@@ -56,8 +56,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
-  beat positions, so clips can line up musically. When detection is uncertain you
-  can set a BPM by hand and slide the beat grid over the waveform to line it up.
+  beat positions, so clips can line up musically. Once a clip's tempo is known it
+  automatically snaps to the timeline's bar grid so its bars line up with the
+  project — handy when a clip has a silent intro — and you can turn this off in
+  Preferences. When detection is uncertain you can set a BPM by hand and slide the
+  beat grid over the waveform to line it up.
 - **Metronome.** Toggle an audible click that follows the project tempo from the
   timing display, so you can check by ear whether a loop or beat sits in time
   with the BPM. It is off by default and its state is saved with the project.

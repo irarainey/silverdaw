@@ -196,6 +196,37 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
     }
     const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
     silverdaw::log::info("engine", "invalidate prefetch (pos=" + juce::String(pos) + ")");
+
+    if (! master.isPlaying())
+    {
+        // Stopped edits (move / trim / envelope / reverse / edge-fade / brake / backspin / warp)
+        // change the OffsetSource UPSTREAM of the read-ahead buffer, but juce::BufferingAudioSource
+        // has no synchronous flush: setNextReadPosition only moves nextPlayPos and wakes the
+        // background thread, so a far-then-near seek on the message thread reverts nextPlayPos
+        // before that thread observes the far position — the stale valid range (buffered at the old
+        // offset) survives, and primeTracksForPlayback's waitForNextAudioBlockReady accepts it as
+        // "ready". The result is a burst of the clip's pre-edit audio on the next play. Recreating
+        // the owned BufferingAudioSource is the only reliable flush (mirrors rebuildPreviewReadAhead)
+        // — the new buffer has an empty valid range, forcing a fresh read from the updated
+        // OffsetSource. Safe while stopped: MasterClockSource does not pull the BusGraph, and the
+        // retired buffer removes itself from readAheadThread in its destructor.
+        track.transportSource->setSource(nullptr);
+        track.bufferingSource = std::make_unique<juce::BufferingAudioSource>(
+            track.offsetSource.get(), readAheadThread,
+            /*deleteSourceWhenDeleted=*/false,
+            kTransportReadAheadSamples, track.numChannels);
+        track.transportSource->setSource(track.bufferingSource.get(),
+                                         0,       // read-ahead handled by our owned bufferingSource
+                                         nullptr, // ditto — no extra reader thread
+                                         track.sampleRate, track.numChannels);
+        track.transportSource->setPosition(pos);
+        track.prefetchDirty = false;
+        return;
+    }
+
+    // While playing, recreating the source would force-stop the transport (JUCE resets its playing
+    // flag in setSource). The stale read-ahead drains within one buffer during continuous playback,
+    // so keep the opportunistic far-then-near seek for the live-edit case.
     track.transportSource->setPosition(pos + 3600.0);
     track.transportSource->setPosition(pos);
     track.prefetchDirty = false;

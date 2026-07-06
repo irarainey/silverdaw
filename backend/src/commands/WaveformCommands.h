@@ -21,8 +21,10 @@ void handleClipAdd(const juce::var& payload, AudioEngine& engine, ProjectState& 
                    BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
                    const DecodedCache& decodedCache);
 void handleWaveformRequest(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                           BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache);
+                           BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
+                           const DecodedCache& decodedCache);
 void handleClipEditorPeaksRequest(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                                  BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache);
+                                  BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
+                                  const DecodedCache& decodedCache);
 
 } // namespace silverdaw

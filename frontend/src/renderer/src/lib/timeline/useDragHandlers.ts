@@ -94,6 +94,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     clipAutoScrollDelta,
     hitTestClip,
     hitTestMarker,
+    hitTestPlayhead,
     hitTestTrimEdge,
     getSourceDurationMs,
     pointerToTrackId
@@ -366,6 +367,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const ms = pointerToMs(e.clientX, e.altKey)
     if (ms === null) return
 
+    // Ruler band and empty track rows both seek the playhead (and start a
+    // playhead drag), so the user can place the playhead anywhere on the
+    // timeline — e.g. to choose where a right-click ▸ Paste will land. A single
+    // click seeks; a press-and-drag moves it live. Double-click has no timeline
+    // action (markers are toggled at the playhead with the M key).
     isDraggingPlayhead.value = true
     hoverCursor.value = 'grabbing'
     window.addEventListener('pointermove', onPlayheadPointerMove)
@@ -612,8 +618,20 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       return
     }
     const trimHit = hitTestTrimEdge(e.clientX, e.clientY)
-    const next = trimHit ? 'ew-resize' : 'default'
-    if (hoverCursor.value !== next) hoverCursor.value = next
+    if (trimHit) {
+      if (hoverCursor.value !== 'ew-resize') hoverCursor.value = 'ew-resize'
+      updateAutomationHoverTip(e.clientX, e.clientY)
+      return
+    }
+    // The playhead is draggable only where a pointer-down starts a playhead
+    // drag — the ruler and empty track areas, not over a clip (clicking a clip
+    // seeks/moves it instead). Signal that with a grab (open-hand) cursor.
+    if (hitTestPlayhead(e.clientX, e.clientY) && !hitTestClip(e.clientX, e.clientY)) {
+      if (hoverCursor.value !== 'grab') hoverCursor.value = 'grab'
+      updateAutomationHoverTip(e.clientX, e.clientY)
+      return
+    }
+    if (hoverCursor.value !== 'default') hoverCursor.value = 'default'
     updateAutomationHoverTip(e.clientX, e.clientY)
   }
 

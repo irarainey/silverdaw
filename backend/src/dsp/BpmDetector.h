@@ -20,6 +20,9 @@ struct BpmAnalysis
     bool variableTempo = false;
     /** Marks likely non-rhythmic detections; the renderer can override via `audioType`. */
     bool lowConfidence = false;
+    /** True when analysis was aborted by the wall-clock timeout before producing
+        a tempo. The caller surfaces this to the user (who can reanalyse). */
+    bool timedOut = false;
 };
 
 // Offline BTrack analysis; run only on workers, never the audio or message thread.
@@ -42,6 +45,14 @@ class BpmDetector
         reflects the entire piece, eliminating grid drift that accumulates when
         the period is fit to just the opening minute. */
     static constexpr double kMaxAnalysisSeconds = 600.0;
+    /** Wall-clock ceiling for one analysis pass. Detection normally finishes in a
+        few seconds to ~30 s; this is a safety net so a pathological or very long
+        input can't stall the analysis worker indefinitely. Set generously (BTrack
+        runs on a fixed 60 s audio prefix, so cost is largely machine-bound rather
+        than track-length-bound) to avoid false timeouts on slower machines. On
+        timeout the pass returns no tempo with `timedOut` set, and the user is
+        invited to reanalyse. */
+    static constexpr double kAnalysisTimeoutSeconds = 120.0;
 
     /** Blocking; call from a worker, and keep `formatManager` alive for the call. */
     BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);

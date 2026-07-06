@@ -25,6 +25,8 @@ describe('useTransportSkip', () => {
   it('skip-back (timeline mode) rewinds to the start and resets the view', () => {
     const transport = useTransportStore()
     const project = useProjectStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
     const setPosition = vi.spyOn(transport, 'setPosition')
     const { onSkipBack } = useTransportSkip()
 
@@ -90,13 +92,17 @@ describe('useTransportSkip', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('skip-forward (timeline mode) seeks to the project end', () => {
+  it('skip-forward (timeline mode) seeks to the project end and scrolls the view there', () => {
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
     seedTrackLength(4000)
+    const scrollToEdge = vi.spyOn(ui, 'requestTimelineScroll')
     const { onSkipForward } = useTransportSkip()
 
     onSkipForward()
 
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 4000 })
+    expect(scrollToEdge).toHaveBeenCalledWith('end')
   })
 
   it('skip-forward (marker mode) seeks to the next marker', () => {

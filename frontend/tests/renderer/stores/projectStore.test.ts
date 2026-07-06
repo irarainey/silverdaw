@@ -167,6 +167,15 @@ describe('projectStore', () => {
     })
   })
 
+  it('selects the newly added track', () => {
+    const project = useProjectStore()
+
+    const trackId = project.addTrack()
+
+    expect(project.selectedTrackId).toBe(trackId)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_VIEW', { selectedTrackId: trackId })
+  })
+
   it('adds tracks and local clips while notifying the bridge about tracks', () => {
     const project = useProjectStore()
 
@@ -193,6 +202,184 @@ describe('projectStore', () => {
     expect(project.clips[clipId ?? '']?.startMs).toBe(500)
     expect(project.durationMs).toBe(DEFAULT_TRACK_LENGTH_MS)
     expect(sendMock).toHaveBeenCalledWith('TRACK_ADD', { trackId, name: 'Track 1', colorIndex: 0 })
+  })
+
+  it('extends the project duration to fit a clip longer than the default track length', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+
+    // A clip whose end runs past the 5-minute default should grow the track (and
+    // therefore the project duration) to the clip's full end.
+    const longClipMs = DEFAULT_TRACK_LENGTH_MS + 120_000
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'lib-long',
+        filePath: 'C:\\audio\\long.wav',
+        fileName: 'long.wav',
+        durationMs: longClipMs,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      },
+      0
+    )
+
+    expect(clipId).toBeTruthy()
+    expect(project.tracks[0]?.lengthMs).toBe(longClipMs)
+    expect(project.durationMs).toBe(longClipMs)
+  })
+
+  it('alignClipToBarGrid moves a matching-tempo clip so its beat grid lands on a bar line', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 120 // matches the clip; 500 ms/beat, 2000 ms/bar (4/4)
+
+    const itemId = library.addItem({
+      filePath: 'C:\\align.wav',
+      fileName: 'align.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    // Grid: anchor 125 ms → first in-window beat at 125 ms, spaced 500 ms.
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625, 1.125, 1.625]
+
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\align.wav',
+        fileName: 'align.wav',
+        durationMs: 10_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+
+    // First grid beat at 125 ms; nearest bar line is 0 but that needs start −125,
+    // so it bumps a bar → beat on the 2000 ms bar line, clip start 1875 ms.
+    project.alignClipToBarGrid(clipId ?? '')
+    expect(project.clips[clipId ?? '']?.startMs).toBe(1875)
+  })
+
+  it('alignClipToBarGrid does nothing when the clip tempo differs from the project tempo', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    useTransportStore().bpm = 100 // clip is 120 → beats spaced differently from grid
+
+    const itemId = library.addItem({
+      filePath: 'C:\\mismatch.wav',
+      fileName: 'mismatch.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625, 1.125]
+
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\mismatch.wav',
+        fileName: 'mismatch.wav',
+        durationMs: 10_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      333
+    )
+
+    project.alignClipToBarGrid(clipId ?? '')
+    expect(project.clips[clipId ?? '']?.startMs).toBe(333)
+  })
+
+  it('alignClipToBarGrid leaves a clip without a beat grid (simple sample) untouched', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    useTransportStore().bpm = 120
+
+    const itemId = library.addItem({
+      filePath: 'C:\\sample.wav',
+      fileName: 'sample.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    // No bpm/beats set → no beat grid.
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\sample.wav',
+        fileName: 'sample.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      137
+    )
+
+    project.alignClipToBarGrid(clipId ?? '')
+    expect(project.clips[clipId ?? '']?.startMs).toBe(137)
+  })
+
+  it('aligns a clip once the project tempo is seeded to match (deferred to PROJECT_BPM_APPLIED)', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 100 // stale pre-seed tempo; the clip is 120
+
+    const itemId = library.addItem({
+      filePath: 'C:\\seed.wav',
+      fileName: 'seed.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\seed.wav',
+        fileName: 'seed.wav',
+        durationMs: 10_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+
+    // Analysis arrives while the project is still at the stale 100 bpm: the clip's
+    // 120-bpm beats don't match the grid, so the immediate align is a no-op.
+    library.setItemAnalysis(itemId, 120, 0.125, [0.125, 0.625, 1.125, 1.625], false)
+    expect(project.clips[clipId ?? '']?.startMs).toBe(0)
+
+    // The first-clip seed sets the project tempo to the clip's; the bpm handler
+    // then flushes the pending alignment and the clip snaps to the bar grid.
+    transport.setBpm(120)
+    library.flushGridAlignAfterBpm()
+    expect(project.clips[clipId ?? '']?.startMs).toBe(1875)
   })
 
   it('requests the timeline reveal the newly added track', async () => {

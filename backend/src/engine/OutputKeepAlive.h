@@ -81,12 +81,20 @@ class OutputKeepAlive
         wakeBurstSamples =
             sampleRate > 0.0 ? static_cast<int>(sampleRate * (kWakeBurstMs / 1000.0)) : 0;
         wakeBurstRemaining = wakeBurstSamples;
+        warmHoldSamples =
+            sampleRate > 0.0 ? static_cast<int>(sampleRate * (kWarmHoldMs / 1000.0)) : 0;
+        warmRemaining = 0; // a fresh device/SR start is cold until real programme plays
     }
 
     // Re-arm the decaying wake burst from full. Called at the start of each play on a sleep-prone
     // endpoint (via MasterClockSource's audio-thread pre-roll) so the amp is roused before the
     // downbeat even if it relaxed back to mute since the last play. Audio-thread only.
     void armWakeBurst() noexcept { wakeBurstRemaining = wakeBurstSamples; }
+
+    // True while the endpoint is known-awake: real programme audio played within the last warm-hold
+    // window, so a fresh play needs no (audible) wake burst. Audio-thread only — read from the
+    // per-play wake decision, updated by maybeApplyFloor as blocks stream.
+    bool isWarm() const noexcept { return warmRemaining > 0; }
 
     // Audio thread: add the keep-alive signal on otherwise-silent blocks while the gate is open. A
     // decaying wake burst rouses a cold amp on the first blocks after a device (re)start, falling to
@@ -96,6 +104,17 @@ class OutputKeepAlive
     bool maybeApplyFloor(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
                          float programPeak) noexcept
     {
+        // Track endpoint warmth every block: above-threshold programme proves the amp is awake and
+        // (re)opens the warm window; otherwise the window counts down. Runs before the early-out so
+        // warmth stays current even on blocks where no floor is injected.
+        if (numSamples > 0)
+        {
+            if (programPeak > silverdaw::kKeepAliveSilenceThreshold)
+                warmRemaining = warmHoldSamples;
+            else
+                warmRemaining = juce::jmax(0, warmRemaining - numSamples);
+        }
+
         const bool active = shouldRun() && programPeak <= silverdaw::kKeepAliveSilenceThreshold;
         if (! active || numSamples <= 0)
             return false;
@@ -166,6 +185,11 @@ class OutputKeepAlive
     // counts down to zero as the burst decays into the holding dither.
     int wakeBurstSamples{0};
     int wakeBurstRemaining{0};
+    // Warm-window counters — audio-thread only. warmHoldSamples is the window length (set in
+    // prepare() for the active rate); warmRemaining counts down from the last above-threshold block
+    // and, while positive, marks the endpoint known-awake so the per-play wake burst is suppressed.
+    int warmHoldSamples{0};
+    int warmRemaining{0};
 };
 
 } // namespace silverdaw

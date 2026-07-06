@@ -35,6 +35,15 @@ const GLOBAL_SHORTCUT_ACTIONS: ReadonlySet<string> = new Set([
   'view.zoomReset'
 ])
 
+/** Extra key aliases for existing menu actions that the menu can't show a second
+ *  accelerator for. `Ctrl+D` complements the bare `D` duplicate, and `Backspace`
+ *  complements `Delete`. Dispatch and editable-target deferral reuse the action's
+ *  existing rules (both are in `TEXT_EDIT_ACTIONS`). */
+const ALIAS_ACCELERATORS: ReadonlyArray<{ accel: string; action: string }> = [
+  { accel: 'Ctrl+D', action: 'edit.duplicateClip' },
+  { accel: 'Backspace', action: 'edit.deleteClip' }
+]
+
 function parseAccelerator(accel: string): ParsedAccelerator | null {
   const parts = accel
     .split('+')
@@ -89,6 +98,11 @@ export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBindin
       const accel = parseAccelerator(item.accelerator)
       if (accel) bindings.push({ accel, action: item.action })
     }
+  }
+  // Extra key aliases for actions the menu already exposes under a different key.
+  for (const alias of ALIAS_ACCELERATORS) {
+    const accel = parseAccelerator(alias.accel)
+    if (accel) bindings.push({ accel, action: alias.action })
   }
   return bindings
 }

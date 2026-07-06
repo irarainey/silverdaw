@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.0.3
+
+### Added
+
+- The Home and End keys now jump the playhead to the start and end of the timeline (scrolling the view there), matching Ctrl+Shift+Left / Right.
+- New keyboard shortcuts: Ctrl+F (zoom to fit), Escape (deselect clip/track), K (toggle metronome), Shift+M / Shift+S (mute / solo the selected track), Ctrl+Shift+T (trim project to last clip), plus Ctrl+D and Backspace as aliases for Duplicate and Delete.
+- The K key now also toggles the Clip Editor's own metronome while that dialog is open, leaving the main timeline metronome setting unchanged.
+- The Clip Editor now supports the Home / End keys (jump the preview playhead to the start / end of the active playback range) and Ctrl+F (fit the working view back into the canvas).
+- Clips now automatically align to the timeline bar grid once their tempo is detected, so their bars line up with the project's bars (even when the clip starts with silence) and splitting and marker placement stay on the beat. Clips with no detected beats (such as simple samples) are left where you placed them. This can be turned off in Preferences ▸ Timeline.
+
+### Changed
+
+- Adding a track now automatically selects it, so clip paste, mute / solo shortcuts, and the FX rack target the new track immediately.
+- A selected track's highlight border now extends across its header panel with the same thickness and track colour as the timeline row, so the selection outline reads as one continuous box.
+- New projects now default to a 5-minute timeline (down from 10). Adding a first clip that runs longer automatically extends the project duration to fit the whole clip.
+- The audio processing panel header no longer shows a redundant in-progress count.
+- The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.
+- The timeline ruler now shows a grab cursor over the playhead, and a single click places the playhead while click-and-drag moves it. Double-clicking the ruler no longer does anything — add or remove a marker at the playhead with the M key.
+- Tempo detection now gives up after 120 seconds and shows a notification instead of running indefinitely; the file can be reanalysed manually from the library.
+
+### Fixed
+
+- Stem separation that runs out of GPU memory (or hits a GPU driver reset) mid-inference no longer floods the diagnostics log with an alarming raw ONNX Runtime error. The job already transparently retries on the CPU; ONNX Runtime's own logging is now routed into the structured backend log at a proportionate level instead of the process error stream.
+- Editing a clip's position/trim during live playback can no longer momentarily glitch on the rare occasion the audio thread reads the clip's window mid-update: it now falls back to the last consistent window instead of a possibly torn (mismatched offset/length) read.
+- Moving a clip along the timeline while playback is stopped and then pressing play no longer briefly bursts the clip's audio from its previous position. The per-track read-ahead buffer is now fully rebuilt after a stopped edit instead of relying on an unreliable seek that could leave stale buffered audio to play on the next start. (Also fixes the same stale-buffer class for stopped trim / fade / reverse / warp edits.)
+- The Clip Editor and library preview window now wake a sleep-prone (USB) DAC before playback, using the same audio-thread wake pre-roll as the main timeline, so the first play into a cold amp no longer loses its opening to silence. The wake burst only fires when the endpoint is actually cold, so auditioning clips back-to-back stays clean (no start-of-play hiss on an already-awake device).
+- Importing AAC/M4A files no longer hangs on "Analysing tempo…", and the import now always completes even when a file has no detectable tempo.
+- Tempo detection no longer intermittently reports "no tempo" on import — concurrent decode jobs for the same file could collide on the shared decoded-audio cache, causing detection to give up. Decoding is now serialised per file, so the grid is detected on the first import instead of only after a manual reanalyse.
+- Timeline beat markers now render reliably, including on imported AAC/M4A tracks.
+- Project Properties no longer rejects a duration set to the exact length of the last clip — the length field (whole seconds) is now validated against the second-rounded clip end, so the displayed minimum can be saved.
+- The transport's next button, when set to jump to the timeline ends, now scrolls the timeline view to the end of the project (matching how the previous button scrolls back to the start).
+- The Preferences ▸ Stems tab now recognises already-downloaded separation models on open, instead of showing them as not downloaded when they are already present on disk.
+
 ## 1.0.2
 
 ### Added

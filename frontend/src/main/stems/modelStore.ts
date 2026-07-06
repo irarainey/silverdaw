@@ -119,6 +119,20 @@ export class ModelStore {
   }
 
   /**
+   * Like `readInstallState`, but self-heals the "files present yet not marked
+   * downloaded" case: when every file is present at its expected size while the
+   * revision sentinel is missing or stale (e.g. files copied in manually, or an
+   * older/interrupted install that left no sentinel), stamp the sentinel so the
+   * model is recognised as installed. Returns the reconciled state.
+   */
+  async reconcileInstallState(): Promise<ModelInstallState> {
+    const state = await this.readInstallState()
+    if (state.installed || !state.files.every((f) => f.present)) return state
+    await this.writeSentinel()
+    return { ...state, installed: true }
+  }
+
+  /**
    * Inspect an arbitrary candidate directory (e.g. a user-supplied model the
    * "locate existing model" flow points at) without consulting or writing the
    * revision sentinel. Presence is size-only, mirroring `readInstallState`.

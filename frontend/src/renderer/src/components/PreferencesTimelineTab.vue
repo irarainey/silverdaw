@@ -4,6 +4,7 @@ import type { SkipButtonTarget } from '@/stores/uiStore'
 const followPlayback = defineModel<boolean>('followPlayback', { required: true })
 const matchProjectTempoOnDrop = defineModel<boolean>('matchProjectTempoOnDrop', { required: true })
 const seedProjectTempoFromFirstClip = defineModel<boolean>('seedProjectTempoFromFirstClip', { required: true })
+const alignClipsToGridOnAnalysis = defineModel<boolean>('alignClipsToGridOnAnalysis', { required: true })
 const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { required: true })
 </script>
 
@@ -57,6 +58,22 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
         </span>
       </span>
     </label>
+    <label class="mt-3 flex cursor-pointer items-start gap-3">
+      <input
+        v-model="alignClipsToGridOnAnalysis"
+        type="checkbox"
+        class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+      >
+      <span class="flex-1">
+        <span class="block font-medium text-zinc-200">Align clips to the beat grid after analysis</span>
+        <span class="mt-0.5 block text-zinc-500">
+          Once a clip's tempo has been detected, nudge it so its beats line up
+          with the timeline's beat grid, so splitting and marker placement stay
+          on the beat. Clips with no detected beats (such as simple samples) are
+          left where you placed them.
+        </span>
+      </span>
+    </label>
     <div class="mt-4">
       <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
         Previous / next buttons
@@ -72,12 +89,12 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
-            value="timelineEnds"
+            value="markers"
             class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Timeline ends</span>
-            <span class="text-zinc-500"> — Jump to project start / end</span>
+            <span class="font-medium text-zinc-200">Markers</span>
+            <span class="text-zinc-500"> — Step through timeline markers</span>
           </span>
         </label>
         <label
@@ -87,12 +104,12 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
             v-model="skipButtonTarget"
             type="radio"
             name="skip-button-target"
-            value="markers"
+            value="timelineEnds"
             class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
           >
           <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Markers</span>
-            <span class="text-zinc-500"> — Step through timeline markers</span>
+            <span class="font-medium text-zinc-200">Timeline ends</span>
+            <span class="text-zinc-500"> — Jump to project start / end</span>
           </span>
         </label>
       </div>

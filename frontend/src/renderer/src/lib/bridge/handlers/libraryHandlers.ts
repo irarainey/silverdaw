@@ -1,7 +1,8 @@
 // Library/waveform-domain inbound handlers: peak cache loads, analysis results,
 // and saved-sample reconciliation.
 
-import { useLibraryStore } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { applySampleSaved, loadEditorPeaksFromCache, loadPeaksFromCache } from '@/lib/bridge/peaksCache'
 import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
@@ -20,7 +21,8 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
   },
 
   LIBRARY_ITEM_ANALYSIS: (payload) => {
-    useLibraryStore().setItemAnalysis(
+    const library = useLibraryStore()
+    library.setItemAnalysis(
       payload.itemId,
       payload.bpm,
       payload.beatAnchorSec,
@@ -31,8 +33,18 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
     )
     log.info(
       'bridge',
-      `LIBRARY_ITEM_ANALYSIS itemId=${payload.itemId} bpm=${payload.bpm.toFixed(2)} anchor=${payload.beatAnchorSec.toFixed(3)}s beats=${payload.beats.length}${payload.variableTempo ? ' variable' : ''}${payload.lowConfidence ? ' low-confidence' : ''}${payload.playbackFilePath ? ' (cached)' : ''}`
+      `LIBRARY_ITEM_ANALYSIS itemId=${payload.itemId} bpm=${payload.bpm.toFixed(2)} anchor=${payload.beatAnchorSec.toFixed(3)}s beats=${payload.beats.length}${payload.variableTempo ? ' variable' : ''}${payload.lowConfidence ? ' low-confidence' : ''}${payload.playbackFilePath ? ' (cached)' : ''}${payload.timedOut ? ' timed-out' : ''}`
     )
+    // Tempo detection hit its time limit: tell the user it was skipped and that
+    // they can retry it manually (right-click ▸ Reanalyse) rather than leaving
+    // them wondering why the clip has no beat grid.
+    if (payload.timedOut) {
+      const item = library.getItem(payload.itemId)
+      const name = item ? libraryItemDisplayName(item) : 'the track'
+      useNotificationsStore().pushError(
+        `Tempo detection timed out for "${name}". You can reanalyse it manually from the library.`
+      )
+    }
   },
 
   SAMPLE_SAVED: (payload) => {

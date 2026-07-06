@@ -194,7 +194,8 @@ export function useClipEditorController(
     resetZoom,
     setZoomAnchored,
     zoomIn,
-    zoomOut
+    zoomOut,
+    zoomToFit
   } = viewport
   void _basePxPerMs
 
@@ -835,6 +836,11 @@ export function useClipEditorController(
     nudgePlayhead,
     togglePlay: onTogglePlay,
     toggleLoop: onToggleLoop,
+    canToggleMetronome: () => editsExistingClip.value,
+    toggleMetronome: onToggleClipMetronome,
+    skipToStart: onSkipToStart,
+    skipToEnd: onSkipToEnd,
+    zoomToFit,
     zoomIn,
     zoomOut,
     resetZoom,

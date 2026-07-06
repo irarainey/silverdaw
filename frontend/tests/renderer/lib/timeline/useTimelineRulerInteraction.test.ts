@@ -56,12 +56,8 @@ function makeDeps(
   const openClipEditor = vi.fn()
   const deps: TimelineRulerInteractionDeps = {
     getHostRect: () => ({ left: 0, top: 0, width: 1000, height: 400 }) as DOMRect,
-    getScreenWidth: () => 1000,
-    headerWidth: () => 200,
-    pxPerSecond: () => 100,
     scrollX: () => 0,
     scrollY: () => 0,
-    msPerSubBeat: () => 125,
     getClipHitRegions: () => hitRegions,
     startClipRename,
     openClipEditor,
@@ -124,26 +120,23 @@ describe('useTimelineRulerInteraction — onDoubleClick', () => {
     expect(openClipEditor).not.toHaveBeenCalled()
   })
 
-  it('double-click on an empty ruler position toggles a marker', () => {
+  it('double-click on an empty ruler position does nothing (markers use the M key)', () => {
     const project = useProjectStore()
-    const spy = vi.spyOn(project, 'toggleMarkerAt')
+    const toggleSpy = vi.spyOn(project, 'toggleMarkerAt')
     const { deps } = makeDeps([])
     const r = useTimelineRulerInteraction(deps)
-    // y inside the ruler band (RULER_HEIGHT), x past the header column.
-    // worldMs = ((0 + 300 - 200) / 100) * 1000 = 1000 -> snapped to 1000.
+    // y inside the ruler band, x past the header column: no clip, no action.
     r.onDoubleClick(mouse({ clientX: 300, clientY: 5 }))
-    expect(spy).toHaveBeenCalledWith(1000)
+    expect(toggleSpy).not.toHaveBeenCalled()
   })
 
-  it('double-click on an existing ruler marker removes it', () => {
+  it('double-click on an existing ruler marker does nothing (no removal on the ruler)', () => {
     const project = useProjectStore()
-    // Marker at 1000 ms -> screen x = 200 + (1000/1000)*100 = 300.
     project.toggleMarkerAt(1000)
-    const markerId = project.markers[0]?.id
-    const spy = vi.spyOn(project, 'removeMarker')
+    const removeSpy = vi.spyOn(project, 'removeMarker')
     const { deps } = makeDeps([])
     const r = useTimelineRulerInteraction(deps)
     r.onDoubleClick(mouse({ clientX: 300, clientY: 5 }))
-    expect(spy).toHaveBeenCalledWith(markerId)
+    expect(removeSpy).not.toHaveBeenCalled()
   })
 })

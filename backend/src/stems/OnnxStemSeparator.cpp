@@ -23,6 +23,7 @@
 
 #include "Log.h"
 #include "InferenceThreads.h"
+#include "OnnxLogging.h"
 #include "StemRunCancellation.h"
 #include "StemShifts.h"
 #include "BsRoformerRhythm.h"
@@ -252,7 +253,7 @@ bool isRecoverableGpuFault(const Ort::Exception& e)
 class OnnxStemSeparator : public StemSeparator
 {
   public:
-    OnnxStemSeparator() : env(ORT_LOGGING_LEVEL_ERROR, "silverdaw-stems")
+    OnnxStemSeparator() : env(makeOrtEnv("silverdaw-stems"))
     {
         applyExecutionProvider(false);
     }

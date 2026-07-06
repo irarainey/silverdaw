@@ -7,10 +7,12 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
   open: { value: boolean }
   hasSel: { value: boolean }
   canGate: { value: boolean }
+  canMetronome: { value: boolean }
 } {
   const open = { value: true }
   const hasSel = { value: false }
   const canGate = { value: false }
+  const canMetronome = { value: true }
   const spies = {
     close: vi.fn(),
     clearSelection: vi.fn(),
@@ -18,6 +20,10 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     nudgePlayhead: vi.fn(),
     togglePlay: vi.fn(),
     toggleLoop: vi.fn(),
+    toggleMetronome: vi.fn(),
+    skipToStart: vi.fn(),
+    skipToEnd: vi.fn(),
+    zoomToFit: vi.fn(),
     zoomIn: vi.fn(),
     zoomOut: vi.fn(),
     resetZoom: vi.fn(),
@@ -38,6 +44,11 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     nudgePlayhead: spies.nudgePlayhead as ClipEditorKeyboardDeps['nudgePlayhead'],
     togglePlay: spies.togglePlay,
     toggleLoop: spies.toggleLoop,
+    canToggleMetronome: () => canMetronome.value,
+    toggleMetronome: spies.toggleMetronome,
+    skipToStart: spies.skipToStart,
+    skipToEnd: spies.skipToEnd,
+    zoomToFit: spies.zoomToFit,
     zoomIn: spies.zoomIn,
     zoomOut: spies.zoomOut,
     resetZoom: spies.resetZoom,
@@ -45,7 +56,7 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     redoCropLocal: spies.redoCropLocal,
     ...overrides
   }
-  return { deps, spies, open, hasSel, canGate }
+  return { deps, spies, open, hasSel, canGate, canMetronome }
 }
 
 interface KeyOpts {
@@ -180,6 +191,25 @@ describe('useClipEditorKeyboard — onKeydown', () => {
     expect(h.spies.toggleLoop).toHaveBeenCalled()
   })
 
+  it('K toggles the clip metronome when available', () => {
+    kb.onKeydown(makeKey({ key: 'k' }).e)
+    expect(h.spies.toggleMetronome).toHaveBeenCalledTimes(1)
+    kb.onKeydown(makeKey({ key: 'K' }).e)
+    expect(h.spies.toggleMetronome).toHaveBeenCalledTimes(2)
+  })
+
+  it('K does nothing when the metronome is unavailable', () => {
+    h.canMetronome.value = false
+    kb.onKeydown(makeKey({ key: 'k' }).e)
+    expect(h.spies.toggleMetronome).not.toHaveBeenCalled()
+  })
+
+  it('K with a modifier does not toggle the metronome', () => {
+    kb.onKeydown(makeKey({ key: 'k', ctrlKey: true }).e)
+    kb.onKeydown(makeKey({ key: 'k', shiftKey: true }).e)
+    expect(h.spies.toggleMetronome).not.toHaveBeenCalled()
+  })
+
   it('S silences and F restores the selection when a range is gateable', () => {
     h.canGate.value = true
     kb.onKeydown(makeKey({ key: 's' }).e)
@@ -240,6 +270,36 @@ describe('useClipEditorKeyboard — onWindowKeydownCapture', () => {
     expect(h.spies.undoCropLocal).toHaveBeenCalledTimes(1)
     kb.onWindowKeydownCapture(makeKey({ key: 'z', ctrlKey: true, shiftKey: true }).e)
     expect(h.spies.redoCropLocal).toHaveBeenCalledTimes(1)
+  })
+
+  it('Home / End seek regardless of focus drift, swallowing the event', () => {
+    const home = makeKey({ key: 'Home' })
+    kb.onWindowKeydownCapture(home.e)
+    expect(h.spies.skipToStart).toHaveBeenCalledTimes(1)
+    expect(home.preventDefault).toHaveBeenCalled()
+    expect(home.stopPropagation).toHaveBeenCalled()
+    kb.onWindowKeydownCapture(makeKey({ key: 'End' }).e)
+    expect(h.spies.skipToEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+F fits the working view and swallows the event', () => {
+    const { e, preventDefault, stopPropagation } = makeKey({ key: 'f', ctrlKey: true })
+    kb.onWindowKeydownCapture(e)
+    expect(h.spies.zoomToFit).toHaveBeenCalledTimes(1)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(stopPropagation).toHaveBeenCalled()
+  })
+
+  it('Ctrl+Shift+F does not fit the view', () => {
+    kb.onWindowKeydownCapture(makeKey({ key: 'f', ctrlKey: true, shiftKey: true }).e)
+    expect(h.spies.zoomToFit).not.toHaveBeenCalled()
+  })
+
+  it('does not seek or fit while typing in a field', () => {
+    kb.onWindowKeydownCapture(makeKey({ key: 'Home', editable: true }).e)
+    kb.onWindowKeydownCapture(makeKey({ key: 'f', ctrlKey: true, editable: true }).e)
+    expect(h.spies.skipToStart).not.toHaveBeenCalled()
+    expect(h.spies.zoomToFit).not.toHaveBeenCalled()
   })
 
   it('ignores plain keys with no Ctrl/Cmd modifier', () => {

@@ -1403,6 +1403,12 @@ project transport.
 - Loop toggle (`L`): loops the current selection — or the whole
   saved clip if no selection is set. Source files only loop when an
   explicit selection is set (the source file itself is immutable).
+- **Clip metronome** (`K`, or the toolbar tick — shown for existing saved /
+  timeline clips, hidden in the read-only source preview): when the clip's
+  source has a BPM grid it plays an audible click on that grid during preview
+  playback, independent of the main timeline metronome. Only the enabled flag is
+  persisted with the project; the grid BPM / anchor are sent transiently via
+  `PREVIEW_SET_METRONOME`.
 - Smooth ease-in catch-up follow during playback, matching the main
   timeline's behaviour.
 - **Volume Shape editor.** In the cropped **Clip** view a faint volume
@@ -1441,7 +1447,7 @@ project transport.
 - Bridge envelopes: inbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
   `PREVIEW_PAUSE` / `PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD`
   / `PREVIEW_SET_ENVELOPE` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
-  `PREVIEW_SET_BACKSPIN` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
+  `PREVIEW_SET_BACKSPIN` / `PREVIEW_SET_METRONOME` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
   / `CLIP_SET_ENVELOPE`; outbound
   `PREVIEW_STATE` / `PREVIEW_POSITION` / `PREVIEW_ENDED` /
   `CLIP_EDITOR_PEAKS_READY`. A monotonic `generation` counter on the
@@ -1725,6 +1731,7 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Library tile shows detected key and BPM next to the duration with an amber `~ BPM` badge for variable-tempo sources; round-trips through `LIBRARY > ITEM[key, bpm, beats, beatAnchorSec, variableTempo, playbackFilePath]` on save/load
 - [x] Beat markers drawn on the clip waveform — synthesised on a source-global beat grid (`beats[0] + N × 60/sourceBPM`) so split / duplicate / trim sub-clips stay in lockstep
 - [x] Drag-snap on a clip uses the same source-global beat grid: the first source beat inside the clip snaps to the nearest project sub-beat (Alt to bypass for ms-precise drag)
+- [x] Clips auto-align to the project **bar** grid after tempo analysis (`project.alignClipToBarGrid`): the first in-window grid beat snaps to the nearest bar line so a clip placed before its beats were known — e.g. one with a silent intro — lands on the bar; gated by the **Align clips to the beat grid after analysis** preference (default on, `ui.alignClipsToGridOnAnalysis`), skips simple samples / locked / tempo-mismatched clips, and re-runs from `PROJECT_BPM_APPLIED` so a first-clip tempo seed is applied before aligning
 - [x] Floating processing panel surfaces staged progress (preparing audio → analysing tempo → analysing beats → applying warp when needed) for both import and reanalysis; OS busy cursor stays in `progress` for the whole lifespan
 - [x] Manual timeline markers: `M` toggles a marker at the nearest playhead grid point, double-clicking the ruler toggles at the nearest grid point, drag moves markers with grid snap, duplicate markers on the same grid point are refused, `Ctrl+←/→` jumps between markers and scrolls them into view, and markers persist as `MARKERS > MARKER[id, positionMs]`
 - [x] Auto warp-to-project-BPM on clip drop/import, gated by the General preference and late-applied after BPM analysis when needed
@@ -1736,10 +1743,15 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)
 - [x] Split clip at playhead (`S` key + Edit menu + clip context menu — splits every clip whose timeline window straddles the playhead)
-- [x] Duplicate clip (`D` key + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
-- [x] Delete clip (`Delete` key + Edit menu + clip context menu)
+- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
+- [x] Delete clip (`Delete` or `Backspace` + Edit menu + clip context menu)
 - [x] Cut / Copy / Paste clips (`Ctrl + X` / `Ctrl + C` / `Ctrl + V`); paste lands after the source clip on its track, or at the playhead when pasting onto a different (selected) track; toast when the destination slot is occupied
 - [x] Clip selection (thicker outline) + track selection (highlighted row border) — drives the Cut/Copy/Paste/Duplicate/Delete target
+- [x] Deselect the current clip / track (and any selected automation point) with `Escape`
+- [x] Trim Project to Last Clip via `Ctrl + Shift + T` (also Edit menu)
+- [x] Zoom to fit the whole project to the timeline width via `Ctrl + F` (also View menu); sizes `pxPerSecond` to the track area and jumps the view to the start
+- [x] Toggle the project metronome with `K`
+- [x] Mute / solo the selected track with `Shift + M` / `Shift + S` (bare `M` / `S` are Marker / Split)
 - [x] Per-clip colour override — right-click → inline 16-swatch palette, persisted as `colorIndex` on the clip and round-tripped via `CLIP_COLOR`
 - [x] Cross-track clip drag — drag a clip into another row to re-parent it (extended `CLIP_MOVE { clipId, positionMs, trackId? }`)
 - [x] No-overlap rule on same-track clip drag (magnetic edge snap so adjacent clips play seamlessly)

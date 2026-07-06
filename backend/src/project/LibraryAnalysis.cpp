@@ -244,37 +244,57 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
 
-    // Decode once so later clip adds use cheap PCM instead of block-time decoding.
+    // Analysis must run on decoded PCM. ensureDecoded returns the source
+    // unchanged when it is already a readable WAV, a cached WAV for decodable
+    // compressed formats, or an invalid file when the source can't be decoded
+    // (e.g. a raw .m4a/.aac — the backend has no reader for those; the renderer
+    // decodes them to a WAV whose path is resolved upstream). Never fall back to
+    // analysing a non-WAV: the detector can't read it and the import would hang
+    // waiting on a result that never comes.
     const auto cachedFile = recreateDecodedCache
                                 ? decodedCache.recreateDecoded(filePath, engine.getFormatManager())
                                 : decodedCache.ensureDecoded(filePath, engine.getFormatManager());
-    const juce::String cachedPath = cachedFile.existsAsFile() ? cachedFile.getFullPathName() : juce::String();
+    const bool haveWav = cachedFile.existsAsFile() && cachedFile.hasFileExtension("wav");
+    const juce::String cachedPath = haveWav ? cachedFile.getFullPathName() : juce::String();
 
-    // Analyse the cached WAV so beat times match playback.
-    const juce::File analysisFile = cachedFile.existsAsFile() ? cachedFile : filePath;
-    silverdaw::BpmDetector detector;
-    const silverdaw::BpmAnalysis analysis = detector.analyse(analysisFile, engine.getFormatManager());
+    silverdaw::BpmAnalysis analysis; // bpm 0 by default → treated as "no tempo"
+    if (haveWav)
+    {
+        silverdaw::BpmDetector detector;
+        analysis = detector.analyse(cachedFile, engine.getFormatManager());
+    }
+    else
+    {
+        silverdaw::log::warn("bpmjob", "no decoded WAV to analyse for itemId=" + itemId + " file="
+                                           + filePath.getFileName() + " — skipping tempo detection");
+    }
+
     if (analysis.bpm <= 0.0)
     {
-        silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
-        // Still publish the cache path so future clip adds use the WAV.
-        if (cachedPath.isNotEmpty() || recreateDecodedCache)
-        {
-            juce::MessageManager::callAsync(
-                [itemId, cachedPath, &projectState, &bridge]
-                {
-                    projectState.clearLibraryItemAnalysis(itemId);
+        const bool didTimeOut = analysis.timedOut;
+        silverdaw::log::info("bpmjob", juce::String(didTimeOut ? "tempo detection timed out" : "no plausible BPM")
+                                           + " for itemId=" + itemId);
+        // Always broadcast an empty analysis so the import UI clears its
+        // "Analysing tempo…" stage, even when a file has no detectable tempo or
+        // couldn't be decoded. Publish the cache path when we have one so future
+        // clip adds reuse the WAV. `timedOut` tells the renderer to toast so the
+        // user knows they can reanalyse.
+        juce::MessageManager::callAsync(
+            [itemId, cachedPath, didTimeOut, &projectState, &bridge]
+            {
+                projectState.clearLibraryItemAnalysis(itemId);
+                if (cachedPath.isNotEmpty())
                     projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
-                    auto* p = new juce::DynamicObject();
-                    p->setProperty("itemId", itemId);
-                    p->setProperty("bpm", 0.0);
-                    p->setProperty("beatAnchorSec", 0.0);
-                    p->setProperty("beats", juce::var(juce::Array<juce::var>{}));
-                    p->setProperty("variableTempo", false);
-                    p->setProperty("playbackFilePath", cachedPath);
-                    bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
-                });
-        }
+                auto* p = new juce::DynamicObject();
+                p->setProperty("itemId", itemId);
+                p->setProperty("bpm", 0.0);
+                p->setProperty("beatAnchorSec", 0.0);
+                p->setProperty("beats", juce::var(juce::Array<juce::var>{}));
+                p->setProperty("variableTempo", false);
+                p->setProperty("playbackFilePath", cachedPath);
+                if (didTimeOut) p->setProperty("timedOut", true);
+                bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
+            });
         {
             std::lock_guard<std::mutex> lock(bpmJobsMutex);
             bpmJobsInFlight.erase(itemId);
@@ -355,8 +375,15 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
         }
         bpmJobsInFlight.insert(itemId);
     }
+    // Detection must run on decoded PCM. Compressed non-native sources (.m4a /
+    // .aac) can't be read by the backend's format manager; the renderer decodes
+    // them to a WAV and stores its path on the library item, so resolve to that
+    // WAV here (native sources resolve to themselves and are decoded inside the
+    // job). This keeps analysis on a readable WAV regardless of import format,
+    // mirroring what LIBRARY_REANALYSE already does.
+    const juce::String analysisPath = resolveEnginePlaybackPath(filePath, projectState, decodedCache);
     peakPool.addJob(
-        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
+        [itemId, file = juce::File(analysisPath), &engine, &projectState, &bridge, &decodedCache]
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
 }
 

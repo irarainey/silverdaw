@@ -72,7 +72,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     // Mix the Clip Editor metronome through a wrapper (added in place of the bare transport) so its
     // lifetime is managed by the mixer's add/remove locking. Re-apply the persisted enabled state
     // and grid so toggling the click survives preview reloads.
-    previewMetronomeSource = std::make_unique<PreviewMetronomeSource>(*preview.transportSource);
+    previewMetronomeSource = std::make_unique<PreviewMetronomeSource>(*preview.transportSource, outputKeepAlive);
     previewMetronomeSource->setEnabled(previewMetronomeEnabled);
     previewMetronomeSource->setGrid(previewMetronomeBpm, previewMetronomeAnchorSec);
     updatePreviewMetronomeMapping();
@@ -335,8 +335,12 @@ void AudioEngine::playPreview()
                              (preview.envelopeSnapshot != nullptr
                                   ? preview.envelopeSnapshot->describe().toStdString()
                                   : "none"));
-    // The loaded project's inaudible keep-alive tone already holds the endpoint awake, so
-    // preview playback opens instantly without a wake pre-roll.
+    // Sleep-prone (USB) endpoints get the same wake pre-roll as the main transport: the preview's
+    // PreviewMetronomeSource wrapper detects this stopped->playing edge on the audio thread and
+    // holds the preview silent for a short lead-in while OutputKeepAlive emits its decaying wake
+    // burst, rousing a cold/relaxed DAC amp before the first audible sample. Non-sleep-prone
+    // endpoints skip it and play instantly. This keeps the Clip Editor / preview window on the
+    // exact same device rules as timeline playback.
     preview.transportSource->start();
 }
 

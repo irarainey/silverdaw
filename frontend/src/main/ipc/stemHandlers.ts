@@ -95,7 +95,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   ipcMain.handle(IPC.stems.getModelDir, async (): Promise<string> => effectiveModelDir())
 
   ipcMain.handle(IPC.stems.getModelState, async (): Promise<StemModelState> => {
-    const state = await storeForDir(effectiveModelDir()).readInstallState()
+    const state = await storeForDir(effectiveModelDir()).reconcileInstallState()
     return {
       installed: state.installed,
       presentBytes: state.presentBytes,
@@ -107,7 +107,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   ipcMain.handle(IPC.stems.getModelInfo, async (): Promise<StemModelInfo> => {
     const override = sanitiseStemModelDir(prefs.get().paths.stemModelDir)
     const dir = override ?? managedModelDir
-    const installed = (await storeForDir(dir).readInstallState()).installed
+    const installed = (await storeForDir(dir).reconcileInstallState()).installed
     return { directory: dir, located: override !== undefined, installed }
   })
 
@@ -198,7 +198,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   let activePackDownload: AbortController | null = null
 
   ipcMain.handle(IPC.stems.getVocalPackState, async (): Promise<StemModelState> => {
-    const state = await vocalPackStoreFor(effectiveVocalPackDir()).readInstallState()
+    const state = await vocalPackStoreFor(effectiveVocalPackDir()).reconcileInstallState()
     return {
       installed: state.installed,
       presentBytes: state.presentBytes,
@@ -276,7 +276,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   let activeRhythmDownload: AbortController | null = null
 
   ipcMain.handle(IPC.stems.getRhythmPackState, async (): Promise<StemModelState> => {
-    const state = await rhythmPackStoreFor(effectiveRhythmPackDir()).readInstallState()
+    const state = await rhythmPackStoreFor(effectiveRhythmPackDir()).reconcileInstallState()
     return {
       installed: state.installed,
       presentBytes: state.presentBytes,

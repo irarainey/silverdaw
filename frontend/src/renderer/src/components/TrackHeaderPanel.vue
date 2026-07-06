@@ -17,6 +17,7 @@ import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { AUTOMATABLE_PARAM_IDS, AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { sampleBreakpoints } from '@/lib/automation/breakpoints'
 import { trackStaticAutomationValue } from '@/stores/projectTrackActions'
+import { TRACK_PALETTE, type Track } from '@/stores/projectTypes'
 import { useTransportStore } from '@/stores/transportStore'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 import { useTrackHeaderEditing } from '@/lib/track/useTrackHeaderEditing'
@@ -34,6 +35,23 @@ const project = useProjectStore()
 const ui = useUiStore()
 
 const headerWidth = computed(() => ui.trackHeaderWidth)
+
+// Mirror the timeline row's selection outline on the header so the border is
+// continuous across both: the selected track's own palette colour at 2px,
+// matching the PixiJS stroke (`palette.border`, width 2). `drop` suppresses the
+// edge that seams into an open automation lane ('bottom' on the row, 'top' on
+// the lane header) so the outline stays a single unbroken box.
+function selectionBorderStyle(
+  track: Track,
+  drop?: 'top' | 'bottom'
+): Record<string, string> | undefined {
+  if (project.selectedTrackId !== track.id) return undefined
+  const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+  const style: Record<string, string> = { borderColor: palette.cssHex, borderWidth: '2px' }
+  if (drop === 'bottom' && ui.automationLanes[track.id]) style.borderBottomWidth = '0px'
+  if (drop === 'top') style.borderTopWidth = '0px'
+  return style
+}
 
 /** Tapered fader mapping keeps most travel in the audible attenuation range. */
 function volumeToSliderPosition(volume: number): number {
@@ -338,14 +356,14 @@ function isTrackFxShowing(trackId: string): boolean {
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
             'ring-1 ring-inset ring-cyan-500/60': track.soloed,
             'opacity-30': reorderingTrackId === track.id,
-            'border-sky-400! bg-zinc-800/40': project.selectedTrackId === track.id,
+            'bg-zinc-800/40': project.selectedTrackId === track.id,
             'rounded-b-none border-b-0': ui.automationLanes[track.id]
           }"
-          :style="{
+          :style="[{
             top: ((rowLayout[i]?.top ?? 0) - RULER_HEIGHT) + 'px',
             height: (rowLayout[i]?.clipHeight ?? 0) + 'px',
             width: headerWidth + 'px'
-          }"
+          }, selectionBorderStyle(track, 'bottom')]"
           @click="onHeaderClick(track, $event)"
         >
           <!-- Top row: reorder grip + name. -->
@@ -643,12 +661,12 @@ function isTrackFxShowing(trackId: string): boolean {
           v-show="ui.automationLanes[track.id]"
           :key="'lane-' + track.id"
           class="pointer-events-auto absolute left-0 flex flex-col rounded-b border border-t-0 border-zinc-700 bg-zinc-900/40 px-2 py-1.5"
-          :class="{ 'border-sky-400! bg-zinc-800/40': project.selectedTrackId === track.id }"
-          :style="{
+          :class="{ 'bg-zinc-800/40': project.selectedTrackId === track.id }"
+          :style="[{
             top: ((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.clipHeight ?? 0) - RULER_HEIGHT) + 'px',
             height: ((rowLayout[i]?.height ?? 0) - (rowLayout[i]?.clipHeight ?? 0)) + 'px',
             width: headerWidth + 'px'
-          }"
+          }, selectionBorderStyle(track, 'top')]"
           @click="onHeaderClick(track, $event)"
         >
           <div class="mb-1.5 flex items-center gap-1">

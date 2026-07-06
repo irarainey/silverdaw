@@ -13,6 +13,7 @@ const base: UiPrefs = {
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
   seedProjectTempoFromFirstClip: true,
+  alignClipsToGridOnAnalysis: true,
   cleanupProjectFiles: false,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'timelineEnds',

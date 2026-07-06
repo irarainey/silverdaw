@@ -98,7 +98,10 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     engine/              Master transport clock, mixer / bus graph (incl.
                          equal-power pan), per-track audio sources, keep-alive
     dsp/                 Per-track DSP: Tone EQ, Leveler, pan / track chain,
-                         shared Reverb + Delay, BPM + loudness, waveform peaks
+                         shared Reverb + Delay, BPM + loudness, waveform peaks,
+                         per-stem cleanup enhancers
+    stems/               ONNX stem-separation orchestration (RoFormer + htdemucs
+                         backup, GPU→CPU fallback); invokes the enhancers in dsp/
     mixdown/             Offline render + export / normalise / dither on the
                          same canonical chain as playback
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
@@ -1007,6 +1010,17 @@ and — crucially — it runs entirely on the audio thread, so the message threa
 (an earlier 500 ms `Thread::sleep` pre-roll froze the UI). With keep-awake off, playback
 skips the pre-roll and plays from the first sample.
 
+The **Clip Editor / preview** voice follows the same rule via an equivalent pre-roll in
+[`PreviewMetronomeSource`](../backend/src/engine/PreviewMetronomeSource.h) (the preview's
+single mixer input): it detects the transport's stopped→playing edge on the audio thread and
+holds the preview silent for `kWakePrerollMs` while the wake burst re-arms, so the first
+preview play into a cold DAC isn't swallowed. Unlike the master transport, the preview
+pre-roll fires **only when the endpoint is cold**: `OutputKeepAlive` marks the device *warm*
+for `kWarmHoldMs` after any real programme above the silence threshold
+(`OutputKeepAlive::isWarm()`), and a warm play skips the burst. This keeps rapid back-to-back
+clip auditioning — which shares an already-awake amp — free of the otherwise-audible
+start-of-play hiss, while a genuinely cold play after a pause still wakes the amp.
+
 The keep-alive — both the dither **and** the wake burst / pre-roll — is a simple
 **explicit per-device toggle**, off by default. There is no device-type
 auto-detection: a device is kept awake only when the user turns it on for that
@@ -1214,7 +1228,9 @@ preference (default on, mirrored to the backend via `PROJECT_SET_SEED_TEMPO_PREF
 is enabled — with it off the seed is skipped entirely and the project BPM stays put.
 When it fires a `PROJECT_BPM_APPLIED { bpm }`
 envelope is broadcast and the renderer mirrors both into `libraryStore` and
-`transportStore`. Seeding runs even for variable-tempo and low-confidence sources
+`transportStore`. At that point the renderer also beat-aligns the just-analysed
+clips to the project **bar** grid when the **Align clips to the beat grid after
+analysis** preference is on (see that preference for the mechanics). Seeding runs even for variable-tempo and low-confidence sources
 (an approximate tempo is more useful than the default 100) but is suppressed for
 items **explicitly classified as a sample**, so a rain ambience the user has
 marked as a sample can't drag the project tempo. The user can fine-tune from the
@@ -1784,6 +1800,22 @@ Persisted fields:
   untouched and the transport BPM field does not pulse a detection hint. Like the
   turntable-effect defaults, it is pushed to the backend on change and re-sent on
   every reconnect (`PROJECT_SET_SEED_TEMPO_PREF { enabled }`).
+- **Align clips to the beat grid after analysis** — `ui.alignClipsToGridOnAnalysis`
+  (default on). Once a clip's tempo analysis completes, its first in-window grid beat
+  is snapped to the nearest project **bar** line (via `project.alignClipToBarGrid`,
+  reusing the drag-time `clipFirstBeatOffsetMs` projection), bumping one bar forward
+  when the nearest bar would fall before the timeline origin — so a clip that starts
+  with silence lands with its bars on the timeline's bars (a lead-in bar of silence)
+  rather than a beat off. Renderer-only (not sent to the backend). It **only moves a
+  clip whose effective tempo matches the project tempo** — a clip whose beats are
+  spaced differently from the grid can't align. The align runs at analysis time
+  (covering a clip dropped at a tempo the project already uses) and is **re-run from
+  `PROJECT_BPM_APPLIED`** (`library.flushGridAlignAfterBpm`): a first-clip tempo seed
+  arrives in the bridge message *after* the analysis, so a clip that seeds the project
+  is skipped as a mismatch at analysis time and snaps into place once the seeded tempo
+  lands (a short-lived pending set stops a later manual BPM change from reflowing clips).
+  Clips with no beat grid (simple samples), locked clips, and clips queued for
+  auto-warp are left untouched.
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.
@@ -1994,7 +2026,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Double-click on **ruler** | Toggle a marker at the nearest grid point. There can only be one marker on a grid point. |
+| Click + drag on **ruler** | Drag the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). Double-click has no effect — toggle markers at the playhead with `M`. |
 | Drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
@@ -2015,6 +2047,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
 | `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |
+| `Home` / `End` | Skip to the start or end of the project and jump the timeline viewport there (the bare-key twin of `Ctrl` + `Shift` + `←` / `→`). |
 | Mouse wheel | Scroll the track stack vertically. |
 | `Ctrl` + mouse wheel | Zoom the timeline (anchored on the pointer). |
 | Two-finger horizontal swipe (trackpad) | Pan left/right. |
@@ -2022,11 +2055,16 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl +` / `Ctrl =` | Zoom in 10% (anchored on the playhead). |
 | `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
+| `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
+| `Escape` | Deselect the current clip / track (and any selected automation point). |
+| `K` | Toggle the project metronome. |
+| `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
-| `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
-| `Delete` | Delete the selected clip. |
+| `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
+| `Delete` / `Backspace` | Delete the selected clip. |
+| `Ctrl + Shift + T` | Trim the project length down to the end of the last clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
@@ -2051,6 +2089,9 @@ and the following set takes over instead:
 | `Alt` + `←` / `→` | Nudge the playhead by 1 ms (unsnapped). |
 | `Shift` + `←` / `→` | Extend a keyboard selection: first press anchors at the playhead (or the opposite edge of an existing narrowing selection); subsequent presses move the playhead and grow / shrink the selection. Combine with `Alt` for 1 ms steps. |
 | `L` | Toggle loop mode. With loop on, playback loops the selection — or the whole saved clip if no selection is set. Source files only loop when a selection is set. |
+| `K` | Toggle the Clip Editor metronome (only when the metronome control is shown). Scoped to the dialog — the main timeline metronome is a separate setting and stays unchanged. |
+| `Home` / `End` | Jump the preview playhead to the start / end of the active playback range (honouring the selection bounds, like the skip-to-start / skip-to-end buttons). |
+| `Ctrl` + `F` | Fit the whole working view — the cropped clip or the full source — into the canvas and scroll to the start (mirrors the timeline's zoom-to-fit; behaves the same in the clip editor and the library preview window). |
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
@@ -2113,6 +2154,11 @@ paste onto a track. Keyboard `Ctrl+V` pastes onto the **selected** track; the cl
 track-lane right-click menus paste onto the **right-clicked** track (selecting it first). The
 new clip always lands at the playhead. Overlap rules are evaluated only on that destination;
 the source-track's clips don't constrain placement.
+
+Adding a track selects it automatically, so a clip paste, the mute/solo shortcuts, and the
+Track FX rack all target the new track without a further click. The selected-track outline is
+drawn in the track's own palette colour and extends continuously across both the timeline row
+and its header panel.
 
 ### Track effect automation
 

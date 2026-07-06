@@ -51,7 +51,7 @@ function stageColor(stage: ImportStage): string {
       aria-live="polite"
     >
       <div class="mb-1 px-1 text-[10px] uppercase tracking-wide text-zinc-500">
-        Processing audio ({{ entries.length }})
+        Processing audio
       </div>
       <div
         v-for="entry in entries"

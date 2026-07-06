@@ -11,11 +11,7 @@ import {
   TRACK_PALETTE,
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
-import {
-  useLibraryStore,
-  libraryItemSourceBpm,
-  libraryItemIsSimple
-} from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemSourceBpm, libraryItemIsSimple } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
@@ -63,6 +59,18 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   type PooledGraphics = InstanceType<NonNullable<typeof GraphicsCtor.value>>
   const graphicsPool: PooledGraphics[] = []
   let poolCursor = 0
+  // Dedicated pool for clip beat-marker overlays. Markers are the only
+  // CONDITIONALLY-drawn clip element, so they must NOT share `graphicsPool`:
+  // there, a clip that gains/loses markers between frames shifts every later
+  // clip's pool slot, so a Graphics that held a header last frame gets reused as
+  // markers this frame. Reusing a detached-and-re-added pooled Graphics that way
+  // leaves Pixi's batcher in a stale state and the geometry silently never
+  // paints (the same class of failure the waveform Mesh works around with
+  // `no-batch`). A separate pool keyed by its own cursor gives each
+  // marker-drawing clip a STABLE instance across frames — reused (no per-frame
+  // `new Graphics()` leak) and never repurposed (no batcher corruption).
+  const markerGraphicsPool: PooledGraphics[] = []
+  let markerCursor = 0
   // Identity of the tracks layer the pool was built against. A GPU reset (TDR)
   // loses the WebGL context, so `usePixiApp` tears the Pixi app down and rebuilds
   // it with brand-new layers; the previous frame's pooled Graphics were children
@@ -92,10 +100,12 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       // waveform Mesh pool is tied to the same layer, so drop it in lock-step.
       graphicsPool.length = 0
       meshPool.length = 0
+      markerGraphicsPool.length = 0
       pooledLayer = layer
     }
     poolCursor = 0
     meshCursor = 0
+    markerCursor = 0
     frameColumns = 0
     frameLanes = 0
     frameRects = 0
@@ -133,6 +143,22 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const created = new G()
     graphicsPool[poolCursor] = created
     poolCursor++
+    return created
+  }
+
+  // Beat-marker allocator: same reuse contract as `acquireGraphics`, but from the
+  // dedicated `markerGraphicsPool` so a marker's pooled instance is stable across
+  // frames regardless of which clips do or don't draw markers this frame.
+  function acquireMarkerGraphics(G: NonNullable<typeof GraphicsCtor.value>): PooledGraphics {
+    const existing = markerGraphicsPool[markerCursor]
+    if (existing) {
+      existing.clear()
+      markerCursor++
+      return existing
+    }
+    const created = new G()
+    markerGraphicsPool[markerCursor] = created
+    markerCursor++
     return created
   }
 
@@ -504,7 +530,10 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
       while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
       const minMarkerSpacingPx = 4
-      const markers = acquireGraphics(G)
+      // Dedicated, stable pooled Graphics (see `markerGraphicsPool`): avoids both
+      // the shared-pool slot-shift that corrupted Pixi's batcher (markers silently
+      // not painting) and the per-frame `new Graphics()` leak.
+      const markers = acquireMarkerGraphics(G)
       let drew = 0
       // Stride by whole beats when zoomed out to avoid drawing skipped markers.
       const pxPerBeat = (beatSpacingMs / warpRatio) * pxPerMs
@@ -515,14 +544,23 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         const offsetInClipMs = beatMs - inMs
         if (offsetInClipMs < 0) continue
         const x = absX + (offsetInClipMs / warpRatio) * pxPerMs
+        // A non-finite x (NaN/Infinity from a bad ratio or anchor) would slip
+        // past both bounds checks below (NaN comparisons are always false) and
+        // push invalid geometry that Pixi silently drops — draw nothing instead.
+        if (!Number.isFinite(x)) continue
         if (x < worldLeft) continue
         if (x > worldRight) break
-        markers.moveTo(x + 0.5, innerY + 1).lineTo(x + 0.5, innerY + innerH - 1)
+        // Filled 1px rect rather than a stroked line. Stroke-only pooled Graphics
+        // detached/re-added each redraw can leave Pixi's batcher in a state where
+        // the geometry silently never paints (observed: markers computed + added
+        // to the layer yet invisible). Filled geometry uses the same reliable path
+        // as the clip block and waveform mesh, which always render.
+        markers.rect(Math.round(x), innerY + 1, 1, Math.max(1, innerH - 2))
         ++drew
         if (stepMs <= 0) break
       }
       if (drew > 0) {
-        markers.stroke({ color: 0xffffff, width: 1, alpha: 0.4 })
+        markers.fill({ color: 0xffffff, alpha: 0.4 })
         tracksL.addChild(markers)
       }
     }

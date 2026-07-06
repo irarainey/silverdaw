@@ -475,11 +475,12 @@ bool dispatchWaveform(const DispatchContext& ctx)
     auto& bridge = ctx.bridge;
     auto& peakPool = ctx.peakPool;
     const auto& cache = ctx.cache;
+    const auto& decodedCache = ctx.decodedCache;
 
     if (type == "WAVEFORM_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
-        silverdaw::handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache);
+        silverdaw::handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
     }
     else if (type == "CLIP_EDITOR_PEAKS_REQUEST")
     {
@@ -487,7 +488,7 @@ bool dispatchWaveform(const DispatchContext& ctx)
                               "recv CLIP_EDITOR_PEAKS_REQUEST libId=" +
                                   payload.getProperty("libraryItemId", "").toString() +
                                   " ppS=" + payload.getProperty("peaksPerSecond", "").toString());
-        silverdaw::handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache);
+        silverdaw::handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
     }
     else
     {

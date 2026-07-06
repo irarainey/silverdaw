@@ -36,6 +36,7 @@ const {
   showLibraryTileImages,
   matchProjectTempoOnDrop,
   seedProjectTempoFromFirstClip,
+  alignClipsToGridOnAnalysis,
   cleanupProjectFiles,
   skipButtonTarget,
   waveformDisplayMode,
@@ -191,6 +192,7 @@ function onSave(): void {
               v-model:follow-playback="followPlayback"
               v-model:match-project-tempo-on-drop="matchProjectTempoOnDrop"
               v-model:seed-project-tempo-from-first-clip="seedProjectTempoFromFirstClip"
+              v-model:align-clips-to-grid-on-analysis="alignClipsToGridOnAnalysis"
               v-model:skip-button-target="skipButtonTarget"
             />
             <PreferencesEffectsTab

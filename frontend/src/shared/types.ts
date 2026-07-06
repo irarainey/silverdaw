@@ -62,6 +62,10 @@ export interface UiPreferences {
   /** Adopt the first dropped clip's detected tempo as the project BPM on a new project. */
   seedProjectTempoFromFirstClip: boolean
 
+  /** After tempo analysis completes, nudge the clip so its detected beats align to
+   *  the project beat grid (skips clips with no beat grid, e.g. simple samples). */
+  alignClipsToGridOnAnalysis: boolean
+
   /** Delete a removed library item's generated project files (stems/samples WAVs
    *  and orphaned cover/tag media) instead of only unlinking it. */
   cleanupProjectFiles: boolean
