@@ -1994,7 +1994,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Double-click on **ruler** | Toggle a marker at the nearest grid point. There can only be one marker on a grid point. |
+| Click + drag on **ruler** | Drag the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). Double-click has no effect — toggle markers at the playhead with `M`. |
 | Drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |

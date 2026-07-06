@@ -208,15 +208,11 @@ export function useTimelineViewController(
     }
   })
 
-  // ─── Ruler / clip double-click interaction ────────────────────────────────
+  // ─── Clip double-click interaction (rename / open editor) ─────────────────
   const { onDoubleClick } = useTimelineRulerInteraction({
     getHostRect: () => host.value?.getBoundingClientRect() ?? null,
-    getScreenWidth: () => pixi.app.value?.renderer.screen.width ?? null,
-    headerWidth,
-    pxPerSecond: () => pxPerSecond.value,
     scrollX: () => scrollX.value,
     scrollY: () => scrollY.value,
-    msPerSubBeat: () => geometry.msPerSubBeat(),
     getClipHitRegions: () => clipHitRegions,
     startClipRename,
     openClipEditor: (clipId) => dialogs.openEditor(clipId)

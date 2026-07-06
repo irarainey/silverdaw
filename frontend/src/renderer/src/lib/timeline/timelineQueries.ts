@@ -4,6 +4,7 @@ import { type ComputedRef, type Ref } from 'vue'
 import type { Application } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useTransportStore } from '@/stores/transportStore'
 import { RULER_HEIGHT, SCROLLBAR_WIDTH } from './constants'
 import { trackIndexAtWorldY } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
@@ -39,6 +40,7 @@ export interface TimelineQueriesContext {
 export function createTimelineQueries(ctx: TimelineQueriesContext) {
   const project = useProjectStore()
   const library = useLibraryStore()
+  const transport = useTransportStore()
   const { host, app, scrollX, scrollY, maxScrollX, geometry, getClipHitRegions } = ctx
 
   /** Convert client x to timeline ms; Alt uses 1 ms fine mode instead of grid snap. */
@@ -139,6 +141,30 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
       if (Math.abs(worldX - markerX) <= hitHalfWidth) return marker.id
     }
     return null
+  }
+
+  /**
+   * True when the pointer sits within a few px of the playhead line, so the
+   * timeline can show a grab cursor signalling it can be dragged. The playhead
+   * spans the ruler and the track area; x is compared in viewport space against
+   * the playhead's on-screen position. Uses the transport position (the drawn
+   * value while paused, the common hover-drag case).
+   */
+  function hitTestPlayhead(clientX: number, clientY: number): boolean {
+    const a = app.value
+    if (!host.value || !a) return false
+    const rect = host.value.getBoundingClientRect()
+    const x = clientX - rect.left
+    const y = clientY - rect.top
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    if (x < geometry.headerWidth() || x > rightEdge) return false
+    if (y < 0 || y > a.renderer.screen.height) return false
+    const viewportX =
+      geometry.headerWidth() +
+      (transport.positionMs / 1000) * geometry.pxPerSecond.value -
+      scrollX.value
+    const hitHalfWidth = 5
+    return Math.abs(x - viewportX) <= hitHalfWidth
   }
 
   /** True when timeline trim is permitted for the clip backing this region. */
@@ -245,6 +271,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     clipAutoScrollDelta,
     hitTestClip,
     hitTestMarker,
+    hitTestPlayhead,
     hitTestTrimEdge,
     isClipLinkedToLibraryClip,
     getSourceDurationMs,
