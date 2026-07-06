@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Importing AAC/M4A files no longer hangs on "Analysing tempo…", and the import now always completes even when a file has no detectable tempo.
+- Timeline beat markers now render reliably, including on imported AAC/M4A tracks.
 - Project Properties no longer rejects a duration set to the exact length of the last clip — the length field (whole seconds) is now validated against the second-rounded clip end, so the displayed minimum can be saved.
 - The transport's next button, when set to jump to the timeline ends, now scrolls the timeline view to the end of the project (matching how the previous button scrolls back to the start).
 - The Preferences ▸ Stems tab now recognises already-downloaded separation models on open, instead of showing them as not downloaded when they are already present on disk.

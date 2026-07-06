@@ -197,9 +197,11 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
 
     if (ok)
     {
-        // Fire-and-forget peaks work keeps the message thread free.
+        // All peak/analysis I/O reads the decoded WAV; the source is only ever
+        // read to produce that WAV. engineFilePath is the resolved playable WAV
+        // (or the source itself when it is already a readable WAV).
         peakPool.addJob(
-            [clipId, file = juce::File(filePath), &engine, &cache, &bridge]
+            [clipId, file = juce::File(engineFilePath), &engine, &cache, &bridge]
             { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
         // Covers deduped or missing LIBRARY_ADD before this clip arrives.
         silverdaw::ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
@@ -212,7 +214,8 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
 
 void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                           juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                           const silverdaw::DecodedCache& decodedCache)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
@@ -232,14 +235,25 @@ void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& eng
         return;
     }
 
+    // Peaks are always computed from the decoded WAV; the source is only read to
+    // produce it. Build the decoded cache if a compressed source hasn't been
+    // decoded yet, then peaks compute off the WAV on a later request.
+    const juce::String engineFilePath =
+        silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+    if (engineFilePath == filePath)
+    {
+        silverdaw::ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
+    }
+
     peakPool.addJob(
-        [clipId, file = juce::File(filePath), &engine, &cache, &bridge]
+        [clipId, file = juce::File(engineFilePath), &engine, &cache, &bridge]
         { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
 }
 
 void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
                                   silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
-                                  juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache)
+                                  juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                                  const silverdaw::DecodedCache& decodedCache)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const int peaksPerSecond =
@@ -248,8 +262,15 @@ void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngi
     if (libraryItemId.isEmpty()) return;
     const auto filePath = projectState.getLibraryItemFilePath(libraryItemId);
     if (filePath.isEmpty()) return;
+    // Editor peaks, like every other read, come from the decoded WAV.
+    const juce::String engineFilePath =
+        silverdaw::resolveEnginePlaybackPath(filePath, projectState, decodedCache);
+    if (engineFilePath == filePath)
+    {
+        silverdaw::ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
+    }
     peakPool.addJob(
-        [libraryItemId, file = juce::File(filePath), peaksPerSecond, &engine, &cache, &bridge]
+        [libraryItemId, file = juce::File(engineFilePath), peaksPerSecond, &engine, &cache, &bridge]
         { produceAndBroadcastEditorPeaks(libraryItemId, file, peaksPerSecond, engine, cache, bridge); });
 }
 
