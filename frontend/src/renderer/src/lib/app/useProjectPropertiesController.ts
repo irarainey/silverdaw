@@ -168,7 +168,13 @@ export function useProjectPropertiesController(
   const durationError = computed(() => {
     const ms = parsedDurationMs.value
     if (ms === null) return 'Use mm:ss or h:mm:ss.'
-    if (ms < minDurationMs.value) {
+    // The field only expresses whole seconds (formatTime floors), so compare
+    // against the second-floored minimum — otherwise the displayed value for a
+    // sub-second clip end (e.g. "3:05" for 185432 ms) parses back below the raw
+    // float minimum and falsely errors. setProjectLengthMs clamps up to the
+    // true longest-clip end regardless, so this can't truncate a clip.
+    const minMs = Math.floor(minDurationMs.value / 1000) * 1000
+    if (ms < minMs) {
       return `Duration cannot be shorter than the last clip (${minDurationLabel.value}).`
     }
     return null
