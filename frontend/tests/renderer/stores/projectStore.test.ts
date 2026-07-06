@@ -195,6 +195,32 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('TRACK_ADD', { trackId, name: 'Track 1', colorIndex: 0 })
   })
 
+  it('extends the project duration to fit a clip longer than the default track length', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+
+    // A clip whose end runs past the 5-minute default should grow the track (and
+    // therefore the project duration) to the clip's full end.
+    const longClipMs = DEFAULT_TRACK_LENGTH_MS + 120_000
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'lib-long',
+        filePath: 'C:\\audio\\long.wav',
+        fileName: 'long.wav',
+        durationMs: longClipMs,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      },
+      0
+    )
+
+    expect(clipId).toBeTruthy()
+    expect(project.tracks[0]?.lengthMs).toBe(longClipMs)
+    expect(project.durationMs).toBe(longClipMs)
+  })
+
   it('requests the timeline reveal the newly added track', async () => {
     const { useUiStore } = await import('@/stores/uiStore')
     const project = useProjectStore()

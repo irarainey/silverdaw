@@ -133,8 +133,10 @@ export interface ProjectDelayState {
   mix: number
 }
 
-/** Default visible length of a new empty track — 10 minutes. */
-export const DEFAULT_TRACK_LENGTH_MS = 10 * 60 * 1000
+/** Default visible length of a new empty track — 5 minutes. Adding a clip that
+ *  runs longer extends the track (and hence the project duration) to fit it via
+ *  the clip-end clamp in the placement/load paths. */
+export const DEFAULT_TRACK_LENGTH_MS = 5 * 60 * 1000
 
 /**
  * Upper bound on a track's linear volume — the linear equivalent of MAX_TRACK_DB
