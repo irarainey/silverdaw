@@ -1403,6 +1403,12 @@ project transport.
 - Loop toggle (`L`): loops the current selection — or the whole
   saved clip if no selection is set. Source files only loop when an
   explicit selection is set (the source file itself is immutable).
+- **Clip metronome** (`K`, or the toolbar tick — shown for existing saved /
+  timeline clips, hidden in the read-only source preview): when the clip's
+  source has a BPM grid it plays an audible click on that grid during preview
+  playback, independent of the main timeline metronome. Only the enabled flag is
+  persisted with the project; the grid BPM / anchor are sent transiently via
+  `PREVIEW_SET_METRONOME`.
 - Smooth ease-in catch-up follow during playback, matching the main
   timeline's behaviour.
 - **Volume Shape editor.** In the cropped **Clip** view a faint volume
@@ -1441,7 +1447,7 @@ project transport.
 - Bridge envelopes: inbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
   `PREVIEW_PAUSE` / `PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD`
   / `PREVIEW_SET_ENVELOPE` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
-  `PREVIEW_SET_BACKSPIN` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
+  `PREVIEW_SET_BACKSPIN` / `PREVIEW_SET_METRONOME` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
   / `CLIP_SET_ENVELOPE`; outbound
   `PREVIEW_STATE` / `PREVIEW_POSITION` / `PREVIEW_ENDED` /
   `CLIP_EDITOR_PEAKS_READY`. A monotonic `generation` counter on the

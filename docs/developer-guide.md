@@ -98,7 +98,10 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     engine/              Master transport clock, mixer / bus graph (incl.
                          equal-power pan), per-track audio sources, keep-alive
     dsp/                 Per-track DSP: Tone EQ, Leveler, pan / track chain,
-                         shared Reverb + Delay, BPM + loudness, waveform peaks
+                         shared Reverb + Delay, BPM + loudness, waveform peaks,
+                         per-stem cleanup enhancers
+    stems/               ONNX stem-separation orchestration (RoFormer + htdemucs
+                         backup, GPU→CPU fallback); invokes the enhancers in dsp/
     mixdown/             Offline render + export / normalise / dither on the
                          same canonical chain as playback
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
@@ -1006,6 +1009,17 @@ beat is never swallowed, the transport position (and therefore the downbeat) is 
 and — crucially — it runs entirely on the audio thread, so the message thread never blocks
 (an earlier 500 ms `Thread::sleep` pre-roll froze the UI). With keep-awake off, playback
 skips the pre-roll and plays from the first sample.
+
+The **Clip Editor / preview** voice follows the same rule via an equivalent pre-roll in
+[`PreviewMetronomeSource`](../backend/src/engine/PreviewMetronomeSource.h) (the preview's
+single mixer input): it detects the transport's stopped→playing edge on the audio thread and
+holds the preview silent for `kWakePrerollMs` while the wake burst re-arms, so the first
+preview play into a cold DAC isn't swallowed. Unlike the master transport, the preview
+pre-roll fires **only when the endpoint is cold**: `OutputKeepAlive` marks the device *warm*
+for `kWarmHoldMs` after any real programme above the silence threshold
+(`OutputKeepAlive::isWarm()`), and a warm play skips the burst. This keeps rapid back-to-back
+clip auditioning — which shares an already-awake amp — free of the otherwise-audible
+start-of-play hiss, while a genuinely cold play after a pause still wakes the amp.
 
 The keep-alive — both the dither **and** the wake burst / pre-roll — is a simple
 **explicit per-device toggle**, off by default. There is no device-type
@@ -2140,6 +2154,11 @@ paste onto a track. Keyboard `Ctrl+V` pastes onto the **selected** track; the cl
 track-lane right-click menus paste onto the **right-clicked** track (selecting it first). The
 new clip always lands at the playhead. Overlap rules are evaluated only on that destination;
 the source-track's clips don't constrain placement.
+
+Adding a track selects it automatically, so a clip paste, the mute/solo shortcuts, and the
+Track FX rack all target the new track without a further click. The selected-track outline is
+drawn in the track's own palette colour and extends continuously across both the timeline row
+and its header panel.
 
 ### Track effect automation
 
