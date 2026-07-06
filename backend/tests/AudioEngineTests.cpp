@@ -211,6 +211,44 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
     dir.deleteRecursively();
 }
 
+// Regression guard: moving a clip while STOPPED must not leak the clip's pre-move audio on the next
+// play. The per-track read-ahead lives in an owned juce::BufferingAudioSource, and changing the
+// OffsetSource offset upstream does not invalidate that cache; the old far-then-near seek was a
+// message-thread race that usually left the stale range intact (burst of old-position audio on
+// play). rebuildTrackPrefetch now recreates the BufferingAudioSource when stopped — the only
+// reliable flush. Audio content can't be asserted offline (no device on CI), so this exercises the
+// stopped move -> commit (synchronous recreate) -> prime -> play path and asserts it stays
+// crash-free and bounded, guarding the new setSource(nullptr)+recreate branch.
+void testStoppedClipMoveRecreatesReadAheadSafely()
+{
+    const auto dir = makeTempDir("clip-move-recreate");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr);
+
+    const auto wav = writeTestWav(dir, "tone.wav", 2.0);
+    require(engine.addClip("t1", "c1", wav, 0.0), "addClip should build the owned-buffer chain");
+    engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
+
+    // Move the clip far right while stopped, then commit — commitClipOffset calls rebuildTrackPrefetch
+    // synchronously, which (stopped) tears down and recreates the read-ahead buffer.
+    require(engine.setClipOffsetMs("c1", 30000.0), "moving a stopped clip should succeed");
+    const auto t0 = juce::Time::getMillisecondCounterHiRes();
+    require(engine.commitClipOffset("c1"), "committing the move should rebuild the prefetch");
+    require(juce::Time::getMillisecondCounterHiRes() - t0 < 3000.0,
+            "the stopped-move buffer recreate must stay bounded (never hang)");
+
+    // Play from the start through the freshly recreated chain: must prime and gate without crashing.
+    engine.setPositionMs(0.0);
+    const bool ready = engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    engine.play();
+    require(engine.isPlaying() == ready, "play() must open the gate iff priming reports ready");
+    engine.stop();
+
+    require(engine.removeClip("c1"), "removeClip c1 should succeed");
+    engine.shutdown();
+    dir.deleteRecursively();
+}
+
 void testOutputKeepAliveFloorIsPostGainAndGated()
 {
     const float threshold = static_cast<float>(silverdaw::kKeepAliveSilenceThreshold);
@@ -1102,6 +1140,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
+    tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
     tests.push_back({"AudioEngine addClip consumes a pre-opened reader (and fails cleanly on null)", testAudioEngineAddClipConsumesPreOpenedReader});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
     tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
