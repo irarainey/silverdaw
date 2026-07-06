@@ -4,6 +4,7 @@ import type { SkipButtonTarget } from '@/stores/uiStore'
 const followPlayback = defineModel<boolean>('followPlayback', { required: true })
 const matchProjectTempoOnDrop = defineModel<boolean>('matchProjectTempoOnDrop', { required: true })
 const seedProjectTempoFromFirstClip = defineModel<boolean>('seedProjectTempoFromFirstClip', { required: true })
+const alignClipsToGridOnAnalysis = defineModel<boolean>('alignClipsToGridOnAnalysis', { required: true })
 const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { required: true })
 </script>
 
@@ -54,6 +55,22 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
           warp so its source BPM matches the project BPM. Turn off
           to drop clips at their native tempo; you can still enable
           warp per-clip via right-click ▸ Warp.
+        </span>
+      </span>
+    </label>
+    <label class="mt-3 flex cursor-pointer items-start gap-3">
+      <input
+        v-model="alignClipsToGridOnAnalysis"
+        type="checkbox"
+        class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+      >
+      <span class="flex-1">
+        <span class="block font-medium text-zinc-200">Align clips to the beat grid after analysis</span>
+        <span class="mt-0.5 block text-zinc-500">
+          Once a clip's tempo has been detected, nudge it so its beats line up
+          with the timeline's beat grid, so splitting and marker placement stay
+          on the beat. Clips with no detected beats (such as simple samples) are
+          left where you placed them.
         </span>
       </span>
     </label>

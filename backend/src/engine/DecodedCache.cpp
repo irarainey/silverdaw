@@ -1,10 +1,33 @@
 #include "DecodedCache.h"
 #include "Log.h"
 
+#include <map>
 #include <memory>
+#include <mutex>
+#include <string>
 
 namespace silverdaw
 {
+
+namespace
+{
+// Per-cache-file lock: several worker jobs (BPM detection from LIBRARY_ADD and
+// from CLIP_ADD, plus the clip-add decode) can call ensureDecoded for the SAME
+// source at once. They all target one fixed `<hash>.wav.tmp`, so without
+// serialisation the losers hit "file in use" on the tmp open, return no WAV, and
+// (for BPM) report no tempo. Serialising per cache path makes the first caller
+// decode while the rest wait, then reuse the finished cache.
+std::mutex& decodeLockFor(const juce::String& cachePath)
+{
+    static std::mutex mapMutex;
+    static std::map<std::string, std::unique_ptr<std::mutex>> locks;
+    const auto key = cachePath.toStdString();
+    std::lock_guard<std::mutex> guard(mapMutex);
+    auto& slot = locks[key];
+    if (!slot) slot = std::make_unique<std::mutex>();
+    return *slot;
+}
+} // namespace
 
 DecodedCache::DecodedCache()
 {
@@ -54,6 +77,10 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     }
 
     const auto cachePath = cacheFileFor(sourceFile);
+    // Serialise writers for this cache file (see decodeLockFor). A concurrent
+    // caller blocks here, then falls through to the cache-hit check below and
+    // reuses the WAV the first caller just wrote.
+    std::lock_guard<std::mutex> decodeLock(decodeLockFor(cachePath.getFullPathName()));
     if (cachePath.existsAsFile())
     {
         silverdaw::log::debug("decodedcache", "hit " + sourceFile.getFileName());
@@ -135,13 +162,18 @@ juce::File DecodedCache::recreateDecoded(const juce::File& sourceFile, juce::Aud
 {
     const auto cachePath = cacheFileFor(sourceFile);
     const auto tmpPath = cachePath.withFileExtension(".wav.tmp");
-    if (cachePath.existsAsFile())
     {
-        cachePath.deleteFile();
-    }
-    if (tmpPath.existsAsFile())
-    {
-        tmpPath.deleteFile();
+        // Delete under the same per-path lock ensureDecoded uses, so a concurrent
+        // decode can't observe the cache mid-removal.
+        std::lock_guard<std::mutex> decodeLock(decodeLockFor(cachePath.getFullPathName()));
+        if (cachePath.existsAsFile())
+        {
+            cachePath.deleteFile();
+        }
+        if (tmpPath.existsAsFile())
+        {
+            tmpPath.deleteFile();
+        }
     }
     return ensureDecoded(sourceFile, formatManager);
 }

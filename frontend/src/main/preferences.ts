@@ -20,6 +20,9 @@ export interface UiPrefs {
   matchProjectTempoOnDrop: boolean
   /** Seed the project tempo from the first clip dropped on a new project. */
   seedProjectTempoFromFirstClip: boolean
+  /** After analysis, snap a clip so its beats land on the project beat grid;
+   *  clips without a beat grid (e.g. simple samples) are left untouched. */
+  alignClipsToGridOnAnalysis: boolean
   /** Delete a removed library item's generated project files (stems/samples WAVs
    *  and orphaned cover/tag media). Off by default — removal only unlinks. */
   cleanupProjectFiles: boolean
@@ -201,6 +204,7 @@ export function buildDefaultPrefs(): Preferences {
       showLibraryTileImages: true,
       matchProjectTempoOnDrop: true,
       seedProjectTempoFromFirstClip: true,
+      alignClipsToGridOnAnalysis: true,
       cleanupProjectFiles: false,
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'markers',
@@ -424,6 +428,7 @@ export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
     showLibraryTileImages: boolOr(p.showLibraryTileImages, base.showLibraryTileImages),
     matchProjectTempoOnDrop: boolOr(p.matchProjectTempoOnDrop, base.matchProjectTempoOnDrop),
     seedProjectTempoFromFirstClip: boolOr(p.seedProjectTempoFromFirstClip, base.seedProjectTempoFromFirstClip),
+    alignClipsToGridOnAnalysis: boolOr(p.alignClipsToGridOnAnalysis, base.alignClipsToGridOnAnalysis),
     cleanupProjectFiles: boolOr(p.cleanupProjectFiles, base.cleanupProjectFiles),
     defaultProjectSampleRate:
       typeof p.defaultProjectSampleRate === 'number' &&

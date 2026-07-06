@@ -5,6 +5,7 @@
 ### Added
 
 - The Home and End keys now jump the playhead to the start and end of the timeline (scrolling the view there), matching Ctrl+Shift+Left / Right.
+- Clips now automatically align to the timeline bar grid once their tempo is detected, so their bars line up with the project's bars (even when the clip starts with silence) and splitting and marker placement stay on the beat. Clips with no detected beats (such as simple samples) are left where you placed them. This can be turned off in Preferences ▸ Timeline.
 
 ### Changed
 
@@ -17,6 +18,7 @@
 ### Fixed
 
 - Importing AAC/M4A files no longer hangs on "Analysing tempo…", and the import now always completes even when a file has no detectable tempo.
+- Tempo detection no longer intermittently reports "no tempo" on import — concurrent decode jobs for the same file could collide on the shared decoded-audio cache, causing detection to give up. Decoding is now serialised per file, so the grid is detected on the first import instead of only after a manual reanalyse.
 - Timeline beat markers now render reliably, including on imported AAC/M4A tracks.
 - Project Properties no longer rejects a duration set to the exact length of the last clip — the length field (whole seconds) is now validated against the second-rounded clip end, so the displayed minimum can be saved.
 - The transport's next button, when set to jump to the timeline ends, now scrolls the timeline view to the end of the project (matching how the previous button scrolls back to the start).

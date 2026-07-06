@@ -4,6 +4,7 @@
 import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useUiStore } from '@/stores/uiStore'
 import { variableTempoWarpSkippedMessage } from '@/lib/warp'
 import { send as sendBridge } from '@/lib/bridgeService'
 import type { LibraryState } from './libraryTypes'
@@ -12,7 +13,14 @@ import { libraryItemDisplayName } from './libraryItemHelpers'
 type ImportThis = LibraryState & {
   markItemWarping(libraryItemId: string): void
   finishImport(id: string, stage: 'done' | 'failed'): void
+  alignItemClipsToGrid(itemId: string): void
 }
+
+// Library items analysed just before a project-BPM change (a first-clip tempo
+// seed) whose clips still need grid alignment once the new tempo lands. Module
+// scope (not reactive state) — pure cross-message coordination; auto-expires so
+// a later manual BPM change can't reflow clips.
+const gridAlignPendingItemIds = new Set<string>()
 
 export const importActions = {
     saveLibraryItemAsSample(itemId: string, audioType: 'simple' | 'music'): void {
@@ -54,6 +62,20 @@ export const importActions = {
       item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined
       // One unconditional repaint is cheaper than searching for matching clips.
       useProjectStore().peaksRevision++
+      // Beat-align this item's placed clips to the project bar grid once beats are
+      // known. Runs now (covers a clip dropped at a tempo the project already uses)
+      // AND is re-run from PROJECT_BPM_APPLIED via `flushGridAlignAfterBpm`: a
+      // first-clip tempo seed lands in the NEXT bridge message, so at this point the
+      // project grid may still be the stale pre-seed tempo. `alignClipToBarGrid`
+      // itself skips simple samples, locked clips, tempo mismatches, and warped
+      // clips are excluded here.
+      if (bpm > 0 && useUiStore().alignClipsToGridOnAnalysis) {
+        this.alignItemClipsToGrid(itemId)
+        gridAlignPendingItemIds.add(itemId)
+        // Don't let this linger and reflow clips on an unrelated future manual BPM
+        // change; any tempo seed for this item arrives within a frame.
+        setTimeout(() => gridAlignPendingItemIds.delete(itemId), 1500)
+      }
       // Split the single backend analysis pass into clearer visible stages.
       const entry = this.imports.find((e) => e.libraryItemId === itemId)
       if (entry && entry.stage !== 'done' && entry.stage !== 'failed') {
@@ -82,6 +104,30 @@ export const importActions = {
           }, 600)
         }
       }
+    },
+
+    /** Align a library item's placed, non-warping clips to the project bar grid.
+     *  `alignClipToBarGrid` skips clips that can't/shouldn't move (no beat grid,
+     *  locked, tempo mismatch, already aligned). */
+    alignItemClipsToGrid(itemId: string): void {
+      const project = useProjectStore()
+      for (const clip of Object.values(project.clips)) {
+        if (clip.libraryItemId === itemId && clip.pendingAutoWarp !== true) {
+          project.alignClipToBarGrid(clip.id)
+        }
+      }
+    },
+
+    /** Re-align clips for items analysed just before a project-BPM change (the
+     *  first-clip tempo seed). Called from the PROJECT_BPM_APPLIED handler once the
+     *  project grid tempo is final, so a clip whose tempo now matches the grid
+     *  snaps into place (it was skipped as a mismatch at analysis time). */
+    flushGridAlignAfterBpm(): void {
+      if (gridAlignPendingItemIds.size === 0) return
+      const ids = [...gridAlignPendingItemIds]
+      gridAlignPendingItemIds.clear()
+      if (!useUiStore().alignClipsToGridOnAnalysis) return
+      for (const id of ids) this.alignItemClipsToGrid(id)
     },
 
     /** Begins renderer-local import progress tracking. */

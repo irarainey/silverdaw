@@ -28,6 +28,9 @@ interface UiState {
   matchProjectTempoOnDrop: boolean
   /** App preference (default on): dropping the first clip on a new project seeds the project tempo. */
   seedProjectTempoFromFirstClip: boolean
+  /** App preference (default on): after analysis, snap a clip so its detected beats
+   *  align to the project beat grid. Clips without a beat grid are left untouched. */
+  alignClipsToGridOnAnalysis: boolean
   /** Delete a removed library item's generated project files instead of only unlinking it. */
   cleanupProjectFiles: boolean
   /** Application default for new projects; existing projects keep their stored rate. */
@@ -68,6 +71,7 @@ const DEFAULTS = {
   showLibraryTileImages: true,
   matchProjectTempoOnDrop: true,
   seedProjectTempoFromFirstClip: true,
+  alignClipsToGridOnAnalysis: true,
   cleanupProjectFiles: false,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'markers',
@@ -107,6 +111,7 @@ let pendingPush: {
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
   seedProjectTempoFromFirstClip?: boolean
+  alignClipsToGridOnAnalysis?: boolean
   cleanupProjectFiles?: boolean
   skipButtonTarget?: SkipButtonTarget
   waveformDisplayMode?: WaveformDisplayMode
@@ -120,6 +125,7 @@ interface UiPushPayload {
   showLibraryTileImages?: boolean
   matchProjectTempoOnDrop?: boolean
   seedProjectTempoFromFirstClip?: boolean
+  alignClipsToGridOnAnalysis?: boolean
   cleanupProjectFiles?: boolean
   defaultProjectSampleRate?: number
   skipButtonTarget?: SkipButtonTarget
@@ -147,6 +153,7 @@ export const useUiStore = defineStore('ui', {
     showLibraryTileImages: DEFAULTS.showLibraryTileImages,
     matchProjectTempoOnDrop: DEFAULTS.matchProjectTempoOnDrop,
     seedProjectTempoFromFirstClip: DEFAULTS.seedProjectTempoFromFirstClip,
+    alignClipsToGridOnAnalysis: DEFAULTS.alignClipsToGridOnAnalysis,
     cleanupProjectFiles: DEFAULTS.cleanupProjectFiles,
     defaultProjectSampleRate: DEFAULTS.defaultProjectSampleRate,
     skipButtonTarget: DEFAULTS.skipButtonTarget,
@@ -186,6 +193,10 @@ export const useUiStore = defineStore('ui', {
           typeof saved.seedProjectTempoFromFirstClip === 'boolean'
             ? saved.seedProjectTempoFromFirstClip
             : DEFAULTS.seedProjectTempoFromFirstClip
+        this.alignClipsToGridOnAnalysis =
+          typeof saved.alignClipsToGridOnAnalysis === 'boolean'
+            ? saved.alignClipsToGridOnAnalysis
+            : DEFAULTS.alignClipsToGridOnAnalysis
         this.cleanupProjectFiles =
           typeof saved.cleanupProjectFiles === 'boolean'
             ? saved.cleanupProjectFiles
@@ -253,6 +264,12 @@ export const useUiStore = defineStore('ui', {
       if (this.matchProjectTempoOnDrop === value) return
       this.matchProjectTempoOnDrop = value
       if (this.hydrated) schedulePush({ matchProjectTempoOnDrop: value })
+    },
+
+    setAlignClipsToGridOnAnalysis(value: boolean): void {
+      if (this.alignClipsToGridOnAnalysis === value) return
+      this.alignClipsToGridOnAnalysis = value
+      if (this.hydrated) schedulePush({ alignClipsToGridOnAnalysis: value })
     },
 
     setSeedProjectTempoFromFirstClip(value: boolean): void {

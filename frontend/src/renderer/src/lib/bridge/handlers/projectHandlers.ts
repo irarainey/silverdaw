@@ -3,6 +3,7 @@
 
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
@@ -108,6 +109,9 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   PROJECT_BPM_APPLIED: (payload) => {
     // Mirror backend-seeded BPM locally without echoing to the bridge.
     useTransportStore().setBpm(payload.bpm)
+    // The grid tempo is now final: snap any clips analysed just before this seed
+    // that were skipped as a tempo mismatch against the stale pre-seed tempo.
+    useLibraryStore().flushGridAlignAfterBpm()
     log.info('bridge', `PROJECT_BPM_APPLIED bpm=${payload.bpm.toFixed(2)}`)
   },
 

@@ -1214,7 +1214,9 @@ preference (default on, mirrored to the backend via `PROJECT_SET_SEED_TEMPO_PREF
 is enabled — with it off the seed is skipped entirely and the project BPM stays put.
 When it fires a `PROJECT_BPM_APPLIED { bpm }`
 envelope is broadcast and the renderer mirrors both into `libraryStore` and
-`transportStore`. Seeding runs even for variable-tempo and low-confidence sources
+`transportStore`. At that point the renderer also beat-aligns the just-analysed
+clips to the project **bar** grid when the **Align clips to the beat grid after
+analysis** preference is on (see that preference for the mechanics). Seeding runs even for variable-tempo and low-confidence sources
 (an approximate tempo is more useful than the default 100) but is suppressed for
 items **explicitly classified as a sample**, so a rain ambience the user has
 marked as a sample can't drag the project tempo. The user can fine-tune from the
@@ -1784,6 +1786,22 @@ Persisted fields:
   untouched and the transport BPM field does not pulse a detection hint. Like the
   turntable-effect defaults, it is pushed to the backend on change and re-sent on
   every reconnect (`PROJECT_SET_SEED_TEMPO_PREF { enabled }`).
+- **Align clips to the beat grid after analysis** — `ui.alignClipsToGridOnAnalysis`
+  (default on). Once a clip's tempo analysis completes, its first in-window grid beat
+  is snapped to the nearest project **bar** line (via `project.alignClipToBarGrid`,
+  reusing the drag-time `clipFirstBeatOffsetMs` projection), bumping one bar forward
+  when the nearest bar would fall before the timeline origin — so a clip that starts
+  with silence lands with its bars on the timeline's bars (a lead-in bar of silence)
+  rather than a beat off. Renderer-only (not sent to the backend). It **only moves a
+  clip whose effective tempo matches the project tempo** — a clip whose beats are
+  spaced differently from the grid can't align. The align runs at analysis time
+  (covering a clip dropped at a tempo the project already uses) and is **re-run from
+  `PROJECT_BPM_APPLIED`** (`library.flushGridAlignAfterBpm`): a first-clip tempo seed
+  arrives in the bridge message *after* the analysis, so a clip that seeds the project
+  is skipped as a mismatch at analysis time and snaps into place once the seeded tempo
+  lands (a short-lived pending set stops a later manual BPM change from reflowing clips).
+  Clips with no beat grid (simple samples), locked clips, and clips queued for
+  auto-warp are left untouched.
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.

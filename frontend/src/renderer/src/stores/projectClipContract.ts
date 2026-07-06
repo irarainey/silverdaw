@@ -59,6 +59,8 @@ export type ProjectClipThis = ProjectState & {
 
   removeClip(clipId: string): void
 
+  moveClip(clipId: string, startMs: number, targetTrackId?: string): void
+
   setClipWarp(
     clipId: string,
     patch: {
