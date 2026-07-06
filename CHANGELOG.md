@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Editing a clip's position/trim during live playback can no longer momentarily glitch on the rare occasion the audio thread reads the clip's window mid-update: it now falls back to the last consistent window instead of a possibly torn (mismatched offset/length) read.
 - Moving a clip along the timeline while playback is stopped and then pressing play no longer briefly bursts the clip's audio from its previous position. The per-track read-ahead buffer is now fully rebuilt after a stopped edit instead of relying on an unreliable seek that could leave stale buffered audio to play on the next start. (Also fixes the same stale-buffer class for stopped trim / fade / reverse / warp edits.)
 - The Clip Editor and library preview window now wake a sleep-prone (USB) DAC before playback, using the same audio-thread wake pre-roll as the main timeline, so the first play into a cold amp no longer loses its opening to silence. The wake burst only fires when the endpoint is actually cold, so auditioning clips back-to-back stays clean (no start-of-play hiss on an already-awake device).
 - Importing AAC/M4A files no longer hangs on "Analysing tempo…", and the import now always completes even when a file has no detectable tempo.

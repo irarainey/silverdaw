@@ -461,6 +461,11 @@ class OffsetSource : public juce::PositionableAudioSource
 
     // Seqlock keeps multi-field clip-window reads consistent without locking the audio thread.
     mutable std::atomic<std::uint32_t> windowSeq{0};
+    // Last CONSISTENT clip-window read, returned as a wait-free fallback when the seqlock can't get
+    // a clean read within the bounded spin — so the audio path is never handed a torn multi-field
+    // state. Touched only inside readClipWindow, which for a live source runs on its single owning
+    // read-ahead / offline-render thread (see readClipWindow).
+    mutable ClipWindow lastGoodWindow{};
 
     void beginWindowWrite() noexcept
     {
@@ -484,12 +489,20 @@ class OffsetSource : public juce::PositionableAudioSource
             w.clipDurationSamples = clipDurationSamples.load(std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_acquire);
             const auto s2 = windowSeq.load(std::memory_order_relaxed);
-            if (s1 == s2) return w;
+            if (s1 == s2)
+            {
+                lastGoodWindow = w; // cache the last CONSISTENT snapshot (single reader thread)
+                return w;
+            }
         }
-        w.offsetSamples = offsetSamples.load(std::memory_order_relaxed);
-        w.inSourceSamples = inSourceSamples.load(std::memory_order_relaxed);
-        w.clipDurationSamples = clipDurationSamples.load(std::memory_order_relaxed);
-        return w;
+        // The writer held the seqlock open for the whole bounded spin — e.g. the message thread was
+        // preempted between the field stores. Return the last consistent window rather than falling
+        // through to torn relaxed reads (which could pair a new offset with an old duration and
+        // glitch the block). It is at worst one update stale — imperceptible and self-correcting on
+        // the next block — but never inconsistent. Spinning longer to wait out the writer is avoided
+        // deliberately: this runs on the (high-priority) audio read-ahead thread, and busy-waiting
+        // on a preempted lower-priority writer risks priority inversion.
+        return lastGoodWindow;
     }
 
     // Preallocated warp scratch keeps the audio callback bounded and handles source/output
