@@ -12,6 +12,7 @@
 - The audio processing panel header no longer shows a redundant in-progress count.
 - The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.
 - The timeline ruler now shows a grab cursor over the playhead, and a single click places the playhead while click-and-drag moves it. Double-clicking the ruler no longer does anything — add or remove a marker at the playhead with the M key.
+- Tempo detection now gives up after 120 seconds and shows a notification instead of running indefinitely; the file can be reanalysed manually from the library.
 
 ### Fixed
 

@@ -5,6 +5,7 @@
 #include <BTrack.h>
 #include <OnsetDetectionFunction.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <limits>
@@ -460,6 +461,24 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         return result;
     }
 
+    // Wall-clock safety net: detection normally finishes well under this, but a
+    // pathological/very long input must not stall the analysis worker forever.
+    // Checked cooperatively at each heavy stage and inside the per-hop loops; on
+    // expiry we abandon the pass and report `timedOut` so the caller can notify.
+    const auto analysisStart = std::chrono::steady_clock::now();
+    const auto timedOut = [&analysisStart]() -> bool {
+        const auto elapsed = std::chrono::steady_clock::now() - analysisStart;
+        return std::chrono::duration<double>(elapsed).count() > kAnalysisTimeoutSeconds;
+    };
+    const auto abortTimedOut = [&](const char* stage) -> BpmAnalysis {
+        silverdaw::log::warn("bpm", "analysis timed out (" + juce::String(stage) + ") after "
+                                        + juce::String(kAnalysisTimeoutSeconds, 0) + "s for "
+                                        + audioFile.getFileName() + " — abandoning");
+        BpmAnalysis out;
+        out.timedOut = true;
+        return out;
+    };
+
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(audioFile));
     if (reader == nullptr)
     {
@@ -490,6 +509,8 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         const int toRead =
             static_cast<int>(juce::jmin(static_cast<juce::int64>(decodeBlockSize), totalSourceSamples - sourcePos));
         if (toRead <= 0) break;
+        // ~every 4 MB decoded (large tracks only); cheap clock read, no hot-path cost.
+        if ((sourcePos % (decodeBlockSize * 256)) == 0 && timedOut()) return abortTimedOut("decode");
 
         if (!reader->read(&decodeBuffer, 0, toRead, sourcePos, true, true))
         {
@@ -538,6 +559,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     }
 
     // Beat positions stay in source time even after analysis-rate resampling.
+    if (timedOut()) return abortTimedOut("resample");
     BTrack bt(kHopSize, kFrameSize);
     std::vector<double> hopBuffer(static_cast<size_t>(kHopSize), 0.0);
     std::vector<double> beatTimes;
@@ -552,6 +574,8 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     for (size_t pos = 0; pos + static_cast<size_t>(kHopSize) <= beatTrackFrames;
          pos += static_cast<size_t>(kHopSize), ++hopIndex)
     {
+        // BTrack is the causal tracker; check ~every 4096 hops (~24 s @ 256 hop).
+        if ((hopIndex & 0xFFF) == 0 && timedOut()) return abortTimedOut("btrack");
         for (int i = 0; i < kHopSize; ++i)
         {
             hopBuffer[static_cast<size_t>(i)] = static_cast<double>(resampled[pos + static_cast<size_t>(i)]);
@@ -631,6 +655,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     double envRate = 0.0;
     if (!resampled.empty() && beatTimes.size() >= 6 && baselineKept > 0)
     {
+        if (timedOut()) return abortTimedOut("odf");
         envRate = kAnalysisSampleRate / static_cast<double>(kOdfHop);
         odf = computeOdf(resampled, kOdfHop);
         // Strip the slow sub-onset energy floor (sustained vocals/horns/pads in a

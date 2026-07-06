@@ -271,13 +271,16 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 
     if (analysis.bpm <= 0.0)
     {
-        silverdaw::log::info("bpmjob", "no plausible BPM for itemId=" + itemId);
+        const bool didTimeOut = analysis.timedOut;
+        silverdaw::log::info("bpmjob", juce::String(didTimeOut ? "tempo detection timed out" : "no plausible BPM")
+                                           + " for itemId=" + itemId);
         // Always broadcast an empty analysis so the import UI clears its
         // "Analysing tempo…" stage, even when a file has no detectable tempo or
         // couldn't be decoded. Publish the cache path when we have one so future
-        // clip adds reuse the WAV.
+        // clip adds reuse the WAV. `timedOut` tells the renderer to toast so the
+        // user knows they can reanalyse.
         juce::MessageManager::callAsync(
-            [itemId, cachedPath, &projectState, &bridge]
+            [itemId, cachedPath, didTimeOut, &projectState, &bridge]
             {
                 projectState.clearLibraryItemAnalysis(itemId);
                 if (cachedPath.isNotEmpty())
@@ -289,6 +292,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                 p->setProperty("beats", juce::var(juce::Array<juce::var>{}));
                 p->setProperty("variableTempo", false);
                 p->setProperty("playbackFilePath", cachedPath);
+                if (didTimeOut) p->setProperty("timedOut", true);
                 bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
             });
         {

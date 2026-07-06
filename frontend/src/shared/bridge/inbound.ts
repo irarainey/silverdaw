@@ -511,7 +511,10 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   /** Auto-classification hint; user can override via `audioType`. */
   lowConfidence: z.boolean().optional(),
   /** Decoded PCM cache path reused for clip playback. */
-  playbackFilePath: z.string().optional()
+  playbackFilePath: z.string().optional(),
+  /** Tempo detection was aborted by the analysis timeout; the grid is empty and
+   *  the user is prompted to reanalyse manually. */
+  timedOut: z.boolean().optional()
 })
 export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPayloadSchema>
 
