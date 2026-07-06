@@ -27,6 +27,8 @@ interface FakeStores {
   project: {
     durationMs: number
     selectedClipId: string | null
+    selectedTrackId: string | null
+    metronomeEnabled: boolean
     clips: Record<string, { locked: boolean; startMs: number }>
     tracks: { clipIds: string[] }[]
     markers: { positionMs: number }[]
@@ -34,11 +36,18 @@ interface FakeStores {
     setClipLocked: ReturnType<typeof vi.fn>
     toggleMarkerAt: ReturnType<typeof vi.fn>
     moveClip: ReturnType<typeof vi.fn>
+    selectClip: ReturnType<typeof vi.fn>
+    selectTrack: ReturnType<typeof vi.fn>
+    setMetronomeEnabled: ReturnType<typeof vi.fn>
+    toggleMute: ReturnType<typeof vi.fn>
+    toggleSolo: ReturnType<typeof vi.fn>
   }
   ui: {
     requestTimelineZoom: ReturnType<typeof vi.fn>
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
+    selectedAutomationPoint: unknown
+    setSelectedAutomationPoint: ReturnType<typeof vi.fn>
   }
   library: {
     byId: Record<string, unknown>
@@ -64,18 +73,27 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     project: {
       durationMs: 10_000,
       selectedClipId: null,
+      selectedTrackId: null,
+      metronomeEnabled: false,
       clips: {},
       tracks: [],
       markers: [],
       viewPxPerSecond: 100,
       setClipLocked: vi.fn(),
       toggleMarkerAt: vi.fn(),
-      moveClip: vi.fn()
+      moveClip: vi.fn(),
+      selectClip: vi.fn(),
+      selectTrack: vi.fn(),
+      setMetronomeEnabled: vi.fn(),
+      toggleMute: vi.fn(),
+      toggleSolo: vi.fn()
     },
     ui: {
       requestTimelineZoom: vi.fn(),
       requestTimelineScroll: vi.fn(),
-      requestTimelineScrollToPosition: vi.fn()
+      requestTimelineScrollToPosition: vi.fn(),
+      selectedAutomationPoint: null,
+      setSelectedAutomationPoint: vi.fn()
     },
     library: {
       byId: {},
@@ -224,6 +242,49 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     const { e } = makeKey({ code: 'Digit0', key: '0', ctrlKey: true })
     kb.onGlobalShortcutKey(e)
     expect(h.stores.ui.requestTimelineZoom).toHaveBeenCalledWith('reset')
+  })
+
+  it('Escape clears the clip, track, and automation selection', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.selectedTrackId = 't1'
+    const { e } = makeKey({ key: 'Escape' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.selectClip).toHaveBeenCalledWith(null)
+    expect(h.stores.project.selectTrack).toHaveBeenCalledWith(null)
+    expect(h.stores.ui.setSelectedAutomationPoint).toHaveBeenCalledWith(null)
+  })
+
+  it('Escape is a no-op when nothing is selected', () => {
+    const { e } = makeKey({ key: 'Escape' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.selectClip).not.toHaveBeenCalled()
+  })
+
+  it('K toggles the project metronome', () => {
+    h.stores.project.metronomeEnabled = false
+    const { e } = makeKey({ key: 'k' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.setMetronomeEnabled).toHaveBeenCalledWith(true)
+  })
+
+  it('Shift+M mutes the selected track', () => {
+    h.stores.project.selectedTrackId = 't1'
+    const { e } = makeKey({ key: 'm', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.toggleMute).toHaveBeenCalledWith('t1')
+  })
+
+  it('Shift+S solos the selected track', () => {
+    h.stores.project.selectedTrackId = 't2'
+    const { e } = makeKey({ key: 's', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.toggleSolo).toHaveBeenCalledWith('t2')
+  })
+
+  it('Shift+M with no track selected is a no-op', () => {
+    const { e } = makeKey({ key: 'm', shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.project.toggleMute).not.toHaveBeenCalled()
   })
 
   it('Ctrl+Shift+ArrowLeft skips to start', () => {

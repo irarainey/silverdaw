@@ -22,6 +22,8 @@ export interface TimelineZoomDeps {
   getHostRect: () => DOMRect | null
   headerWidth: () => number
   pxPerSecond: () => number
+  /** Whole project length in ms; used to compute "zoom to fit". */
+  getProjectDurationMs: () => number
   // Horizontal scroll offset — read and written during a re-pin.
   scrollX: Ref<number>
   maxScrollX: () => number
@@ -46,6 +48,22 @@ export interface TimelineZoom {
 export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
   function applyZoomRequest(request: TimelineZoomRequest): void {
     const prev = deps.pxPerSecond()
+    // Zoom-to-fit: size the whole project to the track area and jump the view to
+    // the start, so the entire arrangement is visible at once.
+    if (request.kind === 'step' && request.action === 'fit') {
+      const durationMs = deps.getProjectDurationMs()
+      const areaWidth = deps.trackAreaWidth()
+      if (!(durationMs > 0) || !(areaWidth > 0)) return
+      // Leave a small right-hand margin so the last clip edge isn't flush.
+      const target = (areaWidth * 0.98) / (durationMs / 1000)
+      const next = deps.setPxPerSecond(target)
+      deps.scrollX.value = 0
+      deps.applyScroll()
+      deps.redraw()
+      deps.updatePlayhead()
+      if (next === prev) return
+      return
+    }
     const target =
       request.kind === 'absolute'
         ? request.pxPerSecond

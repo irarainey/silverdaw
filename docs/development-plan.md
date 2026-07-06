@@ -1737,10 +1737,15 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)
 - [x] Split clip at playhead (`S` key + Edit menu + clip context menu — splits every clip whose timeline window straddles the playhead)
-- [x] Duplicate clip (`D` key + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
-- [x] Delete clip (`Delete` key + Edit menu + clip context menu)
+- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
+- [x] Delete clip (`Delete` or `Backspace` + Edit menu + clip context menu)
 - [x] Cut / Copy / Paste clips (`Ctrl + X` / `Ctrl + C` / `Ctrl + V`); paste lands after the source clip on its track, or at the playhead when pasting onto a different (selected) track; toast when the destination slot is occupied
 - [x] Clip selection (thicker outline) + track selection (highlighted row border) — drives the Cut/Copy/Paste/Duplicate/Delete target
+- [x] Deselect the current clip / track (and any selected automation point) with `Escape`
+- [x] Trim Project to Last Clip via `Ctrl + Shift + T` (also Edit menu)
+- [x] Zoom to fit the whole project to the timeline width via `Ctrl + F` (also View menu); sizes `pxPerSecond` to the track area and jumps the view to the start
+- [x] Toggle the project metronome with `K`
+- [x] Mute / solo the selected track with `Shift + M` / `Shift + S` (bare `M` / `S` are Marker / Split)
 - [x] Per-clip colour override — right-click → inline 16-swatch palette, persisted as `colorIndex` on the clip and round-tripped via `CLIP_COLOR`
 - [x] Cross-track clip drag — drag a clip into another row to re-parent it (extended `CLIP_MOVE { clipId, positionMs, trackId? }`)
 - [x] No-overlap rule on same-track clip drag (magnetic edge snap so adjacent clips play seamlessly)

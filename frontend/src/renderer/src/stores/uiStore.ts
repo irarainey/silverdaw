@@ -12,7 +12,7 @@ export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
   | { edge: TimelineScrollEdge; id: number }
   | { positionMs: number; id: number }
-export type TimelineZoomAction = 'in' | 'out' | 'reset'
+export type TimelineZoomAction = 'in' | 'out' | 'reset' | 'fit'
 /** One-shot TimelineView zoom request; `absolute` is px/sec. */
 export type TimelineZoomRequest =
   | { kind: 'step'; action: TimelineZoomAction; id: number }

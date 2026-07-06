@@ -167,6 +167,49 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       return
     }
 
+    // Escape: clear the current clip / track / automation-point selection.
+    if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      const hadSelection =
+        project.selectedClipId !== null ||
+        project.selectedTrackId !== null ||
+        ui.selectedAutomationPoint !== null
+      if (!hadSelection) return
+      e.preventDefault()
+      e.stopPropagation()
+      project.selectClip(null)
+      project.selectTrack(null)
+      ui.setSelectedAutomationPoint(null)
+      log.debug('project', 'shortcut escape — cleared selection')
+      return
+    }
+
+    // K: toggle the project metronome.
+    if (e.key.toLowerCase() === 'k' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.repeat) return
+      project.setMetronomeEnabled(!project.metronomeEnabled)
+      log.info('transport', `shortcut metronome ${project.metronomeEnabled ? 'on' : 'off'}`)
+      return
+    }
+
+    // Shift+M / Shift+S: mute / solo the selected track (bare M / S are Marker /
+    // Split, so the track-mix twins take Shift).
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey &&
+        (e.key.toLowerCase() === 'm' || e.key.toLowerCase() === 's')) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.repeat) return
+      const trackId = project.selectedTrackId
+      if (!trackId) {
+        log.info('project', 'shortcut mute/solo ignored — no track selected')
+        return
+      }
+      if (e.key.toLowerCase() === 'm') project.toggleMute(trackId)
+      else project.toggleSolo(trackId)
+      return
+    }
+
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
       let zoomAction: 'in' | 'out' | 'reset' | null = null
       if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {

@@ -103,7 +103,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Duplicate Clip', action: 'edit.duplicateClip', accelerator: 'D' },
         { label: 'Delete Clip', action: 'edit.deleteClip', accelerator: 'Delete' },
         SEP,
-        { label: 'Trim Project to Last Clip', action: 'edit.cropProjectToLastClip' },
+        { label: 'Trim Project to Last Clip', action: 'edit.cropProjectToLastClip', accelerator: 'Ctrl+Shift+T' },
         SEP,
         { label: 'Preferences\u2026', action: 'edit.preferences' }
       ]
@@ -115,6 +115,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Zoom In', action: 'view.zoomIn', accelerator: 'Ctrl++' },
         { label: 'Zoom Out', action: 'view.zoomOut', accelerator: 'Ctrl+-' },
         { label: 'Reset Zoom', action: 'view.zoomReset', accelerator: 'Ctrl+0' },
+        { label: 'Zoom to Fit', action: 'view.zoomFit', accelerator: 'Ctrl+F' },
         {
           label: 'Zoom Presets',
           submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => ({

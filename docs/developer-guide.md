@@ -2041,11 +2041,16 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Ctrl +` / `Ctrl =` | Zoom in 10% (anchored on the playhead). |
 | `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
+| `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
+| `Escape` | Deselect the current clip / track (and any selected automation point). |
+| `K` | Toggle the project metronome. |
+| `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
-| `D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
-| `Delete` | Delete the selected clip. |
+| `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
+| `Delete` / `Backspace` | Delete the selected clip. |
+| `Ctrl + Shift + T` | Trim the project length down to the end of the last clip. |
 | `Ctrl + X` / `Ctrl + C` | Cut / copy the selected clip into the local clipboard. |
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |

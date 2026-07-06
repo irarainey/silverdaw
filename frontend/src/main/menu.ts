@@ -90,6 +90,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'view.zoomIn':
     case 'view.zoomOut':
     case 'view.zoomReset':
+    case 'view.zoomFit':
       wc.send(IPC.menu.action, action)
       break
     case 'view.toggleDevTools':

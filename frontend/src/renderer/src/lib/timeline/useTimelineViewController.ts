@@ -224,6 +224,7 @@ export function useTimelineViewController(
     getHostRect: () => host.value?.getBoundingClientRect() ?? null,
     headerWidth,
     pxPerSecond: () => pxPerSecond.value,
+    getProjectDurationMs: () => project.durationMs,
     scrollX,
     maxScrollX: () => maxScrollX.value,
     scrollY,

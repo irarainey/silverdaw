@@ -28,6 +28,7 @@ function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
     getHostRect: () => ({ left: 0, top: 0, width: 1000, height: 400 }) as DOMRect,
     headerWidth: () => 200,
     pxPerSecond: () => pxPerSecond.value,
+    getProjectDurationMs: () => 240_000,
     scrollX,
     maxScrollX: () => 100_000,
     scrollY,
@@ -169,5 +170,25 @@ describe('useTimelineZoom — applyZoomRequest', () => {
     const { applyZoomRequest } = useTimelineZoom(h.deps)
     applyZoomRequest({ kind: 'absolute', pxPerSecond: 100, id: 4 } as never)
     expect(h.spies.redraw).not.toHaveBeenCalled()
+  })
+
+  it('step "fit" sizes the project to the track area and jumps to the start', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond })
+    h.scrollX.value = 5000
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'fit', id: 5 } as never)
+    // (trackAreaWidth 800 * 0.98) / (240000 ms / 1000) = 3.2667 px/sec.
+    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeCloseTo(3.2667, 3)
+    expect(h.scrollX.value).toBe(0)
+    expect(h.spies.redraw).toHaveBeenCalled()
+  })
+
+  it('step "fit" is a no-op when the project has no duration', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond, getProjectDurationMs: () => 0 })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'fit', id: 6 } as never)
+    expect(setPxPerSecond).not.toHaveBeenCalled()
   })
 })

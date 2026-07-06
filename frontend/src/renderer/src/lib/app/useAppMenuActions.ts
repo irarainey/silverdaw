@@ -82,12 +82,14 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       action === 'view.zoomIn' ||
       action === 'view.zoomOut' ||
       action === 'view.zoomReset' ||
+      action === 'view.zoomFit' ||
       isZoomPresetAction(action)
     ) {
       if (deps.isModalOpen()) return
       if (action === 'view.zoomIn') ui.requestTimelineZoom('in')
       else if (action === 'view.zoomOut') ui.requestTimelineZoom('out')
       else if (action === 'view.zoomReset') ui.requestTimelineZoom('reset')
+      else if (action === 'view.zoomFit') ui.requestTimelineZoom('fit')
       else {
         const px = parseZoomPresetAction(action)
         if (px !== null) ui.requestTimelineZoomTo(px)

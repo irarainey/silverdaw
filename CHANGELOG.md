@@ -5,6 +5,7 @@
 ### Added
 
 - The Home and End keys now jump the playhead to the start and end of the timeline (scrolling the view there), matching Ctrl+Shift+Left / Right.
+- New keyboard shortcuts: Ctrl+F (zoom to fit), Escape (deselect clip/track), K (toggle metronome), Shift+M / Shift+S (mute / solo the selected track), Ctrl+Shift+T (trim project to last clip), plus Ctrl+D and Backspace as aliases for Duplicate and Delete.
 - Clips now automatically align to the timeline bar grid once their tempo is detected, so their bars line up with the project's bars (even when the clip starts with silence) and splitting and marker placement stay on the beat. Clips with no detected beats (such as simple samples) are left where you placed them. This can be turned off in Preferences ▸ Timeline.
 
 ### Changed
