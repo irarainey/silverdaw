@@ -9,6 +9,7 @@
 
 ### Changed
 
+- The track header panel is now 10% wider by default.
 - New projects now default to a 5-minute timeline (down from 10). Adding a first clip that runs longer automatically extends the project duration to fit the whole clip.
 - The audio processing panel header no longer shows a redundant in-progress count.
 - The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.

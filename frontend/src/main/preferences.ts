@@ -198,7 +198,7 @@ export function buildDefaultPrefs(): Preferences {
   return {
     window: { width: 1400, height: 900, maximized: false },
     ui: {
-      trackHeaderWidth: 175,
+      trackHeaderWidth: 193,
       libraryPanelHeight: 180,
       followPlayback: true,
       showLibraryTileImages: true,

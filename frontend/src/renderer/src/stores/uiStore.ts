@@ -65,7 +65,7 @@ let nextTimelineRevealTrackRequestId = 1
 
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
-  trackHeaderWidth: 175,
+  trackHeaderWidth: 193,
   libraryPanelHeight: 180,
   followPlayback: true,
   showLibraryTileImages: true,
