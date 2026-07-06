@@ -14,6 +14,7 @@
 #include "InferenceThreads.h"
 #include "Log.h"
 #include "MelRoformerSpectral.h"
+#include "OnnxLogging.h"
 #include "StemRunCancellation.h"
 #include "StemSeparator.h"
 
@@ -26,7 +27,7 @@ constexpr int kModelSampleRate = 44100;
 
 struct MelRoformerVocals::Impl
 {
-    Ort::Env env{ORT_LOGGING_LEVEL_ERROR, "silverdaw-roformer"};
+    Ort::Env env{makeOrtEnv("silverdaw-roformer")};
     Ort::SessionOptions sessionOptions;
     std::unique_ptr<Ort::Session> session;
     juce::String sessionPath;
