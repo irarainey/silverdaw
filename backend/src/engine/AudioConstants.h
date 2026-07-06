@@ -50,6 +50,20 @@ inline constexpr float kWakeBurstPeak = 0.05F; // ~-26 dBFS broadband; rouses a 
 inline constexpr int kWakeBurstMs = 300;       // burst decays to the holding dither over this time
 inline constexpr int kWakePrerollMs = 250;     // per-play audio-thread wake lead-in (USB endpoints)
 
+// A play onto an endpoint that is already awake needs no wake burst — bursting into a warm amp is
+// just audible noise (heard as a hiss at the start of playback), most obvious when auditioning
+// clips with leading silence back-to-back in the Clip Editor / preview. Real programme audio proves
+// the amp is awake, so we treat the endpoint as "warm" for this long after the last above-threshold
+// output and suppress the otherwise-redundant per-play wake burst during that window.
+//
+// Deliberately SHORT: sleep-prone amps can relax back to mute within ~1s (and some mute
+// progressively quicker over repeated wake cycles), so a long window would keep reporting "warm"
+// after the amp has actually gone cold — skipping the burst and swallowing the opening. Keeping it
+// well under a typical relax time re-arms the burst soon after audio stops, trading the odd faint
+// start-of-play hiss on a very rapid replay for reliable waking. Tunable: raise it if a warm amp
+// still hisses on quick replays; lower it if a genuinely cold play is ever swallowed again.
+inline constexpr int kWarmHoldMs = 800;
+
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
 

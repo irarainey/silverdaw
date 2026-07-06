@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- The Clip Editor and library preview window now wake a sleep-prone (USB) DAC before playback, using the same audio-thread wake pre-roll as the main timeline, so the first play into a cold amp no longer loses its opening to silence. The wake burst only fires when the endpoint is actually cold, so auditioning clips back-to-back stays clean (no start-of-play hiss on an already-awake device).
 - Importing AAC/M4A files no longer hangs on "Analysing tempo…", and the import now always completes even when a file has no detectable tempo.
 - Tempo detection no longer intermittently reports "no tempo" on import — concurrent decode jobs for the same file could collide on the shared decoded-audio cache, causing detection to give up. Decoding is now serialised per file, so the grid is detected on the first import instead of only after a manual reanalyse.
 - Timeline beat markers now render reliably, including on imported AAC/M4A tracks.

@@ -1,6 +1,8 @@
 #pragma once
 
+#include "AudioConstants.h"
 #include "Metronome.h"
+#include "OutputKeepAlive.h"
 
 #include <atomic>
 #include <cmath>
@@ -23,10 +25,18 @@ namespace silverdaw
 // position offset by the grid phase, reusing its exact click generator. A constant warp ratio is
 // assumed; Rubber Band's small processing latency is not compensated (clicks can sit a few ms off
 // on a heavily warped clip — a refinement, not a correctness break).
+//
+// Device wake: this wrapper is the preview's single mixer input, so it also runs the same wake
+// pre-roll the main transport does (see MasterClockSource). On a sleep-prone (USB) endpoint, the
+// first block of each play holds the preview silent for a short lead-in while the shared
+// OutputKeepAlive emits its decaying wake burst, rousing the DAC's auto-mute amp before the first
+// audible sample. This keeps the Clip Editor / preview window on the exact same device rules as
+// timeline playback, so a cold amp no longer swallows the opening of a preview.
 class PreviewMetronomeSource : public juce::AudioSource
 {
   public:
-    explicit PreviewMetronomeSource(juce::AudioTransportSource& innerSource) : inner(innerSource) {}
+    PreviewMetronomeSource(juce::AudioTransportSource& innerSource, OutputKeepAlive& keepAliveRef)
+        : inner(innerSource), keepAlive(keepAliveRef) {}
 
     void setEnabled(bool e) noexcept { metro.setEnabled(e); }
     bool isEnabled() const noexcept { return metro.isEnabled(); }
@@ -50,12 +60,49 @@ class PreviewMetronomeSource : public juce::AudioSource
         inner.prepareToPlay(samplesPerBlockExpected, newSampleRate);
         metro.prepare(newSampleRate);
         sampleRate = newSampleRate;
+        prerollSamples = newSampleRate > 0.0
+            ? static_cast<int>(newSampleRate * (silverdaw::kWakePrerollMs / 1000.0))
+            : 0;
+        wakePrerollRemaining = 0;
+        wasPlaying = false;
     }
 
     void releaseResources() override { inner.releaseResources(); }
 
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
     {
+        // Wake pre-roll (audio thread): on a stopped->playing transition, a sleep-prone (USB)
+        // endpoint gets a short silent lead-in during which OutputKeepAlive (via MeteringSource)
+        // emits its decaying wake burst, rousing the DAC's auto-mute amp before the first audible
+        // sample. The inner transport is NOT pulled while the pre-roll runs, so the downbeat is
+        // preserved and plays at full level the instant the amp is awake. Non-sleep-prone endpoints
+        // skip it and play instantly. Mirrors MasterClockSource so preview follows the same rules.
+        const bool playingNow = inner.isPlaying();
+        if (playingNow && ! wasPlaying)
+        {
+            // Only rouse a genuinely cold endpoint: a warm amp (real audio played within the warm
+            // window) is already awake, so bursting into it would just add an audible start-of-play
+            // hiss — most obvious auditioning clips with leading silence back-to-back. A cold endpoint
+            // still gets the full silent pre-roll + wake burst so its opening is never swallowed.
+            if (keepAlive.isKeepAwakeEnabled() && ! keepAlive.isWarm())
+            {
+                wakePrerollRemaining = prerollSamples;
+                keepAlive.armWakeBurst();
+            }
+            else
+            {
+                wakePrerollRemaining = 0;
+            }
+        }
+        wasPlaying = playingNow;
+
+        if (wakePrerollRemaining > 0 && info.numSamples > 0)
+        {
+            info.clearActiveBufferRegion();
+            wakePrerollRemaining = juce::jmax(0, wakePrerollRemaining - info.numSamples);
+            return;
+        }
+
         // Capture the start-of-block played position BEFORE pulling (the pull advances the
         // transport), mirroring how the main metronome samples the transport position.
         const double posBeforeSec = inner.getCurrentPosition();
@@ -88,12 +135,19 @@ class PreviewMetronomeSource : public juce::AudioSource
 
   private:
     juce::AudioTransportSource& inner;
+    OutputKeepAlive& keepAlive;
     Metronome metro;
     double sampleRate{0.0};
     std::atomic<double> gridBpm{0.0};
     std::atomic<double> anchorSec{0.0};
     std::atomic<double> inMs{0.0};
     std::atomic<double> ratio{1.0};
+    // Wake pre-roll state — audio-thread only. prerollSamples is the armed length (set for the
+    // active rate in prepareToPlay); wakePrerollRemaining counts down the current lead-in; wasPlaying
+    // tracks the inner transport's play state to detect a stopped->playing edge on the audio thread.
+    int prerollSamples{0};
+    int wakePrerollRemaining{0};
+    bool wasPlaying{false};
 };
 
 } // namespace silverdaw

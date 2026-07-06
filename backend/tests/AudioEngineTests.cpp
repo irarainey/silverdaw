@@ -14,6 +14,7 @@
 #include "Metronome.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "PreviewMetronomeSource.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
@@ -689,6 +690,137 @@ void testMasterClockWakePrerollRousesUsbThenPlays()
     }
 }
 
+// The Clip Editor / preview window must follow the same cold-DAC rules as the main transport: on a
+// sleep-prone (USB) endpoint the first block of each preview play is a silent wake pre-roll (the
+// PreviewMetronomeSource wrapper holds the transport WITHOUT pulling it, so OutputKeepAlive can emit
+// its wake burst before the first audible sample); non-sleep-prone endpoints play from the first
+// block. Mirrors testMasterClockWakePrerollRousesUsbThenPlays for the preview path.
+void testPreviewWakePrerollRousesUsbThenPlays()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    const auto dir = makeTempDir("preview-wake-preroll");
+    const auto wav = writeTestWav(dir, "tone.wav", 2.0, kRate);
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+
+    const int prerollSamples = static_cast<int>(kRate * (silverdaw::kWakePrerollMs / 1000.0));
+    const int prerollBlocks = (prerollSamples + kBlock - 1) / kBlock;
+
+    auto peakOf = [](const juce::AudioBuffer<float>& b) {
+        float p = 0.0F;
+        for (int ch = 0; ch < b.getNumChannels(); ++ch)
+            p = juce::jmax(p, b.getMagnitude(ch, 0, b.getNumSamples()));
+        return p;
+    };
+
+    // ── Keep-awake ON: a silent pre-roll precedes programme, transport held put ──
+    {
+        auto* reader = fm.createReaderFor(wav);
+        require(reader != nullptr, "reader should open the test wav");
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        juce::AudioTransportSource transport;
+        transport.setSource(&readerSource, 0, nullptr, kRate, 2);
+        transport.setGain(1.0F);
+
+        silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(true); // explicit per-device toggle (off by default)
+        silverdaw::PreviewMetronomeSource preview(transport, ka);
+        preview.prepareToPlay(kBlock, kRate);
+
+        transport.setPosition(0.5); // mid-tone, away from the zero-crossing start
+        const double startPos = transport.getCurrentPosition();
+        transport.start();
+
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+        for (int b = 0; b < prerollBlocks; ++b)
+        {
+            buf.clear();
+            buf.setSample(0, 0, 1.0F); // poison; the pre-roll must clear it
+            preview.getNextAudioBlock(info);
+            require(peakOf(buf) == 0.0F, "preview wake pre-roll must emit silence");
+        }
+        requireNear(transport.getCurrentPosition(), startPos, 1.0e-3,
+                    "preview wake pre-roll must not advance the transport");
+
+        // After the pre-roll, programme plays and the transport advances.
+        buf.clear();
+        preview.getNextAudioBlock(info);
+        require(peakOf(buf) > 0.05F, "programme must play right after the preview wake pre-roll");
+        require(transport.getCurrentPosition() > startPos,
+                "the transport must advance once the preview programme starts");
+        preview.releaseResources();
+    }
+
+    // ── Keep-awake ON but endpoint warm: no pre-roll, programme from the first block ──
+    {
+        auto* reader = fm.createReaderFor(wav);
+        require(reader != nullptr, "reader should open the test wav");
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        juce::AudioTransportSource transport;
+        transport.setSource(&readerSource, 0, nullptr, kRate, 2);
+        transport.setGain(1.0F);
+
+        silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(true);
+        ka.setDeviceActive(true);
+        ka.prepare(kRate);
+        // Real programme just played (above-threshold peak) opens the warm window, so a fresh play
+        // must NOT emit a wake burst (which would be an audible start-of-play hiss on a warm amp).
+        juce::AudioBuffer<float> loud(2, kBlock);
+        loud.clear();
+        ka.maybeApplyFloor(loud, 0, kBlock, 0.5F);
+        require(ka.isWarm(), "above-threshold programme must mark the endpoint warm");
+
+        silverdaw::PreviewMetronomeSource preview(transport, ka);
+        preview.prepareToPlay(kBlock, kRate);
+        transport.setPosition(0.5);
+        transport.start();
+
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+        buf.clear();
+        preview.getNextAudioBlock(info);
+        require(peakOf(buf) > 0.05F,
+                "a warm endpoint must play the preview instantly (no silent wake pre-roll)");
+        require(transport.getCurrentPosition() > 0.5,
+                "a warm endpoint advances the preview transport from the first block");
+        preview.releaseResources();
+    }
+
+    // ── Non-USB (keep-awake off): programme from the very first block, no pre-roll ──
+    {
+        auto* reader = fm.createReaderFor(wav);
+        require(reader != nullptr, "reader should open the test wav");
+        juce::AudioFormatReaderSource readerSource(reader, true);
+        juce::AudioTransportSource transport;
+        transport.setSource(&readerSource, 0, nullptr, kRate, 2);
+        transport.setGain(1.0F);
+
+        silverdaw::OutputKeepAlive ka;
+        ka.setKeepAwakeEnabled(false);
+        silverdaw::PreviewMetronomeSource preview(transport, ka);
+        preview.prepareToPlay(kBlock, kRate);
+
+        transport.setPosition(0.5);
+        transport.start();
+
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+        buf.clear();
+        preview.getNextAudioBlock(info);
+        require(peakOf(buf) > 0.05F, "non-sleep-prone endpoints must play the preview instantly");
+        require(transport.getCurrentPosition() > 0.5,
+                "non-sleep-prone endpoints advance the preview transport from the first block");
+        preview.releaseResources();
+    }
+
+    dir.deleteRecursively();
+}
+
 // Reproduces the prime->play path at the JUCE buffering/transport level to check whether the
 // FIRST played block delivers programme audio or silence. Mirrors primeTracksForPlayback:
 // setPosition -> start -> settle-pump 1 sample -> re-seek -> start -> wait for read-ahead, then
@@ -976,6 +1108,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
     tests.push_back({"Master gain is settled at play-start (no first-block fade)", testMasterGainIsSettledAtPlayStart});
     tests.push_back({"MasterClockSource wake pre-roll rouses a USB endpoint then plays", testMasterClockWakePrerollRousesUsbThenPlays});
+    tests.push_back({"Preview wake pre-roll rouses a USB endpoint then plays", testPreviewWakePrerollRousesUsbThenPlays});
     tests.push_back({"Primed transport delivers the first played block", testPrimedTransportDeliversFirstBlock});
     tests.push_back({"Primed mixer delivers the first played block", testPrimedMixerDeliversFirstBlock});
     tests.push_back({"Primed OffsetSource delivers the first played block", testPrimedOffsetSourceDeliversFirstBlock});
