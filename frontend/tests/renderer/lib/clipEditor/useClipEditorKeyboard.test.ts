@@ -7,10 +7,12 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
   open: { value: boolean }
   hasSel: { value: boolean }
   canGate: { value: boolean }
+  canMetronome: { value: boolean }
 } {
   const open = { value: true }
   const hasSel = { value: false }
   const canGate = { value: false }
+  const canMetronome = { value: true }
   const spies = {
     close: vi.fn(),
     clearSelection: vi.fn(),
@@ -18,6 +20,7 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     nudgePlayhead: vi.fn(),
     togglePlay: vi.fn(),
     toggleLoop: vi.fn(),
+    toggleMetronome: vi.fn(),
     zoomIn: vi.fn(),
     zoomOut: vi.fn(),
     resetZoom: vi.fn(),
@@ -38,6 +41,8 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     nudgePlayhead: spies.nudgePlayhead as ClipEditorKeyboardDeps['nudgePlayhead'],
     togglePlay: spies.togglePlay,
     toggleLoop: spies.toggleLoop,
+    canToggleMetronome: () => canMetronome.value,
+    toggleMetronome: spies.toggleMetronome,
     zoomIn: spies.zoomIn,
     zoomOut: spies.zoomOut,
     resetZoom: spies.resetZoom,
@@ -45,7 +50,7 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     redoCropLocal: spies.redoCropLocal,
     ...overrides
   }
-  return { deps, spies, open, hasSel, canGate }
+  return { deps, spies, open, hasSel, canGate, canMetronome }
 }
 
 interface KeyOpts {
@@ -178,6 +183,25 @@ describe('useClipEditorKeyboard — onKeydown', () => {
     expect(h.spies.resetZoom).toHaveBeenCalled()
     kb.onKeydown(makeKey({ key: 'l' }).e)
     expect(h.spies.toggleLoop).toHaveBeenCalled()
+  })
+
+  it('K toggles the clip metronome when available', () => {
+    kb.onKeydown(makeKey({ key: 'k' }).e)
+    expect(h.spies.toggleMetronome).toHaveBeenCalledTimes(1)
+    kb.onKeydown(makeKey({ key: 'K' }).e)
+    expect(h.spies.toggleMetronome).toHaveBeenCalledTimes(2)
+  })
+
+  it('K does nothing when the metronome is unavailable', () => {
+    h.canMetronome.value = false
+    kb.onKeydown(makeKey({ key: 'k' }).e)
+    expect(h.spies.toggleMetronome).not.toHaveBeenCalled()
+  })
+
+  it('K with a modifier does not toggle the metronome', () => {
+    kb.onKeydown(makeKey({ key: 'k', ctrlKey: true }).e)
+    kb.onKeydown(makeKey({ key: 'k', shiftKey: true }).e)
+    expect(h.spies.toggleMetronome).not.toHaveBeenCalled()
   })
 
   it('S silences and F restores the selection when a range is gateable', () => {

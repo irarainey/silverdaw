@@ -17,6 +17,10 @@ export interface ClipEditorKeyboardDeps {
   nudgePlayhead: (direction: -1 | 1, snapToBeats: boolean) => void
   togglePlay: () => void
   toggleLoop: () => void
+  // True when the clip metronome is available (the toggle button is shown);
+  // gates the `K` shortcut so it mirrors button visibility exactly.
+  canToggleMetronome: () => boolean
+  toggleMetronome: () => void
   zoomIn: () => void
   zoomOut: () => void
   resetZoom: () => void
@@ -150,6 +154,15 @@ export function useClipEditorKeyboard(deps: ClipEditorKeyboardDeps): ClipEditorK
     if (e.key === 'l' || e.key === 'L') {
       e.preventDefault()
       deps.toggleLoop()
+      return
+    }
+    // K: toggle the clip-editor metronome. Scoped to this dialog — the main
+    // timeline metronome is a separate setting and stays untouched. Only fires
+    // when the metronome control is available (same guard as its button).
+    if ((e.key === 'k' || e.key === 'K') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      if (!deps.canToggleMetronome()) return
+      e.preventDefault()
+      deps.toggleMetronome()
       return
     }
     // Quick region gate on the current selection, mirroring the Silence / Full

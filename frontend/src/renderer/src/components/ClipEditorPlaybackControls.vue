@@ -98,7 +98,7 @@ defineEmits<{
       aria-label="Clip metronome click"
       class="ml-1 rounded p-2 hover:bg-zinc-800"
       :class="metronomeEnabled ? 'bg-blue-600 text-white hover:bg-blue-500' : 'text-zinc-300 hover:text-zinc-100'"
-      :title="metronomeEnabled ? 'Clip metronome on — click plays in time with the clip\'s tempo. Click to turn off.' : 'Clip metronome off — click plays an audible tick in time with the clip\'s tempo. Click to turn on.'"
+      :title="metronomeEnabled ? 'Clip metronome on (K) — click plays in time with the clip\'s tempo. Click to turn off.' : 'Clip metronome off (K) — click plays an audible tick in time with the clip\'s tempo. Click to turn on.'"
       @click="$emit('toggle-metronome')"
     >
       <svg

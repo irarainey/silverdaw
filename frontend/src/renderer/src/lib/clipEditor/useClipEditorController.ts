@@ -835,6 +835,8 @@ export function useClipEditorController(
     nudgePlayhead,
     togglePlay: onTogglePlay,
     toggleLoop: onToggleLoop,
+    canToggleMetronome: () => editsExistingClip.value,
+    toggleMetronome: onToggleClipMetronome,
     zoomIn,
     zoomOut,
     resetZoom,
