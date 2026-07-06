@@ -70,6 +70,7 @@ export interface ClipEditorViewport {
   setZoomAnchored(nextZoom: number, anchorMs: number): void
   zoomIn(): void
   zoomOut(): void
+  zoomToFit(): void
 
   // Multi-field transitions.
   initialiseForItem(): void
@@ -200,6 +201,25 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
     setZoomAnchored(zoom.value / 1.5, center)
   }
 
+  // Fit the entire working view (cropped clip or full source) into the canvas
+  // width and scroll to the start. Unlike the +/- controls — which never zoom
+  // out past the timeline scale so a long range opens at track-view scale and
+  // scrolls — an explicit fit is allowed to drop the effective scale below that
+  // floor so the whole clip / source can be seen end-to-end. Clip-edit and
+  // source-preview dialogs share this so both behave identically.
+  function zoomToFit(): void {
+    scrollMs.value = 0
+    const w = canvasCssWidth.value
+    const px = basePxPerMs.value
+    const fullDur = viewDurationMs.value
+    if (w <= 0 || px <= 0 || fullDur <= 0) {
+      zoom.value = MIN_ZOOM
+      return
+    }
+    // Zoom that makes the visible window span the whole view: w / (px·zoom) = fullDur.
+    zoom.value = Math.min(MAX_ZOOM, w / (px * fullDur))
+  }
+
   function initialiseForItem(): void {
     const entry = editorItem.value
     if (!entry) {
@@ -275,6 +295,7 @@ export function useClipEditorViewport(inputs: UseClipEditorViewportInputs): Clip
     setZoomAnchored,
     zoomIn,
     zoomOut,
+    zoomToFit,
     initialiseForItem,
     snapCropViewToSelection,
     captureCropSnapshot,

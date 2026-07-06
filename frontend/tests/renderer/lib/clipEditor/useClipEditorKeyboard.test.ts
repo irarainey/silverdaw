@@ -21,6 +21,9 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     togglePlay: vi.fn(),
     toggleLoop: vi.fn(),
     toggleMetronome: vi.fn(),
+    skipToStart: vi.fn(),
+    skipToEnd: vi.fn(),
+    zoomToFit: vi.fn(),
     zoomIn: vi.fn(),
     zoomOut: vi.fn(),
     resetZoom: vi.fn(),
@@ -43,6 +46,9 @@ function makeDeps(overrides: Partial<ClipEditorKeyboardDeps> = {}): {
     toggleLoop: spies.toggleLoop,
     canToggleMetronome: () => canMetronome.value,
     toggleMetronome: spies.toggleMetronome,
+    skipToStart: spies.skipToStart,
+    skipToEnd: spies.skipToEnd,
+    zoomToFit: spies.zoomToFit,
     zoomIn: spies.zoomIn,
     zoomOut: spies.zoomOut,
     resetZoom: spies.resetZoom,
@@ -264,6 +270,36 @@ describe('useClipEditorKeyboard — onWindowKeydownCapture', () => {
     expect(h.spies.undoCropLocal).toHaveBeenCalledTimes(1)
     kb.onWindowKeydownCapture(makeKey({ key: 'z', ctrlKey: true, shiftKey: true }).e)
     expect(h.spies.redoCropLocal).toHaveBeenCalledTimes(1)
+  })
+
+  it('Home / End seek regardless of focus drift, swallowing the event', () => {
+    const home = makeKey({ key: 'Home' })
+    kb.onWindowKeydownCapture(home.e)
+    expect(h.spies.skipToStart).toHaveBeenCalledTimes(1)
+    expect(home.preventDefault).toHaveBeenCalled()
+    expect(home.stopPropagation).toHaveBeenCalled()
+    kb.onWindowKeydownCapture(makeKey({ key: 'End' }).e)
+    expect(h.spies.skipToEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl+F fits the working view and swallows the event', () => {
+    const { e, preventDefault, stopPropagation } = makeKey({ key: 'f', ctrlKey: true })
+    kb.onWindowKeydownCapture(e)
+    expect(h.spies.zoomToFit).toHaveBeenCalledTimes(1)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(stopPropagation).toHaveBeenCalled()
+  })
+
+  it('Ctrl+Shift+F does not fit the view', () => {
+    kb.onWindowKeydownCapture(makeKey({ key: 'f', ctrlKey: true, shiftKey: true }).e)
+    expect(h.spies.zoomToFit).not.toHaveBeenCalled()
+  })
+
+  it('does not seek or fit while typing in a field', () => {
+    kb.onWindowKeydownCapture(makeKey({ key: 'Home', editable: true }).e)
+    kb.onWindowKeydownCapture(makeKey({ key: 'f', ctrlKey: true, editable: true }).e)
+    expect(h.spies.skipToStart).not.toHaveBeenCalled()
+    expect(h.spies.zoomToFit).not.toHaveBeenCalled()
   })
 
   it('ignores plain keys with no Ctrl/Cmd modifier', () => {

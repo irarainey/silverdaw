@@ -2076,6 +2076,8 @@ and the following set takes over instead:
 | `Shift` + `←` / `→` | Extend a keyboard selection: first press anchors at the playhead (or the opposite edge of an existing narrowing selection); subsequent presses move the playhead and grow / shrink the selection. Combine with `Alt` for 1 ms steps. |
 | `L` | Toggle loop mode. With loop on, playback loops the selection — or the whole saved clip if no selection is set. Source files only loop when a selection is set. |
 | `K` | Toggle the Clip Editor metronome (only when the metronome control is shown). Scoped to the dialog — the main timeline metronome is a separate setting and stays unchanged. |
+| `Home` / `End` | Jump the preview playhead to the start / end of the active playback range (honouring the selection bounds, like the skip-to-start / skip-to-end buttons). |
+| `Ctrl` + `F` | Fit the whole working view — the cropped clip or the full source — into the canvas and scroll to the start (mirrors the timeline's zoom-to-fit; behaves the same in the clip editor and the library preview window). |
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |

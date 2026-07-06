@@ -243,6 +243,38 @@ describe('useClipEditorViewport — zoom math', () => {
     vp.zoomOut()
     expect(vp.zoom.value).toBeCloseTo(1)
   })
+
+  it('zoomToFit keeps zoom at 1 for a short clip that already fits', () => {
+    const vp = makeVp({
+      editorItem: makeLibraryClipItem(),
+      editsExistingClip: true,
+      timelineClip: makeTimelineClip({ inMs: 0, durationMs: 1_500 }),
+      uiZoomPxPerSecond: 100
+    })
+    vp.canvasCssWidth.value = 1000
+    vp.zoomToFit()
+    expect(vp.zoom.value).toBeCloseTo(1)
+    expect(vp.visibleDurationMs.value).toBeCloseTo(1_500)
+    expect(vp.maxScrollMs.value).toBe(0)
+  })
+
+  it('zoomToFit fits a long source end-to-end, dropping below the timeline floor', () => {
+    const vp = makeVp({
+      editorItem: makeItem(),
+      editsExistingClip: false,
+      sourceDurationMs: 120_000,
+      uiZoomPxPerSecond: 100
+    })
+    vp.canvasCssWidth.value = 1000
+    vp.scrollMs.value = 5_000
+    vp.zoomToFit()
+    // basePxPerMs floors at 0.1, so fitting 120s requires a sub-1 zoom.
+    expect(vp.zoom.value).toBeCloseTo(1000 / (0.1 * 120_000))
+    expect(vp.zoom.value).toBeLessThan(MIN_ZOOM)
+    expect(vp.visibleDurationMs.value).toBeCloseTo(120_000)
+    expect(vp.maxScrollMs.value).toBe(0)
+    expect(vp.scrollMs.value).toBe(0)
+  })
 })
 
 describe('useClipEditorViewport — scroll clamping', () => {

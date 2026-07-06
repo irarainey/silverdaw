@@ -26,7 +26,7 @@ defineEmits<{
       type="button"
       data-borderless-button="true"
       class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-      title="Skip to start"
+      title="Skip to start (Home)"
       @click="$emit('skip-to-start')"
     >
       <svg
@@ -64,7 +64,7 @@ defineEmits<{
       type="button"
       data-borderless-button="true"
       class="rounded p-2 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-      title="Skip to end"
+      title="Skip to end (End)"
       @click="$emit('skip-to-end')"
     >
       <svg

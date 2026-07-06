@@ -21,6 +21,9 @@ export interface ClipEditorKeyboardDeps {
   // gates the `K` shortcut so it mirrors button visibility exactly.
   canToggleMetronome: () => boolean
   toggleMetronome: () => void
+  skipToStart: () => void
+  skipToEnd: () => void
+  zoomToFit: () => void
   zoomIn: () => void
   zoomOut: () => void
   resetZoom: () => void
@@ -56,6 +59,22 @@ export function useClipEditorKeyboard(deps: ClipEditorKeyboardDeps): ClipEditorK
       if (!e.repeat) deps.togglePlay()
       return
     }
+    // Home / End seek the playhead to the start / end of the active playback
+    // range. Handled here (not only on the dialog root) so they still fire
+    // after a waveform-canvas click has blurred focus to <body>, where the
+    // dialog-root @keydown listener would never see the event.
+    if (e.key === 'Home' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      deps.skipToStart()
+      return
+    }
+    if (e.key === 'End' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      deps.skipToEnd()
+      return
+    }
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return
     const key = e.key.toLowerCase()
     if (key === 'z' && !e.shiftKey) {
@@ -68,6 +87,15 @@ export function useClipEditorKeyboard(deps: ClipEditorKeyboardDeps): ClipEditorK
       e.preventDefault()
       e.stopPropagation()
       deps.redoCropLocal()
+      return
+    }
+    // Ctrl/Cmd+F fits the working view back into the canvas. Same focus-drift
+    // rationale as Home / End above; the global zoom-to-fit accelerator is
+    // suspended while the dialog is open, so this stays scoped to the editor.
+    if (key === 'f' && !e.shiftKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      deps.zoomToFit()
     }
   }
 
