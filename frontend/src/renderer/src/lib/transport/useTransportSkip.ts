@@ -121,6 +121,9 @@ export function useTransportSkip(): TransportSkip {
     if (!Number.isFinite(end) || end <= 0) return
     log.info('transport', `click skip-forward -> ${end}ms`)
     sendBridge('TRANSPORT_SEEK', { positionMs: end })
+    // Mirror skip-back's rewind-and-scroll: bring the timeline view to the end
+    // so the playhead's new resting place is on screen.
+    ui.requestTimelineScroll('end')
   }
 
   return { onSkipBack, onPlay, onSkipForward }
