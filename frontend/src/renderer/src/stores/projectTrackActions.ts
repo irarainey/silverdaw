@@ -13,6 +13,7 @@ import { DEFAULT_TRACK_LENGTH_MS, MAX_TRACK_VOLUME, TRACK_PALETTE } from './proj
 
 type TrackActionsThis = ProjectState & {
   pushAllGains(): void
+  selectTrack(trackId: string | null): void
   setTrackAutomation(
     trackId: string,
     paramId: AutomationParamId,
@@ -72,6 +73,9 @@ export const trackActions = {
       // A new row is appended at the bottom; ask the timeline to scroll it into
       // view so it is never created out of sight below the fold.
       useUiStore().requestRevealTrack(trackId)
+      // Select the new track so it is the immediate target for clip paste /
+      // mute / solo shortcuts and the FX rack.
+      this.selectTrack(trackId)
       log.info('project', `addTrack id=${trackId}`)
       return trackId
     },

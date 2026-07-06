@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Adding a track now automatically selects it, so clip paste, mute / solo shortcuts, and the FX rack target the new track immediately.
+- A selected track's highlight border now extends across its header panel with the same thickness and track colour as the timeline row, so the selection outline reads as one continuous box.
 - New projects now default to a 5-minute timeline (down from 10). Adding a first clip that runs longer automatically extends the project duration to fit the whole clip.
 - The audio processing panel header no longer shows a redundant in-progress count.
 - The transport's previous / next buttons now step through timeline markers by default (instead of jumping to the project start / end); you can switch back in Preferences ▸ Timeline.

@@ -167,6 +167,15 @@ describe('projectStore', () => {
     })
   })
 
+  it('selects the newly added track', () => {
+    const project = useProjectStore()
+
+    const trackId = project.addTrack()
+
+    expect(project.selectedTrackId).toBe(trackId)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_VIEW', { selectedTrackId: trackId })
+  })
+
   it('adds tracks and local clips while notifying the bridge about tracks', () => {
     const project = useProjectStore()
 
