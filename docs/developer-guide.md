@@ -383,13 +383,12 @@ buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly.
 
 The main remaining roadmap areas are region selection on timeline clips, library
-search / tags / list view, ffmpeg-backed decoding for unsupported formats, the
+search / tags / list view, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain —
 saturation — applied both live and in mixdown, beyond the per-track Tone EQ +
 Filter, the per-track Compressor, the project-wide Reverb and Delay sends,
 the track effect automation lanes, the per-clip Volume Shape, and the per-clip
-turntable Brake / Backspin tails that already ship), and a CI matrix that
-enforces a coverage floor over the existing backend and frontend test suites.
+turntable Brake / Backspin tails that already ship).
 
 ## Bridge protocol
 

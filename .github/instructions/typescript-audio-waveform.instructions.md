@@ -127,53 +127,18 @@ and what the timeline visually promises.
 
 ## File Size and Single Responsibility
 
-- **Apply the repo-wide authoring-time gate first.** Before adding code to any
-  existing file, run the *Before you add code* checklist in
-  `.github/copilot-instructions.md`: check the target's current size against its
-  ceiling, name the responsibility you are adding, and extract a focused new unit
-  rather than growing a file that shouldn't grow.
-- **Default to domain separation of logic.** Organise code by the feature /
-  problem domain it serves (clips, waveform/peaks, warp & music-time, timeline
-  rendering, import/reanalysis, …), not by incidental technical layering. New
-  logic goes into the module that owns its domain; when a file mixes domains,
-  that is the first and strongest seam to split along. Keep unit-of-time
-  conversions for one domain together so source-vs-timeline math stays local.
-- **Each domain of logic lives in its own file — always, by default.** This is a
-  standing rule, not an aspiration. A distinct feature/problem domain (peaks
-  decoding, warp/music-time conversion, beat snapping, a render pass, …) gets its
-  own module rather than being co-located with unrelated domains. Start domains
-  separated — do not bundle two of them into one file "for convenience", because
-  they feel related, or because each is currently small; "related" and "only a
-  few lines" are never sufficient reasons. The *only* grounds for keeping multiple
-  domains in one file is an **exceptionally good, explicitly documented** reason —
-  e.g. they are genuinely one inseparable unit, a tight per-sample/per-column hot
-  loop must stay together, or splitting would force an unavoidable circular
-  dependency. When you do, record that reason in the file and re-evaluate it on
-  every change; the moment the justification weakens, split. This rule is
-  independent of line count: a short file mixing two domains is still wrong even
-  far below any ceiling.
-- These rules build on the general TypeScript file-size guidance; the timeline,
-  waveform, and warp-math surface tends to grow fast, so apply them aggressively.
-- A module should be one coherent unit of thought (e.g. peaks decoding, warp
-  conversions, beat snapping, a single render pass). If you can't describe it in
-  one short sentence, split it. Line count is a symptom, not the goal.
-- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it. A
-  file approaching ~800 lines is a strong signal to split *now*; a file over
-  ~800 lines is a defect to fix, not a style nit.
-- **Nothing is impossible — exhaust every avenue before keeping a file oversized.**
-  A standing "justified exception" is the last resort, never the first answer,
-  and is **not** a permanent licence: re-evaluate it every time the file grows.
-- **Earlier architectural decisions are always revisable.** A module boundary
-  that was once reasonable may no longer be the cleanest as features land. Treat
-  the existing structure as provisional and re-split timeline / peaks / warp /
-  rendering concerns by responsibility rather than defending the status quo.
-  Re-drawing boundaries is expected, normal iterative work.
-- **The one caveat:** keep a genuinely cohesive timing/warp pipeline together
-  when fragmenting it would scatter unit-of-time conversions across files and
-  invite source-vs-timeline mix-ups — that correctness risk outweighs the line
-  count. Everywhere else, find the real seams first and extract pure helpers.
-- Extract via pure mechanical moves (no behaviour change) and keep
-  `pnpm typecheck` / `lint` / `test` green at each step.
+Follow **ADR 0016** (`docs/adr/0016-maintainability-file-size.md`). This surface
+(timeline, waveform/peaks, warp math) grows fast — apply the gate aggressively.
+
+- Inherits the TS **~350-line** soft ceiling; ~800 is a hard trigger. Organise by
+  domain (peaks decoding, warp/music-time conversion, beat snapping, a render
+  pass, …), each in its own module. Keep one domain's unit-of-time conversions
+  together so source-vs-timeline math stays local.
+- **Exception:** keep a genuinely cohesive timing/warp pipeline together when
+  splitting would scatter unit-of-time conversions across files and invite
+  source-vs-timeline mix-ups — that correctness risk outweighs the line count.
+- Extract via pure mechanical moves; keep `pnpm typecheck` / `lint` / `test`
+  green at each step.
 
 ## Comments and Documentation
 

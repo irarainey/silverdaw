@@ -6,10 +6,10 @@ applyTo: "frontend/src/renderer/**/*.vue, frontend/src/renderer/**/*.css"
 # Silverdaw UI/UX Styling Instructions
 
 Conventions that keep the renderer visually and verbally consistent. The app is
-a **dark, flat, dense, keyboard-friendly** desktop DAW aimed at GarageBand-level
-simplicity (see `.ref/daw-design-plan.md` §2). Match the patterns already in the
-codebase — do not introduce new colour families, component frames, or wording
-styles without updating this file first.
+a **dark, flat, dense, keyboard-friendly** desktop DAW built for beginner-first
+simplicity (see ADR 0011; this file is the detailed reference behind ADR 0012).
+Match the patterns already in the codebase — do not introduce new colour
+families, component frames, or wording styles without updating this file first.
 
 Tailwind CSS **v4** is used (utility classes in templates; no `tailwind.config`
 — theme tokens are standard Tailwind palette names). Shared primitives live in

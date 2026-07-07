@@ -130,16 +130,15 @@ or compact code.
 
 ## Testing and Validation
 
-- Add or update backend tests for model persistence, bridge-relevant state,
-  timing math, warp ratio mapping, cache behavior, and bug fixes.
-- For audio changes, test the pure math or state transitions directly where
-  possible. Use smoke tests for third-party DSP integration when full audio
-  assertions would be brittle.
-- Run existing backend build/tests after C++ changes:
-  - configure/build via the repository scripts or CMake;
-  - `ctest --test-dir backend/build --build-config Debug --output-on-failure`.
-- When packaging-related C++ changes affect Windows runtime dependencies,
-  inspect the release executable dependencies with `dumpbin /dependents`.
+Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Backend specifics:
+
+- Add/update tests for model persistence, bridge-relevant state, timing and
+  warp-ratio math, cache behaviour, and every bug fix; smoke-test third-party DSP
+  where full audio assertions would be brittle.
+- Run `ctest --test-dir backend/build --build-config Debug --output-on-failure`
+  after C++ changes (configure/build via the repo scripts or CMake first).
+- When packaging-related changes affect Windows runtime deps, inspect the release
+  executable with `dumpbin /dependents`.
 
 ## Comments and Documentation
 
@@ -157,58 +156,17 @@ or compact code.
 
 ## File Size and Single Responsibility
 
-- **Apply the repo-wide authoring-time gate first.** Before adding code to any
-  existing file, run the *Before you add code* checklist in
-  `.github/copilot-instructions.md`: check the target's current size against its
-  ceiling, name the responsibility you are adding, and extract a focused new unit
-  rather than growing a file that shouldn't grow.
-- **Default to domain separation of logic.** Organise translation units by the
-  feature / problem domain they serve (transport, project state, transitions,
-  per-command groups, …), not by incidental technical layering. New logic goes
-  into the TU that owns its domain; when a file mixes domains, that is the first
-  and strongest seam to split along. Keep cross-domain coupling to a small,
-  explicit surface, while honouring the audio-thread / message-thread / I/O
-  separation the engine already enforces.
-- **Each domain of logic lives in its own translation unit — always, by
-  default.** This is a standing rule, not an aspiration. A distinct
-  feature/problem domain (transport, project state, a command group, a DSP
-  concern, …) gets its own `.cpp`/`.h` pair rather than being co-located with
-  unrelated domains in a shared TU. Start domains separated — do not bundle two
-  of them into one file "for convenience", because they feel related, or because
-  each is currently small; "related" and "only a few lines" are never sufficient
-  reasons. The *only* grounds for keeping multiple domains in one TU is an
-  **exceptionally good, explicitly documented** reason — e.g. they are genuinely
-  one inseparable unit, a real-time hot path must stay in a single TU for
-  inlining/locality, or splitting would force an unavoidable circular dependency.
-  When you do, record that reason in the file and re-evaluate it on every change;
-  the moment the justification weakens, split. This rule is independent of line
-  count: a short file mixing two domains is still wrong even far below any ceiling.
-- A translation unit / header should be one coherent unit of thought. If you
-  can't describe it in one short sentence, split it.
-- Soft ceilings (scrutinise above): `.cpp` ~500 lines, `.h` ~250
-  (declarations only). Line count is a symptom, not the goal.
-- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
-  A file approaching ~800 lines is a strong signal to split *now*, before it
-  grows further; a file over ~800 lines is a defect to fix, not a style nit.
-- **Nothing is impossible — exhaust every avenue before keeping a file oversized.**
-  A standing "justified exception" is the last resort, never the first answer.
-  If you reach for one, show you genuinely explored extracting cohesive
-  free-function command groups into their own TU (mirror `TransitionCommands.cpp`)
-  and record why it was rejected. A previously-recorded exception is **not** a
-  permanent licence: re-evaluate it every time the file grows or a feature lands.
-- **Earlier architectural decisions are always revisable.** As the engine grows,
-  a file layout or TU boundary that was once reasonable (including a file that
-  was previously a "justified" large file) may no longer be the cleanest. Treat
-  the existing structure as provisional: when a file crosses the ceiling,
-  actively reconsider whether the original decomposition still holds and re-split
-  by responsibility rather than defending the status quo (e.g. peel command
-  groups off `Main.cpp` / `ProjectState.cpp`). Re-drawing TU boundaries is
-  expected, normal iterative work, not a special event — prefer it over an
-  exception.
-- **The one hard limit on splitting:** never fragment a genuinely cohesive
-  real-time DSP path (e.g. one `processBlock` chain) purely to chase a line
-  count — that is worse than keeping it together, and is the rare case where a
-  recorded exception is correct. Everywhere else, find the real seams first.
-- Move via pure mechanical extraction (no behaviour change), keeping the build
-  and `ctest` green at each step. Watch for ODR, static-init-order, and
-  threading hazards when moving file-local statics across TUs.
+Follow **ADR 0016** (`docs/adr/0016-maintainability-file-size.md`) for the full
+gate. C++/JUCE specifics:
+
+- Soft ceilings: `.cpp` **~500**, header **~250** (declarations only); ~800 is a
+  hard trigger.
+- One domain per translation unit (transport, project state, a command group, a
+  DSP concern, …) with the audio-thread / message-thread / I/O separation intact;
+  peel cohesive free-function command groups into their own TU (mirror
+  `TransitionCommands.cpp`).
+- **Exception:** a real-time hot path — e.g. a single `processBlock` chain — may
+  stay in one TU for inlining/locality and correctness; record the reason.
+- Move via pure mechanical extraction, keeping the build and `ctest` green; watch
+  for ODR, static-init-order, and threading hazards when moving file-local
+  statics across TUs.

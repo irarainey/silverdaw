@@ -15,13 +15,18 @@ review of a single change, subsystem, or PR, use the **Code Reviewer** agent
 
 ## Standards (single source of truth — do not restate, apply them)
 
-- `.github/copilot-instructions.md` — review priorities, the maintainability
-  rules (file size, duplication, SRP, best practice), and the hard project
-  invariants (audio-thread real-time safety, `{ type, payload }` bridge contract
-  via the zod schema, dynamic `--port` bridge, Electron hardening, strict types,
-  non-destructive editing, the custom `SilverdawBackendTests` harness).
+- `CONTEXT.md` (repo root) — the always-on source of truth for goals, state, and
+  `CRITICAL`/`IMPORTANT` constraints. Read it first.
+- `DECISIONS.md` → `docs/adr/*` — the project invariants and their rationale
+  (two-process split, `ValueTree` source of truth, `{ type, payload }` bridge via
+  the zod schema, dynamic `--port` + AUTH, real-time audio thread, non-destructive
+  editing, maintainability & file-size policy [ADR 0016], testing strategy
+  [ADR 0014], and more). `ARCHITECTURE.md` — structure, boundaries, data flow.
+- `.github/copilot-instructions.md` — review priorities and how-to-help; points
+  at the durable assets above.
 - `.github/instructions/*.instructions.md` — the path-specific C++/JUCE,
-  TypeScript, audio-waveform TS, Vue 3, Markdown, and documentation contracts.
+  TypeScript, audio-waveform TS, Vue 3, UI/UX styling, Markdown, and
+  documentation contracts.
 - Where these are silent, defer to ISO C++17 / C++ Core Guidelines / CERT C++,
   the Vue Style Guide, the Electron security checklist, and OWASP Top 10.
 

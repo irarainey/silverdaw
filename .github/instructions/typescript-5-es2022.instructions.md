@@ -30,73 +30,19 @@ applyTo: "**/*.ts"
 
 ## File Size and Single Responsibility
 
-- **Apply the repo-wide authoring-time gate first.** Before adding code to any
-  existing file, run the *Before you add code* checklist in
-  `.github/copilot-instructions.md`: check the target's current size against its
-  ceiling, name the responsibility you are adding, and extract a focused new unit
-  rather than growing a file that shouldn't grow.
-- **Default to domain separation of logic.** Organise code by the feature /
-  problem domain it serves (clips, tracks, markers, transitions, library,
-  persistence, transport, …), not by incidental technical layering. New logic
-  goes into the module that owns its domain; when a file mixes domains, that is
-  the first and strongest seam to split along. Approach every change — new or
-  refactor — by asking "which domain owns this?" before "where is there room to
-  put it?". Cross-domain coupling should be a small, explicit contract (a shared
-  `this`/interface type, a narrow imported helper), never a tangle of reach-ins.
-- **Each domain of logic lives in its own file — always, by default.** This is a
-  standing rule, not an aspiration. A distinct feature/problem domain (a clip
-  concern, a track concern, a persistence concern, a transport concern, …) gets
-  its own dedicated module rather than being co-located with unrelated domains in
-  a shared file. Start domains separated — do not bundle two of them into one
-  file "for convenience", because they feel related, or because each is currently
-  small; "related" and "only a few lines" are never sufficient reasons. The
-  *only* grounds for keeping multiple domains in one file is an **exceptionally
-  good, explicitly documented** reason — e.g. they are genuinely one inseparable
-  unit, or splitting would force an unavoidable circular dependency that no shared
-  contract type can break. When you do keep them together, record that reason in
-  the file and re-evaluate it on every change; the moment the justification
-  weakens, split. This rule is independent of line count: a 120-line file mixing
-  two domains is still wrong even though it is far below any ceiling.
-- A module should be one coherent unit of thought; if you can't describe it in
-  one short sentence, split it. Line count is a *symptom, not the goal*.
-- Soft ceilings (scrutinise above): TS module ~350 lines; Pinia store actions /
-  large composables, extract pure helpers and sub-modules early. Pure
-  type/schema-only files may run longer.
-- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
-  A file approaching ~800 lines is a strong signal to split *now*, before it
-  grows further; a file over ~800 lines is a defect to fix, not a style nit.
-- **Nothing is impossible — exhaust every avenue before keeping a file oversized.**
-  A standing "justified exception" is the last resort, never the first answer.
-  If you reach for one, you must show you genuinely explored splitting by domain,
-  by responsibility, by adapter, and by extracting pure helpers — and record why
-  each was rejected. A previously-recorded exception is **not** a permanent
-  licence: re-evaluate it every time the file grows or a feature lands.
-- **Earlier architectural decisions are always revisable.** As the codebase
-  grows, a module layout or boundary that was once reasonable (including a file
-  that was previously a "justified" large file) may no longer be the cleanest.
-  Treat the existing structure as provisional: when a file crosses the ceiling,
-  actively reconsider whether the original decomposition still holds and
-  re-split by domain / responsibility — e.g. spread focused action modules into
-  a store, lift cross-references into a small shared `this`/contract type —
-  rather than defending the status quo. Prefer revising the structure over
-  declaring an exception. Refactors that move boundaries are expected, normal
-  iterative work, not a special event.
-- **A split must still genuinely improve maintainability**, not just move lines.
-  A contrived extraction — a composable taking a large cross-cutting "dependency
-  bag", or fragmenting one coherent unit of thought into arbitrary part1/part2
-  files — is not progress. But this is a quality bar for *how* you split, not an
-  excuse to skip splitting: first find the real domain seams (they almost always
-  exist), and only fall back to a recorded exception once those are genuinely
-  exhausted.
-- **Resist growing an already-oversized file** (e.g. `projectStore.ts`,
-  `bridge-protocol.ts`, `libraryStore.ts`) — extract a focused module instead,
-  even for a small addition.
-- Prefer a stable **barrel / facade re-export** so existing importers don't
-  churn when you split a module. Extract via pure mechanical moves (no behaviour
-  change) and keep `pnpm typecheck` / `lint` / `test` green at each step.
-- For the bridge schema, split by domain into `shared/protocol/*` re-exported
-  from the existing `bridge-protocol.ts` facade — it stays the single source of
-  truth; never fork a parallel hand-written type.
+Follow **ADR 0016** (`docs/adr/0016-maintainability-file-size.md`) for the full
+gate — single-responsibility / domain separation, the "Before you add code"
+authoring check, split mechanics, and the ~800-line hard trigger. TS specifics:
+
+- Soft ceiling **~350 lines** per module; pure type/schema-only files may run
+  longer. Extract pure helpers and sub-modules early from large Pinia stores and
+  composables (e.g. resist growing `projectStore.ts`, `libraryStore.ts`).
+- One domain per module (clips, tracks, markers, transitions, library,
+  persistence, transport, …); cross-domain coupling is a small explicit contract.
+- Split the bridge schema by domain under `shared/bridge/*`, re-exported from the
+  `bridge-protocol.ts` facade — never fork a parallel hand-written type.
+- Extract via pure mechanical moves; keep `pnpm typecheck` / `lint` / `test`
+  green at each step.
 
 ## Naming & Style
 
@@ -165,10 +111,10 @@ applyTo: "**/*.ts"
 
 ## Testing Expectations
 
-- Add or update unit tests with the project's framework and naming style.
-- Expand integration or end-to-end suites when behavior crosses modules or platform APIs.
-- Run targeted test scripts for quick feedback before submitting.
-- Avoid brittle timing assertions; prefer fake timers or injected clocks.
+Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`): use the project's
+framework (Vitest) and naming style, expand integration coverage when behaviour
+crosses modules, run targeted specs for quick feedback, and avoid brittle timing
+assertions (prefer fake timers or injected clocks).
 
 ## Performance & Reliability
 

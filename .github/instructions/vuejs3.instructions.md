@@ -38,69 +38,20 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 
 ### Component Design
 
-- **Apply the repo-wide authoring-time gate first.** Before adding code to any
-  existing component, composable, or store, run the *Before you add code*
-  checklist in `.github/copilot-instructions.md`: check the target's current size
-  against its ceiling, name the responsibility you are adding, and extract a child
-  component or `useXxx` composable rather than growing a file that shouldn't grow.
-- **Default to domain separation of logic.** Organise components, composables,
-  and stores by the feature / problem domain they serve (timeline, clip editor,
-  library, transport, …), not by incidental technical layering. New logic goes
-  into the unit that owns its domain; when a component or store mixes domains,
-  that is the first and strongest seam to split along — extract a child
-  component or a `useXxx` composable for the distinct domain. Keep presentation
-  ↔ store ↔ preload ↔ main boundaries clean and cross-domain coupling explicit.
-- **Each domain of logic lives in its own file — always, by default.** This is a
-  standing rule, not an aspiration. A distinct feature/problem domain gets its
-  own component, composable, or store rather than being co-located with unrelated
-  domains: presentation concerns belong in the SFC, reusable domain behaviour in
-  a dedicated `useXxx` composable, and shared state in the store that owns that
-  domain. Start domains separated — do not bundle two of them into one SFC or
-  composable "for convenience", because they feel related, or because each is
-  currently small; "related" and "only a few lines" are never sufficient reasons.
-  The *only* grounds for keeping multiple domains together is an **exceptionally
-  good, explicitly documented** reason — e.g. they are genuinely one inseparable
-  unit, or splitting would force an unavoidable circular dependency. When you do,
-  record that reason in the file and re-evaluate it on every change; the moment
-  the justification weakens, split. This rule is independent of line count: a
-  small SFC mixing two domains is still wrong even well below any ceiling.
-- Adhere to the single responsibility principle for components
-- Use PascalCase for component names and kebab-case for file names
-- Keep components small and focused on one concern
-- A single-file component should be one coherent unit of thought. Soft ceiling
-  ~250 lines. Line count is a symptom, not the goal — the real signal is
-  multiple concerns in one file.
-- **Treat ~800 lines as a firm ceiling, not a suggestion.** Aim well below it.
-  An SFC approaching ~800 lines is a strong signal to split *now*, before it
-  grows further; an SFC over ~800 lines is a defect to fix, not a style nit.
-- **Nothing is impossible — exhaust every avenue before keeping an SFC oversized.**
-  A standing "justified exception" is the last resort, never the first answer.
-  If you reach for one, show you genuinely explored extracting child components
-  for distinct UI regions and lifting logic into `useXxx` composables, and
-  record why each was rejected. A previously-recorded exception is **not** a
-  permanent licence: re-evaluate it every time the file grows or a feature lands.
-- **Earlier architectural decisions are always revisable.** As the app grows, a
-  component/composable boundary that was once reasonable (including an SFC that
-  was previously a "justified" large file) may no longer be the cleanest. Treat
-  the existing structure as provisional: when a file crosses the ceiling,
-  actively reconsider whether the original decomposition still holds and
-  re-split by UI region / responsibility rather than defending the status quo.
-  Re-drawing component and composable boundaries is expected, normal iterative
-  work, not a special event — prefer it over declaring an exception.
-- **A split must still genuinely improve maintainability**, not just move lines.
-  A contrived extraction — a composable needing a large cross-cutting
-  "dependency bag", or fragmenting one coherent unit of reactive orchestration
-  into arbitrary part1/part2 files — is not progress. This is a quality bar for
-  *how* you split, not an excuse to skip splitting: first find the real seams
-  (distinct UI regions, isolatable reactive logic), and only fall back to a
-  recorded exception once those are genuinely exhausted.
-- When an SFC is over budget, extract child components for distinct UI regions
-  and move logic into `useXxx` composables, keeping `<template>` thin. Preserve
-  emitted events, props, and watcher timing exactly — extraction must not change
-  behaviour; keep `pnpm typecheck` / `lint` / `test` green at each step.
-- Use `<script setup>` syntax for brevity and performance
-- Validate props with TypeScript; use runtime checks only when necessary
-- Favor slots and scoped slots for flexible composition
+Follow **ADR 0016** (`docs/adr/0016-maintainability-file-size.md`) for the
+maintainability gate. Vue specifics:
+
+- Soft ceiling **~250 lines** per SFC; ~800 is a hard trigger. When over budget,
+  extract child components for distinct UI regions and lift logic into `useXxx`
+  composables, keeping `<template>` thin — preserve emitted events, props, and
+  watcher timing exactly (no behaviour change; keep `pnpm typecheck` / `lint` /
+  `test` green).
+- Each domain (timeline, clip editor, library, transport, …) in its own
+  component / composable / store; keep presentation ↔ store ↔ preload ↔ main
+  boundaries clean and cross-domain coupling explicit.
+- Use `<script setup>`; PascalCase component names, kebab-case file names.
+- Validate props with TypeScript; use runtime checks only when necessary.
+- Favour slots and scoped slots for flexible composition.
 
 ### State Management
 
@@ -172,12 +123,11 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 
 ### Testing
 
-- Write unit tests with Vue Test Utils and Vitest
-- Focus on behavior, not implementation details
-- Use `mount` and `shallowMount` for component isolation
-- Mock global plugins (router, Pinia) as needed
-- Add end-to-end tests with Cypress or Playwright
-- Test accessibility using axe-core integration
+Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
+
+- Vue Test Utils + Vitest; test behaviour, not implementation detail.
+- `mount` / `shallowMount` for component isolation; mock router / Pinia as needed.
+- Playwright for e2e (planned); test accessibility with axe-core.
 
 ### Security
 

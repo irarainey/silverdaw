@@ -12,7 +12,9 @@ on:
 - Stem separation and harmonic matching
 - Fast import-to-arrangement pipeline
 
-**Explicitly deprioritised:** notation, live DJ performance.
+**Explicitly out of scope (permanently):** macOS/Linux or any cross-platform
+port, and any hosted/web version — Silverdaw is a Windows desktop application
+only. Also deprioritised: notation and live DJ performance.
 
 ---
 
@@ -61,7 +63,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Language        | C++17                       | Performance, JUCE compatibility                                 |
 | Framework       | JUCE (headless)             | Audio I/O, plugin hosting, project state — UI subsystems unused |
 | Communication   | IXWebSocket loopback server | Low-latency local IPC                                           |
-| Target platform | Windows (x64)               | Initial focus; JUCE enables macOS port later                    |
+| Target platform | Windows (x64) only          | Permanent scope — Windows desktop only; no macOS/Linux port, no hosted/web version |
 
 ### Backend External Libraries
 
@@ -74,7 +76,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Time-stretch / pitch shift   | Rubber Band Library                   | Implemented for real-time per-clip warp / pitch-shift playback.                                                                                               |
 | Stem separation              | RoFormer quality models (default) + htdemucs-ft backup, via ONNX Runtime | Implemented; see Section 6. Primary engine is the MIT RoFormer quality models (Mel-Band RoFormer vocals + 4-stem BS-RoFormer drums/bass), used automatically once downloaded; htdemucs-ft is the backup, fetched on demand and used per stem when a pack is absent. CPU by default, optional DirectML GPU (auto CPU fallback). Weights downloaded on demand. Fast/Balanced/Best drives overlap on both engines. |
 | Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional, model-aware post-separation vocal cleanup: htdemucs vocals get a cross-stem STFT Wiener de-bleed + RNNoise broadband denoise (BSD-2-Clause) + sub-bass high-pass/expander; the high-SDR RoFormer vocal skips the de-bleed and runs gentler denoise/expander. RNNoise is fetched and statically linked via CMake `FetchContent`. |
-| Decoding unsupported formats | Renderer Web Audio + temp WAV today; ffmpeg later | Web Audio covers many unsupported-by-JUCE formats today. ffmpeg is a later compatibility / robustness upgrade, not a core workflow blocker. |
+| Decoding unsupported formats | Renderer Web Audio + temp WAV | Web Audio covers many formats JUCE can't decode natively; the decoded WAV is cached for the backend to load. |
 
 > **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
 
@@ -491,7 +493,7 @@ The warp engine is implemented as per-clip Rubber Band processors managed by
 the backend and driven from the shared master transport clock.
 
 - **Modes:** rhythmic (drums/percussion), tonal (melodic material), complex (mixed)
-- **Real-time mode** for playback; offline render remains future work for export and stem processing
+- **Real-time mode** for playback; the same non-destructive warp is applied offline during mixdown export
 - Pitch and tempo adjusted independently, non-destructively (per-clip semitone + cents)
 - Warp settings stored in `ValueTree`; never baked into audio files
 - Auto-warp can match newly dropped/imported clips to the current project BPM,
@@ -1214,10 +1216,8 @@ min/max scan is scaled in place — so it stays cheap at zoomed-out views
 with many clips. The editable envelope line and breakpoint handles live
 only in the **Clip Editor**, drawn over its waveform.
 
-**Now shipped as track effect automation (§7.11.1):** timeline-absolute curves
-for Pan, Tone, send levels, Compressor, Filter, and a post-FX Gain are
-available as track lanes (distinct from the clip-relative Volume Shape above).
-Plugin parameter envelopes remain deferred to Phase 8.
+Track-wide parameter automation (Pan, Tone, sends, Compressor, Filter, Gain) is a
+separate feature — see **§7.11.1**, distinct from this clip-relative Volume Shape.
 
 ### 7.11.1 Track Effect Automation
 
@@ -1461,13 +1461,9 @@ project transport.
 
 ### 7.15 Audio Format Support
 - JUCE-native formats (WAV / AIFF / FLAC + MP3/WMA on Windows) decode directly on the backend.
-- Unsupported formats that Web Audio can decode currently route through the
-  renderer's Web Audio + temp-WAV detour.
-- Later ffmpeg support can move unsupported-format decoding out of the
-  renderer and improve codec coverage, producing a WAV in the transcode cache
-  that the backend can load. It is deferred until after core DAW workflows
-  because the current Web Audio + temp-WAV path already serves playback when
-  Web Audio can decode the file.
+- Unsupported formats that Web Audio can decode route through the renderer's
+  Web Audio + temp-WAV detour, producing a WAV in the cache that the backend
+  loads.
 
 ### 7.16 DJ Performance Effects (turntable brake + backspin)
 Emulates a vinyl record-stop as a **non-destructive per-clip** on/off effect. At
@@ -2200,7 +2196,7 @@ playable at every point — no broken-build day):
   side routes through `silverdaw::log::warn` / `info` / `error`
   rather than raw `std::cerr` / `std::cout` (except for the
   log-init failure path and the JUCE entry banner).
-- [x] Windows release packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association — a signed MSIX/AppX sideload package, a portable zip, and an unsigned Microsoft Store package, all produced by `scripts/Build-Release.ps1`. The backend statically links the MSVC runtime, so the package does not need to bootstrap the Visual C++ Redistributable. ONNX Runtime + DirectML DLLs are bundled; the stem-separation model weights (htdemucs backup + RoFormer quality packs) are kept out of the package and downloaded on demand / located from an existing copy. ffmpeg bundling remains tied to its future feature work.
+- [x] Windows release packaging for the Electron app + `SilverdawBackend.exe` + icons + licences + `.silverdaw` file association — a signed MSIX/AppX sideload package, a portable zip, and an unsigned Microsoft Store package, all produced by `scripts/Build-Release.ps1`. The backend statically links the MSVC runtime, so the package does not need to bootstrap the Visual C++ Redistributable. ONNX Runtime + DirectML DLLs are bundled; the stem-separation model weights (htdemucs backup + RoFormer quality packs) are kept out of the package and downloaded on demand / located from an existing copy.
 
 ### Phase 8 — Post-Core Hardening & Compatibility Enhancements
 
@@ -2208,10 +2204,6 @@ playable at every point — no broken-build day):
 reduce memory pressure, and add release-process hardening that improves
 robustness without changing the core editing model.
 
-- [ ] ffmpeg-based decoder for unsupported formats (AAC / M4A / Opus / …),
-  replacing the Web Audio + temp-WAV detour where useful. This should reduce
-  renderer memory pressure and make decoding more consistent across Windows
-  machines.
 - [ ] Renderer memory investigation: eliminate avoidable in-memory PCM
   retention per import and decide whether the backend's read-ahead buffer
   needs a bounded shared cache for many-track projects.
@@ -2237,14 +2229,10 @@ robustness without changing the core editing model.
 - [ ] Sidechain routing and advanced send/return refinements beyond the
   first mixer/effects pass.
 - [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
-- [ ] DirectML GPU acceleration for stem separation after the CPU 4-stem
-  path is stable.
 - [ ] Harmonic compatibility indicators between clips, beyond basic key
   display and manual pitch controls.
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
-- [ ] CI coverage gates and expanded Electron e2e smoke tests once the feature
-  surface stabilises. (issue #17)
 
 ### Cross-cutting workstreams (run continuously, not phase-gated)
 
@@ -2268,13 +2256,6 @@ robustness without changing the core editing model.
   mixdown-parity subsystems
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
-  Electron e2e tests and an enforced coverage floor remain planned hardening
-  work.
-- **CI:** planned GitHub Actions matrix — Windows MSVC and Linux Clang legs
-  running, per push: backend `cmake --build`, `clang-tidy`, `ctest` (the
-  custom `SilverdawBackendTests` harness); frontend `pnpm install`,
-  `pnpm typecheck`, `pnpm lint`, `pnpm test`; Playwright smoke on Windows.
-  Cache the JUCE / IXWebSocket FetchContent dirs and pnpm store.
 - **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to a discoverable diagnostics folder (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`; dev builds: `<userData>/diagnostics`) on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
 - **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
 
@@ -2289,11 +2270,10 @@ robustness without changing the core editing model.
 | Large bridge payloads stalling the I/O loop | The bridge is text-only. Bulk data uses disk caches plus small `*_READY` envelopes so IXWebSocket I/O threads never stream audio / peak payloads. |
 | PixiJS performance with many clips          | Pool and recycle display objects; only render clips in the visible viewport                                                                       |
 | Demucs model download UX                    | Stem features visibly disabled until model is present; clear download progress UI                                                                 |
-| Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction / ffmpeg work to post-core hardening      |
+| Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction to post-core hardening      |
 | Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
 | VST3 plugin crashes                         | Sandbox plugins via JUCE `AudioPluginHost` separate process                                                                                       |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
-| ffmpeg licensing / binary distribution      | Deferred to Phase 8; prefer a child-process LGPL build if/when wider codec support becomes necessary                                             |
 | Project file forward/backward compat        | Versioned JSON with a schema-version field; backend reads any older version, writes the latest                                                    |
 | Unresolved file references on load          | Backend marks affected clips `unresolved` (silent playback, greyed UI); user can re-link via a per-clip "Locate file" action                      |
 | Per-clip envelope on the audio thread       | Breakpoint list double-buffered; the audio thread reads via a single atomic pointer swapped at edit time; no allocation in the hot path           |
@@ -2313,17 +2293,6 @@ robustness without changing the core editing model.
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
 - **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to a discoverable diagnostics folder (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`; dev: `<userData>/diagnostics`) on every launch regardless of that flag, so a failed startup can still be diagnosed.
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
-
-## 11. Open Decisions
-
-- **Demucs download host** — GitHub Releases or CDN; checksum verification on download required
-- **Key detection depth** — current Web Audio chroma matching gives root + mode; Camelot wheel support can be layered on later if needed
-- **Undo scope** — whether undo covers UI-only state (zoom, selection) or backend audio state only
-- **Project file compatibility** — versioned JSON is the chosen format; decide how
-  much backward-migration logic is needed as schemas evolve.
-- **ffmpeg integration** — link `libavformat`/`libavcodec` into the backend vs spawn `ffmpeg.exe` as a child process at import time; child-process is simpler to license / sandbox, in-process is faster for batch imports
-- **Library scope** — is the library always project-scoped (current direction in §7.13) or also user-scoped (a "global samples" library shared across projects)? Project-scoped is simpler; user-scoped is friendlier for power users
-- **Volume envelope on warped clips** — envelopes are time-based, warp changes the time mapping. Decide whether the envelope is anchored in clip-source time (moves with warp) or timeline time (stays put)
 
 ---
 
@@ -2596,12 +2565,12 @@ sequencing into the phase plan is still to be decided.
 These are expected to land around MVP stage, not before — low priority relative
 to the application itself.
 
-- [ ] **Windows Store distribution** (issue #30) — submit the app to the
+- [x] **Windows Store distribution** (issue #30) — submit the app to the
   Microsoft Store for one-click install, alongside the signed sideload package
-  and portable zip. (Store-identity packaging already builds via
-  `pnpm dist:store`; submission to Partner Center is still pending.)
-- [ ] **Product website** (issue #39) — a public marketing/landing site for the
+  and portable zip. (Store-identity packaging builds via `pnpm dist:store`, and
+  the app is submitted to the Microsoft Store.)
+- [x] **Product website** (issue #39) — a public marketing/landing site for the
   application.
-- [ ] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
+- [x] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
   Markdown files in `docs/`, presented as a simple, easy-to-follow user guide for
   the application.
