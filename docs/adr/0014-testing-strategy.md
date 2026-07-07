@@ -9,8 +9,10 @@
   persistence, bridge-relevant state, timing/warp-ratio math, cache behaviour,
   and every bug fix. Test pure math and state transitions directly; use smoke
   tests for third-party DSP integration where full audio assertions would be
-  brittle. Run:
-  `ctest --test-dir backend/build --build-config Debug --output-on-failure`.
+  brittle. Build with `-DSILVERDAW_BUILD_TESTS=ON`, build the
+  `SilverdawBackendTests` target, then run:
+  `ctest --test-dir backend/build --build-config Debug --output-on-failure`
+  (in an MSVC Developer environment — e.g. via `scripts/Invoke-DevShell.ps1`).
 - **Frontend:** **Vitest** (+ Vue Test Utils for components); Playwright for
   Electron e2e is planned. Test behaviour, not implementation detail. Avoid
   brittle timing assertions — use fake timers or injected clocks. Run targeted
@@ -25,6 +27,16 @@ and a POST_BUILD step generates one `add_test` per case (see
 `backend/cmake/SilverdawDiscoverTests.cmake`). So individual cases show up in
 `ctest` output and the VS Code Testing panel, not just one aggregate row. Keep
 test-case names ASCII so they survive the discovery round-trip.
+
+## Coverage
+
+Both sides can emit coverage reports. Frontend: `pnpm test:coverage` (Vitest v8
+→ `frontend/coverage/`). Backend: `-DSILVERDAW_ENABLE_COVERAGE=ON` adds a
+`SilverdawBackendCoverage` target — llvm-cov/gcovr on Clang/GNU, or
+**OpenCppCoverage** over the Debug binary on MSVC (HTML + `cobertura.xml` under
+`backend/build-coverage/`). `scripts/Coverage.ps1` runs either or both and
+collects the viewable HTML reports into one gitignored `coverage/` folder
+(`coverage/frontend/`, `coverage/backend/`, `coverage/index.html`).
 
 ## Why
 

@@ -2512,11 +2512,21 @@ pnpm dist:dir    # win-unpacked only, no packaging
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
     "ctest --test-dir backend/build --output-on-failure"
   ```
-  Backend coverage is available for Clang / GNU builds with
-  `-DSILVERDAW_ENABLE_COVERAGE=ON`. It adds a `SilverdawBackendCoverage`
-  target that runs the backend unit tests and writes reports under the
-  build directory's `coverage/` folder. MSVC builds still run the tests,
-  but do not provide native coverage reports through this CMake target.
+  Backend coverage is available with `-DSILVERDAW_ENABLE_COVERAGE=ON`, which
+  adds a `SilverdawBackendCoverage` target that runs the backend unit tests and
+  writes reports under `backend/build-coverage/` (a dedicated, non-hidden
+  folder). Clang / GNU
+  builds use source-based instrumentation (llvm-cov / gcovr); **MSVC** builds
+  use [OpenCppCoverage](https://github.com/OpenCppCoverage/OpenCppCoverage)
+  over the Debug binary (`winget install OpenCppCoverage.OpenCppCoverage`),
+  producing an HTML report plus `cobertura.xml`. OpenCppCoverage attaches as a
+  debugger, so a Debug JUCE build ends on a benign breakpoint stop code even
+  though every test passes and the report is written — that code is expected.
+  `scripts/Coverage.ps1` runs frontend and/or backend coverage in one step
+  (`./scripts/Coverage.ps1 -Target All | Frontend | Backend`) and collects both
+  viewable HTML reports into a single gitignored root folder —
+  `coverage/frontend/`, `coverage/backend/`, and a `coverage/index.html` landing
+  page linking both.
 - **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json`
   for the renderer/shared sources and tests, then `tsc --noEmit -p tsconfig.node.json`
   for the Electron main/preload sources and the main-process tests),

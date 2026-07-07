@@ -542,9 +542,13 @@ if(SILVERDAW_ENABLE_COVERAGE)
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(silverdaw_backend_core PRIVATE
             -O0 -g --coverage)
+    elseif(MSVC)
+        # MSVC coverage is produced at runtime by OpenCppCoverage (see the
+        # SilverdawBackendCoverage target below), which reads the Debug PDBs.
+        # No source instrumentation flags are needed here.
     else()
         message(FATAL_ERROR
-            "Backend coverage requires a Clang or GNU compiler. "
+            "Backend coverage requires Clang, GNU, or MSVC (OpenCppCoverage). "
             "The current compiler is ${CMAKE_CXX_COMPILER_ID}.")
     endif()
 endif()
@@ -716,7 +720,9 @@ tests/MixdownRenderTests.cpp
     endif()
 
     if(SILVERDAW_ENABLE_COVERAGE)
-        set(SILVERDAW_BACKEND_COVERAGE_DIR ${CMAKE_BINARY_DIR}/coverage)
+        # Write reports to a dedicated, non-hidden folder (backend/build-coverage)
+        # rather than inside backend/build, which the VS Code Explorer hides.
+        set(SILVERDAW_BACKEND_COVERAGE_DIR ${CMAKE_SOURCE_DIR}/build-coverage)
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             target_compile_options(SilverdawBackendTests PRIVATE
                 -O0 -g -fprofile-instr-generate -fcoverage-mapping)
@@ -770,6 +776,28 @@ tests/MixdownRenderTests.cpp
                     COMMENT "Running backend tests with gcovr coverage")
             else()
                 message(WARNING "gcovr is required for SilverdawBackendCoverage")
+            endif()
+        elseif(MSVC)
+            # MSVC has no built-in source coverage. Use OpenCppCoverage over the
+            # already-built Debug binary (needs PDBs) — a runtime tool, so no
+            # instrumentation flags are added; the target just runs it.
+            find_program(OPENCPPCOVERAGE_EXE OpenCppCoverage
+                HINTS "$ENV{ProgramFiles}/OpenCppCoverage"
+                      "$ENV{ProgramFiles\(x86\)}/OpenCppCoverage")
+            if(OPENCPPCOVERAGE_EXE)
+                add_custom_target(SilverdawBackendCoverage
+                    COMMAND ${CMAKE_COMMAND}
+                        -D "OPENCPPCOVERAGE=${OPENCPPCOVERAGE_EXE}"
+                        -D "TEST_EXECUTABLE=$<TARGET_FILE:SilverdawBackendTests>"
+                        -D "SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src"
+                        -D "OUTPUT_DIR=${SILVERDAW_BACKEND_COVERAGE_DIR}"
+                        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SilverdawRunCoverage.cmake"
+                    DEPENDS SilverdawBackendTests
+                    USES_TERMINAL
+                    COMMENT "Running backend tests with OpenCppCoverage")
+            else()
+                message(WARNING "OpenCppCoverage is required for SilverdawBackendCoverage on MSVC "
+                    "(winget install OpenCppCoverage.OpenCppCoverage)")
             endif()
         endif()
     endif()

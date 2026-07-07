@@ -38,21 +38,6 @@ here; read it and work from it.
 correctness → **maintainability / best practice** → security → performance →
 micro-optimisation. Maintainability is a first-class, blocking-class gate.
 
-## Maintainability
-
-A first-class, blocking-class gate. The full policy — single-responsibility /
-domain separation, no duplication, the authoring-time "Before you add code" gate,
-per-file-type ceilings, the ~800-line hard trigger, and the real-time-path
-exception — is **ADR 0016** (`docs/adr/0016-maintainability-file-size.md`).
-Follow it; the path-specific files carry only their language's ceiling.
-
-## Testing
-
-Backend uses a custom `SilverdawBackendTests` harness (CTest, no
-Catch2/GoogleTest); frontend uses Vitest. See **ADR 0014**
-(`docs/adr/0014-testing-strategy.md`) for what to test and how to run it. Match
-the existing harness/framework — never introduce a new one.
-
 ## Language standards
 
 Path-specific instruction files under `.github/instructions/` (auto-applied by

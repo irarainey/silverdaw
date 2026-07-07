@@ -55,9 +55,6 @@ for the current feature set and roadmap.
 - `IMPORTANT` — **Beginner-first simplicity is the product tie-breaker;** the
   renderer follows a single dark, small-palette design system. See ADR 0011,
   ADR 0012 (detailed tokens in `.github/instructions/ui-ux-styling…`).
-- `IMPORTANT` — **Maintainability is a first-class gate.** Small, single-purpose
-  files; no duplication; names carry intent; the authoring-time "extract before
-  you grow" rule and per-file-type ceilings. See ADR 0016.
 - `IMPORTANT` — **Audio playback performance is always first-class.** JUCE-level
   optimisation on the audio path is expected, balanced against maintainable code.
   See ADR 0017 (firm figures in `docs/developer-guide.md#rendering-performance`).
@@ -73,6 +70,41 @@ for the current feature set and roadmap.
 - **Warp** — non-destructive per-clip time-stretch/pitch mapping (Rubber Band).
 - **Peaks** — waveform min/max summary, disk-cached, delivered via `*_READY`.
 - **Mixdown** — offline render through the same canonical chain as playback.
+
+## Maintainability
+
+A first-class, **blocking-class** gate — not a style nit. One coherent unit of
+thought per file; no duplication (logic, dispatch branches, payload shapes, magic
+constants); one reason to change per module; names carry intent; comment the
+*why*, not the *what*. The full policy — domain separation, the authoring-time
+"Before you add code" gate, per-file-type ceilings, the ~800-line hard trigger,
+and the real-time-path exception — is ADR 0016
+(`docs/adr/0016-maintainability-file-size.md`); the path-specific files under
+`.github/instructions/` carry only their language's ceiling.
+
+## Testing & coverage
+
+Match the existing harness/framework — never introduce a new one. Rationale and
+detail: ADR 0014 (`docs/adr/0014-testing-strategy.md`).
+
+- **Backend** — a custom `SilverdawBackendTests` harness wired into **CTest** (no
+  Catch2/GoogleTest). Configure with `-DSILVERDAW_BUILD_TESTS=ON`, build the
+  `SilverdawBackendTests` target, then run in an MSVC Developer environment
+  (e.g. via `scripts/Invoke-DevShell.ps1`):
+  `ctest --test-dir backend/build --build-config Debug --output-on-failure`.
+  Each case is a separate CTest test (discovered at build time via the harness's
+  `--list` / `--run` flags), so cases show individually in `ctest` and the VS
+  Code Testing panel. Keep test-case names ASCII.
+- **Frontend** — **Vitest** (`pnpm test`; `pnpm test:watch`), Vue Test Utils for
+  components; Playwright e2e planned.
+- **Coverage** — `scripts/Coverage.ps1 [-Target All|Frontend|Backend]` runs
+  either/both and collects the HTML reports into a single gitignored root
+  `coverage/` folder (`coverage/index.html` links both). Frontend uses Vitest v8
+  (`pnpm test:coverage`); backend uses **OpenCppCoverage** over the Debug binary
+  on MSVC via the `SilverdawBackendCoverage` target
+  (`-DSILVERDAW_ENABLE_COVERAGE=ON`; `winget install
+  OpenCppCoverage.OpenCppCoverage`). OpenCppCoverage ends on a benign breakpoint
+  stop code on Debug JUCE builds — expected; the report is still written.
 
 ## Load on demand
 
