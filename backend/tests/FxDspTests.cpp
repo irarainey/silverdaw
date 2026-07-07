@@ -113,7 +113,7 @@ void testToneEqLowCutDirectionAndShelfRange()
     const double halfCutLow = toneGainRatio(0.0F, 0.0F, 0.0F, 0.5F, 200.0);
     require(halfCutLow > cutLow, "A weaker filter must attenuate the band less than a stronger one");
 
-    // Shelves / peak must deliver real range at the full ±15 dB. +15 dB ≈
+    // Shelves / peak must deliver real range at the full +/-15 dB. +15 dB ≈
     // 5.6× linear; assert clearly above unity. The clamp must also hold:
     // an over-range request resolves to the same gain as the +15 dB limit.
     const double bassMax = toneGainRatio(15.0F, 0.0F, 0.0F, 0.0F, 40.0);
@@ -748,7 +748,7 @@ void testLevelerSnapAppliesOnFirstBlock()
 
 void addFxDspTests(std::vector<TestCase>& tests)
 {
-    tests.push_back({"ToneEq low-cut is a high-pass and shelves have �15 dB range", testToneEqLowCutDirectionAndShelfRange});
+    tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});

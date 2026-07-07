@@ -5,16 +5,19 @@
 #include "TestRegistry.h"
 
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include <juce_events/juce_events.h>
 
-int main()
+namespace
 {
-    juce::ScopedJuceInitialiser_GUI juceInit;
+using namespace silverdaw::tests;
 
-    using namespace silverdaw::tests;
-
+// Assemble the full registry. Building it is cheap (each entry is just a name +
+// lambda); running JUCE / audio code only happens when a test's fn() is called.
+std::vector<TestCase> buildRegistry()
+{
     std::vector<TestCase> tests;
     addProjectStateTests(tests);
     addProjectStateFxTests(tests);
@@ -37,12 +40,55 @@ int main()
     addMelRoformerSpectralTests(tests);
     addBsRoformerSpectralTests(tests);
     addLibraryCleanupTests(tests);
+    return tests;
+}
+} // namespace
 
+// Usage:
+//   SilverdawBackendTests             run every test (default; used by the dev script)
+//   SilverdawBackendTests --list      print one test name per line and exit (test discovery)
+//   SilverdawBackendTests --run NAME  run only the test whose name exactly matches NAME
+int main(int argc, char** argv)
+{
+    using namespace silverdaw::tests;
+
+    const auto tests = buildRegistry();
     require(tests.size() == 176, "backend test registry should contain 176 tests");
 
+    bool listOnly = false;
+    std::string runOnly;
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg = argv[i];
+        if (arg == "--list")
+            listOnly = true;
+        else if (arg == "--run" && i + 1 < argc)
+            runOnly = argv[++i];
+        else
+        {
+            std::cerr << "unknown argument: " << arg << '\n';
+            return 2;
+        }
+    }
+
+    // Discovery: list names without initialising JUCE or running any test.
+    if (listOnly)
+    {
+        for (const auto& test : tests)
+            std::cout << test.name << '\n';
+        return 0;
+    }
+
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
     int failed = 0;
+    int ran = 0;
     for (const auto& test : tests)
     {
+        if (!runOnly.empty() && runOnly != test.name)
+            continue;
+
+        ++ran;
         try
         {
             test.fn();
@@ -55,12 +101,18 @@ int main()
         }
     }
 
+    if (!runOnly.empty() && ran == 0)
+    {
+        std::cerr << "no test named '" << runOnly << "'\n";
+        return 2;
+    }
+
     if (failed > 0)
     {
         std::cerr << failed << " backend test(s) failed\n";
         return 1;
     }
 
-    std::cout << tests.size() << " backend test(s) passed\n";
+    std::cout << ran << " backend test(s) passed\n";
     return 0;
 }

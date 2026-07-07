@@ -17,6 +17,15 @@
   specs for fast feedback.
 - **Match the existing harness/framework — never introduce a new one.**
 
+## Test discovery
+
+Each backend case is registered as its own CTest test, discovered at build time:
+the harness supports `--list` (print case names) and `--run "<name>"` (run one),
+and a POST_BUILD step generates one `add_test` per case (see
+`backend/cmake/SilverdawDiscoverTests.cmake`). So individual cases show up in
+`ctest` output and the VS Code Testing panel, not just one aggregate row. Keep
+test-case names ASCII so they survive the discovery round-trip.
+
 ## Why
 
 - The engine's testing needs are small and self-contained; a bespoke harness

@@ -774,5 +774,27 @@ tests/MixdownRenderTests.cpp
         endif()
     endif()
 
-    add_test(NAME SilverdawBackendTests COMMAND SilverdawBackendTests)
+    # Register each backend test case as its own CTest test so it shows up
+    # individually (VS Code Testing panel, `ctest` output) rather than as one
+    # aggregate run. A POST_BUILD step runs the harness with `--list` and
+    # regenerates the include file; CTest reads it via TEST_INCLUDE_FILES.
+    set(_silverdaw_tests_include "${CMAKE_CURRENT_BINARY_DIR}/SilverdawBackendTests_tests.cmake")
+
+    add_custom_command(TARGET SilverdawBackendTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -D "TEST_EXECUTABLE=$<TARGET_FILE:SilverdawBackendTests>"
+            -D "CTEST_FILE=${_silverdaw_tests_include}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SilverdawDiscoverTests.cmake"
+        BYPRODUCTS "${_silverdaw_tests_include}"
+        COMMENT "Discovering backend test cases for CTest"
+        VERBATIM)
+
+    # Ensure the include file exists at configure time so CTest doesn't error on
+    # a clean build dir before the first build has generated the real list.
+    if(NOT EXISTS "${_silverdaw_tests_include}")
+        file(WRITE "${_silverdaw_tests_include}"
+            "# Regenerated at build time by SilverdawDiscoverTests.cmake\n")
+    endif()
+
+    set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES "${_silverdaw_tests_include}")
 endif()
