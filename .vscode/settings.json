@@ -63,6 +63,17 @@
   "cmake.configureOnOpen": false,
   "cmake.preferredGenerators": ["Ninja", "Visual Studio 17 2022"],
   "cmake.useCMakePresets": "auto",
+  "cmake.ctest.testExplorerIntegrationEnabled": true,
+  // The Testing panel runs the already-built SilverdawBackendTests via CTest
+  // without CMake Tools rebuilding first — its preset-mode build environment
+  // doesn't match the 2022 Build Tools compiler baked into the cache, so a
+  // pre-run build fails. Rebuild the backend via the dev script / CLI, then
+  // re-run tests here. useVsDeveloperEnvironment lets CMake Tools source the
+  // correct MSVC env if you later re-enable build-before-run.
+  "cmake.buildBeforeRun": false,
+  "cmake.useVsDeveloperEnvironment": "auto",
+  // keeps tests enabled whenever CMake Tools configures (no presets exist):
+  "cmake.configureSettings": { "SILVERDAW_BUILD_TESTS": "ON" },
   // IntelliSense is provided by clangd; cpptools is kept for the debugger only.
   "C_Cpp.intelliSenseEngine": "disabled",
   "C_Cpp.autocomplete": "disabled",
