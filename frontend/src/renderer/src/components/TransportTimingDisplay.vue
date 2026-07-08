@@ -4,7 +4,7 @@ const bpmInput = defineModel<string>('bpmInput', { required: true })
 const isEditingLength = defineModel<boolean>('isEditingLength', { required: true })
 const isEditingBpm = defineModel<boolean>('isEditingBpm', { required: true })
 
-defineProps<{
+const props = defineProps<{
   positionDisplay: string
   barPosition: string
   timingEditable: boolean
@@ -23,6 +23,19 @@ const emit = defineEmits<{
   bumpBpm: [delta: number]
   toggleMetronome: []
 }>()
+
+/** BPM step for a modifier state: whole integer by default, fine 0.01 with Alt
+ *  (the app's fine-adjust modifier). */
+function bpmStep(e: { altKey: boolean }): number {
+  return e.altKey ? 0.01 : 1
+}
+
+function onBpmWheel(e: WheelEvent): void {
+  if (!props.timingEditable) return
+  e.preventDefault()
+  const direction = e.deltaY < 0 ? 1 : -1
+  emit('bumpBpm', direction * bpmStep(e))
+}
 </script>
 
 <template>
@@ -123,7 +136,7 @@ const emit = defineEmits<{
             step="0.01"
             spellcheck="false"
             :disabled="!timingEditable"
-            :title="projectBpmPending ? 'Detecting tempo for the first clip…' : timingEditable ? 'Tempo (20 – 300 BPM). Use ↑/↓ or the spinner to adjust by 1; hold Shift for 10.' : 'Add a track to edit project tempo'"
+            :title="projectBpmPending ? 'Detecting tempo for the first clip…' : timingEditable ? 'Tempo (20 – 300 BPM). Scroll or use ↑/↓ / the spinner to adjust by 1; hold Alt for 0.01.' : 'Add a track to edit project tempo'"
             :class="[
               'w-[6ch] rounded bg-transparent font-mono text-base tabular-nums outline-none focus:text-blue-300 disabled:cursor-not-allowed disabled:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
               projectBpmPending
@@ -133,6 +146,7 @@ const emit = defineEmits<{
             @focus="isEditingBpm = true"
             @blur="emit('bpmCommit')"
             @keydown="emit('bpmKeydown', $event)"
+            @wheel="onBpmWheel"
           >
           <div class="ml-1 flex flex-col text-zinc-500">
             <button
@@ -140,10 +154,10 @@ const emit = defineEmits<{
               data-borderless-button="true"
               tabindex="-1"
               :disabled="!timingEditable"
-              title="Increase BPM (Shift: +10)"
+              title="Increase BPM (Alt: +0.01)"
               class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
               @mousedown.prevent
-              @click="(e) => emit('bumpBpm', e.shiftKey ? 10 : 1)"
+              @click="(e) => emit('bumpBpm', bpmStep(e))"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -159,10 +173,10 @@ const emit = defineEmits<{
               data-borderless-button="true"
               tabindex="-1"
               :disabled="!timingEditable"
-              title="Decrease BPM (Shift: -10)"
+              title="Decrease BPM (Alt: -0.01)"
               class="flex h-3 w-3 items-center justify-center leading-none hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
               @mousedown.prevent
-              @click="(e) => emit('bumpBpm', e.shiftKey ? -10 : -1)"
+              @click="(e) => emit('bumpBpm', -bpmStep(e))"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
