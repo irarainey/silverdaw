@@ -8,13 +8,14 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
   SCROLLBAR_WIDTH
 } from './constants'
-import { trackIndexAtWorldY } from './trackLayout'
+import { trackIndexAtWorldY, tracksContentHeight } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
 
@@ -24,6 +25,9 @@ export interface DropPreview {
   durationMs: number
   /** False if the drop would overlap an existing clip on the same track. */
   valid: boolean
+  /** True when the pointer is in the empty area below the tracks: dropping here
+   *  creates a new track for the clip. `trackIndex` is -1 in this mode. */
+  createNewTrack?: boolean
 }
 
 export interface DropZone {
@@ -69,12 +73,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     return liveId ? library.getItem(liveId) : null
   }
 
-  /** Map a pointer to a valid track and beat-aware snapped start time. */
-  function pointerToTrackDrop(
-    clientX: number,
-    clientY: number,
-    item: LibraryItem
-  ): { trackIndex: number; startMs: number } | null {
+  /** Map a pointer to either a valid track drop or, when it is in the empty area below the
+   *  tracks (or the project has no tracks), a new-track drop. Returns null when the pointer
+   *  is outside the droppable content area or in an inter-row gap. `startMs` is beat-aware
+   *  snapped for both. */
+  type ResolvedDrop =
+    | { createNewTrack: false; trackIndex: number; startMs: number }
+    | { createNewTrack: true; startMs: number }
+
+  function resolveDrop(clientX: number, clientY: number, item: LibraryItem): ResolvedDrop | null {
     const a = app.value
     if (!host.value || !a) return null
     const rect = host.value.getBoundingClientRect()
@@ -87,11 +94,6 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return null
 
-    const worldY = y + scrollY.value
-    const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
-    if (!hit) return null
-    const trackIndex = hit.index
-
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000
     const snap = geometry.msPerSubBeat()
@@ -100,7 +102,16 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       referenceBeatOffsetMs !== null
         ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
         : Math.max(0, Math.round(rawMs / snap) * snap)
-    return { trackIndex, startMs }
+
+    const worldY = y + scrollY.value
+    const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
+    if (hit) return { createNewTrack: false, trackIndex: hit.index, startMs }
+
+    // No track under the pointer. If it sits below the last row (or the project has no tracks
+    // yet), offer to make a new track; an inter-row gap resolves to nothing.
+    const tracksBottom = RULER_HEIGHT + tracksContentHeight(project.tracks, makeLaneHeightOf())
+    if (worldY >= tracksBottom) return { createNewTrack: true, startMs }
+    return null
   }
 
   function firstSourceBeatOffsetMs(item: LibraryItem): number | null {
@@ -157,7 +168,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     if (!e.dataTransfer) return
 
     const item = resolveDragItem(e)
-    const target = item ? pointerToTrackDrop(e.clientX, e.clientY, item) : null
+    const target = item ? resolveDrop(e.clientX, e.clientY, item) : null
     if (!target || !item) {
       e.dataTransfer.dropEffect = 'none'
       clearPreview()
@@ -188,19 +199,23 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
         ? item.durationMs / previewRatio
         : item.durationMs
 
-    const overlaps = project.wouldClipOverlap(
-      project.tracks[target.trackIndex]!.id,
-      target.startMs,
-      effectiveDurMs
-    )
+    // A new track is always empty, so a new-track drop can never overlap.
+    const overlaps = target.createNewTrack
+      ? false
+      : project.wouldClipOverlap(
+          project.tracks[target.trackIndex]!.id,
+          target.startMs,
+          effectiveDurMs
+        )
     e.dataTransfer.dropEffect = overlaps ? 'none' : 'copy'
 
     // Avoid repainting the Pixi ghost on unchanged dragover events.
     const next: DropPreview = {
-      trackIndex: target.trackIndex,
+      trackIndex: target.createNewTrack ? -1 : target.trackIndex,
       startMs: target.startMs,
       durationMs: effectiveDurMs,
-      valid: !overlaps
+      valid: !overlaps,
+      createNewTrack: target.createNewTrack
     }
     const cur = dropPreview.value
     if (
@@ -208,7 +223,8 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       cur.trackIndex !== next.trackIndex ||
       cur.startMs !== next.startMs ||
       cur.durationMs !== next.durationMs ||
-      cur.valid !== next.valid
+      cur.valid !== next.valid ||
+      (cur.createNewTrack ?? false) !== (next.createNewTrack ?? false)
     ) {
       dropPreview.value = next
       onPreviewChanged()
@@ -237,15 +253,27 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       return
     }
 
-    const target = pointerToTrackDrop(e.clientX, e.clientY, item)
+    const target = resolveDrop(e.clientX, e.clientY, item)
     if (!target) {
+      onPreviewChanged()
+      return
+    }
+
+    const placement = { ...item, fileName: libraryItemDisplayName(item) }
+    if (target.createNewTrack) {
+      // Create the track and place the clip as ONE undo step so Ctrl+Z removes both.
+      runInUndoGroup('Add clip to new track', () => {
+        const trackId = project.addTrack()
+        project.addClipFromLibrary(trackId, placement, target.startMs)
+      })
+      log.info('dropzone', `drop new-track startMs=${target.startMs} item=${item.id}`)
       onPreviewChanged()
       return
     }
 
     project.addClipFromLibrary(
       project.tracks[target.trackIndex]!.id,
-      { ...item, fileName: libraryItemDisplayName(item) },
+      placement,
       target.startMs
     )
     log.info('dropzone', `drop trackIndex=${target.trackIndex} startMs=${target.startMs} item=${item.id}`)
