@@ -25,6 +25,7 @@ interface Harness {
     setClipReversed: ReturnType<typeof vi.fn>
     setClipBrake: ReturnType<typeof vi.fn>
     setClipBackspin: ReturnType<typeof vi.fn>
+    alignClipToBarGrid: ReturnType<typeof vi.fn>
   }
   library: {
     updateLibraryClipEdit: ReturnType<typeof vi.fn>
@@ -39,6 +40,7 @@ interface Harness {
     pushError: ReturnType<typeof vi.fn>
   }
   close: ReturnType<typeof vi.fn>
+  commitGrid: ReturnType<typeof vi.fn>
   state: Record<string, unknown>
 }
 
@@ -64,6 +66,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
   }
   const notifications = { pushInfo: vi.fn(), pushError: vi.fn() }
   const close = vi.fn()
+  const commitGrid = vi.fn()
 
   const state: Record<string, unknown> = {
     editorItem: { id: 'item-1', name: 'Test' },
@@ -109,6 +112,9 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editsTimelineClip: () => state.editsTimelineClip as boolean,
     hasWarpPitchChanged: () => state.hasWarpPitchChanged as boolean,
     gridChanged: () => state.gridChanged as boolean,
+    commitGrid: () => {
+      commitGrid()
+    },
     alignToGridEnabled: () => state.alignToGridEnabled as boolean,
     sourceBpm: () => state.sourceBpm as number | undefined,
     projectBpm: () => state.projectBpm as number,
@@ -131,7 +137,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     ...overrides
   }
 
-  return { deps, project, library, notifications, close, state }
+  return { deps, project, library, notifications, close, commitGrid, state }
 }
 
 describe('useClipEditorSave', () => {
@@ -331,6 +337,29 @@ describe('useClipEditorSave', () => {
     expect(h.project.alignClipToBarGrid).not.toHaveBeenCalled()
   })
 
+  it('commits the beat-grid draft on save (timeline-clip branch)', () => {
+    h.state.editsSingleTimelineClip = true
+    h.state.editsLibraryClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.commitGrid).toHaveBeenCalledTimes(1)
+  })
+
+  it('commits the beat-grid draft on save (linked-clip branch)', () => {
+    h.state.editsLibraryClipLibrary = true
+    h.state.editsTimelineClip = true
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.commitGrid).toHaveBeenCalledTimes(1)
+  })
+
   it('linked-clip save propagates brake / backspin to all linked clips', () => {
     h.state.editsLibraryClipLibrary = true
     h.state.editsTimelineClip = true
@@ -387,6 +416,7 @@ describe('useClipEditorSave', () => {
     useClipEditorSave(h.deps).onSaveAsNew()
 
     expect(h.library.addLibraryClipFromSelection).toHaveBeenCalledWith('item-1', 100, 500)
+    expect(h.commitGrid).toHaveBeenCalledTimes(1)
     expect(h.notifications.pushInfo).toHaveBeenCalled()
     expect(h.close).toHaveBeenCalledTimes(1)
   })

@@ -4,11 +4,12 @@
 // they can set a known BPM and drag the grid onto the beats by hand.
 //
 // The grid renders from the source item's (bpm, beatAnchorSec); this composable
-// just drives those two values through the library store. Sliding updates the
-// anchor locally for a live redraw, then persists once on pointer release.
+// just drives those two values through the library store. Edits are kept local to
+// the editor session (a live redraw with no bridge round-trip) and committed to the
+// backend as a single undoable edit on Save, or discarded on Cancel.
 
 import { ref, watch, type Ref } from 'vue'
-import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
 
 export interface ClipEditorBeatGridDeps {
   /** The source library item backing the clip, or null when unavailable. */
@@ -59,8 +60,20 @@ export interface ClipEditorBeatGrid {
   nudgeHalfBeat: (direction: -1 | 1) => void
   /** Live local anchor update during a drag (seconds). */
   previewAnchorSec: (anchorSec: number) => void
-  /** Persist the final anchor after a drag (seconds). */
+  /** Update the draft anchor after a drag (seconds). Local only — persisted on Save. */
   commitAnchorSec: (anchorSec: number) => void
+  /**
+   * Persist the session's final grid (bpm + anchor) as a single undoable edit.
+   * Call inside the Save undo group. No-op unless the grid was changed and not
+   * already committed, so the whole session lands as one undo step.
+   */
+  commit: () => void
+  /**
+   * Roll the source grid back to how it opened when a session ends without a Save
+   * (Cancel / close). No-op once `commit` has run. Drafts never reach the backend,
+   * so this only restores the local view.
+   */
+  discardIfUncommitted: () => void
   /** Reset per-session grid UI (align mode, edited flag, captured original) for a
    *  freshly opened editor, recapturing the current source tempo as the baseline. */
   reset: () => void
@@ -80,10 +93,16 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // The tempo the source had when the editor opened. Snapshotted once so the user
   // can always see the value they started from and restore it after an override.
   const originalBpm = ref<number | null>(null)
-  // Set once the user pins a BPM or slides the grid; the source change is
-  // persisted immediately, but the Clip Editor still needs a dirty signal so
-  // Save enables and gives the edit explicit closure.
+  // Set once the user pins a BPM or slides the grid; the change stays local to
+  // the editor session and is committed to the backend (as one undoable edit) on
+  // Save. Also drives the Clip Editor's dirty / Save affordance.
   const gridEdited = ref(false)
+  // True after `commit` has persisted the draft, so the close handler doesn't then
+  // roll it back as if the session were cancelled.
+  let gridCommitted = false
+  // The source grid as it looked when the editor opened, so an uncommitted session
+  // (Cancel / close without Save) can restore it exactly.
+  let gridSnapshot: LibraryItemGridSnapshot | null = null
   // True while the user is typing in the tempo field, so external tempo changes
   // (octave, restore, backend echo) don't overwrite what they are entering.
   let tempoEditing = false
@@ -142,7 +161,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const bpm = manualBpmInput.value
     if (item && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM) {
       if (typeof item.bpm !== 'number' || Math.abs(item.bpm - bpm) > 1e-6) {
-        library.setItemManualTempo(item.id, bpm, currentAnchorSec(item))
+        library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec(item))
         gridEdited.value = true
       }
       manualBpmInput.value = Math.round(bpm * 100) / 100
@@ -158,7 +177,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     const orig = originalBpm.value
     if (!item || orig === null || orig < MIN_BPM || orig > MAX_BPM) return
-    library.setItemManualTempo(item.id, orig, currentAnchorSec(item))
+    library.setItemManualTempoLocal(item.id, orig, currentAnchorSec(item))
     manualBpmInput.value = Math.round(orig * 100) / 100
     gridEdited.value = true
   }
@@ -169,7 +188,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     if (!item || !item.bpm || item.bpm <= 0) return
     const next = item.bpm * factor
     if (next < MIN_BPM || next > MAX_BPM) return
-    library.setItemManualTempo(item.id, next, currentAnchorSec(item))
+    library.setItemManualTempoLocal(item.id, next, currentAnchorSec(item))
     manualBpmInput.value = Math.round(next * 100) / 100
     gridEdited.value = true
   }
@@ -185,7 +204,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function nudgeAnchorMs(deltaMs: number): void {
     const item = deps.sourceItem()
     if (!item || !item.bpm || item.bpm <= 0 || !Number.isFinite(deltaMs)) return
-    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item) + deltaMs / 1000)
+    library.setItemManualTempoLocal(item.id, item.bpm, currentAnchorSec(item) + deltaMs / 1000)
     gridEdited.value = true
   }
 
@@ -193,7 +212,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     if (!item || !item.bpm || item.bpm <= 0) return
     const halfBeatSec = 30 / item.bpm
-    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item) + direction * halfBeatSec)
+    library.setItemManualTempoLocal(item.id, item.bpm, currentAnchorSec(item) + direction * halfBeatSec)
     gridEdited.value = true
   }
 
@@ -206,8 +225,25 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function commitAnchorSec(anchorSec: number): void {
     const item = deps.sourceItem()
     if (!item || !item.bpm || item.bpm <= 0) return
-    library.setItemManualTempo(item.id, item.bpm, anchorSec)
+    library.setItemManualTempoLocal(item.id, item.bpm, anchorSec)
     gridEdited.value = true
+  }
+
+  function commit(): void {
+    if (!gridEdited.value || gridCommitted) return
+    const item = deps.sourceItem()
+    if (!item || !item.bpm || item.bpm <= 0) return
+    // The draft already lives in the item's local (bpm, anchor); persist that final
+    // pair as the session's single undoable grid edit.
+    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item))
+    gridCommitted = true
+  }
+
+  function discardIfUncommitted(): void {
+    if (!gridEdited.value || gridCommitted || !gridSnapshot) return
+    const item = deps.sourceItem()
+    if (item) library.restoreItemGridLocal(item.id, gridSnapshot)
+    gridEdited.value = false
   }
 
   function reset(): void {
@@ -215,8 +251,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     // state — without this they persisted into the next clip's editor session.
     alignActive.value = false
     gridEdited.value = false
+    gridCommitted = false
     tempoEditing = false
-    const bpm = deps.sourceItem()?.bpm
+    const item = deps.sourceItem()
+    gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
+    const bpm = item?.bpm
     originalBpm.value = typeof bpm === 'number' && bpm > 0 ? bpm : null
     syncTempoField()
   }
@@ -238,6 +277,8 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     nudgeHalfBeat,
     previewAnchorSec,
     commitAnchorSec,
+    commit,
+    discardIfUncommitted,
     reset
   }
 }

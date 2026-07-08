@@ -1240,10 +1240,14 @@ Transport bar afterwards.
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
 builds a rigid grid across the item's duration on the backend and re-broadcasts
 `LIBRARY_ITEM_ANALYSIS` with `variableTempo` and `lowConfidence` cleared, so the
-item reads as verified music. In the Clip Editor a **slide-the-grid** drag gesture
-shifts `beatAnchorSec` live (local-only preview, committed on release) to correct
-the downbeat phase; the markers track the drag in real time and the commit marks
-the Clip Editor dirty so its **Save** button stays available to confirm and close.
+item reads as verified music. In the Clip Editor the whole grid is edited as a
+**draft**: a slide-the-grid drag, the BPM field, the octave buttons, the nudges and
+the half-beat shift all update the source's local `(bpm, beatAnchorSec)` only — the
+markers and preview metronome track the edit live with no bridge round-trip — and
+mark the Clip Editor dirty. The draft is persisted with a single
+`LIBRARY_ITEM_SET_MANUAL_TEMPO` on **Save** (inside the Save undo group, so the
+grid change and any on-Save re-align fold into one undo step), and rolled back to
+the grid captured on open if the session ends without a Save (Cancel / close).
 Alongside the drag, the beat-grid panel is split into a **Tempo** section — a BPM
 field you type and commit with Enter or by clicking away (no separate Apply
 button), **÷2 / ×2**
@@ -1251,8 +1255,6 @@ octave buttons that halve or double the source BPM while holding the phase ancho
 and, once the tempo has changed, the **Original** value with a **Restore** button —
 and a **Position** section with the slide-to-align toggle, **±5 ms** fine-nudge
 buttons, and a **half-beat** shift for when the grid has locked onto the off-beat.
-Each commits through the same
-`LIBRARY_ITEM_SET_MANUAL_TEMPO` path.
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 

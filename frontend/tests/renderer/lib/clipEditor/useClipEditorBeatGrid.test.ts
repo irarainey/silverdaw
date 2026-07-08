@@ -62,7 +62,11 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.manualBpmInput.value).toBe(140)
   })
 
-  it('commits a valid typed tempo and reverts an out-of-range one', () => {
+  // Edits are drafted locally during a session — no bridge round-trip — and committed
+  // once on Save. Every edit assertion below checks the local (bpm, anchor) and that
+  // nothing is sent until `commit`.
+
+  it('drafts a valid typed tempo locally and reverts an out-of-range one', () => {
     const item = addSource(120, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
@@ -70,57 +74,49 @@ describe('useClipEditorBeatGrid', () => {
     grid.beginTempoEdit()
     grid.manualBpmInput.value = 10
     grid.commitTempoEdit(true)
-    expect(sendMock).not.toHaveBeenCalled()
+    expect(item.bpm).toBe(120)
     expect(grid.manualBpmInput.value).toBe(120)
+    expect(sendMock).not.toHaveBeenCalled()
 
     grid.beginTempoEdit()
     grid.manualBpmInput.value = 128
     grid.commitTempoEdit(true)
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 128,
-      beatAnchorSec: 0
-    })
-  })
-
-  it('does not write when the committed tempo is unchanged', () => {
-    const item = addSource(120, 0)
-    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    sendMock.mockClear()
-    grid.beginTempoEdit()
-    grid.commitTempoEdit(true)
+    expect(item.bpm).toBe(128)
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('commits the typed BPM through the store, keeping the current anchor', () => {
+  it('does not draft when the committed tempo is unchanged', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.beginTempoEdit()
+    grid.commitTempoEdit(true)
+    expect(grid.hasGridChanged()).toBe(false)
+  })
+
+  it('drafts the typed BPM locally, keeping the current anchor', () => {
     const item = addSource(120, 0.3)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
     grid.beginTempoEdit()
     grid.manualBpmInput.value = 96
     grid.commitTempoEdit(true)
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 96,
-      beatAnchorSec: 0.3
-    })
+    expect(item.bpm).toBe(96)
+    expect(item.beatAnchorSec).toBe(0.3)
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('previews an anchor locally and commits it with the existing BPM', () => {
+  it('previews and drafts an anchor locally with the existing BPM', () => {
     const item = addSource(120, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
 
     grid.previewAnchorSec(0.12)
     expect(item.beatAnchorSec).toBe(0.12)
-    expect(sendMock).not.toHaveBeenCalled()
 
     grid.commitAnchorSec(0.2)
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 120,
-      beatAnchorSec: 0.2
-    })
+    expect(item.beatAnchorSec).toBe(0.2)
+    expect(item.bpm).toBe(120)
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('reports a grid change only after the user pins a BPM or commits an anchor', () => {
@@ -135,7 +131,7 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.hasGridChanged()).toBe(true)
   })
 
-  it('reports a grid change after committing a manual BPM', () => {
+  it('reports a grid change after drafting a manual BPM', () => {
     const item = addSource(120, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     expect(grid.hasGridChanged()).toBe(false)
@@ -145,63 +141,48 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.hasGridChanged()).toBe(true)
   })
 
-  it('halves and doubles the source BPM, keeping the anchor', () => {
+  it('halves and doubles the source BPM locally, keeping the anchor', () => {
     const item = addSource(120, 0.25)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
 
     grid.halveBpm()
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 60,
-      beatAnchorSec: 0.25
-    })
+    expect(item.bpm).toBe(60)
+    expect(item.beatAnchorSec).toBe(0.25)
     expect(grid.manualBpmInput.value).toBe(60)
 
     grid.doubleBpm()
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 120,
-      beatAnchorSec: 0.25
-    })
+    expect(item.bpm).toBe(120)
+    expect(item.beatAnchorSec).toBe(0.25)
     expect(grid.manualBpmInput.value).toBe(120)
     expect(grid.hasGridChanged()).toBe(true)
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('clamps an octave change that would leave the valid BPM range', () => {
     const item = addSource(200, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    sendMock.mockClear()
     grid.doubleBpm()
-    expect(sendMock).not.toHaveBeenCalled()
+    expect(item.bpm).toBe(200)
+    expect(grid.hasGridChanged()).toBe(false)
   })
 
   it('nudges the anchor by a millisecond delta on the existing BPM', () => {
     const item = addSource(120, 0.5)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    sendMock.mockClear()
     grid.nudgeAnchorMs(-5)
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 120,
-      beatAnchorSec: 0.495
-    })
+    expect(item.beatAnchorSec).toBeCloseTo(0.495, 6)
     expect(grid.hasGridChanged()).toBe(true)
   })
 
   it('shifts the anchor by half a beat to flip an off-beat lock', () => {
     const item = addSource(120, 0.5)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    sendMock.mockClear()
     grid.nudgeHalfBeat(1)
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 120,
-      beatAnchorSec: 0.75
-    })
+    expect(item.beatAnchorSec).toBe(0.75)
   })
 
-  it('captures the tempo at open as the original and restores it', () => {
+  it('captures the tempo at open as the original and restores it locally', () => {
     const item = addSource(120, 0.4)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     expect(grid.originalBpm.value).toBe(120)
@@ -216,13 +197,10 @@ describe('useClipEditorBeatGrid', () => {
 
     sendMock.mockClear()
     grid.restoreOriginalBpm()
-    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
-      itemId: item.id,
-      bpm: 120,
-      beatAnchorSec: 0.4
-    })
+    expect(item.bpm).toBe(120)
     expect(grid.manualBpmInput.value).toBe(120)
     expect(grid.canRestore()).toBe(false)
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('has no original to restore when the source opened without a tempo', () => {
@@ -230,8 +208,72 @@ describe('useClipEditorBeatGrid', () => {
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     expect(grid.originalBpm.value).toBeNull()
     expect(grid.canRestore()).toBe(false)
-    sendMock.mockClear()
     grid.restoreOriginalBpm()
+    expect(item.bpm).toBeUndefined()
+  })
+
+  it('persists the session final grid once on commit', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.reset()
+    grid.nudgeAnchorMs(20)
+    grid.beginTempoEdit()
+    grid.manualBpmInput.value = 128
+    grid.commitTempoEdit(true)
+    sendMock.mockClear()
+
+    grid.commit()
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+      itemId: item.id,
+      bpm: 128,
+      beatAnchorSec: 0.02
+    })
+  })
+
+  it('commit is a no-op without an edit, and only fires once', () => {
+    const item = addSource(120, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.reset()
+    sendMock.mockClear()
+
+    grid.commit()
     expect(sendMock).not.toHaveBeenCalled()
+
+    grid.commitAnchorSec(0.2)
+    grid.commit()
+    grid.commit()
+    expect(sendMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards an uncommitted draft back to the grid captured on open', () => {
+    const item = addSource(120, 0.4)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.reset()
+
+    grid.beginTempoEdit()
+    grid.manualBpmInput.value = 96
+    grid.commitTempoEdit(true)
+    grid.commitAnchorSec(0.9)
+    expect(item.bpm).toBe(96)
+    expect(item.beatAnchorSec).toBe(0.9)
+
+    sendMock.mockClear()
+    grid.discardIfUncommitted()
+    expect(item.bpm).toBe(120)
+    expect(item.beatAnchorSec).toBe(0.4)
+    expect(grid.hasGridChanged()).toBe(false)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back once the draft has been committed', () => {
+    const item = addSource(120, 0.4)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.reset()
+
+    grid.commitAnchorSec(0.9)
+    grid.commit()
+    grid.discardIfUncommitted()
+    expect(item.beatAnchorSec).toBe(0.9)
   })
 })

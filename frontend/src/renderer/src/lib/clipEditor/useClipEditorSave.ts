@@ -41,6 +41,9 @@ export interface ClipEditorSaveDeps {
   hasWarpPitchChanged: () => boolean
   /** True when the beat grid (manual BPM / anchor) was changed this session. */
   gridChanged: () => boolean
+  /** Persist the session's final beat grid as one undoable edit (draft-then-commit).
+   *  Called inside the Save undo group so the grid change folds into the one Save step. */
+  commitGrid: () => void
   /** The "align clips to grid on analysis" preference. */
   alignToGridEnabled: () => boolean
   sourceBpm: () => number | undefined
@@ -163,6 +166,10 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       }
       // Save commits the whole draft as ONE undo step.
       runInUndoGroup('Save clip changes', () => {
+        // The beat grid was edited locally during the session; persist its final
+        // position here so it folds into the single Save transaction alongside any
+        // on-Save re-align below.
+        deps.commitGrid()
         deps.project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
         // Only re-apply warp when the user actually changed it. `libraryClipWarpPatch`
         // reconstructs the patch from the draft, which is lossy for follow-project
@@ -193,6 +200,8 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     // Persist the saved-clip edit and its envelope/reverse propagation as ONE undo step; the
     // nested groups inside the library actions fold into this outer transaction.
     const result = runInUndoGroup('Save clip changes', () => {
+      // Persist the session's beat-grid draft as part of the one Save transaction.
+      deps.commitGrid()
       const editResult = deps.library.updateLibraryClipEdit(entry.id, {
         inMs: targetIn,
         durationMs: targetDur,
@@ -227,11 +236,16 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
   function onSaveAsNew(): void {
     const src = deps.sourceItem()
     if (!src) return
-    const id = deps.library.addLibraryClipFromSelection(
-      src.id,
-      deps.selectionInMs(),
-      deps.selectionDurationMs()
-    )
+    // Persist any beat-grid draft and the new-clip add as ONE undo step, so a grid
+    // edit made this session isn't dropped when the user saves as new.
+    const id = runInUndoGroup('Save clip as new', () => {
+      deps.commitGrid()
+      return deps.library.addLibraryClipFromSelection(
+        src.id,
+        deps.selectionInMs(),
+        deps.selectionDurationMs()
+      )
+    })
     if (id) {
       deps.notifications.pushInfo(`Saved selection as new clip.`)
       deps.close()
