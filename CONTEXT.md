@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-07 · Owner: @irarainey_
+_Last reviewed: 2026-07-08 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -16,8 +16,11 @@ audio engine, linked by a per-session-authenticated loopback WebSocket.
 ## Current state
 
 Core arrangement, mixing, analysis, stem separation, and out-of-process engine
-recovery are all shipped. See `docs/developer-guide.md#current-status-and-roadmap`
-for the current feature set and roadmap.
+recovery are all shipped. Silverdaw is **publicly released** — installable from
+the **Microsoft Store** (auto-updating), so existing installs, saved preferences,
+and saved projects must keep working across every update (see ADR 0019). See
+`docs/developer-guide.md#current-status-and-roadmap` for the current feature set
+and roadmap.
 
 ## Goals and non-goals
 
@@ -39,6 +42,13 @@ for the current feature set and roadmap.
 - `CRITICAL` — **Non-destructive editing.** Tempo, pitch, trim, fades, reverse,
   and volume shape are clip settings — never mutate the user's source files.
   See ADR 0007.
+- `CRITICAL` — **Backward compatibility is binding — the app is publicly
+  released (Microsoft Store, auto-updating).** Persisted **project files** and
+  **preferences** are versioned and read-old/write-latest; new fields are
+  additive with safe defaults; never remove/repurpose a persisted key or make an
+  older project or prefs file fail to open. Bump a version only on a semantic
+  change and migrate it explicitly; code around changed features must degrade
+  gracefully for older state. See ADR 0019 (and ADR 0015).
 - `CRITICAL` — **Bridge is text-only `{ type, payload }`.** Bulk data (peaks,
   stems, mixdowns) goes via disk + a small `*_READY` envelope, never the socket.
   See ADR 0003.

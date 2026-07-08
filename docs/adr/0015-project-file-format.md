@@ -24,3 +24,11 @@ rather than failing the whole load.
 - **Opaque binary format.** Not inspectable and harder to evolve.
 - **A full migration framework now.** YAGNI at the current rate of schema change;
   read-old/write-latest suffices.
+
+## See also
+
+Now that Silverdaw is publicly released (Microsoft Store, auto-updating),
+**ADR 0019** promotes this read-old/write-latest behaviour from
+forward/backward *headroom* to a binding `CRITICAL` compatibility contract, and
+extends it to application preferences and to the code paths around changed
+features.
