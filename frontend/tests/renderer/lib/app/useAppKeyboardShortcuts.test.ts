@@ -44,6 +44,7 @@ interface FakeStores {
   }
   ui: {
     requestTimelineZoom: ReturnType<typeof vi.fn>
+    requestTimelineZoomTo: ReturnType<typeof vi.fn>
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
     selectedAutomationPoint: unknown
@@ -90,6 +91,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     },
     ui: {
       requestTimelineZoom: vi.fn(),
+      requestTimelineZoomTo: vi.fn(),
       requestTimelineScroll: vi.fn(),
       requestTimelineScrollToPosition: vi.fn(),
       selectedAutomationPoint: null,
@@ -242,6 +244,36 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     const { e } = makeKey({ code: 'Digit0', key: '0', ctrlKey: true })
     kb.onGlobalShortcutKey(e)
     expect(h.stores.ui.requestTimelineZoom).toHaveBeenCalledWith('reset')
+  })
+
+  it('Ctrl+1 zooms to 100% (100 px/s)', () => {
+    const { e } = makeKey({ code: 'Digit1', key: '1', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(100)
+  })
+
+  it('Ctrl+8 zooms to 800% (800 px/s)', () => {
+    const { e } = makeKey({ code: 'Digit8', key: '8', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(800)
+  })
+
+  it('Ctrl+Numpad3 zooms to 300% (300 px/s)', () => {
+    const { e } = makeKey({ code: 'Numpad3', key: '3', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(300)
+  })
+
+  it('Ctrl+9 is not a zoom shortcut', () => {
+    const { e } = makeKey({ code: 'Digit9', key: '9', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+Shift+1 does not zoom (plain Ctrl+N only)', () => {
+    const { e } = makeKey({ code: 'Digit1', key: '1', ctrlKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).not.toHaveBeenCalled()
   })
 
   it('Escape clears the clip, track, and automation selection', () => {

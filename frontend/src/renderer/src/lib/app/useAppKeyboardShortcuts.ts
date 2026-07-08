@@ -11,6 +11,7 @@ import type { useLibraryStore } from '@/stores/libraryStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
+import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -211,6 +212,19 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     }
 
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      // Ctrl/Cmd + 1..8 jump straight to 100%..800% zoom (N × 100%). Match on
+      // `code` so the number row and the numeric keypad both work regardless of
+      // any Shift-produced symbol; require no Shift so it stays a plain Ctrl+N.
+      if (!e.shiftKey) {
+        const digit = /^(?:Digit|Numpad)([1-8])$/.exec(e.code)
+        if (digit) {
+          e.preventDefault()
+          e.stopPropagation()
+          ui.requestTimelineZoomTo(Number(digit[1]) * DEFAULT_PX_PER_SECOND)
+          return
+        }
+      }
+
       let zoomAction: 'in' | 'out' | 'reset' | null = null
       if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
         zoomAction = 'in'

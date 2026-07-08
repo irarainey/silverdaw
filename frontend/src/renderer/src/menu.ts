@@ -5,6 +5,7 @@ import {
   zoomPercentLabel,
   zoomPresetAction
 } from '@/lib/timeline/zoomPresets'
+import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { projectNameFromPath } from '@/lib/project/projectPath'
 import type { RecentProject } from '@shared/types'
 
@@ -118,10 +119,17 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Zoom to Fit', action: 'view.zoomFit', accelerator: 'Ctrl+F' },
         {
           label: 'Zoom Presets',
-          submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => ({
-            label: zoomPercentLabel(px),
-            action: zoomPresetAction(px)
-          }))
+          submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => {
+            // Presets that land on an exact N×100% get the matching Ctrl+N
+            // accelerator (Ctrl+1..8), owned by the keyboard handler in App.vue.
+            const n = px / DEFAULT_PX_PER_SECOND
+            const accelerator = Number.isInteger(n) && n >= 1 && n <= 8 ? `Ctrl+${n}` : undefined
+            return {
+              label: zoomPercentLabel(px),
+              action: zoomPresetAction(px),
+              ...(accelerator ? { accelerator } : {})
+            }
+          })
         },
         SEP,
         { label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }

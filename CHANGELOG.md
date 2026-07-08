@@ -2,6 +2,10 @@
 
 ## 1.1.0
 
+### Added
+
+- `Ctrl` + `1`–`8` jump the timeline straight to 100%–800% zoom, so you can `Ctrl+F` to fit then snap to a fixed scale. The matching Zoom Presets now show these accelerators.
+
 ### Fixed
 
 - Clicking the timeline on a marker now moves the playhead there instead of doing nothing. Markers are now dragged with Shift held, so a plain mouse drag always moves the playhead — unambiguous even when the playhead sits on a marker.

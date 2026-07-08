@@ -2131,7 +2131,9 @@ would have no visible effect, so we hide the affordance until it's meaningful.
 
 The same zoom commands are reachable from the **View** menu — **Zoom In** (`Ctrl +`),
 **Zoom Out** (`Ctrl -`), **Reset Zoom** (`Ctrl 0`), and a **Zoom Presets** submenu of
-fixed levels (20% / 50% / 100% / 200% / 400%). The View-menu accelerators are display-only
+fixed levels (20% / 50% / 100% / 200% / 400% / 800%). In addition, `Ctrl 1`–`Ctrl 8`
+jump straight to 100%–800% zoom (N × 100%); the presets that land on one of those levels
+show the matching accelerator. The View-menu accelerators are display-only
 labels; the keys themselves are handled by App.vue's global shortcut handler, so
 `menuShortcuts` deliberately skips binding them to avoid a double-fire (see
 `GLOBAL_SHORTCUT_ACTIONS`). Presets are defined once in
