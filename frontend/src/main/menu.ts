@@ -40,6 +40,9 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'file.addTrack':
       wc.send(IPC.menu.action, action)
       break
+    case 'file.importToLibrary':
+      wc.send(IPC.menu.action, action)
+      break
     case 'file.exportMixdown':
       wc.send(IPC.menu.action, action)
       break

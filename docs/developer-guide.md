@@ -125,9 +125,10 @@ scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 
 Silverdaw currently supports the core arrangement workflow:
 
-- Import audio into a project-scoped library and drag it onto the timeline. Dropping onto an
-  existing track places the clip there; dropping onto the empty area below the tracks shows a
-  "new track" drop lane and creates a fresh track for the clip (one undo step).
+- Import audio into a project-scoped library (the panel's Import button, or **File ▸ Import to
+  Library…** / `Ctrl+I`) and drag it onto the timeline. Dropping onto an existing track places the
+  clip there; dropping onto the empty area below the tracks shows a "new track" drop lane and
+  creates a fresh track for the clip (one undo step).
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.

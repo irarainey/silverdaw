@@ -9,6 +9,7 @@ import type { useAppStore } from '@/stores/appStore'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { openAndImportAudioFilesIntoLibrary } from '@/lib/importAudio'
 import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -102,6 +103,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'file.addTrack') {
       project.addTrack()
+      return
+    }
+    if (action === 'file.importToLibrary') {
+      void openAndImportAudioFilesIntoLibrary()
       return
     }
     if (action === 'file.projectProperties') {

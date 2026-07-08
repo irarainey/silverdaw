@@ -79,6 +79,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         SEP,
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
         SEP,
+        { label: 'Import to Library\u2026', action: 'file.importToLibrary', accelerator: 'Ctrl+I' },
         { label: 'Add Track\u2026', action: 'file.addTrack', accelerator: 'Ctrl+T' },
         {
           label: 'Export Mixdown\u2026',

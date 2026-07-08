@@ -17,6 +17,10 @@ vi.mock('@/lib/timeline/zoomPresets', () => ({
   isZoomPresetAction: (a: string) => a.startsWith('view.zoomPreset:'),
   parseZoomPresetAction: (a: string) => Number.parseInt(a.split(':')[1] ?? '', 10) || null
 }))
+const openAndImportAudioFilesIntoLibrary = vi.fn()
+vi.mock('@/lib/importAudio', () => ({
+  openAndImportAudioFilesIntoLibrary: (...args: unknown[]) => openAndImportAudioFilesIntoLibrary(...args)
+}))
 
 const menuAction = vi.fn()
 const clearRecentProjects = vi.fn()
@@ -186,6 +190,14 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('file.addTrack')
     expect(h.stores.project.addTrack).toHaveBeenCalledTimes(1)
+  })
+
+  it('importToLibrary opens the audio import flow', () => {
+    openAndImportAudioFilesIntoLibrary.mockClear()
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('file.importToLibrary')
+    expect(openAndImportAudioFilesIntoLibrary).toHaveBeenCalledTimes(1)
   })
 
   it('view.zoomIn is suppressed behind a modal', () => {
