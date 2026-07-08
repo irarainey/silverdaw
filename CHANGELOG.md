@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Undoing or redoing a track's tone, leveler, reverb/delay send, pan or automation back to its default now resets it in the audio engine instead of leaving the previous value playing.
+- Undo and redo of a clip edit are dramatically faster on large projects — they now update just the changed clip in the audio engine instead of rebuilding every clip, so undo no longer slows down as you add more clips.
 - Manual-tempo / beat-grid edits in the Clip Editor are now undoable as one step and mark the project dirty (automatic tempo detection stays silent, as before).
 - On Save, an edited clip snaps the least distance to the nearest beat when "align to grid" is on and it has room, otherwise it's left put with a note to move it manually.
 - The Clip Editor's Slide-to-Align toggle now resets when the editor opens, and Save no longer shows a confirmation toast.

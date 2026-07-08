@@ -189,15 +189,79 @@ void ProjectState::recomputeDirty()
     setDirty(actuallyDirty);
 }
 
-void ProjectState::valueTreePropertyChanged(juce::ValueTree& /*tree*/,
-                                            const juce::Identifier& /*property*/)
+bool ProjectState::performUndo()
 {
+    lastUndoChangeSet_ = {};
+    bool ok = false;
+    {
+        // Suppress the per-action dirty listener; a single transaction can unwind dozens of
+        // raw property writes, each of which would otherwise trigger a full-tree equivalence
+        // scan we immediately discard. Record touched entities so the caller can update the
+        // engine incrementally instead of rebuilding it from scratch.
+        const SuppressDirtyScope suppress(*this);
+        const RecordingChangeSetScope recording(*this, lastUndoChangeSet_);
+        ok = undoManager.undo();
+    }
+    recomputeDirty();
+    return ok;
+}
+
+bool ProjectState::performRedo()
+{
+    lastUndoChangeSet_ = {};
+    bool ok = false;
+    {
+        const SuppressDirtyScope suppress(*this);
+        const RecordingChangeSetScope recording(*this, lastUndoChangeSet_);
+        ok = undoManager.redo();
+    }
+    recomputeDirty();
+    return ok;
+}
+
+void ProjectState::recordUndoChange(const juce::ValueTree& tree, const juce::Identifier* property)
+{
+    auto& cs = *recordingChangeSet_;
+    if (cs.needsFullRebuild) return;
+    if (tree.hasType(kClip))
+    {
+        // A relink/rebind swaps the clip's audio source, which needs a reader re-open the
+        // incremental path can't do — force a full rebuild. `filePath` is defensive: it is not
+        // currently written per-clip, but if it ever is it must take the same source-change path.
+        static const juce::Identifier kLibraryItemId{"libraryItemId"};
+        static const juce::Identifier kClipFilePath{"filePath"};
+        if (property != nullptr && (*property == kLibraryItemId || *property == kClipFilePath))
+        {
+            cs.needsFullRebuild = true;
+            return;
+        }
+        const juce::String id = tree.getProperty(kId).toString();
+        if (id.isNotEmpty())
+            cs.clipIds.addIfNotAlreadyThere(id);
+        else
+            cs.needsFullRebuild = true; // defensive: an unidentifiable clip node can't be fast-pathed
+    }
+    else
+    {
+        // Track / project / marker / transition edits aren't handled by the clip-only fast
+        // path; fall back to a full rebuild.
+        cs.needsFullRebuild = true;
+    }
+}
+
+void ProjectState::valueTreePropertyChanged(juce::ValueTree& tree,
+                                            const juce::Identifier& property)
+{
+    if (recordingChangeSet_ != nullptr) recordUndoChange(tree, &property);
     if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
 
 void ProjectState::valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/)
 {
+    // A child add/remove/reorder is structural (clip/track/marker/transition topology changed);
+    // the clip-only incremental path can't reconcile it, so force a full rebuild.
+    if (recordingChangeSet_ != nullptr) recordingChangeSet_->needsFullRebuild = true;
     if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
@@ -205,6 +269,7 @@ void ProjectState::valueTreeChildAdded(juce::ValueTree& /*parent*/, juce::ValueT
 void ProjectState::valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::ValueTree& /*child*/,
                                          int /*index*/)
 {
+    if (recordingChangeSet_ != nullptr) recordingChangeSet_->needsFullRebuild = true;
     if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }
@@ -212,6 +277,7 @@ void ProjectState::valueTreeChildRemoved(juce::ValueTree& /*parent*/, juce::Valu
 void ProjectState::valueTreeChildOrderChanged(juce::ValueTree& /*parent*/, int /*oldIndex*/,
                                               int /*newIndex*/)
 {
+    if (recordingChangeSet_ != nullptr) recordingChangeSet_->needsFullRebuild = true;
     if (suppressDirtyDepth > 0) return;
     recomputeDirty();
 }

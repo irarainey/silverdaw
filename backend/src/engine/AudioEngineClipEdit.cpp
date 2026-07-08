@@ -437,6 +437,7 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
         {
             track->retiredWarps.push_back(std::move(track->warp));
         }
+        track->warpMode = {};
         if (master.isPlaying())
         {
             rebuildTrackPrefetch(*track);
@@ -451,10 +452,14 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
     }
 
     // Silverdaw tempoRatio is project/source; Rubber Band receives the inverse internally.
-    const bool needRebuild = (track->warp == nullptr) || mode.has_value();
+    // Only rebuild the stretcher when there is none yet or the mode actually changes — a rebuild
+    // is a heavy alloc that resets the stretcher's history (an audible glitch mid-playback), so
+    // ratio/pitch-only changes and same-state replays (e.g. incremental undo) must reuse it.
+    const auto modeStr = mode.value_or(track->warpMode.isEmpty() ? juce::String("rhythmic")
+                                                                 : track->warpMode);
+    const bool needRebuild = (track->warp == nullptr) || (mode.has_value() && modeStr != track->warpMode);
     if (needRebuild)
     {
-        const auto modeStr = mode.value_or(juce::String("rhythmic"));
         const auto& dm = deviceManager.getAudioDeviceSetup();
         auto wp = makeWarpProcessor(track->numChannels, track->sampleRate,
                                     static_cast<int>(dm.bufferSize), modeStr,
@@ -464,6 +469,7 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
             track->retiredWarps.push_back(std::move(track->warp));
         }
         track->warp = std::move(wp);
+        track->warpMode = modeStr;
         track->offsetSource->setWarpProcessor(track->warp.get());
         track->offsetSource->requestWarpReseek();
         silverdaw::log::info("engine",

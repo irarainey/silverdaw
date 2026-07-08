@@ -53,7 +53,7 @@ int main(int argc, char** argv)
     using namespace silverdaw::tests;
 
     const auto tests = buildRegistry();
-    require(tests.size() == 177, "backend test registry should contain 177 tests");
+    require(tests.size() == 179, "backend test registry should contain 179 tests");
 
     bool listOnly = false;
     std::string runOnly;

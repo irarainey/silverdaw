@@ -36,6 +36,119 @@ juce::StringArray collectClipIds(const silverdaw::ProjectState& projectState)
     return ids;
 }
 
+namespace
+{
+// Apply a clip's non-structural effect state (warp, envelope, reverse, brake, backspin) to the
+// engine from its ValueTree. Applied UNCONDITIONALLY — a disabled/empty value is pushed too — so
+// this is correct both when replaying onto a freshly added clip (rebuild) and when reconciling an
+// already-attached clip after undo/redo (where a reverted effect must actually be turned off in
+// the engine, not just skipped).
+void applyClipEffectsToEngine(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                              const juce::ValueTree& clip)
+{
+    const juce::String clipId = clip.getProperty("id").toString();
+    if (clipId.isEmpty()) return;
+
+    const bool warpEnabled = static_cast<bool>(clip.getProperty("warpEnabled", false));
+    if (warpEnabled)
+    {
+        const auto warpMode = clip.getProperty("warpMode", "rhythmic").toString();
+        std::optional<double> tempoRatio;
+        if (clip.hasProperty("tempoRatio"))
+            tempoRatio = static_cast<double>(clip.getProperty("tempoRatio", 1.0));
+        else
+        {
+            // No pin: follow project BPM against source BPM.
+            const auto warpLibraryItemId = clip.getProperty("libraryItemId", {}).toString();
+            const double sourceBpm = projectState.getLibraryItemBpm(warpLibraryItemId);
+            const double projectBpm = projectState.getBpm();
+            if (sourceBpm > 0.0 && projectBpm > 0.0) tempoRatio = projectBpm / sourceBpm;
+        }
+        const std::optional<double> semitones =
+            clip.hasProperty("semitones")
+                ? std::optional<double>{static_cast<double>(clip.getProperty("semitones", 0.0))}
+                : std::nullopt;
+        const std::optional<double> cents =
+            clip.hasProperty("cents")
+                ? std::optional<double>{static_cast<double>(clip.getProperty("cents", 0.0))}
+                : std::nullopt;
+        engine.setClipWarp(clipId, true, warpMode, tempoRatio, semitones, cents);
+    }
+    else
+    {
+        engine.setClipWarp(clipId, false, std::nullopt, std::nullopt, std::nullopt, std::nullopt);
+    }
+
+    // Envelope — an empty array clears it (setClipEnvelope publishes nullptr for empty).
+    if (clip.hasProperty("envelopePoints") && clip.getProperty("envelopePoints").isArray())
+        engine.setClipEnvelope(clipId, *clip.getProperty("envelopePoints").getArray());
+    else
+        engine.setClipEnvelope(clipId, {});
+
+    engine.setClipReversed(clipId, static_cast<bool>(clip.getProperty("reversed", false)));
+
+    // Brake / backspin — 0 seconds clears the effect.
+    if (static_cast<bool>(clip.getProperty("brake", false)))
+        engine.setClipBrake(clipId, engine.getBrakeDefaultSeconds(), engine.getBrakeDefaultCurve());
+    else
+        engine.setClipBrake(clipId, 0.0, engine.getBrakeDefaultCurve());
+
+    if (static_cast<bool>(clip.getProperty("backspin", false)))
+        engine.setClipBackspin(clipId, engine.getBackspinDefaultSeconds(),
+                               engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve());
+    else
+        engine.setClipBackspin(clipId, 0.0, engine.getBackspinDefaultSpeed(),
+                               engine.getBackspinDefaultCurve());
+}
+} // namespace
+
+bool applyUndoClipChangesIncremental(silverdaw::AudioEngine& engine,
+                                     silverdaw::ProjectState& projectState,
+                                     const juce::StringArray& clipIds)
+{
+    const auto& root = projectState.getTree();
+    for (const auto& clipId : clipIds)
+    {
+        bool applied = false;
+        for (int t = 0; t < root.getNumChildren() && !applied; ++t)
+        {
+            const auto track = root.getChild(t);
+            if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+            for (int c = 0; c < track.getNumChildren(); ++c)
+            {
+                const auto clip = track.getChild(c);
+                if (!clip.hasType(juce::Identifier{"CLIP"})) continue;
+                if (clip.getProperty("id").toString() != clipId) continue;
+
+                const juce::String trackId = track.getProperty("id").toString();
+                const double offsetMs = static_cast<double>(clip.getProperty("offsetMs", 0.0));
+                const double inMs = static_cast<double>(clip.getProperty("inMs", 0.0));
+                const double durationMs = static_cast<double>(clip.getProperty("durationMs", 0.0));
+                // setClipTrim positions the clip window (start = offset) and its in/duration in one
+                // atomic write — covers both a move and a trim without re-opening the reader.
+                if (!engine.setClipTrim(clipId, offsetMs, inMs, durationMs)) return false;
+                engine.setClipGain(clipId, projectState.getEffectiveTrackGain(trackId));
+                applyClipEffectsToEngine(engine, projectState, clip);
+                applied = true;
+                break;
+            }
+        }
+        // A touched clip that is no longer in the project means the transaction was structural
+        // after all; bail so the caller falls back to a full rebuild.
+        if (!applied) return false;
+    }
+
+    // A moved/trimmed clip changes the crossfade shape at any transition boundary it touches. The
+    // undo/redo already restored the transition nodes in the tree, so there's nothing to reconcile
+    // here (and reconciling with useUndo=false would mutate the tree outside the undo stack). Only
+    // refresh the engine's edge fades, and only when the project actually has transitions — this
+    // mirrors the forward geometry-edit path (reconcileTransitionsAfterGeometryEdit) and keeps a
+    // transition-free undo genuinely O(touched clips) with no project-wide prefetch churn.
+    if (projectState.hasAnyTransition())
+        silverdaw::syncClipEdgeFades(engine, projectState);
+    return true;
+}
+
 juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverdaw::ProjectState& projectState,
                                     bool reset)
 {
@@ -202,33 +315,31 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
         {
             continue;
         }
-        // Snap non-default track Tone once so load/export start from steady state.
+        // Apply the track's FX state unconditionally — including defaults — so this rebuild is
+        // idempotent regardless of the engine's prior state. Undo/redo reuse it as a fallback
+        // path: only re-applying non-default values would leave a tone/leveler/send/pan value
+        // that undo reverted back to default stale and still live in the engine.
         {
             const auto toneTrackId = track.getProperty("id").toString();
-            const float tBass = projectState.getTrackToneBassDb(toneTrackId);
-            const float tMid = projectState.getTrackToneMidDb(toneTrackId);
-            const float tTreble = projectState.getTrackToneTrebleDb(toneTrackId);
-            const float tFilter = projectState.getTrackToneFilter(toneTrackId);
-            if (tBass != 0.0F || tMid != 0.0F || tTreble != 0.0F || tFilter != 0.0F)
-                engine.setTrackTone(toneTrackId, tBass, tMid, tTreble, tFilter, /*snap*/ true);
 
-            // Restore non-zero Leveler only to avoid identity updates on flat projects.
-            const float tLeveler = projectState.getTrackLevelerAmount(toneTrackId);
-            if (tLeveler != 0.0F)
-                engine.setTrackLeveler(toneTrackId, tLeveler, /*snap*/ true);
+            // Clear stale automation FIRST: clearAllTrackAutomation snaps every previously
+            // automated param back to neutral, so it must run before the authoritative static
+            // values below — otherwise it would clobber a just-restored pan/tone/send/leveler value
+            // for a param whose lane was removed by the undo.
+            engine.clearAllTrackAutomation(toneTrackId);
 
-            // Restore sends only when non-zero to avoid identity updates.
-            const float sReverb = projectState.getTrackReverbSend(toneTrackId);
-            const float sDelay = projectState.getTrackDelaySend(toneTrackId);
-            if (sReverb != 0.0F || sDelay != 0.0F)
-                engine.setTrackSends(toneTrackId, sReverb, sDelay);
+            engine.setTrackTone(toneTrackId,
+                                projectState.getTrackToneBassDb(toneTrackId),
+                                projectState.getTrackToneMidDb(toneTrackId),
+                                projectState.getTrackToneTrebleDb(toneTrackId),
+                                projectState.getTrackToneFilter(toneTrackId), /*snap*/ true);
+            engine.setTrackLeveler(toneTrackId, projectState.getTrackLevelerAmount(toneTrackId),
+                                   /*snap*/ true);
+            engine.setTrackSends(toneTrackId, projectState.getTrackReverbSend(toneTrackId),
+                                 projectState.getTrackDelaySend(toneTrackId));
+            engine.setTrackPan(toneTrackId, projectState.getTrackPan(toneTrackId));
 
-            // Restore pan only when off-centre to keep the engine's unity path.
-            const float pan = projectState.getTrackPan(toneTrackId);
-            if (pan != 0.0F)
-                engine.setTrackPan(toneTrackId, pan);
-
-            // Restore per-track effect automation lanes.
+            // Reapply the project's current automation lanes on top of the restored static state.
             const auto lanes = projectState.getTrackAutomationLanes(toneTrackId);
             for (const auto& lane : lanes)
             {
@@ -284,62 +395,9 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             if (added)
             {
                 ++rebuilt;
-                // Replay persisted warp so loaded clips match their saved tempo/pitch.
-                const auto warpEnabled = static_cast<bool>(clip.getProperty("warpEnabled", false));
-                if (warpEnabled)
-                {
-                    const auto warpMode = clip.getProperty("warpMode", "rhythmic").toString();
-                    std::optional<double> tempoRatio;
-                    if (clip.hasProperty("tempoRatio"))
-                        tempoRatio = static_cast<double>(clip.getProperty("tempoRatio", 1.0));
-                    else
-                    {
-                        // No pin: follow project BPM against source BPM.
-                        const auto warpLibraryItemId = clip.getProperty("libraryItemId", {}).toString();
-                        const double sourceBpm = projectState.getLibraryItemBpm(warpLibraryItemId);
-                        const double projectBpm = projectState.getBpm();
-                        if (sourceBpm > 0.0 && projectBpm > 0.0)
-                            tempoRatio = projectBpm / sourceBpm;
-                    }
-                    const std::optional<double> semitones =
-                        clip.hasProperty("semitones")
-                            ? std::optional<double>{static_cast<double>(clip.getProperty("semitones", 0.0))}
-                            : std::nullopt;
-                    const std::optional<double> cents =
-                        clip.hasProperty("cents")
-                            ? std::optional<double>{static_cast<double>(clip.getProperty("cents", 0.0))}
-                            : std::nullopt;
-                    engine.setClipWarp(clipId, true, warpMode, tempoRatio, semitones, cents);
-                }
-
-                // Only clips with envelope points leave the no-op fast path.
-                if (clip.hasProperty("envelopePoints"))
-                {
-                    const auto& envVar = clip.getProperty("envelopePoints");
-                    if (envVar.isArray() && envVar.getArray()->size() > 0)
-                    {
-                        engine.setClipEnvelope(clipId, *envVar.getArray());
-                    }
-                }
-
-                // Replay persisted reverse so loaded clips play backwards as saved.
-                if (static_cast<bool>(clip.getProperty("reversed", false)))
-                {
-                    engine.setClipReversed(clipId, true);
-                }
-
-                // Replay persisted brake (turntable record-stop) with the engine defaults.
-                if (static_cast<bool>(clip.getProperty("brake", false)))
-                {
-                    engine.setClipBrake(clipId, engine.getBrakeDefaultSeconds(),
-                                        engine.getBrakeDefaultCurve());
-                }
-                if (static_cast<bool>(clip.getProperty("backspin", false)))
-                {
-                    engine.setClipBackspin(clipId, engine.getBackspinDefaultSeconds(),
-                                           engine.getBackspinDefaultSpeed(),
-                                           engine.getBackspinDefaultCurve());
-                }
+                // Replay the clip's persisted effect state (warp / envelope / reverse / brake /
+                // backspin) so a loaded or rebuilt clip matches how it was saved.
+                applyClipEffectsToEngine(engine, projectState, clip);
             }
             else
             {

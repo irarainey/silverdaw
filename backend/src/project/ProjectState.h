@@ -530,6 +530,27 @@ class ProjectState : public juce::ValueTree::Listener
         return undoManager;
     }
 
+    // Undo / redo the last transaction, suppressing per-action dirty recomputation and
+    // running a single equivalence check afterwards. The dirty listener otherwise fires a
+    // full-tree `isEquivalentTo` scan for every raw action a transaction unwinds (then
+    // discards all but the last), which dominates undo cost on large projects. Returns the
+    // UndoManager result. Callers still drive the engine rebuild / broadcast themselves.
+    bool performUndo();
+    bool performRedo();
+
+    // Entities touched by the most recent performUndo/performRedo. Lets the caller apply an
+    // incremental engine update (only the touched clips) instead of a full rebuild that
+    // re-opens a reader for every clip. `needsFullRebuild` is set for any change the fast path
+    // can't safely handle — structural child edits (add/remove/reorder/reparent), a clip
+    // relink/rebind, or a change to a non-clip/track node (project settings, markers, tracks) —
+    // telling the caller to fall back to a complete rebuild.
+    struct UndoChangeSet
+    {
+        juce::StringArray clipIds;
+        bool needsFullRebuild = false;
+    };
+    const UndoChangeSet& lastUndoChangeSet() const noexcept { return lastUndoChangeSet_; }
+
   private:
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
@@ -555,6 +576,11 @@ class ProjectState : public juce::ValueTree::Listener
     void setDirty(bool d);
     void recomputeDirty();
 
+    // While a performUndo/performRedo is running, `recordingChangeSet_` points at the change
+    // set the listener callbacks classify each reverted edit into (touched clip ids, or
+    // needs-full-rebuild for anything the incremental path can't handle).
+    void recordUndoChange(const juce::ValueTree& tree, const juce::Identifier* property);
+
     // Mirrors non-edit state into cleanSnapshot so undo cannot leave phantom dirty deltas.
     void setNonDirtyRootProperty(const juce::Identifier& id, const juce::var& value);
 
@@ -573,6 +599,11 @@ class ProjectState : public juce::ValueTree::Listener
     int suppressDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;
 
+    // Populated by performUndo/performRedo (see lastUndoChangeSet); `recordingChangeSet_` is
+    // non-null only for the duration of the undo/redo so the listener can classify each edit.
+    UndoChangeSet lastUndoChangeSet_;
+    UndoChangeSet* recordingChangeSet_{nullptr};
+
     // RAII keeps dirty-suppression exception-safe and nest-safe.
     class SuppressDirtyScope
     {
@@ -584,6 +615,24 @@ class ProjectState : public juce::ValueTree::Listener
         ~SuppressDirtyScope() noexcept { --state.suppressDirtyDepth; }
         SuppressDirtyScope(const SuppressDirtyScope&) = delete;
         SuppressDirtyScope& operator=(const SuppressDirtyScope&) = delete;
+
+    private:
+        ProjectState& state;
+    };
+
+    // RAII points the change-set recorder at a target for the duration of an undo/redo and always
+    // clears it — even if the UndoManager or a listener throws — so a stray later edit can never be
+    // misclassified into a stale change set.
+    class RecordingChangeSetScope
+    {
+    public:
+        RecordingChangeSetScope(ProjectState& owner, UndoChangeSet& target) noexcept : state(owner)
+        {
+            state.recordingChangeSet_ = &target;
+        }
+        ~RecordingChangeSetScope() noexcept { state.recordingChangeSet_ = nullptr; }
+        RecordingChangeSetScope(const RecordingChangeSetScope&) = delete;
+        RecordingChangeSetScope& operator=(const RecordingChangeSetScope&) = delete;
 
     private:
         ProjectState& state;

@@ -46,4 +46,13 @@ juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session, Pr
 void rebuildEngineFromProject(AudioEngine& engine, ProjectState& projectState,
                               juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 
+// Incremental undo/redo fast path: reconcile only the touched clips' engine state (position,
+// trim, gain, warp, envelope, reverse, brake, backspin) in place, without tearing down and
+// re-adding every clip (which re-opens a reader per clip). Returns false if any touched clip is
+// no longer in the project — i.e. the transaction was structural after all — so the caller must
+// fall back to a full rebuild. Only valid for non-structural, clip-only changes
+// (see ProjectState::UndoChangeSet).
+bool applyUndoClipChangesIncremental(AudioEngine& engine, ProjectState& projectState,
+                                     const juce::StringArray& clipIds);
+
 } // namespace silverdaw

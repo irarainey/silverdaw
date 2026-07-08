@@ -651,6 +651,24 @@ void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::St
     }
 }
 
+void AudioEngine::clearAllTrackAutomation(const juce::String& trackId)
+{
+    if (trackId.isEmpty()) return;
+    auto it = automationCurrent.find(trackId);
+    if (it == automationCurrent.end()) return; // already clear — nothing published for this track
+
+    busGraph.setTrackAutomationPtr(trackId, nullptr);
+    if (it->second)
+    {
+        // Snap each previously-automated param to neutral so the chain doesn't hold its last value.
+        for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
+            if (it->second->has[i])
+                busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+        retiredAutomation.push_back(std::move(it->second));
+    }
+    automationCurrent.erase(it);
+}
+
 void AudioEngine::setProjectReverb(float size, float decay, float tone, float mix, bool snap)
 {
     busGraph.setProjectReverb(size, decay, tone, mix, snap);
