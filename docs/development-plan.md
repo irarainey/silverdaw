@@ -2419,9 +2419,11 @@ Implementation increments (foundations first; each keeps build + tests green):
 
 - [ ] **Gap commands, not ripple mode** — *Delete & close gap*,
   *Insert space at playhead*, *Move following clips on track*. Per-track first.
-- [ ] **Selection group (move-only)** — link selected clips so they
-  move/delete together (keeps a vocal + instrumental aligned). Grouped *trim/
-  stretch* deferred; kept distinct from stem groups and library-linked clips.
+- [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
+  same-track range or Ctrl-click across tracks selects several clips; the whole
+  group moves/nudges together and can be locked, coloured, duplicated, deleted,
+  and cut/copied/pasted in one undo step. Renderer-only selection (not
+  serialised). Grouped *trim/stretch* is still deferred.
 - [ ] **Library cue / song landmarks** — mark intro / drop /
   chorus etc. on a library item; jump-to in the Clip Editor and on drop-align.
   Navigation only, no performance triggering.
@@ -2476,6 +2478,9 @@ Implementation increments (foundations first; each keeps build + tests green):
 - [ ] **Stereo channel control** (issue #45) — per-track control over the left
   and right channels: balance and independent channel level (and, later, basic
   mid/side width), so a clip's stereo image can be tweaked in the mixer.
+  *(Partly addressed in 1.1.0: right-click ▸ **Split Stereo Channels…** splits a
+  stereo clip's Left/Right channel onto its own track. The per-track mixer
+  balance/width control below is still to do.)*
 
 ### 12.6 Fast import-to-arrangement — *largely delivered / deferred to future enhancements*
 
