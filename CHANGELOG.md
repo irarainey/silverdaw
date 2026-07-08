@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- Clicking a project in the startup screen's Recent Projects list now works anywhere on the row. Previously only the inner text was clickable while the whole row highlighted on hover, so clicks in the row's padding did nothing.
+- The startup screen and pre-mount splash now have full minimise / maximise / close controls and a draggable top edge, matching the main window. The splash also hands off to the loading screen without flashing or jumping.
+- Recent Projects entries on the startup screen are now clickable across the whole row, not just the text.
 
 ## 1.0.3
 

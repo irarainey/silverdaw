@@ -7,6 +7,7 @@ import { useTransportStore } from '@/stores/transportStore'
 // 256 px renders crisply at 128 px on 2x DPI.
 import logoUrl from '@resources/icons/256x256.png'
 import { projectNameFromPath as projectName } from '@/lib/project/projectPath'
+import AppTitleBarWindowControls from '@/components/AppTitleBarWindowControls.vue'
 
 const props = defineProps<{
   open: boolean
@@ -37,6 +38,14 @@ function onClose(): void {
   window.silverdaw.closeWindow()
 }
 
+function minimizeWindow(): void {
+  window.silverdaw.minimizeWindow()
+}
+
+function toggleMaximizeWindow(): void {
+  window.silverdaw.toggleMaximizeWindow()
+}
+
 // All startup gates resolved; phase dwell below still controls readiness. Uses the
 // handshake (not the post-open PROJECT_STATE) so the picker appears while the audio
 // device is still opening. Deliberately NOT gated on the audio-device scan: that scan
@@ -59,8 +68,13 @@ const liveStatusText = computed(() => {
 // Minimum phase dwell keeps fast startup transitions readable.
 const MIN_PHASE_MS = 500
 
+// The static pre-mount splash (index.html) opens on this exact string; the Vue loading
+// screen starts on it too and holds it for one dwell, so the hand-off from the splash
+// shows no text jump before the first live status ("Waiting for the audio engine…") appears.
+const SPLASH_STATUS = 'Loading Silverdaw…'
+
 // Queue phase changes so bursts remain readable.
-const statusText = ref('')
+const statusText = ref(SPLASH_STATUS)
 const phaseQueue: string[] = []
 const phaseQueueLength = ref(0)
 const phaseTimerActive = ref(false)
@@ -78,6 +92,11 @@ function showNextPhase(): void {
   phaseTimerActive.value = true
   phaseTimer = setTimeout(showNextPhase, MIN_PHASE_MS)
 }
+
+// Dwell on the seeded splash status first so the immediate live-status watch below queues
+// behind it (phaseTimer is non-null) instead of overwriting the first frame.
+phaseTimerActive.value = true
+phaseTimer = setTimeout(showNextPhase, MIN_PHASE_MS)
 
 watch(
   liveStatusText,
@@ -168,28 +187,20 @@ onBeforeUnmount(() => {
       aria-labelledby="startup-title"
       :aria-busy="!ready && !bridgeFailed"
     >
-      <!-- System-close button matching the title-bar affordance. -->
-      <button
-        type="button"
-        data-borderless-button="true"
-        class="absolute right-0 top-0 flex h-9 w-11 items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white focus:outline-none"
-        aria-label="Close Silverdaw"
-        title="Close"
-        @click="onClose"
+      <!-- Window controls matching the main title bar. The overlay covers the
+           real title bar, so it carries its own minimise / maximise / close
+           cluster; the full-width strip is draggable so the window can still be
+           moved from the startup screen. -->
+      <div
+        class="absolute inset-x-0 top-0 flex h-9 items-stretch justify-end"
+        style="-webkit-app-region: drag"
       >
-        <svg
-          viewBox="0 0 16 16"
-          class="h-3.5 w-3.5"
-          aria-hidden="true"
-        >
-          <path
-            d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-          />
-        </svg>
-      </button>
+        <AppTitleBarWindowControls
+          @minimize="minimizeWindow"
+          @toggle-maximize="toggleMaximizeWindow"
+          @close="onClose"
+        />
+      </div>
 
       <!-- ─── Bridge-failure mode ───────────────────────────────── -->
       <div
