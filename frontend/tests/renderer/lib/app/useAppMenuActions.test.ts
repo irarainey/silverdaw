@@ -69,7 +69,8 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     transport: { bridgeReady: overrides.bridgeReady ?? true, positionMs: 0 },
     ui: {
       requestTimelineZoom: vi.fn(),
-      requestTimelineZoomTo: vi.fn()
+      requestTimelineZoomTo: vi.fn(),
+      toggleLibraryPanelCollapsed: vi.fn()
     },
     library: { byId: {} as Record<string, unknown> },
     notifications: { pushError: vi.fn(), pushInfo: vi.fn() },
@@ -206,6 +207,13 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('view.zoomPreset:200')
     expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(200)
+  })
+
+  it('view.toggleLibraryPanel toggles the library/FX panel', () => {
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('view.toggleLibraryPanel')
+    expect(h.stores.ui.toggleLibraryPanelCollapsed).toHaveBeenCalledTimes(1)
   })
 
   it('file.exportMixdown opens the export dialog', () => {

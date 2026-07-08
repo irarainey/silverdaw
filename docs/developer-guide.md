@@ -157,7 +157,8 @@ Silverdaw currently supports the core arrangement workflow:
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
 - **Track & project effects.** The bottom panel has three tabs — **Library**,
-  **Track FX**, and **Project FX**. Each track header also has an **Fx** button
+  **Track FX**, and **Project FX**. The whole panel collapses / expands from its
+  header, with `Ctrl+J`, or **View ▸ Toggle Library / FX Panel**. Each track header also has an **Fx** button
   (beside Mute / Solo) that opens **Track FX** for that track — expanding the
   panel first if it is minimised — (pressing it again collapses back to the
   Library). With no track selected the **Track FX** tab stays open and shows a

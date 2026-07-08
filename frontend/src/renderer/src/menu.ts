@@ -132,6 +132,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
           })
         },
         SEP,
+        { label: 'Toggle Library / FX Panel', action: 'view.toggleLibraryPanel', accelerator: 'Ctrl+J' },
         { label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }
       ]
     },

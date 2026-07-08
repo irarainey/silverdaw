@@ -4,6 +4,7 @@
 
 ### Added
 
+- `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) now opens and collapses the bottom Library / FX panel.
 - `Ctrl` + `1`–`8` jump the timeline straight to 100%–800% zoom, so you can `Ctrl+F` to fit then snap to a fixed scale. The matching Zoom Presets now show these accelerators.
 
 ### Fixed

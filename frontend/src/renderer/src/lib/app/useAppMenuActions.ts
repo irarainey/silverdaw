@@ -96,6 +96,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       }
       return
     }
+    if (action === 'view.toggleLibraryPanel') {
+      ui.toggleLibraryPanelCollapsed()
+      return
+    }
     if (action === 'file.addTrack') {
       project.addTrack()
       return

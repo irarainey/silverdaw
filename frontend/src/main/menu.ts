@@ -91,6 +91,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'view.zoomOut':
     case 'view.zoomReset':
     case 'view.zoomFit':
+    case 'view.toggleLibraryPanel':
       wc.send(IPC.menu.action, action)
       break
     case 'view.toggleDevTools':
