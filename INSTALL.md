@@ -2,11 +2,11 @@
 
 Silverdaw is a Windows desktop application (Windows 10 version 1809 or later, or
 Windows 11, 64-bit). There are two ways to install it. The **Microsoft Store**
-is the easiest and recommended option once it is available.
+is the easiest and recommended option.
 
 | Option | Best for | Effort | Updates | Windows integration\* |
 | ------ | -------- | ------ | ------------ | --------------------- |
-| **Microsoft Store** *(coming soon)* | Everyone | One click | Automatic | Full |
+| **[Microsoft Store][store]** | Everyone | One click | Automatic | Full |
 | **Portable download** (zip) | Trying it quickly, no install | Unzip & run | Manual | None
 
 \* *Windows integration* = a Start-menu entry, the `.silverdaw` file association
@@ -15,9 +15,12 @@ clean uninstall.
 
 ---
 
-## 1. Microsoft Store — recommended *(coming soon)*
+## 1. Microsoft Store — recommended
 
-Once published, Silverdaw will install in one click from the Microsoft Store.
+Install Silverdaw in one click from the Microsoft Store:
+
+- **[apps.microsoft.com/detail/9N8T25L0462F][store]**
+
 Microsoft signs and distributes the package, so there are no security prompts, and updates arrive automatically.
 
 **Pros**
@@ -30,9 +33,7 @@ Microsoft signs and distributes the package, so there are no security prompts, a
 
 **Cons**
 
-- Not available yet — this option is coming soon.
-
-*(A direct Store link will be added here when the app goes live.)*
+- None to speak of — this is the recommended option for most people.
 
 ---
 
@@ -68,7 +69,7 @@ to any folder you can write to, and run `Silverdaw.exe`. Nothing is installed.
 
 ## Which should I choose?
 
-- **Most people:** the **Microsoft Store** once it is live — it is the simplest
+- **Most people:** the **[Microsoft Store][store]** — it is the simplest
   and safest, with automatic updates.
 - **Just want to try it now, with no install:** the **portable zip**.
 
@@ -101,3 +102,4 @@ over time). If you
 report a startup problem, attaching them helps pin down the cause.
 
 [releases]: https://github.com/irarainey/silverdaw/releases
+[store]: https://apps.microsoft.com/detail/9N8T25L0462F

@@ -2568,10 +2568,11 @@ sequencing into the phase plan is still to be decided.
 These are expected to land around MVP stage, not before — low priority relative
 to the application itself.
 
-- [x] **Windows Store distribution** (issue #30) — submit the app to the
+- [x] **Windows Store distribution** (issue #30) — publish the app to the
   Microsoft Store for one-click install, alongside the signed sideload package
   and portable zip. (Store-identity packaging builds via `pnpm dist:store`, and
-  the app is submitted to the Microsoft Store.)
+  the app is **live on the Microsoft Store** at
+  <https://apps.microsoft.com/detail/9N8T25L0462F>.)
 - [x] **Product website** (issue #39) — a public marketing/landing site for the
   application.
 - [x] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
