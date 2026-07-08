@@ -226,13 +226,17 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'edit.duplicateClip') {
-      if (project.selectedClipId) {
+      if (project.selectedClipIds.size > 1) {
+        project.duplicateSelectedClips()
+      } else if (project.selectedClipId) {
         project.duplicateClip(project.selectedClipId)
       }
       return
     }
     if (action === 'edit.deleteClip') {
-      if (project.selectedClipId) {
+      if (project.selectedClipIds.size > 1) {
+        project.deleteSelectedClips()
+      } else if (project.selectedClipId) {
         project.removeClip(project.selectedClipId)
       }
       return

@@ -27,6 +27,8 @@ interface FakeStores {
   project: {
     durationMs: number
     selectedClipId: string | null
+    selectedClipIds: Set<string>
+    setSelectedClipsLocked: ReturnType<typeof vi.fn>
     selectedTrackId: string | null
     metronomeEnabled: boolean
     clips: Record<string, { locked: boolean; startMs: number }>
@@ -74,6 +76,8 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     project: {
       durationMs: 10_000,
       selectedClipId: null,
+      selectedClipIds: new Set<string>(),
+      setSelectedClipsLocked: vi.fn(),
       selectedTrackId: null,
       metronomeEnabled: false,
       clips: {},

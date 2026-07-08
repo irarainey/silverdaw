@@ -157,6 +157,7 @@ export function applyProjectStructureReset(
     target.markers = []
     if (!isSoftReplace) {
       target.selectedClipId = null
+      target.selectedClipIds = new Set()
       target.selectedTrackId = null
       target.clipboardClip = null
     }

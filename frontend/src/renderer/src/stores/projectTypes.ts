@@ -240,8 +240,13 @@ export interface ProjectState {
   /** Which FX rack the bottom panel shows: per-track or project-wide. UI-only (not persisted). */
   fxTab: 'track' | 'project'
 
-  /** Selected clip id (UI-only). Drives the selection outline and Cut/Copy target. */
+  /** Selected clip id (UI-only). The primary/anchor of the selection: the Cut/Copy target and
+   *  the anchor for Shift-click range selection. Always a member of `selectedClipIds` when set. */
   selectedClipId: string | null
+
+  /** Full multi-selection of clip ids (UI-only, not persisted). Contains `selectedClipId` when
+   *  non-empty. Drives the selection outline and multi-clip operations. */
+  selectedClipIds: Set<string>
 
   /** Selected track id — paste target and Track FX target. Persisted as non-dirty view state. */
   selectedTrackId: string | null

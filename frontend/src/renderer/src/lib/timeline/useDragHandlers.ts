@@ -142,6 +142,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   // Locked clips can click-seek, but threshold-crossing drags suppress release seek.
   let pendingDragLocked = false
   let pendingDragSuppressSeek = false
+  // True when the pending drag began on a clip that is part of a multi-selection via a PLAIN
+  // click: the selection collapses to just that clip only once we know it's a drag or a click
+  // (not on pointerdown), so a press-and-drag on one clip of a group doesn't discard the rest.
+  let pendingDragCollapseMulti = false
   let draggedMarkerId: string | null = null
   // Pending marker drag: a press over a marker resolves to a move only after
   // crossing the threshold; a plain click falls through to a playhead seek.
@@ -390,8 +394,28 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       if (clip) {
         const pointerMs = pointerToRawMs(e.clientX)
         if (pointerMs !== null) {
-          // Select clip and host track so paste targets what the user clicked.
-          project.selectClip(clip.id)
+          // Ctrl/Cmd-click toggles this clip in the multi-selection; Shift-click extends a
+          // same-track range from the anchor. Both are discrete (no drag, no seek).
+          if (e.ctrlKey || e.metaKey) {
+            project.toggleClipSelection(clip.id)
+            project.selectTrack(clip.trackId)
+            e.preventDefault()
+            return
+          }
+          if (e.shiftKey) {
+            project.selectClipRange(clip.id)
+            project.selectTrack(clip.trackId)
+            e.preventDefault()
+            return
+          }
+          // Plain click. If the clip is part of a multi-selection, defer collapsing to a single
+          // clip until we know this is a plain click or a drag start (see onPendingPointer*).
+          const inMultiSelection = project.selectedClipIds.size > 1 && project.isClipSelected(clip.id)
+          if (!inMultiSelection) {
+            // Select clip and host track so paste targets what the user clicked.
+            project.selectClip(clip.id)
+          }
+          pendingDragCollapseMulti = inMultiSelection
           project.selectTrack(clip.trackId)
           pendingDragClipId = clip.id
           pendingDragEdge = trimHit?.edge ?? null
@@ -584,6 +608,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     pendingDragClipId = null
     pendingDragEdge = null
     pendingDragLocked = false
+    pendingDragCollapseMulti = false
     window.removeEventListener('pointermove', onPendingPointerMove)
     window.removeEventListener('pointerup', onPendingPointerUp)
     window.removeEventListener('pointercancel', onPendingPointerUp)
@@ -594,6 +619,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const dx = e.clientX - pendingDragStartX
     const dy = e.clientY - pendingDragStartY
     if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+
+    // A drag on a clip that was part of a multi-selection collapses to just that clip (MVP has no
+    // group-move yet), so the gesture moves/trims a single clip predictably.
+    if (pendingDragCollapseMulti) project.selectClip(pendingDragClipId)
 
     if (pendingDragLocked) {
       // Locked drag crossed threshold: refuse drag and suppress release seek.
@@ -640,6 +669,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function onPendingPointerUp(e: PointerEvent): void {
     if (pendingDragClipId === null) return
     const suppressSeek = pendingDragSuppressSeek
+    // A plain click (no drag) on a clip that was part of a multi-selection collapses to just
+    // that clip.
+    if (pendingDragCollapseMulti) project.selectClip(pendingDragClipId)
     clearPendingDrag()
     if (suppressSeek) return
     const ms = pointerToMs(e.clientX, e.altKey)

@@ -23,6 +23,7 @@ import {
   isClipTempoWarpActive
 } from '@/lib/clip/clipTiming'
 import { send as sendBridge } from '@/lib/bridgeService'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { log } from '@/lib/log'
 import type {
   DelayNoteValue,
@@ -39,6 +40,7 @@ import {
   DEFAULT_PROJECT_NAME
 } from './projectTypes'
 import type {
+  Clip,
   ProjectState
 } from './projectTypes'
 import { applyProjectStateSnapshot as applyProjectStateSnapshotImpl } from './projectSnapshot'
@@ -85,6 +87,7 @@ export const useProjectStore = defineStore('project', {
     fxPanelOpen: false,
     fxTab: 'track',
     selectedClipId: null,
+    selectedClipIds: new Set(),
     selectedTrackId: null,
     clipboardClip: null,
     duplicateTailBySource: {},
@@ -138,7 +141,13 @@ export const useProjectStore = defineStore('project', {
 
     anySoloed(state): boolean {
       return state.tracks.some((t) => t.soloed)
-    }
+    },
+
+    /** Membership test for the multi-selection (used by the renderer highlight). */
+    isClipSelected: (state) => (clipId: string): boolean => state.selectedClipIds.has(clipId),
+
+    /** How many clips are currently selected. */
+    selectedClipCount: (state): number => state.selectedClipIds.size
   },
 
   actions: {
@@ -149,9 +158,135 @@ export const useProjectStore = defineStore('project', {
     ...transitionActions,
 
     selectClip(clipId: string | null): void {
-      if (this.selectedClipId === clipId) return
+      if (this.selectedClipId === clipId && this.selectedClipIds.size === (clipId ? 1 : 0)) return
       this.selectedClipId = clipId
+      this.selectedClipIds = clipId ? new Set([clipId]) : new Set()
       this.peaksRevision++
+    },
+
+    /** Ctrl-click: toggle a clip in/out of the multi-selection, keeping a sensible anchor. */
+    toggleClipSelection(clipId: string): void {
+      if (!this.clips[clipId]) return
+      const next = new Set(this.selectedClipIds)
+      if (next.has(clipId)) {
+        next.delete(clipId)
+        if (this.selectedClipId === clipId) {
+          this.selectedClipId = next.values().next().value ?? null
+        }
+      } else {
+        next.add(clipId)
+        this.selectedClipId = clipId
+      }
+      this.selectedClipIds = next
+      this.peaksRevision++
+    },
+
+    /** Shift-click: select every clip on the anchor's track between the anchor and `clipId`
+     *  (inclusive), ordered by start time. Falls back to a singleton when there's no same-track
+     *  anchor (e.g. the anchor is on another track or absent). */
+    selectClipRange(clipId: string): void {
+      const clicked = this.clips[clipId]
+      const anchorId = this.selectedClipId
+      const anchor = anchorId ? this.clips[anchorId] : null
+      if (!clicked || !anchor || anchor.trackId !== clicked.trackId) {
+        this.selectClip(clipId)
+        return
+      }
+      const track = this.tracks.find((t) => t.id === clicked.trackId)
+      if (!track) {
+        this.selectClip(clipId)
+        return
+      }
+      const ordered = track.clipIds
+        .map((id) => this.clips[id])
+        .filter((c): c is Clip => c != null)
+        .sort((a, b) => a.startMs - b.startMs)
+      const iA = ordered.findIndex((c) => c.id === anchorId)
+      const iB = ordered.findIndex((c) => c.id === clipId)
+      if (iA < 0 || iB < 0) {
+        this.selectClip(clipId)
+        return
+      }
+      const [lo, hi] = iA <= iB ? [iA, iB] : [iB, iA]
+      const next = new Set<string>()
+      for (let i = lo; i <= hi; i++) next.add(ordered[i]!.id)
+      this.selectedClipIds = next
+      // Keep the original anchor so a second Shift-click pivots on the same clip.
+      this.selectedClipId = anchorId
+      this.peaksRevision++
+    },
+
+    /** Clear the whole clip selection. */
+    clearClipSelection(): void {
+      if (this.selectedClipId === null && this.selectedClipIds.size === 0) return
+      this.selectedClipId = null
+      this.selectedClipIds = new Set()
+      this.peaksRevision++
+    },
+
+    /** Drop any selected ids that no longer exist (e.g. after an undo/redo removed clips) so a
+     *  stale id can't corrupt a later multi-clip operation. */
+    reconcileClipSelection(): void {
+      let changed = false
+      const next = new Set<string>()
+      for (const id of this.selectedClipIds) {
+        if (this.clips[id]) next.add(id)
+        else changed = true
+      }
+      if (this.selectedClipId !== null && !this.clips[this.selectedClipId]) {
+        this.selectedClipId = next.values().next().value ?? null
+        changed = true
+      }
+      if (changed) {
+        this.selectedClipIds = next
+        this.peaksRevision++
+      }
+    },
+
+    /** Delete every selected clip as one undo step, then clear the selection. */
+    deleteSelectedClips(): void {
+      const ids = Array.from(this.selectedClipIds)
+      if (ids.length === 0) return
+      runInUndoGroup('Delete clips', () => {
+        for (const id of ids) this.removeClip(id)
+      })
+      this.clearClipSelection()
+    },
+
+    /** Lock or unlock every selected clip as one undo step. */
+    setSelectedClipsLocked(locked: boolean): void {
+      const ids = Array.from(this.selectedClipIds)
+      if (ids.length === 0) return
+      runInUndoGroup(locked ? 'Lock clips' : 'Unlock clips', () => {
+        for (const id of ids) this.setClipLocked(id, locked)
+      })
+    },
+
+    /** Recolour every selected clip as one undo step. */
+    setSelectedClipsColor(colorIndex: number): void {
+      const ids = Array.from(this.selectedClipIds)
+      if (ids.length === 0) return
+      runInUndoGroup('Recolour clips', () => {
+        for (const id of ids) this.setClipColor(id, colorIndex)
+      })
+    },
+
+    /** Duplicate every selected clip as one undo step, selecting the new clips. */
+    duplicateSelectedClips(): void {
+      const ids = Array.from(this.selectedClipIds)
+      if (ids.length === 0) return
+      const newIds: string[] = []
+      runInUndoGroup('Duplicate clips', () => {
+        for (const id of ids) {
+          const newId = this.duplicateClip(id)
+          if (newId) newIds.push(newId)
+        }
+      })
+      if (newIds.length > 0) {
+        this.selectedClipIds = new Set(newIds)
+        this.selectedClipId = newIds[0] ?? null
+        this.peaksRevision++
+      }
     },
 
     /** Persist selected track as non-dirty view state. */

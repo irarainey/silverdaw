@@ -144,6 +144,13 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.preventDefault()
       e.stopPropagation()
       if (e.repeat) return
+      // Multiple clips selected: lock all (or unlock all if every one is already locked).
+      if (project.selectedClipIds.size > 1) {
+        const ids = Array.from(project.selectedClipIds)
+        const allLocked = ids.every((id) => project.clips[id]?.locked === true)
+        project.setSelectedClipsLocked(!allLocked)
+        return
+      }
       const id = project.selectedClipId
       if (!id) {
         log.info('project', 'shortcut Ctrl+L ignored — no clip selected')

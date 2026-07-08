@@ -121,6 +121,32 @@ export function useTimelineContextMenu(
         }
       ]
     }
+    // Multi-selection: a short, dedicated menu of operations that apply to the whole group,
+    // rather than greying out the many single-clip-only items on the normal menu.
+    if (
+      contextMenuClipId.value !== null &&
+      project.selectedClipIds.size > 1 &&
+      project.isClipSelected(contextMenuClipId.value)
+    ) {
+      const ids = Array.from(project.selectedClipIds)
+      const count = ids.length
+      const allLocked = ids.every((id) => project.clips[id]?.locked === true)
+      return [
+        {
+          command: allLocked ? 'clips.unlock' : 'clips.lock',
+          label: allLocked ? `Unlock ${count} Clips` : `Lock ${count} Clips`
+        },
+        {
+          command: 'clips.color',
+          label: 'Colour',
+          separatorAbove: true,
+          swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id }))
+        },
+        { command: 'clips.duplicate', label: `Duplicate ${count} Clips`, separatorAbove: true },
+        { command: 'clips.delete', label: `Delete ${count} Clips` },
+        { command: 'clips.deselect', label: 'Deselect', separatorAbove: true }
+      ]
+    }
     const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
     const items: ClipContextMenuItem[] = []
     const clipParent = clip ? library.byId[clip.libraryItemId] : null
@@ -348,6 +374,11 @@ export function useTimelineContextMenu(
         e.preventDefault()
         contextMenuTrackId.value = null
         contextMenuClipId.value = r.clipId
+        // Right-clicking a clip outside the current multi-selection collapses to just that clip;
+        // right-clicking one inside it keeps the whole group so the multi-menu targets it.
+        if (!(project.selectedClipIds.size > 1 && project.isClipSelected(r.clipId))) {
+          project.selectClip(r.clipId)
+        }
         contextMenuX.value = e.clientX
         contextMenuY.value = e.clientY
         contextMenuOpen.value = true
@@ -385,6 +416,33 @@ export function useTimelineContextMenu(
         project.pasteClipAtPlayhead(transport.positionMs)
       }
       contextMenuTrackId.value = null
+      contextMenuClipId.value = null
+      return
+    }
+    // Multi-selection batch operations (each is one undo step; see the store actions).
+    if (command === 'clips.delete') {
+      project.deleteSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.lock' || command === 'clips.unlock') {
+      project.setSelectedClipsLocked(command === 'clips.lock')
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.duplicate') {
+      project.duplicateSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.deselect') {
+      project.clearClipSelection()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command.startsWith('clips.color:')) {
+      const idx = Number.parseInt(command.slice('clips.color:'.length), 10)
+      if (Number.isFinite(idx)) project.setSelectedClipsColor(idx)
       contextMenuClipId.value = null
       return
     }

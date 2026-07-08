@@ -44,5 +44,17 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
   // Hydrate library first so clip rebuild can resolve library items.
   applyProjectLibrary(target, snapshot)
   const clipsNeedingPeaks = applyProjectTracks(target, snapshot)
+  // Drop any selected ids the snapshot no longer contains (e.g. an undo/redo removed clips) so a
+  // stale id can't corrupt a later multi-clip operation. Selection survives soft-replays.
+  if (target.selectedClipIds.size > 0 || target.selectedClipId !== null) {
+    const pruned = new Set<string>()
+    for (const id of target.selectedClipIds) {
+      if (target.clips[id]) pruned.add(id)
+    }
+    target.selectedClipIds = pruned
+    if (target.selectedClipId !== null && !target.clips[target.selectedClipId]) {
+      target.selectedClipId = pruned.values().next().value ?? null
+    }
+  }
   finalizeProjectSnapshot(target, snapshot, isSoftReplace, clipsNeedingPeaks, pendingProjectLengthMs)
 }
