@@ -305,14 +305,14 @@ onBeforeUnmount(() => {
               v-for="(recent, idx) in recents"
               :key="recent.path"
               :class="[
-                'group relative flex items-center gap-3 px-3 py-2 text-sm hover:bg-zinc-800',
+                'group relative flex items-stretch text-sm hover:bg-zinc-800',
                 idx === 0 ? '' : 'border-t border-zinc-800'
               ]"
             >
               <button
                 type="button"
                 data-borderless-button="true"
-                class="flex min-w-0 flex-1 flex-col bg-transparent p-0 pr-7 text-left"
+                class="flex min-w-0 flex-1 flex-col justify-center bg-transparent px-3 py-2 pr-9 text-left"
                 :title="recent.path"
                 @click="openRecent(recent.path)"
               >

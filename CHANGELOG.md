@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+### Fixed
+
+- Clicking a project in the startup screen's Recent Projects list now works anywhere on the row. Previously only the inner text was clickable while the whole row highlighted on hover, so clicks in the row's padding did nothing.
+
 ## 1.0.3
 
 ### Added
