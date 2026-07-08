@@ -127,22 +127,24 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     const posMs = displayPositionMs || transport.positionMs
     const absX = headerWidth() + (posMs / 1000) * pxPerSecond.value
 
-    // Auto-follow eases forward only; never teleport scroll backwards.
+    // Auto-follow is a playback affordance only: it eases the view forward to keep
+    // the moving playhead in view during playback. Dragging the playhead never
+    // re-centres the view (that felt jarring and could scroll the wrong way while
+    // catching up) — a drag edge-scrolls in useDragHandlers instead, and a drag
+    // inside the visible area leaves the scroll untouched.
     const shouldFollow =
-      (transport.isPlaying && ui.followPlayback) || isDraggingPlayhead.value
+      transport.isPlaying && ui.followPlayback && !isDraggingPlayhead.value
     const now = performance.now()
     const dtSec = lastUpdateMs === 0 ? 0 : Math.min(0.1, (now - lastUpdateMs) / 1000)
     lastUpdateMs = now
     if (shouldFollow) {
       const viewportCentre = headerWidth() + (width - headerWidth()) / 2
       const desired = Math.max(0, absX - viewportCentre)
-      // Playback follow eases forward only: playback never runs backwards, and we don't want
-      // backward scroll jitter. But while the user is actively dragging the playhead, follow in
-      // BOTH directions so dragging left scrolls the timeline back with it, not just dragging right.
+      // Playback follow eases forward only: playback never runs backwards, and we
+      // don't want backward scroll jitter.
       const gap = desired - scrollX.value
-      const allowBackward = isDraggingPlayhead.value
       let nextScroll: number | null = null
-      if (gap > 0.5 || (allowBackward && gap < -0.5)) {
+      if (gap > 0.5) {
         // Mix playback-relative and gap-proportional catch-up; cap prevents overshoot.
         const audioPxPerSec = pxPerSecond.value
         const approachPxPerSec = audioPxPerSec * 3

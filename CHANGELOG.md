@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Clicking the timeline on a marker now moves the playhead there instead of doing nothing. Markers are now dragged with Shift held, so a plain mouse drag always moves the playhead — unambiguous even when the playhead sits on a marker.
+- Clicking the timeline to place the playhead no longer scrolls the view. Dragging the playhead now only scrolls once it reaches the edge of the view, instead of re-centring (which could jump or scroll the wrong way). Follow-scroll is reserved for playback.
 - The startup screen and pre-mount splash now have full minimise / maximise / close controls and a draggable top edge, matching the main window. The splash also hands off to the loading screen without flashing or jumping.
 - Recent Projects entries on the startup screen are now clickable across the whole row, not just the text.
 
