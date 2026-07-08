@@ -12,7 +12,8 @@
 
 ### Fixed
 
-- Scrolling the mouse wheel over the project tempo now changes it by 1 BPM (hold Alt for 0.01) instead of always stepping by a hard-to-control 0.01; the spinner and ↑/↓ keys gain the same Alt fine-step.
+- The Clip Editor's tempo fields (beat-grid BPM and Warp "pin to" BPM) now always display two decimals (e.g. 120.00).
+- Scrolling the mouse wheel over a BPM field (the project tempo, and the Clip Editor's beat-grid tempo and Warp "pin to" tempo) now changes it by 1 BPM (hold Alt for 0.01) instead of always stepping by a hard-to-control 0.01; the project-tempo spinner and ↑/↓ keys gain the same Alt fine-step.
 - Undoing or redoing a track's tone, leveler, reverb/delay send, pan or automation back to its default now resets it in the audio engine instead of leaving the previous value playing.
 - Undo and redo of a clip edit are dramatically faster on large projects — they now update just the changed clip in the audio engine instead of rebuilding every clip, so undo no longer slows down as you add more clips.
 - Manual-tempo / beat-grid edits in the Clip Editor are now undoable as one step and mark the project dirty (automatic tempo detection stays silent, as before).

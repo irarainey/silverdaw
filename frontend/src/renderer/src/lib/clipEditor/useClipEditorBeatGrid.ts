@@ -20,10 +20,11 @@ export interface ClipEditorBeatGrid {
   /** When true, dragging the waveform slides the beat grid instead of selecting. */
   alignActive: Ref<boolean>
   /**
-   * The beat-grid BPM shown in (and edited via) the tempo field. Kept in sync with
-   * the source's current tempo unless the user is actively editing it.
+   * The beat-grid BPM shown in (and edited via) the tempo field, as a string always formatted
+   * to two decimals (e.g. "120.00"). Kept in sync with the source's current tempo unless the user
+   * is actively editing it; empty string when the source has no tempo.
    */
-  manualBpmInput: Ref<number | null>
+  manualBpmInput: Ref<string>
   /**
    * The source tempo captured when the editor opened, so the user can see what
    * they started from and revert to it. Null until a valid BPM is first observed.
@@ -54,6 +55,8 @@ export interface ClipEditorBeatGrid {
   /** Halve / double the source BPM (octave fix), keeping the phase anchor. */
   halveBpm: () => void
   doubleBpm: () => void
+  /** Step the source BPM by `delta` (e.g. wheel ±1, or ±0.01 fine), keeping the phase anchor. */
+  bumpBpm: (delta: number) => void
   /** Nudge the grid phase by a few milliseconds (fine alignment the drag lacks). */
   nudgeAnchorMs: (deltaMs: number) => void
   /** Shift the grid by half a beat to flip an on-beat/off-beat lock. */
@@ -89,7 +92,7 @@ function currentAnchorSec(item: LibraryItem): number {
 export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorBeatGrid {
   const library = useLibraryStore()
   const alignActive = ref(false)
-  const manualBpmInput = ref<number | null>(null)
+  const manualBpmInput = ref<string>('')
   // The tempo the source had when the editor opened. Snapshotted once so the user
   // can always see the value they started from and restore it after an override.
   const originalBpm = ref<number | null>(null)
@@ -115,7 +118,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   function syncTempoField(): void {
     if (tempoEditing) return
     const cur = currentBpm()
-    manualBpmInput.value = cur !== undefined ? Math.round(cur * 100) / 100 : null
+    manualBpmInput.value = cur !== undefined ? cur.toFixed(2) : ''
   }
 
   watch(
@@ -158,17 +161,17 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function commitTempoEdit(endEditing = false): void {
     const item = deps.sourceItem()
-    const bpm = manualBpmInput.value
-    if (item && typeof bpm === 'number' && bpm >= MIN_BPM && bpm <= MAX_BPM) {
+    const bpm = Number(manualBpmInput.value)
+    if (item && manualBpmInput.value.trim() !== '' && Number.isFinite(bpm) && bpm >= MIN_BPM && bpm <= MAX_BPM) {
       if (typeof item.bpm !== 'number' || Math.abs(item.bpm - bpm) > 1e-6) {
         library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec(item))
         gridEdited.value = true
       }
-      manualBpmInput.value = Math.round(bpm * 100) / 100
+      manualBpmInput.value = bpm.toFixed(2)
     } else if (!tempoEditing || endEditing) {
       // Empty / out-of-range entry: revert the field to the current tempo.
       const cur = currentBpm()
-      manualBpmInput.value = cur !== undefined ? Math.round(cur * 100) / 100 : null
+      manualBpmInput.value = cur !== undefined ? cur.toFixed(2) : ''
     }
     if (endEditing) tempoEditing = false
   }
@@ -178,7 +181,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const orig = originalBpm.value
     if (!item || orig === null || orig < MIN_BPM || orig > MAX_BPM) return
     library.setItemManualTempoLocal(item.id, orig, currentAnchorSec(item))
-    manualBpmInput.value = Math.round(orig * 100) / 100
+    manualBpmInput.value = orig.toFixed(2)
     gridEdited.value = true
   }
 
@@ -189,7 +192,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const next = item.bpm * factor
     if (next < MIN_BPM || next > MAX_BPM) return
     library.setItemManualTempoLocal(item.id, next, currentAnchorSec(item))
-    manualBpmInput.value = Math.round(next * 100) / 100
+    manualBpmInput.value = next.toFixed(2)
     gridEdited.value = true
   }
 
@@ -199,6 +202,16 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function doubleBpm(): void {
     scaleBpm(2)
+  }
+
+  function bumpBpm(delta: number): void {
+    const item = deps.sourceItem()
+    if (!item || !item.bpm || item.bpm <= 0 || !Number.isFinite(delta)) return
+    const next = Math.min(MAX_BPM, Math.max(MIN_BPM, item.bpm + delta))
+    if (Math.abs(next - item.bpm) < 1e-9) return
+    library.setItemManualTempoLocal(item.id, next, currentAnchorSec(item))
+    manualBpmInput.value = next.toFixed(2)
+    gridEdited.value = true
   }
 
   function nudgeAnchorMs(deltaMs: number): void {
@@ -273,6 +286,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     restoreOriginalBpm,
     halveBpm,
     doubleBpm,
+    bumpBpm,
     nudgeAnchorMs,
     nudgeHalfBeat,
     previewAnchorSec,

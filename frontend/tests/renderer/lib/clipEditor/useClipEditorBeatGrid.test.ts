@@ -59,7 +59,7 @@ describe('useClipEditorBeatGrid', () => {
   it('seeds the tempo field with the current source BPM', () => {
     const item = addSource(140, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
-    expect(grid.manualBpmInput.value).toBe(140)
+    expect(grid.manualBpmInput.value).toBe('140.00')
   })
 
   // Edits are drafted locally during a session — no bridge round-trip — and committed
@@ -72,14 +72,14 @@ describe('useClipEditorBeatGrid', () => {
     sendMock.mockClear()
 
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 10
+    grid.manualBpmInput.value = '10'
     grid.commitTempoEdit(true)
     expect(item.bpm).toBe(120)
-    expect(grid.manualBpmInput.value).toBe(120)
+    expect(grid.manualBpmInput.value).toBe('120.00')
     expect(sendMock).not.toHaveBeenCalled()
 
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 128
+    grid.manualBpmInput.value = '128'
     grid.commitTempoEdit(true)
     expect(item.bpm).toBe(128)
     expect(sendMock).not.toHaveBeenCalled()
@@ -98,7 +98,7 @@ describe('useClipEditorBeatGrid', () => {
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     sendMock.mockClear()
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 96
+    grid.manualBpmInput.value = '96'
     grid.commitTempoEdit(true)
     expect(item.bpm).toBe(96)
     expect(item.beatAnchorSec).toBe(0.3)
@@ -136,7 +136,7 @@ describe('useClipEditorBeatGrid', () => {
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     expect(grid.hasGridChanged()).toBe(false)
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 96
+    grid.manualBpmInput.value = '96'
     grid.commitTempoEdit(true)
     expect(grid.hasGridChanged()).toBe(true)
   })
@@ -149,12 +149,12 @@ describe('useClipEditorBeatGrid', () => {
     grid.halveBpm()
     expect(item.bpm).toBe(60)
     expect(item.beatAnchorSec).toBe(0.25)
-    expect(grid.manualBpmInput.value).toBe(60)
+    expect(grid.manualBpmInput.value).toBe('60.00')
 
     grid.doubleBpm()
     expect(item.bpm).toBe(120)
     expect(item.beatAnchorSec).toBe(0.25)
-    expect(grid.manualBpmInput.value).toBe(120)
+    expect(grid.manualBpmInput.value).toBe('120.00')
     expect(grid.hasGridChanged()).toBe(true)
     expect(sendMock).not.toHaveBeenCalled()
   })
@@ -164,6 +164,30 @@ describe('useClipEditorBeatGrid', () => {
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })
     grid.doubleBpm()
     expect(item.bpm).toBe(200)
+    expect(grid.hasGridChanged()).toBe(false)
+  })
+
+  it('bumps the BPM locally by whole and fine steps, keeping the anchor and clamping', () => {
+    const item = addSource(120, 0.25)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    sendMock.mockClear()
+
+    grid.bumpBpm(1)
+    expect(item.bpm).toBe(121)
+    expect(item.beatAnchorSec).toBe(0.25)
+    expect(grid.manualBpmInput.value).toBe('121.00')
+
+    grid.bumpBpm(-0.01)
+    expect(item.bpm).toBeCloseTo(120.99, 6)
+    expect(grid.hasGridChanged()).toBe(true)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('does not bump the BPM past the valid range', () => {
+    const item = addSource(300, 0)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    grid.bumpBpm(1)
+    expect(item.bpm).toBe(300)
     expect(grid.hasGridChanged()).toBe(false)
   })
 
@@ -190,7 +214,7 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.canRestore()).toBe(false)
 
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 96
+    grid.manualBpmInput.value = '96'
     grid.commitTempoEdit(true)
     expect(item.bpm).toBe(96)
     expect(grid.canRestore()).toBe(true)
@@ -198,7 +222,7 @@ describe('useClipEditorBeatGrid', () => {
     sendMock.mockClear()
     grid.restoreOriginalBpm()
     expect(item.bpm).toBe(120)
-    expect(grid.manualBpmInput.value).toBe(120)
+    expect(grid.manualBpmInput.value).toBe('120.00')
     expect(grid.canRestore()).toBe(false)
     expect(sendMock).not.toHaveBeenCalled()
   })
@@ -218,7 +242,7 @@ describe('useClipEditorBeatGrid', () => {
     grid.reset()
     grid.nudgeAnchorMs(20)
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 128
+    grid.manualBpmInput.value = '128'
     grid.commitTempoEdit(true)
     sendMock.mockClear()
 
@@ -252,7 +276,7 @@ describe('useClipEditorBeatGrid', () => {
     grid.reset()
 
     grid.beginTempoEdit()
-    grid.manualBpmInput.value = 96
+    grid.manualBpmInput.value = '96'
     grid.commitTempoEdit(true)
     grid.commitAnchorSec(0.9)
     expect(item.bpm).toBe(96)
