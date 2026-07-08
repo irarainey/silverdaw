@@ -35,6 +35,7 @@ const emit = defineEmits<{
   (e: 'openContextMenu', event: MouseEvent, item: LibraryItem): void
   (e: 'startRename', item: LibraryItem): void
   (e: 'toggleCollapsed', itemId: string, collapsed: boolean): void
+  (e: 'import'): void
 }>()
 
 const editingValue = defineModel<string>('editingValue', { required: true })
@@ -46,7 +47,15 @@ const editingValue = defineModel<string>('editingValue', { required: true })
       v-if="props.itemCount === 0"
       class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
     >
-      Drop audio files here, or click <span class="mx-1 font-medium text-zinc-300">Import</span> to add them.
+      Drop audio files here, or click
+      <button
+        type="button"
+        class="mx-1 cursor-pointer font-medium text-zinc-300 underline-offset-2 outline-none hover:text-zinc-100 hover:underline focus-visible:text-zinc-100 focus-visible:underline"
+        @click="emit('import')"
+      >
+        Import
+      </button>
+      to add them.
     </div>
     <div
       v-else
