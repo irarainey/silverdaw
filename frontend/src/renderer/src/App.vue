@@ -15,6 +15,7 @@ import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
 import StemSeparationProgressDialog from '@/components/StemSeparationProgressDialog.vue'
 import StemModelDownloadDialog from '@/components/StemModelDownloadDialog.vue'
 import StemSelectionDialog from '@/components/StemSelectionDialog.vue'
+import ChannelSplitDialog from '@/components/ChannelSplitDialog.vue'
 import { loadStemQualityPreference } from '@/lib/stems/stemSeparationFlow'
 import { useMixdownState } from '@/lib/mixdownState'
 import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
@@ -431,6 +432,8 @@ const { handleMenuAction } = useAppMenuActions({
     <StemModelDownloadDialog />
 
     <StemSeparationProgressDialog />
+
+    <ChannelSplitDialog />
 
     <AudioDeviceUnavailableDialog
       :open="audioUnavailableOpen"

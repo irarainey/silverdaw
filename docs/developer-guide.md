@@ -306,6 +306,17 @@ Silverdaw currently supports the core arrangement workflow:
   to samples** (one WAV per slice, default **simple** one-shots, named per slice).
   The backend writes them in a single batch via `CLIP_SLICE_TO_SAMPLES`, and the
   renderer shows one summary toast for the whole run.
+- **Split Stereo Channels…** on a stereo timeline clip (right-click; hidden when
+  the source isn't 2-channel) opens a Left/Right picker. Each chosen channel is
+  exported via `CLIP_SPLIT_CHANNELS` — the backend reuses the sample-export writer
+  (`SampleExport.cpp`) with a channel-duplicate step (`ChannelSplitDsp.h`) to write
+  a raw source-window WAV whose L and R both carry that one channel, under a
+  per-source subfolder of the `channels` folder. The result is announced via
+  `CHANNEL_SPLIT_READY` (or `CHANNEL_SPLIT_FAILED`); the renderer imports each file
+  as a **stem**-kind library item (so cleanup and serialization are shared with
+  stems) and drops it on its own new track aligned to the source clip, inheriting
+  the source's grid and auto-warp exactly like a stem. No warp is baked. Runs on
+  the export thread pool, so a long clip never blocks the bridge.
 - Inline rename for library items (single-click into the name) and timeline clips
   (double-click the clip title). Renames persist with the project; if the renamed
   clip is saved to the library, the library entry inherits the same name.
@@ -1098,8 +1109,8 @@ returns the summary plus (for stereo) the per-channel arrays.
 The renderer keeps the per-channel peaks in a session-only
 `libraryStore.channelPeaksByItemId` map (keyed by the source item id,
 each with its own LOD pyramid). The **Waveform display** preference (Preferences ▸
-General) chooses between *Single waveform* (summary, default) and *Left and
-right channels* (stacked L/R lanes for stereo sources); the choice is persisted
+General) chooses between *Single waveform* (summary) and *Left and
+right channels* (stacked L/R lanes for stereo sources, the default); the choice is persisted
 to `preferences.json` and applied to both the timeline and the Clip Editor. Mono
 sources, and rows too short to fit two readable lanes, always fall back to the
 single summary lane. On the timeline, stereo lanes also reflect the track's
@@ -1851,8 +1862,8 @@ Persisted fields:
   buttons jump: `timelineEnds` seeks the project start / end; `markers` steps
   through the timeline markers, falling back to the start / end past the last
   marker in either direction.
-- **Waveform display** — `ui.waveformDisplayMode`, `summary` (default) or
-  `stereo`. `summary` draws a single combined waveform per clip; `stereo`
+- **Waveform display** — `ui.waveformDisplayMode`, `summary` or
+  `stereo` (default). `summary` draws a single combined waveform per clip; `stereo`
   stacks separate left / right lanes for two-channel sources (mono sources and
   rows too short for two lanes still show one lane). Applies to both the
   timeline and the Clip Editor.

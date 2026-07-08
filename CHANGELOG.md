@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Split Stereo Channels…** on a stereo clip's right-click menu opens a picker to split out its Left and/or Right channel. Each chosen channel lands on its own new track as a stereo clip carrying only that channel (copied to both sides) — non-destructive, and it inherits the source's grid and warps just like a stem.
 - Select multiple clips on the timeline: **Shift-click** selects a range on the same track, **Ctrl-click** toggles individual clips across tracks.
 - Drag any selected clip to move the whole multi-selection as a group, preserving relative positions and track offsets, blocked only where it wouldn't fit; **Shift + ←/→** nudges the group.
 - A dedicated right-click menu offers Copy, Cut, Lock, Colour, Duplicate and Delete for the whole selection, and **Delete**, **Ctrl + L** (lock) and **Duplicate** act on every selected clip.
@@ -14,6 +15,10 @@
 - Dragging a library item onto the empty area below the tracks now shows a "new track" drop lane (with a ＋ badge) and drops the clip onto a freshly created track — undoable as one step.
 - `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) opens and collapses the bottom Library / FX panel.
 - `Ctrl` + `1`–`8` jump the timeline to 100%–800% zoom; the matching Zoom Presets show these accelerators.
+
+### Changed
+
+- The waveform display now defaults to **Left and right channels** (stacked stereo lanes) instead of a single summary waveform. Existing preferences are untouched; change it any time in Preferences ▸ General.
 
 ### Fixed
 

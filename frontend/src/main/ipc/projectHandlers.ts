@@ -6,7 +6,7 @@ import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
 import { readFile, mkdir, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
+import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
 import { ensureWritableTargetDir } from '../writableTarget'
@@ -105,9 +105,12 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // Likewise the project's samples folder, where music samples persist their
       // inherited metadata/cover sidecar.
       registerSamplesWriteRoot(join(dirname(target), 'samples'))
+      // And the project's channels folder, where split stereo channels are written.
+      registerChannelsWriteRoot(join(dirname(target), 'channels'))
       // Clear any empty per-source artifact folder left behind by an earlier removal.
       void sweepEmptyArtifactSubdirs(join(dirname(target), 'stems'))
       void sweepEmptyArtifactSubdirs(join(dirname(target), 'samples'))
+      void sweepEmptyArtifactSubdirs(join(dirname(target), 'channels'))
       // Carry the central media store (cover art + tags) into the project folder so it
       // survives the save: items imported while the project was unsaved wrote it to the
       // temp workspace, and a "Save As" copies it from the previous project folder.
@@ -135,12 +138,15 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // Stems + samples for this project live beside it; trust those folders for reads + sidecar.
       const stemsRoot = join(rootsDir, 'stems')
       const samplesRoot = join(rootsDir, 'samples')
+      const channelsRoot = join(rootsDir, 'channels')
       registerStemsWriteRoot(stemsRoot)
       registerSamplesWriteRoot(samplesRoot)
+      registerChannelsWriteRoot(channelsRoot)
       // Clear any empty per-source artifact folder left behind by a removal whose folder couldn't
       // be deleted last session. Best-effort; never touches folders that still hold files.
       void sweepEmptyArtifactSubdirs(stemsRoot)
       void sweepEmptyArtifactSubdirs(samplesRoot)
+      void sweepEmptyArtifactSubdirs(channelsRoot)
       // Central per-source metadata/cover store (keyed by media GUID) beside the project.
       registerProjectMediaRoots(rootsDir)
       let parsed: unknown

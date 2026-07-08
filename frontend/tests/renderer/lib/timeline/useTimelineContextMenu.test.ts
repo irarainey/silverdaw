@@ -68,6 +68,7 @@ function setupMenu(opts: {
   positionMs?: number
   chooseAudioFile?: ReturnType<typeof vi.fn>
   startStemSeparation?: ReturnType<typeof vi.fn>
+  startChannelSplit?: ReturnType<typeof vi.fn>
 }): ReturnType<typeof useTimelineContextMenu> {
   const project = useProjectStore()
   const library = useLibraryStore()
@@ -98,7 +99,8 @@ function setupMenu(opts: {
     headerWidth: () => 200,
     dialogs,
     chooseAudioFile: opts.chooseAudioFile,
-    startStemSeparation: opts.startStemSeparation
+    startStemSeparation: opts.startStemSeparation,
+    startChannelSplit: opts.startChannelSplit
   })
   menu.contextMenuClipId.value = opts.clip.id
   return menu
@@ -365,6 +367,23 @@ describe('useTimelineContextMenu — command dispatch', () => {
   it('separate stems is disabled for unresolved clips', () => {
     const menu = setupMenu({ clip: makeClip({ unresolved: true }), item: makeAudioFileItem() })
     expect(findItem(menu, 'clip.separateStems')?.disabled).toBe(true)
+  })
+
+  it('split stereo channels item is present for a stereo source and routes to the injected starter', () => {
+    const startChannelSplit = vi.fn()
+    const clip = makeClip()
+    const menu = setupMenu({ clip, item: makeAudioFileItem(), startChannelSplit })
+    expect(findItem(menu, 'clip.splitChannels')?.disabled).toBeFalsy()
+
+    menu.contextMenuClipId.value = clip.id
+    menu.onContextMenuCommand('clip.splitChannels')
+    expect(startChannelSplit).toHaveBeenCalledWith(clip.id)
+  })
+
+  it('split stereo channels item is hidden when the source is not stereo', () => {
+    const monoItem = { ...makeAudioFileItem(), channelCount: 1 } as LibraryItem
+    const menu = setupMenu({ clip: makeClip(), item: monoItem })
+    expect(findItem(menu, 'clip.splitChannels')).toBeUndefined()
   })
 
   it('relink invokes the injected chooseAudioFile picker', async () => {

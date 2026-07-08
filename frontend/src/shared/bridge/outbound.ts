@@ -284,6 +284,17 @@ export interface ClipSliceToSamplesPayload {
   slices: ReadonlyArray<{ itemId: string; inMs: number; durationMs: number }>
 }
 
+/** Split a stereo clip: each requested channel is exported as a new stereo WAV (that
+ *  channel copied to both L+R) and announced via CHANNEL_SPLIT_READY. */
+export interface ClipSplitChannelsPayload {
+  jobId: string
+  clipId: string
+  /** Friendly source name used for the channel WAV filenames + track names. */
+  sourceName: string
+  /** Channels to extract (non-empty): 'left' and/or 'right'. */
+  channels: ReadonlyArray<'left' | 'right'>
+}
+
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
 //
 // Mutation envelopes optionally carry `gestureId` + `gestureEnd` so the backend
@@ -466,6 +477,7 @@ export interface BridgeOutboundMap {
   CLIP_SET_WARP: ClipSetWarpPayload
   CLIP_SAVE_AS_SAMPLE: ClipSaveAsSamplePayload
   CLIP_SLICE_TO_SAMPLES: ClipSliceToSamplesPayload
+  CLIP_SPLIT_CHANNELS: ClipSplitChannelsPayload
   LIBRARY_ITEM_SAVE_AS_SAMPLE: LibraryItemSaveAsSamplePayload
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
@@ -1023,6 +1035,7 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_SET_WARP: 'payload',
   CLIP_SAVE_AS_SAMPLE: 'payload',
   CLIP_SLICE_TO_SAMPLES: 'payload',
+  CLIP_SPLIT_CHANNELS: 'payload',
   LIBRARY_ITEM_SAVE_AS_SAMPLE: 'payload',
   CLIP_EDITOR_PEAKS_REQUEST: 'payload',
   LIBRARY_ADD: 'payload',

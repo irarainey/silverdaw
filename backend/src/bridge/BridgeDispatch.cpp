@@ -166,6 +166,11 @@ bool dispatchClip(const DispatchContext& ctx)
         silverdaw::handleClipSliceToSamples(payload, engine, projectState, bridge, peakPool, cache,
                                             session.currentPath);
     }
+    else if (type == "CLIP_SPLIT_CHANNELS")
+    {
+        silverdaw::handleClipSplitChannels(payload, engine, projectState, bridge, peakPool, cache,
+                                           session.currentPath);
+    }
     else if (type == "CLIP_SET_ENVELOPE")
     {
         silverdaw::log::debug("bridge", "recv CLIP_SET_ENVELOPE clipId=" +

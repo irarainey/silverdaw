@@ -32,6 +32,7 @@ import { previewBridgeHandlers } from '@/lib/bridge/handlers/previewHandlers'
 import { audioDeviceBridgeHandlers } from '@/lib/bridge/handlers/audioDeviceHandlers'
 import { mixdownBridgeHandlers } from '@/lib/bridge/handlers/mixdownHandlers'
 import { stemBridgeHandlers } from '@/lib/bridge/handlers/stemHandlers'
+import { channelSplitBridgeHandlers } from '@/lib/bridge/handlers/channelSplitHandlers'
 import { meterBridgeHandlers } from '@/lib/bridge/handlers/meterHandlers'
 
 const BRIDGE_HOST = '127.0.0.1'
@@ -417,6 +418,7 @@ const inboundHandlers = {
   ...audioDeviceBridgeHandlers,
   ...mixdownBridgeHandlers,
   ...stemBridgeHandlers,
+  ...channelSplitBridgeHandlers,
   ...meterBridgeHandlers,
   ...livenessBridgeHandlers
 } satisfies BridgeInboundHandlers

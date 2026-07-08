@@ -148,6 +148,31 @@ void testDeleteArtifactsRefusesOutsideRoots()
     projectDir.deleteRecursively();
 }
 
+void testDeleteArtifactsPrunesChannelsFolder()
+{
+    const auto projectDir = makeTempDir("cleanup-channels");
+    const auto session = sessionFor(projectDir);
+
+    // Split-channel WAVs live under a per-source folder of the `channels` root and are
+    // owned artifacts (reused 'stem' kind), so removing their library items must delete
+    // them and prune the emptied folder — exactly like stems/samples.
+    const auto channelsRoot = projectDir.getChildFile("channels");
+    const auto sourceDir = channelsRoot.getChildFile("Song");
+    const auto left = sourceDir.getChildFile("Song (L)-sample-001.wav");
+    const auto right = sourceDir.getChildFile("Song (R)-sample-001.wav");
+    writeStub(left);
+    writeStub(right);
+
+    silverdaw::handleLibraryDeleteArtifacts(
+        pathsPayload({left.getFullPathName(), right.getFullPathName()}), session, testEngine());
+    require(! left.existsAsFile(), "split-channel WAV (L) should be deleted");
+    require(! right.existsAsFile(), "split-channel WAV (R) should be deleted");
+    require(! sourceDir.exists(), "emptied channels per-source folder should be pruned");
+    require(channelsRoot.isDirectory(), "the channels root itself must never be removed");
+
+    projectDir.deleteRecursively();
+}
+
 } // namespace
 
 void addLibraryCleanupTests(std::vector<TestCase>& tests)
@@ -161,6 +186,8 @@ void addLibraryCleanupTests(std::vector<TestCase>& tests)
                      testDeleteArtifactsRemovesReadOnlyFolder});
     tests.push_back(
         {"delete artifacts refuses paths outside the artifact roots", testDeleteArtifactsRefusesOutsideRoots});
+    tests.push_back(
+        {"delete artifacts prunes an emptied channels folder", testDeleteArtifactsPrunesChannelsFolder});
 }
 
 } // namespace silverdaw::tests

@@ -29,6 +29,7 @@ import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loop
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
+import { requestChannelSplitForClip } from '@/lib/stems/channelSplitFlow'
 import { log } from '@/lib/log'
 
 export type ChooseAudioFile = (args: {
@@ -61,6 +62,9 @@ export interface UseTimelineContextMenuInputs {
   /** Starts stem separation for a clip (model-gating + dispatch). Injected so
    *  tests can stub it; defaults to the separation flow orchestrator. */
   startStemSeparation?: (clipId: string) => void
+  /** Opens the stereo-channel-split picker for a clip. Injected so tests can stub
+   *  it; defaults to the channel-split flow. */
+  startChannelSplit?: (clipId: string) => void
   /** Logger for picker / IPC failures. Defaults to `console.warn`. */
   onError?: (message: string, err: unknown) => void
 }
@@ -96,6 +100,11 @@ export function useTimelineContextMenu(
     inputs.startStemSeparation ??
     ((clipId: string): void => {
       void requestStemSeparationForClip(clipId)
+    })
+  const startChannelSplit =
+    inputs.startChannelSplit ??
+    ((clipId: string): void => {
+      requestChannelSplitForClip(clipId)
     })
   const onError =
     inputs.onError ??
@@ -248,6 +257,18 @@ export function useTimelineContextMenu(
         'new track (non-destructive). A one-time model download is needed on first use.',
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
+    // Stereo-only: split a channel out to its own track (that channel copied to both
+    // sides). Hidden entirely when the source isn't a stereo file.
+    if (clip && hasLibraryItem && clipParent?.channelCount === 2) {
+      items.push({
+        command: 'clip.splitChannels',
+        label: 'Split Stereo Channels…',
+        title:
+          'Copy the left and/or right channel to its own new track as a stereo clip ' +
+          '(non-destructive).',
+        disabled: clip.unresolved
+      })
+    }
     if (clip) {
       // Reverse and the two turntable tail effects (brake / backspin) form a
       // mutually-exclusive group: each row stays visible but is disabled while
@@ -529,6 +550,8 @@ export function useTimelineContextMenu(
       inputs.dialogs.openWarp(clipId, 'pitch')
     } else if (command === 'clip.separateStems') {
       startStemSeparation(clipId)
+    } else if (command === 'clip.splitChannels') {
+      startChannelSplit(clipId)
     } else if (command === 'clip.reverse') {
       if (clip) {
         const next = !clip.reversed

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "BridgeServer.h"
+#include "ChannelSplitDsp.h"
 #include "ProjectSession.h"
 #include "StemSeparationCommands.h"
 #include "StemSeparationEngine.h"
@@ -242,6 +243,48 @@ void testStemMetrics()
     requireNear(silverdaw::siSdrDb(silent, noise), 0.0, 1e-9, "silent reference yields 0 dB");
 }
 
+// Split-stereo-channels DSP: the chosen channel is copied across both outputs so the
+// exported clip is a stereo file carrying only that channel; out-of-range/mono is a no-op.
+void testDuplicateChannelAcross()
+{
+    juce::AudioBuffer<float> buffer(2, 4);
+    for (int i = 0; i < 4; ++i)
+    {
+        buffer.setSample(0, i, 0.1f * static_cast<float>(i + 1)); // left ramp
+        buffer.setSample(1, i, -0.5f);                            // right constant
+    }
+
+    // Duplicate the left channel: both channels become the left ramp.
+    silverdaw::duplicateChannelAcross(buffer, 4, 0);
+    for (int i = 0; i < 4; ++i)
+    {
+        requireNear(buffer.getSample(0, i), 0.1f * static_cast<float>(i + 1), 1e-6, "left preserved");
+        requireNear(buffer.getSample(1, i), 0.1f * static_cast<float>(i + 1), 1e-6, "right becomes left");
+    }
+
+    // Duplicate the right channel of a fresh buffer: both become the right constant.
+    juce::AudioBuffer<float> other(2, 4);
+    for (int i = 0; i < 4; ++i)
+    {
+        other.setSample(0, i, 0.9f);
+        other.setSample(1, i, -0.25f);
+    }
+    silverdaw::duplicateChannelAcross(other, 4, 1);
+    for (int i = 0; i < 4; ++i)
+    {
+        requireNear(other.getSample(0, i), -0.25f, 1e-6, "left becomes right");
+        requireNear(other.getSample(1, i), -0.25f, 1e-6, "right preserved");
+    }
+
+    // A mono buffer and an out-of-range channel are both no-ops (leave audio untouched).
+    juce::AudioBuffer<float> mono(1, 4);
+    for (int i = 0; i < 4; ++i) mono.setSample(0, i, 0.3f);
+    silverdaw::duplicateChannelAcross(mono, 4, 0);
+    for (int i = 0; i < 4; ++i) requireNear(mono.getSample(0, i), 0.3f, 1e-6, "mono untouched");
+    silverdaw::duplicateChannelAcross(buffer, 4, 5); // out of range: no change
+    requireNear(buffer.getSample(1, 0), 0.1f, 1e-6, "out-of-range channel is a no-op");
+}
+
 } // namespace
 
 void addStemSeparationTests(std::vector<TestCase>& tests)
@@ -255,6 +298,7 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"shift offsets are deterministic and deduped", testShiftOffsets});
     tests.push_back({"stem metrics: SI-SDR scale-invariance and SDR", testStemMetrics});
     tests.push_back({"stems output base dir follows the project", testStemsOutputBaseDir});
+    tests.push_back({"split-channels duplicates the chosen channel", testDuplicateChannelAcross});
 }
 
 } // namespace silverdaw::tests
