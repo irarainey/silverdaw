@@ -214,15 +214,18 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'edit.cut') {
-      project.cutSelectedClip()
+      if (project.selectedClipIds.size > 1) project.cutSelectedClips()
+      else project.cutSelectedClip()
       return
     }
     if (action === 'edit.copy') {
-      project.copySelectedClip()
+      if (project.selectedClipIds.size > 1) project.copySelectedClips()
+      else project.copySelectedClip()
       return
     }
     if (action === 'edit.paste') {
-      project.pasteClipAtPlayhead(transport.positionMs)
+      if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+      else project.pasteClipAtPlayhead(transport.positionMs)
       return
     }
     if (action === 'edit.duplicateClip') {

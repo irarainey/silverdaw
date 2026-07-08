@@ -90,6 +90,7 @@ export const useProjectStore = defineStore('project', {
     selectedClipIds: new Set(),
     selectedTrackId: null,
     clipboardClip: null,
+    clipboardClips: null,
     duplicateTailBySource: {},
     canUndo: false,
     canRedo: false,

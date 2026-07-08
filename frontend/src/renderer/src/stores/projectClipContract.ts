@@ -50,6 +50,8 @@ export type ProjectClipThis = ProjectState & {
 
   copySelectedClip(): boolean
 
+  copySelectedClips(): boolean
+
   createTransition(
     trackId: string,
     leftClipId: string,

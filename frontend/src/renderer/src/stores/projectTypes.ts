@@ -201,6 +201,21 @@ export interface ClipboardEntry {
   effectiveWarpActive?: boolean
 }
 
+/** One clip in a multi-clip clipboard, carrying its offset from the group anchor (the copied
+ *  selection's top-most track and earliest start) so the whole group can be re-anchored at the
+ *  paste target. Both offsets are ≥ 0. */
+export interface ClipboardGroupItem extends ClipboardEntry {
+  /** `startMs` offset from the group anchor's earliest start. */
+  relStartMs: number
+  /** Track-index offset from the group anchor's top-most track. */
+  relTrackIndex: number
+}
+
+/** Cut/copy buffer for a multi-clip selection. Renderer-only; cleared on load/new. */
+export interface ClipboardGroup {
+  items: ClipboardGroupItem[]
+}
+
 /** Default name shown in the title bar before a project is named or loaded. */
 export const DEFAULT_PROJECT_NAME = 'Untitled'
 
@@ -253,6 +268,10 @@ export interface ProjectState {
 
   /** Cut/copy buffer for `pasteClipAtPlayhead`. Renderer-only; cleared on load/new. */
   clipboardClip: ClipboardEntry | null
+
+  /** Cut/copy buffer for a multi-clip selection (`pasteClipsAtPlayhead`). Mutually exclusive with
+   *  `clipboardClip` — whichever was last copied wins. Renderer-only; cleared on load/new. */
+  clipboardClips: ClipboardGroup | null
 
   /** Source clip id -> last duplicated clip id for repeated duplicate commands. */
   duplicateTailBySource: Record<string, string>

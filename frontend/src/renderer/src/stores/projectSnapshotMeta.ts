@@ -160,6 +160,7 @@ export function applyProjectStructureReset(
       target.selectedClipIds = new Set()
       target.selectedTrackId = null
       target.clipboardClip = null
+      target.clipboardClips = null
     }
     target.duplicateTailBySource = {}
     target.peaksRevision++

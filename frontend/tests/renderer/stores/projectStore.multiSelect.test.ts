@@ -321,3 +321,126 @@ describe('projectStore — atomic group move (moveClipGroup)', () => {
   })
 })
 
+/** Select `ids` as a multi-selection with `ids[0]` as the anchor/primary. */
+function selectAll(project: Project, ids: string[]): void {
+  project.selectClip(ids[0]!)
+  for (let i = 1; i < ids.length; i++) project.toggleClipSelection(ids[i]!)
+}
+
+/** Start times of a track's clips, ascending. */
+function trackStarts(project: Project, trackId: string): number[] {
+  return project.tracks
+    .find((t) => t.id === trackId)!
+    .clipIds.map((id) => project.clips[id]!.startMs)
+    .sort((a, b) => a - b)
+}
+
+describe('projectStore — multi-clip clipboard (copy/cut/paste)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sendMock.mockClear()
+    sendMock.mockReturnValue(true)
+    uuidCounter = 0
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => `uuid-${++uuidCounter}`) })
+    vi.stubGlobal('window', { silverdaw: { readAudioMetadata: vi.fn().mockResolvedValue(null) } })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('copySelectedClips captures relative offsets and supersedes the single-clip buffer', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 2) // 0 and 2000
+    project.selectClip(a!)
+    expect(project.copySelectedClip()).toBe(true)
+    expect(project.clipboardClip).not.toBeNull()
+
+    selectAll(project, [a!, b!])
+    expect(project.copySelectedClips()).toBe(true)
+    expect(project.clipboardClip).toBeNull() // multi copy clears the single buffer
+    const items = project.clipboardClips!.items
+    expect(items).toHaveLength(2)
+    expect(items.map((i) => i.relStartMs).sort((x, y) => x - y)).toEqual([0, 2000])
+    expect(items.every((i) => i.relTrackIndex === 0)).toBe(true)
+  })
+
+  it('pastes the whole group at the playhead, preserving spacing', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 2) // 0 and 2000
+    selectAll(project, [a!, b!])
+    project.copySelectedClips()
+
+    project.selectTrack(track)
+    const primary = project.pasteClipsAtPlayhead(5_000)
+    expect(primary).toBeTruthy()
+    // Originals at 0/2000 plus pasted at 5000/7000 (2000 spacing preserved).
+    expect(trackStarts(project, track)).toEqual([0, 2_000, 5_000, 7_000])
+    // Selection moves to the two pasted clips.
+    expect(project.selectedClipIds.size).toBe(2)
+    expect(project.isClipSelected(a!)).toBe(false)
+  })
+
+  it('preserves cross-track offsets, extending downward from the target track', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    const t2 = project.addTrack()
+    const t3 = project.addTrack()
+    const [a] = addClips(project, t1, 1) // t1 @0
+    const [b] = addClips(project, t2, 1) // t2 @0
+    selectAll(project, [a!, b!]) // anchor track = t1 (index 0): rel tracks 0 and 1
+
+    project.copySelectedClips()
+    project.selectTrack(t2) // paste anchor on t2 → items land on t2 and t3
+    const primary = project.pasteClipsAtPlayhead(3_000)
+
+    expect(project.clips[primary!]!.trackId).toBe(t2)
+    expect(trackStarts(project, t2)).toEqual([0, 3_000]) // original @0 + pasted @3000
+    expect(trackStarts(project, t3)).toEqual([3_000]) // pasted one track down
+  })
+
+  it('rejects the whole paste atomically when any clip overlaps an existing clip', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 3) // 0, 2000, 4000 (the 4000 clip stays put)
+    selectAll(project, [a!, b!])
+    project.copySelectedClips()
+
+    project.selectTrack(track)
+    const before = project.tracks.find((t) => t.id === track)!.clipIds.length
+    // Anchor at 4000 → a→4000 overlaps the clip already at 4000; reject everything.
+    expect(project.pasteClipsAtPlayhead(4_000)).toBeNull()
+    expect(project.tracks.find((t) => t.id === track)!.clipIds.length).toBe(before)
+  })
+
+  it('rejects when track clamping collapses clips onto the last track and they overlap', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    const t2 = project.addTrack()
+    const t3 = project.addTrack()
+    const [a] = addClips(project, t1, 1) // t1 @0
+    const [b] = addClips(project, t2, 1) // t2 @0 (same rel start as a)
+    selectAll(project, [a!, b!]) // rel tracks 0 and 1, both rel start 0
+
+    project.copySelectedClips()
+    project.selectTrack(t3) // t3 is the last track: both clips clamp onto it at the same start
+    expect(project.pasteClipsAtPlayhead(5_000)).toBeNull()
+    expect(project.tracks.find((t) => t.id === t3)!.clipIds.length).toBe(0)
+  })
+
+  it('cutSelectedClips copies the group, removes the clips, and clears the selection', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 2)
+    selectAll(project, [a!, b!])
+
+    expect(project.cutSelectedClips()).toBe(true)
+    expect(project.clipboardClips!.items).toHaveLength(2)
+    expect(project.clips[a!]).toBeUndefined()
+    expect(project.clips[b!]).toBeUndefined()
+    expect(project.selectedClipIds.size).toBe(0)
+  })
+})
+

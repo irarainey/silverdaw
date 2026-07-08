@@ -117,7 +117,7 @@ export function useTimelineContextMenu(
         {
           command: 'track.paste',
           label: 'Paste',
-          disabled: !project.clipboardClip
+          disabled: !project.clipboardClip && !project.clipboardClips
         }
       ]
     }
@@ -142,6 +142,8 @@ export function useTimelineContextMenu(
           separatorAbove: true,
           swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id }))
         },
+        { command: 'clips.copy', label: `Copy ${count} Clips`, separatorAbove: true },
+        { command: 'clips.cut', label: `Cut ${count} Clips` },
         { command: 'clips.duplicate', label: `Duplicate ${count} Clips`, separatorAbove: true },
         { command: 'clips.delete', label: `Delete ${count} Clips` },
         { command: 'clips.deselect', label: 'Deselect', separatorAbove: true }
@@ -169,9 +171,9 @@ export function useTimelineContextMenu(
     items.push({
       command: 'clip.paste',
       label: 'Paste',
-      // Paste needs a clip on the clipboard; it lands on this clip's track at
-      // the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
-      disabled: !project.clipboardClip
+      // Paste needs a clip (single or group) on the clipboard; it lands on this
+      // clip's track at the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
+      disabled: !project.clipboardClip && !project.clipboardClips
     })
     items.push({ command: 'clip.duplicate', label: 'Duplicate' })
     items.push({ command: 'clip.delete', label: 'Delete' })
@@ -413,13 +415,24 @@ export function useTimelineContextMenu(
       const trackId = contextMenuTrackId.value
       if (trackId) {
         project.selectTrack(trackId)
-        project.pasteClipAtPlayhead(transport.positionMs)
+        if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+        else project.pasteClipAtPlayhead(transport.positionMs)
       }
       contextMenuTrackId.value = null
       contextMenuClipId.value = null
       return
     }
     // Multi-selection batch operations (each is one undo step; see the store actions).
+    if (command === 'clips.copy') {
+      project.copySelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.cut') {
+      project.cutSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
     if (command === 'clips.delete') {
       project.deleteSelectedClips()
       contextMenuClipId.value = null
@@ -480,7 +493,8 @@ export function useTimelineContextMenu(
         // Paste onto the right-clicked clip's track at the playhead, matching
         // the Edit-menu / Ctrl+V behaviour.
         project.selectTrack(clip.trackId)
-        project.pasteClipAtPlayhead(transport.positionMs)
+        if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+        else project.pasteClipAtPlayhead(transport.positionMs)
       }
     } else if (command === 'clip.duplicate') {
       project.duplicateClip(clipId)
