@@ -15,7 +15,6 @@ import {
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
-import { TIME_SIG_NUM } from '@/lib/timeline/constants'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
 
@@ -169,12 +168,13 @@ export const clipPlacementActions = {
     },
 
     /** Check overlap in effective timeline time, not source duration. */
-    wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean {
+    wouldClipOverlap(trackId: string, startMs: number, durationMs: number, excludeClipId?: string): boolean {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return false
       const newStart = Math.max(0, startMs)
       const newEnd = newStart + durationMs
       for (const otherId of track.clipIds) {
+        if (otherId === excludeClipId) continue
         const other = this.clips[otherId]
         if (!other) continue
         const otherEffDur = effectiveClipDurationMs(other)
@@ -206,49 +206,54 @@ export const clipPlacementActions = {
       useNotificationsStore().pushError(message)
     },
 
-    /** Snap a clip so its beat grid lines up with the project BAR grid: the clip's
-     *  first in-window grid beat is moved to the nearest project bar line (bumping a
-     *  bar forward when that would land before the timeline origin, i.e. a clean
-     *  leading bar of silence). Aligning the beat grid (what the timeline markers
-     *  use) rather than the raw clip edge is why a clip that starts with silence
-     *  ends up on the bar rather than a beat off it.
+    /** Snap a clip so its beat grid lines up with the project beat grid: the clip's
+     *  first in-window grid beat is moved to the NEAREST project beat line — the
+     *  smallest possible shift (at most half a beat), forward or back — rather than the
+     *  nearest bar, which could shove the clip up to two beats away. If that would land
+     *  before the timeline origin it bumps forward one beat so the clip stays on the
+     *  grid at t >= 0. Aligning the beat grid (what the timeline markers use) rather
+     *  than the raw clip edge is why a clip that starts with silence lands on the grid
+     *  rather than a fraction of a beat off it.
      *
      *  No-op unless the clip's effective (warp-adjusted) tempo matches the project
      *  tempo — a clip whose beats are spaced differently from the grid can't align,
      *  and simple samples (no beat grid) and locked clips are never moved. Callers
      *  run this AFTER the project tempo has settled (e.g. after the first-clip BPM
      *  seed), so `transport.bpm` reflects the grid the clip will sit on. */
-    alignClipToBarGrid(clipId: string): void {
+    alignClipToBarGrid(clipId: string): 'moved' | 'blocked' | 'skip' {
       const clip = this.clips[clipId]
-      if (!clip || clip.locked) return
+      if (!clip || clip.locked) return 'skip'
       const projectBpm = useTransportStore().bpm
-      if (!Number.isFinite(projectBpm) || projectBpm <= 0) return
+      if (!Number.isFinite(projectBpm) || projectBpm <= 0) return 'skip'
       const library = useLibraryStore()
       const offsetMs = clipFirstBeatOffsetMs(clip, library)
-      if (offsetMs === null) return // no beat grid — leave simple samples untouched
+      if (offsetMs === null) return 'skip' // no beat grid — leave simple samples untouched
 
       // The clip's beats must share the project grid spacing, or aligning one beat
       // is meaningless (the rest drift). Compare the clip's effective (warp-adjusted)
       // timeline beat spacing to the project's.
       const item = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
       const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
-      if (!sourceBpm || sourceBpm <= 0) return
+      if (!sourceBpm || sourceBpm <= 0) return 'skip'
       const warpRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
       const clipBeatMs = 60_000 / sourceBpm / warpRatio
       const projectBeatMs = 60_000 / projectBpm
-      if (Math.abs(clipBeatMs - projectBeatMs) / projectBeatMs > 0.01) return // tempo mismatch
+      if (Math.abs(clipBeatMs - projectBeatMs) / projectBeatMs > 0.01) return 'skip' // tempo mismatch
 
-      const barSpacingMs = projectBeatMs * TIME_SIG_NUM
       const firstBeatMs = clip.startMs + offsetMs
-      // Nearest bar line, then back out the offset. Bump a whole bar forward if that
-      // would put the clip before the origin, so the downbeat stays bar-aligned with
-      // a single leading bar of silence.
-      let target = Math.round(firstBeatMs / barSpacingMs) * barSpacingMs - offsetMs
-      while (target < -1e-6) target += barSpacingMs
+      // Nearest project beat line (least distance, earlier or later), then back out the
+      // offset. Bump one beat forward if that would put the clip before the origin.
+      let target = Math.round(firstBeatMs / projectBeatMs) * projectBeatMs - offsetMs
+      while (target < -1e-6) target += projectBeatMs
       target = Math.max(0, target)
-      if (Math.abs(target - clip.startMs) < 0.5) return // already aligned
+      if (Math.abs(target - clip.startMs) < 0.5) return 'skip' // already aligned
+      // Only align when the target position is clear. Never bump into a nearby gap
+      // (that would misalign the grid) or overlap a neighbour — report it as blocked so
+      // the caller can leave the clip put and tell the user to move it by hand.
+      if (this.wouldClipOverlap(clip.trackId, target, effectiveClipDurationMs(clip), clipId)) return 'blocked'
       this.moveClip(clipId, target)
       log.debug('project', `alignClipToBarGrid ${clipId} ${clip.startMs.toFixed(1)} -> ${target.toFixed(1)}ms`)
+      return 'moved'
     }
 } satisfies Record<string, (this: ProjectClipThis, ...args: never[]) => unknown> &
   ThisType<ProjectClipThis>

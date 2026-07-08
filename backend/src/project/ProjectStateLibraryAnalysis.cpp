@@ -41,6 +41,45 @@ bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double a
                                     { item.setProperty(kBeatAnchorSec, anchorSec, nullptr); });
 }
 
+bool ProjectState::setLibraryItemManualTempo(const juce::String& itemId, double bpm,
+                                             const std::vector<double>& beatTimesSec, double beatAnchorSec)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() != itemId) continue;
+
+        // Undoable, dirtying user edit — written through the UndoManager, and
+        // deliberately NOT routed through mutateDerivedLibraryItem (which suppresses
+        // dirty and mirrors the clean snapshot for automatic, non-undoable analysis).
+        if (bpm > 0.0)
+            item.setProperty(kBpm, bpm, &undoManager);
+        else
+            item.removeProperty(kBpm, &undoManager);
+
+        if (beatTimesSec.empty())
+        {
+            item.removeProperty(kBeats, &undoManager);
+        }
+        else
+        {
+            juce::Array<juce::var> arr;
+            arr.ensureStorageAllocated(static_cast<int>(beatTimesSec.size()));
+            for (double t : beatTimesSec) arr.add(juce::var(t));
+            item.setProperty(kBeats, juce::var(arr), &undoManager);
+        }
+
+        item.setProperty(kBeatAnchorSec, beatAnchorSec, &undoManager);
+        // A hand-set grid is a fixed, confident tempo.
+        item.removeProperty(kVariableTempo, &undoManager);
+        item.removeProperty(kLowConfidence, &undoManager);
+        return true;
+    }
+    return false;
+}
+
 bool ProjectState::setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath)
 {
     return mutateDerivedLibraryItem(itemId,

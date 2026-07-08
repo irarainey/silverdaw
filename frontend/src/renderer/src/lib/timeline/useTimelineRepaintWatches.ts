@@ -57,6 +57,38 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     }
   )
 
+  // Trim geometry, per-clip appearance, and edit state that the Clip Editor (and
+  // undo/redo, backend echoes) can change without altering the clip count or the
+  // warp/library signatures above. Without this a trim, reverse, brake/backspin,
+  // volume-shape, colour, or rename committed from the Clip Editor updated the
+  // store but fired no repaint watch, so the timeline only caught up on the next
+  // scroll-triggered rebuild.
+  watch(
+    () => Object.values(project.clips)
+      .map((clip) => [
+        clip.id,
+        clip.trackId,
+        clip.startMs,
+        clip.inMs,
+        clip.durationMs,
+        clip.effectiveDurationMs ?? '',
+        clip.effectiveTempoRatio ?? '',
+        clip.effectiveWarpActive === true ? 1 : 0,
+        clip.colorIndex ?? '',
+        clip.name ?? '',
+        clip.reversed === true ? 1 : 0,
+        clip.brake === true ? 1 : 0,
+        clip.backspin === true ? 1 : 0,
+        clip.locked === true ? 1 : 0,
+        (clip.envelopePoints ?? []).map((p) => `${p.timeMs}@${p.gain}`).join(';')
+      ].join(':'))
+      .join('|'),
+    () => {
+      redraw()
+      updatePlayhead()
+    }
+  )
+
   watch(
     () => Object.values(project.clips)
       .map((clip) => {

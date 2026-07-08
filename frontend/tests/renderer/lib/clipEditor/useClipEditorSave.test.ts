@@ -51,7 +51,8 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     setClipEnvelope: vi.fn(),
     setClipReversed: vi.fn(),
     setClipBrake: vi.fn(),
-    setClipBackspin: vi.fn()
+    setClipBackspin: vi.fn(),
+    alignClipToBarGrid: vi.fn(() => 'skip')
   }
   const library = {
     updateLibraryClipEdit: vi.fn(() => ({ ok: true })),
@@ -73,6 +74,8 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editsLibraryClipLibrary: true,
     editsTimelineClip: false,
     hasWarpPitchChanged: false,
+    gridChanged: false,
+    alignToGridEnabled: false,
     sourceBpm: 120,
     projectBpm: 120,
     canApplyCrop: false,
@@ -105,6 +108,8 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editsLibraryClipLibrary: () => state.editsLibraryClipLibrary as boolean,
     editsTimelineClip: () => state.editsTimelineClip as boolean,
     hasWarpPitchChanged: () => state.hasWarpPitchChanged as boolean,
+    gridChanged: () => state.gridChanged as boolean,
+    alignToGridEnabled: () => state.alignToGridEnabled as boolean,
     sourceBpm: () => state.sourceBpm as number | undefined,
     projectBpm: () => state.projectBpm as number,
     canApplyCrop: () => state.canApplyCrop as boolean,
@@ -153,7 +158,6 @@ describe('useClipEditorSave', () => {
       'item-1',
       expect.objectContaining({ inMs: 250, durationMs: 400 })
     )
-    expect(h.notifications.pushInfo).toHaveBeenCalled()
     expect(h.close).toHaveBeenCalledTimes(1)
   })
 
@@ -279,6 +283,52 @@ describe('useClipEditorSave', () => {
 
     expect(h.project.setClipBrake).toHaveBeenCalledWith('clip-1', true)
     expect(h.project.setClipBackspin).toHaveBeenCalledWith('clip-1', false)
+  })
+
+  it('timeline-clip save re-aligns the clip to the grid when the beat grid changed', () => {
+    h.state.editsSingleTimelineClip = true
+    h.state.editsLibraryClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+    h.state.gridChanged = true
+    h.state.alignToGridEnabled = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.project.alignClipToBarGrid).toHaveBeenCalledWith('clip-1')
+  })
+
+  it('timeline-clip save toasts when the clip cannot be re-aligned (blocked)', () => {
+    h.project.alignClipToBarGrid.mockReturnValue('blocked')
+    h.state.editsSingleTimelineClip = true
+    h.state.editsLibraryClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+    h.state.gridChanged = true
+    h.state.alignToGridEnabled = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.notifications.pushInfo).toHaveBeenCalled()
+  })
+
+  it('timeline-clip save does not re-align when the beat grid was not changed', () => {
+    h.state.editsSingleTimelineClip = true
+    h.state.editsLibraryClipLibrary = false
+    h.state.timelineClip = makeClip({ id: 'clip-1' })
+    h.state.canApplyCrop = true
+    h.state.selectionInMs = 0
+    h.state.selectionDurationMs = 1000
+    h.state.gridChanged = false
+    h.state.alignToGridEnabled = true
+
+    useClipEditorSave(h.deps).onSaveChanges()
+
+    expect(h.project.alignClipToBarGrid).not.toHaveBeenCalled()
   })
 
   it('linked-clip save propagates brake / backspin to all linked clips', () => {

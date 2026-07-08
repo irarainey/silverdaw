@@ -61,6 +61,9 @@ export interface ClipEditorBeatGrid {
   previewAnchorSec: (anchorSec: number) => void
   /** Persist the final anchor after a drag (seconds). */
   commitAnchorSec: (anchorSec: number) => void
+  /** Reset per-session grid UI (align mode, edited flag, captured original) for a
+   *  freshly opened editor, recapturing the current source tempo as the baseline. */
+  reset: () => void
 }
 
 const MIN_BPM = 20
@@ -207,6 +210,17 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     gridEdited.value = true
   }
 
+  function reset(): void {
+    // Slide-to-align, the session edit flag, and the tempo-edit lock are per-open UI
+    // state — without this they persisted into the next clip's editor session.
+    alignActive.value = false
+    gridEdited.value = false
+    tempoEditing = false
+    const bpm = deps.sourceItem()?.bpm
+    originalBpm.value = typeof bpm === 'number' && bpm > 0 ? bpm : null
+    syncTempoField()
+  }
+
   return {
     alignActive,
     manualBpmInput,
@@ -223,6 +237,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     nudgeAnchorMs,
     nudgeHalfBeat,
     previewAnchorSec,
-    commitAnchorSec
+    commitAnchorSec,
+    reset
   }
 }

@@ -171,18 +171,33 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                                    const std::vector<double>& beats, double beatAnchorSec,
                                    bool variableTempo, bool lowConfidence,
                                    const juce::String& cachedPath, AudioEngine& engine,
-                                   ProjectState& projectState, BridgeServer& bridge)
+                                   ProjectState& projectState, BridgeServer& bridge,
+                                   juce::UndoManager* undo = nullptr)
 {
-    // setLibraryItemBpm returns false only when the item is gone (also our guard).
-    if (!projectState.setLibraryItemBpm(itemId, bpm))
+    if (undo != nullptr)
     {
-        silverdaw::log::warn("bpmjob", "library item " + itemId + " gone before analysis applied");
-        return false;
+        // User-driven manual tempo: an undoable, dirtying edit (variable /
+        // low-confidence flags are always cleared for a hand-set grid).
+        if (!projectState.setLibraryItemManualTempo(itemId, bpm, beats, beatAnchorSec))
+        {
+            silverdaw::log::warn("bpmjob", "library item " + itemId + " gone before manual tempo applied");
+            return false;
+        }
     }
-    projectState.setLibraryItemBeats(itemId, beats);
-    projectState.setLibraryItemBeatAnchor(itemId, beatAnchorSec);
-    projectState.setLibraryItemVariableTempo(itemId, variableTempo);
-    projectState.setLibraryItemLowConfidence(itemId, lowConfidence);
+    else
+    {
+        // Automatic analysis: derived, non-dirtying, non-undoable metadata.
+        // setLibraryItemBpm returns false only when the item is gone (also our guard).
+        if (!projectState.setLibraryItemBpm(itemId, bpm))
+        {
+            silverdaw::log::warn("bpmjob", "library item " + itemId + " gone before analysis applied");
+            return false;
+        }
+        projectState.setLibraryItemBeats(itemId, beats);
+        projectState.setLibraryItemBeatAnchor(itemId, beatAnchorSec);
+        projectState.setLibraryItemVariableTempo(itemId, variableTempo);
+        projectState.setLibraryItemLowConfidence(itemId, lowConfidence);
+    }
     if (cachedPath.isNotEmpty())
     {
         projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
@@ -201,6 +216,13 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     if (cachedPath.isNotEmpty())
     {
         p->setProperty("playbackFilePath", cachedPath);
+    }
+    // Mark a user-driven manual tempo so the renderer does NOT auto-align placed
+    // clips on this echo (manual grid edits re-align only on Clip Editor Save);
+    // automatic analysis leaves the flag off and still aligns on import.
+    if (undo != nullptr)
+    {
+        p->setProperty("manual", true);
     }
     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
@@ -356,7 +378,7 @@ void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorS
 
     applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, /*variableTempo=*/false,
                                   /*lowConfidence=*/false, /*cachedPath=*/juce::String{}, engine,
-                                  projectState, bridge);
+                                  projectState, bridge, &projectState.getUndoManager());
 }
 
 void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, ProjectState& projectState,

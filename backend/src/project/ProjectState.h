@@ -429,6 +429,13 @@ class ProjectState : public juce::ValueTree::Listener
     // Derived beat anchor supports renderer beat-grid layout without marking dirty.
     bool setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec);
 
+    // A hand-set tempo/beat grid is a deliberate user edit (unlike automatic
+    // analysis): it writes bpm/beats/anchor through the UndoManager and marks the
+    // project dirty, so it is undoable via EDIT_UNDO. Clears the variable-tempo and
+    // low-confidence flags (a manual grid is treated as confident, fixed music).
+    bool setLibraryItemManualTempo(const juce::String& itemId, double bpm,
+                                   const std::vector<double>& beatTimesSec, double beatAnchorSec);
+
     // Decoded-WAV cache paths are derived metadata and do not mark dirty.
     bool setLibraryItemPlaybackPath(const juce::String& itemId, const juce::String& playbackPath);
 

@@ -317,6 +317,9 @@ export const useLibraryStore = defineStore('library', {
       item.variableTempo = undefined
       item.lowConfidence = undefined
       useProjectStore().peaksRevision++
+      // Persist only — an undoable, coalesced backend edit. Any grid re-alignment
+      // of placed clips happens on Clip Editor Save (see useClipEditorSave), not on
+      // every grid tweak, so the timeline never reflows while the user is dragging.
       sendBridge('LIBRARY_ITEM_SET_MANUAL_TEMPO', { itemId, bpm, beatAnchorSec })
     },
 

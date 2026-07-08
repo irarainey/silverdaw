@@ -514,7 +514,11 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   playbackFilePath: z.string().optional(),
   /** Tempo detection was aborted by the analysis timeout; the grid is empty and
    *  the user is prompted to reanalyse manually. */
-  timedOut: z.boolean().optional()
+  timedOut: z.boolean().optional(),
+  /** Set when this analysis is a user-driven manual tempo (not automatic detection),
+   *  so the renderer skips auto-aligning placed clips on this echo — manual grid
+   *  edits re-align only on Clip Editor Save. */
+  manual: z.boolean().optional()
 })
 export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPayloadSchema>
 

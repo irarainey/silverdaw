@@ -4,14 +4,18 @@
 
 ### Added
 
-- `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) now opens and collapses the bottom Library / FX panel.
-- `Ctrl` + `1`–`8` jump the timeline straight to 100%–800% zoom, so you can `Ctrl+F` to fit then snap to a fixed scale. The matching Zoom Presets now show these accelerators.
+- `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) opens and collapses the bottom Library / FX panel.
+- `Ctrl` + `1`–`8` jump the timeline to 100%–800% zoom; the matching Zoom Presets show these accelerators.
 
 ### Fixed
 
-- Clicking the timeline on a marker now moves the playhead there instead of doing nothing. Markers are now dragged with Shift held, so a plain mouse drag always moves the playhead — unambiguous even when the playhead sits on a marker.
-- Clicking the timeline to place the playhead no longer scrolls the view. Dragging the playhead now only scrolls once it reaches the edge of the view, instead of re-centring (which could jump or scroll the wrong way). Follow-scroll is reserved for playback.
-- The startup screen and pre-mount splash now have full minimise / maximise / close controls and a draggable top edge, matching the main window. The splash also hands off to the loading screen without flashing or jumping.
+- Manual-tempo / beat-grid edits in the Clip Editor are now undoable as one step and mark the project dirty (automatic tempo detection stays silent, as before).
+- On Save, an edited clip snaps the least distance to the nearest beat when "align to grid" is on and it has room, otherwise it's left put with a note to move it manually.
+- The Clip Editor's Slide-to-Align toggle now resets when the editor opens, and Save no longer shows a confirmation toast.
+- Editing a clip in the Clip Editor now redraws it and its linked copies on the timeline immediately, not just after the next scroll.
+- Clicking the timeline on a marker moves the playhead there, and markers are now dragged with Shift held so a plain drag always moves the playhead.
+- Clicking the timeline no longer scrolls the view to the playhead, and dragging the playhead only scrolls at the view edges (follow-scroll is reserved for playback).
+- The startup screen and pre-mount splash now have minimise / maximise / close controls, a draggable top edge, and a flash-free hand-off to the loading screen.
 - Recent Projects entries on the startup screen are now clickable across the whole row, not just the text.
 
 ## 1.0.3

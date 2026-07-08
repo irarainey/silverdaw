@@ -146,7 +146,8 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
           persistedBeats,
           item.variableTempo === true,
           item.playbackFilePath,
-          item.lowConfidence === true
+          item.lowConfidence === true,
+          /*align=*/ false
         )
       }
       if (item.audioType === 'simple' || item.audioType === 'music') {

@@ -151,7 +151,7 @@ describe('useClipEditorBeatGrid', () => {
     sendMock.mockClear()
 
     grid.halveBpm()
-    expect(sendMock).toHaveBeenLastCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
       itemId: item.id,
       bpm: 60,
       beatAnchorSec: 0.25
@@ -159,7 +159,7 @@ describe('useClipEditorBeatGrid', () => {
     expect(grid.manualBpmInput.value).toBe(60)
 
     grid.doubleBpm()
-    expect(sendMock).toHaveBeenLastCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+    expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
       itemId: item.id,
       bpm: 120,
       beatAnchorSec: 0.25

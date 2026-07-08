@@ -22,6 +22,7 @@ import { useClipEditorCropHistory } from '@/lib/clipEditor/useClipEditorCropHist
 import { useClipEditorSave } from '@/lib/clipEditor/useClipEditorSave'
 import { useClipEditorCanvasInteraction } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
 import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
+import { send as sendBridge } from '@/lib/bridgeService'
 import { useClipEditorKeyboard } from '@/lib/clipEditor/useClipEditorKeyboard'
 import { useClipEditorTransport } from '@/lib/clipEditor/useClipEditorTransport'
 import { useClipEditorVolumeRegion } from '@/lib/clipEditor/useClipEditorVolumeRegion'
@@ -352,13 +353,32 @@ export function useClipEditorController(
     loopEnabled: () => loopEnabled.value
   })
 
+  // A whole Clip Editor session commits as ONE undo step. Grid edits are persisted
+  // live (for the metronome/markers), so without this the beat-grid tempo change and
+  // the on-Save auto-align would land in two separate undo transactions. Global undo
+  // is disabled while the editor is open, and a leaked group self-heals (the backend
+  // resets its group depth on the next undo), so an always-open session group is safe.
+  let clipEditorUndoGroupOpen = false
+  function beginClipEditorUndoGroup(): void {
+    if (clipEditorUndoGroupOpen) return
+    sendBridge('EDIT_GROUP_BEGIN', { label: 'Edit clip' })
+    clipEditorUndoGroupOpen = true
+  }
+  function endClipEditorUndoGroup(): void {
+    if (!clipEditorUndoGroupOpen) return
+    clipEditorUndoGroupOpen = false
+    sendBridge('EDIT_GROUP_END')
+  }
+
   watch(
     () => props.open,
     async (open) => {
       ui.clipEditorOpen = open
       if (open) {
+        beginClipEditorUndoGroup()
         viewExpanded.value = false
         resetZoom()
+        beatGrid.reset()
         initSelectionForItem()
         initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
         initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
@@ -382,6 +402,7 @@ export function useClipEditorController(
         dialogEl.value?.focus()
         loadPreviewForView()
       } else {
+        endClipEditorUndoGroup()
         stopPlayheadRaf()
         clearPreviewWarpUpdateTimer()
         clearPreviewEnvelopeUpdateTimer()
@@ -638,6 +659,7 @@ export function useClipEditorController(
 
   onBeforeUnmount(() => {
     ui.clipEditorOpen = false
+    endClipEditorUndoGroup()
     stopPlayheadRaf()
     clearPreviewWarpUpdateTimer()
     clearPreviewEnvelopeUpdateTimer()
@@ -805,6 +827,8 @@ export function useClipEditorController(
     editsLibraryClipLibrary: () => editsLibraryClipLibrary.value,
     editsTimelineClip: () => editsTimelineClip.value,
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
+    gridChanged: () => beatGrid.hasGridChanged(),
+    alignToGridEnabled: () => ui.alignClipsToGridOnAnalysis,
     sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm,
     canApplyCrop: () => canApplyCrop.value,

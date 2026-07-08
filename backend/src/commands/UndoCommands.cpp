@@ -170,6 +170,11 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     {
         idPart = readOptionalString(payload, "markerId").value_or(juce::String{});
     }
+    else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
+    {
+        // Coalesce rapid grid nudges / BPM steps on one item into a single undo step.
+        idPart = readOptionalString(payload, "itemId").value_or(juce::String{});
+    }
     else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME" ||
              type == "PROJECT_SET_BAR_COUNTER_START" || type == "PROJECT_SET_MIXDOWN_START_BAR")
     {

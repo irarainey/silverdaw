@@ -954,6 +954,33 @@ void testProjectStateMetronomeRoundTrip()
     require(! state.isDirty(), "turning the metronome back off must remain silent (not dirty)");
 }
 
+void testProjectStateManualTempoIsUndoableAndDirtying()
+{
+    // A hand-set tempo/beat grid is a deliberate user edit: unlike automatic
+    // analysis (which is derived and silent) it marks the project dirty and is
+    // undoable via the UndoManager, so Ctrl+Z reverts it.
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("l1", "C:\\audio\\loop.wav", "loop.wav", 4000.0, 48000, 2),
+            "library add should succeed");
+    // Seed a derived (non-dirty) analysis BPM, then take that as the clean baseline.
+    require(state.setLibraryItemBpm("l1", 100.0), "baseline bpm should apply");
+    state.markClean();
+    require(! state.isDirty(), "baseline should be clean");
+
+    state.getUndoManager().beginNewTransaction("Set manual tempo");
+    require(state.setLibraryItemManualTempo("l1", 128.0, {0.0, 0.46875, 0.9375}, 0.0),
+            "manual tempo setter should find the item");
+    require(state.isDirty(), "manual tempo is a real edit and must mark the project dirty");
+    require(state.getUndoManager().canUndo(), "manual tempo must push an undo entry");
+    requireNear(state.getLibraryItemBpmForPath("C:\\audio\\loop.wav"), 128.0, 0.0001,
+                "manual bpm should be live before undo");
+
+    require(state.getUndoManager().undo(), "undo should succeed");
+    requireNear(state.getLibraryItemBpmForPath("C:\\audio\\loop.wav"), 100.0, 0.0001,
+                "undo must restore the previous bpm");
+    require(! state.isDirty(), "undo must return the project to clean");
+}
+
 } // namespace
 
 void addProjectStateTests(std::vector<TestCase>& tests)
@@ -968,6 +995,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
+    tests.push_back({"ProjectState manual tempo is undoable and marks dirty", testProjectStateManualTempoIsUndoableAndDirtying});
     tests.push_back({"ProjectState clip transitions: derive, serialise, invariants, reconcile", testProjectStateClipTransitions});
     tests.push_back({"ProjectState bpmSeeded flag persists across save/load", testProjectStateBpmSeededRoundTrip});
     tests.push_back({"First on-track clip seeds project BPM", testFirstClipSeedsProjectBpm});

@@ -13,7 +13,7 @@ import { libraryItemDisplayName } from './libraryItemHelpers'
 type ImportThis = LibraryState & {
   markItemWarping(libraryItemId: string): void
   finishImport(id: string, stage: 'done' | 'failed'): void
-  alignItemClipsToGrid(itemId: string): void
+  alignItemClipsToGrid(itemId: string): number
 }
 
 // Library items analysed just before a project-BPM change (a first-clip tempo
@@ -39,7 +39,10 @@ export const importActions = {
       })
     },
 
-    /** Records backend analysis and advances matching import progress. */
+    /** Records backend analysis and advances matching import progress. `align`
+     *  is off for authoritative snapshot applies (project load, undo/redo): the
+     *  clips are already where they belong, so re-aligning would fight an undo or
+     *  dirty a freshly-loaded project. New imports and manual-tempo echoes align. */
     setItemAnalysis(
       itemId: string,
       bpm: number,
@@ -47,7 +50,8 @@ export const importActions = {
       beats: number[],
       variableTempo: boolean,
       playbackFilePath?: string,
-      lowConfidence?: boolean
+      lowConfidence?: boolean,
+      align: boolean = true
     ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
@@ -69,7 +73,7 @@ export const importActions = {
       // project grid may still be the stale pre-seed tempo. `alignClipToBarGrid`
       // itself skips simple samples, locked clips, tempo mismatches, and warped
       // clips are excluded here.
-      if (bpm > 0 && useUiStore().alignClipsToGridOnAnalysis) {
+      if (bpm > 0 && align && useUiStore().alignClipsToGridOnAnalysis) {
         this.alignItemClipsToGrid(itemId)
         gridAlignPendingItemIds.add(itemId)
         // Don't let this linger and reflow clips on an unrelated future manual BPM
@@ -109,13 +113,15 @@ export const importActions = {
     /** Align a library item's placed, non-warping clips to the project bar grid.
      *  `alignClipToBarGrid` skips clips that can't/shouldn't move (no beat grid,
      *  locked, tempo mismatch, already aligned). */
-    alignItemClipsToGrid(itemId: string): void {
+    alignItemClipsToGrid(itemId: string): number {
       const project = useProjectStore()
+      let blocked = 0
       for (const clip of Object.values(project.clips)) {
         if (clip.libraryItemId === itemId && clip.pendingAutoWarp !== true) {
-          project.alignClipToBarGrid(clip.id)
+          if (project.alignClipToBarGrid(clip.id) === 'blocked') blocked++
         }
       }
+      return blocked
     },
 
     /** Re-align clips for items analysed just before a project-BPM change (the

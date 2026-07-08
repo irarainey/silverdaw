@@ -230,11 +230,11 @@ describe('projectStore', () => {
     expect(project.durationMs).toBe(longClipMs)
   })
 
-  it('alignClipToBarGrid moves a matching-tempo clip so its beat grid lands on a bar line', () => {
+  it('alignClipToBarGrid moves a matching-tempo clip the least distance so its beat grid lands on a beat line', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
     const transport = useTransportStore()
-    transport.bpm = 120 // matches the clip; 500 ms/beat, 2000 ms/bar (4/4)
+    transport.bpm = 120 // matches the clip; 500 ms/beat (4/4)
 
     const itemId = library.addItem({
       filePath: 'C:\\align.wav',
@@ -265,10 +265,63 @@ describe('projectStore', () => {
       0
     )
 
-    // First grid beat at 125 ms; nearest bar line is 0 but that needs start −125,
-    // so it bumps a bar → beat on the 2000 ms bar line, clip start 1875 ms.
+    // First grid beat at 125 ms; nearest beat line is 0 but that needs start −125,
+    // so it bumps one beat → beat on the 500 ms line, clip start 375 ms (a far smaller
+    // move than snapping to the 2000 ms bar).
     project.alignClipToBarGrid(clipId ?? '')
-    expect(project.clips[clipId ?? '']?.startMs).toBe(1875)
+    expect(project.clips[clipId ?? '']?.startMs).toBe(375)
+  })
+
+  it('alignClipToBarGrid leaves a clip put and reports blocked when the beat target overlaps a neighbour', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    useTransportStore().bpm = 120 // 500 ms/beat (4/4)
+
+    const itemId = library.addItem({
+      filePath: 'C:\\align2.wav',
+      fileName: 'align2.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625, 1.125, 1.625]
+
+    const trackId = project.addTrack()
+    // Main clip at 0, 1000 ms long — its beat target is 375 ms (375–1375 ms).
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\align2.wav',
+        fileName: 'align2.wav',
+        durationMs: 1000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )
+    // Neighbour occupying 1100–1400 ms, inside the 375–1375 ms target footprint.
+    project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: itemId,
+        filePath: 'C:\\align2.wav',
+        fileName: 'align2.wav',
+        durationMs: 300,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      1100
+    )
+
+    expect(project.alignClipToBarGrid(clipId ?? '')).toBe('blocked')
+    expect(project.clips[clipId ?? '']?.startMs).toBe(0) // left where it was
   })
 
   it('alignClipToBarGrid does nothing when the clip tempo differs from the project tempo', () => {
@@ -376,10 +429,10 @@ describe('projectStore', () => {
     expect(project.clips[clipId ?? '']?.startMs).toBe(0)
 
     // The first-clip seed sets the project tempo to the clip's; the bpm handler
-    // then flushes the pending alignment and the clip snaps to the bar grid.
+    // then flushes the pending alignment and the clip snaps to the nearest beat.
     transport.setBpm(120)
     library.flushGridAlignAfterBpm()
-    expect(project.clips[clipId ?? '']?.startMs).toBe(1875)
+    expect(project.clips[clipId ?? '']?.startMs).toBe(375)
   })
 
   it('requests the timeline reveal the newly added track', async () => {
