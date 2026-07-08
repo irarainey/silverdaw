@@ -10,7 +10,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { clipFirstBeatOffsetMs, effectiveClipDurationMs } from '@/lib/clip/clipTiming'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { laneRegion, laneYToValue } from './automationLaneRenderer'
@@ -92,6 +92,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     pointerToRawMsClamped,
     snapTimelineMs,
     clipAutoScrollDelta,
+    clipAutoScrollDeltaAtMs,
     hitTestClip,
     hitTestMarker,
     hitTestPlayhead,
@@ -120,6 +121,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let draggedClipId: string | null = null
   let clipGrabOffsetMs = 0
   let latestClipDragPointer: ClipDragPointer | null = null
+  // Group drag (Phase 2): dragging a clip that's part of a multi-selection moves the whole group
+  // by a uniform delta from these captured origins, validated atomically by `moveClipGroup`.
+  let groupDragActive = false
+  let groupDragOrigins: { clipId: string; startMs: number; trackIndex: number }[] = []
+  let groupDragAnchorId: string | null = null
+  let groupDragAnchorOrigStartMs = 0
+  let groupDragAnchorOrigTrackIndex = 0
+  let groupAnchorGrabOffsetMs = 0
+  // Sign of the group's net requested drag (+1 right, -1 left, 0 none) — picks which edge of the
+  // group leads auto-scroll so the view follows the furthest clip.
+  let groupDragDirection = 0
   let clipAutoScrollFrame: number | null = null
   // Edge auto-scroll while dragging the playhead, mirroring the clip drag loop.
   let latestPlayheadDragPointer: { clientX: number; altKey: boolean } | null = null
@@ -297,13 +309,16 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
 
   function runClipAutoScroll(): void {
     clipAutoScrollFrame = null
-    if (draggedClipId === null || latestClipDragPointer === null) return
-    const delta = clipAutoScrollDelta(latestClipDragPointer.clientX)
+    if ((draggedClipId === null && !groupDragActive) || latestClipDragPointer === null) return
+    const delta = groupDragActive
+      ? groupAutoScrollDelta()
+      : clipAutoScrollDelta(latestClipDragPointer.clientX)
     if (delta === 0) return
     const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
     if (next === scrollX.value) return
     scrollX.value = next
-    applyClipDrag(latestClipDragPointer)
+    if (groupDragActive) applyGroupDrag(latestClipDragPointer)
+    else applyClipDrag(latestClipDragPointer)
     onClipMoved()
     clipAutoScrollFrame = window.requestAnimationFrame(runClipAutoScroll)
   }
@@ -603,6 +618,112 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointercancel', onClipPointerUp)
   }
 
+  /** Begin a group drag: capture every selected clip's origin (start + track index) and open one
+   *  undo transaction that spans the gesture so the whole move collapses to a single undo step. */
+  function beginGroupDrag(anchorId: string, pointerStartMs: number): void {
+    const anchor = project.clips[anchorId]
+    if (!anchor) return
+    groupDragOrigins = Array.from(project.selectedClipIds)
+      .map((id) => {
+        const c = project.clips[id]
+        const trackIndex = c ? project.tracks.findIndex((t) => t.id === c.trackId) : -1
+        return c && trackIndex >= 0 ? { clipId: id, startMs: c.startMs, trackIndex } : null
+      })
+      .filter((o): o is { clipId: string; startMs: number; trackIndex: number } => o !== null)
+    groupDragAnchorId = anchorId
+    groupDragAnchorOrigStartMs = anchor.startMs
+    groupDragAnchorOrigTrackIndex = project.tracks.findIndex((t) => t.id === anchor.trackId)
+    groupAnchorGrabOffsetMs = pointerStartMs - anchor.startMs
+    groupDragDirection = 0
+    groupDragActive = true
+    sendBridge('EDIT_GROUP_BEGIN', { label: 'Move clips' })
+    window.addEventListener('pointermove', onGroupPointerMove)
+    window.addEventListener('pointerup', onGroupPointerUp)
+    window.addEventListener('pointercancel', onGroupPointerUp)
+  }
+
+  /** Apply the current pointer as a uniform group delta (anchor snapped like a single-clip drag). */
+  function applyGroupDrag(pointer: ClipDragPointer): void {
+    if (!groupDragActive || groupDragAnchorId === null) return
+    const anchor = project.clips[groupDragAnchorId]
+    if (!anchor) return
+    const pointerMs = pointerToRawMsClamped(pointer.clientX)
+    if (pointerMs === null) return
+
+    const rawStartMs = pointerMs - groupAnchorGrabOffsetMs
+    let anchorTarget: number
+    if (pointer.altKey) {
+      anchorTarget = Math.max(0, Math.round(rawStartMs))
+    } else {
+      const snap = geometry.msPerSubBeat()
+      const referenceBeatOffsetMs = clipFirstBeatOffsetMs(anchor, library)
+      if (referenceBeatOffsetMs !== null) {
+        const projectBeat = rawStartMs + referenceBeatOffsetMs
+        anchorTarget = Math.max(0, Math.round(projectBeat / snap) * snap - referenceBeatOffsetMs)
+      } else {
+        anchorTarget = Math.max(0, Math.round(rawStartMs / snap) * snap)
+      }
+    }
+    const deltaMs = anchorTarget - groupDragAnchorOrigStartMs
+    if (deltaMs > 0) groupDragDirection = 1
+    else if (deltaMs < 0) groupDragDirection = -1
+
+    const destTrackId = pointerToTrackId(pointer.clientY)
+    const destTrackIndex = destTrackId ? project.tracks.findIndex((t) => t.id === destTrackId) : -1
+    const deltaTrackIndex =
+      destTrackIndex >= 0 ? destTrackIndex - groupDragAnchorOrigTrackIndex : 0
+
+    const clampedDeltaMs = project.clampGroupDeltaMs(groupDragOrigins, deltaMs, deltaTrackIndex)
+    project.moveClipGroup(groupDragOrigins, clampedDeltaMs, deltaTrackIndex)
+  }
+
+  /** Timeline position (ms) of the group's leading edge in the current drag direction — the
+   *  right end of the right-most clip when moving right, the left start of the left-most clip when
+   *  moving left. Auto-scroll probes this instead of the cursor so the view follows the furthest
+   *  clip. Uses live clip positions so the probe tracks the group as it moves. */
+  function groupLeadingEdgeMs(): number | null {
+    if (groupDragDirection === 0) return null
+    let lead: number | null = null
+    for (const o of groupDragOrigins) {
+      const clip = project.clips[o.clipId]
+      if (!clip) continue
+      const edge =
+        groupDragDirection > 0 ? clip.startMs + effectiveClipDurationMs(clip) : clip.startMs
+      if (lead === null) lead = edge
+      else lead = groupDragDirection > 0 ? Math.max(lead, edge) : Math.min(lead, edge)
+    }
+    return lead
+  }
+
+  /** Auto-scroll pressure for a group drag, driven by the leading clip edge rather than the cursor. */
+  function groupAutoScrollDelta(): number {
+    const leadMs = groupLeadingEdgeMs()
+    return leadMs === null ? 0 : clipAutoScrollDeltaAtMs(leadMs)
+  }
+
+  function onGroupPointerMove(e: PointerEvent): void {
+    if (!groupDragActive) return
+    const pointer = { clientX: e.clientX, clientY: e.clientY, altKey: e.altKey }
+    latestClipDragPointer = pointer
+    applyGroupDrag(pointer)
+    onClipMoved()
+    if (groupAutoScrollDelta() !== 0) startClipAutoScroll(pointer)
+    else stopClipAutoScroll()
+  }
+
+  function onGroupPointerUp(_e: PointerEvent): void {
+    if (!groupDragActive) return
+    groupDragActive = false
+    groupDragAnchorId = null
+    groupDragOrigins = []
+    sendBridge('EDIT_GROUP_END')
+    stopClipAutoScroll()
+    onClipMoved()
+    window.removeEventListener('pointermove', onGroupPointerMove)
+    window.removeEventListener('pointerup', onGroupPointerUp)
+    window.removeEventListener('pointercancel', onGroupPointerUp)
+  }
+
   /** Detach pending-drag listeners from both promotion and click paths. */
   function clearPendingDrag(): void {
     pendingDragClipId = null
@@ -620,8 +741,25 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const dy = e.clientY - pendingDragStartY
     if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
 
-    // A drag on a clip that was part of a multi-selection collapses to just that clip (MVP has no
-    // group-move yet), so the gesture moves/trims a single clip predictably.
+    // A body drag on a clip that's part of a multi-selection moves the whole group (Phase 2),
+    // unless any selected clip is locked (then fall back to a single-clip move by collapsing).
+    if (
+      pendingDragCollapseMulti &&
+      pendingDragEdge === null &&
+      pendingDragClipId !== null &&
+      project.selectedClipIds.size > 1 &&
+      !Array.from(project.selectedClipIds).some((id) => project.clips[id]?.locked)
+    ) {
+      const anchorId = pendingDragClipId
+      const startMs = pendingDragStartMs
+      clearPendingDrag()
+      beginGroupDrag(anchorId, startMs)
+      onGroupPointerMove(e)
+      return
+    }
+
+    // A drag on a clip that was part of a multi-selection collapses to just that clip (no group
+    // move — a trim, or a group containing a locked clip), so the gesture moves a single clip.
     if (pendingDragCollapseMulti) project.selectClip(pendingDragClipId)
 
     if (pendingDragLocked) {
@@ -749,6 +887,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function onHostPointerMove(e: PointerEvent): void {
     if (
       draggedClipId !== null ||
+      groupDragActive ||
       trimClipId !== null ||
       draggedMarkerId !== null ||
       isDraggingPlayhead.value
@@ -809,6 +948,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // cursor must not snap back to the arrow mid-drag.
     if (
       draggedClipId !== null ||
+      groupDragActive ||
       trimClipId !== null ||
       draggedMarkerId !== null ||
       isDraggingPlayhead.value
@@ -849,6 +989,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)
+    window.removeEventListener('pointermove', onGroupPointerMove)
+    window.removeEventListener('pointerup', onGroupPointerUp)
+    window.removeEventListener('pointercancel', onGroupPointerUp)
     window.removeEventListener('pointermove', onTrimPointerMove)
     window.removeEventListener('pointerup', onTrimPointerUp)
     window.removeEventListener('pointercancel', onTrimPointerUp)

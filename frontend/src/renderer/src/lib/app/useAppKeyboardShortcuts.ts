@@ -10,6 +10,7 @@ import type { useUiStore } from '@/stores/uiStore'
 import type { useLibraryStore } from '@/stores/libraryStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { log } from '@/lib/log'
@@ -77,6 +78,27 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       return null
     }
     return { id, clip }
+  }
+
+  /** Whether a keyboard nudge should move the whole multi-selection as a group. */
+  function isMultiSelectionNudge(): boolean {
+    return project.selectedClipIds.size > 1
+  }
+
+  /** Nudge every selected clip by `deltaMs` (uniform, no track change) as one undo step. Uses the
+   *  atomic group move so the batch is rejected wholesale if it wouldn't fit. */
+  function nudgeSelectedClips(deltaMs: number): void {
+    const origins = Array.from(project.selectedClipIds)
+      .map((id) => {
+        const c = project.clips[id]
+        const trackIndex = c ? project.tracks.findIndex((t) => t.id === c.trackId) : -1
+        return c && trackIndex >= 0 ? { clipId: id, startMs: c.startMs, trackIndex } : null
+      })
+      .filter((o): o is { clipId: string; startMs: number; trackIndex: number } => o !== null)
+    if (origins.length === 0) return
+    runInUndoGroup('Nudge clips', () => {
+      project.moveClipGroup(origins, deltaMs, 0)
+    })
   }
 
   // Jump the playhead to the start of the timeline and scroll the view there.
@@ -332,6 +354,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       lastArrowSeekMs = null
       const direction = e.key === 'ArrowLeft' ? -1 : 1
       const targetMs = Math.max(0, Math.round(target.clip.startMs) + direction)
+      if (isMultiSelectionNudge()) {
+        nudgeSelectedClips(targetMs - target.clip.startMs)
+        return
+      }
       // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
       // one undo step on the backend, so a burst of nudges = one undo.
       project.moveClip(target.id, targetMs)
@@ -362,6 +388,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
           ? Math.max(0, Math.floor((beatBase - 1e-6) / snap) * snap)
           : (Math.floor(beatBase / snap + 1e-6) + 1) * snap
       const targetMs = Math.max(0, snappedBeat - offset)
+      if (isMultiSelectionNudge()) {
+        nudgeSelectedClips(targetMs - target.clip.startMs)
+        return
+      }
       // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
       // one undo step on the backend.
       project.moveClip(target.id, targetMs)

@@ -132,6 +132,139 @@ export const clipPlacementActions = {
       log.debug('project', `commitClipMove id=${clipId} at=${clip.startMs}ms`)
     },
 
+    /** Move a group of clips by a uniform (deltaMs, deltaTrackIndex) from captured `origins`, as
+     *  ONE atomic operation: validate the entire target configuration first (each target in bounds
+     *  and not overlapping a clip OUTSIDE the group — group members shift together so never block
+     *  each other) and apply only if the whole group fits, otherwise make no change. Rejects when
+     *  any group clip is missing or locked. Because a uniform track delta maps distinct source
+     *  tracks to distinct target tracks and preserves per-track gaps, group members can't collide
+     *  with one another, so only non-group clips are checked. Callers bracket a drag/nudge gesture
+     *  in `EDIT_GROUP_BEGIN`/`END` so the whole move is a single undo step. Returns true when the
+     *  group was valid (applied); false when rejected. */
+    moveClipGroup(
+      origins: readonly { clipId: string; startMs: number; trackIndex: number }[],
+      deltaMs: number,
+      deltaTrackIndex: number
+    ): boolean {
+      if (origins.length === 0) return false
+      const groupIds = new Set(origins.map((o) => o.clipId))
+      const trackCount = this.tracks.length
+
+      type GroupTarget = { clip: Clip; startMs: number; destTrackId: string; trackChanged: boolean }
+      const targets: GroupTarget[] = []
+      for (const o of origins) {
+        const clip = this.clips[o.clipId]
+        if (!clip || clip.locked) return false
+        const startMs = o.startMs + deltaMs
+        if (startMs < 0) return false
+        const trackIndex = o.trackIndex + deltaTrackIndex
+        if (trackIndex < 0 || trackIndex >= trackCount) return false
+        const destTrack = this.tracks[trackIndex]
+        if (!destTrack) return false
+        targets.push({
+          clip,
+          startMs,
+          destTrackId: destTrack.id,
+          trackChanged: destTrack.id !== clip.trackId
+        })
+      }
+
+      // Validate every target against the clips OUTSIDE the group on its destination track.
+      for (const t of targets) {
+        const newEnd = t.startMs + effectiveClipDurationMs(t.clip)
+        const destTrack = this.tracks.find((tr) => tr.id === t.destTrackId)
+        if (!destTrack) return false
+        for (const otherId of destTrack.clipIds) {
+          if (groupIds.has(otherId)) continue
+          const other = this.clips[otherId]
+          if (!other) continue
+          const otherEnd = other.startMs + effectiveClipDurationMs(other)
+          if (t.startMs < otherEnd - CLIP_FIT_EPSILON_MS && newEnd > other.startMs + CLIP_FIT_EPSILON_MS) {
+            return false
+          }
+        }
+      }
+
+      // Whole group fits — apply. Reparent cross-track moves, set positions, and send one CLIP_MOVE
+      // per clip that actually changed (so a still gesture frame is free of bridge chatter).
+      let changed = false
+      for (const t of targets) {
+        const clip = t.clip
+        const posChanged = clip.startMs !== t.startMs
+        if (!t.trackChanged && !posChanged) continue
+        if (t.trackChanged) {
+          const oldTrack = this.tracks.find((tr) => tr.id === clip.trackId)
+          if (oldTrack) {
+            const idx = oldTrack.clipIds.indexOf(clip.id)
+            if (idx >= 0) oldTrack.clipIds.splice(idx, 1)
+          }
+          const destTrack = this.tracks.find((tr) => tr.id === t.destTrackId)
+          destTrack?.clipIds.push(clip.id)
+          clip.trackId = t.destTrackId
+        }
+        clip.startMs = t.startMs
+        const destTrack = this.tracks.find((tr) => tr.id === t.destTrackId)
+        if (destTrack) {
+          const clipEnd = t.startMs + effectiveClipDurationMs(clip)
+          if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
+          if (t.trackChanged) this.pushTrackGain(destTrack)
+        }
+        sendBridge('CLIP_MOVE', {
+          clipId: clip.id,
+          positionMs: t.startMs,
+          ...(t.trackChanged ? { trackId: t.destTrackId } : {})
+        })
+        changed = true
+      }
+      if (changed) this.peaksRevision++
+      return true
+    },
+
+    /** Largest in-direction time delta (≤ the requested one, same sign) that keeps every group
+     *  member in bounds and clear of the clips OUTSIDE the group on its destination track. Used by
+     *  the group DRAG so the group slides right up to a boundary — the timeline start or a
+     *  neighbouring clip — instead of snapping back when the full delta won't fit, mirroring the
+     *  single-clip bump-clamp (`findClipSlot`). Track delta is taken as given; if a member would
+     *  land out of the track range, or a member/clip is missing, the requested delta is returned
+     *  unchanged so `moveClipGroup` makes the final (reject) call. A valid origin config means no
+     *  external clip overlaps a member at delta 0, so each external neighbour is strictly to the
+     *  left (limits leftward travel) or right (limits rightward travel) of that member. */
+    clampGroupDeltaMs(
+      origins: readonly { clipId: string; startMs: number; trackIndex: number }[],
+      deltaMs: number,
+      deltaTrackIndex: number
+    ): number {
+      if (origins.length === 0) return deltaMs
+      const groupIds = new Set(origins.map((o) => o.clipId))
+      const trackCount = this.tracks.length
+      let lo = -Infinity // most-negative (leftward) delta the whole group can take
+      let hi = Infinity // most-positive (rightward) delta the whole group can take
+      for (const o of origins) {
+        const clip = this.clips[o.clipId]
+        if (!clip) return deltaMs
+        const trackIndex = o.trackIndex + deltaTrackIndex
+        if (trackIndex < 0 || trackIndex >= trackCount) return deltaMs
+        const destTrack = this.tracks[trackIndex]
+        if (!destTrack) return deltaMs
+        const origStart = o.startMs
+        const origEnd = origStart + effectiveClipDurationMs(clip)
+        lo = Math.max(lo, -origStart) // can't move the earliest member before the timeline start
+        for (const otherId of destTrack.clipIds) {
+          if (groupIds.has(otherId)) continue
+          const other = this.clips[otherId]
+          if (!other) continue
+          const otherEnd = other.startMs + effectiveClipDurationMs(other)
+          if (otherEnd <= origStart + CLIP_FIT_EPSILON_MS) {
+            lo = Math.max(lo, otherEnd - origStart) // external neighbour to the left
+          } else if (other.startMs >= origEnd - CLIP_FIT_EPSILON_MS) {
+            hi = Math.min(hi, other.startMs - origEnd) // external neighbour to the right
+          }
+        }
+      }
+      if (lo > hi) return deltaMs // no feasible uniform delta — let moveClipGroup reject
+      return Math.max(lo, Math.min(hi, deltaMs))
+    },
+
     /** Trim source-window fields atomically in one CLIP_TRIM envelope. */
     trimClip(clipId: string, startMs: number, inMs: number, durationMs: number): void {
       const clip = this.clips[clipId]

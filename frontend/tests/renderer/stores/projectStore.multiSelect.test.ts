@@ -190,3 +190,134 @@ describe('projectStore — multi-clip selection', () => {
     expect(project.selectedClipIds.has(a!)).toBe(false)
   })
 })
+
+/** Build `moveClipGroup` origins for the given clip ids from their current positions. */
+function originsFor(project: Project, ids: string[]) {
+  return ids.map((id) => {
+    const c = project.clips[id]!
+    return { clipId: id, startMs: c.startMs, trackIndex: project.tracks.findIndex((t) => t.id === c.trackId) }
+  })
+}
+
+describe('projectStore — atomic group move (moveClipGroup)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sendMock.mockClear()
+    sendMock.mockReturnValue(true)
+    uuidCounter = 0
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => `uuid-${++uuidCounter}`) })
+    vi.stubGlobal('window', { silverdaw: { readAudioMetadata: vi.fn().mockResolvedValue(null) } })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('applies a uniform delta to the whole group when it fits', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 2) // at 0 and 2000
+    const origins = originsFor(project, [a!, b!])
+
+    expect(project.moveClipGroup(origins, 500, 0)).toBe(true)
+    expect(project.clips[a!]!.startMs).toBe(500)
+    expect(project.clips[b!]!.startMs).toBe(2500)
+  })
+
+  it('lets group members pass through each other (only non-group clips block)', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    // Two adjacent clips (0–1000, 1000–2000-ish); the default 2000 spacing keeps a gap.
+    const [a, b] = addClips(project, track, 2)
+    const origins = originsFor(project, [a!, b!])
+    // Move the group so `a` lands where `b` was — allowed because `b` moves too.
+    expect(project.moveClipGroup(origins, 2000, 0)).toBe(true)
+    expect(project.clips[a!]!.startMs).toBe(2000)
+    expect(project.clips[b!]!.startMs).toBe(4000)
+  })
+
+  it('rejects the whole move when a target overlaps a clip outside the group', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 3) // 0, 2000, 4000
+    const origins = originsFor(project, [a!, b!]) // the 4000 clip stays put
+    const beforeA = project.clips[a!]!.startMs
+    const beforeB = project.clips[b!]!.startMs
+
+    // +2000 would push b onto c (4000) — reject the whole group, no change.
+    expect(project.moveClipGroup(origins, 2000, 0)).toBe(false)
+    expect(project.clips[a!]!.startMs).toBe(beforeA)
+    expect(project.clips[b!]!.startMs).toBe(beforeB)
+  })
+
+  it('moves the group across tracks, reparenting each clip', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    const t2 = project.addTrack()
+    const [a] = addClips(project, t1, 1)
+    const origins = originsFor(project, [a!])
+
+    expect(project.moveClipGroup(origins, 0, 1)).toBe(true)
+    expect(project.clips[a!]!.trackId).toBe(t2)
+    expect(project.tracks.find((t) => t.id === t2)!.clipIds).toContain(a)
+    expect(project.tracks.find((t) => t.id === t1)!.clipIds).not.toContain(a)
+  })
+
+  it('rejects the move when any group clip is locked', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 2)
+    project.setClipLocked(b!, true)
+    const origins = originsFor(project, [a!, b!])
+
+    expect(project.moveClipGroup(origins, 500, 0)).toBe(false)
+    expect(project.clips[a!]!.startMs).toBe(0)
+  })
+
+  it('rejects out-of-bounds moves (negative start or track index)', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a] = addClips(project, track, 1)
+    const origins = originsFor(project, [a!])
+
+    expect(project.moveClipGroup(origins, -5000, 0)).toBe(false)
+    expect(project.moveClipGroup(origins, 0, 5)).toBe(false)
+    expect(project.moveClipGroup(origins, 0, -1)).toBe(false)
+    expect(project.clips[a!]!.startMs).toBe(0)
+  })
+
+  it('clampGroupDeltaMs returns the requested delta unchanged when the whole group fits', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 3) // 0–1000, 2000–3000, 4000–5000 (c stays out)
+    const origins = originsFor(project, [a!, b!])
+
+    // +500 leaves b at 2500–3500, clear of c at 4000 — no clamp needed.
+    expect(project.clampGroupDeltaMs(origins, 500, 0)).toBe(500)
+  })
+
+  it('clampGroupDeltaMs clamps a rightward drag so the group butts against the next clip', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const [a, b] = addClips(project, track, 3) // c at 4000–5000 is outside the group
+    const origins = originsFor(project, [a!, b!])
+
+    // +2000 would push b (ends 3000) onto c (starts 4000); clamp to +1000 so b ends exactly at 4000.
+    expect(project.clampGroupDeltaMs(origins, 2000, 0)).toBe(1000)
+    expect(project.moveClipGroup(origins, project.clampGroupDeltaMs(origins, 2000, 0), 0)).toBe(true)
+    expect(project.clips[a!]!.startMs).toBe(1000)
+    expect(project.clips[b!]!.startMs).toBe(3000)
+  })
+
+  it('clampGroupDeltaMs clamps a leftward drag to the timeline start and left neighbours', () => {
+    const project = useProjectStore()
+    const track = project.addTrack()
+    const ids = addClips(project, track, 3) // ids[0] at 0–1000 stays outside the group
+    const origins = originsFor(project, [ids[1]!, ids[2]!]) // clips at 2000 and 4000
+
+    // Left edge is bounded by the first clip's end (1000): the 2000 clip can reach 1000, so the
+    // requested -5000 clamps to -1000.
+    expect(project.clampGroupDeltaMs(origins, -5000, 0)).toBe(-1000)
+  })
+})
+

@@ -4,7 +4,7 @@
 
 ### Added
 
-- Select multiple clips on the timeline: **Shift-click** selects a range on the same track, **Ctrl-click** toggles individual clips across tracks. A dedicated right-click menu offers Lock, Colour, Duplicate and Delete for the whole selection, and **Delete**, **Ctrl + L** (lock) and **Duplicate** act on every selected clip as one undo step.
+- Select multiple clips on the timeline: **Shift-click** selects a range on the same track, **Ctrl-click** toggles individual clips across tracks. Drag any selected clip to move the whole group (preserving relative positions, across tracks, blocked only where it wouldn't fit), and **Shift + ←/→** nudges the group. A dedicated right-click menu offers Lock, Colour, Duplicate and Delete for the whole selection, and **Delete**, **Ctrl + L** (lock) and **Duplicate** act on every selected clip. Each multi-clip edit is a single undo step.
 - **File ▸ Import to Library…** (`Ctrl` + `I`) opens the audio-file picker and imports the chosen files into the library — the same flow as the panel's Import button.
 - The word "Import" in the empty library panel's hint is now a clickable shortcut to the Import button.
 - Dragging a library item onto the empty area below the tracks now shows a "new track" drop lane (with a ＋ badge) and drops the clip onto a freshly created track — undoable as one step.
