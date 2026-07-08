@@ -116,6 +116,8 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                              + devicesSnapshot.currentDeviceName
                              + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0)
                              + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
+                             + " outCh=" + juce::String(devicesSnapshot.currentOutputChannels)
+                             + " bits=" + juce::String(devicesSnapshot.currentBitDepth)
                              + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
                              + (fellBack ? " (fell back to default)" : ""));
 
@@ -266,6 +268,8 @@ void AudioEngine::rebuildDevicesSnapshot(bool rescan)
     {
         snap.currentSampleRate = dev->getCurrentSampleRate();
         snap.currentBufferSize = dev->getCurrentBufferSizeSamples();
+        snap.currentOutputChannels = dev->getActiveOutputChannels().countNumberOfSetBits();
+        snap.currentBitDepth = dev->getCurrentBitDepth();
     }
     snap.outputLatencyMs = getOutputLatencyMs();
     snap.heuristicExtraLatencyMs = getHeuristicExtraLatencyMs();

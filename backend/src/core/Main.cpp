@@ -193,6 +193,41 @@ int runBackend(int argc, char* argv[])
                              + juce::String(juce::SystemStats::getNumPhysicalCpus()) + " physical @ "
                              + juce::String(juce::SystemStats::getCpuSpeedInMegahertz()) + " MHz | RAM "
                              + juce::String(juce::SystemStats::getMemorySizeInMegabytes()) + " MB");
+    // CPU SIMD feature flags: the ONNX Runtime (stem separation) and the DSP paths pick
+    // code paths off these, so a "why is separation slow / crashing here" report is far
+    // easier to triage when the log shows what the machine actually supports.
+    const auto cpuFlag = [](bool present, const char* name) -> juce::String
+    { return present ? (juce::String(" ") + name) : juce::String(); };
+    silverdaw::log::info("sys",
+                         "CPU features:" + cpuFlag(juce::SystemStats::hasSSE(), "SSE")
+                             + cpuFlag(juce::SystemStats::hasSSE2(), "SSE2")
+                             + cpuFlag(juce::SystemStats::hasSSE3(), "SSE3")
+                             + cpuFlag(juce::SystemStats::hasSSSE3(), "SSSE3")
+                             + cpuFlag(juce::SystemStats::hasSSE41(), "SSE4.1")
+                             + cpuFlag(juce::SystemStats::hasSSE42(), "SSE4.2")
+                             + cpuFlag(juce::SystemStats::hasAVX(), "AVX")
+                             + cpuFlag(juce::SystemStats::hasAVX2(), "AVX2")
+                             + cpuFlag(juce::SystemStats::hasAVX512F(), "AVX512F")
+                             + cpuFlag(juce::SystemStats::hasFMA3(), "FMA3"));
+    // Machine identity — helps correlate multiple reports from the same box.
+    silverdaw::log::info("sys",
+                         "Machine '" + juce::SystemStats::getComputerName() + "' | "
+                             + juce::SystemStats::getOperatingSystemName()
+                             + " | " + juce::SystemStats::getUserLanguage() + "-"
+                             + juce::SystemStats::getUserRegion());
+    // Free/total disk on the volumes that matter: the temp workspace (unsaved projects,
+    // decoded-audio cache, in-flight stems/channels/samples) and the install volume. An
+    // "out of space" failure mid-export/import is otherwise invisible in the log.
+    const auto tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory);
+    const auto exeFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const auto diskGb = [](juce::int64 bytes) -> juce::String
+    { return bytes >= 0 ? juce::String(static_cast<double>(bytes) / 1.0e9, 1) : juce::String("?"); };
+    silverdaw::log::info("sys",
+                         "Disk temp '" + tempDir.getFullPathName() + "' free " + diskGb(tempDir.getBytesFreeOnVolume())
+                             + " / " + diskGb(tempDir.getVolumeTotalSize()) + " GB | install '"
+                             + exeFile.getParentDirectory().getFullPathName() + "' free "
+                             + diskGb(exeFile.getBytesFreeOnVolume()) + " / "
+                             + diskGb(exeFile.getVolumeTotalSize()) + " GB");
     silverdaw::log::info("main",
                          "port=" + juce::String(bridgePort) + " token="
                              + (bridgeToken.isNotEmpty() ? "set" : "unset") + " diagDir="

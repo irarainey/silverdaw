@@ -279,6 +279,8 @@ class AudioEngine
         juce::String currentDeviceName;
         double currentSampleRate = 0.0;
         int currentBufferSize = 0;
+        int currentOutputChannels = 0;
+        int currentBitDepth = 0;
         double outputLatencyMs = 0.0;
         double heuristicExtraLatencyMs = 0.0;
         bool fellBackToDefault = false;
