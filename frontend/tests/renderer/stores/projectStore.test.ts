@@ -1006,6 +1006,101 @@ describe('projectStore', () => {
     })
   })
 
+  describe('library-clip window migration (finalizeProjectSnapshot)', () => {
+    const sourceAndSavedLibrary = [
+      {
+        id: 'l3',
+        kind: 'source' as const,
+        filePath: 'C:\\audio\\drums.wav',
+        fileName: 'drums.wav',
+        durationMs: 20_000,
+        sampleRate: 44_100,
+        channelCount: 2
+      },
+      {
+        id: 'l6',
+        kind: 'clip' as const,
+        name: 'Drum loop',
+        filePath: 'C:\\audio\\drums.wav',
+        fileName: 'drums.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        sourceItemId: 'l3',
+        sourceClipId: 'origin',
+        sourceInMs: 1_000,
+        sourceDurationMs: 4_000
+      }
+    ]
+
+    it('rebinds a source-referencing clip to a matching saved library-clip on project LOAD', () => {
+      const project = useProjectStore()
+      sendMock.mockClear()
+      project.applyProjectStateSnapshot({
+        filePath: 'C:\\projects\\mix.silverdaw',
+        name: 'Mix',
+        reset: true,
+        library: sourceAndSavedLibrary,
+        tracks: [
+          {
+            id: 't1',
+            name: 'T1',
+            gain: 1,
+            clips: [{ id: 'c1', libraryItemId: 'l3', offsetMs: 0, inMs: 1_000, durationMs: 4_000 }]
+          }
+        ]
+      })
+      expect(sendMock).toHaveBeenCalledWith('CLIP_REBIND', { clipId: 'c1', libraryItemId: 'l6' })
+      expect(project.clips.c1?.libraryItemId).toBe('l6')
+    })
+
+    it('does NOT migrate on an undo/redo soft-replace snapshot', () => {
+      const project = useProjectStore()
+      sendMock.mockClear()
+      project.applyProjectStateSnapshot({
+        filePath: null,
+        name: 'Mix',
+        softReplace: true,
+        library: sourceAndSavedLibrary,
+        tracks: [
+          {
+            id: 't1',
+            name: 'T1',
+            gain: 1,
+            clips: [{ id: 'c1', libraryItemId: 'l3', offsetMs: 0, inMs: 1_000, durationMs: 4_000 }]
+          }
+        ]
+      })
+      expect(sendMock).not.toHaveBeenCalledWith('CLIP_REBIND', expect.anything())
+      expect(project.clips.c1?.libraryItemId).toBe('l3')
+    })
+
+    it('skips an ambiguous match where two clips share the same window', () => {
+      const project = useProjectStore()
+      sendMock.mockClear()
+      project.applyProjectStateSnapshot({
+        filePath: 'C:\\projects\\mix.silverdaw',
+        name: 'Mix',
+        reset: true,
+        library: sourceAndSavedLibrary,
+        tracks: [
+          {
+            id: 't1',
+            name: 'T1',
+            gain: 1,
+            clips: [
+              { id: 'c1', libraryItemId: 'l3', offsetMs: 0, inMs: 1_000, durationMs: 4_000 },
+              { id: 'c2', libraryItemId: 'l3', offsetMs: 8_000, inMs: 1_000, durationMs: 4_000 }
+            ]
+          }
+        ]
+      })
+      expect(sendMock).not.toHaveBeenCalledWith('CLIP_REBIND', expect.anything())
+      expect(project.clips.c1?.libraryItemId).toBe('l3')
+      expect(project.clips.c2?.libraryItemId).toBe('l3')
+    })
+  })
+
   it('updates and forwards per-track Reverb / Delay sends, suppressing defaults', () => {
     const project = useProjectStore()
     const trackId = project.addTrack()

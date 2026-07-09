@@ -39,6 +39,7 @@
 - The startup screen and pre-mount splash now have minimise / maximise / close controls, a draggable top edge, and a flash-free hand-off to the loading screen.
 - Recent Projects entries on the startup screen are now clickable across the whole row (not just the text), and clicking one immediately after launch reliably opens it instead of occasionally being ignored while the engine was still starting.
 - Dragging a clip from the library onto an existing track now auto-scrolls the timeline when the pointer nears the left or right edge, so you can drop it at the very start (or anywhere), matching the drop-on-empty-area behaviour.
+- Undo now walks all the way back to a clean project after saving a clip to the library: a library-clip window-reconciliation step was wrongly re-running on every undo/redo, re-linking clips and churning the undo stack so it never converged. It now runs only when opening a saved project, and only for unambiguous matches — so a saved library clip is no longer shown as "used" by a track it isn't on.
 
 ## 1.0.3
 

@@ -235,7 +235,6 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
 export function finalizeProjectSnapshot(
   target: SnapshotTarget,
   snapshot: ProjectStatePayload,
-  isSoftReplace: boolean,
   clipsNeedingPeaks: string[],
   pendingProjectLengthMs: number | null
 ): void {
@@ -266,8 +265,19 @@ export function finalizeProjectSnapshot(
     target.peaksRevision++
   }
 
-  // Migration: rebind pre-existing library-clip windows to their saved item.
-  if (snapshot.reset === true || isSoftReplace) {
+  // Migration (project LOAD only): rebind pre-existing library-clip windows to their saved
+  // item. This exists purely to reconcile older saved projects on open, where a timeline
+  // clip references the source item directly but a saved library-clip now covers the same
+  // window. It must NOT run on undo/redo — those broadcast a soft-replace snapshot, and
+  // re-issuing the (undoable) CLIP_REBIND there churns the undo stack so it can never reach
+  // the clean state, and re-links clips that undo had just detached.
+  if (snapshot.reset === true) {
+    // First resolve each clip's would-be candidate, and count how many clips map to each
+    // candidate. Only unambiguous 1:1 matches are rebound: a window shared by more than one
+    // clip can't be attributed to a single origin, so we leave those on the source rather
+    // than risk claiming an unrelated clip (they still replay the correct audio).
+    const candidateForClip: Record<string, string> = {}
+    const clipsPerCandidate: Record<string, number> = {}
     for (const clipId in target.clips) {
       const clip = target.clips[clipId]
       if (!clip) continue
@@ -279,13 +289,27 @@ export function finalizeProjectSnapshot(
           Math.abs((i.derivedFrom?.durationMs ?? 0) - clip.durationMs) < 0.5
       )
       if (candidate && candidate.id !== clip.libraryItemId) {
+        candidateForClip[clipId] = candidate.id
+        clipsPerCandidate[candidate.id] = (clipsPerCandidate[candidate.id] ?? 0) + 1
+      }
+    }
+    for (const clipId in candidateForClip) {
+      const candidateId = candidateForClip[clipId]!
+      if (clipsPerCandidate[candidateId] !== 1) {
         log.info(
           'project',
-          `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidate.id} (library-clip window match)`
+          `skip clip ${clipId} — ambiguous library-clip window match to ${candidateId} (${clipsPerCandidate[candidateId]} clips)`
         )
-        clip.libraryItemId = candidate.id
-        sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidate.id })
+        continue
       }
+      const clip = target.clips[clipId]
+      if (!clip) continue
+      log.info(
+        'project',
+        `migrate clip ${clipId} libraryItemId=${clip.libraryItemId} -> ${candidateId} (library-clip window match)`
+      )
+      clip.libraryItemId = candidateId
+      sendBridge('CLIP_REBIND', { clipId, libraryItemId: candidateId })
     }
   }
 }

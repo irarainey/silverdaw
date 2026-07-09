@@ -56,5 +56,5 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
       target.selectedClipId = pruned.values().next().value ?? null
     }
   }
-  finalizeProjectSnapshot(target, snapshot, isSoftReplace, clipsNeedingPeaks, pendingProjectLengthMs)
+  finalizeProjectSnapshot(target, snapshot, clipsNeedingPeaks, pendingProjectLengthMs)
 }
