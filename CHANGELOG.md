@@ -16,6 +16,7 @@
 - Dragging a library item onto the empty area below the tracks now shows a "new track" drop lane (with a ＋ badge) and drops the clip onto a freshly created track — undoable as one step.
 - `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) opens and collapses the bottom Library / FX panel.
 - `Ctrl` + `1`–`8` jump the timeline to 100%–800% zoom; the matching Zoom Presets show these accelerators.
+- **Help ▸ Keyboard Shortcuts** opens the keyboard-shortcuts reference for your version of the docs.
 
 ### Changed
 

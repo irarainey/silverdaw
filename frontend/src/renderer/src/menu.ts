@@ -145,6 +145,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'Help',
       items: [
         { label: 'Documentation', action: 'help.docs' },
+        { label: 'Keyboard Shortcuts', action: 'help.shortcuts' },
         { label: 'Submit Feedback', action: 'help.reportIssue' },
         // Only present when diagnostic logging is on for this run — otherwise there is
         // nothing to send. Zips the current run's logs and opens a support email draft.

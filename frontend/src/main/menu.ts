@@ -109,6 +109,10 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'help.docs':
       void shell.openExternal('https://docs.silverdaw.com')
       break
+    case 'help.shortcuts':
+      // Versioned docs page — the path always matches the running app version.
+      void shell.openExternal(`https://docs.silverdaw.com/${app.getVersion()}/guide/shortcuts`)
+      break
     case 'help.reportIssue':
       void shell.openExternal('https://silverdaw.featurebase.app')
       break
