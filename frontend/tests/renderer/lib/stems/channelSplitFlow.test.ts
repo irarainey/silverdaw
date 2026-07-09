@@ -48,7 +48,7 @@ beforeEach(() => {
 })
 
 describe('channelSplitFlow', () => {
-  it('opens the picker for a stereo clip with both channels ticked by default', () => {
+  it('opens the picker for a stereo clip with nothing ticked by default', () => {
     requestChannelSplitForClip('stereo')
 
     expect(selection.value).not.toBeNull()
@@ -59,7 +59,7 @@ describe('channelSplitFlow', () => {
       startMs: 4000,
       sourceInMs: 200
     })
-    expect(selection.value?.selected).toEqual({ left: true, right: true })
+    expect(selection.value?.selected).toEqual({ left: false, right: false })
   })
 
   it('refuses a non-stereo clip and does not open the picker', () => {
@@ -70,7 +70,9 @@ describe('channelSplitFlow', () => {
   })
 
   it('dispatches CLIP_SPLIT_CHANNELS for the ticked channels and registers the job', () => {
-    requestChannelSplitForClip('stereo') // both ticked by default
+    requestChannelSplitForClip('stereo')
+    toggleChannelSelection('left') // tick both
+    toggleChannelSelection('right')
     confirmChannelSplit()
 
     expect(registerChannelSplitJob).toHaveBeenCalledWith('job-xyz', expect.objectContaining({ clipId: 'stereo' }))
@@ -84,9 +86,7 @@ describe('channelSplitFlow', () => {
   })
 
   it('does nothing on confirm when no channel is ticked', () => {
-    requestChannelSplitForClip('stereo') // both ticked by default
-    toggleChannelSelection('left') // untick both → none ticked
-    toggleChannelSelection('right')
+    requestChannelSplitForClip('stereo') // nothing ticked by default
     confirmChannelSplit()
 
     expect(send).not.toHaveBeenCalled()

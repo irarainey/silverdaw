@@ -29,6 +29,8 @@
 #include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
 #include "VocalDebleeder.h"
+#include "Dereverberator.h"
+#include "VocalRestorer.h"
 
 namespace silverdaw
 {
@@ -417,7 +419,9 @@ class OnnxStemSeparator : public StemSeparator
         // Whether a given stem has its optional post-separation cleanup enabled.
         const auto cleanupEnabledFor = [&request](const juce::String& st) -> bool
         {
-            if (st == "vocals") return request.vocalEnhance.enabled;
+            // Vocals also reserve a cleanup band for the per-run dereverb pass, so the
+            // progress bar advances even when only dereverb (not enhance) is enabled.
+            if (st == "vocals") return request.vocalEnhance.enabled || request.dereverb.enabled;
             if (st == "drums") return request.drumEnhance.enabled;
             if (st == "bass") return request.bassEnhance.enabled;
             if (st == "other") return request.otherEnhance.enabled;
@@ -662,29 +666,30 @@ class OnnxStemSeparator : public StemSeparator
             // so the `other` residual stays mixture-consistent. RNNoise removes
             // broadband noise/separation artefacts; the high-pass + expander
             // stage then pushes down residual sub-bass and inter-phrase bleed.
-            if (request.vocalEnhance.enabled && juce::String(stem) == "vocals")
+            if (juce::String(stem) == "vocals"
+                && (request.vocalEnhance.enabled || request.dereverb.enabled))
             {
-                // The RoFormer vocal pack produces a high-SDR stem; the cleanup
-                // (tuned for the dirtier htdemucs vocal) is gentled for it — the
-                // cross-stem de-bleed is skipped entirely (it would gut a clean
-                // vocal on dense mixes) and the denoise / expander run softened.
+                // The RoFormer vocal pack produces a high-SDR stem; the enhance cleanup
+                // (tuned for the dirtier htdemucs vocal) is gentled for it — the cross-stem
+                // de-bleed is skipped entirely (it would gut a clean vocal on dense mixes)
+                // and the denoise / expander run softened. Dereverb is a per-run choice,
+                // independent of the enhance toggle, so the two are gated separately here.
                 const bool vocalFromRoformer = haveVocalPack;
-                auto vocalOpts = request.vocalEnhance;
-                vocalOpts.cleanModel = vocalFromRoformer;
-                const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength, vocalFromRoformer);
-                silverdaw::log::info("stems",
-                                     juce::String("applied vocal cleanup strength=")
-                                         + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
-                                         + (vocalFromRoformer ? " (clean-model: de-bleed skipped)" : "")
-                                         + " denoiseWet=" + juce::String(wet, 2));
                 onProgress("cleanup", cleanupBase, stem);
-                // Cross-stem de-bleed (htdemucs path only): build the interferer
-                // estimate (instrumental = mixture - vocal, in the denormalised
-                // domain) and push down pitched instrument bleed the broadband
-                // denoiser cannot touch. The `other` residual was already
-                // accumulated from the UNPROCESSED vocal above, so this stays
-                // consistent. Skipped for the clean RoFormer vocal.
-                if (! vocalFromRoformer)
+
+                // Progress split: dereverb and the RNNoise denoise are the two heavy passes;
+                // each owns a share of the first 90% of the reserved band, the expander the tail.
+                const double dereverbBand =
+                    request.dereverb.enabled ? (request.vocalEnhance.enabled ? 0.45 : 0.90) : 0.0;
+                const double denoiseStart = cleanupBase + cleanupSpan * dereverbBand;
+                const double denoiseBand =
+                    request.vocalEnhance.enabled ? (0.90 - dereverbBand) : 0.0;
+
+                // Cross-stem de-bleed (htdemucs enhance path only): push down pitched
+                // instrument bleed using instrumental = mixture - vocal. Runs BEFORE dereverb
+                // so the reverb estimate isn't contaminated by other instruments' tails, and
+                // because de-bleed is frame-independent (it needs no envelope of its own).
+                if (request.vocalEnhance.enabled && ! vocalFromRoformer)
                 {
                     juce::AudioBuffer<float> instrumental(kModelChannels, numSamples);
                     for (int ch = 0; ch < kModelChannels; ++ch)
@@ -698,15 +703,65 @@ class OnnxStemSeparator : public StemSeparator
                     VocalDebleeder::process(stemBuffer, instrumental, kModelSampleRate,
                                             request.vocalEnhance.strength);
                 }
-                // The denoiser is the slow cleanup path; tick the bar across the
-                // reserved slice as it runs (it owns the first 90% of the slice,
-                // leaving room for the quick expander stage that follows).
-                VocalDenoiser::process(
-                    stemBuffer, kModelSampleRate, wet,
-                    [&](double f) {
-                        onProgress("cleanup", cleanupBase + cleanupSpan * 0.90 * f, stem);
-                    });
-                VocalEnhancer::process(stemBuffer, kModelSampleRate, vocalOpts);
+
+                // Reverb/echo reduction (per-run). Before the denoise: RNNoise is trained on
+                // dry speech, so tightening the reverberant envelope first helps it.
+                //
+                // Capture the vocal's active loudness BEFORE de-reverb so the final
+                // VocalRestorer stage can match it back — spectral subtraction removes
+                // energy and leaves the stem noticeably quieter, and matching the
+                // loud-frame loudness (not the reverb-filled gaps) restores the level
+                // without re-inflating the tail we just removed.
+                float vocalRefLevel = 0.0f;
+                if (request.dereverb.enabled)
+                {
+                    vocalRefLevel = VocalRestorer::activeLoudness(stemBuffer, kModelSampleRate);
+                    silverdaw::log::info("stems",
+                                         juce::String("applied vocal dereverb strength=")
+                                             + dereverbStrengthToString(request.dereverb.strength));
+                    Dereverberator::process(
+                        stemBuffer, kModelSampleRate, request.dereverb.strength,
+                        [&](double f) {
+                            onProgress("cleanup", cleanupBase + cleanupSpan * dereverbBand * f, stem);
+                        });
+                }
+
+                // RNNoise denoise + sub-bass high-pass / expander (enhance path only).
+                if (request.vocalEnhance.enabled)
+                {
+                    auto vocalOpts = request.vocalEnhance;
+                    vocalOpts.cleanModel = vocalFromRoformer;
+                    const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength, vocalFromRoformer);
+                    silverdaw::log::info("stems",
+                                         juce::String("applied vocal cleanup strength=")
+                                             + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
+                                             + (vocalFromRoformer ? " (clean-model: de-bleed skipped)" : "")
+                                             + " denoiseWet=" + juce::String(wet, 2));
+                    VocalDenoiser::process(
+                        stemBuffer, kModelSampleRate, wet,
+                        [&](double f) {
+                            onProgress("cleanup", denoiseStart + cleanupSpan * denoiseBand * f, stem);
+                        });
+                    VocalEnhancer::process(stemBuffer, kModelSampleRate, vocalOpts);
+                }
+
+                // Final polish (per-run de-reverb only): restore the presence and
+                // level that spectral subtraction strips out, so the de-reverbed
+                // vocal isn't dull/flat OR quieter. Runs LAST — after the denoise +
+                // expander have cleaned the vocal — so the shelves brighten the clean
+                // signal rather than musical noise, and the level match sits after the
+                // expander so it can't lift the floor back over the expander threshold.
+                if (request.dereverb.enabled)
+                {
+                    const auto restore = VocalRestorer::process(
+                        stemBuffer, kModelSampleRate, request.dereverb.strength, vocalRefLevel);
+                    silverdaw::log::info(
+                        "stems",
+                        juce::String("applied vocal restore ref=") + juce::String(restore.referenceLevel, 4)
+                            + " proc=" + juce::String(restore.processedLevel, 4)
+                            + " makeup=" + juce::String(restore.makeupDb, 2) + "dB"
+                            + (restore.clamped ? " (clamped)" : ""));
+                }
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
             // Optional drum cleanup. Same contract: drums only, applied after the

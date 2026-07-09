@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Remove reverb & echo from vocals** — an optional per-run tick (Light / Medium / Strong) in the Separate Stems dialog, nested under Vocals, that cleans room reverb and slap-back echo off the vocals stem as it's separated, then restores its presence and level. A fresh choice each run, not a saved setting, and non-destructive.
 - **Split Stereo Channels…** on a stereo clip's right-click menu opens a picker to split out its Left and/or Right channel. Each chosen channel lands on its own new track as a stereo clip carrying only that channel (copied to both sides) — non-destructive, and it inherits the source's grid and warps just like a stem.
 - Select multiple clips on the timeline: **Shift-click** selects a range on the same track, **Ctrl-click** toggles individual clips across tracks.
 - Drag any selected clip to move the whole multi-selection as a group, preserving relative positions and track offsets, blocked only where it wouldn't fit; **Shift + ←/→** nudges the group.
@@ -19,6 +20,7 @@
 ### Changed
 
 - The waveform display now defaults to **Left and right channels** (stacked stereo lanes) instead of a single summary waveform. Existing preferences are untouched; change it any time in Preferences ▸ General.
+- The Separate Stems dialog now opens with **no stems selected**, so you tick just the parts you want (Start stays disabled until at least one is chosen) instead of un-ticking from a full set.
 
 ### Fixed
 

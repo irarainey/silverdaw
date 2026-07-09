@@ -234,6 +234,13 @@ void handleStemSeparate(const juce::var& payload,
     request.otherEnhance.strength = otherEnhanceStrengthFromString(
         readOptionalString(payload, "otherEnhanceStrength").value_or(juce::String{}));
 
+    // Per-run vocal dereverb (chosen in the stem dialog, not a persisted preference).
+    // Absent/false → off, so an older renderer that never sends it is unaffected.
+    const juce::var dereverbVar = payload.getProperty("dereverb", juce::var());
+    request.dereverb.enabled = dereverbVar.isBool() && static_cast<bool>(dereverbVar);
+    request.dereverb.strength = dereverbStrengthFromString(
+        readOptionalString(payload, "dereverbStrength").value_or(juce::String{}));
+
     activeJobId = jobId;
     silverdaw::log::info("stems", "STEM_SEPARATE job=" + jobId + " item=" + sourceItemId +
                                       " clip=" + (clipId.isNotEmpty() ? clipId : juce::String("(library)")) +
@@ -254,6 +261,9 @@ void handleStemSeparate(const juce::var& payload,
                                           : juce::String("0")) +
                                       " enhanceOther=" + (request.otherEnhance.enabled
                                           ? juce::String(otherEnhanceStrengthToString(request.otherEnhance.strength))
+                                          : juce::String("0")) +
+                                      " dereverb=" + (request.dereverb.enabled
+                                          ? juce::String(dereverbStrengthToString(request.dereverb.strength))
                                           : juce::String("0")) +
                                       " source=" + sourceFile.getFullPathName());
     runStemSeparationAsync(std::move(request), separator, pool, bridge, cancelFlag, busyFlag);

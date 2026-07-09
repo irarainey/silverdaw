@@ -74,7 +74,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   separation by default, with a backup model downloaded automatically only if
   it's ever needed. A
   **Fast / Balanced / Best** speed control and optional one-click cleanup let you
-  trade speed for polish.
+  trade speed for polish, and an optional per-run **reverb & echo removal** cleans
+  room reverb and slap-back off the vocal as it separates.
 - **Split stereo channels.** Right-click a stereo clip to split its **Left**
   and/or **Right** channel onto its own new track — each channel becomes a stereo
   clip carrying only that side (copied to both). Non-destructive, and each split

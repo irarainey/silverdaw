@@ -794,6 +794,8 @@ export type DrumEnhanceStrength = StemEnhanceStrength
 export type BassEnhanceStrength = StemEnhanceStrength
 /** Other/residual-cleanup intensity (alias of {@link StemEnhanceStrength}). */
 export type OtherEnhanceStrength = StemEnhanceStrength
+/** Vocal reverb-reduction intensity (alias of {@link StemEnhanceStrength}). */
+export type DereverbStrength = StemEnhanceStrength
 
 export interface StemSeparatePayload {
   jobId: string
@@ -871,6 +873,16 @@ export interface StemSeparatePayload {
   enhanceOther?: boolean
   /** Other-cleanup intensity; backend defaults to 'medium' when omitted. */
   otherEnhanceStrength?: OtherEnhanceStrength
+  /**
+   * Remove reverb/echo from the VOCALS stem. Unlike the enhance flags above this
+   * is a PER-RUN choice made in the stem picker (never a persisted preference),
+   * so it is sent only when the user ticks it. Off/absent leaves the vocal
+   * untouched. Applied before the RNNoise denoise, independently of
+   * `enhanceVocals`.
+   */
+  dereverb?: boolean
+  /** Reverb-reduction intensity; backend defaults to 'medium' when omitted. */
+  dereverbStrength?: DereverbStrength
 }
 export interface StemSeparateCancelPayload {
   jobId: string

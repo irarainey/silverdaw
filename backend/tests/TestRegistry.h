@@ -26,6 +26,8 @@ void addStemSeparationTests(std::vector<TestCase>& tests);
 void addBpmDetectorTests(std::vector<TestCase>& tests);
 void addVocalEnhancerTests(std::vector<TestCase>& tests);
 void addVocalDenoiserTests(std::vector<TestCase>& tests);
+void addDereverberatorTests(std::vector<TestCase>& tests);
+void addVocalRestorerTests(std::vector<TestCase>& tests);
 void addDrumEnhancerTests(std::vector<TestCase>& tests);
 void addBassEnhancerTests(std::vector<TestCase>& tests);
 void addOtherEnhancerTests(std::vector<TestCase>& tests);

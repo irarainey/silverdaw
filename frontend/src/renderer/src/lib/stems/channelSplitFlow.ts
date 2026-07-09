@@ -59,8 +59,9 @@ export function requestChannelSplitForClip(clipId: string): void {
       startMs: clip.startMs,
       sourceInMs: clip.inMs
     },
-    // Default to both channels ticked so a common "split both" is one click away.
-    selected: { left: true, right: true }
+    // Default to nothing ticked (Split stays disabled until a channel is chosen),
+    // matching the Separate Stems dialog so both pickers behave the same way.
+    selected: { left: false, right: false }
   }
 }
 

@@ -1409,6 +1409,43 @@ entirely** (it over-cuts a clean vocal on dense mixes) and the RNNoise wet +
 expander are gentled (the `cleanModel` path). Objective tuning uses the
 `SilverdawStemEval` dev tool (SI-SDR/SDR vs a reference stem).
 
+**Optional vocal de-reverb** (`Dereverberator`, vocals only) is a separate,
+**per-run** cleanup — ticked (with a `Light`/`Medium`/`Strong` selector) in the
+Separate Stems dialog, never a persisted preference, because whether a vocal wants
+de-reverb is a per-source artistic call (a dry studio acapella must not be touched,
+a live/room recording benefits), not a set-once global default. It is sent on the
+`STEM_SEPARATE` payload as `dereverb` + `dereverbStrength` and resolved independently
+of `enhanceVocals`. It runs **before** the RNNoise denoise (a tighter envelope helps
+the denoiser) and, when de-bleed is active, after it (so the reverb estimate isn't
+contaminated by other instruments' tails). It is a conservative statistical STFT
+late-reverb subtraction (a Lebart/Habets-style estimator): with no separate reference
+signal, it estimates the late-reverberant power per bin as a **recursively-accumulated,
+room-decayed copy of the signal's own (delayed, smoothed) power spectrum** — a diffuse
+estimate present *continuously*, so it removes reverb embedded IN sustained singing,
+not only in gaps (the earlier decay-only model was too subtle). That estimate is
+spectrally over-subtracted with a floor and a cap (so a steady note is never crushed
+to the floor), giving a gain in `[sqrt(floor), 1]` (strictly attenuating — never
+amplifies or nulls), band-limited ~120 Hz–12 kHz, shared across channels (stereo image
+preserved), smoothed across **time and frequency** (to avoid musical noise), with
+**broadband onset protection** so vocal attacks stay crisp, then a wet/dry blend. The
+inherent trade is that a single-channel dereverb can't tell a dry sustained note from a
+reverberant one, so it dries held notes somewhat — `Light`/`Medium`/`Strong` scale the
+floor, over-subtraction, reverb weight, and wet mix together so the user picks the
+amount. Full WPE-style linear prediction was deliberately rejected as too unstable to
+ship without auditioning; the worst case here is an over-dry vocal, never a blow-up.
+When de-reverb is active, a final **`VocalRestorer`** stage runs **last** — after the
+denoise and expander — to counter the dulling AND the level drop that spectral
+subtraction leaves behind: two gentle high-shelves (presence ~3.5–4 kHz + a little air
+above the sibilant band) plus a single static **active-loudness match**. The vocal's
+loudness is sampled BEFORE de-reverb (`VocalRestorer::activeLoudness` — the RMS of only
+the loud ~50 ms blocks, so silence and reverb tails are excluded) and the finished stem
+is brought back to it, undoing the level loss without re-inflating the removed tail (the
+gate ignores the quiet gaps) and without pumping (one scalar for the whole stem, clamped
+to ~[-3, +8] dB). It runs after the expander on purpose (so the make-up can't lift the
+noise/reverb floor back over the expander threshold), and a per-sample soft-knee limiter
+keeps the shelves + make-up from ever clipping. Matching the loud-frame loudness (not a
+full-buffer RMS) is what keeps this a level restoration rather than a reverb re-inflation.
+
 **Vocal Quality Pack** (primary vocal engine, downloaded on demand): a
 higher-quality **Mel-Band RoFormer** vocal model (MIT; `MelRoformerVocals` + the
 host-side STFT engine `MelRoformerSpectral`, run through the same ONNX Runtime).

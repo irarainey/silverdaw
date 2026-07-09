@@ -22,7 +22,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName, StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
+import type { StemName, StemQuality, DereverbStrength, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
 import type { StemModelState, StemModelDownloadProgress, EnsureStemModelResult } from '@shared/types'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
@@ -36,6 +36,11 @@ export interface StemSelectionState {
   selected: Record<StemName, boolean>
   /** Quality preset trading speed against separation smoothness. */
   quality: StemQuality
+  /** Per-run: remove reverb/echo from the vocals stem. Chosen fresh each run (never
+   *  persisted), so it defaults off every time the picker opens. */
+  dereverb: boolean
+  /** Per-run strength of that reverb removal (only meaningful when `dereverb`). */
+  dereverbStrength: DereverbStrength
 }
 
 const selection: Ref<StemSelectionState | null> = ref(null)
@@ -83,14 +88,16 @@ function stripExtension(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
-/** Open the stem picker. The quality preset is seeded from the persisted
- *  preference (see `loadStemQualityPreference`) so it reopens on the user's last
- *  choice. */
+/** Open the stem picker. All stems start UNticked so the user picks only what they
+ *  want (Start stays disabled until at least one is chosen) — faster than unticking
+ *  from a full set. The quality preset is seeded from the persisted preference. */
 function openPicker(target: StemSeparationTarget): void {
   selection.value = {
     target,
-    selected: { vocals: true, drums: true, bass: true, other: true },
-    quality: preferredQuality
+    selected: { vocals: false, drums: false, bass: false, other: false },
+    quality: preferredQuality,
+    dereverb: false,
+    dereverbStrength: 'medium'
   }
 }
 
@@ -198,6 +205,18 @@ export function setStemQuality(quality: StemQuality): void {
   window.silverdaw.setStemPrefs({ quality })
 }
 
+/** Toggle the per-run vocal dereverb (remove reverb/echo) in the picker. */
+export function toggleStemDereverb(): void {
+  if (!selection.value) return
+  selection.value = { ...selection.value, dereverb: !selection.value.dereverb }
+}
+
+/** Set the per-run vocal dereverb strength in the picker. */
+export function setStemDereverbStrength(strength: DereverbStrength): void {
+  if (!selection.value) return
+  selection.value = { ...selection.value, dereverbStrength: strength }
+}
+
 /** Dismiss the picker without starting anything. */
 export function cancelStemSelection(): void {
   selection.value = null
@@ -211,8 +230,11 @@ export async function confirmStemSelection(): Promise<void> {
   const stems = ALL_STEMS.filter((s) => current.selected[s])
   if (stems.length === 0) return
   const quality = current.quality
+  // Dereverb only affects the vocals stem; pass the chosen strength (or null = off).
+  const dereverb: DereverbStrength | null =
+    current.dereverb && current.selected.vocals ? current.dereverbStrength : null
   selection.value = null
-  await ensureModelThenDispatch(current.target, stems, quality)
+  await ensureModelThenDispatch(current.target, stems, quality, dereverb)
 }
 
 // ─── Model-download dialog ──────────────────────────────────────────────────
@@ -230,6 +252,7 @@ type FlowNext =
       readonly target: StemSeparationTarget
       readonly stems: StemName[]
       readonly quality: StemQuality
+      readonly dereverb: DereverbStrength | null
     }
 
 export interface StemModelFlowState {
@@ -368,7 +391,8 @@ function showDownloadFlow(
 async function ensureModelThenDispatch(
   target: StemSeparationTarget,
   stems: StemName[],
-  quality: StemQuality
+  quality: StemQuality,
+  dereverb: DereverbStrength | null
 ): Promise<void> {
   const notifications = useNotificationsStore()
   let missing: Array<{ src: StemModelSource; state: StemModelState }>
@@ -384,10 +408,10 @@ async function ensureModelThenDispatch(
   }
 
   if (missing.length === 0) {
-    await dispatchSeparation(target, stems, quality)
+    await dispatchSeparation(target, stems, quality, dereverb)
     return
   }
-  showDownloadFlow({ kind: 'dispatch', target, stems, quality }, missing)
+  showDownloadFlow({ kind: 'dispatch', target, stems, quality, dereverb }, missing)
 }
 
 /** User accepted the download. Fetch each missing model in turn, streaming a
@@ -440,7 +464,7 @@ export async function confirmModelDownload(): Promise<void> {
     flowNext = null
     pendingSources = []
     if (next?.kind === 'dispatch') {
-      await dispatchSeparation(next.target, next.stems, next.quality)
+      await dispatchSeparation(next.target, next.stems, next.quality, next.dereverb)
     } else if (next?.kind === 'select') {
       openPicker(next.target)
     }
@@ -469,7 +493,8 @@ export function cancelModelFlow(): void {
 async function dispatchSeparation(
   target: StemSeparationTarget,
   stems: readonly StemName[],
-  quality: StemQuality
+  quality: StemQuality,
+  dereverb: DereverbStrength | null
 ): Promise<void> {
   const modelDir = await window.silverdaw.getStemModelDir()
   const useGpu = await resolveUseGpu()
@@ -497,13 +522,17 @@ async function dispatchSeparation(
     enhanceBass: enhance.enhanceBass,
     bassEnhanceStrength: enhance.bassEnhanceStrength,
     enhanceOther: enhance.enhanceOther,
-    otherEnhanceStrength: enhance.otherEnhanceStrength
+    otherEnhanceStrength: enhance.otherEnhanceStrength,
+    // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
+    // strength only when the user enabled it for a vocals run.
+    ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
   })
   log.info(
     'stems',
     `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
       `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
-      `useGpu=${useGpu} enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
+      `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
+      `enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
       `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
       `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
       `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
