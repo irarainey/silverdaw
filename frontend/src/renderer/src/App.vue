@@ -67,6 +67,11 @@ const recoveryEntries = ref<RecoverableEntry[]>([])
 const recoveryDialogOpen = ref(false)
 // Cold-launch path parked while recovery runs.
 let pendingOpenAfterRecovery: string | null = null
+// A project open requested before `bridgeReady` (e.g. a fast click on the startup
+// picker): the latest requested path, plus the single watcher that fires it once the
+// bridge is ready. Coalesced so rapid clicks resolve to one load of the last choice.
+let deferredOpenPath: string | null = null
+let stopDeferredOpen: (() => void) | null = null
 
 // Missing-file relink, per-project audio-output reconciliation, and the
 // unsaved-changes guard live in focused shell composables.
@@ -250,18 +255,8 @@ function finishStartupFlow(): void {
 
 /** Open a cold-launch path now if the engine is ready, else once it becomes ready. */
 function openProjectWhenBridgeReady(filePath: string): void {
-  if (transport.bridgeReady) {
-    void openProjectByPath(filePath)
-    return
-  }
-  const stop = watch(
-    () => transport.bridgeReady,
-    (ready) => {
-      if (!ready) return
-      stop()
-      void openProjectByPath(filePath)
-    }
-  )
+  // `openProjectByPath` now defers until `bridgeReady` itself, so just route through it.
+  void openProjectByPath(filePath)
 }
 
 function onRecoveryRestored(): void {
@@ -285,7 +280,27 @@ function onRecoveryDiscarded(projectId: string): void {
 async function openProjectByPath(filePath: string): Promise<void> {
   if (!filePath) return
   if (!transport.bridgeReady) {
-    log.warn('app', `dropped open-from-path ${filePath} (bridge not ready)`)
+    // The startup picker (and a cold-launch path) can surface as soon as the WebSocket
+    // handshake lands, which is BEFORE `bridgeReady` — the backend opens the audio device
+    // and emits the first PROJECT_STATE only after the bridge is already serving. A click
+    // in that window must NOT be dropped; defer the open until the bridge is ready (the
+    // same contract the cold-launch path used) instead of silently ignoring it. Rapid
+    // clicks coalesce onto the latest path behind a single watcher.
+    deferredOpenPath = filePath
+    if (stopDeferredOpen === null) {
+      log.info('app', `deferring open ${filePath} until bridge ready`)
+      stopDeferredOpen = watch(
+        () => transport.bridgeReady,
+        (ready) => {
+          if (!ready) return
+          stopDeferredOpen?.()
+          stopDeferredOpen = null
+          const next = deferredOpenPath
+          deferredOpenPath = null
+          if (next) void openProjectByPath(next)
+        }
+      )
+    }
     return
   }
   guardAgainstUnsavedChanges(async () => {
@@ -298,10 +313,10 @@ async function openProjectByPath(filePath: string): Promise<void> {
 /** Open a recent project, dropping stale MRU entries before loading. */
 async function openRecentPath(filePath: string): Promise<void> {
   if (!filePath) return
-  if (!transport.bridgeReady) {
-    log.warn('app', `dropped open-recent ${filePath} (bridge not ready)`)
-    return
-  }
+  // The existence check + MRU cleanup are main-process IPC (independent of the backend
+  // bridge), so they run immediately; the actual load defers to `openProjectByPath`,
+  // which waits for `bridgeReady` if the picker was clicked before the engine finished
+  // opening — so an early click is never silently dropped.
   const exists = await window.silverdaw.projectFileExists(filePath)
   if (!exists) {
     log.warn('app', `recent project missing: ${filePath}`)
