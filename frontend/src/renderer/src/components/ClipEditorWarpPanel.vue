@@ -4,6 +4,7 @@
 // passed in via props (shared with the sibling pitch panel) so this
 // component stays trivially testable.
 
+import { ref, watch } from 'vue'
 import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
@@ -25,6 +26,46 @@ const draftStretchPercent = props.draft.draftStretchPercent
 const draftEffectiveBpm = props.draft.draftEffectiveBpm
 const draftEffectiveRatio = props.draft.draftEffectiveRatio
 const setTempoMode = props.draft.setTempoMode
+
+// The pinned-BPM field is shown as a string always formatted to two decimals (e.g. "120.00")
+// while `draftPinnedBpm` stays a plain number for the warp maths. The display only reformats when
+// the field isn't being typed into, so intermediate keystrokes aren't clobbered.
+const pinnedBpmText = ref('')
+let pinnedBpmFocused = false
+function formatPinnedBpm(): string {
+  const v = draftPinnedBpm.value
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : ''
+}
+watch(draftPinnedBpm, () => {
+  if (!pinnedBpmFocused) pinnedBpmText.value = formatPinnedBpm()
+}, { immediate: true })
+
+function onPinnedBpmFocus(): void {
+  pinnedBpmFocused = true
+}
+function onPinnedBpmInput(e: Event): void {
+  const raw = (e.target as HTMLInputElement).value
+  pinnedBpmText.value = raw
+  const n = Number(raw.trim())
+  if (raw.trim() !== '' && Number.isFinite(n)) draftPinnedBpm.value = n
+}
+function onPinnedBpmBlur(): void {
+  pinnedBpmFocused = false
+  pinnedBpmText.value = formatPinnedBpm()
+}
+
+/** Wheel over the pinned-BPM field steps by 1 (whole integer), or 0.01 with Alt held (fine).
+ *  Only active in "pin" mode and when the field already holds a tempo to step from. */
+function onPinnedBpmWheel(e: WheelEvent): void {
+  if (draftTempoMode.value !== 'pin') return
+  const current = draftPinnedBpm.value
+  if (typeof current !== 'number' || !Number.isFinite(current)) return
+  e.preventDefault()
+  const direction = e.deltaY < 0 ? 1 : -1
+  const next = Math.min(300, Math.max(20, current + direction * (e.altKey ? 0.01 : 1)))
+  draftPinnedBpm.value = Math.round(next * 100) / 100
+  pinnedBpmText.value = formatPinnedBpm()
+}
 </script>
 
 <template>
@@ -110,13 +151,18 @@ const setTempoMode = props.draft.setTempoMode
         >
         <span class="text-zinc-200">Pin to</span>
         <input
-          v-model.number="draftPinnedBpm"
+          :value="pinnedBpmText"
           type="number"
           min="20"
           max="300"
           step="0.01"
           :disabled="draftTempoMode !== 'pin'"
+          title="Scroll to adjust by 1 BPM; hold Alt for 0.01"
           class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+          @focus="onPinnedBpmFocus"
+          @input="onPinnedBpmInput"
+          @blur="onPinnedBpmBlur"
+          @wheel="onPinnedBpmWheel"
         >
         <span class="text-[10px] text-zinc-500">BPM</span>
       </label>

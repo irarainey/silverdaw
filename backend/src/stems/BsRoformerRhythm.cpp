@@ -122,9 +122,12 @@ struct BsRoformerRhythm::Impl
         std::vector<float> outImag(static_cast<size_t>(Spec::kOutFloats));
         std::vector<float> chunk(static_cast<size_t>(Spec::kChunkFloats));
         std::vector<float> sep(static_cast<size_t>(Spec::kChunkFloats));
-        std::vector<double> drumsAcc(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0);
-        std::vector<double> bassAcc(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0);
-        std::vector<double> counter(static_cast<size_t>(numSamples), 0.0);
+        // Overlap-add accumulators. `float` is ample (each output sample is a weighted sum
+        // of only a few overlapping chunks, not a long cumulative sum) and halves the
+        // largest per-run allocation on long songs; `counter` is channel-independent (mono).
+        std::vector<float> drumsAcc(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0f);
+        std::vector<float> bassAcc(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0f);
+        std::vector<float> counter(static_cast<size_t>(numSamples), 0.0f);
 
         std::vector<float> hwin(static_cast<size_t>(Spec::kChunkSamples));
         for (int i = 0; i < Spec::kChunkSamples; ++i)
@@ -146,14 +149,14 @@ struct BsRoformerRhythm::Impl
         int stepIndex = 0;
 
         // OLA one stem's reconstruction (already in `sep`) into its accumulator.
-        const auto overlapAdd = [&](std::vector<double>& acc, int cstart, int clen)
+        const auto overlapAdd = [&](std::vector<float>& acc, int cstart, int clen)
         {
             for (int ch = 0; ch < Spec::kChannels; ++ch)
             {
                 const float* s = sep.data() + static_cast<size_t>(ch) * Spec::kChunkSamples;
-                double* a = acc.data() + static_cast<size_t>(ch) * numSamples + cstart;
+                float* a = acc.data() + static_cast<size_t>(ch) * numSamples + cstart;
                 for (int i = 0; i < clen; ++i)
-                    a[i] += static_cast<double>(s[i]) * hwin[static_cast<size_t>(i)];
+                    a[i] += s[i] * hwin[static_cast<size_t>(i)];
             }
         };
 
@@ -213,14 +216,14 @@ struct BsRoformerRhythm::Impl
             if (onProgress) onProgress(static_cast<double>(stepIndex) / totalSteps);
         }
 
-        const auto finalise = [&](std::vector<double>& acc, juce::AudioBuffer<float>& dst)
+        const auto finalise = [&](std::vector<float>& acc, juce::AudioBuffer<float>& dst)
         {
             for (int ch = 0; ch < Spec::kChannels; ++ch)
             {
                 float* o = dst.getWritePointer(ch);
-                const double* a = acc.data() + static_cast<size_t>(ch) * numSamples;
+                const float* a = acc.data() + static_cast<size_t>(ch) * numSamples;
                 for (int i = 0; i < numSamples; ++i)
-                    o[i] = static_cast<float>(a[i] / std::max(counter[static_cast<size_t>(i)], 1.0e-10));
+                    o[i] = a[i] / std::max(counter[static_cast<size_t>(i)], 1.0e-10f);
             }
         };
         finalise(drumsAcc, out.drums);

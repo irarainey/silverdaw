@@ -119,6 +119,16 @@ function openExternal(url: string): void {
           <p class="mt-2">
             Audio engine made with <strong>JUCE</strong>.
           </p>
+          <p class="mt-2">
+            Support:
+            <button
+              type="button"
+              class="text-sky-400 underline-offset-2 hover:underline"
+              @click="openExternal('mailto:support@silverdaw.com')"
+            >
+              support@silverdaw.com
+            </button>
+          </p>
           <p class="mt-3 text-zinc-500">
             <button
               type="button"

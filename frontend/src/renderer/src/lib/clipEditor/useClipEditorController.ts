@@ -359,6 +359,7 @@ export function useClipEditorController(
       if (open) {
         viewExpanded.value = false
         resetZoom()
+        beatGrid.reset()
         initSelectionForItem()
         initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
         initialiseVolumeShapeDraft(timelineClip.value, volumeShapeDurationMs.value)
@@ -382,6 +383,9 @@ export function useClipEditorController(
         dialogEl.value?.focus()
         loadPreviewForView()
       } else {
+        // A session that ends without Save rolls back its uncommitted grid draft;
+        // Save has already committed, so this is a no-op there.
+        beatGrid.discardIfUncommitted()
         stopPlayheadRaf()
         clearPreviewWarpUpdateTimer()
         clearPreviewEnvelopeUpdateTimer()
@@ -638,6 +642,7 @@ export function useClipEditorController(
 
   onBeforeUnmount(() => {
     ui.clipEditorOpen = false
+    beatGrid.discardIfUncommitted()
     stopPlayheadRaf()
     clearPreviewWarpUpdateTimer()
     clearPreviewEnvelopeUpdateTimer()
@@ -805,6 +810,9 @@ export function useClipEditorController(
     editsLibraryClipLibrary: () => editsLibraryClipLibrary.value,
     editsTimelineClip: () => editsTimelineClip.value,
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
+    gridChanged: () => beatGrid.hasGridChanged(),
+    commitGrid: () => beatGrid.commit(),
+    alignToGridEnabled: () => ui.alignClipsToGridOnAnalysis,
     sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm,
     canApplyCrop: () => canApplyCrop.value,

@@ -4,6 +4,7 @@
 
 import { app, ipcMain, shell } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
+import { sendDiagnosticLogs } from '../diagnostics'
 import { logRendererLine, type LogLevel } from '../log'
 
 export interface RuntimeHandlersContext {
@@ -43,7 +44,8 @@ export function registerRuntimeHandlers(ctx: RuntimeHandlersContext): void {
     node: process.versions.node
   }))
 
-  // Only http/https URLs may leave the app via the OS browser.
+  // Only http/https links (browser) and mailto: drafts (default mail client) may leave
+  // the app; everything else is refused so the renderer can't launch arbitrary handlers.
   ipcMain.on(IPC.app.openExternal, (_evt, url: unknown) => {
     if (typeof url !== 'string') return
     let parsed: URL
@@ -52,7 +54,11 @@ export function registerRuntimeHandlers(ctx: RuntimeHandlersContext): void {
     } catch {
       return
     }
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:' && parsed.protocol !== 'mailto:') return
     void shell.openExternal(parsed.toString())
   })
+
+  // Zip the current run's logs, reveal the bundle, and open a support email draft.
+  // Runs in main (filesystem + shell); the renderer awaits it to show a wait spinner.
+  ipcMain.handle(IPC.app.sendDiagnostics, () => sendDiagnosticLogs())
 }

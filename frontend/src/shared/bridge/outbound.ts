@@ -284,6 +284,17 @@ export interface ClipSliceToSamplesPayload {
   slices: ReadonlyArray<{ itemId: string; inMs: number; durationMs: number }>
 }
 
+/** Split a stereo clip: each requested channel is exported as a new stereo WAV (that
+ *  channel copied to both L+R) and announced via CHANNEL_SPLIT_READY. */
+export interface ClipSplitChannelsPayload {
+  jobId: string
+  clipId: string
+  /** Friendly source name used for the channel WAV filenames + track names. */
+  sourceName: string
+  /** Channels to extract (non-empty): 'left' and/or 'right'. */
+  channels: ReadonlyArray<'left' | 'right'>
+}
+
 // ─── Effects envelopes (Bass / Mid / Treble / Leveler / Sends / shared FX) ──
 //
 // Mutation envelopes optionally carry `gestureId` + `gestureEnd` so the backend
@@ -466,6 +477,7 @@ export interface BridgeOutboundMap {
   CLIP_SET_WARP: ClipSetWarpPayload
   CLIP_SAVE_AS_SAMPLE: ClipSaveAsSamplePayload
   CLIP_SLICE_TO_SAMPLES: ClipSliceToSamplesPayload
+  CLIP_SPLIT_CHANNELS: ClipSplitChannelsPayload
   LIBRARY_ITEM_SAVE_AS_SAMPLE: LibraryItemSaveAsSamplePayload
   CLIP_EDITOR_PEAKS_REQUEST: ClipEditorPeaksRequestPayload
   LIBRARY_ADD: LibraryAddPayload
@@ -782,6 +794,8 @@ export type DrumEnhanceStrength = StemEnhanceStrength
 export type BassEnhanceStrength = StemEnhanceStrength
 /** Other/residual-cleanup intensity (alias of {@link StemEnhanceStrength}). */
 export type OtherEnhanceStrength = StemEnhanceStrength
+/** Vocal reverb-reduction intensity (alias of {@link StemEnhanceStrength}). */
+export type DereverbStrength = StemEnhanceStrength
 
 export interface StemSeparatePayload {
   jobId: string
@@ -859,6 +873,16 @@ export interface StemSeparatePayload {
   enhanceOther?: boolean
   /** Other-cleanup intensity; backend defaults to 'medium' when omitted. */
   otherEnhanceStrength?: OtherEnhanceStrength
+  /**
+   * Remove reverb/echo from the VOCALS stem. Unlike the enhance flags above this
+   * is a PER-RUN choice made in the stem picker (never a persisted preference),
+   * so it is sent only when the user ticks it. Off/absent leaves the vocal
+   * untouched. Applied before the RNNoise denoise, independently of
+   * `enhanceVocals`.
+   */
+  dereverb?: boolean
+  /** Reverb-reduction intensity; backend defaults to 'medium' when omitted. */
+  dereverbStrength?: DereverbStrength
 }
 export interface StemSeparateCancelPayload {
   jobId: string
@@ -1023,6 +1047,7 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_SET_WARP: 'payload',
   CLIP_SAVE_AS_SAMPLE: 'payload',
   CLIP_SLICE_TO_SAMPLES: 'payload',
+  CLIP_SPLIT_CHANNELS: 'payload',
   LIBRARY_ITEM_SAVE_AS_SAMPLE: 'payload',
   CLIP_EDITOR_PEAKS_REQUEST: 'payload',
   LIBRARY_ADD: 'payload',

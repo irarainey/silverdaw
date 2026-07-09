@@ -33,6 +33,7 @@ export function useAppTitleBarController(
   const visibleMenus = computed(() =>
     buildMenus({
       devToolsEnabled: appStore.devToolsEnabled,
+      loggingEnabled: appStore.loggingEnabled,
       recentProjects: appStore.recentProjects,
       hasAnyClip: hasAnyClip.value
     })

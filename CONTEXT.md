@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-08 · Owner: @irarainey_
+_Last reviewed: 2026-07-09 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -104,7 +104,10 @@ detail: ADR 0014 (`docs/adr/0014-testing-strategy.md`).
   `ctest --test-dir backend/build --build-config Debug --output-on-failure`.
   Each case is a separate CTest test (discovered at build time via the harness's
   `--list` / `--run` flags), so cases show individually in `ctest` and the VS
-  Code Testing panel. Keep test-case names ASCII.
+  Code Testing panel. Keep test-case names ASCII. **When you add or remove a
+  backend test, update the registry-count assertion in `backend/tests/BackendTests.cpp`
+  (`tests.size() == N`) to match — otherwise build-time test discovery (`--list`)
+  aborts and the build fails.**
 - **Frontend** — **Vitest** (`pnpm test`; `pnpm test:watch`), Vue Test Utils for
   components; Playwright e2e planned.
 - **Coverage** — `scripts/Coverage.ps1 [-Target All|Frontend|Backend]` runs

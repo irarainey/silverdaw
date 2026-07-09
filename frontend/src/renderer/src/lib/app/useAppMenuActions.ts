@@ -9,6 +9,7 @@ import type { useAppStore } from '@/stores/appStore'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { openAndImportAudioFilesIntoLibrary } from '@/lib/importAudio'
 import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -29,6 +30,8 @@ export interface AppMenuActionsDeps {
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
+  /** True while the diagnostics bundle is being built — drives the wait spinner. */
+  diagnosticsBusy: Ref<boolean>
   guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
   // True when a modal/dialog owns the keyboard; suppresses menu-zoom.
   isModalOpen: () => boolean
@@ -51,6 +54,19 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'edit.preferences') {
       deps.preferencesOpen.value = true
+      return
+    }
+    // Diagnostics zips local log files — no backend needed, so it stays reachable even
+    // before PROJECT_STATE. Shows a wait spinner while the (short) zip runs.
+    if (action === 'help.sendDiagnostics') {
+      if (deps.diagnosticsBusy.value) return
+      deps.diagnosticsBusy.value = true
+      void window.silverdaw
+        .sendDiagnostics()
+        .catch((err) => log.warn('menu', `send diagnostics failed: ${String(err)}`))
+        .finally(() => {
+          deps.diagnosticsBusy.value = false
+        })
       return
     }
     // Quit/close must work even during a stuck startup.
@@ -96,8 +112,16 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       }
       return
     }
+    if (action === 'view.toggleLibraryPanel') {
+      ui.toggleLibraryPanelCollapsed()
+      return
+    }
     if (action === 'file.addTrack') {
       project.addTrack()
+      return
+    }
+    if (action === 'file.importToLibrary') {
+      void openAndImportAudioFilesIntoLibrary()
       return
     }
     if (action === 'file.projectProperties') {
@@ -205,25 +229,32 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'edit.cut') {
-      project.cutSelectedClip()
+      if (project.selectedClipIds.size > 1) project.cutSelectedClips()
+      else project.cutSelectedClip()
       return
     }
     if (action === 'edit.copy') {
-      project.copySelectedClip()
+      if (project.selectedClipIds.size > 1) project.copySelectedClips()
+      else project.copySelectedClip()
       return
     }
     if (action === 'edit.paste') {
-      project.pasteClipAtPlayhead(transport.positionMs)
+      if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+      else project.pasteClipAtPlayhead(transport.positionMs)
       return
     }
     if (action === 'edit.duplicateClip') {
-      if (project.selectedClipId) {
+      if (project.selectedClipIds.size > 1) {
+        project.duplicateSelectedClips()
+      } else if (project.selectedClipId) {
         project.duplicateClip(project.selectedClipId)
       }
       return
     }
     if (action === 'edit.deleteClip') {
-      if (project.selectedClipId) {
+      if (project.selectedClipIds.size > 1) {
+        project.deleteSelectedClips()
+      } else if (project.selectedClipId) {
         project.removeClip(project.selectedClipId)
       }
       return

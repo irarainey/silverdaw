@@ -208,7 +208,7 @@ export function buildDefaultPrefs(): Preferences {
       cleanupProjectFiles: false,
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'markers',
-      waveformDisplayMode: 'summary',
+      waveformDisplayMode: 'stereo',
       libraryPanelCollapsed: false
     },
     debug: {

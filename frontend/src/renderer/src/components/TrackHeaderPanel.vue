@@ -281,6 +281,20 @@ function onHeaderClick(track: { id: string }, ev: MouseEvent): void {
   project.selectTrack(track.id)
 }
 
+/** Solo click: a plain click toggles solo as before. When another track is soloed (so
+ *  this button is in its blocked / disabled-look state), a Ctrl/Cmd-click switches the
+ *  solo to THIS track — soloing it and unsoloing the other in one step — so you can jump
+ *  the solo without unsoloing then re-soloing. A plain click while blocked is a no-op,
+ *  preserving the one-solo-at-a-time behaviour. */
+function onSoloClick(track: { id: string; soloed: boolean }, ev: MouseEvent): void {
+  const blockedByOtherSolo = project.anySoloed && !track.soloed
+  if (blockedByOtherSolo) {
+    if (ev.ctrlKey || ev.metaKey) project.soloOnly(track.id)
+    return
+  }
+  project.toggleSolo(track.id)
+}
+
 /** Toggle this track's FX panel, retargeting or collapsing as needed. */
 function onToggleFx(track: { id: string }): void {
   if (isTrackFxShowing(track.id)) {
@@ -612,14 +626,15 @@ function isTrackFxShowing(trackId: string): boolean {
             </button>
             <button
               type="button"
-              class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors disabled:cursor-not-allowed"
+              class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors"
               :class="track.soloed
                 ? 'border-cyan-400 bg-cyan-500 text-zinc-950 hover:bg-cyan-400'
-                : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
+                : (project.anySoloed
+                  ? 'border-zinc-800 bg-zinc-800 text-zinc-600 hover:border-zinc-600 hover:text-zinc-300'
+                  : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100')
               "
-              :title="project.anySoloed && !track.soloed ? 'Another track is soloed' : (track.soloed ? 'Unsolo' : 'Solo')"
-              :disabled="project.anySoloed && !track.soloed"
-              @click="project.toggleSolo(track.id)"
+              :title="project.anySoloed && !track.soloed ? 'Another track is soloed — Ctrl-click to solo this one instead' : (track.soloed ? 'Unsolo' : 'Solo')"
+              @click="onSoloClick(track, $event)"
             >
               S
             </button>

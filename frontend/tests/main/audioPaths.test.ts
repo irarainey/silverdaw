@@ -5,6 +5,7 @@ import {
   isPrunableArtifactSubdir,
   isWithinSamplesWriteRoot,
   isWithinStemsWriteRoot,
+  registerChannelsWriteRoot,
   registerIssuedPath,
   registerProjectMediaRoots,
   registerSamplesWriteRoot,
@@ -101,6 +102,20 @@ describe('audioPaths allow-list', () => {
     expect(isWithinSamplesWriteRoot(abs('ConfinedS', 'Samples', '..', 'escape'))).toBe(false)
     expect(isWithinSamplesWriteRoot('relative/Samples')).toBe(false)
     expect(isWithinSamplesWriteRoot(42)).toBe(false)
+  })
+
+  it('treats a registered channels write root as a read root and prunable-subdir root', () => {
+    const channelsRoot = abs('ProjectFolder', 'channels')
+    const channelWav = abs('ProjectFolder', 'channels', 'Song', 'Song (L)-sample-001.wav')
+    // Regression for the split-channels import failure: the channel WAVs the backend
+    // writes into the channels folder must be readable by the renderer on
+    // CHANNEL_SPLIT_READY (they were rejected as "not on allow-list" before).
+    expect(isAllowedAudioPath(channelWav)).toBe(false)
+    registerChannelsWriteRoot(channelsRoot)
+    expect(isAllowedAudioPath(channelWav)).toBe(true)
+    // The root itself is never prunable; a per-source subfolder is.
+    expect(isPrunableArtifactSubdir(channelsRoot)).toBe(false)
+    expect(isPrunableArtifactSubdir(abs('ProjectFolder', 'channels', 'Song'))).toBe(true)
   })
 
   it('marks only strict per-source subfolders of write roots as prunable', () => {

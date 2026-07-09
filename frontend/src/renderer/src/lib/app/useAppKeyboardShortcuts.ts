@@ -10,7 +10,9 @@ import type { useUiStore } from '@/stores/uiStore'
 import type { useLibraryStore } from '@/stores/libraryStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
+import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -78,6 +80,27 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     return { id, clip }
   }
 
+  /** Whether a keyboard nudge should move the whole multi-selection as a group. */
+  function isMultiSelectionNudge(): boolean {
+    return project.selectedClipIds.size > 1
+  }
+
+  /** Nudge every selected clip by `deltaMs` (uniform, no track change) as one undo step. Uses the
+   *  atomic group move so the batch is rejected wholesale if it wouldn't fit. */
+  function nudgeSelectedClips(deltaMs: number): void {
+    const origins = Array.from(project.selectedClipIds)
+      .map((id) => {
+        const c = project.clips[id]
+        const trackIndex = c ? project.tracks.findIndex((t) => t.id === c.trackId) : -1
+        return c && trackIndex >= 0 ? { clipId: id, startMs: c.startMs, trackIndex } : null
+      })
+      .filter((o): o is { clipId: string; startMs: number; trackIndex: number } => o !== null)
+    if (origins.length === 0) return
+    runInUndoGroup('Nudge clips', () => {
+      project.moveClipGroup(origins, deltaMs, 0)
+    })
+  }
+
   // Jump the playhead to the start of the timeline and scroll the view there.
   // Never touches the playback state — playing carries on from 0. Shared by the
   // Ctrl/Cmd+Shift+ArrowLeft and Home shortcuts.
@@ -143,6 +166,13 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.preventDefault()
       e.stopPropagation()
       if (e.repeat) return
+      // Multiple clips selected: lock all (or unlock all if every one is already locked).
+      if (project.selectedClipIds.size > 1) {
+        const ids = Array.from(project.selectedClipIds)
+        const allLocked = ids.every((id) => project.clips[id]?.locked === true)
+        project.setSelectedClipsLocked(!allLocked)
+        return
+      }
       const id = project.selectedClipId
       if (!id) {
         log.info('project', 'shortcut Ctrl+L ignored — no clip selected')
@@ -167,19 +197,35 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       return
     }
 
-    // Escape: clear the current clip / track / automation-point selection.
+    // Escape steps down through the selection hierarchy rather than clearing
+    // everything at once: a plain Escape first clears the clip(s) / automation
+    // point selection (leaving the track selected), and a second Escape then
+    // clears the track. Ctrl/Meta/Shift/Alt are left for other handlers.
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-      const hadSelection =
-        project.selectedClipId !== null ||
-        project.selectedTrackId !== null ||
-        ui.selectedAutomationPoint !== null
-      if (!hadSelection) return
-      e.preventDefault()
-      e.stopPropagation()
-      project.selectClip(null)
-      project.selectTrack(null)
-      ui.setSelectedAutomationPoint(null)
-      log.debug('project', 'shortcut escape — cleared selection')
+      const hasClipSelection =
+        project.selectedClipId !== null || project.selectedClipIds.size > 0
+      const hasAutomationPoint = ui.selectedAutomationPoint !== null
+      const hasTrack = project.selectedTrackId !== null
+
+      // Step 1: clear the clip(s) + automation point, keeping the track.
+      if (hasClipSelection || hasAutomationPoint) {
+        e.preventDefault()
+        e.stopPropagation()
+        project.clearClipSelection()
+        ui.setSelectedAutomationPoint(null)
+        log.debug('project', 'shortcut escape — cleared clip selection')
+        return
+      }
+
+      // Step 2 (or the track-only case): clear the track.
+      if (hasTrack) {
+        e.preventDefault()
+        e.stopPropagation()
+        project.selectTrack(null)
+        log.debug('project', 'shortcut escape — cleared track selection')
+        return
+      }
+      // Nothing selected — let Escape fall through to other handlers.
       return
     }
 
@@ -211,6 +257,19 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     }
 
     if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      // Ctrl/Cmd + 1..8 jump straight to 100%..800% zoom (N × 100%). Match on
+      // `code` so the number row and the numeric keypad both work regardless of
+      // any Shift-produced symbol; require no Shift so it stays a plain Ctrl+N.
+      if (!e.shiftKey) {
+        const digit = /^(?:Digit|Numpad)([1-8])$/.exec(e.code)
+        if (digit) {
+          e.preventDefault()
+          e.stopPropagation()
+          ui.requestTimelineZoomTo(Number(digit[1]) * DEFAULT_PX_PER_SECOND)
+          return
+        }
+      }
+
       let zoomAction: 'in' | 'out' | 'reset' | null = null
       if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
         zoomAction = 'in'
@@ -311,6 +370,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       lastArrowSeekMs = null
       const direction = e.key === 'ArrowLeft' ? -1 : 1
       const targetMs = Math.max(0, Math.round(target.clip.startMs) + direction)
+      if (isMultiSelectionNudge()) {
+        nudgeSelectedClips(targetMs - target.clip.startMs)
+        return
+      }
       // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
       // one undo step on the backend, so a burst of nudges = one undo.
       project.moveClip(target.id, targetMs)
@@ -341,6 +404,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
           ? Math.max(0, Math.floor((beatBase - 1e-6) / snap) * snap)
           : (Math.floor(beatBase / snap + 1e-6) + 1) * snap
       const targetMs = Math.max(0, snappedBeat - offset)
+      if (isMultiSelectionNudge()) {
+        nudgeSelectedClips(targetMs - target.clip.startMs)
+        return
+      }
       // Bump-clamped by moveClip; same-clip moves within 500 ms coalesce into
       // one undo step on the backend.
       project.moveClip(target.id, targetMs)

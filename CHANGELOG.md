@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.1.0
+
+### Added
+
+- **Remove reverb & echo from vocals** — an optional per-run tick (Light / Medium / Strong) in the Separate Stems dialog, nested under Vocals, that cleans room reverb and slap-back echo off the vocals stem as it's separated, then restores its presence and level. A fresh choice each run, not a saved setting, and non-destructive.
+- **Split Stereo Channels…** on a stereo clip's right-click menu opens a picker to split out its Left and/or Right channel. Each chosen channel lands on its own new track as a stereo clip carrying only that channel (copied to both sides) — non-destructive, and it inherits the source's grid and warps just like a stem.
+- Select multiple clips on the timeline: **Shift-click** selects a range on the same track, **Ctrl-click** toggles individual clips across tracks.
+- Drag any selected clip to move the whole multi-selection as a group, preserving relative positions and track offsets, blocked only where it wouldn't fit; **Shift + ←/→** nudges the group.
+- A dedicated right-click menu offers Copy, Cut, Lock, Colour, Duplicate and Delete for the whole selection, and **Delete**, **Ctrl + L** (lock) and **Duplicate** act on every selected clip.
+- **Copy / Cut / Paste** carry the whole multi-selection — paste drops it at the playhead starting on the selected track, keeps each clip's relative timing and track offset, and is rejected as a whole if it wouldn't fit.
+- Each multi-clip edit (move, nudge, lock, colour, duplicate, delete, cut, paste) is a single undo step.
+- **File ▸ Import to Library…** (`Ctrl` + `I`) opens the audio-file picker and imports the chosen files into the library — the same flow as the panel's Import button.
+- The word "Import" in the empty library panel's hint is now a clickable shortcut to the Import button.
+- Dragging a library item onto the empty area below the tracks now shows a "new track" drop lane (with a ＋ badge) and drops the clip onto a freshly created track — undoable as one step.
+- `Ctrl` + `J` (and **View ▸ Toggle Library / FX Panel**) opens and collapses the bottom Library / FX panel.
+- `Ctrl` + `1`–`8` jump the timeline to 100%–800% zoom; the matching Zoom Presets show these accelerators.
+- **Help ▸ Keyboard Shortcuts** opens the keyboard-shortcuts reference for your version of the docs.
+- **Ctrl-click a track's Solo button** to switch the solo straight to that track when another track is already soloed — it solos the clicked track and unsolos the other in one step, so you no longer have to unsolo then re-solo.
+- **`Escape`** now steps through the selection: with a track and clip(s) selected, the first press clears the clip(s) (and any selected automation point) while keeping the track selected, and a second press clears the track.
+
+### Changed
+
+- Help ▸ **Give Feedback** is renamed **Submit Feedback**.
+- The waveform display now defaults to **Left and right channels** (stacked stereo lanes) instead of a single summary waveform. Existing preferences are untouched; change it any time in Preferences ▸ General.
+- The Separate Stems dialog now opens with **no stems selected**, so you tick just the parts you want (Start stays disabled until at least one is chosen) instead of un-ticking from a full set.
+
+### Fixed
+
+- Stem separation is more robust and lighter on memory: it now recovers cleanly from any unexpected error instead of a rare hard failure, can't be wedged by an accidental double-start, gives a clear "ran out of memory" message with advice when a long song exceeds available RAM, and uses roughly half the working memory on long tracks — cutting the intermittent failures some longer separations could hit.
+- The Clip Editor's tempo fields (beat-grid BPM and Warp "pin to" BPM) now always display two decimals (e.g. 120.00).
+- Scrolling the mouse wheel over a BPM field (the project tempo, and the Clip Editor's beat-grid tempo and Warp "pin to" tempo) now changes it by 1 BPM (hold Alt for 0.01) instead of always stepping by a hard-to-control 0.01; the project-tempo spinner and ↑/↓ keys gain the same Alt fine-step.
+- Undoing or redoing a track's tone, leveler, reverb/delay send, pan or automation back to its default now resets it in the audio engine instead of leaving the previous value playing.
+- Undo and redo of a clip edit are dramatically faster on large projects — they now update just the changed clip in the audio engine instead of rebuilding every clip, so undo no longer slows down as you add more clips.
+- Manual-tempo / beat-grid edits in the Clip Editor are now undoable as one step and mark the project dirty (automatic tempo detection stays silent, as before).
+- On Save, an edited clip snaps the least distance to the nearest beat when "align to grid" is on and it has room, otherwise it's left put with a note to move it manually.
+- The Clip Editor's Slide-to-Align toggle now resets when the editor opens, and Save no longer shows a confirmation toast.
+- Editing a clip in the Clip Editor now redraws it and its linked copies on the timeline immediately, not just after the next scroll.
+- Clicking the timeline on a marker moves the playhead there, and markers are now dragged with Shift held so a plain drag always moves the playhead.
+- Clicking the timeline no longer scrolls the view to the playhead, and dragging the playhead only scrolls at the view edges (follow-scroll is reserved for playback).
+- The startup screen and pre-mount splash now have minimise / maximise / close controls, a draggable top edge, and a flash-free hand-off to the loading screen.
+- Recent Projects entries on the startup screen are now clickable across the whole row (not just the text), and clicking one immediately after launch reliably opens it instead of occasionally being ignored while the engine was still starting.
+- Dragging a clip from the library onto an existing track now auto-scrolls the timeline when the pointer nears the left or right edge, so you can drop it at the very start (or anywhere), matching the drop-on-empty-area behaviour.
+- Undo now walks all the way back to a clean project after saving a clip to the library: a library-clip window-reconciliation step was wrongly re-running on every undo/redo, re-linking clips and churning the undo stack so it never converged. It now runs only when opening a saved project, and only for unambiguous matches — so a saved library clip is no longer shown as "used" by a track it isn't on.
+
 ## 1.0.3
 
 ### Added

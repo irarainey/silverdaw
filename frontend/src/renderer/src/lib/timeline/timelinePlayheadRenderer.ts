@@ -12,7 +12,8 @@ import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
   SCROLLBAR_WIDTH,
-  TRACK_GAP
+  TRACK_GAP,
+  TRACK_HEIGHT
 } from './constants'
 import { trackHeightOf } from './trackLayout'
 import type { DropPreview } from './useDropZone'
@@ -127,22 +128,24 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     const posMs = displayPositionMs || transport.positionMs
     const absX = headerWidth() + (posMs / 1000) * pxPerSecond.value
 
-    // Auto-follow eases forward only; never teleport scroll backwards.
+    // Auto-follow is a playback affordance only: it eases the view forward to keep
+    // the moving playhead in view during playback. Dragging the playhead never
+    // re-centres the view (that felt jarring and could scroll the wrong way while
+    // catching up) — a drag edge-scrolls in useDragHandlers instead, and a drag
+    // inside the visible area leaves the scroll untouched.
     const shouldFollow =
-      (transport.isPlaying && ui.followPlayback) || isDraggingPlayhead.value
+      transport.isPlaying && ui.followPlayback && !isDraggingPlayhead.value
     const now = performance.now()
     const dtSec = lastUpdateMs === 0 ? 0 : Math.min(0.1, (now - lastUpdateMs) / 1000)
     lastUpdateMs = now
     if (shouldFollow) {
       const viewportCentre = headerWidth() + (width - headerWidth()) / 2
       const desired = Math.max(0, absX - viewportCentre)
-      // Playback follow eases forward only: playback never runs backwards, and we don't want
-      // backward scroll jitter. But while the user is actively dragging the playhead, follow in
-      // BOTH directions so dragging left scrolls the timeline back with it, not just dragging right.
+      // Playback follow eases forward only: playback never runs backwards, and we
+      // don't want backward scroll jitter.
       const gap = desired - scrollX.value
-      const allowBackward = isDraggingPlayhead.value
       let nextScroll: number | null = null
-      if (gap > 0.5 || (allowBackward && gap < -0.5)) {
+      if (gap > 0.5) {
         // Mix playback-relative and gap-proportional catch-up; cap prevents overshoot.
         const audioPxPerSec = pxPerSecond.value
         const approachPxPerSec = audioPxPerSec * 3
@@ -216,9 +219,64 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     if (!a || !playhead || !G || !dp) return
     syncPlayheadCacheLayer()
 
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    const bottomLimit = Math.min(
+      a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0),
+      RULER_HEIGHT + trackAreaHeight.value
+    )
+
+    // Empty-area drop: draw a "create new track" band (with a + badge) at the row the new track
+    // will occupy, plus the clip ghost at its landing position.
+    if (dp.createNewTrack) {
+      const rowH = TRACK_HEIGHT
+      const worldTop =
+        RULER_HEIGHT + tracksContentHeight.value + (project.tracks.length > 0 ? TRACK_GAP : 0)
+      const yTop = worldTop - scrollY.value
+      const clippedTop = Math.max(RULER_HEIGHT, yTop)
+      const clippedBottom = Math.min(bottomLimit, yTop + rowH)
+      const bandH = clippedBottom - clippedTop
+      const bandLeft = headerWidth()
+      const bandW = rightEdge - bandLeft
+      if (bandH <= 0 || bandW <= 0) return
+
+      const colour = 0x22c55e // green-500
+      const g = new G()
+      // Faint fill + outline signals a droppable "new track" lane.
+      g.rect(bandLeft, clippedTop, bandW, bandH).fill({ color: colour, alpha: 0.12 })
+      g.rect(bandLeft + 0.5, clippedTop + 0.5, bandW - 1, bandH - 1).stroke({
+        color: colour,
+        width: 1.5,
+        alpha: 0.9
+      })
+
+      // Clip ghost at the snapped landing position within the new lane.
+      const absLeft = headerWidth() + (dp.startMs / 1000) * pxPerSecond.value
+      const width = Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
+      const ghostLeft = Math.max(bandLeft, absLeft - scrollX.value)
+      const ghostRight = Math.min(rightEdge, absLeft - scrollX.value + width)
+      if (ghostRight > ghostLeft) {
+        g.rect(ghostLeft, clippedTop, ghostRight - ghostLeft, bandH).fill({ color: colour, alpha: 0.28 })
+      }
+
+      // "+" badge on the header side of the lane to read as "add a track".
+      const cx = bandLeft + 18
+      const cy = clippedTop + bandH / 2
+      const r = Math.min(11, bandH / 2 - 3)
+      if (r > 3) {
+        g.circle(cx, cy, r).fill({ color: colour, alpha: 0.95 })
+        const arm = r * 0.55
+        const thick = Math.max(2, r * 0.28)
+        g.rect(cx - arm, cy - thick / 2, arm * 2, thick).fill({ color: 0x0b0f14 })
+        g.rect(cx - thick / 2, cy - arm, thick, arm * 2).fill({ color: 0x0b0f14 })
+      }
+
+      playhead.addChild(g)
+      dropPreviewGfx = g
+      return
+    }
+
     if (dp.trackIndex < 0 || dp.trackIndex >= project.tracks.length) return
 
-    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
     const targetTrack = project.tracks[dp.trackIndex]
     const rowH = trackHeightOf(targetTrack)
     let worldTop = RULER_HEIGHT
@@ -241,10 +299,6 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     const w = clippedRight - clippedLeft
     if (w <= 0) return
 
-    const bottomLimit = Math.min(
-      a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0),
-      RULER_HEIGHT + trackAreaHeight.value
-    )
     const clippedTop = Math.max(RULER_HEIGHT, yTop)
     const clippedBottom = Math.min(bottomLimit, yTop + rowH)
     const h = clippedBottom - clippedTop

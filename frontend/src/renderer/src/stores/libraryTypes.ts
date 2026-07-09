@@ -102,6 +102,16 @@ export interface LibraryItem {
   coverArtOverride?: string
 }
 
+/** The beat-grid fields the Clip Editor edits as a draft, captured on open so an
+ *  uncommitted session (Cancel / close without Save) can restore the grid exactly. */
+export interface LibraryItemGridSnapshot {
+  bpm?: number
+  beats?: number[]
+  beatAnchorSec?: number
+  variableTempo?: boolean
+  lowConfidence?: boolean
+}
+
 /** Per-file import progress shown while decoding, analysing, or warping. */
 export type ImportStage =
   | 'decoding'

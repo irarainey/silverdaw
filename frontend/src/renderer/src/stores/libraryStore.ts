@@ -17,6 +17,7 @@ import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import type {
   AddLibraryItemInput,
   LibraryItem,
+  LibraryItemGridSnapshot,
   LibraryState
 } from './libraryTypes'
 import { revokeItemCoverArt, libraryItemIsSample, resolveLibraryItemMediaId } from './libraryItemHelpers'
@@ -30,6 +31,7 @@ export type {
   ImportStage,
   ItemChannelPeaks,
   LibraryItem,
+  LibraryItemGridSnapshot,
   LibraryClipSource
 } from './libraryTypes'
 export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
@@ -304,10 +306,25 @@ export const useLibraryStore = defineStore('library', {
      * fallback (set BPM + slide the grid to align it to the waveform).
      */
     setItemManualTempo(itemId: string, bpm: number, beatAnchorSec: number): void {
+      if (!this.setItemManualTempoLocal(itemId, bpm, beatAnchorSec)) return
+      // Persist only — an undoable, coalesced backend edit. Any grid re-alignment
+      // of placed clips happens on Clip Editor Save (see useClipEditorSave), not on
+      // every grid tweak, so the timeline never reflows while the user is dragging.
+      sendBridge('LIBRARY_ITEM_SET_MANUAL_TEMPO', { itemId, bpm, beatAnchorSec })
+    },
+
+    /**
+     * Local-only manual-tempo draft (no bridge round-trip). The Clip Editor edits
+     * the source grid locally during a session — markers redraw and the preview
+     * metronome grid re-pushes off (bpm, anchor) — then commits the final position
+     * once on Save via `setItemManualTempo`. Returns false when the item is missing
+     * or a value is out of range; `bpm` outside 20–300 is ignored.
+     */
+    setItemManualTempoLocal(itemId: string, bpm: number, beatAnchorSec: number): boolean {
       const item = this.items.find((i) => i.id === itemId)
-      if (!item) return
-      if (!Number.isFinite(bpm) || bpm < 20 || bpm > 300) return
-      if (!Number.isFinite(beatAnchorSec)) return
+      if (!item) return false
+      if (!Number.isFinite(bpm) || bpm < 20 || bpm > 300) return false
+      if (!Number.isFinite(beatAnchorSec)) return false
       item.bpm = bpm
       item.beatAnchorSec = beatAnchorSec
       // The renderer derives marker positions from (bpm, anchor); a single
@@ -317,7 +334,37 @@ export const useLibraryStore = defineStore('library', {
       item.variableTempo = undefined
       item.lowConfidence = undefined
       useProjectStore().peaksRevision++
-      sendBridge('LIBRARY_ITEM_SET_MANUAL_TEMPO', { itemId, bpm, beatAnchorSec })
+      return true
+    },
+
+    /**
+     * Capture a source item's beat-grid fields so a Clip Editor session can roll
+     * back an uncommitted draft (Cancel / close without Save) to exactly how the
+     * grid looked on open. Returns null when the item is missing.
+     */
+    snapshotItemGrid(itemId: string): LibraryItemGridSnapshot | null {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return null
+      return {
+        bpm: item.bpm,
+        beats: item.beats ? [...item.beats] : undefined,
+        beatAnchorSec: item.beatAnchorSec,
+        variableTempo: item.variableTempo,
+        lowConfidence: item.lowConfidence
+      }
+    },
+
+    /** Restore a grid snapshot locally (no bridge). Pairs with `snapshotItemGrid`
+     *  to discard an uncommitted Clip Editor grid draft. */
+    restoreItemGridLocal(itemId: string, snap: LibraryItemGridSnapshot): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      item.bpm = snap.bpm
+      item.beats = snap.beats ? [...snap.beats] : undefined
+      item.beatAnchorSec = snap.beatAnchorSec
+      item.variableTempo = snap.variableTempo
+      item.lowConfidence = snap.lowConfidence
+      useProjectStore().peaksRevision++
     },
 
     /**

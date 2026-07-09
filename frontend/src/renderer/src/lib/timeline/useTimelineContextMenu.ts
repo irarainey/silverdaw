@@ -29,6 +29,7 @@ import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loop
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
+import { requestChannelSplitForClip } from '@/lib/stems/channelSplitFlow'
 import { log } from '@/lib/log'
 
 export type ChooseAudioFile = (args: {
@@ -61,6 +62,9 @@ export interface UseTimelineContextMenuInputs {
   /** Starts stem separation for a clip (model-gating + dispatch). Injected so
    *  tests can stub it; defaults to the separation flow orchestrator. */
   startStemSeparation?: (clipId: string) => void
+  /** Opens the stereo-channel-split picker for a clip. Injected so tests can stub
+   *  it; defaults to the channel-split flow. */
+  startChannelSplit?: (clipId: string) => void
   /** Logger for picker / IPC failures. Defaults to `console.warn`. */
   onError?: (message: string, err: unknown) => void
 }
@@ -97,6 +101,11 @@ export function useTimelineContextMenu(
     ((clipId: string): void => {
       void requestStemSeparationForClip(clipId)
     })
+  const startChannelSplit =
+    inputs.startChannelSplit ??
+    ((clipId: string): void => {
+      requestChannelSplitForClip(clipId)
+    })
   const onError =
     inputs.onError ??
     ((message: string, err: unknown): void => {
@@ -117,8 +126,36 @@ export function useTimelineContextMenu(
         {
           command: 'track.paste',
           label: 'Paste',
-          disabled: !project.clipboardClip
+          disabled: !project.clipboardClip && !project.clipboardClips
         }
+      ]
+    }
+    // Multi-selection: a short, dedicated menu of operations that apply to the whole group,
+    // rather than greying out the many single-clip-only items on the normal menu.
+    if (
+      contextMenuClipId.value !== null &&
+      project.selectedClipIds.size > 1 &&
+      project.isClipSelected(contextMenuClipId.value)
+    ) {
+      const ids = Array.from(project.selectedClipIds)
+      const count = ids.length
+      const allLocked = ids.every((id) => project.clips[id]?.locked === true)
+      return [
+        {
+          command: allLocked ? 'clips.unlock' : 'clips.lock',
+          label: allLocked ? `Unlock ${count} Clips` : `Lock ${count} Clips`
+        },
+        {
+          command: 'clips.color',
+          label: 'Colour',
+          separatorAbove: true,
+          swatches: TRACK_PALETTE.map((p) => ({ cssHex: p.cssHex, label: p.id }))
+        },
+        { command: 'clips.copy', label: `Copy ${count} Clips`, separatorAbove: true },
+        { command: 'clips.cut', label: `Cut ${count} Clips` },
+        { command: 'clips.duplicate', label: `Duplicate ${count} Clips`, separatorAbove: true },
+        { command: 'clips.delete', label: `Delete ${count} Clips` },
+        { command: 'clips.deselect', label: 'Deselect', separatorAbove: true }
       ]
     }
     const clip = contextMenuClipId.value ? project.clips[contextMenuClipId.value] : null
@@ -143,9 +180,9 @@ export function useTimelineContextMenu(
     items.push({
       command: 'clip.paste',
       label: 'Paste',
-      // Paste needs a clip on the clipboard; it lands on this clip's track at
-      // the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
-      disabled: !project.clipboardClip
+      // Paste needs a clip (single or group) on the clipboard; it lands on this
+      // clip's track at the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
+      disabled: !project.clipboardClip && !project.clipboardClips
     })
     items.push({ command: 'clip.duplicate', label: 'Duplicate' })
     items.push({ command: 'clip.delete', label: 'Delete' })
@@ -220,6 +257,18 @@ export function useTimelineContextMenu(
         'new track (non-destructive). A one-time model download is needed on first use.',
       disabled: !clip || clip.unresolved || !hasLibraryItem
     })
+    // Stereo-only: split a channel out to its own track (that channel copied to both
+    // sides). Hidden entirely when the source isn't a stereo file.
+    if (clip && hasLibraryItem && clipParent?.channelCount === 2) {
+      items.push({
+        command: 'clip.splitChannels',
+        label: 'Split Stereo Channels…',
+        title:
+          'Copy the left and/or right channel to its own new track as a stereo clip ' +
+          '(non-destructive).',
+        disabled: clip.unresolved
+      })
+    }
     if (clip) {
       // Reverse and the two turntable tail effects (brake / backspin) form a
       // mutually-exclusive group: each row stays visible but is disabled while
@@ -348,6 +397,11 @@ export function useTimelineContextMenu(
         e.preventDefault()
         contextMenuTrackId.value = null
         contextMenuClipId.value = r.clipId
+        // Right-clicking a clip outside the current multi-selection collapses to just that clip;
+        // right-clicking one inside it keeps the whole group so the multi-menu targets it.
+        if (!(project.selectedClipIds.size > 1 && project.isClipSelected(r.clipId))) {
+          project.selectClip(r.clipId)
+        }
         contextMenuX.value = e.clientX
         contextMenuY.value = e.clientY
         contextMenuOpen.value = true
@@ -382,9 +436,47 @@ export function useTimelineContextMenu(
       const trackId = contextMenuTrackId.value
       if (trackId) {
         project.selectTrack(trackId)
-        project.pasteClipAtPlayhead(transport.positionMs)
+        if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+        else project.pasteClipAtPlayhead(transport.positionMs)
       }
       contextMenuTrackId.value = null
+      contextMenuClipId.value = null
+      return
+    }
+    // Multi-selection batch operations (each is one undo step; see the store actions).
+    if (command === 'clips.copy') {
+      project.copySelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.cut') {
+      project.cutSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.delete') {
+      project.deleteSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.lock' || command === 'clips.unlock') {
+      project.setSelectedClipsLocked(command === 'clips.lock')
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.duplicate') {
+      project.duplicateSelectedClips()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command === 'clips.deselect') {
+      project.clearClipSelection()
+      contextMenuClipId.value = null
+      return
+    }
+    if (command.startsWith('clips.color:')) {
+      const idx = Number.parseInt(command.slice('clips.color:'.length), 10)
+      if (Number.isFinite(idx)) project.setSelectedClipsColor(idx)
       contextMenuClipId.value = null
       return
     }
@@ -422,7 +514,8 @@ export function useTimelineContextMenu(
         // Paste onto the right-clicked clip's track at the playhead, matching
         // the Edit-menu / Ctrl+V behaviour.
         project.selectTrack(clip.trackId)
-        project.pasteClipAtPlayhead(transport.positionMs)
+        if (project.clipboardClips) project.pasteClipsAtPlayhead(transport.positionMs)
+        else project.pasteClipAtPlayhead(transport.positionMs)
       }
     } else if (command === 'clip.duplicate') {
       project.duplicateClip(clipId)
@@ -457,6 +550,8 @@ export function useTimelineContextMenu(
       inputs.dialogs.openWarp(clipId, 'pitch')
     } else if (command === 'clip.separateStems') {
       startStemSeparation(clipId)
+    } else if (command === 'clip.splitChannels') {
+      startChannelSplit(clipId)
     } else if (command === 'clip.reverse') {
       if (clip) {
         const next = !clip.reversed

@@ -6,6 +6,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { RULER_HEIGHT, SCROLLBAR_WIDTH } from './constants'
+import { edgeAutoScrollDelta } from './edgeAutoScroll'
 import { trackIndexAtWorldY } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
@@ -14,18 +15,12 @@ import type { ClipHitRegion } from './useDragHandlers'
 /** Pixel edge zone for trim-vs-move hit detection. */
 const TRIM_EDGE_PX = 8
 
-/**
- * At a butt-join the previous clip's right edge and the next clip's left edge
+/** At a butt-join the previous clip's right edge and the next clip's left edge
  * sit on the same pixel. Bias the boundary toward the later clip's left edge so
  * aiming at the visible seam line reliably grabs the start of the right clip;
  * the previous clip's right edge stays reachable a few pixels deeper inside it.
  */
 const BOUNDARY_LEFT_BIAS_PX = 3
-
-/** Horizontal edge zone used to auto-scroll while dragging a clip. */
-const CLIP_AUTOSCROLL_EDGE_PX = 72
-/** Maximum horizontal auto-scroll speed, in pixels per animation frame. */
-const CLIP_AUTOSCROLL_MAX_PX_PER_FRAME = 42
 
 export interface TimelineQueriesContext {
   host: Ref<HTMLElement | null>
@@ -93,18 +88,28 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     const a = app.value
     if (!host.value || !a || maxScrollX.value <= 0) return 0
     const rect = host.value.getBoundingClientRect()
-    const x = clientX - rect.left
+    return autoScrollDeltaForLocalX(clientX - rect.left)
+  }
+
+  /** Edge auto-scroll pressure for a host-local x (px from the host's left). Shared by the
+   *  pointer-driven probe (`clipAutoScrollDelta`) and the timeline-position probe
+   *  (`clipAutoScrollDeltaAtMs`). Returns 0 when there's no scroll room or x is clear of both
+   *  edge zones; negative near the left edge, positive near the right. */
+  function autoScrollDeltaForLocalX(x: number): number {
+    const a = app.value
+    if (!a || maxScrollX.value <= 0) return 0
     const leftEdge = geometry.headerWidth()
     const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
-    if (x < leftEdge + CLIP_AUTOSCROLL_EDGE_PX) {
-      const pressure = Math.min(1, (leftEdge + CLIP_AUTOSCROLL_EDGE_PX - x) / CLIP_AUTOSCROLL_EDGE_PX)
-      return -Math.ceil(CLIP_AUTOSCROLL_MAX_PX_PER_FRAME * pressure)
-    }
-    if (x > rightEdge - CLIP_AUTOSCROLL_EDGE_PX) {
-      const pressure = Math.min(1, (x - (rightEdge - CLIP_AUTOSCROLL_EDGE_PX)) / CLIP_AUTOSCROLL_EDGE_PX)
-      return Math.ceil(CLIP_AUTOSCROLL_MAX_PX_PER_FRAME * pressure)
-    }
-    return 0
+    return edgeAutoScrollDelta(x, leftEdge, rightEdge)
+  }
+
+  /** Edge auto-scroll pressure for a timeline position (ms) instead of the pointer. Lets a group
+   *  drag drive auto-scroll from its leading clip edge — "as if the cursor were on the furthest
+   *  clip" — so the destination stays in view rather than tracking the grabbed clip. */
+  function clipAutoScrollDeltaAtMs(ms: number): number {
+    return autoScrollDeltaForLocalX(
+      geometry.headerWidth() + (ms / 1000) * geometry.pxPerSecond.value - scrollX.value
+    )
   }
 
   function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
@@ -269,6 +274,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     pointerToRawMsClamped,
     snapTimelineMs,
     clipAutoScrollDelta,
+    clipAutoScrollDeltaAtMs,
     hitTestClip,
     hitTestMarker,
     hitTestPlayhead,

@@ -70,6 +70,8 @@ const INBOUND_TYPES = {
   STEM_PARTIAL: true,
   STEM_READY: true,
   STEM_FAILED: true,
+  CHANNEL_SPLIT_READY: true,
+  CHANNEL_SPLIT_FAILED: true,
   MASTER_LEVEL: true,
   TRACK_LEVELS: true,
   TRACK_SENDS_APPLIED: true,

@@ -14,6 +14,14 @@ const props = defineProps<{
 const manualBpmInput = props.grid.manualBpmInput
 const originalBpm = props.grid.originalBpm
 const alignActive = props.grid.alignActive
+
+/** Wheel over the BPM field steps by 1 (whole integer), or 0.01 with Alt held (fine). */
+function onBpmWheel(e: WheelEvent): void {
+  if (!props.grid.hasGrid()) return
+  e.preventDefault()
+  const direction = e.deltaY < 0 ? 1 : -1
+  props.grid.bumpBpm(direction * (e.altKey ? 0.01 : 1))
+}
 </script>
 
 <template>
@@ -25,17 +33,19 @@ const alignActive = props.grid.alignActive
       </legend>
       <div class="flex items-center gap-2">
         <input
-          v-model.number="manualBpmInput"
+          v-model="manualBpmInput"
           type="number"
           min="20"
           max="300"
           step="0.01"
           placeholder="BPM"
           aria-label="Beat grid BPM"
+          title="Scroll to adjust by 1 BPM; hold Alt for 0.01"
           class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-right font-mono text-sm text-zinc-100 focus:border-sky-500 focus:outline-none"
           @focus="props.grid.beginTempoEdit()"
           @keydown.enter.prevent="props.grid.commitTempoEdit()"
           @blur="props.grid.commitTempoEdit(true)"
+          @wheel="onBpmWheel"
         >
         <span class="text-[10px] text-zinc-500">BPM</span>
         <button

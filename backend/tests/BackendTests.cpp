@@ -34,6 +34,8 @@ std::vector<TestCase> buildRegistry()
     addBpmDetectorTests(tests);
     addVocalEnhancerTests(tests);
     addVocalDenoiserTests(tests);
+    addDereverberatorTests(tests);
+    addVocalRestorerTests(tests);
     addDrumEnhancerTests(tests);
     addBassEnhancerTests(tests);
     addOtherEnhancerTests(tests);
@@ -53,7 +55,7 @@ int main(int argc, char** argv)
     using namespace silverdaw::tests;
 
     const auto tests = buildRegistry();
-    require(tests.size() == 176, "backend test registry should contain 176 tests");
+    require(tests.size() == 200, "backend test registry should contain 200 tests");
 
     bool listOnly = false;
     std::string runOnly;

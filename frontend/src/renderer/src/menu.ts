@@ -5,6 +5,7 @@ import {
   zoomPercentLabel,
   zoomPresetAction
 } from '@/lib/timeline/zoomPresets'
+import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { projectNameFromPath } from '@/lib/project/projectPath'
 import type { RecentProject } from '@shared/types'
 
@@ -33,6 +34,10 @@ const SEP: MenuItemDef = { label: null }
 export interface BuildMenusOptions {
   /** Append the developer Debug menu. */
   devToolsEnabled: boolean
+  /** Startup diagnostic-logging state — enables Help ▸ Send Diagnostic Logs (there are
+   *  only logs to send when logging was on for this run). Optional so shortcut binding,
+   *  which never needs it, can omit it. */
+  loggingEnabled?: boolean
   /** Recent Projects MRU, head = most recent. */
   recentProjects?: RecentProject[]
   /** Gates File > Export Mixdown until there is audio to render. */
@@ -78,6 +83,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         SEP,
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
         SEP,
+        { label: 'Import to Library\u2026', action: 'file.importToLibrary', accelerator: 'Ctrl+I' },
         { label: 'Add Track\u2026', action: 'file.addTrack', accelerator: 'Ctrl+T' },
         {
           label: 'Export Mixdown\u2026',
@@ -118,12 +124,20 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Zoom to Fit', action: 'view.zoomFit', accelerator: 'Ctrl+F' },
         {
           label: 'Zoom Presets',
-          submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => ({
-            label: zoomPercentLabel(px),
-            action: zoomPresetAction(px)
-          }))
+          submenu: ZOOM_PRESET_PX_PER_SECOND.map((px) => {
+            // Presets that land on an exact N×100% get the matching Ctrl+N
+            // accelerator (Ctrl+1..8), owned by the keyboard handler in App.vue.
+            const n = px / DEFAULT_PX_PER_SECOND
+            const accelerator = Number.isInteger(n) && n >= 1 && n <= 8 ? `Ctrl+${n}` : undefined
+            return {
+              label: zoomPercentLabel(px),
+              action: zoomPresetAction(px),
+              ...(accelerator ? { accelerator } : {})
+            }
+          })
         },
         SEP,
+        { label: 'Toggle Library / FX Panel', action: 'view.toggleLibraryPanel', accelerator: 'Ctrl+J' },
         { label: 'Toggle Full Screen', action: 'view.toggleFullScreen', accelerator: 'F11' }
       ]
     },
@@ -131,7 +145,13 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'Help',
       items: [
         { label: 'Documentation', action: 'help.docs' },
-        { label: 'Give Feedback', action: 'help.reportIssue' },
+        { label: 'Keyboard Shortcuts', action: 'help.shortcuts' },
+        { label: 'Submit Feedback', action: 'help.reportIssue' },
+        // Only present when diagnostic logging is on for this run — otherwise there is
+        // nothing to send. Zips the current run's logs and opens a support email draft.
+        ...(opts.loggingEnabled
+          ? [{ label: 'Send Diagnostic Logs…', action: 'help.sendDiagnostics' }]
+          : []),
         SEP,
         { label: 'About Silverdaw', action: 'help.about' }
       ]

@@ -8,11 +8,32 @@
 
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { inspect } from 'node:util'
 
 /** Five-char padded level matches the backend so columns line up in a merged tail. */
 export type LogLevel = 'DEBUG' | 'INFO ' | 'WARN ' | 'ERROR'
+
+// Strip the Windows account name out of `C:\Users\<name>\…` paths before a line is
+// written, so the diagnostic logs never carry personally-identifiable information. The
+// logs are full of profile paths (projects, decoded cache, AppData), each embedding the
+// username; this replaces just the owner segment with `<user>` while leaving the rest of
+// the path readable. Case-insensitive and slash-style agnostic, plus a literal pass on
+// the real home dir in case it sits somewhere non-standard. Applied at every sink below.
+const USER_HOME = (() => {
+  try {
+    return homedir()
+  } catch {
+    return ''
+  }
+})()
+const USER_PATH_RE = /([A-Za-z]:[\\/]Users[\\/])[^\\/\r\n"'|]+/gi
+function redactUserPaths(line: string): string {
+  let out = line.replace(USER_PATH_RE, '$1<user>')
+  if (USER_HOME && out.includes(USER_HOME)) out = out.split(USER_HOME).join('<user-home>')
+  return out
+}
 
 let sessionDir = ''
 let mainStream: WriteStream | null = null
@@ -63,7 +84,7 @@ export function initLogs(logParentDir: string): string {
  */
 export function logMain(level: LogLevel, tag: string, message: string, ...args: unknown[]): void {
   const detail = args.length > 0 ? ` ${args.map(formatLogValue).join(' ')}` : ''
-  const line = `${new Date().toISOString()} ${level} [${tag}] ${message}${detail}`
+  const line = redactUserPaths(`${new Date().toISOString()} ${level} [${tag}] ${message}${detail}`)
   mainStream?.write(`${line}\n`)
   mirrorToConsole(level, line)
 }
@@ -75,7 +96,7 @@ export function logMain(level: LogLevel, tag: string, message: string, ...args: 
 export function logRendererLine(level: LogLevel, tag: string, message: string, timestampMs?: number): void {
   if (!rendererStream) return
   const ts = typeof timestampMs === 'number' ? new Date(timestampMs).toISOString() : new Date().toISOString()
-  rendererStream.write(`${ts} ${level} [${tag}] ${message}\n`)
+  rendererStream.write(`${redactUserPaths(`${ts} ${level} [${tag}] ${message}`)}\n`)
 }
 
 /** Flush + close both streams. Idempotent. */
@@ -121,7 +142,7 @@ export function getDiagnosticsDir(): string {
 export function logDiag(level: LogLevel, tag: string, message: string, ...args: unknown[]): void {
   if (!diagStream) return
   const detail = args.length > 0 ? ` ${args.map(formatLogValue).join(' ')}` : ''
-  diagStream.write(`${new Date().toISOString()} ${level} [${tag}] ${message}${detail}\n`)
+  diagStream.write(`${redactUserPaths(`${new Date().toISOString()} ${level} [${tag}] ${message}${detail}`)}\n`)
 }
 
 /** Flush + close the diagnostics stream. Idempotent. */

@@ -2,6 +2,7 @@
 
 #include "AudioEngine.h"
 #include "BridgeServer.h"
+#include "ChannelSplitDsp.h"
 #include "EditUndoState.h"
 #include "LibraryAnalysis.h"
 #include "Log.h"
@@ -54,6 +55,17 @@ juce::String sampleOutputDir(const juce::String& projectPath, const juce::String
     return base.getFullPathName();
 }
 
+// Split-channel exports live under a per-source subdir of channels/ (mirroring the
+// samples/ layout) so every channel stem cut from the same track stays together.
+juce::String channelsOutputDir(const juce::String& projectPath, const juce::String& sourcePath)
+{
+    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "channels");
+    if (sourcePath.isNotEmpty())
+        return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
+            .getFullPathName();
+    return base.getFullPathName();
+}
+
 juce::File uniqueWavFile(const juce::File& dir, const juce::String& baseName)
 {
     for (int i = 1; i < 10000; ++i)
@@ -87,7 +99,8 @@ double pitchScaleFor(double semitones, double cents)
 bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outputFile,
                             double inMs, double durationMs, silverdaw::AudioEngine& engine,
                             double& outDurationMs, double& outSampleRate, int& outChannels,
-                            juce::String& error, const std::optional<SampleWarpOptions>& warpOptions = std::nullopt)
+                            juce::String& error, const std::optional<SampleWarpOptions>& warpOptions = std::nullopt,
+                            int duplicateChannel = -1)
 {
     std::unique_ptr<juce::AudioFormatReader> reader(engine.getFormatManager().createReaderFor(sourceFile));
     if (reader == nullptr)
@@ -182,6 +195,7 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
                              const int count = static_cast<int>(readEnd - readStart);
                              reader->read(&srcView, destOffset, count, readStart, true, true);
                          });
+            silverdaw::duplicateChannelAcross(buffer, n, duplicateChannel);
             if (!writer->writeFromAudioSampleBuffer(buffer, 0, n))
             {
                 error = "Could not write warped sample audio";
@@ -199,6 +213,7 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
         const int n = static_cast<int>(juce::jmin(static_cast<juce::int64>(kBlock), samplesToWrite - written));
         buffer.clear();
         reader->read(&buffer, 0, n, startSample + written, true, true);
+        silverdaw::duplicateChannelAcross(buffer, n, duplicateChannel);
         if (!writer->writeFromAudioSampleBuffer(buffer, 0, n))
         {
             error = "Could not write sample audio";
@@ -412,6 +427,101 @@ void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& 
                                 inMs, durationMs, engine, projectState, peakPool, cache, bridge,
                                 std::nullopt, audioType, libraryItemId, i, total);
     }
+}
+
+void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& engine,
+                             silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                             juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                             const juce::String& projectPath)
+{
+    juce::ignoreUnused(cache);
+    const juce::String jobId = tryGetRequiredString(payload, "jobId").value_or(juce::String{});
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    juce::String sourceName = tryGetString(payload, "sourceName").value_or(juce::String{});
+    if (jobId.isEmpty() || clipId.isEmpty()) return;
+
+    const juce::var channelsVar = payload.getProperty("channels", juce::var());
+    if (!channelsVar.isArray()) return;
+    std::vector<juce::String> channels;
+    for (const auto& c : *channelsVar.getArray())
+    {
+        const auto name = c.toString();
+        if (name == "left" || name == "right") channels.push_back(name);
+    }
+    if (channels.empty()) return;
+
+    // Same source/output resolution as Save-as-Sample; each channel is a bare source
+    // window (no warp baking — the new clip inherits the source grid and auto-warps
+    // like a stem) with the chosen channel duplicated to both output channels.
+    const juce::String libraryItemId = projectState.getClipLibraryItemId(clipId);
+    auto sourcePath = projectState.getLibraryItemPlaybackPath(libraryItemId);
+    if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
+    juce::String namePath = projectState.getLibraryItemFilePath(libraryItemId);
+    if (namePath.isEmpty()) namePath = sourcePath;
+    if (sourceName.isEmpty()) sourceName = juce::File(namePath).getFileNameWithoutExtension();
+    const juce::String outputDir = channelsOutputDir(projectPath, namePath);
+    const double inMs = projectState.getClipInMs(clipId);
+    const double durationMs = projectState.getClipDurationMs(clipId);
+    const juce::File sourceFile(sourcePath);
+
+    peakPool.addJob(
+        [jobId, clipId, sourceName, channels, outputDir, sourceFile, inMs, durationMs, &engine, &bridge]
+        {
+            struct ChannelResult
+            {
+                juce::String channel;
+                juce::File file;
+            };
+            std::vector<ChannelResult> results;
+            juce::String error;
+            const auto outDir = juce::File(outputDir);
+            for (const auto& channel : channels)
+            {
+                const int channelIndex = (channel == "right") ? 1 : 0;
+                const juce::String suffix = (channel == "right") ? " (R)" : " (L)";
+                const auto safeName = sanitiseSampleFileName(sourceName + suffix);
+                const auto outFile = uniqueWavFile(outDir, safeName);
+                double outDurationMs = 0.0;
+                double outSampleRate = 0.0;
+                int outChannels = 0;
+                if (writeSourceWindowToWav(sourceFile, outFile, inMs, durationMs, engine,
+                                           outDurationMs, outSampleRate, outChannels, error,
+                                           std::nullopt, channelIndex))
+                    results.push_back({ channel, outFile });
+                else
+                    break;
+            }
+
+            juce::MessageManager::callAsync(
+                [jobId, clipId, sourceName, results, error, &bridge]
+                {
+                    if (results.empty())
+                    {
+                        auto* obj = new juce::DynamicObject();
+                        obj->setProperty("jobId", jobId);
+                        obj->setProperty("clipId", clipId);
+                        obj->setProperty("code", "io");
+                        obj->setProperty("error",
+                                         error.isNotEmpty() ? error : juce::String("Could not split channels"));
+                        bridge.broadcast("CHANNEL_SPLIT_FAILED", juce::var(obj));
+                        return;
+                    }
+                    auto* obj = new juce::DynamicObject();
+                    obj->setProperty("jobId", jobId);
+                    obj->setProperty("clipId", clipId);
+                    obj->setProperty("sourceName", sourceName);
+                    juce::Array<juce::var> channelArray;
+                    for (const auto& r : results)
+                    {
+                        auto* entry = new juce::DynamicObject();
+                        entry->setProperty("channel", r.channel);
+                        entry->setProperty("filePath", r.file.getFullPathName());
+                        channelArray.add(juce::var(entry));
+                    }
+                    obj->setProperty("channels", channelArray);
+                    bridge.broadcast("CHANNEL_SPLIT_READY", juce::var(obj));
+                });
+        });
 }
 
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,

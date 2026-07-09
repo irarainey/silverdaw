@@ -10,7 +10,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
+import { clipFirstBeatOffsetMs, effectiveClipDurationMs } from '@/lib/clip/clipTiming'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { laneRegion, laneYToValue } from './automationLaneRenderer'
@@ -92,6 +92,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     pointerToRawMsClamped,
     snapTimelineMs,
     clipAutoScrollDelta,
+    clipAutoScrollDeltaAtMs,
     hitTestClip,
     hitTestMarker,
     hitTestPlayhead,
@@ -109,12 +110,32 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   })
 
   const isDraggingPlayhead = ref(false)
+  // The playhead gesture is active from pointer-down, but the follow-scroll flag
+  // (isDraggingPlayhead) only flips on once the pointer crosses the drag threshold,
+  // so a plain click seeks without the view jumping to re-centre it.
+  let playheadPointerActive = false
+  let playheadPointerStartX = 0
+  let playheadPointerStartY = 0
   const hoverCursor = ref<'default' | 'ew-resize' | 'grab' | 'grabbing'>('default')
   // Clip drag keeps the original grab offset before snapping the leading edge.
   let draggedClipId: string | null = null
   let clipGrabOffsetMs = 0
   let latestClipDragPointer: ClipDragPointer | null = null
+  // Group drag (Phase 2): dragging a clip that's part of a multi-selection moves the whole group
+  // by a uniform delta from these captured origins, validated atomically by `moveClipGroup`.
+  let groupDragActive = false
+  let groupDragOrigins: { clipId: string; startMs: number; trackIndex: number }[] = []
+  let groupDragAnchorId: string | null = null
+  let groupDragAnchorOrigStartMs = 0
+  let groupDragAnchorOrigTrackIndex = 0
+  let groupAnchorGrabOffsetMs = 0
+  // Sign of the group's net requested drag (+1 right, -1 left, 0 none) — picks which edge of the
+  // group leads auto-scroll so the view follows the furthest clip.
+  let groupDragDirection = 0
   let clipAutoScrollFrame: number | null = null
+  // Edge auto-scroll while dragging the playhead, mirroring the clip drag loop.
+  let latestPlayheadDragPointer: { clientX: number; altKey: boolean } | null = null
+  let playheadAutoScrollFrame: number | null = null
   // Trim drags compare each move against original clip geometry.
   let trimClipId: string | null = null
   let trimEdge: 'left' | 'right' | null = null
@@ -133,7 +154,16 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   // Locked clips can click-seek, but threshold-crossing drags suppress release seek.
   let pendingDragLocked = false
   let pendingDragSuppressSeek = false
+  // True when the pending drag began on a clip that is part of a multi-selection via a PLAIN
+  // click: the selection collapses to just that clip only once we know it's a drag or a click
+  // (not on pointerdown), so a press-and-drag on one clip of a group doesn't discard the rest.
+  let pendingDragCollapseMulti = false
   let draggedMarkerId: string | null = null
+  // Pending marker drag: a press over a marker resolves to a move only after
+  // crossing the threshold; a plain click falls through to a playhead seek.
+  let pendingMarkerId: string | null = null
+  let pendingMarkerStartX = 0
+  let pendingMarkerStartY = 0
 
   // ── Automation lane editing (bottom strip of a track row) ───────────────────
   let autoTrackId: string | null = null
@@ -279,15 +309,56 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
 
   function runClipAutoScroll(): void {
     clipAutoScrollFrame = null
-    if (draggedClipId === null || latestClipDragPointer === null) return
-    const delta = clipAutoScrollDelta(latestClipDragPointer.clientX)
+    if ((draggedClipId === null && !groupDragActive) || latestClipDragPointer === null) return
+    const delta = groupDragActive
+      ? groupAutoScrollDelta()
+      : clipAutoScrollDelta(latestClipDragPointer.clientX)
     if (delta === 0) return
     const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
     if (next === scrollX.value) return
     scrollX.value = next
-    applyClipDrag(latestClipDragPointer)
+    if (groupDragActive) applyGroupDrag(latestClipDragPointer)
+    else applyClipDrag(latestClipDragPointer)
     onClipMoved()
     clipAutoScrollFrame = window.requestAnimationFrame(runClipAutoScroll)
+  }
+
+  function startPlayheadAutoScroll(pointer: { clientX: number; altKey: boolean }): void {
+    latestPlayheadDragPointer = pointer
+    if (playheadAutoScrollFrame !== null) return
+    playheadAutoScrollFrame = window.requestAnimationFrame(runPlayheadAutoScroll)
+  }
+
+  // Clamp the pointer into the visible timeline before snapping, so dragging the
+  // playhead past a viewport edge keeps seeking to the edge (and stays on-screen)
+  // instead of stranding it — pointerToMs returns null for an out-of-bounds pointer,
+  // which would otherwise freeze the seek while edge auto-scroll slid the view away.
+  function playheadDragSeekMs(clientX: number, fineMode: boolean): number | null {
+    const raw = pointerToRawMsClamped(clientX)
+    return raw === null ? null : snapTimelineMs(raw, fineMode)
+  }
+
+  function stopPlayheadAutoScroll(): void {
+    latestPlayheadDragPointer = null
+    if (playheadAutoScrollFrame !== null) {
+      window.cancelAnimationFrame(playheadAutoScrollFrame)
+      playheadAutoScrollFrame = null
+    }
+  }
+
+  // Continuously edge-scroll while the drag pointer is held near a viewport edge,
+  // seeking the playhead to stay under the cursor as the view slides beneath it.
+  function runPlayheadAutoScroll(): void {
+    playheadAutoScrollFrame = null
+    if (!isDraggingPlayhead.value || latestPlayheadDragPointer === null) return
+    const delta = clipAutoScrollDelta(latestPlayheadDragPointer.clientX)
+    if (delta === 0) return
+    const next = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
+    if (next === scrollX.value) return
+    scrollX.value = next
+    const ms = playheadDragSeekMs(latestPlayheadDragPointer.clientX, latestPlayheadDragPointer.altKey)
+    if (ms !== null && ms !== transport.positionMs) seekTo(ms)
+    playheadAutoScrollFrame = window.requestAnimationFrame(runPlayheadAutoScroll)
   }
 
   function seekTo(positionMs: number): void {
@@ -312,13 +383,19 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (tryBeginAutomationEdit(e)) return
     ui.setSelectedAutomationPoint(null)
 
-    const markerId = hitTestMarker(e.clientX, e.clientY)
+    // Markers are dragged only while Shift is held, so a plain mouse drag always
+    // moves the playhead — even directly over a marker (which would otherwise be
+    // ambiguous once the playhead sits on top of one). With Shift, a marker hit
+    // begins a *pending* drag: a press-and-drag moves the marker, while a plain
+    // Shift-click still falls through to a playhead seek.
+    const markerId = e.shiftKey ? hitTestMarker(e.clientX, e.clientY) : null
     if (markerId) {
-      draggedMarkerId = markerId
-      hoverCursor.value = 'grabbing'
-      window.addEventListener('pointermove', onMarkerPointerMove)
-      window.addEventListener('pointerup', onMarkerPointerUp)
-      window.addEventListener('pointercancel', onMarkerPointerUp)
+      pendingMarkerId = markerId
+      pendingMarkerStartX = e.clientX
+      pendingMarkerStartY = e.clientY
+      window.addEventListener('pointermove', onPendingMarkerPointerMove)
+      window.addEventListener('pointerup', onPendingMarkerPointerUp)
+      window.addEventListener('pointercancel', onPendingMarkerPointerUp)
       e.preventDefault()
       return
     }
@@ -332,8 +409,28 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       if (clip) {
         const pointerMs = pointerToRawMs(e.clientX)
         if (pointerMs !== null) {
-          // Select clip and host track so paste targets what the user clicked.
-          project.selectClip(clip.id)
+          // Ctrl/Cmd-click toggles this clip in the multi-selection; Shift-click extends a
+          // same-track range from the anchor. Both are discrete (no drag, no seek).
+          if (e.ctrlKey || e.metaKey) {
+            project.toggleClipSelection(clip.id)
+            project.selectTrack(clip.trackId)
+            e.preventDefault()
+            return
+          }
+          if (e.shiftKey) {
+            project.selectClipRange(clip.id)
+            project.selectTrack(clip.trackId)
+            e.preventDefault()
+            return
+          }
+          // Plain click. If the clip is part of a multi-selection, defer collapsing to a single
+          // clip until we know this is a plain click or a drag start (see onPendingPointer*).
+          const inMultiSelection = project.selectedClipIds.size > 1 && project.isClipSelected(clip.id)
+          if (!inMultiSelection) {
+            // Select clip and host track so paste targets what the user clicked.
+            project.selectClip(clip.id)
+          }
+          pendingDragCollapseMulti = inMultiSelection
           project.selectTrack(clip.trackId)
           pendingDragClipId = clip.id
           pendingDragEdge = trimHit?.edge ?? null
@@ -367,12 +464,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const ms = pointerToMs(e.clientX, e.altKey)
     if (ms === null) return
 
-    // Ruler band and empty track rows both seek the playhead (and start a
-    // playhead drag), so the user can place the playhead anywhere on the
-    // timeline — e.g. to choose where a right-click ▸ Paste will land. A single
-    // click seeks; a press-and-drag moves it live. Double-click has no timeline
-    // action (markers are toggled at the playhead with the M key).
-    isDraggingPlayhead.value = true
+    // Ruler band and empty track rows both seek the playhead, so the user can
+    // place the playhead anywhere on the timeline — e.g. to choose where a
+    // right-click ▸ Paste will land. A single click seeks in place without
+    // scrolling; a press-and-drag moves it live and enables follow-scroll (set
+    // in onPlayheadPointerMove once the drag threshold is crossed). Double-click
+    // has no timeline action (markers are toggled at the playhead with the M key).
+    playheadPointerActive = true
+    playheadPointerStartX = e.clientX
+    playheadPointerStartY = e.clientY
     hoverCursor.value = 'grabbing'
     window.addEventListener('pointermove', onPlayheadPointerMove)
     window.addEventListener('pointerup', onPlayheadPointerUp)
@@ -382,18 +482,34 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   }
 
   function onPlayheadPointerMove(e: PointerEvent): void {
-    if (!isDraggingPlayhead.value) return
-    // Alt fine mode can toggle mid-drag.
-    const ms = pointerToMs(e.clientX, e.altKey)
-    if (ms === null) return
-    if (ms === transport.positionMs) return
-    seekTo(ms)
+    if (!playheadPointerActive) return
+    // Promote the click into a drag on first movement past the threshold; only
+    // then does follow-scroll turn on, so a plain click never auto-scrolls.
+    if (!isDraggingPlayhead.value) {
+      const dx = e.clientX - playheadPointerStartX
+      const dy = e.clientY - playheadPointerStartY
+      if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+      isDraggingPlayhead.value = true
+    }
+    // Alt fine mode can toggle mid-drag. Clamp to the visible edges so dragging
+    // past the viewport keeps the playhead pinned to the edge, not off-screen.
+    const ms = playheadDragSeekMs(e.clientX, e.altKey)
+    if (ms !== null && ms !== transport.positionMs) seekTo(ms)
+    // Edge auto-scroll only when the pointer reaches a viewport edge; a drag that
+    // stays within the visible timeline never scrolls the view.
+    if (clipAutoScrollDelta(e.clientX) !== 0) {
+      startPlayheadAutoScroll({ clientX: e.clientX, altKey: e.altKey })
+    } else {
+      stopPlayheadAutoScroll()
+    }
   }
 
   function onPlayheadPointerUp(_e: PointerEvent): void {
-    if (!isDraggingPlayhead.value) return
+    if (!playheadPointerActive) return
+    playheadPointerActive = false
     isDraggingPlayhead.value = false
     hoverCursor.value = 'default'
+    stopPlayheadAutoScroll()
     window.removeEventListener('pointermove', onPlayheadPointerMove)
     window.removeEventListener('pointerup', onPlayheadPointerUp)
     window.removeEventListener('pointercancel', onPlayheadPointerUp)
@@ -417,6 +533,39 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onMarkerPointerMove)
     window.removeEventListener('pointerup', onMarkerPointerUp)
     window.removeEventListener('pointercancel', onMarkerPointerUp)
+  }
+
+  /** Detach pending-marker-drag listeners from both promotion and click paths. */
+  function clearPendingMarkerDrag(): void {
+    pendingMarkerId = null
+    window.removeEventListener('pointermove', onPendingMarkerPointerMove)
+    window.removeEventListener('pointerup', onPendingMarkerPointerUp)
+    window.removeEventListener('pointercancel', onPendingMarkerPointerUp)
+  }
+
+  /** Promote a pending marker press to a real marker drag once it crosses the threshold. */
+  function onPendingMarkerPointerMove(e: PointerEvent): void {
+    if (pendingMarkerId === null) return
+    const dx = e.clientX - pendingMarkerStartX
+    const dy = e.clientY - pendingMarkerStartY
+    if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+
+    const markerId = pendingMarkerId
+    clearPendingMarkerDrag()
+    draggedMarkerId = markerId
+    hoverCursor.value = 'grabbing'
+    window.addEventListener('pointermove', onMarkerPointerMove)
+    window.addEventListener('pointerup', onMarkerPointerUp)
+    window.addEventListener('pointercancel', onMarkerPointerUp)
+    onMarkerPointerMove(e)
+  }
+
+  /** Release before the drag threshold: treat the marker press as a click and seek. */
+  function onPendingMarkerPointerUp(e: PointerEvent): void {
+    if (pendingMarkerId === null) return
+    clearPendingMarkerDrag()
+    const ms = pointerToMs(e.clientX, e.altKey)
+    if (ms !== null) seekTo(ms)
   }
 
   function applyClipDrag(pointer: ClipDragPointer): void {
@@ -469,11 +618,118 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointercancel', onClipPointerUp)
   }
 
+  /** Begin a group drag: capture every selected clip's origin (start + track index) and open one
+   *  undo transaction that spans the gesture so the whole move collapses to a single undo step. */
+  function beginGroupDrag(anchorId: string, pointerStartMs: number): void {
+    const anchor = project.clips[anchorId]
+    if (!anchor) return
+    groupDragOrigins = Array.from(project.selectedClipIds)
+      .map((id) => {
+        const c = project.clips[id]
+        const trackIndex = c ? project.tracks.findIndex((t) => t.id === c.trackId) : -1
+        return c && trackIndex >= 0 ? { clipId: id, startMs: c.startMs, trackIndex } : null
+      })
+      .filter((o): o is { clipId: string; startMs: number; trackIndex: number } => o !== null)
+    groupDragAnchorId = anchorId
+    groupDragAnchorOrigStartMs = anchor.startMs
+    groupDragAnchorOrigTrackIndex = project.tracks.findIndex((t) => t.id === anchor.trackId)
+    groupAnchorGrabOffsetMs = pointerStartMs - anchor.startMs
+    groupDragDirection = 0
+    groupDragActive = true
+    sendBridge('EDIT_GROUP_BEGIN', { label: 'Move clips' })
+    window.addEventListener('pointermove', onGroupPointerMove)
+    window.addEventListener('pointerup', onGroupPointerUp)
+    window.addEventListener('pointercancel', onGroupPointerUp)
+  }
+
+  /** Apply the current pointer as a uniform group delta (anchor snapped like a single-clip drag). */
+  function applyGroupDrag(pointer: ClipDragPointer): void {
+    if (!groupDragActive || groupDragAnchorId === null) return
+    const anchor = project.clips[groupDragAnchorId]
+    if (!anchor) return
+    const pointerMs = pointerToRawMsClamped(pointer.clientX)
+    if (pointerMs === null) return
+
+    const rawStartMs = pointerMs - groupAnchorGrabOffsetMs
+    let anchorTarget: number
+    if (pointer.altKey) {
+      anchorTarget = Math.max(0, Math.round(rawStartMs))
+    } else {
+      const snap = geometry.msPerSubBeat()
+      const referenceBeatOffsetMs = clipFirstBeatOffsetMs(anchor, library)
+      if (referenceBeatOffsetMs !== null) {
+        const projectBeat = rawStartMs + referenceBeatOffsetMs
+        anchorTarget = Math.max(0, Math.round(projectBeat / snap) * snap - referenceBeatOffsetMs)
+      } else {
+        anchorTarget = Math.max(0, Math.round(rawStartMs / snap) * snap)
+      }
+    }
+    const deltaMs = anchorTarget - groupDragAnchorOrigStartMs
+    if (deltaMs > 0) groupDragDirection = 1
+    else if (deltaMs < 0) groupDragDirection = -1
+
+    const destTrackId = pointerToTrackId(pointer.clientY)
+    const destTrackIndex = destTrackId ? project.tracks.findIndex((t) => t.id === destTrackId) : -1
+    const deltaTrackIndex =
+      destTrackIndex >= 0 ? destTrackIndex - groupDragAnchorOrigTrackIndex : 0
+
+    const clampedDeltaMs = project.clampGroupDeltaMs(groupDragOrigins, deltaMs, deltaTrackIndex)
+    project.moveClipGroup(groupDragOrigins, clampedDeltaMs, deltaTrackIndex)
+  }
+
+  /** Timeline position (ms) of the group's leading edge in the current drag direction — the
+   *  right end of the right-most clip when moving right, the left start of the left-most clip when
+   *  moving left. Auto-scroll probes this instead of the cursor so the view follows the furthest
+   *  clip. Uses live clip positions so the probe tracks the group as it moves. */
+  function groupLeadingEdgeMs(): number | null {
+    if (groupDragDirection === 0) return null
+    let lead: number | null = null
+    for (const o of groupDragOrigins) {
+      const clip = project.clips[o.clipId]
+      if (!clip) continue
+      const edge =
+        groupDragDirection > 0 ? clip.startMs + effectiveClipDurationMs(clip) : clip.startMs
+      if (lead === null) lead = edge
+      else lead = groupDragDirection > 0 ? Math.max(lead, edge) : Math.min(lead, edge)
+    }
+    return lead
+  }
+
+  /** Auto-scroll pressure for a group drag, driven by the leading clip edge rather than the cursor. */
+  function groupAutoScrollDelta(): number {
+    const leadMs = groupLeadingEdgeMs()
+    return leadMs === null ? 0 : clipAutoScrollDeltaAtMs(leadMs)
+  }
+
+  function onGroupPointerMove(e: PointerEvent): void {
+    if (!groupDragActive) return
+    const pointer = { clientX: e.clientX, clientY: e.clientY, altKey: e.altKey }
+    latestClipDragPointer = pointer
+    applyGroupDrag(pointer)
+    onClipMoved()
+    if (groupAutoScrollDelta() !== 0) startClipAutoScroll(pointer)
+    else stopClipAutoScroll()
+  }
+
+  function onGroupPointerUp(_e: PointerEvent): void {
+    if (!groupDragActive) return
+    groupDragActive = false
+    groupDragAnchorId = null
+    groupDragOrigins = []
+    sendBridge('EDIT_GROUP_END')
+    stopClipAutoScroll()
+    onClipMoved()
+    window.removeEventListener('pointermove', onGroupPointerMove)
+    window.removeEventListener('pointerup', onGroupPointerUp)
+    window.removeEventListener('pointercancel', onGroupPointerUp)
+  }
+
   /** Detach pending-drag listeners from both promotion and click paths. */
   function clearPendingDrag(): void {
     pendingDragClipId = null
     pendingDragEdge = null
     pendingDragLocked = false
+    pendingDragCollapseMulti = false
     window.removeEventListener('pointermove', onPendingPointerMove)
     window.removeEventListener('pointerup', onPendingPointerUp)
     window.removeEventListener('pointercancel', onPendingPointerUp)
@@ -484,6 +740,27 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const dx = e.clientX - pendingDragStartX
     const dy = e.clientY - pendingDragStartY
     if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return
+
+    // A body drag on a clip that's part of a multi-selection moves the whole group (Phase 2),
+    // unless any selected clip is locked (then fall back to a single-clip move by collapsing).
+    if (
+      pendingDragCollapseMulti &&
+      pendingDragEdge === null &&
+      pendingDragClipId !== null &&
+      project.selectedClipIds.size > 1 &&
+      !Array.from(project.selectedClipIds).some((id) => project.clips[id]?.locked)
+    ) {
+      const anchorId = pendingDragClipId
+      const startMs = pendingDragStartMs
+      clearPendingDrag()
+      beginGroupDrag(anchorId, startMs)
+      onGroupPointerMove(e)
+      return
+    }
+
+    // A drag on a clip that was part of a multi-selection collapses to just that clip (no group
+    // move — a trim, or a group containing a locked clip), so the gesture moves a single clip.
+    if (pendingDragCollapseMulti) project.selectClip(pendingDragClipId)
 
     if (pendingDragLocked) {
       // Locked drag crossed threshold: refuse drag and suppress release seek.
@@ -530,6 +807,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function onPendingPointerUp(e: PointerEvent): void {
     if (pendingDragClipId === null) return
     const suppressSeek = pendingDragSuppressSeek
+    // A plain click (no drag) on a clip that was part of a multi-selection collapses to just
+    // that clip.
+    if (pendingDragCollapseMulti) project.selectClip(pendingDragClipId)
     clearPendingDrag()
     if (suppressSeek) return
     const ms = pointerToMs(e.clientX, e.altKey)
@@ -607,13 +887,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function onHostPointerMove(e: PointerEvent): void {
     if (
       draggedClipId !== null ||
+      groupDragActive ||
       trimClipId !== null ||
       draggedMarkerId !== null ||
       isDraggingPlayhead.value
     ) {
       return
     }
-    if (hitTestMarker(e.clientX, e.clientY)) {
+    // Markers are draggable only with Shift held, so show the grab cursor for a
+    // marker only then; without Shift the pointer falls through to the normal
+    // ruler/playhead cursor because a plain drag there moves the playhead.
+    if (e.shiftKey && hitTestMarker(e.clientX, e.clientY)) {
       if (hoverCursor.value !== 'grab') hoverCursor.value = 'grab'
       return
     }
@@ -664,6 +948,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     // cursor must not snap back to the arrow mid-drag.
     if (
       draggedClipId !== null ||
+      groupDragActive ||
       trimClipId !== null ||
       draggedMarkerId !== null ||
       isDraggingPlayhead.value
@@ -698,9 +983,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointermove', onMarkerPointerMove)
     window.removeEventListener('pointerup', onMarkerPointerUp)
     window.removeEventListener('pointercancel', onMarkerPointerUp)
+    window.removeEventListener('pointermove', onPendingMarkerPointerMove)
+    window.removeEventListener('pointerup', onPendingMarkerPointerUp)
+    window.removeEventListener('pointercancel', onPendingMarkerPointerUp)
     window.removeEventListener('pointermove', onClipPointerMove)
     window.removeEventListener('pointerup', onClipPointerUp)
     window.removeEventListener('pointercancel', onClipPointerUp)
+    window.removeEventListener('pointermove', onGroupPointerMove)
+    window.removeEventListener('pointerup', onGroupPointerUp)
+    window.removeEventListener('pointercancel', onGroupPointerUp)
     window.removeEventListener('pointermove', onTrimPointerMove)
     window.removeEventListener('pointerup', onTrimPointerUp)
     window.removeEventListener('pointercancel', onTrimPointerUp)
@@ -708,6 +999,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     window.removeEventListener('pointerup', onPendingPointerUp)
     window.removeEventListener('pointercancel', onPendingPointerUp)
     stopClipAutoScroll()
+    stopPlayheadAutoScroll()
   })
 
   return { isDraggingPlayhead, hoverCursor, removeAutomationPointAt }

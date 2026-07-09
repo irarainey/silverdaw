@@ -52,7 +52,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
-  free placement. Bar numbering starts at 1 by default,
+  free placement. **Select several clips at once** — Shift-click a range on one
+  track or Ctrl-click clips across tracks — then move the whole group together,
+  nudge it with the arrow keys, or lock, colour, duplicate, delete, and
+  cut/copy/paste them in one step. Bar numbering starts at 1 by default,
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
@@ -71,7 +74,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   separation by default, with a backup model downloaded automatically only if
   it's ever needed. A
   **Fast / Balanced / Best** speed control and optional one-click cleanup let you
-  trade speed for polish.
+  trade speed for polish, and an optional per-run **reverb & echo removal** cleans
+  room reverb and slap-back off the vocal as it separates.
+- **Split stereo channels.** Right-click a stereo clip to split its **Left**
+  and/or **Right** channel onto its own new track — each channel becomes a stereo
+  clip carrying only that side (copied to both). Non-destructive, and each split
+  keeps the original's tempo, key, and artwork, just like a stem.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
@@ -125,8 +133,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   others stay visible but disabled until you turn it off. Tune how long they take
   and how they feel in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
-  waveform or stacked left / right channels, in Preferences — applied across the
-  timeline and the Clip Editor.
+  waveform or stacked left / right channels (the default), in Preferences —
+  applied across the timeline and the Clip Editor.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,

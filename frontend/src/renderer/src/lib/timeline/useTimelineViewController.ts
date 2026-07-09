@@ -76,7 +76,7 @@ export function useTimelineViewController(
   })
 
   const { dropPreview } = useDropZone({
-    host, app: pixi.app, scrollX, scrollY, showScrollbar, geometry,
+    host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
     onPreviewChanged: () => { updatePlayhead() }
   })
 

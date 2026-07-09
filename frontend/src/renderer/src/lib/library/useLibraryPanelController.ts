@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useLibraryStore, libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, type LibraryItem } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { importAudioIntoLibrary, preflightSampleRates } from '@/lib/importAudio'
+import { openAndImportAudioFilesIntoLibrary } from '@/lib/importAudio'
 import { log } from '@/lib/log'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import {
@@ -106,25 +106,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
 
   async function onImportClick(): Promise<void> {
     log.info('library', 'import-button click')
-    const opened = await window.silverdaw.openAudioFiles().catch((err) => {
-      log.error('library', `openAudioFiles failed: ${String(err)}`)
-      return [] as Awaited<ReturnType<typeof window.silverdaw.openAudioFiles>>
-    })
-    if (opened.length === 0) {
-      log.info('library', 'import-button dialog cancelled')
-      return
-    }
-    // Sample-rate preflight can cancel the whole batch before import starts.
-    const decision = await preflightSampleRates(opened.map((f) => f.filePath))
-    if (decision === 'cancel') {
-      log.info('library', 'import cancelled at sample-rate prompt')
-      return
-    }
-    // Track batch progress as one status-bar operation.
-    library.beginImportBatch(opened.length)
-    for (const file of opened) {
-      await importAudioIntoLibrary(file)
-    }
+    await openAndImportAudioFilesIntoLibrary()
   }
 
   // ─── Library item → timeline drag ─────────────────────────────────────────

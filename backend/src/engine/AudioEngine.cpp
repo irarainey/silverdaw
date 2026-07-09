@@ -116,6 +116,8 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                              + devicesSnapshot.currentDeviceName
                              + "' sr=" + juce::String(devicesSnapshot.currentSampleRate, 0)
                              + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
+                             + " outCh=" + juce::String(devicesSnapshot.currentOutputChannels)
+                             + " bits=" + juce::String(devicesSnapshot.currentBitDepth)
                              + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
                              + (fellBack ? " (fell back to default)" : ""));
 
@@ -266,6 +268,8 @@ void AudioEngine::rebuildDevicesSnapshot(bool rescan)
     {
         snap.currentSampleRate = dev->getCurrentSampleRate();
         snap.currentBufferSize = dev->getCurrentBufferSizeSamples();
+        snap.currentOutputChannels = dev->getActiveOutputChannels().countNumberOfSetBits();
+        snap.currentBitDepth = dev->getCurrentBitDepth();
     }
     snap.outputLatencyMs = getOutputLatencyMs();
     snap.heuristicExtraLatencyMs = getHeuristicExtraLatencyMs();
@@ -649,6 +653,24 @@ void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::St
     {
         automationCurrent.emplace(trackId, std::move(next));
     }
+}
+
+void AudioEngine::clearAllTrackAutomation(const juce::String& trackId)
+{
+    if (trackId.isEmpty()) return;
+    auto it = automationCurrent.find(trackId);
+    if (it == automationCurrent.end()) return; // already clear — nothing published for this track
+
+    busGraph.setTrackAutomationPtr(trackId, nullptr);
+    if (it->second)
+    {
+        // Snap each previously-automated param to neutral so the chain doesn't hold its last value.
+        for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
+            if (it->second->has[i])
+                busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+        retiredAutomation.push_back(std::move(it->second));
+    }
+    automationCurrent.erase(it);
 }
 
 void AudioEngine::setProjectReverb(float size, float decay, float tone, float mix, bool snap)

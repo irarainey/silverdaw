@@ -40,6 +40,9 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'file.addTrack':
       wc.send(IPC.menu.action, action)
       break
+    case 'file.importToLibrary':
+      wc.send(IPC.menu.action, action)
+      break
     case 'file.exportMixdown':
       wc.send(IPC.menu.action, action)
       break
@@ -91,6 +94,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'view.zoomOut':
     case 'view.zoomReset':
     case 'view.zoomFit':
+    case 'view.toggleLibraryPanel':
       wc.send(IPC.menu.action, action)
       break
     case 'view.toggleDevTools':
@@ -105,8 +109,17 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'help.docs':
       void shell.openExternal('https://docs.silverdaw.com')
       break
+    case 'help.shortcuts':
+      // Versioned docs page — the path always matches the running app version.
+      void shell.openExternal(`https://docs.silverdaw.com/${app.getVersion()}/guide/shortcuts`)
+      break
     case 'help.reportIssue':
       void shell.openExternal('https://silverdaw.featurebase.app')
+      break
+    case 'help.sendDiagnostics':
+      // Forwarded to the renderer, which shows a wait spinner and invokes the
+      // app:sendDiagnostics IPC (the zip can take a moment).
+      wc.send(IPC.menu.action, action)
       break
     case 'help.about':
       wc.send(IPC.menu.action, action)

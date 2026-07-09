@@ -117,6 +117,32 @@ export async function preflightSampleRates(filePaths: readonly string[]): Promis
   }
 }
 
+/** Open the audio-file picker and import the chosen files into the library as one batch:
+ *  sample-rate preflight (which can cancel), then per-file import with status-bar progress.
+ *  Shared by the Library panel's Import button and the File ▸ Import to Library menu / Ctrl+I. */
+export async function openAndImportAudioFilesIntoLibrary(): Promise<void> {
+  const library = useLibraryStore()
+  const opened = await window.silverdaw.openAudioFiles().catch((err) => {
+    log.error('library', `openAudioFiles failed: ${String(err)}`)
+    return [] as Awaited<ReturnType<typeof window.silverdaw.openAudioFiles>>
+  })
+  if (opened.length === 0) {
+    log.info('library', 'import dialog cancelled')
+    return
+  }
+  // Sample-rate preflight can cancel the whole batch before import starts.
+  const decision = await preflightSampleRates(opened.map((f) => f.filePath))
+  if (decision === 'cancel') {
+    log.info('library', 'import cancelled at sample-rate prompt')
+    return
+  }
+  // Track batch progress as one status-bar operation.
+  library.beginImportBatch(opened.length)
+  for (const file of opened) {
+    await importAudioIntoLibrary(file)
+  }
+}
+
 /** Map a library item to the placement payload `addClipFromLibrary` expects, so
  *  warp, library-clip, and tempo handling stay aligned across every caller. */
 export function libraryItemToClipPlacement(audio: LibraryItem): {

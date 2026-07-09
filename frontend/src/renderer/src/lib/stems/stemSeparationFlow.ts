@@ -22,7 +22,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName, StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
+import type { StemName, StemQuality, DereverbStrength, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
 import type { StemModelState, StemModelDownloadProgress, EnsureStemModelResult } from '@shared/types'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
@@ -36,9 +36,23 @@ export interface StemSelectionState {
   selected: Record<StemName, boolean>
   /** Quality preset trading speed against separation smoothness. */
   quality: StemQuality
+  /** Per-run: remove reverb/echo from the vocals stem. Chosen fresh each run (never
+   *  persisted), so it defaults off every time the picker opens. */
+  dereverb: boolean
+  /** Per-run strength of that reverb removal (only meaningful when `dereverb`). */
+  dereverbStrength: DereverbStrength
 }
 
 const selection: Ref<StemSelectionState | null> = ref(null)
+
+// Guards the dispatch preamble against a double-trigger. The backend separator is
+// single-slot: `stemSeparationState` covers a job once `beginStemSeparation` runs, but
+// `dispatchSeparation` first does several async preference/model-path lookups — a window
+// in which a second trigger (an impatient click, or two entry points) could fire a
+// duplicate STEM_SEPARATE that the backend can only reject with an error toast. This flag
+// closes that window; together with the active-state check a duplicate never reaches the
+// backend.
+let dispatchInFlight = false
 
 // The last-used separation quality, persisted with application preferences so the
 // picker reopens on the user's choice instead of resetting each time. Cached in the
@@ -83,14 +97,16 @@ function stripExtension(name: string): string {
   return name.replace(/\.[^.]+$/, '')
 }
 
-/** Open the stem picker. The quality preset is seeded from the persisted
- *  preference (see `loadStemQualityPreference`) so it reopens on the user's last
- *  choice. */
+/** Open the stem picker. All stems start UNticked so the user picks only what they
+ *  want (Start stays disabled until at least one is chosen) — faster than unticking
+ *  from a full set. The quality preset is seeded from the persisted preference. */
 function openPicker(target: StemSeparationTarget): void {
   selection.value = {
     target,
-    selected: { vocals: true, drums: true, bass: true, other: true },
-    quality: preferredQuality
+    selected: { vocals: false, drums: false, bass: false, other: false },
+    quality: preferredQuality,
+    dereverb: false,
+    dereverbStrength: 'medium'
   }
 }
 
@@ -198,6 +214,18 @@ export function setStemQuality(quality: StemQuality): void {
   window.silverdaw.setStemPrefs({ quality })
 }
 
+/** Toggle the per-run vocal dereverb (remove reverb/echo) in the picker. */
+export function toggleStemDereverb(): void {
+  if (!selection.value) return
+  selection.value = { ...selection.value, dereverb: !selection.value.dereverb }
+}
+
+/** Set the per-run vocal dereverb strength in the picker. */
+export function setStemDereverbStrength(strength: DereverbStrength): void {
+  if (!selection.value) return
+  selection.value = { ...selection.value, dereverbStrength: strength }
+}
+
 /** Dismiss the picker without starting anything. */
 export function cancelStemSelection(): void {
   selection.value = null
@@ -211,8 +239,11 @@ export async function confirmStemSelection(): Promise<void> {
   const stems = ALL_STEMS.filter((s) => current.selected[s])
   if (stems.length === 0) return
   const quality = current.quality
+  // Dereverb only affects the vocals stem; pass the chosen strength (or null = off).
+  const dereverb: DereverbStrength | null =
+    current.dereverb && current.selected.vocals ? current.dereverbStrength : null
   selection.value = null
-  await ensureModelThenDispatch(current.target, stems, quality)
+  await ensureModelThenDispatch(current.target, stems, quality, dereverb)
 }
 
 // ─── Model-download dialog ──────────────────────────────────────────────────
@@ -230,6 +261,7 @@ type FlowNext =
       readonly target: StemSeparationTarget
       readonly stems: StemName[]
       readonly quality: StemQuality
+      readonly dereverb: DereverbStrength | null
     }
 
 export interface StemModelFlowState {
@@ -368,7 +400,8 @@ function showDownloadFlow(
 async function ensureModelThenDispatch(
   target: StemSeparationTarget,
   stems: StemName[],
-  quality: StemQuality
+  quality: StemQuality,
+  dereverb: DereverbStrength | null
 ): Promise<void> {
   const notifications = useNotificationsStore()
   let missing: Array<{ src: StemModelSource; state: StemModelState }>
@@ -384,10 +417,10 @@ async function ensureModelThenDispatch(
   }
 
   if (missing.length === 0) {
-    await dispatchSeparation(target, stems, quality)
+    await dispatchSeparation(target, stems, quality, dereverb)
     return
   }
-  showDownloadFlow({ kind: 'dispatch', target, stems, quality }, missing)
+  showDownloadFlow({ kind: 'dispatch', target, stems, quality, dereverb }, missing)
 }
 
 /** User accepted the download. Fetch each missing model in turn, streaming a
@@ -440,7 +473,7 @@ export async function confirmModelDownload(): Promise<void> {
     flowNext = null
     pendingSources = []
     if (next?.kind === 'dispatch') {
-      await dispatchSeparation(next.target, next.stems, next.quality)
+      await dispatchSeparation(next.target, next.stems, next.quality, next.dereverb)
     } else if (next?.kind === 'select') {
       openPicker(next.target)
     }
@@ -469,45 +502,73 @@ export function cancelModelFlow(): void {
 async function dispatchSeparation(
   target: StemSeparationTarget,
   stems: readonly StemName[],
-  quality: StemQuality
+  quality: StemQuality,
+  dereverb: DereverbStrength | null
 ): Promise<void> {
-  const modelDir = await window.silverdaw.getStemModelDir()
-  const useGpu = await resolveUseGpu()
-  const enhance = await resolveStemEnhance()
-  const roformerModelPath = await resolveVocalPackPath()
-  const rhythmModelPath = await resolveRhythmPackPath()
-  const jobId = crypto.randomUUID()
-  registerStemJob(jobId, target)
-  beginStemSeparation(jobId, target, stems)
-  sendBridge('STEM_SEPARATE', {
-    jobId,
-    sourceItemId: target.sourceItemId,
-    clipId: target.clipId,
-    modelDir,
-    roformerModelPath,
-    rhythmModelPath,
-    sourceName: target.sourceName,
-    stems: [...stems],
-    quality,
-    useGpu,
-    enhanceVocals: enhance.enhanceVocals,
-    vocalEnhanceStrength: enhance.vocalEnhanceStrength,
-    enhanceDrums: enhance.enhanceDrums,
-    drumEnhanceStrength: enhance.drumEnhanceStrength,
-    enhanceBass: enhance.enhanceBass,
-    bassEnhanceStrength: enhance.bassEnhanceStrength,
-    enhanceOther: enhance.enhanceOther,
-    otherEnhanceStrength: enhance.otherEnhanceStrength
-  })
-  log.info(
-    'stems',
-    `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
-      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
-      `useGpu=${useGpu} enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
-      `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
-      `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
-      `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
-  )
+  // Reject a duplicate before it reaches the single-slot backend. The check-and-set is
+  // synchronous (no await between), so a second concurrent call is blocked; `state`
+  // covers the window after the job is registered.
+  if (dispatchInFlight || snapshotStemSeparationState() !== null) {
+    log.warn('stems', 'ignored duplicate stem separation (one is already in progress)')
+    return
+  }
+  dispatchInFlight = true
+  const notifications = useNotificationsStore()
+  let jobId: string | null = null
+  try {
+    const modelDir = await window.silverdaw.getStemModelDir()
+    const useGpu = await resolveUseGpu()
+    const enhance = await resolveStemEnhance()
+    const roformerModelPath = await resolveVocalPackPath()
+    const rhythmModelPath = await resolveRhythmPackPath()
+    jobId = crypto.randomUUID()
+    registerStemJob(jobId, target)
+    beginStemSeparation(jobId, target, stems)
+    sendBridge('STEM_SEPARATE', {
+      jobId,
+      sourceItemId: target.sourceItemId,
+      clipId: target.clipId,
+      modelDir,
+      roformerModelPath,
+      rhythmModelPath,
+      sourceName: target.sourceName,
+      stems: [...stems],
+      quality,
+      useGpu,
+      enhanceVocals: enhance.enhanceVocals,
+      vocalEnhanceStrength: enhance.vocalEnhanceStrength,
+      enhanceDrums: enhance.enhanceDrums,
+      drumEnhanceStrength: enhance.drumEnhanceStrength,
+      enhanceBass: enhance.enhanceBass,
+      bassEnhanceStrength: enhance.bassEnhanceStrength,
+      enhanceOther: enhance.enhanceOther,
+      otherEnhanceStrength: enhance.otherEnhanceStrength,
+      // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
+      // strength only when the user enabled it for a vocals run.
+      ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
+    })
+    log.info(
+      'stems',
+      `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
+        `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
+        `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
+        `enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
+        `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
+        `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
+        `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
+    )
+  } catch (err) {
+    // A preparation failure (prefs / model-dir / pack-path lookup) must not leave a
+    // half-registered job or a stuck progress dialog — clean up and surface it.
+    if (jobId !== null) {
+      forgetStemJob(jobId)
+      clearStemSeparationState()
+    }
+    notifications.pushError('Could not start stem separation.')
+    log.error('stems', `dispatch failed: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    dispatchInFlight = false
+  }
 }
 
 /**

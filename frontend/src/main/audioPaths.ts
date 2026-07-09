@@ -25,6 +25,11 @@ const stemsWriteRoots: Set<string> = new Set<string>()
 // reads/writes are confined to these roots.
 const samplesWriteRoots: Set<string> = new Set<string>()
 
+// App-derived "channels" folders beside a project (or in the temp workspace while
+// unsaved) where the backend writes split-out stereo channels. Read-trusted like
+// stems/samples so the renderer can import the produced WAVs on CHANNEL_SPLIT_READY.
+const channelsWriteRoots: Set<string> = new Set<string>()
+
 export function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
@@ -114,6 +119,21 @@ export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
   return false
 }
 
+// Trust a project's "channels" output folder (derived by main from a save/open
+// path, or the temp workspace while unsaved) for renderer audio reads, so the
+// renderer can import split-channel WAVs the moment CHANNEL_SPLIT_READY arrives.
+// Idempotent. (Channel stems inherit cover/tags from the shared media store, so
+// they need no per-source sidecar confinement of their own.)
+export function registerChannelsWriteRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute channels root:', dir)
+    return
+  }
+  const canonical = canonicalisePath(dir)
+  channelsWriteRoots.add(canonical)
+  trustedReadRoots.add(canonical)
+}
+
 // True only for a path STRICTLY inside a stems or samples write root — i.e. a
 // per-source subfolder, never a root itself. Used to safely prune an emptied
 // per-source artifact folder after its files are cleaned up, without ever
@@ -121,7 +141,7 @@ export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
 export function isPrunableArtifactSubdir(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const canonical = canonicalisePath(dir)
-  for (const root of [...stemsWriteRoots, ...samplesWriteRoots]) {
+  for (const root of [...stemsWriteRoots, ...samplesWriteRoots, ...channelsWriteRoots]) {
     const rel = relative(root, canonical)
     if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true
   }

@@ -17,6 +17,8 @@
 
 #include "VocalDenoiser.h"
 
+#include "Dereverberator.h"
+
 #include "DrumEnhancer.h"
 
 #include "BassEnhancer.h"
@@ -117,6 +119,13 @@ struct StemSeparationRequest
     // denormalised and after it is accumulated for the `other` residual, so the
     // residual stays mixture-consistent against the unprocessed vocal.
     VocalEnhanceOptions vocalEnhance{};
+    // Optional reverb/echo reduction applied to the VOCALS stem only. Off by
+    // default and, unlike the enhance options above, chosen PER-RUN in the stem
+    // dialog (never a persisted preference), so it is resolved by the command
+    // layer straight from the STEM_SEPARATE payload's `dereverb`/`dereverbStrength`
+    // fields. Applied before the RNNoise denoise so the denoiser sees a tighter
+    // (de-reverberated) envelope, and independently of `vocalEnhance.enabled`.
+    DereverbOptions dereverb{};
     // Optional post-separation cleanup applied to the DRUMS stem only. Off by
     // default; resolved by the command layer from the `stems.enhanceDrums`/
     // `stems.drumEnhanceStrength` preferences. Applied in OnnxStemSeparator after

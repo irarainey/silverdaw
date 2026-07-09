@@ -4,6 +4,8 @@ import {
   requestStemSeparationForLibraryItem,
   useStemSelection,
   toggleStemSelection,
+  toggleStemDereverb,
+  setStemDereverbStrength,
   setStemQuality,
   confirmStemSelection,
   cancelStemSelection,
@@ -153,9 +155,11 @@ const FULL_DISPATCH = {
   otherEnhanceStrength: 'medium'
 }
 
-/** Start a clip separation and click Start with all four stems still ticked. */
+/** Start a clip separation and click Start with all four stems ticked (the picker
+ *  now opens with everything UNticked, so tick them explicitly). */
 async function startClipSeparation(): Promise<void> {
   await requestStemSeparationForClip('c1')
+  for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
   await confirmStemSelection()
 }
 
@@ -235,7 +239,7 @@ afterEach(() => {
 })
 
 describe('stem selection dialog', () => {
-  it('opens with all stems ticked and a stripped source name', async () => {
+  it('opens with all stems unticked and a stripped source name', async () => {
     await requestStemSeparationForClip('c1')
     const selection = useStemSelection().value
     expect(selection?.target).toMatchObject({
@@ -244,7 +248,7 @@ describe('stem selection dialog', () => {
       clipId: 'c1',
       startMs: 4000
     })
-    expect(selection?.selected).toEqual({ vocals: true, drums: true, bass: true, other: true })
+    expect(selection?.selected).toEqual({ vocals: false, drums: false, bass: false, other: false })
     expect(selection?.quality).toBe('balanced')
   })
 
@@ -265,6 +269,7 @@ describe('stem selection dialog', () => {
 
   it('separates a stem clip from the stem itself, not its (missing) original source', async () => {
     await requestStemSeparationForClip('cstem')
+    toggleStemSelection('vocals')
     await confirmStemSelection()
 
     // The audio source is the clip's own library item (the stem WAV on the
@@ -282,8 +287,8 @@ describe('stem selection dialog', () => {
 
   it('dispatches only the ticked stems', async () => {
     await requestStemSeparationForClip('c1')
-    toggleStemSelection('bass')
-    toggleStemSelection('other')
+    toggleStemSelection('vocals')
+    toggleStemSelection('drums')
     await confirmStemSelection()
 
     expect(sendMock).toHaveBeenCalledWith(
@@ -294,6 +299,7 @@ describe('stem selection dialog', () => {
 
   it('dispatches the chosen quality preset', async () => {
     await requestStemSeparationForClip('c1')
+    toggleStemSelection('vocals')
     setStemQuality('best')
     await confirmStemSelection()
 
@@ -338,11 +344,73 @@ describe('stem selection dialog', () => {
 
   it('does not start when no stem is ticked', async () => {
     await requestStemSeparationForClip('c1')
-    for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
+    // The picker now opens with nothing ticked, so a straight confirm must not start.
     await confirmStemSelection()
     expect(sendMock).not.toHaveBeenCalled()
-    // The dialog stays open so the user can re-tick.
+    // The dialog stays open so the user can tick something.
     expect(useStemSelection().value).not.toBeNull()
+  })
+
+  it('does not send dereverb by default (per-run, off unless ticked)', async () => {
+    await startClipSeparation()
+    const payload = sendMock.mock.calls.find((c) => c[0] === 'STEM_SEPARATE')?.[1] as
+      | Record<string, unknown>
+      | undefined
+    expect(payload).toBeDefined()
+    expect(payload).not.toHaveProperty('dereverb')
+  })
+
+  it('dispatches dereverb when the vocal reverb toggle is on', async () => {
+    await requestStemSeparationForClip('c1')
+    toggleStemSelection('vocals')
+    toggleStemDereverb()
+    await confirmStemSelection()
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ dereverb: true, dereverbStrength: 'medium' })
+    )
+  })
+
+  it('dispatches the chosen dereverb strength', async () => {
+    await requestStemSeparationForClip('c1')
+    toggleStemSelection('vocals')
+    toggleStemDereverb()
+    setStemDereverbStrength('strong')
+    await confirmStemSelection()
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ dereverb: true, dereverbStrength: 'strong' })
+    )
+  })
+
+  it('omits dereverb when vocals are not being extracted', async () => {
+    await requestStemSeparationForClip('c1')
+    toggleStemSelection('drums') // extract drums only
+    toggleStemDereverb() // reverb removal ticked, but no vocals stem
+    await confirmStemSelection()
+    const payload = sendMock.mock.calls.find((c) => c[0] === 'STEM_SEPARATE')?.[1] as
+      | Record<string, unknown>
+      | undefined
+    expect(payload).toBeDefined()
+    expect(payload).not.toHaveProperty('dereverb')
+  })
+
+  it('carries the dereverb choice through a model download to dispatch', async () => {
+    // Packs missing → the download dialog opens first; the picker (where vocals +
+    // dereverb are ticked) opens only after the download, then dispatch must still send it.
+    packsMissing(800, 400)
+    packsInstallOnEnsure()
+
+    await requestStemSeparationForClip('c1')
+    await confirmModelDownload()
+    toggleStemSelection('vocals')
+    toggleStemDereverb()
+    await confirmStemSelection()
+
+    expect(sendMock).toHaveBeenCalledWith(
+      'STEM_SEPARATE',
+      expect.objectContaining({ dereverb: true })
+    )
   })
 })
 
@@ -364,6 +432,18 @@ describe('stemSeparationFlow', () => {
     expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
     // The default path uses the RoFormer packs, not the htdemucs backup.
     expect(api.ensureStemModel).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch a second separation while one is already in progress', async () => {
+    await startClipSeparation()
+    expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
+    expect(sendMock.mock.calls.filter((c) => c[0] === 'STEM_SEPARATE')).toHaveLength(1)
+
+    // A second attempt while the job is still active must be ignored — otherwise it
+    // reaches the single-slot backend, which can only reject it with an error toast.
+    await startClipSeparation()
+
+    expect(sendMock.mock.calls.filter((c) => c[0] === 'STEM_SEPARATE')).toHaveLength(1)
   })
 
   it('shows the download dialog BEFORE the picker when the packs are absent', async () => {
@@ -400,6 +480,7 @@ describe('stemSeparationFlow', () => {
 
     await requestStemSeparationForClip('c1')
     await confirmModelDownload()
+    for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
     await confirmStemSelection()
 
     expect(api.ensureStemModel).not.toHaveBeenCalled()

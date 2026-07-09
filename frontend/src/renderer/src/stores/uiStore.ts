@@ -75,7 +75,7 @@ const DEFAULTS = {
   cleanupProjectFiles: false,
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'markers',
-  waveformDisplayMode: 'summary',
+  waveformDisplayMode: 'stereo',
   libraryPanelCollapsed: false
 } as const
 

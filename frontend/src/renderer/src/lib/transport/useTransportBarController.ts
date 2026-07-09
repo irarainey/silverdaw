@@ -220,11 +220,11 @@ export function useTransportBarController() {
     }
     else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      bumpBpm(e.shiftKey ? 10 : 1)
+      bumpBpm(e.altKey ? 0.01 : 1)
     }
     else if (e.key === 'ArrowDown') {
       e.preventDefault()
-      bumpBpm(e.shiftKey ? -10 : -1)
+      bumpBpm(e.altKey ? -0.01 : -1)
     }
   }
 

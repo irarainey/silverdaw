@@ -119,6 +119,7 @@ const {
         @open-context-menu="openItemContextMenu"
         @start-rename="startRename"
         @toggle-collapsed="library.setItemCollapsed"
+        @import="onImportClick"
       />
 
       <TrackFxPanel

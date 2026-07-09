@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.0.3
+    VERSION 1.1.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -437,6 +437,8 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
     src/dsp/VocalDebleeder.cpp
+    src/dsp/Dereverberator.cpp
+    src/dsp/VocalRestorer.cpp
     src/dsp/DrumEnhancer.cpp
     src/dsp/BassEnhancer.cpp
     src/dsp/OtherEnhancer.cpp
@@ -680,6 +682,8 @@ tests/MixdownRenderTests.cpp
         tests/BpmDetectorTests.cpp
         tests/VocalEnhancerTests.cpp
         tests/VocalDenoiserTests.cpp
+        tests/DereverberatorTests.cpp
+        tests/VocalRestorerTests.cpp
         tests/DrumEnhancerTests.cpp
         tests/BassEnhancerTests.cpp
         tests/OtherEnhancerTests.cpp

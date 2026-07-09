@@ -170,6 +170,11 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     {
         idPart = readOptionalString(payload, "markerId").value_or(juce::String{});
     }
+    else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
+    {
+        // Coalesce rapid grid nudges / BPM steps on one item into a single undo step.
+        idPart = readOptionalString(payload, "itemId").value_or(juce::String{});
+    }
     else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME" ||
              type == "PROJECT_SET_BAR_COUNTER_START" || type == "PROJECT_SET_MIXDOWN_START_BAR")
     {
@@ -246,6 +251,57 @@ void endUndoGroup() noexcept
     }
 }
 
+namespace
+{
+// Apply an already-performed undo/redo to the engine and broadcast the result. Uses the
+// incremental clip-only fast path when the change set supports it (single-transaction, non-
+// structural clip edits), falling back to the full teardown + `rebuildEngineFromProject` for
+// structural / track / project-level changes. `preIds` is the engine's clip set captured BEFORE
+// the tree was reverted (so the fallback removes exactly what is attached).
+void applyUndoRedoToEngine(const char* label, silverdaw::AudioEngine& engine,
+                           silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
+                           silverdaw::ProjectSession& session, juce::ThreadPool& peakPool,
+                           const silverdaw::DecodedCache& decodedCache,
+                           const juce::StringArray& preIds, double tStart, double tStateChange)
+{
+    const auto& changes = projectState.lastUndoChangeSet();
+    bool incremental = !changes.needsFullRebuild && changes.clipIds.size() > 0;
+    if (incremental)
+        incremental = silverdaw::applyUndoClipChangesIncremental(engine, projectState, changes.clipIds);
+
+    if (!incremental)
+    {
+        // Full rebuild fallback: drop every attached clip and re-add from project state. This is
+        // the O(clips) path (a reader re-open per clip); the fast path above avoids it entirely.
+        const double playheadMs = engine.getPositionMs();
+        engine.stop();
+        for (const auto& id : preIds) engine.removeClip(id);
+        silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
+        engine.setPositionMs(playheadMs);
+    }
+    const double tApply = juce::Time::getMillisecondCounterHiRes();
+
+    bridge.broadcast("PROJECT_STATE", silverdaw::buildSoftReplaceProjectStateEnvelope(session, projectState));
+
+    // Dirty listener only fires on transitions; force current state after undo/redo.
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty("dirty", projectState.isDirty());
+        bridge.broadcast("PROJECT_DIRTY", juce::var(p));
+    }
+    const double tEnd = juce::Time::getMillisecondCounterHiRes();
+
+    silverdaw::log::info(
+        "project",
+        juce::String(label) + " ok path=" + (incremental ? "incremental" : "rebuild") +
+            " clips=" + juce::String(preIds.size()) +
+            " revert=" + juce::String(tStateChange - tStart, 1) +
+            "ms apply=" + juce::String(tApply - tStateChange, 1) +
+            "ms broadcast=" + juce::String(tEnd - tApply, 1) +
+            "ms total=" + juce::String(tEnd - tStart, 1) + "ms");
+}
+} // namespace
+
 void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                     silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session,
                     juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
@@ -260,26 +316,15 @@ void handleEditUndo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& pro
         return;
     }
 
-    // Preserve playhead across rebuild's `engine.stop()`.
-    const double playheadMs = engine.getPositionMs();
+    // Capture the engine's current clip set BEFORE reverting the tree (the fallback removes these).
     const auto preIds = silverdaw::collectClipIds(projectState);
 
-    engine.stop();
-    um.undo();
-    for (const auto& id : preIds) engine.removeClip(id);
-    silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
-    engine.setPositionMs(playheadMs);
+    const double tStart = juce::Time::getMillisecondCounterHiRes();
+    projectState.performUndo();
+    const double tStateChange = juce::Time::getMillisecondCounterHiRes();
 
-    bridge.broadcast("PROJECT_STATE", silverdaw::buildSoftReplaceProjectStateEnvelope(session, projectState));
-
-    // Dirty listener only fires on transitions; force current state after undo.
-    {
-        auto* p = new juce::DynamicObject();
-        p->setProperty("dirty", projectState.isDirty());
-        bridge.broadcast("PROJECT_DIRTY", juce::var(p));
-    }
-
-    silverdaw::log::info("project", "EDIT_UNDO ok");
+    applyUndoRedoToEngine("EDIT_UNDO", engine, projectState, bridge, session, peakPool, decodedCache,
+                          preIds, tStart, tStateChange);
 }
 
 void handleEditRedo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
@@ -295,23 +340,14 @@ void handleEditRedo(silverdaw::AudioEngine& engine, silverdaw::ProjectState& pro
         return;
     }
 
-    const double playheadMs = engine.getPositionMs();
     const auto preIds = silverdaw::collectClipIds(projectState);
 
-    engine.stop();
-    um.redo();
-    for (const auto& id : preIds) engine.removeClip(id);
-    silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
-    engine.setPositionMs(playheadMs);
+    const double tStart = juce::Time::getMillisecondCounterHiRes();
+    projectState.performRedo();
+    const double tStateChange = juce::Time::getMillisecondCounterHiRes();
 
-    bridge.broadcast("PROJECT_STATE", silverdaw::buildSoftReplaceProjectStateEnvelope(session, projectState));
-    {
-        auto* p = new juce::DynamicObject();
-        p->setProperty("dirty", projectState.isDirty());
-        bridge.broadcast("PROJECT_DIRTY", juce::var(p));
-    }
-
-    silverdaw::log::info("project", "EDIT_REDO ok");
+    applyUndoRedoToEngine("EDIT_REDO", engine, projectState, bridge, session, peakPool, decodedCache,
+                          preIds, tStart, tStateChange);
 }
 
 } // namespace silverdaw

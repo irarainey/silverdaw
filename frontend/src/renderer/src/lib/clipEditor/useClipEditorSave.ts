@@ -39,6 +39,13 @@ export interface ClipEditorSaveDeps {
   editsLibraryClipLibrary: () => boolean
   editsTimelineClip: () => boolean
   hasWarpPitchChanged: () => boolean
+  /** True when the beat grid (manual BPM / anchor) was changed this session. */
+  gridChanged: () => boolean
+  /** Persist the session's final beat grid as one undoable edit (draft-then-commit).
+   *  Called inside the Save undo group so the grid change folds into the one Save step. */
+  commitGrid: () => void
+  /** The "align clips to grid on analysis" preference. */
+  alignToGridEnabled: () => boolean
   sourceBpm: () => number | undefined
   projectBpm: () => number
 
@@ -127,6 +134,20 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     return null
   }
 
+  /** After a Clip Editor save, snap the edited timeline clip to the bar grid when the
+   *  beat grid was changed this session and the align preference is on — but only if it
+   *  has room. A clip boxed in by neighbours is left where it is and the user is told to
+   *  move it manually. Runs inside the save's undo group so the move folds into the one
+   *  Save step; nothing happens while the grid is merely being dragged. */
+  function alignEditedClipToGridOnSave(clip: Clip): void {
+    if (!deps.gridChanged() || !deps.alignToGridEnabled()) return
+    if (deps.project.alignClipToBarGrid(clip.id) === 'blocked') {
+      deps.notifications.pushInfo(
+        `Couldn't align "${deps.titleText()}" to the bar grid — other clips are in the way. Move it manually.`
+      )
+    }
+  }
+
   function onSaveChanges(): void {
     const entry = deps.editorItem()
     if (!entry) return
@@ -145,6 +166,10 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
       }
       // Save commits the whole draft as ONE undo step.
       runInUndoGroup('Save clip changes', () => {
+        // The beat grid was edited locally during the session; persist its final
+        // position here so it folds into the single Save transaction alongside any
+        // on-Save re-align below.
+        deps.commitGrid()
         deps.project.trimClip(clip.id, clip.startMs, targetIn, targetDur)
         // Only re-apply warp when the user actually changed it. `libraryClipWarpPatch`
         // reconstructs the patch from the draft, which is lossy for follow-project
@@ -166,8 +191,8 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         // clip, so it is set directly (the linked branch below propagates).
         deps.project.setClipBrake(clip.id, deps.brakeCommitted())
         deps.project.setClipBackspin(clip.id, deps.backspinCommitted())
+        alignEditedClipToGridOnSave(clip)
       })
-      deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
       return
     }
@@ -175,6 +200,8 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     // Persist the saved-clip edit and its envelope/reverse propagation as ONE undo step; the
     // nested groups inside the library actions fold into this outer transaction.
     const result = runInUndoGroup('Save clip changes', () => {
+      // Persist the session's beat-grid draft as part of the one Save transaction.
+      deps.commitGrid()
       const editResult = deps.library.updateLibraryClipEdit(entry.id, {
         inMs: targetIn,
         durationMs: targetDur,
@@ -190,11 +217,12 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         // Brake/backspin propagate across every linked instance too (like reverse).
         deps.library.updateLibraryClipBrake(entry.id, deps.brakeCommitted())
         deps.library.updateLibraryClipBackspin(entry.id, deps.backspinCommitted())
+        const linked = deps.timelineClip()
+        if (linked) alignEditedClipToGridOnSave(linked)
       }
       return editResult
     })
     if (result.ok) {
-      deps.notifications.pushInfo(`Saved changes for "${deps.titleText()}".`)
       deps.close()
     } else if (result.conflictingTrackNames && result.conflictingTrackNames.length > 0) {
       deps.notifications.pushError(
@@ -208,11 +236,16 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
   function onSaveAsNew(): void {
     const src = deps.sourceItem()
     if (!src) return
-    const id = deps.library.addLibraryClipFromSelection(
-      src.id,
-      deps.selectionInMs(),
-      deps.selectionDurationMs()
-    )
+    // Persist any beat-grid draft and the new-clip add as ONE undo step, so a grid
+    // edit made this session isn't dropped when the user saves as new.
+    const id = runInUndoGroup('Save clip as new', () => {
+      deps.commitGrid()
+      return deps.library.addLibraryClipFromSelection(
+        src.id,
+        deps.selectionInMs(),
+        deps.selectionDurationMs()
+      )
+    })
     if (id) {
       deps.notifications.pushInfo(`Saved selection as new clip.`)
       deps.close()

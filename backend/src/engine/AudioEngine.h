@@ -123,6 +123,12 @@ class AudioEngine
     void setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
                             const juce::Array<juce::var>& points);
 
+    // Drop every automation lane on `trackId`, snapping each automated parameter back to its
+    // neutral default. Used when rebuilding the engine from project state so a lane removed by
+    // undo/redo can't leave its last automated value stuck live in the chain. No-op when the
+    // track has no automation.
+    void clearAllTrackAutomation(const juce::String& trackId);
+
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
 
     // Delay time is staged while playing; feedback, tone, and mix apply live.
@@ -273,6 +279,8 @@ class AudioEngine
         juce::String currentDeviceName;
         double currentSampleRate = 0.0;
         int currentBufferSize = 0;
+        int currentOutputChannels = 0;
+        int currentBitDepth = 0;
         double outputLatencyMs = 0.0;
         double heuristicExtraLatencyMs = 0.0;
         bool fellBackToDefault = false;
@@ -316,6 +324,10 @@ class AudioEngine
         std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
         std::unique_ptr<juce::AudioTransportSource> transportSource;
         std::unique_ptr<WarpProcessor> warp;
+        // Current Rubber Band time-stretch mode for `warp`. Lets setClipWarp skip rebuilding the
+        // stretcher (a heavy alloc + history reset) when only the ratio/pitch changed or the same
+        // state is re-applied (e.g. replaying effects on an incremental undo). Empty when no warp.
+        juce::String warpMode;
         std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
         std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
         // Retire replaced snapshots/processors until the audio thread is quiescent.

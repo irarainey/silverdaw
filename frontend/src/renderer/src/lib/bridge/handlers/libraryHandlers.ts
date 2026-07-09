@@ -29,7 +29,10 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
       payload.beats,
       payload.variableTempo,
       payload.playbackFilePath,
-      payload.lowConfidence
+      payload.lowConfidence,
+      // A manual tempo echo must not reflow placed clips — that happens on Clip
+      // Editor Save. Automatic detection (import) has no `manual` flag and aligns.
+      /*align=*/ payload.manual !== true
     )
     log.info(
       'bridge',

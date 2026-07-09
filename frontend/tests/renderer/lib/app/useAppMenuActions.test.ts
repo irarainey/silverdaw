@@ -17,12 +17,17 @@ vi.mock('@/lib/timeline/zoomPresets', () => ({
   isZoomPresetAction: (a: string) => a.startsWith('view.zoomPreset:'),
   parseZoomPresetAction: (a: string) => Number.parseInt(a.split(':')[1] ?? '', 10) || null
 }))
+const openAndImportAudioFilesIntoLibrary = vi.fn()
+vi.mock('@/lib/importAudio', () => ({
+  openAndImportAudioFilesIntoLibrary: (...args: unknown[]) => openAndImportAudioFilesIntoLibrary(...args)
+}))
 
 const menuAction = vi.fn()
 const clearRecentProjects = vi.fn()
 const chooseProjectOpen = vi.fn()
 const chooseProjectSaveAs = vi.fn()
 const prepareProjectOpen = vi.fn()
+const sendDiagnostics = vi.fn(() => Promise.resolve(true))
 
 function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}): {
   deps: AppMenuActionsDeps
@@ -39,6 +44,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     preferencesOpen: ReturnType<typeof ref<boolean>>
     projectPropertiesOpen: ReturnType<typeof ref<boolean>>
     exportMixdownOpen: ReturnType<typeof ref<boolean>>
+    diagnosticsBusy: ReturnType<typeof ref<boolean>>
   }
   guard: ReturnType<typeof vi.fn>
   openRecentPath: ReturnType<typeof vi.fn>
@@ -48,6 +54,9 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
       currentFilePath: null as string | null,
       projectName: 'Untitled',
       selectedClipId: null as string | null,
+      selectedClipIds: new Set<string>(),
+      deleteSelectedClips: vi.fn(),
+      duplicateSelectedClips: vi.fn(),
       selectedTrackId: null as string | null,
       durationMs: 10_000,
       clips: {} as Record<string, unknown>,
@@ -69,7 +78,8 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     transport: { bridgeReady: overrides.bridgeReady ?? true, positionMs: 0 },
     ui: {
       requestTimelineZoom: vi.fn(),
-      requestTimelineZoomTo: vi.fn()
+      requestTimelineZoomTo: vi.fn(),
+      toggleLibraryPanelCollapsed: vi.fn()
     },
     library: { byId: {} as Record<string, unknown> },
     notifications: { pushError: vi.fn(), pushInfo: vi.fn() },
@@ -83,7 +93,8 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     aboutOpen: ref(false),
     preferencesOpen: ref(false),
     projectPropertiesOpen: ref(false),
-    exportMixdownOpen: ref(false)
+    exportMixdownOpen: ref(false),
+    diagnosticsBusy: ref(false)
   }
   const guard = vi.fn((proceed: () => void) => proceed())
   const openRecentPath = vi.fn()
@@ -99,6 +110,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     preferencesOpen: refs.preferencesOpen,
     projectPropertiesOpen: refs.projectPropertiesOpen,
     exportMixdownOpen: refs.exportMixdownOpen,
+    diagnosticsBusy: refs.diagnosticsBusy,
     guardAgainstUnsavedChanges: guard,
     isModalOpen: () => overrides.modalOpen === true,
     openRecentPath
@@ -114,6 +126,7 @@ beforeEach(() => {
   chooseProjectSaveAs.mockReset()
   prepareProjectOpen.mockReset()
   clearRecentProjects.mockClear()
+  sendDiagnostics.mockClear()
   ;(globalThis as unknown as { window: unknown }).window = {
     silverdaw: {
       menuAction,
@@ -121,6 +134,7 @@ beforeEach(() => {
       chooseProjectOpen,
       chooseProjectSaveAs,
       prepareProjectOpen,
+      sendDiagnostics,
       refreshRecentProjects: vi.fn()
     }
   }
@@ -139,6 +153,26 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('edit.preferences')
     expect(h.refs.preferencesOpen.value).toBe(true)
+  })
+
+  it('sends diagnostics and toggles the busy spinner, even before the bridge is ready', async () => {
+    const h = makeDeps({ bridgeReady: false })
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('help.sendDiagnostics')
+    expect(sendDiagnostics).toHaveBeenCalledTimes(1)
+    expect(h.refs.diagnosticsBusy.value).toBe(true)
+    // Let the resolved promise's finally() clear the spinner.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.refs.diagnosticsBusy.value).toBe(false)
+  })
+
+  it('ignores a second diagnostics request while one is already running', () => {
+    const h = makeDeps({ bridgeReady: true })
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('help.sendDiagnostics')
+    handleMenuAction('help.sendDiagnostics')
+    expect(sendDiagnostics).toHaveBeenCalledTimes(1)
   })
 
   it('routes file.exit through the unsaved-changes guard when the bridge is ready', () => {
@@ -187,6 +221,14 @@ describe('useAppMenuActions — handleMenuAction', () => {
     expect(h.stores.project.addTrack).toHaveBeenCalledTimes(1)
   })
 
+  it('importToLibrary opens the audio import flow', () => {
+    openAndImportAudioFilesIntoLibrary.mockClear()
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('file.importToLibrary')
+    expect(openAndImportAudioFilesIntoLibrary).toHaveBeenCalledTimes(1)
+  })
+
   it('view.zoomIn is suppressed behind a modal', () => {
     const h = makeDeps({ modalOpen: true })
     const { handleMenuAction } = useAppMenuActions(h.deps)
@@ -206,6 +248,13 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('view.zoomPreset:200')
     expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(200)
+  })
+
+  it('view.toggleLibraryPanel toggles the library/FX panel', () => {
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('view.toggleLibraryPanel')
+    expect(h.stores.ui.toggleLibraryPanelCollapsed).toHaveBeenCalledTimes(1)
   })
 
   it('file.exportMixdown opens the export dialog', () => {

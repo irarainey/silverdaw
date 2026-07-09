@@ -27,6 +27,8 @@ interface FakeStores {
   project: {
     durationMs: number
     selectedClipId: string | null
+    selectedClipIds: Set<string>
+    setSelectedClipsLocked: ReturnType<typeof vi.fn>
     selectedTrackId: string | null
     metronomeEnabled: boolean
     clips: Record<string, { locked: boolean; startMs: number }>
@@ -38,12 +40,14 @@ interface FakeStores {
     moveClip: ReturnType<typeof vi.fn>
     selectClip: ReturnType<typeof vi.fn>
     selectTrack: ReturnType<typeof vi.fn>
+    clearClipSelection: ReturnType<typeof vi.fn>
     setMetronomeEnabled: ReturnType<typeof vi.fn>
     toggleMute: ReturnType<typeof vi.fn>
     toggleSolo: ReturnType<typeof vi.fn>
   }
   ui: {
     requestTimelineZoom: ReturnType<typeof vi.fn>
+    requestTimelineZoomTo: ReturnType<typeof vi.fn>
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
     selectedAutomationPoint: unknown
@@ -73,6 +77,8 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     project: {
       durationMs: 10_000,
       selectedClipId: null,
+      selectedClipIds: new Set<string>(),
+      setSelectedClipsLocked: vi.fn(),
       selectedTrackId: null,
       metronomeEnabled: false,
       clips: {},
@@ -84,12 +90,14 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       moveClip: vi.fn(),
       selectClip: vi.fn(),
       selectTrack: vi.fn(),
+      clearClipSelection: vi.fn(),
       setMetronomeEnabled: vi.fn(),
       toggleMute: vi.fn(),
       toggleSolo: vi.fn()
     },
     ui: {
       requestTimelineZoom: vi.fn(),
+      requestTimelineZoomTo: vi.fn(),
       requestTimelineScroll: vi.fn(),
       requestTimelineScrollToPosition: vi.fn(),
       selectedAutomationPoint: null,
@@ -244,20 +252,73 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(h.stores.ui.requestTimelineZoom).toHaveBeenCalledWith('reset')
   })
 
-  it('Escape clears the clip, track, and automation selection', () => {
-    h.stores.project.selectedClipId = 'c1'
-    h.stores.project.selectedTrackId = 't1'
-    const { e } = makeKey({ key: 'Escape' })
+  it('Ctrl+1 zooms to 100% (100 px/s)', () => {
+    const { e } = makeKey({ code: 'Digit1', key: '1', ctrlKey: true })
     kb.onGlobalShortcutKey(e)
-    expect(h.stores.project.selectClip).toHaveBeenCalledWith(null)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(100)
+  })
+
+  it('Ctrl+8 zooms to 800% (800 px/s)', () => {
+    const { e } = makeKey({ code: 'Digit8', key: '8', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(800)
+  })
+
+  it('Ctrl+Numpad3 zooms to 300% (300 px/s)', () => {
+    const { e } = makeKey({ code: 'Numpad3', key: '3', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).toHaveBeenCalledWith(300)
+  })
+
+  it('Ctrl+9 is not a zoom shortcut', () => {
+    const { e } = makeKey({ code: 'Digit9', key: '9', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+Shift+1 does not zoom (plain Ctrl+N only)', () => {
+    const { e } = makeKey({ code: 'Digit1', key: '1', ctrlKey: true, shiftKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineZoomTo).not.toHaveBeenCalled()
+  })
+
+  it('Escape clears only the track when just a track is selected', () => {
+    h.stores.project.selectedTrackId = 't1'
+    kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
     expect(h.stores.project.selectTrack).toHaveBeenCalledWith(null)
+    expect(h.stores.project.clearClipSelection).not.toHaveBeenCalled()
+  })
+
+  it('Escape steps: first clears clip(s) keeping the track, then clears the track', () => {
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.selectedClipIds = new Set(['c1'])
+    h.stores.project.selectedTrackId = 't1'
+
+    // First hit clears the clip selection but leaves the track selected.
+    kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
+    expect(h.stores.project.clearClipSelection).toHaveBeenCalledTimes(1)
+    expect(h.stores.project.selectTrack).not.toHaveBeenCalled()
+
+    // Simulate the store clearing the clip selection, then hit Escape again.
+    h.stores.project.selectedClipId = null
+    h.stores.project.selectedClipIds = new Set()
+    kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
+    expect(h.stores.project.selectTrack).toHaveBeenCalledWith(null)
+  })
+
+  it('Escape first clears an automation point, keeping the track', () => {
+    h.stores.ui.selectedAutomationPoint = { pointId: 'p1' }
+    h.stores.project.selectedTrackId = 't1'
+    kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
     expect(h.stores.ui.setSelectedAutomationPoint).toHaveBeenCalledWith(null)
+    expect(h.stores.project.selectTrack).not.toHaveBeenCalled()
   })
 
   it('Escape is a no-op when nothing is selected', () => {
     const { e } = makeKey({ key: 'Escape' })
     kb.onGlobalShortcutKey(e)
-    expect(h.stores.project.selectClip).not.toHaveBeenCalled()
+    expect(h.stores.project.clearClipSelection).not.toHaveBeenCalled()
+    expect(h.stores.project.selectTrack).not.toHaveBeenCalled()
   })
 
   it('K toggles the project metronome', () => {

@@ -32,8 +32,15 @@ function installGlobalErrorLogging(): void {
 // calls would slip through as no-ops on disabled sessions but still
 // hit the IPC layer on enabled ones).
 async function bootstrap(): Promise<void> {
-  // Wire the static splash's close button (declared in `index.html`) to the same quit
-  // path as the title-bar ×, so a user can bail out during the brief pre-mount window.
+  // Wire the static splash's window controls (declared in `index.html`) to the same
+  // paths as the title-bar buttons, so a user can minimise, maximise, or quit during
+  // the brief pre-mount window.
+  document
+    .getElementById('splash-minimize')
+    ?.addEventListener('click', () => window.silverdaw.minimizeWindow())
+  document
+    .getElementById('splash-maximize')
+    ?.addEventListener('click', () => window.silverdaw.toggleMaximizeWindow())
   document
     .getElementById('splash-close')
     ?.addEventListener('click', () => window.silverdaw.closeWindow())

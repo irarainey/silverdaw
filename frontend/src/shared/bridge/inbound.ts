@@ -514,7 +514,11 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   playbackFilePath: z.string().optional(),
   /** Tempo detection was aborted by the analysis timeout; the grid is empty and
    *  the user is prompted to reanalyse manually. */
-  timedOut: z.boolean().optional()
+  timedOut: z.boolean().optional(),
+  /** Set when this analysis is a user-driven manual tempo (not automatic detection),
+   *  so the renderer skips auto-aligning placed clips on this echo — manual grid
+   *  edits re-align only on Clip Editor Save. */
+  manual: z.boolean().optional()
 })
 export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPayloadSchema>
 
@@ -739,6 +743,34 @@ export const StemFailedPayloadSchema = z.object({
 })
 export type StemFailedPayload = z.infer<typeof StemFailedPayloadSchema>
 
+// ─── Split stereo channels ──────────────────────────────────────────────────
+
+/** One exported channel written to disk (a stereo WAV carrying only that channel). */
+export const ChannelSplitFileSchema = z.object({
+  channel: z.enum(['left', 'right']),
+  filePath: z.string().min(1)
+})
+export type ChannelSplitFile = z.infer<typeof ChannelSplitFileSchema>
+
+/** Channel-split success; `channels` are absolute paths the renderer imports as new
+ *  stem library items and drops on new tracks (one track per channel). */
+export const ChannelSplitReadyPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  clipId: z.string().min(1).optional(),
+  sourceName: z.string(),
+  channels: z.array(ChannelSplitFileSchema)
+})
+export type ChannelSplitReadyPayload = z.infer<typeof ChannelSplitReadyPayloadSchema>
+
+/** Channel-split failure; surfaced to the user unless the job was abandoned. */
+export const ChannelSplitFailedPayloadSchema = z.object({
+  jobId: z.string().min(1),
+  clipId: z.string().min(1).optional(),
+  code: z.enum(['io', 'decode', 'invalid']),
+  error: z.string()
+})
+export type ChannelSplitFailedPayload = z.infer<typeof ChannelSplitFailedPayloadSchema>
+
 export interface BridgeInboundMap {
   READY: ReadyPayload
   PROJECT_STATE: ProjectStatePayload
@@ -785,6 +817,8 @@ export interface BridgeInboundMap {
   STEM_PARTIAL: StemPartialPayload
   STEM_READY: StemReadyPayload
   STEM_FAILED: StemFailedPayload
+  CHANNEL_SPLIT_READY: ChannelSplitReadyPayload
+  CHANNEL_SPLIT_FAILED: ChannelSplitFailedPayload
   MASTER_LEVEL: MasterLevelPayload
   TRACK_LEVELS: TrackLevelsPayload
   PONG: PongPayload
@@ -847,6 +881,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'STEM_PARTIAL',
   'STEM_READY',
   'STEM_FAILED',
+  'CHANNEL_SPLIT_READY',
+  'CHANNEL_SPLIT_FAILED',
   'MASTER_LEVEL',
   'TRACK_LEVELS',
   'PONG',
@@ -1045,6 +1081,14 @@ export function isStemReadyPayload(value: unknown): value is StemReadyPayload {
 
 export function isStemFailedPayload(value: unknown): value is StemFailedPayload {
   return StemFailedPayloadSchema.safeParse(value).success
+}
+
+export function isChannelSplitReadyPayload(value: unknown): value is ChannelSplitReadyPayload {
+  return ChannelSplitReadyPayloadSchema.safeParse(value).success
+}
+
+export function isChannelSplitFailedPayload(value: unknown): value is ChannelSplitFailedPayload {
+  return ChannelSplitFailedPayloadSchema.safeParse(value).success
 }
 
 export function isMasterLevelPayload(value: unknown): value is MasterLevelPayload {

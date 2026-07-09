@@ -235,6 +235,7 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
 
     const auto stemsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "stems");
     const auto samplesRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "samples");
+    const auto channelsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "channels");
 
     // Group the requested deletions by their per-source folder (a direct child of a root),
     // WITHOUT deleting yet — so the folder's file count is read before any file goes into
@@ -248,7 +249,7 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
         if (path.isEmpty() || ! juce::File::isAbsolutePath(path)) continue;
 
         const juce::File file(path);
-        if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot))
+        if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot) && ! file.isAChildOf(channelsRoot))
         {
             silverdaw::log::warn("bridge",
                                  "LIBRARY_DELETE_ARTIFACTS refusing path outside artifact roots: " + path);
@@ -258,7 +259,8 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
         engine.releaseReadersForFile(file);
 
         const auto folder = file.getParentDirectory();
-        if (folder.getParentDirectory() == stemsRoot || folder.getParentDirectory() == samplesRoot)
+        if (folder.getParentDirectory() == stemsRoot || folder.getParentDirectory() == samplesRoot
+            || folder.getParentDirectory() == channelsRoot)
         {
             requestedByFolder[folder.getFullPathName()].add(file.getFileName());
         }

@@ -50,6 +50,8 @@ export type ProjectClipThis = ProjectState & {
 
   copySelectedClip(): boolean
 
+  copySelectedClips(): boolean
+
   createTransition(
     trackId: string,
     leftClipId: string,
@@ -87,5 +89,10 @@ export type ProjectClipThis = ProjectState & {
 
   splitClipAt(clipId: string, atMs: number): string | null
 
-  wouldClipOverlap(trackId: string, startMs: number, durationMs: number): boolean
+  wouldClipOverlap(
+    trackId: string,
+    startMs: number,
+    durationMs: number,
+    excludeClipId?: string
+  ): boolean
 }

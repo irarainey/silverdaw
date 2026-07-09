@@ -25,7 +25,7 @@ import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
 import { sanitiseStemModelDir, getManagedModelsRoot } from '../preferences'
 import type { PrefsService } from '../prefsService'
-import { registerStemsWriteRoot, registerSamplesWriteRoot, registerProjectMediaRoots } from '../audioPaths'
+import { registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerProjectMediaRoots } from '../audioPaths'
 
 export interface StemHandlersContext {
   getMainWindow(): BrowserWindow | null
@@ -76,6 +76,9 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   // backend then migrates them beside the project file). Saved-project samples dirs
   // are registered separately in projectHandlers.
   registerSamplesWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'samples'))
+  // Split-out stereo channels are likewise written to the temp workspace while
+  // unsaved; trust it for renderer reads (backend migrates them on save).
+  registerChannelsWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'channels'))
   // Central per-source metadata/cover store while unsaved (migrated beside the project on save).
   registerProjectMediaRoots(join(app.getPath('temp'), 'Silverdaw'))
   // The backend separator is single-slot, so at most one download is in flight.

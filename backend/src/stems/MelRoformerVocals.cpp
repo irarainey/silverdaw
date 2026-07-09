@@ -121,8 +121,13 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
     std::vector<float> masks(static_cast<size_t>(Spec::kTensorFloats));
     std::vector<float> chunk(static_cast<size_t>(Spec::kChunkFloats));
     std::vector<float> sep(static_cast<size_t>(Spec::kChunkFloats));
-    std::vector<double> target(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0);
-    std::vector<double> counter(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0);
+    // Overlap-add accumulators. `float` is ample here: each output sample is a weighted
+    // sum of only a handful of overlapping chunks (not a long cumulative sum), so float's
+    // precision is far below the audible/output resolution — and it halves the largest
+    // per-run allocation on long songs. `counter` is channel-independent (the recombination
+    // window is the same for every channel), so a single mono weight track suffices.
+    std::vector<float> target(static_cast<size_t>(Spec::kChannels) * numSamples, 0.0f);
+    std::vector<float> counter(static_cast<size_t>(numSamples), 0.0f);
 
     // Hamming chunk-recombination window (reference host uses Hamming here, Hann
     // for the inner STFT overlap-add — both reproduced exactly).
@@ -183,14 +188,14 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
         for (int ch = 0; ch < Spec::kChannels; ++ch)
         {
             const float* s = sep.data() + static_cast<size_t>(ch) * Spec::kChunkSamples;
-            double* t = target.data() + static_cast<size_t>(ch) * numSamples + cstart;
-            double* c = counter.data() + static_cast<size_t>(ch) * numSamples + cstart;
+            float* t = target.data() + static_cast<size_t>(ch) * numSamples + cstart;
             for (int i = 0; i < clen; ++i)
-            {
-                const float w = hwin[static_cast<size_t>(i)];
-                t[i] += static_cast<double>(s[i]) * w;
-                c[i] += w;
-            }
+                t[i] += s[i] * hwin[static_cast<size_t>(i)];
+        }
+        // Channel-independent recombination weight — accumulate once (mono).
+        {
+            float* c = counter.data() + cstart;
+            for (int i = 0; i < clen; ++i) c[i] += hwin[static_cast<size_t>(i)];
         }
 
         ++stepIndex;
@@ -203,10 +208,9 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
     for (int ch = 0; ch < Spec::kChannels; ++ch)
     {
         float* out = vocals.getWritePointer(ch);
-        const double* t = target.data() + static_cast<size_t>(ch) * numSamples;
-        const double* c = counter.data() + static_cast<size_t>(ch) * numSamples;
+        const float* t = target.data() + static_cast<size_t>(ch) * numSamples;
         for (int i = 0; i < numSamples; ++i)
-            out[i] = static_cast<float>(t[i] / std::max(c[i], 1.0e-10)) * inv;
+            out[i] = (t[i] / std::max(counter[static_cast<size_t>(i)], 1.0e-10f)) * inv;
     }
     if (onProgress) onProgress(1.0);
     return vocals;

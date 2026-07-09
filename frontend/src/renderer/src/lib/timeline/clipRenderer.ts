@@ -325,7 +325,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     const borderAlpha = clip.unresolved ? 0.85 : 0.9
 
     // Selected clips use a thicker palette border without masking unresolved red.
-    const isSelected = project.selectedClipId === clip.id
+    const isSelected = project.isClipSelected(clip.id)
     const borderWidth = isSelected ? 3 : 1
     const effectiveBorderAlpha = isSelected ? 1.0 : borderAlpha
 

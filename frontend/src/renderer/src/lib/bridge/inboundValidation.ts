@@ -24,6 +24,8 @@ import {
   isStemPartialPayload,
   isStemReadyPayload,
   isStemFailedPayload,
+  isChannelSplitReadyPayload,
+  isChannelSplitFailedPayload,
   isLibraryItemAnalysisPayload,
   isMasterLevelPayload,
   isTrackLevelsPayload,
@@ -161,6 +163,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isStemReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'STEM_FAILED':
       return isStemFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CHANNEL_SPLIT_READY':
+      return isChannelSplitReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'CHANNEL_SPLIT_FAILED':
+      return isChannelSplitFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MASTER_LEVEL':
       return isMasterLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELS':
