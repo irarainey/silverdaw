@@ -19,6 +19,7 @@
 
 ### Changed
 
+- Help ▸ **Give Feedback** is renamed **Submit Feedback**.
 - The waveform display now defaults to **Left and right channels** (stacked stereo lanes) instead of a single summary waveform. Existing preferences are untouched; change it any time in Preferences ▸ General.
 - The Separate Stems dialog now opens with **no stems selected**, so you tick just the parts you want (Start stays disabled until at least one is chosen) instead of un-ticking from a full set.
 
@@ -35,7 +36,7 @@
 - Clicking the timeline on a marker moves the playhead there, and markers are now dragged with Shift held so a plain drag always moves the playhead.
 - Clicking the timeline no longer scrolls the view to the playhead, and dragging the playhead only scrolls at the view edges (follow-scroll is reserved for playback).
 - The startup screen and pre-mount splash now have minimise / maximise / close controls, a draggable top edge, and a flash-free hand-off to the loading screen.
-- Recent Projects entries on the startup screen are now clickable across the whole row, not just the text.
+- Recent Projects entries on the startup screen are now clickable across the whole row (not just the text), and clicking one immediately after launch reliably opens it instead of occasionally being ignored while the engine was still starting.
 
 ## 1.0.3
 

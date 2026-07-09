@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <regex>
 #include <sstream>
 
 namespace silverdaw::log
@@ -53,6 +54,19 @@ std::string currentIso8601Ms()
     return out.str();
 }
 
+// Strip the Windows account name out of any `C:\Users\<name>\…` path before it is
+// written, so the diagnostic logs never carry personally-identifiable information.
+// The logs are full of profile paths (projects, the decoded cache, AppData), each of
+// which embeds the username; this replaces just the owner segment with `<user>` while
+// keeping the rest of the path intact for debugging. Case-insensitive and slash-style
+// agnostic. Applied at the single sink so every log line is covered.
+std::string redactUserPaths(std::string s)
+{
+    static const std::regex re(R"(([A-Za-z]:[\\/]Users[\\/])[^\\/\r\n"']+)",
+                               std::regex::icase | std::regex::optimize);
+    return std::regex_replace(s, re, "$1<user>");
+}
+
 // Electron passes the log dir; standalone runs fall back under `.logs`.
 juce::File resolveLogDirectory(const juce::String& override)
 {
@@ -94,7 +108,7 @@ void initialise(const juce::String& logDirOverride, Level minLevel, bool truncat
     g_initialised = true;
     // Mark session boundaries in append-mode logs.
     g_file << currentIso8601Ms() << " INFO  [log] backend logger initialised; logDir="
-           << dir.getFullPathName().toStdString() << '\n';
+           << redactUserPaths(dir.getFullPathName().toStdString()) << '\n';
     g_file.flush();
 }
 
@@ -137,7 +151,7 @@ void write(Level level, const char* tag, const juce::String& message)
         return;
     }
     g_file << currentIso8601Ms() << ' ' << levelName(level) << " [" << (tag != nullptr ? tag : "?") << "] "
-           << message.toStdString() << '\n';
+           << redactUserPaths(message.toStdString()) << '\n';
     g_file.flush();
 }
 

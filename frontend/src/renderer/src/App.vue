@@ -60,6 +60,7 @@ const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const exportMixdownOpen = ref(false)
+const diagnosticsBusy = ref(false)
 const sampleRatePromptState = useSampleRateMismatchPromptState()
 const mixdownState = useMixdownState()
 // Recovery blocks startup until each autosave entry is resolved.
@@ -393,6 +394,7 @@ const { handleMenuAction } = useAppMenuActions({
   preferencesOpen,
   projectPropertiesOpen,
   exportMixdownOpen,
+  diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isShortcutModalOpen,
   openRecentPath
@@ -424,6 +426,25 @@ const { handleMenuAction } = useAppMenuActions({
       :open="aboutOpen"
       @close="aboutOpen = false"
     />
+
+    <!-- Wait spinner while the diagnostics bundle is zipped (Help ▸ Send Diagnostic Logs). -->
+    <div
+      v-if="diagnosticsBusy"
+      class="dialog-backdrop"
+      role="alertdialog"
+      aria-busy="true"
+      aria-label="Preparing diagnostic logs"
+    >
+      <div class="flex flex-col items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-8 py-6 shadow-2xl">
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"
+          aria-hidden="true"
+        />
+        <p class="text-sm text-zinc-200">
+          Preparing diagnostic logs…
+        </p>
+      </div>
+    </div>
 
     <PreferencesDialog
       :open="preferencesOpen"

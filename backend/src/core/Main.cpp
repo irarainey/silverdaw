@@ -209,11 +209,11 @@ int runBackend(int argc, char* argv[])
                              + cpuFlag(juce::SystemStats::hasAVX2(), "AVX2")
                              + cpuFlag(juce::SystemStats::hasAVX512F(), "AVX512F")
                              + cpuFlag(juce::SystemStats::hasFMA3(), "FMA3"));
-    // Machine identity — helps correlate multiple reports from the same box.
+    // Locale — useful for triaging text/encoding/number-format issues, and not
+    // personally identifiable (deliberately no computer/host name is logged, as that
+    // can carry the user's name).
     silverdaw::log::info("sys",
-                         "Machine '" + juce::SystemStats::getComputerName() + "' | "
-                             + juce::SystemStats::getOperatingSystemName()
-                             + " | " + juce::SystemStats::getUserLanguage() + "-"
+                         "Locale " + juce::SystemStats::getUserLanguage() + "-"
                              + juce::SystemStats::getUserRegion());
     // Free/total disk on the volumes that matter: the temp workspace (unsaved projects,
     // decoded-audio cache, in-flight stems/channels/samples) and the install volume. An

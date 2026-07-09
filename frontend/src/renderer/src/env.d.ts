@@ -68,6 +68,7 @@ declare global {
         node: string
       }>
       openExternal(url: string): void
+      sendDiagnostics(): Promise<boolean>
       setLastProjectPath(path: string, name: string): void
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>

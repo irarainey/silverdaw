@@ -30,6 +30,8 @@ export interface AppMenuActionsDeps {
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
+  /** True while the diagnostics bundle is being built — drives the wait spinner. */
+  diagnosticsBusy: Ref<boolean>
   guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
   // True when a modal/dialog owns the keyboard; suppresses menu-zoom.
   isModalOpen: () => boolean
@@ -52,6 +54,19 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'edit.preferences') {
       deps.preferencesOpen.value = true
+      return
+    }
+    // Diagnostics zips local log files — no backend needed, so it stays reachable even
+    // before PROJECT_STATE. Shows a wait spinner while the (short) zip runs.
+    if (action === 'help.sendDiagnostics') {
+      if (deps.diagnosticsBusy.value) return
+      deps.diagnosticsBusy.value = true
+      void window.silverdaw
+        .sendDiagnostics()
+        .catch((err) => log.warn('menu', `send diagnostics failed: ${String(err)}`))
+        .finally(() => {
+          deps.diagnosticsBusy.value = false
+        })
       return
     }
     // Quit/close must work even during a stuck startup.

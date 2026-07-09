@@ -112,6 +112,11 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'help.reportIssue':
       void shell.openExternal('https://silverdaw.featurebase.app')
       break
+    case 'help.sendDiagnostics':
+      // Forwarded to the renderer, which shows a wait spinner and invokes the
+      // app:sendDiagnostics IPC (the zip can take a moment).
+      wc.send(IPC.menu.action, action)
+      break
     case 'help.about':
       wc.send(IPC.menu.action, action)
       break

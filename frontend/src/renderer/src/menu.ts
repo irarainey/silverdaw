@@ -34,6 +34,10 @@ const SEP: MenuItemDef = { label: null }
 export interface BuildMenusOptions {
   /** Append the developer Debug menu. */
   devToolsEnabled: boolean
+  /** Startup diagnostic-logging state — enables Help ▸ Send Diagnostic Logs (there are
+   *  only logs to send when logging was on for this run). Optional so shortcut binding,
+   *  which never needs it, can omit it. */
+  loggingEnabled?: boolean
   /** Recent Projects MRU, head = most recent. */
   recentProjects?: RecentProject[]
   /** Gates File > Export Mixdown until there is audio to render. */
@@ -141,7 +145,12 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
       label: 'Help',
       items: [
         { label: 'Documentation', action: 'help.docs' },
-        { label: 'Give Feedback', action: 'help.reportIssue' },
+        { label: 'Submit Feedback', action: 'help.reportIssue' },
+        // Only present when diagnostic logging is on for this run — otherwise there is
+        // nothing to send. Zips the current run's logs and opens a support email draft.
+        ...(opts.loggingEnabled
+          ? [{ label: 'Send Diagnostic Logs…', action: 'help.sendDiagnostics' }]
+          : []),
         SEP,
         { label: 'About Silverdaw', action: 'help.about' }
       ]

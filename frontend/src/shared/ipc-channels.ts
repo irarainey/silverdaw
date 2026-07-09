@@ -21,7 +21,8 @@ export const IPC = {
   },
   app: {
     getInfo: 'app:getInfo',
-    openExternal: 'app:openExternal'
+    openExternal: 'app:openExternal',
+    sendDiagnostics: 'app:sendDiagnostics'
   },
   bridge: {
     getPort: 'bridge:getPort',
