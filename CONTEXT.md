@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-08 · Owner: @irarainey_
+_Last reviewed: 2026-07-09 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task

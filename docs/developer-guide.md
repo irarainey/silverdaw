@@ -1399,6 +1399,12 @@ runs on a background thread and never touches the audio callback; progress is
 reported via `STEM_PROGRESS`, each stem lands the instant its WAV is written
 (`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
 
+**The Separate Stems dialog** lets the user tick which of **vocals / drums / bass /
+other** to extract. It opens with **nothing ticked** (Start stays disabled until at
+least one stem is chosen), so a run processes only the parts the user picks rather
+than making them un-tick from a full set — and each un-picked stem proportionally
+shortens the run.
+
 **Optional vocal cleanup** (opt-in, vocals only) runs after separation and is
 **model-aware**. For an **htdemucs** vocal it runs the full chain: a cross-stem
 **de-bleed** (`VocalDebleeder`, a conservative STFT Wiener soft mask using
@@ -1924,7 +1930,13 @@ Persisted fields:
   separate from the always-on **startup diagnostics**
   (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`, see *Engine resilience and
   recovery ▸ Startup diagnostics*), which are written on every launch regardless
-  of this toggle but only cover startup.
+  of this toggle but only cover startup. All of these logs are privacy-scrubbed at
+  the point of writing: the Windows user-profile segment of any logged file path is
+  replaced with `<user>` and the computer name is never logged, so a shared log
+  carries nothing that identifies the user. When diagnostic logging is on, Help ▸
+  **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
+  the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
+  to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
 - **Show Developer Tools** — gates the visibility of the **Debug** menu and
   DevTools shortcuts independently of file logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
@@ -2083,6 +2095,11 @@ on the renderer side.
 The timeline accepts the following inputs. Modifiers behave **live** during drags — pressing
 or releasing the modifier between frames switches mode without restarting the drag.
 
+The full, version-matched shortcut reference is published online and opened from **Help ▸
+Keyboard Shortcuts**, which navigates to `https://docs.silverdaw.com/<app-version>/guide/shortcuts`
+(the path always carries the running app's `app.getVersion()`, so a release must have the
+matching versioned page live).
+
 | Input | Effect |
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
@@ -2122,7 +2139,7 @@ or releasing the modifier between frames switches mode without restarting the dr
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
 | `Escape` | Deselect the current clip / track (and any selected automation point). |
 | `K` | Toggle the project metronome. |
-| `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. |
+| `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |

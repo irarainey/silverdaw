@@ -2254,8 +2254,10 @@ robustness without changing the core editing model.
   store, composables, the bridge-protocol zod schemas, the dB taper helpers,
   the Clip Editor viewport/warp-draft/target composables, and the clip-lock
   store actions). The backend ships with its own custom test harness (no Catch2
-  dependency) wired into CTest as `SilverdawBackendTests` — **176 cases** at the
-  time of writing, the registry count being asserted by the harness itself. Each
+  dependency) wired into CTest as `SilverdawBackendTests`; the harness asserts its
+  own exact case count at build time, so the authoritative current total is the
+  `tests.size() == N` assertion in `backend/tests/BackendTests.cpp` rather than a
+  figure repeated here (which would drift). Each
   case is registered as its own CTest test (discovered at build time via the
   harness's `--list` / `--run` flags), so it appears individually in `ctest`
   output and the VS Code Testing panel. They
