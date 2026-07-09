@@ -15,6 +15,7 @@ import {
   SCROLLBAR_HEIGHT,
   SCROLLBAR_WIDTH
 } from './constants'
+import { edgeAutoScrollDelta } from './edgeAutoScroll'
 import { trackIndexAtWorldY, tracksContentHeight } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
@@ -40,6 +41,7 @@ export interface DropZoneOptions {
   app: Readonly<Ref<Application | null>>
   scrollX: Ref<number>
   scrollY: Ref<number>
+  maxScrollX: ComputedRef<number>
   showScrollbar: ComputedRef<boolean>
   geometry: GridGeometry
   /** Fires when the ghost preview changes so the host can repaint. */
@@ -52,12 +54,24 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   const library = useLibraryStore()
   const project = useProjectStore()
   const transport = useTransportStore()
-  const { host, app, scrollX, scrollY, showScrollbar, geometry, onPreviewChanged } = opts
+  const { host, app, scrollX, scrollY, maxScrollX, showScrollbar, geometry, onPreviewChanged } = opts
 
   const dropPreview = ref<DropPreview | null>(null)
 
+  // Latest dragover pointer, so the edge auto-scroll loop (which runs while the pointer is
+  // held still near an edge, when no dragover events fire) can keep re-probing the position.
+  let lastDragClientX = 0
+  let lastDragClientY = 0
+  let autoScrollFrame: number | null = null
+
   function isLibraryDrag(): boolean {
     return library.currentDragItemId !== null
+  }
+
+  /** The item currently being dragged from the library (from the live store id). */
+  function currentDragItem(): LibraryItem | null {
+    const liveId = library.currentDragItemId
+    return liveId ? library.getItem(liveId) : null
   }
 
   /** Resolve the dragged item from MIME on drop, otherwise from the live store id. */
@@ -69,8 +83,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
         if (item) return item
       }
     }
-    const liveId = library.currentDragItemId
-    return liveId ? library.getItem(liveId) : null
+    return currentDragItem()
   }
 
   /** Map a pointer to either a valid track drop or, when it is in the empty area below the
@@ -162,17 +175,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     e.preventDefault()
   }
 
-  function onDragOver(e: DragEvent): void {
-    if (!isLibraryDrag()) return
-    e.preventDefault()
-    if (!e.dataTransfer) return
-
-    const item = resolveDragItem(e)
-    const target = item ? resolveDrop(e.clientX, e.clientY, item) : null
+  /** Recompute the ghost preview for a pointer position and return the drop effect the
+   *  cursor should show. Split out of `onDragOver` so the edge auto-scroll loop can refresh
+   *  the ghost while the timeline slides under a stationary pointer. */
+  function refreshPreview(clientX: number, clientY: number): 'copy' | 'none' {
+    const item = currentDragItem()
+    const target = item ? resolveDrop(clientX, clientY, item) : null
     if (!target || !item) {
-      e.dataTransfer.dropEffect = 'none'
       clearPreview()
-      return
+      return 'none'
     }
 
     // Mirror drop-time warp so the ghost width matches the landed clip.
@@ -207,7 +218,6 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
           target.startMs,
           effectiveDurMs
         )
-    e.dataTransfer.dropEffect = overlaps ? 'none' : 'copy'
 
     // Avoid repainting the Pixi ghost on unchanged dragover events.
     const next: DropPreview = {
@@ -229,6 +239,57 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       dropPreview.value = next
       onPreviewChanged()
     }
+    return overlaps ? 'none' : 'copy'
+  }
+
+  /** Edge auto-scroll pressure for a client x (0 in the clear middle, non-zero near an edge). */
+  function edgeDelta(clientX: number): number {
+    const a = app.value
+    if (!host.value || !a || maxScrollX.value <= 0) return 0
+    const rect = host.value.getBoundingClientRect()
+    const leftEdge = geometry.headerWidth()
+    const rightEdge = a.renderer.screen.width - SCROLLBAR_WIDTH
+    return edgeAutoScrollDelta(clientX - rect.left, leftEdge, rightEdge)
+  }
+
+  function stopAutoScroll(): void {
+    if (autoScrollFrame !== null) {
+      window.cancelAnimationFrame(autoScrollFrame)
+      autoScrollFrame = null
+    }
+  }
+
+  function startAutoScroll(): void {
+    if (autoScrollFrame === null) autoScrollFrame = window.requestAnimationFrame(runAutoScroll)
+  }
+
+  // While the drag pointer hovers near a horizontal edge, keep scrolling the timeline so a
+  // library clip can be dropped at the very start (or anywhere), not just within the current
+  // view. dragover doesn't fire for a stationary pointer, so this rAF loop drives it; the
+  // ghost is refreshed each step because the timeline moves under the still pointer.
+  function runAutoScroll(): void {
+    autoScrollFrame = null
+    if (!isLibraryDrag()) return
+    const delta = edgeDelta(lastDragClientX)
+    if (delta === 0) return
+    const nextScroll = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
+    if (nextScroll === scrollX.value) return // clamped at the start/end — nothing more to scroll
+    scrollX.value = nextScroll
+    refreshPreview(lastDragClientX, lastDragClientY)
+    autoScrollFrame = window.requestAnimationFrame(runAutoScroll)
+  }
+
+  function onDragOver(e: DragEvent): void {
+    if (!isLibraryDrag()) return
+    e.preventDefault()
+    if (!e.dataTransfer) return
+
+    lastDragClientX = e.clientX
+    lastDragClientY = e.clientY
+    e.dataTransfer.dropEffect = refreshPreview(e.clientX, e.clientY)
+
+    if (edgeDelta(e.clientX) !== 0) startAutoScroll()
+    else stopAutoScroll()
   }
 
   function onDragLeave(e: DragEvent): void {
@@ -237,11 +298,13 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const related = e.relatedTarget as Node | null
     if (related && host.value && host.value.contains(related)) return
     clearPreview()
+    stopAutoScroll()
   }
 
   function onDrop(e: DragEvent): void {
     if (!isLibraryDrag()) return
     e.preventDefault()
+    stopAutoScroll()
 
     // Clear the ghost before the drop repaint.
     dropPreview.value = null
@@ -301,6 +364,7 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
   onBeforeUnmount(() => {
     stopHostWatch()
+    stopAutoScroll()
     const el = host.value
     if (el) {
       el.removeEventListener('dragenter', onDragEnter)

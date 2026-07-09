@@ -38,6 +38,7 @@
 - Clicking the timeline no longer scrolls the view to the playhead, and dragging the playhead only scrolls at the view edges (follow-scroll is reserved for playback).
 - The startup screen and pre-mount splash now have minimise / maximise / close controls, a draggable top edge, and a flash-free hand-off to the loading screen.
 - Recent Projects entries on the startup screen are now clickable across the whole row (not just the text), and clicking one immediately after launch reliably opens it instead of occasionally being ignored while the engine was still starting.
+- Dragging a clip from the library onto an existing track now auto-scrolls the timeline when the pointer nears the left or right edge, so you can drop it at the very start (or anywhere), matching the drop-on-empty-area behaviour.
 
 ## 1.0.3
 
