@@ -377,6 +377,33 @@ export const trackActions = {
       })
     },
 
+    /** Move solo to `trackId` exclusively: solo it and unsolo every other track in one
+     *  undo step. Backs the Ctrl-click "switch solo" shortcut, so the user can jump the
+     *  solo to another track without unsoloing then re-soloing. A no-op if the target is
+     *  already the only soloed track. */
+    soloOnly(trackId: string): void {
+      const target = this.tracks.find((x) => x.id === trackId)
+      if (!target) return
+      // Nothing to do when this track is already the sole soloed one.
+      if (target.soloed && this.tracks.every((t) => t.id === trackId || !t.soloed)) return
+      log.info('project', `soloOnly id=${trackId}`)
+      runInUndoGroup('Switch solo', () => {
+        for (const t of this.tracks) {
+          const shouldSolo = t.id === trackId
+          if (t.soloed !== shouldSolo) {
+            t.soloed = shouldSolo
+            sendBridge('TRACK_SOLO', { trackId: t.id, soloed: shouldSolo })
+          }
+          // Soloing a track clears its own mute, matching toggleSolo.
+          if (shouldSolo && t.muted) {
+            t.muted = false
+            log.info('project', `soloOnly cleared mute id=${t.id}`)
+            sendBridge('TRACK_MUTE', { trackId: t.id, muted: false })
+          }
+        }
+      })
+    },
+
     /** Re-push user volume; backend folds in mute/solo. */
     pushTrackGain(track: Track): void {
       sendBridge('TRACK_GAIN', { trackId: track.id, gain: track.volume })

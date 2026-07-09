@@ -1625,4 +1625,46 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('TRACK_SOLO', { trackId, soloed: true })
     expect(sendMock).toHaveBeenCalledWith('TRACK_MUTE', { trackId, muted: false })
   })
+
+  it('soloOnly switches the solo to another track, unsoloing the previous one', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    const t2 = project.addTrack()
+    project.toggleSolo(t1)
+    sendMock.mockClear()
+
+    project.soloOnly(t2)
+
+    expect(project.tracks.find((t) => t.id === t1)?.soloed).toBe(false)
+    expect(project.tracks.find((t) => t.id === t2)?.soloed).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SOLO', { trackId: t2, soloed: true })
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SOLO', { trackId: t1, soloed: false })
+  })
+
+  it('soloOnly clears the newly-soloed track\'s mute', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    const t2 = project.addTrack()
+    project.toggleMute(t2)
+    project.toggleSolo(t1)
+    sendMock.mockClear()
+
+    project.soloOnly(t2)
+
+    expect(project.tracks.find((t) => t.id === t2)?.soloed).toBe(true)
+    expect(project.tracks.find((t) => t.id === t2)?.muted).toBe(false)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_MUTE', { trackId: t2, muted: false })
+  })
+
+  it('soloOnly is a no-op when the target is already the only soloed track', () => {
+    const project = useProjectStore()
+    const t1 = project.addTrack()
+    project.addTrack()
+    project.toggleSolo(t1)
+    sendMock.mockClear()
+
+    project.soloOnly(t1)
+
+    expect(sendMock).not.toHaveBeenCalledWith('TRACK_SOLO', expect.anything())
+  })
 })
