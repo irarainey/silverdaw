@@ -1756,7 +1756,7 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Delete clip (`Delete` or `Backspace` + Edit menu + clip context menu)
 - [x] Cut / Copy / Paste clips (`Ctrl + X` / `Ctrl + C` / `Ctrl + V`); paste lands after the source clip on its track, or at the playhead when pasting onto a different (selected) track; toast when the destination slot is occupied
 - [x] Clip selection (thicker outline) + track selection (highlighted row border) — drives the Cut/Copy/Paste/Duplicate/Delete target
-- [x] Deselect the current clip / track (and any selected automation point) with `Escape`
+- [x] Deselect with `Escape` — stepped: clears the clip(s) / automation point first (keeping the track selected), then the track on a second press
 - [x] Trim Project to Last Clip via `Ctrl + Shift + T` (also Edit menu)
 - [x] Zoom to fit the whole project to the timeline width via `Ctrl + F` (also View menu); sizes `pxPerSecond` to the track area and jumps the view to the start
 - [x] Toggle the project metronome with `K`

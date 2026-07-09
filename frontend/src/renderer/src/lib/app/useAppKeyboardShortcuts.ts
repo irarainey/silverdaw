@@ -197,19 +197,35 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       return
     }
 
-    // Escape: clear the current clip / track / automation-point selection.
+    // Escape steps down through the selection hierarchy rather than clearing
+    // everything at once: a plain Escape first clears the clip(s) / automation
+    // point selection (leaving the track selected), and a second Escape then
+    // clears the track. Ctrl/Meta/Shift/Alt are left for other handlers.
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
-      const hadSelection =
-        project.selectedClipId !== null ||
-        project.selectedTrackId !== null ||
-        ui.selectedAutomationPoint !== null
-      if (!hadSelection) return
-      e.preventDefault()
-      e.stopPropagation()
-      project.selectClip(null)
-      project.selectTrack(null)
-      ui.setSelectedAutomationPoint(null)
-      log.debug('project', 'shortcut escape — cleared selection')
+      const hasClipSelection =
+        project.selectedClipId !== null || project.selectedClipIds.size > 0
+      const hasAutomationPoint = ui.selectedAutomationPoint !== null
+      const hasTrack = project.selectedTrackId !== null
+
+      // Step 1: clear the clip(s) + automation point, keeping the track.
+      if (hasClipSelection || hasAutomationPoint) {
+        e.preventDefault()
+        e.stopPropagation()
+        project.clearClipSelection()
+        ui.setSelectedAutomationPoint(null)
+        log.debug('project', 'shortcut escape — cleared clip selection')
+        return
+      }
+
+      // Step 2 (or the track-only case): clear the track.
+      if (hasTrack) {
+        e.preventDefault()
+        e.stopPropagation()
+        project.selectTrack(null)
+        log.debug('project', 'shortcut escape — cleared track selection')
+        return
+      }
+      // Nothing selected — let Escape fall through to other handlers.
       return
     }
 

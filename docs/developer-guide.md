@@ -2137,7 +2137,7 @@ matching versioned page live).
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
-| `Escape` | Deselect the current clip / track (and any selected automation point). |
+| `Escape` | Step down through the selection: when a track and clip(s) are selected, the first press clears the clip(s) (and any selected automation point) but keeps the track selected, and a second press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `F2` | Rename project (also activates the title-bar rename input). |

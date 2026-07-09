@@ -18,6 +18,7 @@
 - `Ctrl` + `1`–`8` jump the timeline to 100%–800% zoom; the matching Zoom Presets show these accelerators.
 - **Help ▸ Keyboard Shortcuts** opens the keyboard-shortcuts reference for your version of the docs.
 - **Ctrl-click a track's Solo button** to switch the solo straight to that track when another track is already soloed — it solos the clicked track and unsolos the other in one step, so you no longer have to unsolo then re-solo.
+- **`Escape`** now steps through the selection: with a track and clip(s) selected, the first press clears the clip(s) (and any selected automation point) while keeping the track selected, and a second press clears the track.
 
 ### Changed
 
