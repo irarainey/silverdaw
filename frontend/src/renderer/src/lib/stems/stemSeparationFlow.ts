@@ -45,6 +45,15 @@ export interface StemSelectionState {
 
 const selection: Ref<StemSelectionState | null> = ref(null)
 
+// Guards the dispatch preamble against a double-trigger. The backend separator is
+// single-slot: `stemSeparationState` covers a job once `beginStemSeparation` runs, but
+// `dispatchSeparation` first does several async preference/model-path lookups — a window
+// in which a second trigger (an impatient click, or two entry points) could fire a
+// duplicate STEM_SEPARATE that the backend can only reject with an error toast. This flag
+// closes that window; together with the active-state check a duplicate never reaches the
+// backend.
+let dispatchInFlight = false
+
 // The last-used separation quality, persisted with application preferences so the
 // picker reopens on the user's choice instead of resetting each time. Cached in the
 // module (and primed once at startup via loadStemQualityPreference) so the dialog can
@@ -496,47 +505,70 @@ async function dispatchSeparation(
   quality: StemQuality,
   dereverb: DereverbStrength | null
 ): Promise<void> {
-  const modelDir = await window.silverdaw.getStemModelDir()
-  const useGpu = await resolveUseGpu()
-  const enhance = await resolveStemEnhance()
-  const roformerModelPath = await resolveVocalPackPath()
-  const rhythmModelPath = await resolveRhythmPackPath()
-  const jobId = crypto.randomUUID()
-  registerStemJob(jobId, target)
-  beginStemSeparation(jobId, target, stems)
-  sendBridge('STEM_SEPARATE', {
-    jobId,
-    sourceItemId: target.sourceItemId,
-    clipId: target.clipId,
-    modelDir,
-    roformerModelPath,
-    rhythmModelPath,
-    sourceName: target.sourceName,
-    stems: [...stems],
-    quality,
-    useGpu,
-    enhanceVocals: enhance.enhanceVocals,
-    vocalEnhanceStrength: enhance.vocalEnhanceStrength,
-    enhanceDrums: enhance.enhanceDrums,
-    drumEnhanceStrength: enhance.drumEnhanceStrength,
-    enhanceBass: enhance.enhanceBass,
-    bassEnhanceStrength: enhance.bassEnhanceStrength,
-    enhanceOther: enhance.enhanceOther,
-    otherEnhanceStrength: enhance.otherEnhanceStrength,
-    // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
-    // strength only when the user enabled it for a vocals run.
-    ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
-  })
-  log.info(
-    'stems',
-    `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
-      `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
-      `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
-      `enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
-      `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
-      `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
-      `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
-  )
+  // Reject a duplicate before it reaches the single-slot backend. The check-and-set is
+  // synchronous (no await between), so a second concurrent call is blocked; `state`
+  // covers the window after the job is registered.
+  if (dispatchInFlight || snapshotStemSeparationState() !== null) {
+    log.warn('stems', 'ignored duplicate stem separation (one is already in progress)')
+    return
+  }
+  dispatchInFlight = true
+  const notifications = useNotificationsStore()
+  let jobId: string | null = null
+  try {
+    const modelDir = await window.silverdaw.getStemModelDir()
+    const useGpu = await resolveUseGpu()
+    const enhance = await resolveStemEnhance()
+    const roformerModelPath = await resolveVocalPackPath()
+    const rhythmModelPath = await resolveRhythmPackPath()
+    jobId = crypto.randomUUID()
+    registerStemJob(jobId, target)
+    beginStemSeparation(jobId, target, stems)
+    sendBridge('STEM_SEPARATE', {
+      jobId,
+      sourceItemId: target.sourceItemId,
+      clipId: target.clipId,
+      modelDir,
+      roformerModelPath,
+      rhythmModelPath,
+      sourceName: target.sourceName,
+      stems: [...stems],
+      quality,
+      useGpu,
+      enhanceVocals: enhance.enhanceVocals,
+      vocalEnhanceStrength: enhance.vocalEnhanceStrength,
+      enhanceDrums: enhance.enhanceDrums,
+      drumEnhanceStrength: enhance.drumEnhanceStrength,
+      enhanceBass: enhance.enhanceBass,
+      bassEnhanceStrength: enhance.bassEnhanceStrength,
+      enhanceOther: enhance.enhanceOther,
+      otherEnhanceStrength: enhance.otherEnhanceStrength,
+      // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
+      // strength only when the user enabled it for a vocals run.
+      ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
+    })
+    log.info(
+      'stems',
+      `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
+        `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
+        `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
+        `enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
+        `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
+        `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
+        `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
+    )
+  } catch (err) {
+    // A preparation failure (prefs / model-dir / pack-path lookup) must not leave a
+    // half-registered job or a stuck progress dialog — clean up and surface it.
+    if (jobId !== null) {
+      forgetStemJob(jobId)
+      clearStemSeparationState()
+    }
+    notifications.pushError('Could not start stem separation.')
+    log.error('stems', `dispatch failed: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    dispatchInFlight = false
+  }
 }
 
 /**

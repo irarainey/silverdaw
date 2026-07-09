@@ -140,7 +140,7 @@ async function locateVocalModel(): Promise<void> {
 }
 
 async function locateRhythmModel(): Promise<void> {
-  const dir = await window.silverdaw.chooseDirectory({ title: 'Locate drums & bass model folder' })
+  const dir = await window.silverdaw.chooseDirectory({ title: 'Locate drums and bass model folder' })
   if (!dir) return
   qualityError.value = null
   const res = await window.silverdaw.locateRhythmPack(dir)
@@ -243,7 +243,7 @@ onMounted(refreshQuality)
           </button>
         </div>
         <div class="flex items-center gap-2 text-[11px]">
-          <span class="w-32 shrink-0 text-zinc-300">Drums &amp; bass model</span>
+          <span class="w-32 shrink-0 text-zinc-300">Drums and bass model</span>
           <span
             class="rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase"
             :class="rhythmInstalled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-700/40 text-zinc-400'"
@@ -368,8 +368,13 @@ onMounted(refreshQuality)
               The same model is used either way, so there is no separate GPU model
               to download.
               <span class="mt-1 block text-amber-400/90">
-                Experimental: on some GPUs or drivers this can briefly reset the
-                display. If separation fails or the screen misbehaves, turn this
+                Experimental, and not always faster. On integrated GPUs — which
+                share system memory — the CPU is often as fast or faster, and a
+                larger model can run out of GPU memory and fall back to the CPU
+                part-way through (slower than running on the CPU from the start).
+                GPU acceleration helps most on a dedicated graphics card with its
+                own memory. On some GPUs or drivers it can also briefly reset the
+                display; if separation fails or the screen misbehaves, turn this
                 off and use the CPU.
               </span>
             </template>

@@ -1,6 +1,7 @@
 #include "StemSeparationEngine.h"
 
 #include <exception>
+#include <new>
 #include <utility>
 
 #include "Log.h"
@@ -46,6 +47,15 @@ void runStemSeparationJob(StemSeparationRequest request,
     };
     const StemCancelFn shouldCancel = [&cancelFlag]() { return cancelFlag.load(); };
 
+    // Release the single-slot busy flag on EVERY exit path — even if broadcasting or
+    // logging a failure throws — so a stem failure can never wedge the engine into a
+    // permanent "a separation is already in progress" state.
+    struct BusyReset
+    {
+        std::atomic<bool>& flag;
+        ~BusyReset() { flag.store(false); }
+    } busyReset{busyFlag};
+
     try
     {
         auto result = separator.separate(request, onProgress, onStemReady, shouldCancel);
@@ -57,9 +67,26 @@ void runStemSeparationJob(StemSeparationRequest request,
     catch (const StemSeparationError& e)
     {
         stem_bridge::broadcastFailed(bridge, jobId, clipId, e.code, juce::String(e.what()));
-        silverdaw::log::warn("stems",
-                             "STEM_FAILED job=" + jobId + " code=" +
-                                 juce::String(stemFailureCodeToString(e.code)) + " error=" + e.what());
+        // Cancellation is a normal user action, not a failure — log it quietly. Every other
+        // failure is logged at ERROR so it reaches stderr → the always-on diagnostics log,
+        // making it visible even when the user hasn't enabled verbose logging.
+        if (e.code == StemFailureCode::Cancelled)
+            silverdaw::log::info("stems", "STEM cancelled job=" + jobId);
+        else
+            silverdaw::log::error("stems",
+                                  "STEM_FAILED job=" + jobId + " code=" +
+                                      juce::String(stemFailureCodeToString(e.code)) + " error=" + e.what());
+    }
+    catch (const std::bad_alloc&)
+    {
+        // Out of memory — by far the most likely cause of an intermittent failure on a
+        // long song / low-RAM machine. Give the user an actionable message instead of a
+        // raw "bad allocation", and log it distinctly so support can spot the pattern.
+        const juce::String msg =
+            "Ran out of memory during stem separation. Try a shorter clip, the Fast quality "
+            "preset, or separating fewer stems at once.";
+        stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Inference, msg);
+        silverdaw::log::error("stems", "STEM_FAILED job=" + jobId + " out-of-memory (bad_alloc)");
     }
     catch (const std::exception& e)
     {
@@ -67,8 +94,14 @@ void runStemSeparationJob(StemSeparationRequest request,
                                      juce::String(e.what()));
         silverdaw::log::error("stems", "STEM_FAILED job=" + jobId + " unexpected error=" + e.what());
     }
-
-    busyFlag.store(false);
+    catch (...)
+    {
+        // A non-std throw would otherwise escape the worker and terminate the whole
+        // backend process (a far worse outcome than a clean failure toast).
+        stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Inference,
+                                     "Unknown fatal error during stem separation.");
+        silverdaw::log::error("stems", "STEM_FAILED job=" + jobId + " unknown non-standard exception");
+    }
 }
 
 void runStemSeparationAsync(StemSeparationRequest request,

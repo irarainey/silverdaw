@@ -504,7 +504,19 @@ class OnnxStemSeparator : public StemSeparator
             if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
             const double stemBase = stemBandBase[s];
             const double stemSpan = stemBandSpan[s];
-            onProgress("separate", stemBase, stem);
+            // The rhythm pack yields drums AND bass from ONE run, so label the
+            // whole separate phase for both. Without this the per-stem loop flashes
+            // a misleading "Separating Drums" just before the single combined run,
+            // and "Separating Bass" just after it (bass is served from that run's
+            // cache) — making it look as though drums finished on its own first.
+            // Matches the rhythm run's own progress detail so the phase reads as one
+            // coherent "Drums & Bass" step. Cleanup stays per-stem (it genuinely is).
+            const char* sepDetail =
+                (useRhythmPack && isSelected("drums") && isSelected("bass") &&
+                 (juce::String(stem) == "drums" || juce::String(stem) == "bass"))
+                    ? "drums+bass"
+                    : stem;
+            onProgress("separate", stemBase, sepDetail);
 
             // The cleanup pass (if any) owns the cost-proportional tail of this
             // stem's band, so the bar keeps advancing while the enhancer/denoiser
@@ -585,7 +597,7 @@ class OnnxStemSeparator : public StemSeparator
                                     "pre-removing vocals for rhythm (internal vocal pass)");
                                 vocalForRemoval = roformerVocals.separate(
                                     request.roformerModelFile, rawMix, request.useGpu, overlap,
-                                    [&](double f) { onProgress("separate", stemBase + vocalSpan * f, stem); },
+                                    [&](double f) { onProgress("separate", stemBase + vocalSpan * f, sepDetail); },
                                     shouldCancel);
                                 vocalForRemovalReady = true;
                                 rhythmBase = stemBase + vocalSpan;

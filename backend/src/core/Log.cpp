@@ -146,12 +146,25 @@ void shutdown()
 void write(Level level, const char* tag, const juce::String& message)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
+    const auto redacted = redactUserPaths(message.toStdString());
+    // Mirror ERRORs to stderr unconditionally — even when the file sink is closed
+    // (verbose logging off, the default). The Electron supervisor pipes the backend's
+    // stderr into the always-on diagnostics log, so a runtime failure (e.g. a stem
+    // separation that runs out of memory) is never invisible just because the user
+    // hadn't opted into verbose logging. Kept ERROR-only so this stays low-volume, and
+    // it writes the already-redacted message so it carries nothing identifying.
+    if (level == Level::Error)
+    {
+        std::cerr << currentIso8601Ms() << " ERROR [" << (tag != nullptr ? tag : "?") << "] " << redacted
+                  << '\n';
+        std::cerr.flush();
+    }
     if (!g_initialised || level < g_minLevel)
     {
         return;
     }
     g_file << currentIso8601Ms() << ' ' << levelName(level) << " [" << (tag != nullptr ? tag : "?") << "] "
-           << redactUserPaths(message.toStdString()) << '\n';
+           << redacted << '\n';
     g_file.flush();
 }
 

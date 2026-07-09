@@ -161,11 +161,17 @@ void testStemsOutputBaseDir()
 
 void testOverlapForStemQuality()
 {
-    // Higher quality = more window overlap = more model runs (slower).
+    // fast trades seam smoothness for fewer model runs; balanced and best share
+    // the long-standing 0.25 overlap. "best" was dropped from 0.50 to 0.25 after
+    // benchmarks showed the extra runs dominated wall-clock with no audible gain
+    // (the overlap-add is counter-normalised, so overlap only affects seams).
     require(silverdaw::overlapForStemQuality("fast") < silverdaw::overlapForStemQuality("balanced"),
             "fast overlaps less than balanced");
-    require(silverdaw::overlapForStemQuality("balanced") < silverdaw::overlapForStemQuality("best"),
-            "balanced overlaps less than best");
+    requireNear(silverdaw::overlapForStemQuality("best"),
+                silverdaw::overlapForStemQuality("balanced"), 1e-9,
+                "best and balanced share the same overlap");
+    requireNear(silverdaw::overlapForStemQuality("best"), 0.25, 1e-9,
+                "best uses the 0.25 overlap (no longer 0.50)");
     requireNear(silverdaw::overlapForStemQuality("balanced"), 0.25, 1e-9,
                 "balanced preserves the long-standing default overlap");
     // Absent / unknown values fall back to the balanced default so a malformed

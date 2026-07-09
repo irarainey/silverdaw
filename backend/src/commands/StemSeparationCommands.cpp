@@ -25,7 +25,9 @@ namespace
 void failInvalid(BridgeServer& bridge, const juce::String& jobId, const juce::String& clipId,
                  const juce::String& message)
 {
-    silverdaw::log::warn("stems", "STEM_SEPARATE rejected job=" + jobId + " error=" + message);
+    // ERROR so it reaches stderr → the always-on diagnostics log even with verbose
+    // logging off; every one of these produces a user-facing STEM_FAILED toast.
+    silverdaw::log::error("stems", "STEM_SEPARATE rejected job=" + jobId + " error=" + message);
     stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Invalid, message);
 }
 
@@ -123,6 +125,10 @@ void handleStemSeparate(const juce::var& payload,
     // One separation at a time — the engine is single-slot.
     if (busyFlag.load())
     {
+        // Commonly a double-trigger (the dialog fires while a run is already dispatching);
+        // log it durably so "it failed with a toast" is diagnosable.
+        silverdaw::log::error("stems", "STEM_SEPARATE rejected job=" + jobId +
+                                           " error=already in progress");
         stem_bridge::broadcastFailed(bridge, jobId, clipId, StemFailureCode::Invalid,
                                      "A stem separation is already in progress.");
         return;
@@ -286,12 +292,15 @@ void handleStemSeparateCancel(const juce::var& payload,
 
 double overlapForStemQuality(const juce::String& quality)
 {
-    // Window overlap per preset: fast trades seam smoothness for fewer model
-    // runs; best does the opposite. Balanced mirrors the long-standing default
-    // and also covers absent/unknown values.
+    // Window overlap per preset. The chunk overlap-add is counter-normalised
+    // (unity gain at any overlap), so overlap only affects seam smoothness, not
+    // level — and for the RoFormer packs the SDR difference between 0.50 and 0.25
+    // is negligible (<0.1 dB) while 0.50 costs ~1.5x the model runs. "best" was
+    // dropped from 0.50 to 0.25 (matching balanced) after per-window benchmarks
+    // showed the extra runs dominated wall-clock with no audible gain; the real
+    // "best" quality/speed headroom now comes from the model export, not overlap.
     if (quality == "fast") return 0.10;
-    if (quality == "best") return 0.50;
-    return 0.25; // balanced
+    return 0.25; // best / balanced / unknown
 }
 
 int shiftsForStemQuality(const juce::String& quality)

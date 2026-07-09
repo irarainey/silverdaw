@@ -1579,16 +1579,16 @@ The current focus order, ahead of the longer phase list below:
 The next major focus is **under review** — the core remix workflow is complete and
 no single feature is committed as "next". Candidates, strongest first:
 
-1. **Transitions completion (§12.1)** — the crossfade engine ships; the remaining
+1. **Transitions completion (§11.1)** — the crossfade engine ships; the remaining
    FX-based recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus" ducking
    need genuinely new per-clip FX automation tied to transition geometry.
-2. **MIDI / DJ control (§12.9)** — high-interest; wanted fairly early.
+2. **MIDI / DJ control (§11.7)** — high-interest; wanted fairly early.
 
-**Deferred to future enhancements:** Fast import-to-arrangement (§12.6) — its
+**Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
 useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
 remaining auto-pitch-on-drop idea was kicked down the road (a user may want to
-keep a clip's pitch deliberately different; it also needs the §12.4 mode-aware
-key model first). Recording / live input (§12.8) and the Phase 8 hardening backlog
+keep a clip's pitch deliberately different; it also needs the §11.3 mode-aware
+key model first). Recording / live input (§11.6) and the Phase 8 hardening backlog
 remain **deprioritised**. Final ordering is still under review.
 
 ### Phase 1 — Backend Foundation & Bridge
@@ -2218,9 +2218,6 @@ playable at every point — no broken-build day):
 reduce memory pressure, and add release-process hardening that improves
 robustness without changing the core editing model.
 
-- [ ] Renderer memory investigation: eliminate avoidable in-memory PCM
-  retention per import and decide whether the backend's read-ahead buffer
-  needs a bounded shared cache for many-track projects.
 - [ ] **Optional "freeze / bounce" of warped clips** — bake a warped clip's
   time-stretched audio to a cached WAV at its target BPM so playback reads a
   plain file instead of running Rubber Band live, saving real-time CPU on
@@ -2231,20 +2228,8 @@ robustness without changing the core editing model.
   the background (with the live stretcher as the fallback until the bake is
   ready). Consider exposing it as an explicit "Freeze clip" action rather than
   automatic, given the re-render cost on every warp change.
-- [ ] User-scoped sample library folder scanning, beyond the current
-  project-scoped imported-audio library.
-- [ ] Drag selected timeline regions directly into the browser panel to save
-  them as samples.
-- [ ] Preview library tiles at project BPM where useful, reusing existing
-  non-destructive warp settings rather than baking preview audio.
-- [ ] Library list view, tags, search and sort refinements if they are still
-  needed after core editing / mixing workflows settle. (issues #2, #21)
 - [ ] Tag editing and jump-to-clip links in the Library Item Info dialog.
-- [ ] Sidechain routing and advanced send/return refinements beyond the
-  first mixer/effects pass.
 - [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
-- [ ] Harmonic compatibility indicators between clips, beyond basic key
-  display and manual pitch controls.
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 
@@ -2315,7 +2300,7 @@ robustness without changing the core editing model.
 
 ---
 
-## 12. Feature Backlog (Candidate Enhancements)
+## 11. Feature Backlog (Candidate Enhancements)
 
 This backlog collects features and ways-of-working that fit
 Silverdaw's remix/mashup ethos. Every item below has been filtered against the
@@ -2324,7 +2309,7 @@ no notation or live DJ performance; arrangement
 view only). These are **candidates**, not
 commitments — they slot into the existing phase plan rather than replacing it.
 
-### 12.0 Guardrails (reframes applied during triage)
+### 11.0 Guardrails (reframes applied during triage)
 
 Three independent design critiques converged on the following constraints.
 **Build the reframed version, not the literal feature:**
@@ -2350,7 +2335,7 @@ Three independent design critiques converged on the following constraints.
   volume shapes** on the affected clips (reusing the Phase 5 §7.11 breakpoint
   primitive), not as a master envelope or a realtime sidechain detector.
 
-### 12.1 Transitions & blending — *part of the Phase 5 core-effects work (see near-term sequence)*
+### 11.1 Transitions & blending — *part of the Phase 5 core-effects work (see near-term sequence)*
 
 **Transition Zones** let the user drag one clip's edge over its neighbour to
 create a bounded transition object that blends the two clips across their
@@ -2412,75 +2397,29 @@ Implementation increments (foundations first; each keeps build + tests green):
   timeline context menu lists one row per recipe (per transition side, current
   marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
   Vitest coverage for the linear law, recipe→curve derivation, and the menu.
-- [ ] **FX-based recipes** — **Bass swap**, **Filter fade**, **Delay out** still
-  pending; they need per-clip EQ/filter/delay automation tied to the transition
-  geometry (no gain-law shortcut exists). The recipe schema and selection UI are
-  ready to host them once the DSP lands.
-- [ ] **"Vocal Focus" ducking** — one action derives a ducking volume-shape on
-  music clips/tracks under a selected vocal clip. Offline/precomputed, editable
-  and undoable; **not** sidechain routing (that stays Phase 8).
 
-### 12.2 Stem-driven mashup moves — *extends Phase 6*
+### 11.2 Arrangement & editing workflow — *Phase 7/8*
 
-- [ ] **Stem-swap commands** — after 4-stem separation lands as
-  new tracks (§7.7), add *Use vocals only* / *Use instrumental only* /
-  *Restore original* on the source clip. The headline mashup move: drop one
-  song's vocal over another's instrumental. **Avoid** a per-clip multi-stem
-  matrix UI in the first pass.
-- [ ] **Stem-aware transitions** — once Transition Zones (§12.1) and
-  stems both exist, allow the transition to act per-stem (e.g. swap drums first,
-  then vocals). Disclosure feature, not default.
-
-### 12.3 Arrangement & editing workflow — *Phase 7/8*
-
-- [ ] **Gap commands, not ripple mode** — *Delete & close gap*,
-  *Insert space at playhead*, *Move following clips on track*. Per-track first.
 - [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
   same-track range or Ctrl-click across tracks selects several clips; the whole
   group moves/nudges together and can be locked, coloured, duplicated, deleted,
   and cut/copied/pasted in one undo step. Renderer-only selection (not
   serialised). Grouped *trim/stretch* is still deferred.
-- [ ] **Library cue / song landmarks** — mark intro / drop /
-  chorus etc. on a library item; jump-to in the Clip Editor and on drop-align.
-  Navigation only, no performance triggering.
-- [ ] **Named section ranges** — name a timeline range; *Move /
-  Duplicate / Delete section* as destructive timeline edits. Extends the existing
-  project-wide markers.
 - [ ] **Timeline loop / cycle playback** — loop a
   selected timeline range for auditioning (distinct from the existing Clip Editor
   audition loop). Decide FX-tail behaviour at loop wrap up front (flush vs let
   Reverb/Delay tails ring) — pick one intentionally.
-- [ ] **Selection effects in the Clip Editor** (issue #43) — let the
-  Clip Editor's region selection (§7.2.1 / §7.14) apply gain and simple
-  effects rendered into a new clip/sample so the underlying source file stays
-  intact. (Whole-clip **reverse** has shipped as a non-destructive per-clip
-  `reversed` flag — timeline right-click ▸ Reverse and a Clip Editor toolbar
-  toggle with live preview; see §7.5. Per-selection reverse remains future work.)
 
-### 12.4 Tempo, beat-grid & harmonic — *Phase 4 polish / Phase 8*
+### 11.3 Tempo, beat-grid & harmonic — *Phase 4 polish / Phase 8*
 
-- [ ] **Tap tempo** — inline transport-bar control to set/confirm
-  project BPM as a fallback to detection. No dialog.
 - [x] **Minimal beat-grid correction** — manual BPM override plus a slide-the-grid
   drag in the Clip Editor that re-anchors the first downbeat
   (`LIBRARY_ITEM_SET_MANUAL_TEMPO`), and a guarded detector phase-correction step.
   Deliberately **not** full variable-tempo maps, per-beat warp markers, or time
   signatures. The single authority is the source's `(bpm, beatAnchorSec)`, which
   the rigid project grid follows.
-- [ ] **Phrase-aware snapping** — snap drops/moves to 1/2/4/8/16/32-bar
-  phrase boundaries, not only beats. Big speed win for mashups.
-- [ ] **Camelot / Open-Key display + compatibility badges** — convert existing root+mode detection to Camelot/Open-Key notation and
-  flag harmonically compatible library items. This is the concrete form of the
-  Phase 8 "harmonic compatibility indicators" — promote, don't duplicate.
-- [ ] **Key-match action** — one-click *Pitch to compatible
-  key* / *Pitch to match selected clip*, showing the resulting semitone shift,
-  reusing the existing non-destructive Rubber Band pitch.
-- [ ] **Manual beat-line editing** (issue #44) — drag individual detected beat
-  lines (or slide the waveform under the grid) to correct mis-detection. This
-  goes further than *Minimal beat-grid correction* above, so settle the single
-  grid-vs-clip-anchor authority before exposing per-beat moves.
 
-### 12.5 Loudness & gain — *Phase 5/8*
+### 11.4 Loudness & gain — *Phase 5/8*
 
 - [ ] **Clip gain assist (Match Loudness)** —
   one beginner-facing command that sets non-destructive clip gain toward a
@@ -2491,14 +2430,8 @@ Implementation increments (foundations first; each keeps build + tests green):
 - [ ] **Fade out the ending** — one action writes a volume-shape fade-out
   across clips crossing the project end. Implemented via §7.11 shapes, **not** a
   master automation lane.
-- [ ] **Stereo channel control** (issue #45) — per-track control over the left
-  and right channels: balance and independent channel level (and, later, basic
-  mid/side width), so a clip's stereo image can be tweaked in the mixer.
-  *(Partly addressed in 1.1.0: right-click ▸ **Split Stereo Channels…** splits a
-  stereo clip's Left/Right channel onto its own track. The per-track mixer
-  balance/width control below is still to do.)*
 
-### 12.6 Fast import-to-arrangement — *largely delivered / deferred to future enhancements*
+### 11.5 Fast import-to-arrangement — *largely delivered / deferred to future enhancements*
 
 Most of this cluster either already shipped incrementally or has been
 deprioritised. **Conform-on-drop already happens today** — dropping a library
@@ -2509,27 +2442,13 @@ Clip Editor already auditions a clip). What remains is parked for later:
 - [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop
   to also suggest a key-shift. Deliberately deferred: a user may want to keep a
   clip's pitch different, and it can only ever transpose (never convert
-  major↔minor), so it needs the §12.4 **mode-aware** Camelot / Open-Key model +
+  major↔minor), so it needs the §11.3 **mode-aware** Camelot / Open-Key model +
   Key-match action first, and must stay an overridable suggestion.
-- [ ] **Multi-file import to rough arrangement** — *dropped.* Auto-placing several
-  songs/loops sequentially is not a wanted workflow.
-- [ ] **Find compatible next clip / library filters** — *moved to Phase 8 library
-  polish (§12.4 / library).* Filter/sort the library by BPM-near-project,
-  compatible key, duration and tags.
-- [ ] **Replace source, preserve edits** — *future, low priority.* Swap a clip's
-  underlying loop/sample while keeping timeline position, trim, volume shape,
-  pitch and warp where compatible (extends `CLIP_REBIND`).
 
-### 12.7 Onboarding & simplicity — *cross-cutting*
 
-- [ ] **Contextual Quick Help** — dismissible "what's this" tooltips
-  and a light first-run guided overlay, focused on the genuinely novel surfaces
-  (warp, stems, loudness, transitions). Must never block common actions; no
-  blocking tutorial mode.
+### 11.6 Recording & live input — *near-essential, prioritise*
 
-### 12.8 Recording & live input — *near-essential, prioritise*
-
-Subsections 12.8–12.12 capture functionality requested via GitHub issues that
+Subsections 11.6–11.9 capture functionality requested via GitHub issues that
 **intentionally extends beyond the original §1–§2 scope constraints** (pure
 arrangement of existing audio). They are large, cross-layer efforts (engine,
 bridge, UI). Rough relative priority is noted on each subsection heading; final
@@ -2543,7 +2462,7 @@ sequencing into the phase plan is still to be decided.
   count-in and a record-enabled transport path; a finished take becomes a normal,
   non-destructive editable clip. Keep the surface deliberately minimal.
 
-### 12.9 MIDI & DJ control — *prioritise — wanted fairly early*
+### 11.7 MIDI & DJ control — *prioritise — wanted fairly early*
 
 - [ ] **MIDI DJ deck input** (issue #29) — support external MIDI controllers,
   specifically DJ decks/turntable controllers, as an input device. The primary
@@ -2556,7 +2475,7 @@ sequencing into the phase plan is still to be decided.
   saves the result as a reusable **scratch clip** that drops onto the timeline
   like any other clip. Everything is authored, re-editable and non-destructive.
 
-### 12.10 Sequence tracks & sequencing — *secondary focus, fills a gap*
+### 11.8 Sequence tracks & sequencing — *secondary focus, fills a gap*
 
 - [ ] **Sequence tracks alongside audio tracks** (issue #23) — add a second track
   type next to the existing sample/audio tracks: a **sequence track** that
@@ -2569,22 +2488,7 @@ sequencing into the phase plan is still to be decided.
   a shared step grid — effectively a small multitrack within one track — for
   building beats inline on the timeline without leaving the arrangement.
 
-### 12.11 Integrations & sharing — *very low priority*
-
-- [ ] **Upload exported mixes to external services** (issue #31) — connect to
-  external platforms to ease uploading exported clips/mixes (e.g. Mixcloud,
-  SoundCloud, YouTube). Very low priority — a convenience layer over the existing
-  mixdown export, not a core feature.
-- [ ] **Track lookup & purchase linking** (issue #36) — since audio cannot be
-  pulled directly from a streaming service, instead let the user look a track up
-  on a streaming service (e.g. Spotify) and link out to a store where a
-  purchasable, downloadable copy can be obtained for import. Feasibility and the
-  terms of service of each platform must be checked first.
-- [ ] **Online sample/clip bank integration** (issue #36) — optionally connect to
-  online services that host banks of samples/loops/clips, to browse and import
-  them into the library.
-
-### 12.12 Distribution & web presence — *low priority, post-MVP*
+### 11.9 Distribution & web presence — *low priority, post-MVP*
 
 These are expected to land around MVP stage, not before — low priority relative
 to the application itself.

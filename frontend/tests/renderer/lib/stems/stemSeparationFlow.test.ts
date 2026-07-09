@@ -434,6 +434,18 @@ describe('stemSeparationFlow', () => {
     expect(api.ensureStemModel).not.toHaveBeenCalled()
   })
 
+  it('does not dispatch a second separation while one is already in progress', async () => {
+    await startClipSeparation()
+    expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
+    expect(sendMock.mock.calls.filter((c) => c[0] === 'STEM_SEPARATE')).toHaveLength(1)
+
+    // A second attempt while the job is still active must be ignored — otherwise it
+    // reaches the single-slot backend, which can only reject it with an error toast.
+    await startClipSeparation()
+
+    expect(sendMock.mock.calls.filter((c) => c[0] === 'STEM_SEPARATE')).toHaveLength(1)
+  })
+
   it('shows the download dialog BEFORE the picker when the packs are absent', async () => {
     packsMissing(800, 400)
 
