@@ -10,6 +10,7 @@
 #include "PlayheadEmitter.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
+#include "Version.h"
 
 #include <atomic>
 #include <chrono>
@@ -165,7 +166,8 @@ int runBackend(int argc, char* argv[])
                                    /*startupOnly*/ true);
     }
 
-    const juce::String banner = "Silverdaw Backend v1.0.0 - " + juce::SystemStats::getOperatingSystemName() + " (" +
+    const juce::String banner = juce::String("Silverdaw Backend v") + silverdaw::kBackendVersion + " - " +
+                                juce::SystemStats::getOperatingSystemName() + " (" +
                                 juce::SystemStats::getCpuVendor() + ")";
     std::cout << banner.toStdString() << '\n';
     silverdaw::log::info("main", banner);

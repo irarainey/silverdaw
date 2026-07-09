@@ -119,6 +119,22 @@ detail: ADR 0014 (`docs/adr/0014-testing-strategy.md`).
   OpenCppCoverage.OpenCppCoverage`). OpenCppCoverage ends on a benign breakpoint
   stop code on Debug JUCE builds — expected; the report is still written.
 
+## Versioning & builds
+
+- **Two version numbers — bump both together on every release:**
+  - `backend/CMakeLists.txt` → `project(SilverdawBackend VERSION x.y.z)` is the
+    **single source of truth for the backend**. CMake generates `Version.h`
+    (`silverdaw::kBackendVersion`) from it (template: `backend/src/core/Version.h.in`),
+    feeding the startup log banner, the project-file `appVersion`, and the bridge
+    `READY` version — no source file hardcodes the number.
+  - `frontend/package.json` → `"version"` is the Electron app version and drives
+    the electron-builder artifact names (`Silverdaw-<version>.*`).
+- `CRITICAL` — **All native (C++) builds and `ctest` need the MSVC Developer
+  environment.** Never run `cmake` / `ninja` / `ctest` from a bare shell
+  (standard headers like `<algorithm>` fail to resolve). Wrap the command in
+  `scripts/Invoke-DevShell.ps1 "<command>"`, which enters the latest VS x64 dev
+  shell first (the same wrapper `.vscode/tasks.json` uses).
+
 ## Load on demand
 
 _Read these only when the task touches them — not by default._

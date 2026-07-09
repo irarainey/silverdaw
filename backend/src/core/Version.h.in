@@ -1,0 +1,8 @@
+// Generated from Version.h.in by CMake — do not edit.
+// Single source of truth: the project() VERSION in backend/CMakeLists.txt.
+#pragma once
+
+namespace silverdaw
+{
+inline constexpr const char* kBackendVersion = "@PROJECT_VERSION@";
+}

@@ -404,6 +404,15 @@ if(SILVERDAW_ENABLE_COVERAGE AND NOT SILVERDAW_BUILD_TESTS)
     message(FATAL_ERROR "SILVERDAW_ENABLE_COVERAGE requires SILVERDAW_BUILD_TESTS=ON")
 endif()
 
+# ─── Generated version header ────────────────────────────────────────────
+# Single source of truth for the backend version is the project() VERSION
+# above; generate silverdaw::kBackendVersion from it so no source file
+# hardcodes the number.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/Version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/Version.h
+    @ONLY)
+
 add_library(silverdaw_backend_core STATIC
     # bridge
     src/bridge/BridgeAuth.cpp
@@ -494,6 +503,7 @@ target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_STANDALONE_APPLICATION=1)
 
 target_include_directories(silverdaw_backend_core PUBLIC
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/bridge
     ${CMAKE_CURRENT_SOURCE_DIR}/src/commands

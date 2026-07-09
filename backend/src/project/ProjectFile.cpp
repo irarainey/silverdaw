@@ -1,6 +1,7 @@
 #include "ProjectFile.h"
 
 #include "ValueTreeJson.h"
+#include "Version.h"
 
 namespace silverdaw::ProjectFile
 {
@@ -12,7 +13,7 @@ constexpr const char* kSchemaVersionKey = "schemaVersion";
 constexpr const char* kAppVersionKey = "appVersion";
 constexpr const char* kSavedAtKey = "savedAt";
 constexpr const char* kProjectKey = "project";
-constexpr const char* kAppVersionValue = "1.0.0";
+constexpr const char* kAppVersionValue = silverdaw::kBackendVersion;
 
 /** ISO-8601 (millisecond precision, UTC) timestamp for `savedAt`. */
 juce::String isoTimestampNowUtc()

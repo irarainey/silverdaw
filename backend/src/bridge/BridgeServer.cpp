@@ -1,6 +1,7 @@
 #include "BridgeServer.h"
 #include "BridgeAuth.h"
 #include "Log.h"
+#include "Version.h"
 
 #include <ixwebsocket/IXConnectionState.h>
 #include <ixwebsocket/IXNetSystem.h>
@@ -237,7 +238,7 @@ bool BridgeServer::checkAuthToken(const juce::var& payload) const
 void BridgeServer::sendReadyTo(ix::WebSocket& webSocket)
 {
     auto* obj = new juce::DynamicObject();
-    obj->setProperty("version", "1.0.0");
+    obj->setProperty("version", silverdaw::kBackendVersion);
 
     auto* envelope = new juce::DynamicObject();
     envelope->setProperty("type", juce::String("READY"));
