@@ -22,6 +22,35 @@ namespace
 // Dedupe guard: at most one in-flight analysis job per library item id.
 std::mutex bpmJobsMutex;
 std::set<juce::String> bpmJobsInFlight;
+
+// Build a rigid metronome grid phase-locked to `beatAnchorSec`, spanning the
+// item's window [0, durationSec]. The renderer derives marker positions from
+// (bpm, anchor) directly and only needs `beats` to be non-empty; a full grid
+// also keeps the info-dialog count and any beat-position consumers honest. The
+// anchor may be negative (a derived stem whose window starts past the source's
+// grid origin) — the first emitted beat is still the earliest on-grid position
+// at or after local time 0. Returns empty for a non-positive bpm.
+std::vector<double> buildRigidBeatGrid(double bpm, double beatAnchorSec, double durationMs)
+{
+    std::vector<double> beats;
+    if (bpm <= 0.0) return beats;
+    const double beatSpacingSec = 60.0 / bpm;
+    if (beatSpacingSec <= 0.0) return beats;
+    const double endSec = durationMs > 0.0 ? durationMs / 1000.0 : beatAnchorSec + beatSpacingSec;
+    // First grid beat at or after 0s, phase-locked to the anchor.
+    double firstSec = beatAnchorSec;
+    if (firstSec > 0.0)
+        firstSec -= std::floor(firstSec / beatSpacingSec) * beatSpacingSec;
+    else
+        firstSec += std::ceil(-firstSec / beatSpacingSec) * beatSpacingSec;
+    constexpr int kMaxBeats = 100000;
+    int guard = 0;
+    for (double t = firstSec; t <= endSec + 1.0e-6 && guard < kMaxBeats; t += beatSpacingSec, ++guard)
+        beats.push_back(t);
+    if (beats.empty())
+        beats.push_back(beatAnchorSec);
+    return beats;
+}
 } // namespace
 
 std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(ProjectState& projectState,
@@ -347,29 +376,10 @@ void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorS
         return;
     }
 
-    // Build a rigid metronome grid from the anchor across the source duration.
-    // The renderer derives marker positions from (bpm, anchor) directly and only
-    // needs `beats` to be non-empty; a full grid keeps the info-dialog count and
-    // any beat-position consumers honest.
+    // Build a rigid metronome grid from the anchor across the source duration so
+    // markers render and beat-position consumers stay honest (see buildRigidBeatGrid).
     const double durationMs = projectState.getLibraryItemDurationMs(itemId);
-    const double beatSpacingSec = 60.0 / bpm;
-    std::vector<double> beats;
-    if (beatSpacingSec > 0.0)
-    {
-        const double endSec = durationMs > 0.0 ? durationMs / 1000.0 : beatAnchorSec + beatSpacingSec;
-        // First grid beat at or after 0s, phase-locked to the anchor.
-        double firstSec = beatAnchorSec;
-        if (firstSec > 0.0)
-            firstSec -= std::floor(firstSec / beatSpacingSec) * beatSpacingSec;
-        else
-            firstSec += std::ceil(-firstSec / beatSpacingSec) * beatSpacingSec;
-        constexpr int kMaxBeats = 100000;
-        int guard = 0;
-        for (double t = firstSec; t <= endSec + 1.0e-6 && guard < kMaxBeats; t += beatSpacingSec, ++guard)
-            beats.push_back(t);
-    }
-    if (beats.empty())
-        beats.push_back(beatAnchorSec);
+    std::vector<double> beats = buildRigidBeatGrid(bpm, beatAnchorSec, durationMs);
 
     silverdaw::log::info("bpmjob",
                          "applyManualTempo itemId=" + itemId + " bpm=" + juce::String(bpm, 2)
@@ -462,6 +472,15 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
             }
         }
     }
+
+    // A window that begins after the source's last detected beat drops every
+    // shifted beat, leaving `beats` empty even though the inherited (bpm, anchor)
+    // fully describe the grid. Without any beats the renderer's marker gate hides
+    // the grid entirely, so synthesise a rigid grid across the stem's own window
+    // from the same (bpm, anchor) the markers are drawn from. In-window beats are
+    // preserved as-is so a variable-tempo source keeps its detected phrasing.
+    if (beats.empty() && bpm > 0.0)
+        beats = buildRigidBeatGrid(bpm, beatAnchorSec, projectState.getLibraryItemDurationMs(itemId));
 
     if (key.isNotEmpty()) projectState.setLibraryItemKey(itemId, key);
     // A stem has no independent confidence measurement; leave its lowConfidence

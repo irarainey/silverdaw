@@ -29,6 +29,7 @@
 ### Fixed
 
 - Stem separation is more robust and lighter on memory: it now recovers cleanly from any unexpected error instead of a rare hard failure, can't be wedged by an accidental double-start, gives a clear "ran out of memory" message with advice when a long song exceeds available RAM, and uses roughly half the working memory on long tracks — cutting the intermittent failures some longer separations could hit.
+- Stems separated from a section partway through a track now show their beat markers again — previously they inherited the tempo but lost their beat grid when the section started beyond the track's detected beats. Re-separate affected stems to restore their markers.
 - The Clip Editor's tempo fields (beat-grid BPM and Warp "pin to" BPM) now always display two decimals (e.g. 120.00).
 - Scrolling the mouse wheel over a BPM field (the project tempo, and the Clip Editor's beat-grid tempo and Warp "pin to" tempo) now changes it by 1 BPM (hold Alt for 0.01) instead of always stepping by a hard-to-control 0.01; the project-tempo spinner and ↑/↓ keys gain the same Alt fine-step.
 - Undoing or redoing a track's tone, leveler, reverb/delay send, pan or automation back to its default now resets it in the audio engine instead of leaving the previous value playing.

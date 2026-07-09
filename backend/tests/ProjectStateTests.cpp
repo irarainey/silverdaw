@@ -954,6 +954,54 @@ void testProjectStateMetronomeRoundTrip()
     require(! state.isDirty(), "turning the metronome back off must remain silent (not dirty)");
 }
 
+void testStemInheritsSynthesisedGridPastLastBeat()
+{
+    // Regression: a clip-scoped stem whose window begins after the source's last
+    // detected beat had every shifted beat dropped, leaving an empty grid — so the
+    // timeline hid its beat markers even though the inherited (bpm, anchor) fully
+    // described the grid. inheritAnalysisFromSource must synthesise a rigid grid
+    // across the stem's own window instead.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 300000.0, 48000, 2),
+            "source library item should add");
+    require(state.setLibraryItemBpm("src", 120.0), "source BPM should apply");
+    require(state.setLibraryItemBeats("src", {0.5, 1.0, 1.5, 2.0, 2.5}),
+            "source beats end at 2.5s");
+    require(state.setLibraryItemBeatAnchor("src", 0.5), "source anchor should apply");
+
+    // An 8s stem window starting 77.5s into the source — well past the last beat.
+    require(state.addLibraryItem("stem", "C:\\audio\\stem.wav", "stem.wav", 8000.0, 48000, 2, "", "",
+                                 "stem", "Drums", "src", "clip", 77500.0, 8000.0, -1, ""),
+            "stem library item should add with a window offset");
+
+    silverdaw::inheritAnalysisFromSource("stem", "src", engine, state, bridge);
+
+    const auto library = state.getTree().getChildWithName(juce::Identifier{"LIBRARY"});
+    juce::ValueTree stem;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+        if (library.getChild(i).getProperty(juce::Identifier{"id"}).toString() == "stem")
+            stem = library.getChild(i);
+    require(stem.isValid(), "stem item should exist after inheritance");
+
+    const double anchor = static_cast<double>(stem.getProperty(juce::Identifier{"beatAnchorSec"}, 999.0));
+    requireNear(anchor, 0.5 - 77.5, 1e-6, "anchor is the source phase shifted onto the stem timeline");
+
+    const auto beatsVar = stem.getProperty(juce::Identifier{"beats"});
+    require(beatsVar.isArray(), "stem should carry a beats array");
+    auto* arr = beatsVar.getArray();
+    require(arr != nullptr && arr->size() > 0, "stem beats must be synthesised, not empty");
+    const double first = static_cast<double>((*arr)[0]);
+    require(first >= 0.0 && first < 0.5, "first synthesised beat sits at the grid origin >= 0");
+    require(arr->size() >= 15, "an 8s window at 120 BPM yields ~16 beats");
+    const double second = static_cast<double>((*arr)[1]);
+    requireNear(second - first, 0.5, 1e-6, "synthesised beats are one beat apart at 120 BPM");
+    const double last = static_cast<double>((*arr)[arr->size() - 1]);
+    require(last <= 8.0 + 1e-6, "synthesised grid stays within the stem window");
+}
+
 void testProjectStateManualTempoIsUndoableAndDirtying()
 {
     // A hand-set tempo/beat grid is a deliberate user edit: unlike automatic
@@ -1079,6 +1127,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Duplicate-clip group undoes in one step", testDuplicateClipGroupUndoesInOneStep});
     tests.push_back({"Clip effect after a group is a separate undo step", testClipEffectAfterGroupIsSeparateUndoStep});
     tests.push_back({"ProjectState metronome toggle persists silently", testProjectStateMetronomeRoundTrip});
+    tests.push_back({"Stem inherits a synthesised grid past the last source beat",
+                     testStemInheritsSynthesisedGridPastLastBeat});
 }
 
 } // namespace silverdaw::tests
