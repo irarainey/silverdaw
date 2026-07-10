@@ -14,6 +14,7 @@ function input(identifier: string, overrides: Partial<MidiInputDevice> = {}): Mi
     identifier,
     connected: true,
     enabled: false,
+    controllerProfile: null,
     lastActivityMs: null,
     ...overrides
   }
@@ -90,5 +91,37 @@ describe('midiDeviceStore', () => {
     store.requestRescan()
 
     expect(store.rescanning).toBe(false)
+  })
+
+  it('tracks mapped Shift, jog touch, and reserved crossfader state', () => {
+    const store = useMidiDeviceStore()
+    store.applyControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'shift',
+      deck: 2,
+      pressed: true
+    })
+    store.applyControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 1,
+      pressed: true
+    })
+    store.applyControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 3,
+      kind: 'absolute',
+      control: 'crossfader',
+      deck: null,
+      value: 0.75
+    })
+
+    expect(store.shiftPressed[2]).toBe(true)
+    expect(store.jogTouched[1]).toBe(true)
+    expect(store.crossfaderPosition).toBe(0.75)
   })
 })

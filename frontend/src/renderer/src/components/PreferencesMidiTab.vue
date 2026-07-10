@@ -5,6 +5,7 @@ const props = defineProps<{
     identifier: string
     connected: boolean
     enabled: boolean
+    controllerProfile: string | null
     lastActivityMs: number | null
   }>
   /** True once the first device list has arrived from the backend. */
@@ -89,7 +90,15 @@ function onEnabledChange(identifier: string, event: Event): void {
               @change="onEnabledChange(input.identifier, $event)"
             >
             <span class="min-w-0 flex-1 leading-tight">
-              <span class="block truncate font-medium text-zinc-200">{{ input.name }}</span>
+              <span class="block truncate font-medium text-zinc-200">
+                {{ input.name }}
+                <span
+                  v-if="input.controllerProfile"
+                  class="ml-1.5 text-[10px] font-normal text-sky-400"
+                >
+                  {{ input.controllerProfile }} controls
+                </span>
+              </span>
             </span>
           </label>
           <span class="shrink-0 text-right text-[11px] text-zinc-500">

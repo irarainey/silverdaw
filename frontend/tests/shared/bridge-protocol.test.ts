@@ -9,6 +9,7 @@ import {
   isLibraryItemAnalysisPayload,
   isMidiDevicesListPayload,
   isMidiMessagePayload,
+  isMidiControlPayload,
   isPlayheadUpdatePayload,
   isPongPayload,
   isPreviewEndedPayload,
@@ -65,6 +66,7 @@ const INBOUND_TYPES = {
   AUDIO_DEVICE_CHANGED: true,
   MIDI_DEVICES_LIST: true,
   MIDI_MESSAGE: true,
+  MIDI_CONTROL: true,
   EDIT_UNDO_STATE: true,
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
@@ -129,9 +131,58 @@ describe('isMidiDevicesListPayload', () => {
         identifier: 'launchkey',
         connected: true,
         enabled: true,
+        controllerProfile: null,
         lastActivityMs: 1234
       }]
     })).toBe(true)
+  })
+
+  describe('isMidiControlPayload', () => {
+    it('accepts mapped button, relative, and crossfader controls', () => {
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'playPause',
+        deck: 1,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1235,
+        kind: 'relative',
+        control: 'jogScratch',
+        deck: 2,
+        value: -3
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1236,
+        kind: 'absolute',
+        control: 'crossfader',
+        deck: null,
+        value: 0.5
+      })).toBe(true)
+    })
+
+    it('rejects invalid decks and mismatched payload shapes', () => {
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'playPause',
+        deck: 3,
+        pressed: true
+      })).toBe(false)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'relative',
+        control: 'jogScratch',
+        deck: 1,
+        pressed: true
+      })).toBe(false)
+    })
   })
 
   describe('isMidiMessagePayload', () => {

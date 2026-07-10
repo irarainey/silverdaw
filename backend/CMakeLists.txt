@@ -440,6 +440,8 @@ add_library(silverdaw_backend_core STATIC
     # core
     src/core/CrashHandler.cpp
     src/core/Log.cpp
+    # midi
+    src/midi/PioneerDeckMapping.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/LoudnessAnalyzer.cpp
@@ -682,6 +684,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/ProjectStateFxTests.cpp
         tests/PersistenceTests.cpp
         tests/BridgeTests.cpp
+        tests/PioneerDeckMappingTests.cpp
         tests/WarpTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp

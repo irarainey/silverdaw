@@ -2,22 +2,37 @@
 
 #include "BridgeServer.h"
 #include "Log.h"
+#include "midi/PioneerDeckMapping.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <array>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace silverdaw
 {
 namespace
 {
+constexpr int relativeControlCount = 5;
+
+struct QueuedMidiMessage
+{
+    juce::int64 timestampMs = 0;
+    int statusByte = 0;
+    int data1 = -1;
+    int data2 = -1;
+};
+
 class ActiveMidiInput final : public juce::MidiInputCallback
 {
 public:
-    explicit ActiveMidiInput(juce::String deviceIdentifier)
-        : identifier(std::move(deviceIdentifier))
+    ActiveMidiInput(juce::String deviceName, juce::String deviceIdentifier)
+        : name(std::move(deviceName)),
+          identifier(std::move(deviceIdentifier)),
+          hasControllerMapping(supportsPioneerTwoDeckMapping(name))
     {
     }
 
@@ -25,18 +40,51 @@ public:
     {
         const auto* raw = message.getRawData();
         const auto size = message.getRawDataSize();
-        lastActivityMs.store(juce::Time::currentTimeMillis(), std::memory_order_relaxed);
-        statusByte.store(size > 0 ? static_cast<unsigned char>(raw[0]) : 0, std::memory_order_relaxed);
-        data1.store(size > 1 ? static_cast<unsigned char>(raw[1]) : -1, std::memory_order_relaxed);
-        data2.store(size > 2 ? static_cast<unsigned char>(raw[2]) : -1, std::memory_order_relaxed);
+        const auto timestamp = juce::Time::currentTimeMillis();
+        lastActivityMs.store(timestamp, std::memory_order_relaxed);
+
+        int start1 = 0;
+        int size1 = 0;
+        int start2 = 0;
+        int size2 = 0;
+        fifo.prepareToWrite(1, start1, size1, start2, size2);
+        if (size1 == 0)
+        {
+            droppedMessageCount.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        queue[static_cast<size_t>(start1)] = {
+            timestamp,
+            size > 0 ? static_cast<unsigned char>(raw[0]) : 0,
+            size > 1 ? static_cast<unsigned char>(raw[1]) : -1,
+            size > 2 ? static_cast<unsigned char>(raw[2]) : -1};
+        fifo.finishedWrite(1);
     }
 
+    bool pop(QueuedMidiMessage& message)
+    {
+        int start1 = 0;
+        int size1 = 0;
+        int start2 = 0;
+        int size2 = 0;
+        fifo.prepareToRead(1, start1, size1, start2, size2);
+        if (size1 == 0) return false;
+        message = queue[static_cast<size_t>(start1)];
+        fifo.finishedRead(1);
+        return true;
+    }
+
+    static constexpr int queueCapacity = 512;
+    juce::String name;
     juce::String identifier;
+    bool hasControllerMapping = false;
+    PioneerDeckMapper controllerMapper;
     std::atomic<juce::int64> lastActivityMs{0};
-    std::atomic<int> statusByte{0};
-    std::atomic<int> data1{-1};
-    std::atomic<int> data2{-1};
-    juce::int64 lastReportedActivityMs = 0;
+    std::atomic<int> droppedMessageCount{0};
+    std::array<QueuedMidiMessage, queueCapacity> queue{};
+    juce::AbstractFifo fifo{queueCapacity};
+    juce::int64 lastMonitorBroadcastMs = 0;
     std::unique_ptr<juce::MidiInput> input;
 };
 
@@ -53,6 +101,10 @@ public:
             inputObj->setProperty("name", device.name);
             inputObj->setProperty("identifier", device.identifier);
             inputObj->setProperty("connected", true);
+            inputObj->setProperty("controllerProfile",
+                                  supportsPioneerTwoDeckMapping(device.name)
+                                      ? juce::var("Pioneer two-deck")
+                                      : juce::var());
 
             const auto* active = findActive(device.identifier);
             inputObj->setProperty("enabled", active != nullptr && active->input != nullptr);
@@ -79,7 +131,7 @@ public:
         {
             if (!identifiers.contains(device.identifier)) continue;
 
-            auto active = std::make_unique<ActiveMidiInput>(device.identifier);
+            auto active = std::make_unique<ActiveMidiInput>(device.name, device.identifier);
             active->input = juce::MidiInput::openDevice(device.identifier, active.get());
             if (active->input != nullptr)
             {
@@ -92,7 +144,7 @@ public:
             }
         }
 
-        if (!activeInputs.empty()) startTimerHz(4);
+        if (!activeInputs.empty()) startTimerHz(60);
         else stopTimer();
     }
 
@@ -114,30 +166,141 @@ private:
         bool activityChanged = false;
         for (const auto& active : activeInputs)
         {
-            const auto activity = active->lastActivityMs.load(std::memory_order_relaxed);
-            if (activity != active->lastReportedActivityMs)
+            std::array<std::array<double, relativeControlCount>, 2> relativeDeltas{};
+            std::array<std::array<juce::int64, relativeControlCount>, 2> relativeTimestamps{};
+            const auto dropped = active->droppedMessageCount.exchange(0, std::memory_order_relaxed);
+            if (dropped > 0)
             {
-                active->lastReportedActivityMs = activity;
-                auto* message = new juce::DynamicObject();
-                message->setProperty("deviceIdentifier", active->identifier);
-                message->setProperty("timestampMs", static_cast<double>(activity));
-                message->setProperty("statusByte", active->statusByte.load(std::memory_order_relaxed));
-                const auto data1 = active->data1.load(std::memory_order_relaxed);
-                const auto data2 = active->data2.load(std::memory_order_relaxed);
-                if (data1 >= 0) message->setProperty("data1", data1);
-                else message->setProperty("data1", juce::var());
-                if (data2 >= 0) message->setProperty("data2", data2);
-                else message->setProperty("data2", juce::var());
-                if (bridge != nullptr) bridge->broadcast("MIDI_MESSAGE", juce::var(message));
-                activityChanged = true;
+                silverdaw::log::warn("midi", "dropped " + juce::String(dropped) +
+                                                  " queued message(s) from " + active->name);
+            }
+
+            QueuedMidiMessage raw;
+            QueuedMidiMessage latest;
+            bool received = false;
+            while (active->pop(raw))
+            {
+                latest = raw;
+                received = true;
+                if (active->hasControllerMapping)
+                {
+                    const auto mapped =
+                        active->controllerMapper.mapMessage(raw.statusByte, raw.data1, raw.data2);
+                    if (mapped.has_value())
+                    {
+                        const auto relativeIndex = relativeControlIndex(mapped->control);
+                        if (mapped->kind == PioneerDeckControlKind::relative &&
+                            relativeIndex.has_value() && mapped->deck >= 1 && mapped->deck <= 2)
+                        {
+                            const auto deckIndex = static_cast<size_t>(mapped->deck - 1);
+                            const auto controlIndex = static_cast<size_t>(*relativeIndex);
+                            relativeDeltas[deckIndex][controlIndex] += mapped->value;
+                            relativeTimestamps[deckIndex][controlIndex] = raw.timestampMs;
+                        }
+                        else
+                        {
+                            broadcastMappedControl(*active, raw.timestampMs, *mapped);
+                        }
+                    }
+                }
+            }
+            broadcastRelativeControls(*active, relativeDeltas, relativeTimestamps);
+            if (!received) continue;
+
+            activityChanged = true;
+            if (latest.timestampMs - active->lastMonitorBroadcastMs >= 250)
+            {
+                active->lastMonitorBroadcastMs = latest.timestampMs;
+                broadcastMonitorMessage(*active, latest);
             }
         }
-        if (activityChanged && bridge != nullptr)
+
+        const auto now = juce::Time::currentTimeMillis();
+        if (activityChanged && bridge != nullptr && now - lastDeviceListBroadcastMs >= 250)
+        {
+            lastDeviceListBroadcastMs = now;
             bridge->broadcast("MIDI_DEVICES_LIST", buildEnvelope());
+        }
+    }
+
+    void broadcastMonitorMessage(const ActiveMidiInput& active, const QueuedMidiMessage& raw) const
+    {
+        if (bridge == nullptr) return;
+        auto* message = new juce::DynamicObject();
+        message->setProperty("deviceIdentifier", active.identifier);
+        message->setProperty("timestampMs", static_cast<double>(raw.timestampMs));
+        message->setProperty("statusByte", raw.statusByte);
+        message->setProperty("data1", raw.data1 >= 0 ? juce::var(raw.data1) : juce::var());
+        message->setProperty("data2", raw.data2 >= 0 ? juce::var(raw.data2) : juce::var());
+        bridge->broadcast("MIDI_MESSAGE", juce::var(message));
+    }
+
+    static std::optional<int> relativeControlIndex(PioneerDeckControl control)
+    {
+        switch (control)
+        {
+            case PioneerDeckControl::jogScratch: return 0;
+            case PioneerDeckControl::jogPitchBend: return 1;
+            case PioneerDeckControl::jogSearch: return 2;
+            case PioneerDeckControl::wheelPitchBend: return 3;
+            case PioneerDeckControl::wheelSearch: return 4;
+            default: return std::nullopt;
+        }
+    }
+
+    static PioneerDeckControl relativeControlAt(int index)
+    {
+        constexpr std::array<PioneerDeckControl, relativeControlCount> controls{
+            PioneerDeckControl::jogScratch, PioneerDeckControl::jogPitchBend,
+            PioneerDeckControl::jogSearch, PioneerDeckControl::wheelPitchBend,
+            PioneerDeckControl::wheelSearch};
+        return controls[static_cast<size_t>(index)];
+    }
+
+    void broadcastRelativeControls(
+        const ActiveMidiInput& active,
+        const std::array<std::array<double, relativeControlCount>, 2>& deltas,
+        const std::array<std::array<juce::int64, relativeControlCount>, 2>& timestamps) const
+    {
+        for (int deckIndex = 0; deckIndex < 2; ++deckIndex)
+        {
+            for (int controlIndex = 0; controlIndex < relativeControlCount; ++controlIndex)
+            {
+                const auto delta = deltas[static_cast<size_t>(deckIndex)]
+                                         [static_cast<size_t>(controlIndex)];
+                if (delta == 0.0) continue;
+                const PioneerDeckControlEvent event{
+                    relativeControlAt(controlIndex), PioneerDeckControlKind::relative,
+                    deckIndex + 1, delta};
+                broadcastMappedControl(
+                    active,
+                    timestamps[static_cast<size_t>(deckIndex)][static_cast<size_t>(controlIndex)],
+                    event);
+            }
+        }
+    }
+
+    void broadcastMappedControl(const ActiveMidiInput& active, juce::int64 timestampMs,
+                                const PioneerDeckControlEvent& event) const
+    {
+        if (bridge == nullptr) return;
+        auto* message = new juce::DynamicObject();
+        message->setProperty("deviceIdentifier", active.identifier);
+        message->setProperty("timestampMs", static_cast<double>(timestampMs));
+        message->setProperty("kind", pioneerDeckControlKindName(event.kind));
+        message->setProperty("control", pioneerDeckControlName(event.control));
+        if (event.deck > 0) message->setProperty("deck", event.deck);
+        else message->setProperty("deck", juce::var());
+        if (event.kind == PioneerDeckControlKind::button)
+            message->setProperty("pressed", event.value > 0.5);
+        else
+            message->setProperty("value", event.value);
+        bridge->broadcast("MIDI_CONTROL", juce::var(message));
     }
 
     BridgeServer* bridge = nullptr;
     std::vector<std::unique_ptr<ActiveMidiInput>> activeInputs;
+    juce::int64 lastDeviceListBroadcastMs = 0;
 };
 
 MidiInputMonitor& midiInputMonitor()

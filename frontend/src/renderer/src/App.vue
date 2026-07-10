@@ -50,6 +50,7 @@ import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOu
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { useMidiControllerActions } from '@/lib/midi/useMidiControllerActions'
 
 const project = useProjectStore()
 const transport = useTransportStore()
@@ -58,6 +59,7 @@ const library = useLibraryStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
+useMidiControllerActions()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)

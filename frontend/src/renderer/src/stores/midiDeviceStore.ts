@@ -3,7 +3,12 @@
 import { defineStore } from 'pinia'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import type { MidiDevicesListPayload, MidiInputDevice, MidiMessagePayload } from '@shared/bridge-protocol'
+import type {
+  MidiControlPayload,
+  MidiDevicesListPayload,
+  MidiInputDevice,
+  MidiMessagePayload
+} from '@shared/bridge-protocol'
 
 const RESCAN_SAFETY_MS = 6000
 const MAX_MONITOR_MESSAGES = 200
@@ -19,6 +24,10 @@ interface MidiDeviceState {
   /** True from a user-initiated rescan until the backend replies. */
   rescanning: boolean
   monitorMessages: MidiMessagePayload[]
+  shiftPressed: Record<1 | 2, boolean>
+  jogTouched: Record<1 | 2, boolean>
+  crossfaderPosition: number
+  lastControl: MidiControlPayload | null
 }
 
 export const useMidiDeviceStore = defineStore('midiDevice', {
@@ -27,7 +36,11 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
     enabledByIdentifier: {},
     hydrated: false,
     rescanning: false,
-    monitorMessages: []
+    monitorMessages: [],
+    shiftPressed: { 1: false, 2: false },
+    jogTouched: { 1: false, 2: false },
+    crossfaderPosition: 0.5,
+    lastControl: null
   }),
 
   actions: {
@@ -46,6 +59,17 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
 
     clearMonitorMessages(): void {
       this.monitorMessages = []
+    },
+
+    applyControl(payload: MidiControlPayload): void {
+      this.lastControl = payload
+      if (payload.kind === 'absolute') {
+        this.crossfaderPosition = payload.value
+      } else if (payload.kind === 'button' && payload.control === 'shift') {
+        this.shiftPressed[payload.deck] = payload.pressed
+      } else if (payload.kind === 'button' && payload.control === 'jogTouch') {
+        this.jogTouched[payload.deck] = payload.pressed
+      }
     },
 
     /** Ask the backend to enumerate MIDI inputs; the reply lands in `applyList`. */

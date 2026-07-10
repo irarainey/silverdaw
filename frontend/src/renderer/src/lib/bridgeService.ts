@@ -433,7 +433,8 @@ function dispatch(msg: BridgeInboundMessage): void {
     msg.type !== 'PLAYHEAD_UPDATE' &&
     msg.type !== 'PREVIEW_POSITION' &&
     msg.type !== 'MASTER_LEVEL' &&
-    msg.type !== 'TRACK_LEVELS'
+    msg.type !== 'TRACK_LEVELS' &&
+    msg.type !== 'MIDI_CONTROL'
   ) {
     log.info('bridge', `recv ${msg.type}`)
   }
