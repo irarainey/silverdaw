@@ -6,6 +6,7 @@
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { filePathKey } from './projectHelpers'
 import { TRACK_PALETTE } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
 
@@ -121,17 +122,20 @@ export const clipPropertiesActions = {
       if (sampleRate > 0) clip.sampleRate = sampleRate
       // A revision counter avoids deep-watching clips for waveform redraws.
       this.peaksRevision++
-      // Prefer the whole-file library row; saved clips can share its filePath.
+      // Populate every independently visible media row that shares this source.
       const lib = useLibraryStore()
-      const item =
-        lib.items.find((i) => (i.kind === 'source' || i.kind === 'sample') && i.filePath === clip.filePath) ??
-        lib.items.find((i) => i.filePath === clip.filePath)
-      if (item && item.peaks.length === 0) {
-        lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)
-      }
-      // Empty channel lanes clear stale stereo peaks for summary-only sources.
-      if (item && typeof peaksPerSecond === 'number' && peaksPerSecond > 0) {
-        lib.setItemChannelPeaks(item.id, channels ?? [], peaksPerSecond)
+      const sourcePathKey = filePathKey(clip.filePath)
+      const pathMatches = lib.items.filter((item) => filePathKey(item.filePath) === sourcePathKey)
+      const mediaItems = pathMatches.filter((item) => item.kind !== 'clip')
+      const targets = mediaItems.length > 0 ? mediaItems : pathMatches
+      for (const item of targets) {
+        if (item.peaks.length === 0) {
+          lib.setItemPeaks(item.id, peaks, sampleRate, peaksPerSecond)
+        }
+        // Empty channel lanes clear stale stereo peaks for summary-only sources.
+        if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) {
+          lib.setItemChannelPeaks(item.id, channels ?? [], peaksPerSecond)
+        }
       }
       log.debug('project', `setClipPeaks id=${clipId} peaks=${peaks.length / 2} sr=${sampleRate} pps=${clip.peaksPerSecond ?? 'undef'}`)
     }

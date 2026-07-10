@@ -45,6 +45,11 @@ export function fileStem(name: string): string {
   return name.replace(/\.[^.\\/:*?"<>|]+$/, '').trim() || 'Sample'
 }
 
+/** Case-insensitive Windows path key with slash direction normalised. */
+export function filePathKey(filePath: string): string {
+  return filePath.replaceAll('/', '\\').toLowerCase()
+}
+
 /** Map wire-format transitions to the store shape; undefined for an empty list (suppressed default). */
 export function hydrateTransitions(
   raw: readonly ProjectStateTransition[] | undefined

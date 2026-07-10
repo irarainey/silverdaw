@@ -64,6 +64,18 @@ void broadcastPeaksReady(const PeakJobWaiter& waiter, const juce::File& cacheFil
                      juce::var(obj));
 }
 
+void broadcastPeaksFailed(const PeakJobWaiter& waiter, silverdaw::BridgeServer& bridge)
+{
+    if (waiter.target != PeakResponseTarget::timelineClip)
+    {
+        return;
+    }
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("clipId", waiter.id);
+    obj->setProperty("error", "Waveform peaks could not be produced");
+    bridge.broadcast("WAVEFORM_FAILED", juce::var(obj));
+}
+
 // Worker-only disk I/O; WebSocket carries cache paths, never bulk peaks.
 void produceAndBroadcastPeaks(const std::string& jobKey, const juce::File& filePath, int peaksPerSecond,
                               silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
@@ -87,6 +99,10 @@ void produceAndBroadcastPeaks(const std::string& jobKey, const juce::File& fileP
     if (result.peaks.empty())
     {
         silverdaw::log::warn("peaksjob", "no peaks produced for " + filePath.getFileName());
+        for (const auto& waiter : waiters)
+        {
+            broadcastPeaksFailed(waiter, bridge);
+        }
         return;
     }
 

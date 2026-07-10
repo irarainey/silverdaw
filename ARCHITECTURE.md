@@ -49,7 +49,9 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
   the `ValueTree`, and the source graph. The bridge `callAsync`s onto it.
 - **IXWebSocket I/O threads:** parse JSON, gate AUTH, then `callAsync`.
 - **Peaks worker pool:** `juce::ThreadPool` (4) computes/loads peaks off-thread,
-  writes the cache, emits a small `WAVEFORM_READY`.
+  coalesces matching source/resolution jobs, writes the cache, and emits a small
+  `WAVEFORM_READY` for every waiter. `WAVEFORM_FAILED` lets the renderer fall
+  back to local decoding.
 
 ## Data-flow rules
 

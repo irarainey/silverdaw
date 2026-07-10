@@ -457,6 +457,12 @@ export const WaveformReadyPayloadSchema = z.object({
 })
 export type WaveformReadyPayload = z.infer<typeof WaveformReadyPayloadSchema>
 
+export const WaveformFailedPayloadSchema = z.object({
+  clipId: z.string(),
+  error: z.string()
+})
+export type WaveformFailedPayload = z.infer<typeof WaveformFailedPayloadSchema>
+
 /** Clip Editor peaks use the `WAVEFORM_READY` cache layout, keyed by library item. */
 export const ClipEditorPeaksReadyPayloadSchema = z.object({
   libraryItemId: z.string(),
@@ -806,6 +812,7 @@ export interface BridgeInboundMap {
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
+  WAVEFORM_FAILED: WaveformFailedPayload
   CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
   SAMPLE_SAVED: SampleSavedPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
@@ -874,6 +881,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
+  'WAVEFORM_FAILED',
   'CLIP_EDITOR_PEAKS_READY',
   'SAMPLE_SAVED',
   'LIBRARY_ITEM_ANALYSIS',
@@ -967,6 +975,10 @@ export function isProjectDirtyPayload(value: unknown): value is ProjectDirtyPayl
 
 export function isWaveformReadyPayload(value: unknown): value is WaveformReadyPayload {
   return WaveformReadyPayloadSchema.safeParse(value).success
+}
+
+export function isWaveformFailedPayload(value: unknown): value is WaveformFailedPayload {
+  return WaveformFailedPayloadSchema.safeParse(value).success
 }
 
 export function isClipEditorPeaksReadyPayload(value: unknown): value is ClipEditorPeaksReadyPayload {

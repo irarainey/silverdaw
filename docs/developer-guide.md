@@ -85,7 +85,8 @@ Threading invariants:
   thread via `juce::MessageManager::callAsync`.
 - **IXWebSocket I/O threads**: parse JSON, gate AUTH, then callAsync to the message thread.
 - **Peaks worker pool**: `juce::ThreadPool` of 4 workers computes / loads waveform peaks off the
-  message thread, writes them to disk in the cache, and emits a small `WAVEFORM_READY` envelope.
+  message thread. Requests for the same source and resolution share one job, which writes the
+  disk cache and emits a small `WAVEFORM_READY` envelope for every waiting clip.
 
 ## Project layout
 
@@ -458,7 +459,8 @@ themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parse
 header + float32 payload locally. This mirrors how the same architecture treats audio files,
 project files, stems and mixdowns — the WebSocket carries the control plane, the
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
-it was designed for.
+it was designed for. `WAVEFORM_FAILED { clipId, error }` triggers renderer-side decoding as a
+recovery path when the backend cannot produce peaks.
 
 The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts).

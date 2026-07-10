@@ -2,17 +2,25 @@
 // and saved-sample reconciliation.
 
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { applySampleSaved, loadEditorPeaksFromCache, loadPeaksFromCache } from '@/lib/bridge/peaksCache'
 import { log } from '@/lib/log'
+import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 export const libraryBridgeHandlers: BridgeInboundHandlers<
-  'WAVEFORM_READY' | 'CLIP_EDITOR_PEAKS_READY' | 'LIBRARY_ITEM_ANALYSIS' | 'SAMPLE_SAVED'
+  'WAVEFORM_READY' | 'WAVEFORM_FAILED' | 'CLIP_EDITOR_PEAKS_READY' | 'LIBRARY_ITEM_ANALYSIS' | 'SAMPLE_SAVED'
 > = {
   WAVEFORM_READY: (payload) => {
     // Bulk peaks stay on disk; main reads and dequantises them.
     void loadPeaksFromCache(payload)
+  },
+
+  WAVEFORM_FAILED: (payload) => {
+    const clip = useProjectStore().clips[payload.clipId]
+    if (clip) refreshLibraryPeaksForPath(clip.filePath)
+    log.warn('bridge', `WAVEFORM_FAILED clipId=${payload.clipId}: ${payload.error}`)
   },
 
   CLIP_EDITOR_PEAKS_READY: (payload) => {

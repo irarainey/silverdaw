@@ -9,6 +9,7 @@ import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
@@ -115,10 +116,16 @@ export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise
     buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
   } catch (err) {
     log.warn('bridge', `WAVEFORM_READY read failed clipId=${clipId}: ${String(err)}`)
+    const clip = useProjectStore().clips[clipId]
+    if (clip) refreshLibraryPeaksForPath(clip.filePath)
     return
   }
   const parsed = parsePeaksCacheBuffer(buffer, peakCount, `WAVEFORM_READY clipId=${clipId}`)
-  if (!parsed) return
+  if (!parsed) {
+    const clip = useProjectStore().clips[clipId]
+    if (clip) refreshLibraryPeaksForPath(clip.filePath)
+    return
+  }
   useProjectStore().setClipPeaks(clipId, parsed.summary, sampleRate, peaksPerSecond, parsed.channels)
   log.info(
     'bridge',
