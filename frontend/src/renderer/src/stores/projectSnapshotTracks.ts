@@ -202,8 +202,9 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
       }
       target.clips[c.id] = placeholder
       track.clipIds.push(c.id)
-      // Missing sources cannot produce peaks.
-      if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
+      if (!placeholder.unresolved && placeholder.peaks.length === 0) {
+        clipsNeedingPeaks.push(c.id)
+      }
       const clipEnd = placeholder.startMs + placeholder.durationMs
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {

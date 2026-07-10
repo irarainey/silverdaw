@@ -819,6 +819,49 @@ describe('projectStore', () => {
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'c1' })
   })
 
+  it('does not request peaks for a snapshot clip when its library item already has them', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const peaks = new Float32Array([-0.5, 0.5])
+    library.addItem({
+      id: 'l1',
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks,
+      fromSnapshot: true
+    })
+    sendMock.mockClear()
+
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Loaded Mix',
+      reset: false,
+      bpm: 120,
+      tracks: [
+        {
+          id: 't1',
+          name: 'Drums',
+          gain: 1,
+          clips: [
+            {
+              id: 'c1',
+              libraryItemId: 'l1',
+              offsetMs: 0,
+              inMs: 0,
+              durationMs: 1_000
+            }
+          ]
+        }
+      ]
+    })
+
+    expect(project.clips.c1?.peaks).toBe(peaks)
+    expect(sendMock).not.toHaveBeenCalledWith('WAVEFORM_REQUEST', expect.anything())
+  })
+
   it('relinks every library item sharing a missing source and refreshes placed clips', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
