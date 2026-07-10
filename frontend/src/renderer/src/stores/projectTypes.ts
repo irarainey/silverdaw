@@ -224,8 +224,8 @@ export interface ProjectState {
   tracks: Track[]
   clips: Record<string, Clip>
   markers: Marker[]
-  /** Bumped on any clip peaks change — a cheap reactive redraw signal (peaks mutate in place). */
-  peaksRevision: number
+  /** Bumped by clip and row mutations that require a timeline scene rebuild. */
+  timelineRevision: number
 
   // ─── Project file identity ───────────────────────────────────────────────
   /** Absolute path of the loaded `.silverdaw` file; null until first saved. */

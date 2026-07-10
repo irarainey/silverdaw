@@ -5,7 +5,6 @@
 
 import { watch, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemDisplayName, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
@@ -24,88 +23,16 @@ export interface TimelineRepaintWatchesDeps {
 
 export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): void {
   const project = useProjectStore()
-  const library = useLibraryStore()
   const transport = useTransportStore()
   const ui = useUiStore()
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
   const { redraw, updatePlayhead, clampScroll, applyScroll, horizontalRebuildNeeded } = deps
 
+  // Mutation actions bump this scalar instead of forcing Vue to serialize every
+  // clip's geometry, warp, appearance, library, and peak state on each change.
   watch(
-    () => [project.tracks.length, Object.keys(project.clips).length] as const,
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  watch(
-    () => Object.values(project.clips)
-      .map((clip) => [
-        clip.id,
-        clip.warpEnabled === true ? 1 : 0,
-        clip.pendingAutoWarp === true ? 1 : 0,
-        clip.warpMode ?? '',
-        clip.tempoRatio ?? '',
-        clip.semitones ?? '',
-        clip.cents ?? ''
-      ].join(':'))
-      .join('|'),
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  // Trim geometry, per-clip appearance, and edit state that the Clip Editor (and
-  // undo/redo, backend echoes) can change without altering the clip count or the
-  // warp/library signatures above. Without this a trim, reverse, brake/backspin,
-  // volume-shape, colour, or rename committed from the Clip Editor updated the
-  // store but fired no repaint watch, so the timeline only caught up on the next
-  // scroll-triggered rebuild.
-  watch(
-    () => Object.values(project.clips)
-      .map((clip) => [
-        clip.id,
-        clip.trackId,
-        clip.startMs,
-        clip.inMs,
-        clip.durationMs,
-        clip.effectiveDurationMs ?? '',
-        clip.effectiveTempoRatio ?? '',
-        clip.effectiveWarpActive === true ? 1 : 0,
-        clip.colorIndex ?? '',
-        clip.name ?? '',
-        clip.reversed === true ? 1 : 0,
-        clip.brake === true ? 1 : 0,
-        clip.backspin === true ? 1 : 0,
-        clip.locked === true ? 1 : 0,
-        (clip.envelopePoints ?? []).map((p) => `${p.timeMs}@${p.gain}`).join(';')
-      ].join(':'))
-      .join('|'),
-    () => {
-      redraw()
-      updatePlayhead()
-    }
-  )
-
-  watch(
-    () => Object.values(project.clips)
-      .map((clip) => {
-        const item = library.byId[clip.libraryItemId]
-        const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
-        return [
-          clip.id,
-          clip.libraryItemId,
-          item?.kind ?? '',
-          item ? libraryItemDisplayName(item) : '',
-          item?.durationMs ?? '',
-          item?.derivedFrom?.inMs ?? '',
-          item?.derivedFrom?.durationMs ?? '',
-          sourceBpm ?? ''
-        ].join(':')
-      })
-      .join('|'),
+    () => project.timelineRevision,
     () => {
       redraw()
       updatePlayhead()
@@ -120,12 +47,6 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
       redraw()
       updatePlayhead()
     }
-  )
-
-  // Peaks revision avoids a deep watch on clip waveform data.
-  watch(
-    () => project.peaksRevision,
-    () => redraw()
   )
 
   // Both scroll axes change which content falls inside the culled draw window

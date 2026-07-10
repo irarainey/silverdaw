@@ -67,6 +67,7 @@ export const trackActions = {
         lengthMs: DEFAULT_TRACK_LENGTH_MS
       }
       this.tracks.push(track)
+      this.timelineRevision++
       // Optimistic; TRACK_ADDED is diagnostic because the renderer already shows it.
       // colorIndex is persisted so the inherited clip colour never drifts on reload.
       sendBridge('TRACK_ADD', { trackId, name: track.name, colorIndex: track.colorIndex })
@@ -220,7 +221,7 @@ export const trackActions = {
       if (next) map[paramId] = next
       else delete map[paramId]
       track.automation = Object.keys(map).length > 0 ? map : undefined
-      this.peaksRevision++
+      this.timelineRevision++
 
       if (!opts?.localOnly) {
         sendBridge('TRACK_SET_AUTOMATION', {
@@ -334,6 +335,7 @@ export const trackActions = {
       }
       if (this.selectedTrackId === trackId) this.selectedTrackId = null
       this.tracks.splice(idx, 1)
+      this.timelineRevision++
 
       sendBridge('TRACK_REMOVE', { trackId })
 
@@ -455,6 +457,7 @@ export const trackActions = {
       const [moved] = this.tracks.splice(currentIndex, 1)
       if (!moved) return
       this.tracks.splice(clamped, 0, moved)
+      this.timelineRevision++
       sendBridge('TRACK_REORDER', { trackId, newIndex: clamped })
     },
 

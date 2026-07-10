@@ -100,6 +100,7 @@ export const clipEditActions = {
         } else {
           track.clipIds.push(newId)
         }
+        this.timelineRevision++
 
         sendBridge('CLIP_ADD', {
           trackId: clip.trackId,
@@ -238,6 +239,7 @@ export const clipEditActions = {
         track.clipIds.push(newId)
       }
       this.duplicateTailBySource[clipId] = newId
+      this.timelineRevision++
       const clipEnd = copy.startMs + clipEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
@@ -300,7 +302,7 @@ export const clipEditActions = {
         if (tailId === clipId) delete this.duplicateTailBySource[sourceId]
       }
       if (this.selectedClipId === clipId) this.selectedClipId = null
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_REMOVE', { clipId })
       log.info('project', `removeClip id=${clipId}`)
     }

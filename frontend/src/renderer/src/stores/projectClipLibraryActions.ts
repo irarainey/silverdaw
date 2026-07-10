@@ -91,7 +91,7 @@ export const clipLibraryActions = {
       clip.libraryItemId = fallbackParentId
       sendBridge('CLIP_REBIND', { clipId, libraryItemId: fallbackParentId })
       // Library binding changes need an explicit redraw for the link badge.
-      this.peaksRevision++
+      this.timelineRevision++
       log.info('project', `unlinkClipFromLibrary clip=${clipId} -> source=${fallbackParentId}`)
       return true
     },

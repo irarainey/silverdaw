@@ -163,7 +163,7 @@ export function applyProjectStructureReset(
       target.clipboardClips = null
     }
     target.duplicateTailBySource = {}
-    target.peaksRevision++
+    target.timelineRevision++
     library.clear()
   }
 

@@ -184,7 +184,7 @@ export const clipClipboardActions = {
       })
       this.selectedClipId = null
       this.selectedClipIds = new Set()
-      this.peaksRevision++
+      this.timelineRevision++
       log.info('project', `cutSelectedClips count=${ids.length}`)
       return true
     },
@@ -222,7 +222,7 @@ export const clipClipboardActions = {
       const newId = insertPastedClip(this, cb, track, targetStartMs)
       this.selectedClipId = newId
       this.selectedClipIds = new Set([newId])
-      this.peaksRevision++
+      this.timelineRevision++
 
       // One undo step for the paste: CLIP_ADD plus its name/warp replay.
       runInUndoGroup('Paste clip', () => {
@@ -296,7 +296,7 @@ export const clipClipboardActions = {
       const newIds = placements.map((p) => insertPastedClip(this, p.entry, p.track, p.startMs))
       this.selectedClipId = newIds[0] ?? null
       this.selectedClipIds = new Set(newIds)
-      this.peaksRevision++
+      this.timelineRevision++
 
       // One undo step for the whole group.
       runInUndoGroup('Paste clips', () => {

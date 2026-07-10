@@ -263,7 +263,7 @@ export function finalizeProjectSnapshot(
         : null
     target.fxPanelOpen = snapshot.viewFxPanelOpen === true
     target.fxTab = 'track'
-    target.peaksRevision++
+    target.timelineRevision++
   }
 
   // Migration (project LOAD only): rebind pre-existing library-clip windows to their saved

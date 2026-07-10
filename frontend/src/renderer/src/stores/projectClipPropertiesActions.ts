@@ -19,7 +19,7 @@ export const clipPropertiesActions = {
         if (clip.colorIndex === undefined) return
         clip.colorIndex = undefined
         // Historical redraw counter for non-positional visual changes.
-        this.peaksRevision++
+        this.timelineRevision++
         sendBridge('CLIP_COLOR', { clipId, colorIndex: -1 })
         log.info('project', `setClipColor id=${clipId} -> inherit`)
         return
@@ -27,7 +27,7 @@ export const clipPropertiesActions = {
       const clamped = Math.max(0, Math.min(TRACK_PALETTE.length - 1, Math.round(colorIndex)))
       if (clip.colorIndex === clamped) return
       clip.colorIndex = clamped
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_COLOR', { clipId, colorIndex: clamped })
       log.info('project', `setClipColor id=${clipId} -> ${clamped}`)
     },
@@ -40,7 +40,7 @@ export const clipPropertiesActions = {
       const current = clip.locked === true
       if (next === current) return
       clip.locked = next ? true : undefined
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_SET_LOCKED', { clipId, locked: next })
       log.info('project', `setClipLocked id=${clipId} -> ${next ? 'locked' : 'unlocked'}`)
     },
@@ -53,7 +53,7 @@ export const clipPropertiesActions = {
       const current = clip.reversed === true
       if (next === current) return
       clip.reversed = next ? true : undefined
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_SET_REVERSED', { clipId, reversed: next })
       log.info('project', `setClipReversed id=${clipId} -> ${next ? 'reversed' : 'forward'}`)
     },
@@ -71,7 +71,7 @@ export const clipPropertiesActions = {
       // Brake and backspin are mutually exclusive; the backend clears the other,
       // so mirror that locally to keep the UI in sync.
       if (next) clip.backspin = undefined
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_SET_BRAKE', { clipId, on: next })
       log.info('project', `setClipBrake id=${clipId} -> ${next ? 'on' : 'off'}`)
     },
@@ -88,7 +88,7 @@ export const clipPropertiesActions = {
       if (next === current) return
       clip.backspin = next ? true : undefined
       if (next) clip.brake = undefined
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_SET_BACKSPIN', { clipId, on: next })
       log.info('project', `setClipBackspin id=${clipId} -> ${next ? 'on' : 'off'}`)
     },
@@ -101,7 +101,7 @@ export const clipPropertiesActions = {
       const nextName = trimmed.length > 0 ? trimmed : undefined
       if (clip.name === nextName) return false
       clip.name = nextName
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_RENAME', { clipId, name: nextName ?? '' })
       log.info('project', `renameClip id=${clipId} -> ${nextName ?? '<cleared>'}`)
       return true
@@ -121,7 +121,7 @@ export const clipPropertiesActions = {
       if (typeof peaksPerSecond === 'number' && peaksPerSecond > 0) clip.peaksPerSecond = peaksPerSecond
       if (sampleRate > 0) clip.sampleRate = sampleRate
       // A revision counter avoids deep-watching clips for waveform redraws.
-      this.peaksRevision++
+      this.timelineRevision++
       // Populate every independently visible media row that shares this source.
       const lib = useLibraryStore()
       const sourcePathKey = filePathKey(clip.filePath)

@@ -51,7 +51,7 @@ export const clipWarpActions = {
       ) {
         clip.pendingAutoWarp = undefined
       }
-      this.peaksRevision++
+      this.timelineRevision++
       if (!opts?.localOnly && patch.warpEnabled === true) {
         useLibraryStore().markItemWarping(clip.libraryItemId)
       }
@@ -82,7 +82,7 @@ export const clipWarpActions = {
       const next = cleaned.length >= 2 ? cleaned : undefined
       if (!envelopesEqual(clip.envelopePoints, next)) {
         clip.envelopePoints = next
-        this.peaksRevision++
+        this.timelineRevision++
       }
       if (!opts?.localOnly) {
         sendBridge('CLIP_SET_ENVELOPE', {

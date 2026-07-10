@@ -195,7 +195,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     // and regardless of whether the in-memory source still holds its own cover.
     const media = await getProjectMedia(item?.mediaId)
     if (item && media) library.setItemMetadata(payload.itemId, media)
-    useProjectStore().peaksRevision++
+    useProjectStore().timelineRevision++
   }
   // A batch slice-to-samples run shows ONE summary toast on the final item
   // instead of N per-sample toasts.

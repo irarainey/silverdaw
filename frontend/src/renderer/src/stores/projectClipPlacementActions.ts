@@ -57,6 +57,7 @@ export const clipPlacementActions = {
       }
       this.clips[clipId] = clip
       track.clipIds.push(clipId)
+      this.timelineRevision++
 
       const clipEnd = clip.startMs + effectiveClipDurationMs(clip)
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
@@ -114,7 +115,7 @@ export const clipPlacementActions = {
         ...(trackChanged ? { trackId: destTrackId } : {})
       })
       if (trackChanged) this.pushTrackGain(destTrack)
-      this.peaksRevision++ // force redraw after track/position change
+      this.timelineRevision++
       log.debug(
         'project',
         `moveClip id=${clipId} -> ${target}ms${trackChanged ? ' track=' + destTrackId : ''}`
@@ -216,7 +217,7 @@ export const clipPlacementActions = {
         })
         changed = true
       }
-      if (changed) this.peaksRevision++
+      if (changed) this.timelineRevision++
       return true
     },
 
@@ -281,6 +282,7 @@ export const clipPlacementActions = {
       // CLIP_TRIM is not echoed, so update the effective timeline footprint here.
       const trimRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
       clip.effectiveDurationMs = trimRatio > 0 ? safeDur / trimRatio : safeDur
+      this.timelineRevision++
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (track) {
@@ -333,6 +335,7 @@ export const clipPlacementActions = {
       if (track) {
         track.clipIds = track.clipIds.filter((id) => id !== clipId)
       }
+      this.timelineRevision++
       const message = error
         ? `Couldn't add clip: ${error}`
         : 'Couldn\'t add clip (the audio engine rejected the file).'
