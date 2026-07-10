@@ -27,9 +27,6 @@ export function useAppTitleBarController(
     project.tracks.some((track) => track.clipIds.length > 0)
   )
 
-  // Menu list is rebuilt whenever `devToolsEnabled` flips. In practice the flag
-  // is a startup snapshot so this is computed once, but `computed` keeps
-  // the dependency wiring honest without any extra cost.
   const visibleMenus = computed(() =>
     buildMenus({
       devToolsEnabled: appStore.devToolsEnabled,

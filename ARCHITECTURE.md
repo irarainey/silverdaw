@@ -95,7 +95,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/bridge/` | Loopback server, AUTH, dispatch, payload helpers | `docs/developer-guide.md#bridge-protocol` |
 | `backend/src/commands/` | Per-domain bridge command handlers | — |
 | `backend/src/midi/` | Generic JSON-profile loader, MIDI decoder, and feedback encoder | `docs/developer-guide.md#midi-controller-architecture` |
-| `backend/resources/midi-mappings/` | Installed model aliases and controller bindings | `docs/midi-controllers.md` |
+| `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (EQ, Leveler, Reverb, Delay, peaks) | — |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |

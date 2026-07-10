@@ -104,6 +104,10 @@ export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBindin
     const accel = parseAccelerator(alias.accel)
     if (accel) bindings.push({ accel, action: alias.action })
   }
+  if (opts.devToolsEnabled) {
+    const accel = parseAccelerator('F12')
+    if (accel) bindings.push({ accel, action: 'view.toggleDevTools' })
+  }
   return bindings
 }
 

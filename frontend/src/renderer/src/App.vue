@@ -401,7 +401,6 @@ const { handleMenuAction } = useAppMenuActions({
   preferencesOpen,
   projectPropertiesOpen,
   exportMixdownOpen,
-  midiMonitorOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isShortcutModalOpen,

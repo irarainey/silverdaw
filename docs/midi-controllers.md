@@ -77,10 +77,12 @@ provide input when no matching output is available.
 
 ## Supported controllers and profile coverage
 
-The model names below are the case-insensitive names recognised in
-`backend/resources/midi-mappings/*.json`. A profile can support several models
-that share the same verified protocol. Controls not listed for a profile are not
-mapped.
+The source profiles are stored in
+`backend/resources/midi-mappings/*.json`. Builds copy them to a
+`midi-mappings` directory beside the backend executable, which is where the
+installed app loads them. The model names below are matched case-insensitively.
+A profile can support several models that share the same verified protocol.
+Controls not listed for a profile are not mapped.
 
 | Supported model names | Mapped input coverage | Output feedback |
 | --- | --- | --- |
@@ -112,11 +114,10 @@ verified. A similar name does not make an unlisted controller compatible.
 
 ## Diagnose a controller
 
-Open **Preferences ▸ Developer ▸ Open MIDI Monitor…** or
-**Debug ▸ MIDI Monitor…**. The monitor shows the latest Note On, Note Off,
-Control Change, Pitch Bend, and other short messages from enabled inputs,
-including their controller code and value. It keeps the latest 200 messages and
-can be cleared without changing the mapping.
+Open **Preferences ▸ Developer ▸ Open MIDI Monitor…**. The monitor shows the
+latest Note On, Note Off, Control Change, Pitch Bend, and other short messages
+from enabled inputs, including their controller code and value. It keeps the
+latest 200 messages and can be cleared without changing the mapping.
 
 If a listed controller is shown as unsupported:
 

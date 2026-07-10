@@ -515,12 +515,13 @@ device and capability matrix is
 [MIDI deck controllers](midi-controllers.md); the JSON schema is documented in
 [`backend/resources/midi-mappings/README.md`](../backend/resources/midi-mappings/README.md).
 
-The backend loads every
-`backend/resources/midi-mappings/*.json` file on first use. Development builds
-fall back to that source directory; CMake copies the same directory beside the
-backend executable and electron-builder packages it unchanged. Profiles are
-validated for types, value ranges, model-name conflicts, and overlapping input
-bindings. Device matching is case-insensitive, uses token boundaries, honours
+The source profiles live in
+`backend/resources/midi-mappings/*.json`. CMake copies them to a
+`midi-mappings` directory beside the backend executable, which is the runtime
+location loaded by packaged builds. Development runs fall back to the source
+directory when that copied directory is unavailable. Profiles are validated for
+types, value ranges, model-name conflicts, and overlapping input bindings.
+Device matching is case-insensitive, uses token boundaries, honours
 `excludedModels`, and selects the longest matching model name.
 
 `MidiInputMonitor` owns connected inputs:
@@ -1948,9 +1949,9 @@ Selecting **Save** persists enabled identifiers in `preferences.json`;
 **Cancel** restores the pre-dialog selection. Persisted deck 1/2 enablement is
 re-applied after a backend reconnect.
 
-The **MIDI Monitor** is available from **Preferences ▸ Developer** and the
-**Debug** menu. It retains the latest 200 raw messages from enabled inputs and
-shows timestamp, device, message kind, controller code, and value. See
+The **MIDI Monitor** is available from **Preferences ▸ Developer**. It retains
+the latest 200 raw messages from enabled inputs and shows timestamp, device,
+message kind, controller code, and value. See
 [MIDI deck controllers](midi-controllers.md) for setup, all supported model
 names, mapped behavior, controller feedback, and troubleshooting.
 
@@ -2044,8 +2045,8 @@ Persisted fields:
   **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
   the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
   to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
-- **Show Developer Tools** — gates the visibility of the **Debug** menu and
-  DevTools shortcuts independently of file logging.
+- **Show Developer Tools** — enables DevTools shortcuts independently of file
+  logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
   `stems.quality` (Fast / Balanced / Best — the inference + RoFormer chunk
   overlap), `stems.useBackupModel` (force the htdemucs backup for every stem,

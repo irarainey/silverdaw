@@ -27,6 +27,15 @@ describe('collectShortcutBindings', () => {
     expect(bound.some((a) => a.startsWith('view.zoomPreset:'))).toBe(false)
   })
 
+  it('binds F12 only when developer tools are enabled', () => {
+    expect(actions()).not.toContain('view.toggleDevTools')
+    expect(
+      collectShortcutBindings({ devToolsEnabled: true }).some(
+        (binding) => binding.action === 'view.toggleDevTools' && binding.accel.key === 'f12'
+      )
+    ).toBe(true)
+  })
+
   it('binds the Ctrl+D and Backspace aliases and the Trim / Zoom-to-Fit accelerators', () => {
     const bindings = collectShortcutBindings({ devToolsEnabled: false })
     const find = (action: string, pred: (b: (typeof bindings)[number]) => boolean) =>
