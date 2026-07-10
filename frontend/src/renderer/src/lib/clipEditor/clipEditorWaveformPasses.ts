@@ -62,6 +62,7 @@ export interface ClipEditorWaveformPassCtx {
 
 export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
   const { deps, acquireGraphics, acquireText, meshBuilder } = ctx
+  const interpolatedPeak = { min: 0, max: 0 }
 
   // --- Ruler chrome (static layer, never translated) --------------------------
   function drawRulerBackground(layer: Container, g: SceneGeometry): void {
@@ -226,9 +227,9 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
           merger.breakRun(px)
           continue
         }
-        const sampled = sampleInterpolatedPeak(lanePeaks, pairs, fidx)
-        min = sampled.min
-        max = sampled.max
+        sampleInterpolatedPeak(lanePeaks, pairs, fidx, interpolatedPeak)
+        min = interpolatedPeak.min
+        max = interpolatedPeak.max
       } else {
         let startIdx: number
         let endIdx: number

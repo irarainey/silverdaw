@@ -16,6 +16,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
 import { envelopeGainAtMs } from '@/lib/envelope'
+import { updateWaveMeshGeometry } from '@/lib/wave-mesh-geometry'
 import {
   waveformColumnUp,
   waveformColumnDown,
@@ -259,9 +260,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       // position/uv buffers). Pixi's Buffer `data` setter handles both in-place
       // re-upload and resize, so no geometry lifecycle teardown occurs per frame.
       const geo = existing.geometry as MeshGeometry
-      geo.positions = positions
-      geo.uvs = new Float32Array(positions.length)
-      geo.indices = indices
+      updateWaveMeshGeometry(geo, positions, indices)
       existing.tint = tint
       existing.alpha = alpha
       layer.addChild(existing)

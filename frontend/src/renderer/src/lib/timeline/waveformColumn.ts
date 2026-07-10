@@ -64,13 +64,24 @@ export function waveformColumnExcursion(
  *
  * `peaks` is the interleaved `[min, max, min, max, …]` array and `pairs` its
  * bucket count. `fidx` is the fractional bucket index; it is clamped into range.
+ * The caller owns `output` so pixel loops can reuse one result object.
  */
+export interface InterpolatedPeak {
+  min: number
+  max: number
+}
+
 export function sampleInterpolatedPeak(
   peaks: Float32Array,
   pairs: number,
-  fidx: number
-): { min: number; max: number } {
-  if (pairs <= 0) return { min: 0, max: 0 }
+  fidx: number,
+  output: InterpolatedPeak
+): InterpolatedPeak {
+  if (pairs <= 0) {
+    output.min = 0
+    output.max = 0
+    return output
+  }
   const clamped = fidx < 0 ? 0 : fidx > pairs - 1 ? pairs - 1 : fidx
   const i0 = Math.floor(clamped)
   const i1 = i0 + 1 <= pairs - 1 ? i0 + 1 : pairs - 1
@@ -79,10 +90,9 @@ export function sampleInterpolatedPeak(
   const hi0 = peaks[i0 * 2 + 1] || 0
   const lo1 = peaks[i1 * 2] || 0
   const hi1 = peaks[i1 * 2 + 1] || 0
-  return {
-    min: lo0 + (lo1 - lo0) * frac,
-    max: hi0 + (hi1 - hi0) * frac
-  }
+  output.min = lo0 + (lo1 - lo0) * frac
+  output.max = hi0 + (hi1 - hi0) * frac
+  return output
 }
 
 /**
