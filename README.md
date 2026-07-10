@@ -145,6 +145,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Stay in flow.** Choose any audio output device and hot-swap it without
   leaving the timeline, relink moved source files in one step, and undo or redo
   any edit.
+- **Supported MIDI deck control.** Use a recognised deck controller for
+  transport, timeline and marker navigation, jog movement, clip browsing, and
+  selected-track mixer controls. Other MIDI devices remain visible but cannot
+  be enabled. See the
+  **[supported controller list and control reference](docs/midi-controllers.md)**.
 
 ## Supported audio
 
@@ -183,6 +188,8 @@ already have from **Preferences ▸ Stems**.
   Store or portable zip) with the pros and cons of each.
 - **[Developer Guide](docs/developer-guide.md)** — architecture, internals,
   build and run instructions, and contributor workflows.
+- **[MIDI deck controllers](docs/midi-controllers.md)** — supported devices,
+  setup, mapped controls, feedback, limitations, and troubleshooting.
 
 ## License
 

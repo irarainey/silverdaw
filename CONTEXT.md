@@ -15,10 +15,11 @@ audio engine, linked by a per-session-authenticated loopback WebSocket.
 
 ## Current state
 
-Core arrangement, mixing, analysis, stem separation, and out-of-process engine
-recovery are all shipped. Silverdaw is **publicly released** — installable from
-the **Microsoft Store** (auto-updating), so existing installs, saved preferences,
-and saved projects must keep working across every update (see ADR 0019). See
+Core arrangement, mixing, analysis, stem separation, supported MIDI deck
+control, and out-of-process engine recovery are all shipped. Silverdaw is
+**publicly released** — installable from the **Microsoft Store**
+(auto-updating), so existing installs, saved preferences, and saved projects
+must keep working across every update (see ADR 0019). See
 `docs/developer-guide.md#current-status-and-roadmap` for the current feature set
 and roadmap.
 
