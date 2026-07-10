@@ -554,6 +554,7 @@ export interface BridgeOutboundMap {
   AUDIO_DEVICES_REQUEST: AudioDevicesRequestPayload
   MIDI_DEVICES_REQUEST: undefined
   MIDI_INPUTS_SET: MidiInputsSetPayload
+  MIDI_DECK_SELECTION_SET: MidiDeckSelectionSetPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
@@ -981,6 +982,12 @@ export interface MidiInputsSetPayload {
   identifiers: string[]
 }
 
+export interface MidiDeckSelectionSetPayload {
+  deviceIdentifier: string
+  deck1Enabled: boolean
+  deck2Enabled: boolean
+}
+
 /**
  * Ask the backend to enumerate the connected MIDI input devices and reply with a
  * `MIDI_DEVICES_LIST` snapshot. No payload: enumeration is cheap and always fresh.
@@ -1136,6 +1143,7 @@ export const bridgeOutboundPayloadKinds: {
   AUDIO_DEVICES_REQUEST: 'payload',
   MIDI_DEVICES_REQUEST: 'none',
   MIDI_INPUTS_SET: 'payload',
+  MIDI_DECK_SELECTION_SET: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',

@@ -425,6 +425,9 @@ void testProjectStateViewLibraryMarkersAndReplace()
 
     require(state.addMarker("m2", 2000.0), "marker should add");
     require(state.addMarker("m1", 1000.0), "second marker should add");
+    require(state.getMarkerCount() == 2, "marker count should reflect stored markers");
+    require(state.hasMarkerNear(1000.5), "marker proximity should include its tolerance edge");
+    require(!state.hasMarkerNear(1002.0), "marker proximity should reject distant positions");
     require(!state.moveMarker("m1", -1.0), "negative marker move should fail");
     require(state.moveMarker("m1", 1500.0), "marker should move");
     require(!state.moveMarker("m1", 2000.0), "marker should not move onto occupied marker");

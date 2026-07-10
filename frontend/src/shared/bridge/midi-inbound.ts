@@ -33,10 +33,11 @@ const MidiButtonControlSchema = z.enum([
   'previousMarker',
   'nextMarker',
   'shift',
+  'syncModifier',
   'jogTouch'
 ])
 
-const MidiRelativeControlSchema = z.enum([
+const MidiJogControlSchema = z.enum([
   'jogScratch',
   'jogPitchBend',
   'jogSearch',
@@ -44,8 +45,17 @@ const MidiRelativeControlSchema = z.enum([
   'wheelSearch'
 ])
 
+const MidiTrackAbsoluteControlSchema = z.enum([
+  'trackGain',
+  'toneBass',
+  'toneMid',
+  'toneTreble',
+  'filter'
+])
+
 /** Semantic two-deck control decoded by a recognised backend controller profile. */
-export const MidiControlPayloadSchema = z.discriminatedUnion('kind', [
+// A plain union preserves control-specific fields such as required marker-pad indexes.
+export const MidiControlPayloadSchema = z.union([
   z.object({
     deviceIdentifier: z.string(),
     timestampMs: z.number(),
@@ -57,21 +67,62 @@ export const MidiControlPayloadSchema = z.discriminatedUnion('kind', [
   z.object({
     deviceIdentifier: z.string(),
     timestampMs: z.number(),
+    kind: z.literal('button'),
+    control: z.literal('browsePress'),
+    deck: z.null(),
+    pressed: z.boolean()
+  }),
+  z.object({
+    deviceIdentifier: z.string(),
+    timestampMs: z.number(),
+    kind: z.literal('button'),
+    control: z.enum(['markerJump', 'markerToggle']),
+    deck: MidiDeckSchema,
+    pad: z.number().int().min(1).max(8),
+    pressed: z.literal(true)
+  }),
+  z.object({
+    deviceIdentifier: z.string(),
+    timestampMs: z.number(),
     kind: z.literal('relative'),
-    control: MidiRelativeControlSchema,
+    control: MidiJogControlSchema,
     deck: MidiDeckSchema,
     value: z.number().int()
   }),
   z.object({
     deviceIdentifier: z.string(),
     timestampMs: z.number(),
+    kind: z.literal('relative'),
+    control: z.enum(['browseTracks', 'timelineZoom']),
+    deck: z.null(),
+    value: z.number().int()
+  }),
+  z.object({
+    deviceIdentifier: z.string(),
+    timestampMs: z.number(),
     kind: z.literal('absolute'),
-    control: z.literal('crossfader'),
+    control: MidiTrackAbsoluteControlSchema,
+    // Physical source deck is telemetry only; renderer actions target the selected track.
+    deck: MidiDeckSchema,
+    value: z.number().min(0).max(1)
+  }),
+  z.object({
+    deviceIdentifier: z.string(),
+    timestampMs: z.number(),
+    kind: z.literal('absolute'),
+    control: z.enum(['crossfader', 'masterVolume']),
     deck: z.null(),
     value: z.number().min(0).max(1)
   })
 ])
 export type MidiControlPayload = z.infer<typeof MidiControlPayloadSchema>
+
+export const MidiDeckSelectionPayloadSchema = z.object({
+  deviceIdentifier: z.string(),
+  deck1Enabled: z.boolean(),
+  deck2Enabled: z.boolean()
+})
+export type MidiDeckSelectionPayload = z.infer<typeof MidiDeckSelectionPayloadSchema>
 
 export function isMidiDevicesListPayload(value: unknown): value is MidiDevicesListPayload {
   return MidiDevicesListPayloadSchema.safeParse(value).success
@@ -83,4 +134,8 @@ export function isMidiMessagePayload(value: unknown): value is MidiMessagePayloa
 
 export function isMidiControlPayload(value: unknown): value is MidiControlPayload {
   return MidiControlPayloadSchema.safeParse(value).success
+}
+
+export function isMidiDeckSelectionPayload(value: unknown): value is MidiDeckSelectionPayload {
+  return MidiDeckSelectionPayloadSchema.safeParse(value).success
 }

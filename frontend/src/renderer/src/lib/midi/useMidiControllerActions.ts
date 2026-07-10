@@ -9,6 +9,8 @@ export function useMidiControllerActions(): void {
     () => midiDevices.lastControl,
     (control) => {
       if (control) handleMidiControl(control)
-    }
+    },
+    // Avoid Vue batching multiple controller events into one lastControl observation.
+    { flush: 'sync' }
   )
 }

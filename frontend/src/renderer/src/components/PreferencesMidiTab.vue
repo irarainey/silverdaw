@@ -36,8 +36,8 @@ function onEnabledChange(identifier: string, event: Event): void {
         MIDI input devices
       </h2>
       <p class="mb-3 text-zinc-500">
-        Enable the keyboards and controllers Silverdaw should listen to. Enabled
-        devices are remembered for the next launch.
+        Enable supported controllers for Silverdaw. Other MIDI devices remain
+        visible but cannot be enabled yet.
       </p>
 
       <div
@@ -82,11 +82,18 @@ function onEnabledChange(identifier: string, event: Event): void {
           :key="input.identifier"
           class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
         >
-          <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+          <label
+            class="flex min-w-0 flex-1 items-center gap-3"
+            :class="input.controllerProfile ? 'cursor-pointer' : 'cursor-not-allowed'"
+          >
             <input
               type="checkbox"
-              :checked="enabledByIdentifier[input.identifier] === true"
-              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+              :checked="
+                input.controllerProfile !== null &&
+                  enabledByIdentifier[input.identifier] === true
+              "
+              :disabled="input.controllerProfile === null"
+              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
               @change="onEnabledChange(input.identifier, $event)"
             >
             <span class="min-w-0 flex-1 leading-tight">
@@ -97,6 +104,12 @@ function onEnabledChange(identifier: string, event: Event): void {
                   class="ml-1.5 text-[10px] font-normal text-sky-400"
                 >
                   {{ input.controllerProfile }} controls
+                </span>
+                <span
+                  v-else
+                  class="ml-1.5 text-[10px] font-normal text-zinc-500"
+                >
+                  Not supported yet
                 </span>
               </span>
             </span>

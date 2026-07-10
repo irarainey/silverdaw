@@ -3,23 +3,31 @@
 #include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "Log.h"
+#include "MidiDeviceCommands.h"
+#include "ProjectState.h"
 
 namespace silverdaw
 {
 
-PlayheadEmitter::PlayheadEmitter(AudioEngine& e, BridgeServer& b)
-    : engine(e), bridge(b), payloadObject(new juce::DynamicObject()), payload(payloadObject.get())
+PlayheadEmitter::PlayheadEmitter(AudioEngine& e, BridgeServer& b, ProjectState& p)
+    : engine(e),
+      bridge(b),
+      project(p),
+      payloadObject(new juce::DynamicObject()),
+      payload(payloadObject.get())
 {
 }
 
 void PlayheadEmitter::timerCallback()
 {
     const bool playing = engine.isPlaying();
+    sendPioneerTransportPlaying(playing);
     const double rawPosMs = engine.getPositionMs();
 
     // Compensate only during playback so the playhead matches heard audio without moving seek anchors.
     const double latencyMs = playing ? engine.getOutputLatencyMs() : 0.0;
     const double posMs = playing ? juce::jmax(0.0, rawPosMs - latencyMs) : rawPosMs;
+    sendPioneerMarkerLights(project.hasMarkerNear(posMs), project.getMarkerCount());
 
     // Reuse payload storage to avoid 60 Hz message-thread heap churn.
     if (playing || posMs != lastPosMs)
@@ -142,14 +150,22 @@ void PlayheadEmitter::timerCallback()
     // Per-track meters use the same activity gate and one trailing zero as master.
     engine.drainAllTrackPeaks(trackPeakScratch);
     bool anyTrackHasSignal = false;
+    float selectedTrackPeakL = 0.0F;
+    float selectedTrackPeakR = 0.0F;
+    const auto selectedTrackId = project.getViewSelectedTrack();
     for (const auto& snap : trackPeakScratch)
     {
-        if (snap.peakL > kMeterEpsilon || snap.peakR > kMeterEpsilon)
+        if (snap.trackId == selectedTrackId)
         {
-            anyTrackHasSignal = true;
-            break;
+            selectedTrackPeakL = snap.peakL;
+            selectedTrackPeakR = snap.peakR;
         }
+        if (snap.peakL > kMeterEpsilon || snap.peakR > kMeterEpsilon)
+            anyTrackHasSignal = true;
     }
+    // MIDI output deduplicates values; this unconditional call also clears meters on stop.
+    sendPioneerSelectedTrackMeter(selectedTrackPeakL, selectedTrackPeakR,
+                                  playing && selectedTrackId.isNotEmpty());
 
     // perf.tracks: accumulate each track's peak between emissions so a track that
     // falls silent after a gain/filter change is identifiable in the backend log

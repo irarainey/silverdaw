@@ -15,5 +15,11 @@ void handleMidiDevicesRequest(BridgeServer& bridge);
 
 // Opens exactly the requested connected MIDI inputs, then broadcasts their state.
 void handleMidiInputsSet(const juce::var& payload, BridgeServer& bridge);
+void handleMidiDeckSelectionSet(const juce::var& payload, BridgeServer& bridge);
+
+// Mirrors the selected track peak to supported enabled controller channel meters.
+void sendPioneerSelectedTrackMeter(float peakL, float peakR, bool playing);
+void sendPioneerTransportPlaying(bool playing);
+void sendPioneerMarkerLights(bool cueActive, int markerCount);
 
 } // namespace silverdaw

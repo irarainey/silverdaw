@@ -75,6 +75,13 @@ export function seekToNextMarker(source = 'click skip-forward'): void {
   seekToSkipTarget(target)
 }
 
+export function seekToMarkerIndex(index: number, source = 'marker shortcut'): void {
+  const marker = useProjectStore().markers[index]
+  if (!marker) return
+  log.info('transport', `${source} -> marker ${index + 1} at ${marker.positionMs}ms`)
+  seekToSkipTarget(marker.positionMs)
+}
+
 export function toggleTransportPlayback(source = 'click'): void {
   const project = useProjectStore()
   const transport = useTransportStore()

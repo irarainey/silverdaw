@@ -86,14 +86,21 @@ describe('taperPositionToDb / taperDbToPosition', () => {
     expect(taperPositionToDb(1, MAX_MASTER_DB)).toBe(MAX_MASTER_DB)
   })
 
-  it('puts 0 dB near the top of the track fader (above 0.9)', () => {
+  it('puts 0 dB in the upper part of the track fader', () => {
     const unityPos = taperDbToPosition(0, MAX_TRACK_DB)
-    expect(unityPos).toBeGreaterThan(0.9)
-    expect(unityPos).toBeLessThan(1)
+    expect(unityPos).toBeGreaterThan(0.75)
+    expect(unityPos).toBeLessThan(0.85)
   })
 
   it('puts 0 dB at exactly the top of the master fader', () => {
     expect(taperDbToPosition(0, MAX_MASTER_DB)).toBe(1)
+  })
+
+  it('keeps middle positions in a useful audible range', () => {
+    expect(taperPositionToDb(0.5, MAX_TRACK_DB)).toBeGreaterThan(-11)
+    expect(taperPositionToDb(0.5, MAX_TRACK_DB)).toBeLessThan(-9)
+    expect(taperPositionToDb(0.5, MAX_MASTER_DB)).toBeGreaterThan(-16)
+    expect(taperPositionToDb(0.5, MAX_MASTER_DB)).toBeLessThan(-14)
   })
 
   it('round-trips a sample of dB values for track maxDb', () => {

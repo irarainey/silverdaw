@@ -26,14 +26,56 @@ struct QueuedMidiMessage
     int data2 = -1;
 };
 
+std::unique_ptr<juce::MidiOutput> openMatchingMidiOutput(const juce::String& inputName)
+{
+    const auto outputs = juce::MidiOutput::getAvailableDevices();
+    for (const auto& output : outputs)
+    {
+        if (output.name.equalsIgnoreCase(inputName))
+            return juce::MidiOutput::openDevice(output.identifier);
+    }
+
+    std::optional<juce::MidiDeviceInfo> candidate;
+    for (const auto& output : outputs)
+    {
+        if (output.name.containsIgnoreCase(inputName) || inputName.containsIgnoreCase(output.name))
+        {
+            if (candidate.has_value()) return nullptr;
+            candidate = output;
+        }
+    }
+    return candidate.has_value() ? juce::MidiOutput::openDevice(candidate->identifier) : nullptr;
+}
+
 class ActiveMidiInput final : public juce::MidiInputCallback
 {
 public:
     ActiveMidiInput(juce::String deviceName, juce::String deviceIdentifier)
         : name(std::move(deviceName)),
           identifier(std::move(deviceIdentifier)),
-          hasControllerMapping(supportsPioneerTwoDeckMapping(name))
+          hasControllerMapping(supportsPioneerTwoDeckMapping(name)),
+          controllerMapper(name)
     {
+    }
+
+    ~ActiveMidiInput() override
+    {
+        if (output == nullptr) return;
+        for (const auto& message : pioneerSelectedTrackMeterMessages(0.0F, 0.0F))
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        for (const auto& message : pioneerTransportPlayMessages(false))
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        for (const auto& message : pioneerCueLightMessages(false))
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        for (const auto& message : pioneerDeckSelectionLightMessages(false, false))
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        for (const auto& message : pioneerHotCueLightMessages(0))
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
     }
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override
@@ -75,17 +117,36 @@ public:
         return true;
     }
 
+    void sendDeckSelectionLights()
+    {
+        if (output == nullptr) return;
+        for (const auto& message :
+             pioneerDeckSelectionLightMessages(
+                 deckActivation.isEnabled(1), deckActivation.isEnabled(2)))
+        {
+            output->sendMessageNow(
+                juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        }
+    }
+
     static constexpr int queueCapacity = 512;
     juce::String name;
     juce::String identifier;
     bool hasControllerMapping = false;
     PioneerDeckMapper controllerMapper;
+    PioneerDeckActivationState deckActivation;
+    bool cuePressed[2]{false, false};
     std::atomic<juce::int64> lastActivityMs{0};
     std::atomic<int> droppedMessageCount{0};
     std::array<QueuedMidiMessage, queueCapacity> queue{};
     juce::AbstractFifo fifo{queueCapacity};
     juce::int64 lastMonitorBroadcastMs = 0;
     std::unique_ptr<juce::MidiInput> input;
+    std::unique_ptr<juce::MidiOutput> output;
+    int lastMeterValue = -1;
+    int lastPlayingValue = -1;
+    int lastCueValue = -1;
+    int lastHotCueCount = -1;
 };
 
 class MidiInputMonitor final : private juce::Timer
@@ -130,11 +191,20 @@ public:
         for (const auto& device : juce::MidiInput::getAvailableDevices())
         {
             if (!identifiers.contains(device.identifier)) continue;
+            if (!supportsPioneerTwoDeckMapping(device.name))
+            {
+                silverdaw::log::warn("midi", "ignoring unsupported MIDI input enable request: " +
+                                              device.name);
+                continue;
+            }
 
             auto active = std::make_unique<ActiveMidiInput>(device.name, device.identifier);
             active->input = juce::MidiInput::openDevice(device.identifier, active.get());
             if (active->input != nullptr)
             {
+                if (supportsPioneerChannelMeterOutput(active->name))
+                    active->output = openMatchingMidiOutput(active->name);
+                active->sendDeckSelectionLights();
                 active->input->start();
                 activeInputs.push_back(std::move(active));
             }
@@ -151,6 +221,78 @@ public:
     void setBridge(BridgeServer& targetBridge)
     {
         bridge = &targetBridge;
+    }
+
+    void setDeckSelection(const juce::String& identifier, bool deck1Enabled, bool deck2Enabled)
+    {
+        for (const auto& active : activeInputs)
+        {
+            if (active->identifier != identifier) continue;
+            active->deckActivation.setEnabled(1, deck1Enabled);
+            active->deckActivation.setEnabled(2, deck2Enabled);
+            active->cuePressed[0] = false;
+            active->cuePressed[1] = false;
+            active->sendDeckSelectionLights();
+            broadcastDeckSelection(*active);
+            return;
+        }
+        silverdaw::log::warn("midi", "deck selection target is not an enabled input: " +
+                                          identifier);
+    }
+
+    void sendSelectedTrackMeter(float peakL, float peakR, bool playing)
+    {
+        auto messages =
+            pioneerSelectedTrackMeterMessages(playing ? peakL : 0.0F, playing ? peakR : 0.0F);
+        const auto value = messages[0].data2;
+        for (const auto& active : activeInputs)
+        {
+            if (active->output == nullptr || active->lastMeterValue == value) continue;
+            active->lastMeterValue = value;
+            for (const auto& message : messages)
+                active->output->sendMessageNow(
+                    juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        }
+    }
+
+    void sendTransportPlaying(bool playing)
+    {
+        const auto value = playing ? 1 : 0;
+        const auto messages = pioneerTransportPlayMessages(playing);
+        for (const auto& active : activeInputs)
+        {
+            if (active->output == nullptr || active->lastPlayingValue == value) continue;
+            active->lastPlayingValue = value;
+            for (const auto& message : messages)
+                active->output->sendMessageNow(
+                    juce::MidiMessage(message.statusByte, message.data1, message.data2));
+        }
+    }
+
+    void sendMarkerLights(bool cueActive, int markerCount)
+    {
+        const auto cueValue = cueActive ? 1 : 0;
+        const auto clampedMarkerCount = juce::jlimit(0, 8, markerCount);
+        const auto cueMessages = pioneerCueLightMessages(cueActive);
+        const auto hotCueMessages = pioneerHotCueLightMessages(clampedMarkerCount);
+        for (const auto& active : activeInputs)
+        {
+            if (active->output == nullptr) continue;
+            if (active->lastCueValue != cueValue)
+            {
+                active->lastCueValue = cueValue;
+                for (const auto& message : cueMessages)
+                    active->output->sendMessageNow(
+                        juce::MidiMessage(message.statusByte, message.data1, message.data2));
+            }
+            if (active->lastHotCueCount != clampedMarkerCount)
+            {
+                active->lastHotCueCount = clampedMarkerCount;
+                for (const auto& message : hotCueMessages)
+                    active->output->sendMessageNow(
+                        juce::MidiMessage(message.statusByte, message.data1, message.data2));
+            }
+        }
     }
 
 private:
@@ -188,6 +330,31 @@ private:
                         active->controllerMapper.mapMessage(raw.statusByte, raw.data1, raw.data2);
                     if (mapped.has_value())
                     {
+                        if (mapped->control == PioneerDeckControl::deckToggle)
+                        {
+                            const auto deckIndex = static_cast<size_t>(mapped->deck - 1);
+                            const auto pressed = mapped->value > 0.5;
+                            if (!pressed)
+                            {
+                                active->cuePressed[deckIndex] = false;
+                            }
+                            else if (!active->cuePressed[deckIndex])
+                            {
+                                active->cuePressed[deckIndex] = true;
+                                active->deckActivation.toggle(mapped->deck);
+                                active->sendDeckSelectionLights();
+                                broadcastDeckSelection(*active);
+                                silverdaw::log::info(
+                                    "midi",
+                                    active->name + " deck " + juce::String(mapped->deck) +
+                                        (active->deckActivation.isEnabled(mapped->deck)
+                                             ? " enabled"
+                                             : " disabled"));
+                            }
+                            continue;
+                        }
+                        if (!active->deckActivation.allows(*mapped)) continue;
+
                         const auto relativeIndex = relativeControlIndex(mapped->control);
                         if (mapped->kind == PioneerDeckControlKind::relative &&
                             relativeIndex.has_value() && mapped->deck >= 1 && mapped->deck <= 2)
@@ -235,8 +402,19 @@ private:
         bridge->broadcast("MIDI_MESSAGE", juce::var(message));
     }
 
+    void broadcastDeckSelection(const ActiveMidiInput& active) const
+    {
+        if (bridge == nullptr) return;
+        auto* payload = new juce::DynamicObject();
+        payload->setProperty("deviceIdentifier", active.identifier);
+        payload->setProperty("deck1Enabled", active.deckActivation.isEnabled(1));
+        payload->setProperty("deck2Enabled", active.deckActivation.isEnabled(2));
+        bridge->broadcast("MIDI_DECK_SELECTION", juce::var(payload));
+    }
+
     static std::optional<int> relativeControlIndex(PioneerDeckControl control)
     {
+        // Browse/zoom remain per-event so one encoder message always means one UI step.
         switch (control)
         {
             case PioneerDeckControl::jogScratch: return 0;
@@ -268,7 +446,7 @@ private:
             {
                 const auto delta = deltas[static_cast<size_t>(deckIndex)]
                                          [static_cast<size_t>(controlIndex)];
-                if (delta == 0.0) continue;
+                if (delta == 0.0 || !active.deckActivation.isEnabled(deckIndex + 1)) continue;
                 const PioneerDeckControlEvent event{
                     relativeControlAt(controlIndex), PioneerDeckControlKind::relative,
                     deckIndex + 1, delta};
@@ -291,6 +469,7 @@ private:
         message->setProperty("control", pioneerDeckControlName(event.control));
         if (event.deck > 0) message->setProperty("deck", event.deck);
         else message->setProperty("deck", juce::var());
+        if (event.pad > 0) message->setProperty("pad", event.pad);
         if (event.kind == PioneerDeckControlKind::button)
             message->setProperty("pressed", event.value > 0.5);
         else
@@ -343,6 +522,37 @@ void handleMidiInputsSet(const juce::var& payload, silverdaw::BridgeServer& brid
 
     midiInputMonitor().setEnabledInputs(identifiers, bridge);
     bridge.broadcast("MIDI_DEVICES_LIST", buildMidiDevicesListEnvelope());
+}
+
+void handleMidiDeckSelectionSet(const juce::var& payload, silverdaw::BridgeServer& bridge)
+{
+    const auto identifier = payload.getProperty("deviceIdentifier", juce::var());
+    const auto deck1Enabled = payload.getProperty("deck1Enabled", juce::var());
+    const auto deck2Enabled = payload.getProperty("deck2Enabled", juce::var());
+    if (!identifier.isString() || identifier.toString().isEmpty() ||
+        !deck1Enabled.isBool() || !deck2Enabled.isBool())
+    {
+        silverdaw::log::warn("midi", "MIDI_DECK_SELECTION_SET has invalid payload");
+        return;
+    }
+    midiInputMonitor().setBridge(bridge);
+    midiInputMonitor().setDeckSelection(
+        identifier.toString(), static_cast<bool>(deck1Enabled), static_cast<bool>(deck2Enabled));
+}
+
+void sendPioneerSelectedTrackMeter(float peakL, float peakR, bool playing)
+{
+    midiInputMonitor().sendSelectedTrackMeter(peakL, peakR, playing);
+}
+
+void sendPioneerTransportPlaying(bool playing)
+{
+    midiInputMonitor().sendTransportPlaying(playing);
+}
+
+void sendPioneerMarkerLights(bool cueActive, int markerCount)
+{
+    midiInputMonitor().sendMarkerLights(cueActive, markerCount);
 }
 
 } // namespace silverdaw

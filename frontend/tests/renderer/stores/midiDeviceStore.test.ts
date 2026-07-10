@@ -21,9 +21,16 @@ function input(identifier: string, overrides: Partial<MidiInputDevice> = {}): Mi
 }
 
 describe('midiDeviceStore', () => {
+  const setMidiDeckSelection = vi.fn()
+
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.stubGlobal('window', {
+      silverdaw: {
+        setMidiDeckSelection
+      }
+    })
   })
 
   it('starts empty and un-hydrated', () => {
@@ -63,11 +70,67 @@ describe('midiDeviceStore', () => {
 
   it('applies a session-only input change through the bridge', () => {
     const store = useMidiDeviceStore()
+    store.applyList({
+      inputs: [input('launchkey', { controllerProfile: 'Pioneer two-deck' })]
+    })
     store.setInputEnabledForSession('launchkey', true)
 
     expect(store.enabledByIdentifier).toEqual({ launchkey: true })
     expect(sendBridge).toHaveBeenCalledWith('MIDI_INPUTS_SET', {
       identifiers: ['launchkey']
+    })
+  })
+
+  it('keeps unsupported MIDI inputs visible but refuses to enable them', () => {
+    const store = useMidiDeviceStore()
+    store.applyList({ inputs: [input('keyboard', { controllerProfile: null })] })
+
+    store.setInputEnabledForSession('keyboard', true)
+
+    expect(store.inputs).toHaveLength(1)
+    expect(store.enabledByIdentifier).toEqual({})
+    expect(sendBridge).not.toHaveBeenCalledWith('MIDI_INPUTS_SET', expect.anything())
+  })
+
+  it('restores persisted deck selection after enabling its MIDI input', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({
+          'ddj-rb': { deck1Enabled: false, deck2Enabled: true }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_INPUTS_SET', {
+      identifiers: ['ddj-rb']
+    })
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: false,
+      deck2Enabled: true
+    })
+  })
+
+  it('persists deck selection updates from the backend', () => {
+    const store = useMidiDeviceStore()
+    store.applyDeckSelection({
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+
+    expect(store.deckSelectionByIdentifier['ddj-rb']).toEqual({
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+    expect(setMidiDeckSelection).toHaveBeenCalledWith('ddj-rb', {
+      deck1Enabled: true,
+      deck2Enabled: false
     })
   })
 
@@ -93,7 +156,7 @@ describe('midiDeviceStore', () => {
     expect(store.rescanning).toBe(false)
   })
 
-  it('tracks mapped Shift, jog touch, and reserved crossfader state', () => {
+  it('tracks mapped Shift, Sync, jog touch, and reserved crossfader state', () => {
     const store = useMidiDeviceStore()
     store.applyControl({
       deviceIdentifier: 'ddj-rb',
@@ -107,20 +170,37 @@ describe('midiDeviceStore', () => {
       deviceIdentifier: 'ddj-rb',
       timestampMs: 2,
       kind: 'button',
+      control: 'syncModifier',
+      deck: 2,
+      pressed: true
+    })
+    store.applyControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 3,
+      kind: 'button',
       control: 'jogTouch',
       deck: 1,
       pressed: true
     })
     store.applyControl({
       deviceIdentifier: 'ddj-rb',
-      timestampMs: 3,
+      timestampMs: 4,
       kind: 'absolute',
       control: 'crossfader',
       deck: null,
       value: 0.75
     })
+    store.applyControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 5,
+      kind: 'absolute',
+      control: 'masterVolume',
+      deck: null,
+      value: 0.25
+    })
 
     expect(store.shiftPressed[2]).toBe(true)
+    expect(store.syncPressed[2]).toBe(true)
     expect(store.jogTouched[1]).toBe(true)
     expect(store.crossfaderPosition).toBe(0.75)
   })

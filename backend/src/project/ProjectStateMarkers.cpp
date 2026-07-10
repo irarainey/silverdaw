@@ -5,6 +5,26 @@
 namespace silverdaw
 {
 
+int ProjectState::getMarkerCount() const noexcept
+{
+    const auto markers = root.getChildWithName(kMarkers);
+    return markers.isValid() ? markers.getNumChildren() : 0;
+}
+
+bool ProjectState::hasMarkerNear(double positionMs, double toleranceMs) const noexcept
+{
+    const auto markers = root.getChildWithName(kMarkers);
+    for (int i = 0; i < markers.getNumChildren(); ++i)
+    {
+        const auto marker = markers.getChild(i);
+        if (marker.hasType(kMarker) &&
+            std::abs(static_cast<double>(marker.getProperty(kPositionMs, 0.0)) - positionMs) <=
+                toleranceMs)
+            return true;
+    }
+    return false;
+}
+
 bool ProjectState::addMarker(const juce::String& markerId, double positionMs)
 {
     if (markerId.isEmpty() || positionMs < 0.0)

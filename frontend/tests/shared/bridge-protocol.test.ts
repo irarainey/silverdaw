@@ -10,6 +10,7 @@ import {
   isMidiDevicesListPayload,
   isMidiMessagePayload,
   isMidiControlPayload,
+  isMidiDeckSelectionPayload,
   isPlayheadUpdatePayload,
   isPongPayload,
   isPreviewEndedPayload,
@@ -67,6 +68,7 @@ const INBOUND_TYPES = {
   MIDI_DEVICES_LIST: true,
   MIDI_MESSAGE: true,
   MIDI_CONTROL: true,
+  MIDI_DECK_SELECTION: true,
   EDIT_UNDO_STATE: true,
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
@@ -138,13 +140,21 @@ describe('isMidiDevicesListPayload', () => {
   })
 
   describe('isMidiControlPayload', () => {
-    it('accepts mapped button, relative, and crossfader controls', () => {
+    it('accepts mapped button, relative, pad, and absolute controls', () => {
       expect(isMidiControlPayload({
         deviceIdentifier: 'ddj-rb',
         timestampMs: 1234,
         kind: 'button',
         control: 'playPause',
         deck: 1,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'browsePress',
+        deck: null,
         pressed: true
       })).toBe(true)
       expect(isMidiControlPayload({
@@ -158,11 +168,45 @@ describe('isMidiDevicesListPayload', () => {
       expect(isMidiControlPayload({
         deviceIdentifier: 'ddj-rb',
         timestampMs: 1236,
+        kind: 'button',
+        control: 'markerToggle',
+        deck: 2,
+        pad: 8,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1237,
+        kind: 'absolute',
+        control: 'toneBass',
+        deck: 1,
+        value: 0.5
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1238,
         kind: 'absolute',
         control: 'crossfader',
         deck: null,
         value: 0.5
       })).toBe(true)
+    })
+
+    describe('isMidiDeckSelectionPayload', () => {
+      it('accepts independent persisted deck states', () => {
+        expect(isMidiDeckSelectionPayload({
+          deviceIdentifier: 'ddj-rb',
+          deck1Enabled: false,
+          deck2Enabled: true
+        })).toBe(true)
+      })
+
+      it('rejects missing deck state', () => {
+        expect(isMidiDeckSelectionPayload({
+          deviceIdentifier: 'ddj-rb',
+          deck1Enabled: true
+        })).toBe(false)
+      })
     })
 
     it('rejects invalid decks and mismatched payload shapes', () => {
@@ -172,6 +216,14 @@ describe('isMidiDevicesListPayload', () => {
         kind: 'button',
         control: 'playPause',
         deck: 3,
+        pressed: true
+      })).toBe(false)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'markerJump',
+        deck: 1,
         pressed: true
       })).toBe(false)
       expect(isMidiControlPayload({

@@ -693,6 +693,11 @@ bool dispatchMidi(const DispatchContext& ctx)
         silverdaw::handleMidiInputsSet(ctx.payload, ctx.bridge);
         return true;
     }
+    if (ctx.type == "MIDI_DECK_SELECTION_SET")
+    {
+        silverdaw::handleMidiDeckSelectionSet(ctx.payload, ctx.bridge);
+        return true;
+    }
     return false;
 }
 

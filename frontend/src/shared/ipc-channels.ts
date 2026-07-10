@@ -54,6 +54,8 @@ export const IPC = {
     setKeepAwakeForDevice: 'prefs:setKeepAwakeForDevice',
     getEnabledMidiInputs: 'prefs:getEnabledMidiInputs',
     setMidiInputEnabled: 'prefs:setMidiInputEnabled',
+    getMidiDeckSelections: 'prefs:getMidiDeckSelections',
+    setMidiDeckSelection: 'prefs:setMidiDeckSelection',
     getBrake: 'prefs:getBrake',
     setBrake: 'prefs:setBrake',
     getBackspin: 'prefs:getBackspin',

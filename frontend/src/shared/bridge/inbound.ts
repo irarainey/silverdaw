@@ -8,6 +8,7 @@
 import { z } from 'zod'
 import type {
   MidiControlPayload,
+  MidiDeckSelectionPayload,
   MidiDevicesListPayload,
   MidiMessagePayload
 } from './midi-inbound'
@@ -818,6 +819,7 @@ export interface BridgeInboundMap {
   MIDI_DEVICES_LIST: MidiDevicesListPayload
   MIDI_MESSAGE: MidiMessagePayload
   MIDI_CONTROL: MidiControlPayload
+  MIDI_DECK_SELECTION: MidiDeckSelectionPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -885,6 +887,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIDI_DEVICES_LIST',
   'MIDI_MESSAGE',
   'MIDI_CONTROL',
+  'MIDI_DECK_SELECTION',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',

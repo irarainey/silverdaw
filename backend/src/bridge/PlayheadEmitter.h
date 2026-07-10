@@ -13,18 +13,20 @@ namespace silverdaw
 
 class AudioEngine;
 class BridgeServer;
+class ProjectState;
 
 /** Polls the audio engine and broadcasts PLAYHEAD_UPDATE while playing. */
 class PlayheadEmitter : public juce::Timer
 {
   public:
-    PlayheadEmitter(AudioEngine& e, BridgeServer& b);
+    PlayheadEmitter(AudioEngine& e, BridgeServer& b, ProjectState& p);
 
     void timerCallback() override;
 
   private:
     AudioEngine& engine;
     BridgeServer& bridge;
+    ProjectState& project;
     // `payloadObject` keeps the pre-wrapped broadcast payload alive.
     juce::DynamicObject::Ptr payloadObject;
     juce::var payload;
