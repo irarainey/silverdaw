@@ -23,6 +23,8 @@ export interface ClipAddPayload {
   durationMs?: number
   /** Palette index 0..15; omit to inherit the track colour. */
   colorIndex?: number
+  /** False when this clip inherited complete source peaks; omitted defaults to true. */
+  requestWaveform?: boolean
 }
 
 export interface ClipMovePayload {

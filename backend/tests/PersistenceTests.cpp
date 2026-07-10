@@ -13,6 +13,7 @@
 #include "PeakJobCoordinator.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "WaveformCommands.h"
 #include "DecodedCache.h"
 #include "ProjectFile.h"
 #include "ProjectSession.h"
@@ -392,6 +393,22 @@ void testPeakJobCoordinatorCoalescesAndFansOut()
     coordinator.takeWaiters(highResolution.key);
 }
 
+void testClipAddWaveformRequestDefaultsToEnabled()
+{
+    auto* object = new juce::DynamicObject();
+    juce::var payload(object);
+    require(silverdaw::clipAddRequestsWaveform(payload), "missing requestWaveform defaults to true");
+
+    object->setProperty("requestWaveform", false);
+    require(!silverdaw::clipAddRequestsWaveform(payload), "explicit false skips waveform request");
+
+    object->setProperty("requestWaveform", true);
+    require(silverdaw::clipAddRequestsWaveform(payload), "explicit true requests waveform");
+
+    object->setProperty("requestWaveform", "false");
+    require(silverdaw::clipAddRequestsWaveform(payload), "invalid non-boolean value keeps safe default");
+}
+
 void testPeaksCacheConcurrentStoresRemainValid()
 {
     const auto dir = makeTempDir("peaks-cache-concurrent");
@@ -540,6 +557,7 @@ void addPersistenceTests(std::vector<TestCase>& tests)
     tests.push_back({"migrate temp artifacts into project folder", testMigrateTempArtifactsIntoProject});
     tests.push_back({"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation});
     tests.push_back({"Peak jobs coalesce and fan out", testPeakJobCoordinatorCoalescesAndFansOut});
+    tests.push_back({"CLIP_ADD waveform request defaults to enabled", testClipAddWaveformRequestDefaultsToEnabled});
     tests.push_back({"PeaksCache concurrent stores remain valid", testPeaksCacheConcurrentStoresRemainValid});
     tests.push_back({"legacy sampleMode migrates to audioType", testLegacySampleModeMigratesToAudioType});
     tests.push_back({"legacy library kind migrates to source/sample/clip", testLegacyLibraryKindMigrates});

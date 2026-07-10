@@ -50,8 +50,9 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
 - **IXWebSocket I/O threads:** parse JSON, gate AUTH, then `callAsync`.
 - **Peaks worker pool:** `juce::ThreadPool` (4) computes/loads peaks off-thread,
   coalesces matching source/resolution jobs, writes the cache, and emits a small
-  `WAVEFORM_READY` for every waiter. `WAVEFORM_FAILED` lets the renderer fall
-  back to local decoding.
+  `WAVEFORM_READY` for every waiter. Live clip copies that already hold complete
+  peaks opt out before joining the pool. `WAVEFORM_FAILED` lets the renderer
+  fall back to local decoding.
 
 ## Data-flow rules
 

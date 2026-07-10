@@ -82,7 +82,14 @@ describe('compound clip actions are one undo group', () => {
         lengthMs: 1000
       } as never
     ]
-    project.clips = { c1: makeClip({ name: 'My Clip' }) }
+    project.clips = {
+      c1: makeClip({
+        name: 'My Clip',
+        channelCount: 1,
+        peaks: new Float32Array([-0.5, 0.5]),
+        peaksPerSecond: 500
+      })
+    }
 
     const newId = project.splitClipAt('c1', 500)
     expect(newId).toBe('new-clip-id')
@@ -114,7 +121,14 @@ describe('compound clip actions are one undo group', () => {
       } as never
     ]
     // A named clip is the regression case: the trailing CLIP_RENAME must fold into the group.
-    project.clips = { c1: makeClip({ name: 'My Clip' }) }
+    project.clips = {
+      c1: makeClip({
+        name: 'My Clip',
+        channelCount: 1,
+        peaks: new Float32Array([-0.5, 0.5]),
+        peaksPerSecond: 500
+      })
+    }
 
     const newId = project.duplicateClip('c1')
     expect(newId).toBe('new-clip-id')
@@ -131,6 +145,10 @@ describe('compound clip actions are one undo group', () => {
     expect(types.indexOf('CLIP_ADD')).toBeLessThan(end)
     expect(types.indexOf('CLIP_RENAME')).toBeGreaterThan(begin)
     expect(types.indexOf('CLIP_RENAME')).toBeLessThan(end)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_ADD',
+      expect.objectContaining({ requestWaveform: false })
+    )
   })
 })
 

@@ -6,6 +6,10 @@
 
 - Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, and controller feedback.
 
+### Changed
+
+- Splitting, duplicating, and pasting clips now reuse loaded waveform data for faster editing.
+
 ## 1.1.0
 
 ### Added

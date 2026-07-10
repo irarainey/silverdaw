@@ -24,6 +24,12 @@ double effectivePeaksPerSecond(const silverdaw::waveform::PeaksResult& result)
     return result.sampleRate / static_cast<double>(samplesPerPeak);
 }
 
+bool clipAddRequestsWaveform(const juce::var& payload)
+{
+    const auto request = payload.getProperty("requestWaveform", juce::var());
+    return !request.isBool() || static_cast<bool>(request);
+}
+
 namespace
 {
 
@@ -231,8 +237,11 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // All peak/analysis I/O reads the decoded WAV; the source is only ever
         // read to produce that WAV. engineFilePath is the resolved playable WAV
         // (or the source itself when it is already a readable WAV).
-        enqueuePeakJob({PeakResponseTarget::timelineClip, clipId}, juce::File(engineFilePath),
-                       silverdaw::waveform::kDefaultPeaksPerSecond, engine, cache, bridge, peakPool, peakJobs);
+        if (clipAddRequestsWaveform(payload))
+        {
+            enqueuePeakJob({PeakResponseTarget::timelineClip, clipId}, juce::File(engineFilePath),
+                           silverdaw::waveform::kDefaultPeaksPerSecond, engine, cache, bridge, peakPool, peakJobs);
+        }
         // Covers deduped or missing LIBRARY_ADD before this clip arrives.
         silverdaw::ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
         // Re-check project BPM seeding once the first clip exists.

@@ -571,6 +571,88 @@ describe('projectStore', () => {
     )
   })
 
+  it('skips waveform generation when a pasted stereo clip inherits every peak lane', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const sourceTrackId = project.addTrack()
+    const targetTrackId = project.addTrack()
+    const summary = new Float32Array([-0.5, 0.5])
+    library.addItem({
+      id: 'lib-copy',
+      kind: 'source',
+      filePath: 'C:\\audio\\copy.wav',
+      fileName: 'copy.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: summary,
+      peaksPerSecond: 500,
+      fromSnapshot: true
+    })
+    library.setItemChannelPeaks(
+      'lib-copy',
+      [new Float32Array([-0.6, 0.6]), new Float32Array([-0.4, 0.4])],
+      500
+    )
+    const sourceClipId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-copy',
+        filePath: 'C:\\audio\\copy.wav',
+        fileName: 'copy.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: summary,
+        peaksPerSecond: 500
+      },
+      0
+    )
+    project.selectClip(sourceClipId)
+    expect(project.copySelectedClip()).toBe(true)
+    project.selectTrack(targetTrackId)
+    sendMock.mockClear()
+
+    const pastedId = project.pasteClipAtPlayhead(2_000)
+
+    expect(pastedId).toBeTruthy()
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_ADD',
+      expect.objectContaining({ clipId: pastedId, requestWaveform: false })
+    )
+  })
+
+  it('requests waveform generation when paste has no live peak source', () => {
+    const project = useProjectStore()
+    const sourceTrackId = project.addTrack()
+    const targetTrackId = project.addTrack()
+    const sourceClipId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-copy',
+        filePath: 'C:\\audio\\copy.wav',
+        fileName: 'copy.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 1,
+        peaks: new Float32Array([-0.5, 0.5]),
+        peaksPerSecond: 500
+      },
+      0
+    )
+    project.selectClip(sourceClipId)
+    expect(project.copySelectedClip()).toBe(true)
+    project.removeClip(sourceClipId ?? '')
+    project.selectTrack(targetTrackId)
+    sendMock.mockClear()
+
+    const pastedId = project.pasteClipAtPlayhead(2_000)
+    const clipAdd = sendMock.mock.calls.find(([type]) => type === 'CLIP_ADD')
+
+    expect(pastedId).toBeTruthy()
+    expect(clipAdd?.[1]).not.toHaveProperty('requestWaveform')
+  })
+
   it('does not split linked library-clip timeline instances', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

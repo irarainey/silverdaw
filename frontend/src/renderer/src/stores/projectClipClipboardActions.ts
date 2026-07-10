@@ -7,7 +7,9 @@ import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveClipDurationMs, CLIP_FIT_EPSILON_MS } from '@/lib/clip/clipTiming'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { filePathToDisplayName } from './projectHelpers'
+import { waveformReusePayload } from './project-waveform-state'
 import type { Clip, ClipboardEntry, ClipboardGroupItem, Track } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
 
@@ -57,6 +59,10 @@ function insertPastedClip(
 ): string {
   const newId = crypto.randomUUID()
   const fileName = filePathToDisplayName(entry.filePath)
+  // Best-effort hydration only; the outbound gate rechecks the placeholder.
+  const peakSource = Object.values(self.clips).find(
+    (clip) => clip.libraryItemId === entry.libraryItemId && clip.peaks.length > 0
+  )
   const placeholder: Clip = {
     id: newId,
     trackId: track.id,
@@ -67,9 +73,10 @@ function insertPastedClip(
     startMs,
     inMs: entry.inMs,
     durationMs: entry.durationMs,
-    sampleRate: 0,
-    channelCount: 0,
-    peaks: new Float32Array(0),
+    sampleRate: peakSource?.sampleRate ?? 0,
+    channelCount: peakSource?.channelCount ?? 0,
+    peaks: peakSource?.peaks ?? new Float32Array(0),
+    peaksPerSecond: peakSource?.peaksPerSecond,
     unresolved: false,
     colorIndex: entry.colorIndex,
     name: entry.name,
@@ -81,13 +88,6 @@ function insertPastedClip(
     effectiveDurationMs: entry.effectiveDurationMs,
     effectiveTempoRatio: entry.effectiveTempoRatio,
     effectiveWarpActive: entry.effectiveWarpActive
-  }
-  const peakSource = Object.values(self.clips).find(
-    (c) => c.libraryItemId === entry.libraryItemId && c.peaks.length > 0
-  )
-  if (peakSource) {
-    placeholder.peaks = peakSource.peaks
-    placeholder.sampleRate = peakSource.sampleRate
   }
   self.clips[newId] = placeholder
   track.clipIds.push(newId)
@@ -105,6 +105,7 @@ function replayPastedClipBridge(
   track: Track,
   startMs: number
 ): void {
+  const pastedClip = self.clips[newId]
   sendBridge('CLIP_ADD', {
     trackId: track.id,
     clipId: newId,
@@ -112,7 +113,8 @@ function replayPastedClipBridge(
     positionMs: startMs,
     inMs: entry.inMs,
     durationMs: entry.durationMs,
-    ...(entry.colorIndex !== undefined ? { colorIndex: entry.colorIndex } : {})
+    ...(entry.colorIndex !== undefined ? { colorIndex: entry.colorIndex } : {}),
+    ...(pastedClip ? waveformReusePayload(pastedClip, useLibraryStore()) : {})
   })
   self.pushTrackGain(track)
   if (entry.name) {

@@ -438,6 +438,9 @@ Clips reference their audio via `libraryItemId` — the source file path lives o
 library item itself. The backend resolves the actual on-disk file (always preferring the
 decoded-WAV cache) at the time it loads the clip's audio source.
 
+- `CLIP_ADD.requestWaveform` is optional and defaults to `true`. The renderer
+  sends `false` only when a split, duplicate, or pasted clip already has complete
+  waveform data inherited from a live source clip.
 - `type` is an UPPER_SNAKE_CASE discriminator.
 - `payload` is a JSON object or omitted.
 - Every connection's first envelope must be
@@ -2407,6 +2410,14 @@ Older projects that lack a stored pyramid auto-bake one on the next load. The
 clip's beat-marker loop **stride-steps** by a precomputed `ceil(minMarkerSpacingPx /
 pxPerBeat)` so a 5-minute clip at 120 BPM doesn't iterate every beat when only a
 handful of markers fit on screen.
+
+**Live clip peak reuse.** Split, duplicate, and paste operations reuse complete
+summary peaks and, for stereo sources, both channel arrays already held by the
+source clip. Their `CLIP_ADD` payload sets `requestWaveform` to `false`, so the
+backend does not reload and re-announce the same cache file. Missing, incomplete,
+and older payloads default to requesting waveform data. Matching
+`WAVEFORM_READY` envelopes are also ignored before cache-file IPC when the
+renderer already holds data with the announced shape, rate, and sample rate.
 
 **Hot-path library lookups** go through the `libraryStore.byId` Pinia getter (an
 `O(items)`-built `Record<string, LibraryItem>` cached and refreshed only when the

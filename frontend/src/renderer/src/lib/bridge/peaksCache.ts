@@ -13,6 +13,7 @@ import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
+import { clipHasCompleteWaveformData } from '@/stores/project-waveform-state'
 import type { SampleSavedPayload, WaveformReadyPayload } from '@shared/bridge-protocol'
 
 /**
@@ -114,8 +115,19 @@ export function parsePeaksCacheBuffer(
   return { summary, channels, laneCount }
 }
 
+function alreadyHasWaveformData(payload: WaveformReadyPayload): boolean {
+  const project = useProjectStore()
+  const clip = project.clips[payload.clipId]
+  if (!clip) return true
+  return clipHasCompleteWaveformData(clip, useLibraryStore(), payload)
+}
+
 export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise<void> {
   const { clipId, cachePath, peakCount, sampleRate, peaksPerSecond } = payload
+  if (alreadyHasWaveformData(payload)) {
+    log.debug('bridge', `WAVEFORM_READY reused existing peaks clipId=${clipId}`)
+    return
+  }
   let buffer: ArrayBuffer | null
   try {
     buffer = await window.silverdaw.readPeaksCacheFile(cachePath)

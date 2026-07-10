@@ -17,6 +17,7 @@ namespace waveform { struct PeaksResult; }
 // Keep bridge and sample-export peak rates aligned.
 
 double effectivePeaksPerSecond(const waveform::PeaksResult& result);
+[[nodiscard]] bool clipAddRequestsWaveform(const juce::var& payload);
 
 void handleClipAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                    BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,

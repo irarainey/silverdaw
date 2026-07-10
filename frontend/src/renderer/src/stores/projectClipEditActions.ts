@@ -16,6 +16,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
+import { waveformReusePayload } from './project-waveform-state'
 
 export const clipEditActions = {
     /** Split a clip at timeline time while preserving source-time trim math. */
@@ -109,7 +110,8 @@ export const clipEditActions = {
           positionMs: newClipStartMs,
           inMs: newClipInMs,
           durationMs: newClipDurationMs,
-          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
+          ...waveformReusePayload(clip, library)
         })
         this.pushTrackGain(track)
         if (clip.name) {
@@ -253,7 +255,8 @@ export const clipEditActions = {
           positionMs: newStartMs,
           inMs: clip.inMs,
           durationMs: clip.durationMs,
-          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
+          ...waveformReusePayload(clip, useLibraryStore())
         })
         this.pushTrackGain(track)
         if (clip.name) {
