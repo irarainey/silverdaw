@@ -1582,7 +1582,8 @@ no single feature is committed as "next". Candidates, strongest first:
 1. **Transitions completion (§11.1)** — the crossfade engine ships; the remaining
    FX-based recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus" ducking
    need genuinely new per-clip FX automation tied to transition geometry.
-2. **MIDI / DJ control (§11.7)** — high-interest; wanted fairly early.
+2. **Scratch authoring (§11.7)** — MIDI deck input now ships; recording and
+   replaying authored scratch movements remains a candidate.
 
 **Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
 useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
@@ -2462,11 +2463,14 @@ sequencing into the phase plan is still to be decided.
   count-in and a record-enabled transport path; a finished take becomes a normal,
   non-destructive editable clip. Keep the surface deliberately minimal.
 
-### 11.7 MIDI & DJ control — *prioritise — wanted fairly early*
+### 11.7 MIDI & DJ control — *deck input shipped; scratch authoring remains*
 
-- [ ] **MIDI DJ deck input** (issue #29) — support external MIDI controllers,
-  specifically DJ decks/turntable controllers, as an input device. The primary
-  use is driving the scratch authoring below; general MIDI mapping can follow.
+- [x] **MIDI DJ deck input** (issue #29) — supported deck controllers can be
+  enabled from Preferences and drive transport, timeline/marker navigation,
+  clip browsing, jog movement, and selected-track mixer controls through
+  validated JSON profiles. Unsupported MIDI devices remain visible but cannot
+  be enabled. See the
+  [supported controller reference](midi-controllers.md).
 - [ ] **Scratch authoring with on-screen decks** (issue #37) — a studio feature
   for **creating scratches of an audio clip to use in a mix**, not for live
   performance. Show an on-screen deck per track when a MIDI DJ deck is connected;

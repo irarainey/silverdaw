@@ -18,6 +18,9 @@ export const MAX_TRACK_GAIN_LINEAR = Math.pow(10, MAX_TRACK_DB / 20)
 /** Bottom fader slice snaps to true silence. */
 const TAPER_INFINITY_FRACTION = 0.02
 
+/** Front-load useful gain while retaining fine control near unity. */
+const FADER_TAPER_EXPONENT = 0.4
+
 /** Convert a linear gain (>=0) to dB. Returns `-Infinity` for `linear <= 0`. */
 export function linearToDb(linear: number): number {
   if (!Number.isFinite(linear) || linear <= 0) return -Infinity
@@ -50,13 +53,13 @@ export function formatLinearAsDb(
   return formatDb(linearToDb(linear), options)
 }
 
-/** Map slider position to dB with a silence band, then a linear-in-dB ramp. */
+/** Map slider position to dB with a silence band and audio-style tapered travel. */
 export function taperPositionToDb(pos: number, maxDb: number): number {
   if (!Number.isFinite(pos) || pos <= 0) return -Infinity
   if (pos <= TAPER_INFINITY_FRACTION) return MIN_DISPLAY_DB
   const clamped = pos >= 1 ? 1 : pos
   const t = (clamped - TAPER_INFINITY_FRACTION) / (1 - TAPER_INFINITY_FRACTION)
-  return MIN_DISPLAY_DB + t * (maxDb - MIN_DISPLAY_DB)
+  return MIN_DISPLAY_DB + Math.pow(t, FADER_TAPER_EXPONENT) * (maxDb - MIN_DISPLAY_DB)
 }
 
 /** Inverse of `taperPositionToDb`; true mute returns slider position 0. */
@@ -65,7 +68,8 @@ export function taperDbToPosition(db: number, maxDb: number): number {
   if (!Number.isFinite(db)) return 0
   if (db <= MIN_DISPLAY_DB) return TAPER_INFINITY_FRACTION
   if (db >= maxDb) return 1
-  const t = (db - MIN_DISPLAY_DB) / (maxDb - MIN_DISPLAY_DB)
+  const tapered = (db - MIN_DISPLAY_DB) / (maxDb - MIN_DISPLAY_DB)
+  const t = Math.pow(tapered, 1 / FADER_TAPER_EXPONENT)
   return TAPER_INFINITY_FRACTION + t * (1 - TAPER_INFINITY_FRACTION)
 }
 

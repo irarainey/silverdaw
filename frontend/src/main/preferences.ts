@@ -1,6 +1,12 @@
 import { app } from 'electron'
 import { join } from 'node:path'
-import type { DebugPreferences, RecentProject, SkipButtonTarget, WaveformDisplayMode } from '../shared/types'
+import type {
+  DebugPreferences,
+  MidiDeckSelection,
+  RecentProject,
+  SkipButtonTarget,
+  WaveformDisplayMode
+} from '../shared/types'
 import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '../shared/bridge/outbound'
 
 export interface WindowPrefs {
@@ -142,6 +148,10 @@ export interface Preferences {
   audioOutput: AudioOutputPrefs
   /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
   keepAwakeByDevice: Record<string, boolean>
+  /** Enabled MIDI inputs, keyed by JUCE's stable device identifier. */
+  enabledMidiInputs: Record<string, boolean>
+  /** Pioneer deck activation, keyed by JUCE's stable device identifier. */
+  midiDeckSelections: Record<string, MidiDeckSelection>
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
@@ -221,6 +231,8 @@ export function buildDefaultPrefs(): Preferences {
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
     keepAwakeByDevice: {},
+    enabledMidiInputs: {},
+    midiDeckSelections: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
     stems: {
@@ -373,6 +385,32 @@ export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolea
     const trimmed = name.trim()
     if (trimmed.length === 0) continue
     if (enabled === true) out[trimmed] = true
+  }
+  return out
+}
+
+export function sanitiseEnabledMidiInputs(input: unknown): Record<string, boolean> {
+  return sanitiseKeepAwakeByDevice(input)
+}
+
+export function sanitiseMidiDeckSelections(
+  input: unknown
+): Record<string, MidiDeckSelection> {
+  const out: Record<string, MidiDeckSelection> = {}
+  if (!input || typeof input !== 'object') return out
+  for (const [identifier, selection] of Object.entries(input as Record<string, unknown>)) {
+    const key = identifier.trim()
+    if (key.length === 0 || !selection || typeof selection !== 'object') continue
+    const candidate = selection as Partial<MidiDeckSelection>
+    if (
+      typeof candidate.deck1Enabled === 'boolean' &&
+      typeof candidate.deck2Enabled === 'boolean'
+    ) {
+      out[key] = {
+        deck1Enabled: candidate.deck1Enabled,
+        deck2Enabled: candidate.deck2Enabled
+      }
+    }
   }
   return out
 }

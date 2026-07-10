@@ -64,6 +64,13 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
   resolves the on-disk file (preferring the decoded-WAV cache) at load time.
 - **Same canonical chain for playback and mixdown** so exports match what the
   user hears.
+- **MIDI is a profile-driven control plane.** The backend enumerates MIDI
+  inputs, opens only recognised deck profiles, decodes raw messages on the JUCE
+  message thread, and sends semantic `MIDI_CONTROL` envelopes to the renderer.
+  The renderer applies transport, timeline, marker, browse, and selected-track
+  mixer actions. Optional controller feedback travels through a matching MIDI
+  output. See `docs/midi-controllers.md` and
+  `docs/developer-guide.md#midi-controller-architecture`.
 
 ## Engine resilience
 
@@ -84,6 +91,8 @@ One line each; open the linked area only when the task touches it.
 | --- | --- | --- |
 | `backend/src/bridge/` | Loopback server, AUTH, dispatch, payload helpers | `docs/developer-guide.md#bridge-protocol` |
 | `backend/src/commands/` | Per-domain bridge command handlers | — |
+| `backend/src/midi/` | Generic JSON-profile loader, MIDI decoder, and feedback encoder | `docs/developer-guide.md#midi-controller-architecture` |
+| `backend/resources/midi-mappings/` | Installed model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (EQ, Leveler, Reverb, Delay, peaks) | — |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |

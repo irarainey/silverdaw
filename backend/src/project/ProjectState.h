@@ -507,6 +507,8 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Snapshot persisted timeline markers for PROJECT_STATE. */
     juce::var markersAsJson() const;
+    int getMarkerCount() const noexcept;
+    bool hasMarkerNear(double positionMs, double toleranceMs = 1.0) const noexcept;
 
     juce::var tracksAsJson() const;
 

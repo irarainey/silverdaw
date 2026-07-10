@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.1.0
+    VERSION 1.2.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -425,6 +425,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ClipCommands.cpp
     src/commands/LibraryCommands.cpp
     src/commands/MarkerCommands.cpp
+    src/commands/MidiDeviceCommands.cpp
     src/commands/MixdownCommands.cpp
     src/commands/PreviewCommands.cpp
     src/commands/ProjectCommands.cpp
@@ -439,6 +440,9 @@ add_library(silverdaw_backend_core STATIC
     # core
     src/core/CrashHandler.cpp
     src/core/Log.cpp
+    # midi
+    src/midi/MidiControllerMapping.cpp
+    src/midi/MidiControllerProfiles.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/LoudnessAnalyzer.cpp
@@ -576,6 +580,16 @@ target_sources(SilverdawBackend PRIVATE
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
 
+set(SILVERDAW_MIDI_MAPPING_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/midi-mappings")
+target_compile_definitions(silverdaw_backend_core PRIVATE
+    SILVERDAW_MIDI_MAPPING_DIR="${SILVERDAW_MIDI_MAPPING_DIR}")
+add_custom_command(TARGET SilverdawBackend POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${SILVERDAW_MIDI_MAPPING_DIR}"
+        "$<TARGET_FILE_DIR:SilverdawBackend>/midi-mappings"
+    COMMENT "Copying MIDI controller profiles next to backend executable")
+
 # Delay-load onnxruntime.dll so the large ML runtime (and its transitive VC++ runtime
 # dependency chain) is NOT mapped into the process at startup — the Windows loader binds
 # it lazily on first use (stem separation only), not before main(). This shortens cold
@@ -681,6 +695,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/ProjectStateFxTests.cpp
         tests/PersistenceTests.cpp
         tests/BridgeTests.cpp
+        tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp

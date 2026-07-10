@@ -7,6 +7,10 @@ import {
   isEngineErrorPayload,
   isEngineAudioStatusPayload,
   isLibraryItemAnalysisPayload,
+  isMidiDevicesListPayload,
+  isMidiMessagePayload,
+  isMidiControlPayload,
+  isMidiDeckSelectionPayload,
   isPlayheadUpdatePayload,
   isPongPayload,
   isPreviewEndedPayload,
@@ -61,6 +65,10 @@ const INBOUND_TYPES = {
   PREVIEW_ENDED: true,
   AUDIO_DEVICES_LIST: true,
   AUDIO_DEVICE_CHANGED: true,
+  MIDI_DEVICES_LIST: true,
+  MIDI_MESSAGE: true,
+  MIDI_CONTROL: true,
+  MIDI_DECK_SELECTION: true,
   EDIT_UNDO_STATE: true,
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
@@ -113,6 +121,155 @@ describe('isReadyPayload', () => {
   it('rejects missing or wrong-typed version', () => {
     expect(isReadyPayload({})).toBe(false)
     expect(isReadyPayload({ version: 1 })).toBe(false)
+  })
+})
+
+describe('isMidiDevicesListPayload', () => {
+  it('accepts an inputs array with status and activity', () => {
+    expect(isMidiDevicesListPayload({ inputs: [] })).toBe(true)
+    expect(isMidiDevicesListPayload({
+      inputs: [{
+        name: 'Launchkey MK3',
+        identifier: 'launchkey',
+        connected: true,
+        enabled: true,
+        controllerProfile: null,
+        lastActivityMs: 1234
+      }]
+    })).toBe(true)
+  })
+
+  describe('isMidiControlPayload', () => {
+    it('accepts mapped button, relative, pad, and absolute controls', () => {
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'playPause',
+        deck: 1,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'browsePress',
+        deck: null,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1235,
+        kind: 'relative',
+        control: 'jogScratch',
+        deck: 2,
+        value: -3
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1236,
+        kind: 'button',
+        control: 'markerToggle',
+        deck: 2,
+        pad: 8,
+        pressed: true
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1237,
+        kind: 'absolute',
+        control: 'toneBass',
+        deck: 1,
+        value: 0.5
+      })).toBe(true)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1238,
+        kind: 'absolute',
+        control: 'crossfader',
+        deck: null,
+        value: 0.5
+      })).toBe(true)
+    })
+
+    describe('isMidiDeckSelectionPayload', () => {
+      it('accepts independent persisted deck states', () => {
+        expect(isMidiDeckSelectionPayload({
+          deviceIdentifier: 'ddj-rb',
+          deck1Enabled: false,
+          deck2Enabled: true
+        })).toBe(true)
+      })
+
+      it('rejects missing deck state', () => {
+        expect(isMidiDeckSelectionPayload({
+          deviceIdentifier: 'ddj-rb',
+          deck1Enabled: true
+        })).toBe(false)
+      })
+    })
+
+    it('rejects invalid decks and mismatched payload shapes', () => {
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'playPause',
+        deck: 3,
+        pressed: true
+      })).toBe(false)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'button',
+        control: 'markerJump',
+        deck: 1,
+        pressed: true
+      })).toBe(false)
+      expect(isMidiControlPayload({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: 1234,
+        kind: 'relative',
+        control: 'jogScratch',
+        deck: 1,
+        pressed: true
+      })).toBe(false)
+    })
+  })
+
+  describe('isMidiMessagePayload', () => {
+    it('accepts a MIDI control-change message', () => {
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 0xb0,
+        data1: 74,
+        data2: 127
+      })).toBe(true)
+    })
+
+    it('accepts absent data bytes and rejects invalid byte ranges', () => {
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 0xfa,
+        data1: null,
+        data2: null
+      })).toBe(true)
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 256,
+        data1: null,
+        data2: null
+      })).toBe(false)
+    })
+  })
+
+  it('rejects a missing or wrong-typed inputs field', () => {
+    expect(isMidiDevicesListPayload({})).toBe(false)
+    expect(isMidiDevicesListPayload({ inputs: [{ name: 'Launchkey' }] })).toBe(false)
+    expect(isMidiDevicesListPayload(null)).toBe(false)
   })
 })
 

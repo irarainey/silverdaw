@@ -13,6 +13,7 @@ import type {
   PathPrefs,
   ToastPrefs
 } from '../preferences'
+import type { MidiDeckSelection } from '../../shared/types'
 import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
@@ -190,6 +191,58 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     store.keepAwakeByDevice = next
     prefs.schedulePrefsSave()
   })
+
+  ipcMain.handle(
+    IPC.prefs.getEnabledMidiInputs,
+    (): Record<string, boolean> => ({ ...prefs.get().enabledMidiInputs })
+  )
+
+  ipcMain.on(IPC.prefs.setMidiInputEnabled, (_evt, identifier: unknown, enabled: unknown) => {
+    if (typeof identifier !== 'string' || typeof enabled !== 'boolean') return
+    const key = identifier.trim()
+    if (key.length === 0) return
+    const next = { ...prefs.get().enabledMidiInputs }
+    if (enabled) next[key] = true
+    else delete next[key]
+    prefs.get().enabledMidiInputs = next
+    prefs.schedulePrefsSave()
+  })
+
+  ipcMain.handle(
+    IPC.prefs.getMidiDeckSelections,
+    (): Record<string, MidiDeckSelection> => ({ ...prefs.get().midiDeckSelections })
+  )
+
+  ipcMain.on(
+    IPC.prefs.setMidiDeckSelection,
+    (_evt, identifier: unknown, selection: unknown) => {
+      if (typeof identifier !== 'string' || !selection || typeof selection !== 'object') return
+      const key = identifier.trim()
+      const candidate = selection as Partial<MidiDeckSelection>
+      if (
+        key.length === 0 ||
+        typeof candidate.deck1Enabled !== 'boolean' ||
+        typeof candidate.deck2Enabled !== 'boolean'
+      ) {
+        return
+      }
+      const current = prefs.get().midiDeckSelections[key]
+      if (
+        current?.deck1Enabled === candidate.deck1Enabled &&
+        current.deck2Enabled === candidate.deck2Enabled
+      ) {
+        return
+      }
+      prefs.get().midiDeckSelections = {
+        ...prefs.get().midiDeckSelections,
+        [key]: {
+          deck1Enabled: candidate.deck1Enabled,
+          deck2Enabled: candidate.deck2Enabled
+        }
+      }
+      prefs.schedulePrefsSave()
+    }
+  )
 
   // ─── Stem-separation preferences (GPU intent) ───────────────────────────
   ipcMain.handle(IPC.prefs.getStems, () => ({ ...prefs.get().stems }))

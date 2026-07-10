@@ -1,0 +1,26 @@
+{
+  "name": "Pioneer XDJ-RX",
+  "models": ["XDJ-RX"],
+  "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 0, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 1, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 31, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogPitchBend", "touchedAction": "jogScratch", "encoding": "relative", "message": "cc", "data1": 16, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogSearch", "encoding": "relative", "message": "cc", "data1": 51, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 32, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 72, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelPitchBend", "encoding": "relative", "message": "cc", "data1": 48, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelSearch", "encoding": "relative", "message": "cc", "data1": 54, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 79, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 51, "channels": [0], "decks": [0] },
+    { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 96, "channels": [0], "decks": [0] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 17, "channels": [4], "decks": [1] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 18, "channels": [4], "decks": [2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 11, "channels": [4], "decks": [0] }
+  ],
+  "outputs": [
+    { "purpose": "channelMeter", "message": "cc", "data1": 2, "channels": [0, 1] },
+    { "purpose": "playLight", "message": "note", "data1": 0, "channels": [0, 1] },
+    { "purpose": "cueLight", "message": "note", "data1": 1, "channels": [0, 1] }
+  ]
+}

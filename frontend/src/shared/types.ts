@@ -91,6 +91,11 @@ export interface DebugPreferences {
   logDirectory: string
 }
 
+export interface MidiDeckSelection {
+  deck1Enabled: boolean
+  deck2Enabled: boolean
+}
+
 // ─── Stem-separation model store (download-on-first-use) ──────────────────────
 
 /** Fast presence summary for the stem-separation model, returned to the renderer. */

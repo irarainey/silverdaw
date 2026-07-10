@@ -397,7 +397,7 @@ int runBackend(int argc, char* argv[])
         bridge.broadcast("ENGINE_AUDIO_STATUS", juce::var(status));
     }
 
-    silverdaw::PlayheadEmitter emitter(engine, bridge);
+    silverdaw::PlayheadEmitter emitter(engine, bridge, projectState);
     emitter.startTimerHz(kPlayheadUpdateHz);
 
     std::signal(SIGINT, onSignal);

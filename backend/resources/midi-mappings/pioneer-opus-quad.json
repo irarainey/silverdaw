@@ -1,0 +1,30 @@
+{
+  "name": "Pioneer OPUS-QUAD",
+  "models": ["OPUS-QUAD"],
+  "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 0, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 1, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 31, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 79, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 51, "channels": [0], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 57, "channels": [0], "decks": [0] },
+    { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 96, "channels": [0], "decks": [0] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 17, "channels": [4], "decks": [1] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 18, "channels": [4], "decks": [2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 11, "channels": [4], "decks": [0] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 8, "count": 1, "padOffset": 1, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 11, "count": 1, "padOffset": 2, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 13, "count": 1, "padOffset": 3, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 15, "count": 1, "padOffset": 4, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 21, "count": 1, "padOffset": 5, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 23, "count": 1, "padOffset": 6, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 25, "count": 1, "padOffset": 7, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 27, "count": 1, "padOffset": 8, "channels": [0, 1], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "playLight", "message": "note", "data1": 0, "channels": [0, 1] },
+    { "purpose": "cueLight", "message": "note", "data1": 1, "channels": [0, 1] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "data1Values": [8, 11, 13, 15, 21, 23, 25, 27], "channels": [0, 1] }
+  ]
+}

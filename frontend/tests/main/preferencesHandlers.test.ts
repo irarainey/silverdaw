@@ -5,19 +5,23 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const handlers = new Map<string, (evt: unknown, arg: unknown) => unknown>()
+const handlers = new Map<string, (...args: unknown[]) => unknown>()
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/tmp', getName: () => 'silverdaw' },
   dialog: {},
   ipcMain: {
-    handle: (channel: string, fn: (evt: unknown, arg: unknown) => unknown) => handlers.set(channel, fn),
-    on: (channel: string, fn: (evt: unknown, arg: unknown) => unknown) => handlers.set(channel, fn)
+    handle: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn),
+    on: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn)
   }
 }))
 
 import { registerPreferencesHandlers } from '@main/ipc/preferencesHandlers'
-import { buildDefaultPrefs, type Preferences } from '@main/preferences'
+import {
+  buildDefaultPrefs,
+  sanitiseMidiDeckSelections,
+  type Preferences
+} from '@main/preferences'
 
 describe('preferences IPC: setStems', () => {
   let store: Preferences
@@ -33,7 +37,8 @@ describe('preferences IPC: setStems', () => {
       getStartupDevToolsEnabled: () => false,
       prefs: {
         get: () => store,
-        flushSaveSync: flush
+        flushSaveSync: flush,
+        schedulePrefsSave: flush
       } as never
     })
   })
@@ -73,5 +78,29 @@ describe('preferences IPC: setStems', () => {
     expect(store.stems.useGpu).toBe(true)
     expect(store.stems.quality).toBe('best')
     expect(flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists valid per-device MIDI deck selection', () => {
+    const setSelection = handlers.get('prefs:setMidiDeckSelection')
+    setSelection?.({}, 'ddj-rb', {
+      deck1Enabled: false,
+      deck2Enabled: true
+    })
+
+    expect(store.midiDeckSelections['ddj-rb']).toEqual({
+      deck1Enabled: false,
+      deck2Enabled: true
+    })
+    expect(flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('sanitises corrupt persisted MIDI deck selection', () => {
+    expect(sanitiseMidiDeckSelections({
+      valid: { deck1Enabled: true, deck2Enabled: false },
+      partial: { deck1Enabled: true },
+      wrong: 'enabled'
+    })).toEqual({
+      valid: { deck1Enabled: true, deck2Enabled: false }
+    })
   })
 })

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, and controller feedback.
+
 ## 1.1.0
 
 ### Added

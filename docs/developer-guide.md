@@ -11,6 +11,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project layout](#project-layout)
 - [Current status and roadmap](#current-status-and-roadmap)
 - [Bridge protocol](#bridge-protocol)
+- [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
 - [Audio formats](#audio-formats)
@@ -25,6 +26,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
 - [Preferences](#preferences)
+  - [MIDI controller preferences](#midi-controller-preferences)
   - [Audio output device](#audio-output-device)
 - [Project properties](#project-properties)
 - [Project sample rate](#project-sample-rate)
@@ -95,6 +97,7 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
                          payload helpers, playhead emitter
     commands/            Per-domain bridge command handlers (clips, tracks,
                          mixdown, undo, transport, library, …)
+    midi/                JSON-profile loader, MIDI decoder, and output encoder
     engine/              Master transport clock, mixer / bus graph (incl.
                          equal-power pan), per-track audio sources, keep-alive
     dsp/                 Per-track DSP: Tone EQ, Leveler, pan / track chain,
@@ -106,6 +109,8 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
                          same canonical chain as playback
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
                          load, ValueTree↔JSON converter, peaks cache
+  resources/
+    midi-mappings/       Installed model aliases and MIDI input/output bindings
   tests/                 SilverdawBackendTests custom harness (wired into CTest)
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
@@ -132,6 +137,11 @@ Silverdaw currently supports the core arrangement workflow:
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.
+- Enable a recognised MIDI deck controller from **Preferences ▸ MIDI** to drive
+  transport, timeline and marker navigation, jog movement, clip browsing, and
+  selected-track fader/Tone/Filter controls, plus master level where mapped.
+  Unsupported MIDI devices remain visible but cannot be enabled. The complete
+  model and capability matrix is in [MIDI deck controllers](midi-controllers.md).
 - Select several clips at once — **Shift-click** a range on one track or **Ctrl-click**
   clips across tracks — then drag the whole group (relative offsets preserved, across
   tracks, applied atomically), nudge it with **Shift + ←/→**, or lock, colour, duplicate,
@@ -476,6 +486,72 @@ that the socket is open — and `ENGINE_ERROR` (backend → renderer) reports a
 handler-level fault that the engine **caught and survived**. Their behaviour and
 the recovery UX they drive are described under
 [Engine resilience and recovery](#engine-resilience-and-recovery).
+
+The MIDI control path uses seven domain envelopes:
+
+- `MIDI_DEVICES_REQUEST` asks the backend to enumerate connected inputs.
+- `MIDI_INPUTS_SET { identifiers }` replaces the set of enabled inputs. The
+  backend ignores identifiers whose device names do not match a supported
+  profile.
+- `MIDI_DECK_SELECTION_SET` restores the enabled state of physical decks 1 and
+  2 for one input.
+- `MIDI_DEVICES_LIST` reports every detected input with its identifier,
+  connection/enabled state, recognised profile label, and latest activity.
+- `MIDI_MESSAGE` carries a rate-limited raw-message sample for the MIDI Monitor.
+- `MIDI_CONTROL` carries one decoded semantic button, relative, or absolute
+  controller action.
+- `MIDI_DECK_SELECTION` reports a physical deck-selection change made from the
+  controller.
+
+## MIDI controller architecture
+
+MIDI support is model-specific and data-driven. The canonical user-facing
+device and capability matrix is
+[MIDI deck controllers](midi-controllers.md); the JSON schema is documented in
+[`backend/resources/midi-mappings/README.md`](../backend/resources/midi-mappings/README.md).
+
+The backend loads every
+`backend/resources/midi-mappings/*.json` file on first use. Development builds
+fall back to that source directory; CMake copies the same directory beside the
+backend executable and electron-builder packages it unchanged. Profiles are
+validated for types, value ranges, model-name conflicts, and overlapping input
+bindings. Device matching is case-insensitive, uses token boundaries, honours
+`excludedModels`, and selects the longest matching model name.
+
+`MidiInputMonitor` owns connected inputs:
+
+- Enumeration reports all MIDI inputs, including unsupported ones.
+- `MIDI_INPUTS_SET` opens only inputs recognised by
+  `supportsMidiControllerMapping`; the same allowlist is enforced in the UI and
+  backend.
+- JUCE's MIDI callback writes raw short messages into a preallocated
+  512-message `AbstractFifo`. A 60 Hz JUCE message-thread timer drains it,
+  decodes profile bindings, combines relative movement received in one tick,
+  and broadcasts semantic `MIDI_CONTROL` messages. JSON parsing and allocation
+  never occur in the MIDI callback.
+- The mapper supports buttons, centred and two's-complement relative values,
+  7-bit and 14-bit absolute values, relative/absolute 14-bit platters, and
+  contiguous pad ranges. Shift and jog-touch state can select alternate
+  actions.
+- Two physical decks are modelled. A profile's headphone-Cue/PFL binding
+  toggles whether messages from that deck are accepted; shared controls remain
+  active while either deck is active. The state is persisted by the Electron
+  preferences layer.
+
+The renderer converts semantic controls into operational actions in
+`midiControllerActions.ts` and `midiBrowseActions.ts`. Jog movement is
+animation-frame coalesced; normal movement snaps to timeline grid lines and a
+held Sync modifier selects free movement. Browse controls switch between track
+selection, clip selection/range extension, and timeline zoom. Absolute channel
+faders, Tone EQ, and Filter target the currently selected track, with a short
+catch-up transition when hardware and software positions differ. Master volume
+is applied to the project. Crossfader input is retained as controller telemetry
+but does not currently alter the audible mix.
+
+If a profile defines output bindings, the backend opens one unambiguous MIDI
+output whose name matches the input. It can then send selected-track meters,
+Play/Cue state, active-deck state, and marker-pad lights. Missing output
+feedback does not prevent controller input.
 
 ## Engine resilience and recovery
 
@@ -1816,7 +1892,7 @@ User preferences are persisted as JSON at `%APPDATA%/silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
 **transactional**: every field is held in a local working copy until you click
 **Save**; **Cancel** (and `Esc`) discard pending edits without touching the
-engine or the file. The settings are organised into seven tabs on a left-hand
+engine or the file. The settings are organised into eight tabs on a left-hand
 sidebar:
 
 - **General** — appearance: the **waveform display** mode (single vs. left/right
@@ -1833,6 +1909,9 @@ sidebar:
   **Keep awake** checkbox — off by default — on each device row), and the
   **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
   `PROJECT.targetSampleRate` on new projects.
+- **MIDI** — detected MIDI inputs, supported-deck enablement, connection and
+  activity state, and a manual device rescan. Unsupported devices remain
+  visible with disabled checkboxes.
 - **Effects** — global defaults for the per-clip DJ turntable effects: the
   **Brake** Duration (short ~0.4 s / medium ~0.6 s / long ~0.9 s) and Curve
   (linear / curved / steep), and the **Backspin** Duration (same ~0.4 / ~0.6 /
@@ -1846,6 +1925,29 @@ sidebar:
   below them, per-stem cleanup options, and the experimental **GPU
   acceleration** toggle).
 - **Developer** — diagnostic logging, log folder and DevTools access.
+
+### MIDI controller preferences
+
+The MIDI tab requests a fresh backend device list whenever Preferences opens.
+The **Rescan devices** action repeats that enumeration and shows progress until
+the refreshed list arrives or a six-second safety timeout expires. Each row
+shows the Windows device name, supported-profile label, connection state, and
+latest activity time.
+
+> **Only supported deck MIDI controllers can be enabled.** Other MIDI inputs
+> remain visible but their checkboxes are disabled. The backend independently
+> rejects unsupported identifiers, so this restriction is not only a UI state.
+
+Ticking a supported device opens it for the current session immediately.
+Selecting **Save** persists enabled identifiers in `preferences.json`;
+**Cancel** restores the pre-dialog selection. Persisted deck 1/2 enablement is
+re-applied after a backend reconnect.
+
+The **MIDI Monitor** is available from **Preferences ▸ Developer** and the
+**Debug** menu. It retains the latest 200 raw messages from enabled inputs and
+shows timestamp, device, message kind, controller code, and value. See
+[MIDI deck controllers](midi-controllers.md) for setup, all supported model
+names, mapped behavior, controller feedback, and troubleshooting.
 
 Persisted fields:
 

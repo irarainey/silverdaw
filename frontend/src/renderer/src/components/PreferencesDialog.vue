@@ -4,8 +4,10 @@
 
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { usePreferencesForm } from '@/lib/preferences/usePreferencesForm'
 import PreferencesAudioTab from './PreferencesAudioTab.vue'
+import PreferencesMidiTab from './PreferencesMidiTab.vue'
 import PreferencesDeveloperTab from './PreferencesDeveloperTab.vue'
 import PreferencesEffectsTab from './PreferencesEffectsTab.vue'
 import PreferencesGeneralTab from './PreferencesGeneralTab.vue'
@@ -14,9 +16,10 @@ import PreferencesTimelineTab from './PreferencesTimelineTab.vue'
 import PreferencesStemsTab from './PreferencesStemsTab.vue'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'midi-monitor'): void }>()
 
 const audioDevices = useAudioDeviceStore()
+const midiDevices = useMidiDeviceStore()
 
 const {
   uniqueDevices,
@@ -28,6 +31,9 @@ const {
   pickBackend,
   keepAwakeByDeviceDraft,
   setDeviceKeepAwake,
+  enabledMidiInputsDraft,
+  setMidiInputEnabled,
+  discardMidiInputChanges,
   loggingEnabled,
   devToolsEnabled,
   logDirectory,
@@ -72,7 +78,7 @@ const {
 
 const dialogEl = ref<HTMLDivElement | null>(null)
 
-type PreferencesTab = 'general' | 'timeline' | 'project' | 'audio' | 'effects' | 'stems' | 'developer'
+type PreferencesTab = 'general' | 'timeline' | 'project' | 'audio' | 'midi' | 'effects' | 'stems' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
 
 const tabs: Array<{ id: PreferencesTab; label: string }> = [
@@ -80,6 +86,7 @@ const tabs: Array<{ id: PreferencesTab; label: string }> = [
   { id: 'timeline', label: 'Timeline' },
   { id: 'project', label: 'Project' },
   { id: 'audio', label: 'Audio' },
+  { id: 'midi', label: 'MIDI' },
   { id: 'effects', label: 'Effects' },
   { id: 'stems', label: 'Stems' },
   { id: 'developer', label: 'Developer' }
@@ -107,18 +114,25 @@ watch(
     if (!isOpen) return
     activeTab.value = 'general'
     showAdvancedBackend.value = false
+    midiDevices.requestList()
     await loadCurrent()
     requestAnimationFrame(() => dialogEl.value?.focus())
   }
 )
 
 function onCancel(): void {
+  discardMidiInputChanges()
   emit('close')
 }
 
 function onSave(): void {
   save()
   emit('close')
+}
+
+function onMidiInputEnabled(identifier: string, enabled: boolean): void {
+  setMidiInputEnabled(identifier, enabled)
+  midiDevices.setInputEnabledForSession(identifier, enabled)
 }
 </script>
 
@@ -229,6 +243,15 @@ function onSave(): void {
               :last-error="audioDevices.lastError"
               :request-rescan="audioDevices.requestRescan"
             />
+            <PreferencesMidiTab
+              v-else-if="activeTab === 'midi'"
+              :inputs="midiDevices.inputs"
+              :hydrated="midiDevices.hydrated"
+              :rescanning="midiDevices.rescanning"
+              :request-rescan="midiDevices.requestRescan"
+              :enabled-by-identifier="enabledMidiInputsDraft"
+              :set-input-enabled="onMidiInputEnabled"
+            />
             <PreferencesStemsTab
               v-else-if="activeTab === 'stems'"
               v-model:use-gpu-for-stems="useGpuForStems"
@@ -251,6 +274,7 @@ function onSave(): void {
               :initial-dev-tools-enabled="initialDevToolsEnabled"
               :initial-log-directory="initialLogDirectory"
               :choose-log-dir="chooseLogDir"
+              :open-midi-monitor="() => emit('midi-monitor')"
             />
           </div>
         </div>

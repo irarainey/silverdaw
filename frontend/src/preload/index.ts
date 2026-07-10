@@ -1,6 +1,12 @@
 // Least-privilege preload API exposed through context isolation.
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
-import type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences } from '../shared/types'
+import type {
+  AudioMetadata,
+  DebugPreferences,
+  MidiDeckSelection,
+  OpenedAudioFile,
+  UiPreferences
+} from '../shared/types'
 import type {
   EnsureStemModelResult,
   LocateStemModelResult,
@@ -190,6 +196,16 @@ const api = {
     ipcRenderer.invoke(IPC.prefs.getKeepAwakeByDevice),
   setKeepAwakeForDevice: (deviceName: string, enabled: boolean): void => {
     ipcRenderer.send(IPC.prefs.setKeepAwakeForDevice, deviceName, enabled)
+  },
+  getEnabledMidiInputs: (): Promise<Record<string, boolean>> =>
+    ipcRenderer.invoke(IPC.prefs.getEnabledMidiInputs),
+  setMidiInputEnabled: (identifier: string, enabled: boolean): void => {
+    ipcRenderer.send(IPC.prefs.setMidiInputEnabled, identifier, enabled)
+  },
+  getMidiDeckSelections: (): Promise<Record<string, MidiDeckSelection>> =>
+    ipcRenderer.invoke(IPC.prefs.getMidiDeckSelections),
+  setMidiDeckSelection: (identifier: string, selection: MidiDeckSelection): void => {
+    ipcRenderer.send(IPC.prefs.setMidiDeckSelection, identifier, selection)
   },
   // ─── Stem-separation preferences ────────────────────────────────────────
   getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),

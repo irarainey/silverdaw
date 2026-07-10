@@ -1,0 +1,34 @@
+{
+  "name": "Hercules DJControl Inpulse 500",
+  "models": ["DJCONTROL INPULSE 500"],
+  "sources": [
+    "https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Hercules_DJControl_Inpulse_500.midi.xml"
+  ],
+  "inputs": [
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 0, "channels": [0], "decks": [0] },
+    { "action": "browseTracks", "encoding": "relativeTwosComplement", "message": "cc", "data1": 1, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 7, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 6, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "nextMarker", "encoding": "button", "message": "note", "data1": 6, "channels": [4, 5], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 5, "channels": [1, 2, 4, 5], "decks": [1, 2, 1, 2] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 12, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 8, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogScratch", "encoding": "relativeTwosComplement", "message": "cc", "data1": 10, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogPitchBend", "encoding": "relativeTwosComplement", "message": "cc", "data1": 9, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "trackGain", "encoding": "absolute14", "message": "cc", "data1": 0, "lsbData1": 32, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneBass", "encoding": "absolute14", "message": "cc", "data1": 2, "lsbData1": 34, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneMid", "encoding": "absolute14", "message": "cc", "data1": 3, "lsbData1": 35, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneTreble", "encoding": "absolute14", "message": "cc", "data1": 4, "lsbData1": 36, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "filter", "encoding": "absolute7", "message": "cc", "data1": 1, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 0, "channels": [0], "decks": [0] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 0, "count": 8, "padOffset": 1, "channels": [6, 7], "decks": [1, 2] },
+    { "action": "markerToggle", "encoding": "padRange", "message": "note", "data1": 8, "count": 8, "padOffset": 1, "channels": [6, 7], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "channelMeter", "message": "cc", "data1": 64, "channels": [1, 2] },
+    { "purpose": "playLight", "message": "note", "data1": 7, "channels": [1, 2] },
+    { "purpose": "cueLight", "message": "note", "data1": 6, "channels": [1, 2] },
+    { "purpose": "deckSelectionLight", "message": "note", "data1": 12, "channels": [1, 2] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "onValue": 126, "channels": [6, 7] }
+  ]
+}

@@ -32,7 +32,7 @@ const SEP: MenuItemDef = { label: null }
 
 /** Options that influence which menus are visible. */
 export interface BuildMenusOptions {
-  /** Append the developer Debug menu. */
+  /** Enable the Chromium DevTools command and shortcut. */
   devToolsEnabled: boolean
   /** Startup diagnostic-logging state — enables Help ▸ Send Diagnostic Logs (there are
    *  only logs to send when logging was on for this run). Optional so shortcut binding,
@@ -158,15 +158,17 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
     }
   ]
 
-  if (opts.devToolsEnabled) {
-    // Keep Help rightmost; Debug appears only when developer tools are enabled.
-    menus.splice(menus.length - 1, 0, {
-      label: 'Debug',
-      items: [
-        { label: 'Toggle Developer Tools', action: 'view.toggleDevTools', accelerator: 'F12' }
-      ]
-    })
-  }
+  // Keep Help rightmost. MIDI diagnostics are always available; only Chromium
+  // DevTools itself is gated by the developer preference.
+  menus.splice(menus.length - 1, 0, {
+    label: 'Debug',
+    items: [
+      { label: 'MIDI Monitor…', action: 'debug.midiMonitor' },
+      ...(opts.devToolsEnabled
+        ? [SEP, { label: 'Toggle Developer Tools', action: 'view.toggleDevTools', accelerator: 'F12' }]
+        : [])
+    ]
+  })
 
   return menus
 }

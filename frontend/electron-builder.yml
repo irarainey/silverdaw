@@ -50,6 +50,7 @@ extraResources:
     to: backend
     filter:
       - SilverdawBackend.exe
+      - midi-mappings/**
       # onnxruntime.dll is copied next to SilverdawBackend.exe by the CMake
       # POST_BUILD step (see SILVERDAW_ENABLE_STEM_SEPARATION in
       # backend/CMakeLists.txt). It is MIT-licensed, so it ships inside the

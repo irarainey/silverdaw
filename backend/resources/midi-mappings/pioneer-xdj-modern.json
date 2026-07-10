@@ -1,0 +1,42 @@
+{
+  "name": "Pioneer modern standalone",
+  "models": ["OMNIS-DUO", "XDJ-RR", "XDJ-RX2", "XDJ-RX3", "XDJ-XZ"],
+  "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 0, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 1, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "nextMarker", "encoding": "button", "message": "note", "data1": 5, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 31, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogPitchBend", "touchedAction": "jogScratch", "encoding": "relative", "message": "cc", "data1": 34, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogSearch", "encoding": "relative", "message": "cc", "data1": 41, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 32, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 72, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelPitchBend", "encoding": "relative", "message": "cc", "data1": 33, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelSearch", "encoding": "relative", "message": "cc", "data1": 38, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 79, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 51, "channels": [0], "decks": [0] },
+    { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 96, "channels": [0], "decks": [0] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 17, "channels": [4], "decks": [1] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 18, "channels": [4], "decks": [2] },
+    { "action": "toneTreble", "encoding": "absolute7", "message": "cc", "data1": 2, "channels": [4], "decks": [1] },
+    { "action": "toneTreble", "encoding": "absolute7", "message": "cc", "data1": 7, "channels": [4], "decks": [2] },
+    { "action": "toneMid", "encoding": "absolute7", "message": "cc", "data1": 3, "channels": [4], "decks": [1] },
+    { "action": "toneMid", "encoding": "absolute7", "message": "cc", "data1": 8, "channels": [4], "decks": [2] },
+    { "action": "toneBass", "encoding": "absolute7", "message": "cc", "data1": 4, "channels": [4], "decks": [1] },
+    { "action": "toneBass", "encoding": "absolute7", "message": "cc", "data1": 9, "channels": [4], "decks": [2] },
+    { "action": "filter", "encoding": "absolute7", "message": "cc", "data1": 5, "channels": [4], "decks": [1] },
+    { "action": "filter", "encoding": "absolute7", "message": "cc", "data1": 10, "channels": [4], "decks": [2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 11, "channels": [4], "decks": [0] },
+    { "action": "deckToggle", "encoding": "button", "message": "cc", "data1": 70, "channels": [4], "decks": [1] },
+    { "action": "deckToggle", "encoding": "button", "message": "cc", "data1": 71, "channels": [4], "decks": [2] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 0, "count": 8, "padOffset": 1, "channels": [5, 6], "decks": [1, 2] },
+    { "action": "markerToggle", "encoding": "padRange", "message": "note", "data1": 8, "count": 8, "padOffset": 1, "channels": [5, 6], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "channelMeter", "message": "cc", "data1": 2, "channels": [0, 1] },
+    { "purpose": "playLight", "message": "note", "data1": 0, "channels": [0, 1] },
+    { "purpose": "cueLight", "message": "note", "data1": 1, "channels": [0, 1] },
+    { "purpose": "deckSelectionLight", "message": "cc", "data1": 70, "data1Values": [70, 71], "channels": [4, 4] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "channels": [5, 6] }
+  ]
+}
