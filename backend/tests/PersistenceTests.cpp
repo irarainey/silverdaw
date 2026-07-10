@@ -10,6 +10,7 @@
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
+#include "PeakJobCoordinator.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "DecodedCache.h"
@@ -358,6 +359,82 @@ void testPeaksCacheRoundTripAndValidation()
     dir.deleteRecursively();
 }
 
+void testPeakJobCoordinatorCoalescesAndFansOut()
+{
+    silverdaw::PeakJobCoordinator coordinator;
+    const juce::File source("C:\\audio\\loop.wav");
+
+    const auto first = coordinator.addWaiter(
+        source, 500, {silverdaw::PeakResponseTarget::timelineClip, "clip-1"});
+    const auto second = coordinator.addWaiter(
+        source, 500, {silverdaw::PeakResponseTarget::timelineClip, "clip-2"});
+    const auto duplicate = coordinator.addWaiter(
+        source, 500, {silverdaw::PeakResponseTarget::timelineClip, "clip-1"});
+    const auto editor = coordinator.addWaiter(
+        source, 500, {silverdaw::PeakResponseTarget::clipEditor, "library-1"});
+    const auto highResolution = coordinator.addWaiter(
+        source, 2000, {silverdaw::PeakResponseTarget::clipEditor, "library-1"});
+
+    require(first.startsJob, "first source-resolution waiter should start a job");
+    require(! second.startsJob && ! duplicate.startsJob && ! editor.startsJob,
+            "matching source-resolution waiters should coalesce");
+    require(highResolution.startsJob, "different peak resolution should start a separate job");
+
+    const auto waiters = coordinator.takeWaiters(first.key);
+    require(waiters.size() == 3, "coalesced job should retain distinct timeline and editor waiters");
+    require(waiters[0].id == "clip-1" && waiters[1].id == "clip-2" && waiters[2].id == "library-1",
+            "coalesced waiters should retain request order");
+
+    const auto retry = coordinator.addWaiter(
+        source, 500, {silverdaw::PeakResponseTarget::timelineClip, "clip-3"});
+    require(retry.startsJob, "completed source-resolution key should permit a later retry");
+    coordinator.takeWaiters(retry.key);
+    coordinator.takeWaiters(highResolution.key);
+}
+
+void testPeaksCacheConcurrentStoresRemainValid()
+{
+    const auto dir = makeTempDir("peaks-cache-concurrent");
+    const auto source = dir.getChildFile("source.wav");
+    require(source.replaceWithText("concurrent cache key source"), "concurrent source file should write");
+    const silverdaw::PeaksCache cache(dir.getChildFile("cache"));
+
+    silverdaw::waveform::PeaksResult result;
+    result.peaksPerSecond = 500;
+    result.sampleRate = 48000.0;
+    result.laneCount = 3;
+    result.peaks.resize(12000);
+    for (std::size_t i = 0; i < result.peaks.size(); ++i)
+    {
+        result.peaks[i] = static_cast<float>(i % 101) / 100.0F;
+    }
+
+    std::atomic<bool> start{false};
+    std::vector<std::thread> writers;
+    for (int i = 0; i < 4; ++i)
+    {
+        writers.emplace_back([&]()
+        {
+            while (! start.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            cache.store(source, result);
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& writer : writers)
+    {
+        writer.join();
+    }
+
+    const auto loaded = cache.tryLoad(source, result.peaksPerSecond);
+    require(loaded.peaks == result.peaks, "concurrent cache stores should leave one complete valid entry");
+    const auto tempFiles = dir.getChildFile("cache").findChildFiles(juce::File::findFiles, false, "*.tmp");
+    require(tempFiles.isEmpty(), "concurrent cache stores should not leave temporary files");
+    dir.deleteRecursively();
+}
+
 void testLegacySampleModeMigratesToAudioType()
 {
     juce::ValueTree project(juce::Identifier{"PROJECT"});
@@ -462,6 +539,8 @@ void addPersistenceTests(std::vector<TestCase>& tests)
     tests.push_back({"project artifacts base dir follows the project", testProjectArtifactsBaseDir});
     tests.push_back({"migrate temp artifacts into project folder", testMigrateTempArtifactsIntoProject});
     tests.push_back({"PeaksCache round-trip and validation", testPeaksCacheRoundTripAndValidation});
+    tests.push_back({"Peak jobs coalesce and fan out", testPeakJobCoordinatorCoalescesAndFansOut});
+    tests.push_back({"PeaksCache concurrent stores remain valid", testPeaksCacheConcurrentStoresRemainValid});
     tests.push_back({"legacy sampleMode migrates to audioType", testLegacySampleModeMigratesToAudioType});
     tests.push_back({"legacy library kind migrates to source/sample/clip", testLegacyLibraryKindMigrates});
 }

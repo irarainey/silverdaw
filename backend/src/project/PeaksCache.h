@@ -5,6 +5,8 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 
+#include <mutex>
+
 namespace silverdaw
 {
 
@@ -28,6 +30,7 @@ class PeaksCache
   private:
     juce::File cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const;
     juce::File cacheDir;
+    mutable std::mutex storeMutex;
 };
 
 } // namespace silverdaw

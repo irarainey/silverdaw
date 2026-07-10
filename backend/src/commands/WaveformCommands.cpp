@@ -6,6 +6,7 @@
 #include "EnginePlaybackPath.h"
 #include "LibraryAnalysis.h"
 #include "Log.h"
+#include "PeakJobCoordinator.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectState.h"
@@ -26,53 +27,50 @@ double effectivePeaksPerSecond(const silverdaw::waveform::PeaksResult& result)
 namespace
 {
 
-// Worker-only disk I/O; WebSocket carries cache paths, never bulk peaks.
-// Empty peak results are not broadcast so the renderer keeps its placeholder.
-void produceAndBroadcastPeaks(const juce::String& clipId, const juce::File& filePath,
-                              silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
-                              silverdaw::BridgeServer& bridge)
+struct PendingPeakJobCleanup
 {
-    constexpr int kPeaksPerSecond = silverdaw::waveform::kDefaultPeaksPerSecond;
-    silverdaw::log::info("peaksjob", "start clipId=" + clipId + " file=" + filePath.getFileName());
-    auto result = cache.tryLoad(filePath, kPeaksPerSecond);
-    const bool fromCache = !result.peaks.empty();
-    if (!fromCache)
+    PeakJobCoordinator& coordinator;
+    const std::string& key;
+    bool active = true;
+
+    ~PendingPeakJobCleanup()
     {
-        result = silverdaw::waveform::computePeaks(filePath, engine.getFormatManager(), kPeaksPerSecond);
-        if (!result.peaks.empty())
+        if (active)
         {
-            cache.store(filePath, result);
+            coordinator.takeWaiters(key);
         }
     }
-    if (result.peaks.empty())
-    {
-        silverdaw::log::warn("peaksjob", "no peaks produced for clipId=" + clipId);
-        return;
-    }
+};
 
-    // `peakCount` is per lane and matches the PeaksCache on-disk layout.
-    const auto cacheFile = cache.getCacheFilePath(filePath, kPeaksPerSecond);
+void broadcastPeaksReady(const PeakJobWaiter& waiter, const juce::File& cacheFile,
+                         const silverdaw::waveform::PeaksResult& result, silverdaw::BridgeServer& bridge)
+{
     auto* obj = new juce::DynamicObject();
-    obj->setProperty("clipId", clipId);
+    if (waiter.target == PeakResponseTarget::timelineClip)
+    {
+        obj->setProperty("clipId", waiter.id);
+    }
+    else
+    {
+        obj->setProperty("libraryItemId", waiter.id);
+    }
     obj->setProperty("cachePath", cacheFile.getFullPathName());
     obj->setProperty("peakCount", result.bucketsPerLane());
     obj->setProperty("laneCount", result.laneCount);
     obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
     obj->setProperty("sampleRate", result.sampleRate);
-    bridge.broadcast("WAVEFORM_READY", juce::var(obj));
-
-    silverdaw::log::info("peaksjob", "done clipId=" + clipId + " peaks=" +
-                                          juce::String(result.bucketsPerLane()) +
-                                          (fromCache ? " (cache hit)" : " (computed)"));
+    bridge.broadcast(waiter.target == PeakResponseTarget::timelineClip ? "WAVEFORM_READY"
+                                                                       : "CLIP_EDITOR_PEAKS_READY",
+                     juce::var(obj));
 }
 
-// PeaksCache keys by resolution, so editor high-res peaks coexist with defaults.
-void produceAndBroadcastEditorPeaks(const juce::String& libraryItemId, const juce::File& filePath,
-                                    int peaksPerSecond, silverdaw::AudioEngine& engine,
-                                    const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge)
+// Worker-only disk I/O; WebSocket carries cache paths, never bulk peaks.
+void produceAndBroadcastPeaks(const std::string& jobKey, const juce::File& filePath, int peaksPerSecond,
+                              silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
+                              silverdaw::BridgeServer& bridge, PeakJobCoordinator& peakJobs)
 {
-    silverdaw::log::info("peaksjob", "editor start libId=" + libraryItemId +
-                                          " file=" + filePath.getFileName() +
+    PendingPeakJobCleanup cleanup{peakJobs, jobKey};
+    silverdaw::log::info("peaksjob", "start file=" + filePath.getFileName() +
                                           " ppS=" + juce::String(peaksPerSecond));
     auto result = cache.tryLoad(filePath, peaksPerSecond);
     const bool fromCache = !result.peaks.empty();
@@ -84,30 +82,47 @@ void produceAndBroadcastEditorPeaks(const juce::String& libraryItemId, const juc
             cache.store(filePath, result);
         }
     }
+    auto waiters = peakJobs.takeWaiters(jobKey);
+    cleanup.active = false;
     if (result.peaks.empty())
     {
-        silverdaw::log::warn("peaksjob", "editor no peaks libId=" + libraryItemId);
+        silverdaw::log::warn("peaksjob", "no peaks produced for " + filePath.getFileName());
         return;
     }
+
     const auto cacheFile = cache.getCacheFilePath(filePath, peaksPerSecond);
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty("libraryItemId", libraryItemId);
-    obj->setProperty("cachePath", cacheFile.getFullPathName());
-    obj->setProperty("peakCount", result.bucketsPerLane());
-    obj->setProperty("laneCount", result.laneCount);
-    obj->setProperty("peaksPerSecond", effectivePeaksPerSecond(result));
-    obj->setProperty("sampleRate", result.sampleRate);
-    bridge.broadcast("CLIP_EDITOR_PEAKS_READY", juce::var(obj));
-    silverdaw::log::info("peaksjob", "editor done libId=" + libraryItemId + " peaks=" +
-                                          juce::String(result.bucketsPerLane()) +
+    for (const auto& waiter : waiters)
+    {
+        broadcastPeaksReady(waiter, cacheFile, result, bridge);
+    }
+    silverdaw::log::info("peaksjob", "done file=" + filePath.getFileName() +
+                                          " peaks=" + juce::String(result.bucketsPerLane()) +
+                                          " waiters=" + juce::String(static_cast<int>(waiters.size())) +
                                           (fromCache ? " (cache hit)" : " (computed)"));
+}
+
+void enqueuePeakJob(PeakJobWaiter waiter, const juce::File& filePath, int peaksPerSecond,
+                    silverdaw::AudioEngine& engine, const silverdaw::PeaksCache& cache,
+                    silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool,
+                    PeakJobCoordinator& peakJobs)
+{
+    auto ticket = peakJobs.addWaiter(filePath, peaksPerSecond, std::move(waiter));
+    if (!ticket.startsJob)
+    {
+        silverdaw::log::debug("peaksjob", "coalesced file=" + filePath.getFileName() +
+                                              " ppS=" + juce::String(peaksPerSecond));
+        return;
+    }
+    peakPool.addJob(
+        [key = std::move(ticket.key), filePath, peaksPerSecond, &engine, &cache, &bridge, &peakJobs]
+        { produceAndBroadcastPeaks(key, filePath, peaksPerSecond, engine, cache, bridge, peakJobs); });
 }
 
 } // namespace
 
 void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                    silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                   const silverdaw::DecodedCache& decodedCache)
+                   const silverdaw::DecodedCache& decodedCache, PeakJobCoordinator& peakJobs)
 {
     const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
@@ -200,9 +215,8 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         // All peak/analysis I/O reads the decoded WAV; the source is only ever
         // read to produce that WAV. engineFilePath is the resolved playable WAV
         // (or the source itself when it is already a readable WAV).
-        peakPool.addJob(
-            [clipId, file = juce::File(engineFilePath), &engine, &cache, &bridge]
-            { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
+        enqueuePeakJob({PeakResponseTarget::timelineClip, clipId}, juce::File(engineFilePath),
+                       silverdaw::waveform::kDefaultPeaksPerSecond, engine, cache, bridge, peakPool, peakJobs);
         // Covers deduped or missing LIBRARY_ADD before this clip arrives.
         silverdaw::ensureBpmDetection(filePath, engine, projectState, bridge, peakPool, decodedCache);
         // Re-check project BPM seeding once the first clip exists.
@@ -215,7 +229,7 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
 void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                           const silverdaw::DecodedCache& decodedCache)
+                           const silverdaw::DecodedCache& decodedCache, PeakJobCoordinator& peakJobs)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty())
@@ -245,15 +259,14 @@ void handleWaveformRequest(const juce::var& payload, silverdaw::AudioEngine& eng
         silverdaw::ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
     }
 
-    peakPool.addJob(
-        [clipId, file = juce::File(engineFilePath), &engine, &cache, &bridge]
-        { produceAndBroadcastPeaks(clipId, file, engine, cache, bridge); });
+    enqueuePeakJob({PeakResponseTarget::timelineClip, clipId}, juce::File(engineFilePath),
+                   silverdaw::waveform::kDefaultPeaksPerSecond, engine, cache, bridge, peakPool, peakJobs);
 }
 
 void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngine& engine,
                                   silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                                   juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                                  const silverdaw::DecodedCache& decodedCache)
+                                  const silverdaw::DecodedCache& decodedCache, PeakJobCoordinator& peakJobs)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const int peaksPerSecond =
@@ -269,9 +282,8 @@ void handleClipEditorPeaksRequest(const juce::var& payload, silverdaw::AudioEngi
     {
         silverdaw::ensureDecodedCache(filePath, engine, projectState, peakPool, decodedCache);
     }
-    peakPool.addJob(
-        [libraryItemId, file = juce::File(engineFilePath), peaksPerSecond, &engine, &cache, &bridge]
-        { produceAndBroadcastEditorPeaks(libraryItemId, file, peaksPerSecond, engine, cache, bridge); });
+    enqueuePeakJob({PeakResponseTarget::clipEditor, libraryItemId}, juce::File(engineFilePath),
+                   peaksPerSecond, engine, cache, bridge, peakPool, peakJobs);
 }
 
 } // namespace silverdaw

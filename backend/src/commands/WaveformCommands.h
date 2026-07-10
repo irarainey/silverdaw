@@ -9,6 +9,7 @@ class AudioEngine;
 class ProjectState;
 class BridgeServer;
 class DecodedCache;
+class PeakJobCoordinator;
 class PeaksCache;
 
 namespace waveform { struct PeaksResult; }
@@ -19,12 +20,12 @@ double effectivePeaksPerSecond(const waveform::PeaksResult& result);
 
 void handleClipAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                    BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
-                   const DecodedCache& decodedCache);
+                   const DecodedCache& decodedCache, PeakJobCoordinator& peakJobs);
 void handleWaveformRequest(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                            BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
-                           const DecodedCache& decodedCache);
+                           const DecodedCache& decodedCache, PeakJobCoordinator& peakJobs);
 void handleClipEditorPeaksRequest(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                                   BridgeServer& bridge, juce::ThreadPool& peakPool, const PeaksCache& cache,
-                                  const DecodedCache& decodedCache);
+                                  const DecodedCache& decodedCache, PeakJobCoordinator& peakJobs);
 
 } // namespace silverdaw

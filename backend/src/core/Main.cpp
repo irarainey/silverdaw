@@ -6,6 +6,7 @@
 #include "DecodedCache.h"
 #include "EditUndoState.h"
 #include "Log.h"
+#include "PeakJobCoordinator.h"
 #include "PeaksCache.h"
 #include "PlayheadEmitter.h"
 #include "ProjectSession.h"
@@ -268,6 +269,8 @@ int runBackend(int argc, char* argv[])
     // Disk-backed decoded cache avoids repeated compressed-audio decode on clip add.
     const silverdaw::DecodedCache decodedCache;
 
+    silverdaw::PeakJobCoordinator peakJobs;
+
     if (bridgeToken.isEmpty())
     {
         silverdaw::log::warn("bridge",
@@ -281,14 +284,14 @@ int runBackend(int argc, char* argv[])
     // Freeze bridge callbacks at construction so I/O-thread reads are race-free.
     silverdaw::BridgeServer bridge(
         bridgeToken,
-        [&engine, &projectState, &peakPool, &peaksCache, &decodedCache, &session](
+        [&engine, &projectState, &peakPool, &peaksCache, &decodedCache, &peakJobs, &session](
             silverdaw::BridgeServer& self, const juce::String& type, const juce::var& payload)
         {
             // Message-thread crash firewall: prefer an ENGINE_ERROR over a dead backend.
             try
             {
                 silverdaw::dispatchBridgeMessage(type, payload, engine, projectState, self, peakPool,
-                                                 peaksCache, decodedCache, session);
+                                                 peaksCache, decodedCache, peakJobs, session);
             }
             catch (const std::exception& e)
             {
