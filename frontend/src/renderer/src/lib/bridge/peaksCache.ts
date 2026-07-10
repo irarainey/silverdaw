@@ -33,7 +33,7 @@ const PEAKS_FILE_VERSION = 2
 const PEAKS_FILE_HEADER_SIZE = 28
 const PEAKS_MAX_LANES = 8
 
-interface ParsedPeaksCache {
+export interface ParsedPeaksCache {
   /** Lane 0 — the mono summary. Existing draw/LOD code consumes this. */
   readonly summary: Float32Array
   /** Per-channel lanes for stereo (index 0 = left, 1 = right); empty for mono. */
@@ -44,15 +44,15 @@ interface ParsedPeaksCache {
 /**
  * Parse + validate a `.peaks` cache buffer read from disk. Returns null
  * (with a warning) on any malformation so callers can simply bail. Each
- * returned `Float32Array` is freshly copied so it is NOT backed by the raw
- * IPC buffer (which the Pinia store would otherwise retain for the lifetime
- * of the clip — multi-MB live retention for every project).
+ * Canonical one- and three-lane files return views into the renderer-owned IPC
+ * buffer, avoiding multi-megabyte main-thread copies. Non-canonical or padded
+ * files copy the used lanes so unused bytes are not retained.
  *
  * Shared by all three peaks-cache consumers (`WAVEFORM_READY`,
  * `SAMPLE_SAVED`, `CLIP_EDITOR_PEAKS_READY`) so the binary contract lives
  * in exactly one place.
  */
-function parsePeaksCacheBuffer(
+export function parsePeaksCacheBuffer(
   buffer: ArrayBuffer | null,
   expectedPeakCount: number,
   label: string
@@ -99,12 +99,17 @@ function parsePeaksCacheBuffer(
     return null
   }
   const all = new Float32Array(buffer, PEAKS_FILE_HEADER_SIZE, totalFloats)
-  const summary = new Float32Array(all.subarray(0, floatsPerLane))
+  const canRetainBuffer =
+    buffer.byteLength === expectedBytes && (laneCount === 1 || laneCount === 3)
+  const summaryView = all.subarray(0, floatsPerLane)
+  const summary = canRetainBuffer ? summaryView : new Float32Array(summaryView)
   const channels: Float32Array[] = []
   // Only 3-lane (summary + L + R) files carry separable stereo channels.
   if (laneCount === 3) {
-    channels.push(new Float32Array(all.subarray(floatsPerLane, floatsPerLane * 2)))
-    channels.push(new Float32Array(all.subarray(floatsPerLane * 2, floatsPerLane * 3)))
+    const left = all.subarray(floatsPerLane, floatsPerLane * 2)
+    const right = all.subarray(floatsPerLane * 2, floatsPerLane * 3)
+    channels.push(canRetainBuffer ? left : new Float32Array(left))
+    channels.push(canRetainBuffer ? right : new Float32Array(right))
   }
   return { summary, channels, laneCount }
 }
