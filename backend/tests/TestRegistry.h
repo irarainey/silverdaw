@@ -15,7 +15,7 @@ void addProjectStateTests(std::vector<TestCase>& tests);
 void addProjectStateFxTests(std::vector<TestCase>& tests);
 void addPersistenceTests(std::vector<TestCase>& tests);
 void addBridgeTests(std::vector<TestCase>& tests);
-void addPioneerDeckMappingTests(std::vector<TestCase>& tests);
+void addMidiControllerMappingTests(std::vector<TestCase>& tests);
 void addWarpTests(std::vector<TestCase>& tests);
 void addAudioEngineTests(std::vector<TestCase>& tests);
 void addFxDspTests(std::vector<TestCase>& tests);

@@ -1,0 +1,33 @@
+{
+  "name": "Numark Mixtrack 3 family",
+  "models": ["MIXTRACK 3", "MIXTRACK PRO 3"],
+  "sources": [
+    "https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Numark-Mixtrack-3.midi.xml",
+    "https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Numark-Mixtrack-3-scripts.js"
+  ],
+  "inputs": [
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 18, "channels": [0], "decks": [0] },
+    { "action": "browseTracks", "encoding": "relativeTwosComplement", "message": "cc", "data1": 23, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 1, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 3, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 2, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 11, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 14, "channels": [0], "decks": [1] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 15, "channels": [0], "decks": [2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 12, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogPitchBend", "touchedAction": "jogScratch", "encoding": "relativeTwosComplement", "message": "cc", "data1": 17, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 5, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneTreble", "encoding": "absolute7", "message": "cc", "data1": 1, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneMid", "encoding": "absolute7", "message": "cc", "data1": 2, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneBass", "encoding": "absolute7", "message": "cc", "data1": 3, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "filter", "encoding": "absolute7", "message": "cc", "data1": 4, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 7, "channels": [0], "decks": [0] },
+    { "action": "markerJump", "shiftedAction": "markerToggle", "encoding": "padRange", "message": "note", "data1": 27, "count": 4, "padOffset": 1, "channels": [1, 2], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "playLight", "message": "note", "data1": 1, "channels": [1, 2] },
+    { "purpose": "cueLight", "message": "note", "data1": 3, "channels": [1, 2] },
+    { "purpose": "deckSelectionLight", "message": "note", "data1": 14, "data1Values": [14, 15], "channels": [0, 0] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 27, "count": 4, "channels": [1, 2] }
+  ]
+}

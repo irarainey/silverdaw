@@ -1,0 +1,32 @@
+{
+  "name": "Reloop Beatmix 2/4 MK2",
+  "models": ["BEATMIX 2 MK2", "BEATMIX 4 MK2", "BEATMIX 2/4 MK2"],
+  "sources": [
+    "https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Reloop-Beatmix-2-4-MK2.midi.xml",
+    "https://github.com/mixxxdj/mixxx/blob/main/res/controllers/Reloop-Beatmix-2-4-MK2-scripts.js"
+  ],
+  "inputs": [
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 73, "channels": [5], "decks": [0] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 112, "center": 64, "direction": -1, "channels": [5], "decks": [0] },
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 36, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 35, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "nextMarker", "encoding": "button", "message": "note", "data1": 99, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 33, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 82, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 63, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "jogPitchBend", "touchedAction": "jogScratch", "encoding": "relative", "message": "cc", "data1": 96, "center": 64, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "trackGain", "encoding": "absolute7", "message": "cc", "data1": 20, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneTreble", "encoding": "absolute7", "message": "cc", "data1": 17, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneMid", "encoding": "absolute7", "message": "cc", "data1": 18, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "toneBass", "encoding": "absolute7", "message": "cc", "data1": 19, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "crossfader", "encoding": "absolute7", "message": "cc", "data1": 47, "channels": [5], "decks": [0] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 0, "count": 4, "padOffset": 1, "channels": [1, 2], "decks": [1, 2] },
+    { "action": "markerToggle", "encoding": "padRange", "message": "note", "data1": 8, "count": 4, "padOffset": 1, "channels": [1, 2], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "playLight", "message": "note", "data1": 36, "channels": [1, 2] },
+    { "purpose": "cueLight", "message": "note", "data1": 35, "channels": [1, 2] },
+    { "purpose": "deckSelectionLight", "message": "note", "data1": 82, "channels": [1, 2] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "count": 4, "channels": [1, 2] }
+  ]
+}

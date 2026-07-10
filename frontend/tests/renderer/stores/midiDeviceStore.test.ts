@@ -71,7 +71,7 @@ describe('midiDeviceStore', () => {
   it('applies a session-only input change through the bridge', () => {
     const store = useMidiDeviceStore()
     store.applyList({
-      inputs: [input('launchkey', { controllerProfile: 'Pioneer two-deck' })]
+      inputs: [input('launchkey', { controllerProfile: 'MIDI deck' })]
     })
     store.setInputEnabledForSession('launchkey', true)
 

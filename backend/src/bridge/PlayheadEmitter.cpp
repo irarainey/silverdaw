@@ -21,13 +21,13 @@ PlayheadEmitter::PlayheadEmitter(AudioEngine& e, BridgeServer& b, ProjectState& 
 void PlayheadEmitter::timerCallback()
 {
     const bool playing = engine.isPlaying();
-    sendPioneerTransportPlaying(playing);
+    sendMidiTransportPlaying(playing);
     const double rawPosMs = engine.getPositionMs();
 
     // Compensate only during playback so the playhead matches heard audio without moving seek anchors.
     const double latencyMs = playing ? engine.getOutputLatencyMs() : 0.0;
     const double posMs = playing ? juce::jmax(0.0, rawPosMs - latencyMs) : rawPosMs;
-    sendPioneerMarkerLights(project.hasMarkerNear(posMs), project.getMarkerCount());
+    sendMidiMarkerLights(project.hasMarkerNear(posMs), project.getMarkerCount());
 
     // Reuse payload storage to avoid 60 Hz message-thread heap churn.
     if (playing || posMs != lastPosMs)
@@ -164,8 +164,8 @@ void PlayheadEmitter::timerCallback()
             anyTrackHasSignal = true;
     }
     // MIDI output deduplicates values; this unconditional call also clears meters on stop.
-    sendPioneerSelectedTrackMeter(selectedTrackPeakL, selectedTrackPeakR,
-                                  playing && selectedTrackId.isNotEmpty());
+    sendMidiSelectedTrackMeter(selectedTrackPeakL, selectedTrackPeakR,
+                               playing && selectedTrackId.isNotEmpty());
 
     // perf.tracks: accumulate each track's peak between emissions so a track that
     // falls silent after a gain/filter change is identifiable in the backend log

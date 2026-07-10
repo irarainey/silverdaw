@@ -1,0 +1,20 @@
+{
+  "name": "Pioneer DDJ-REV7",
+  "models": ["DDJ-REV7"],
+  "inputs": [
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [6], "decks": [0] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 88, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogScratch", "encoding": "absolute14Relative", "message": "cc", "data1": 25, "lsbData1": 57, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 64, "direction": -1, "channels": [6], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 65, "channels": [6], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 66, "channels": [6], "decks": [0] },
+    { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 100, "channels": [6], "decks": [0] },
+    { "action": "trackGain", "encoding": "absolute14", "message": "cc", "data1": 19, "lsbData1": 51, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "crossfader", "encoding": "absolute14", "message": "cc", "data1": 31, "lsbData1": 63, "channels": [6], "decks": [0] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 0, "count": 8, "padOffset": 1, "channels": [7, 9], "decks": [1, 2] },
+    { "action": "markerToggle", "encoding": "padRange", "message": "note", "data1": 8, "count": 8, "padOffset": 1, "channels": [7, 9], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "channels": [7, 9] }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "Pioneer DDJ-200",
+  "models": ["DDJ-200"],
+  "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 11, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 12, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "nextMarker", "encoding": "button", "message": "note", "data1": 72, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 84, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 88, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogScratch", "encoding": "relative", "message": "cc", "data1": 34, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogPitchBend", "encoding": "relative", "message": "cc", "data1": 35, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogSearch", "encoding": "relative", "message": "cc", "data1": 41, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 54, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 103, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelPitchBend", "encoding": "relative", "message": "cc", "data1": 33, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "trackGain", "encoding": "absolute14", "message": "cc", "data1": 19, "lsbData1": 51, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "toneTreble", "encoding": "absolute14", "message": "cc", "data1": 7, "lsbData1": 39, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "toneMid", "encoding": "absolute14", "message": "cc", "data1": 11, "lsbData1": 43, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "toneBass", "encoding": "absolute14", "message": "cc", "data1": 15, "lsbData1": 47, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "filter", "encoding": "absolute14", "message": "cc", "data1": 23, "lsbData1": 55, "channels": [6], "decks": [1] },
+    { "action": "filter", "encoding": "absolute14", "message": "cc", "data1": 24, "lsbData1": 56, "channels": [6], "decks": [2] },
+    { "action": "crossfader", "encoding": "absolute14", "message": "cc", "data1": 31, "lsbData1": 63, "channels": [6], "decks": [0] },
+    { "action": "markerJump", "encoding": "padRange", "message": "note", "data1": 0, "count": 8, "padOffset": 1, "channels": [7, 9], "decks": [1, 2] },
+    { "action": "markerToggle", "encoding": "padRange", "message": "note", "data1": 0, "count": 8, "padOffset": 1, "channels": [8, 10], "decks": [1, 2] }
+  ],
+  "outputs": [
+    { "purpose": "playLight", "message": "note", "data1": 11, "channels": [0, 1] },
+    { "purpose": "cueLight", "message": "note", "data1": 12, "channels": [0, 1] },
+    { "purpose": "deckSelectionLight", "message": "note", "data1": 84, "channels": [0, 1] },
+    { "purpose": "hotCueLights", "message": "note", "data1": 0, "channels": [7, 9] }
+  ]
+}

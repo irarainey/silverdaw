@@ -1,0 +1,34 @@
+{
+  "name": "Pioneer compact legacy",
+  "models": [
+    "DDJ-WEGO",
+    "DDJ-WEGO2",
+    "DDJ-WEGO3",
+    "DDJ-WEGO4",
+    "DDJ-ERGO"
+  ],
+  "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 11, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "shiftedAction": "nextMarker", "encoding": "button", "message": "note", "data1": 12, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "nextMarker", "encoding": "button", "message": "note", "data1": 72, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "deckToggle", "encoding": "button", "message": "note", "data1": 84, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "shift", "encoding": "button", "message": "note", "data1": 79, "channels": [6], "decks": [0] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 88, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 92, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 54, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 103, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 65, "channels": [6], "decks": [0] },
+    { "action": "browsePress", "encoding": "button", "message": "note", "data1": 66, "channels": [6], "decks": [0] },
+    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 64, "center": 64, "direction": -1, "channels": [6], "decks": [0] },
+    { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 100, "center": 64, "channels": [6], "decks": [0] },
+    { "action": "jogScratch", "encoding": "relative", "message": "cc", "data1": 34, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogPitchBend", "encoding": "relative", "message": "cc", "data1": 35, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogSearch", "encoding": "relative", "message": "cc", "data1": 31, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "jogSearch", "encoding": "relative", "message": "cc", "data1": 39, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelPitchBend", "encoding": "relative", "message": "cc", "data1": 33, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "wheelSearch", "encoding": "relative", "message": "cc", "data1": 38, "center": 64, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "crossfader", "encoding": "absolute14", "message": "cc", "data1": 31, "lsbData1": 63, "channels": [6], "decks": [0] }
+  ],
+  "outputs": []
+}
