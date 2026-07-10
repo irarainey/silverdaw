@@ -30,6 +30,7 @@ import { trackClipBridgeHandlers } from '@/lib/bridge/handlers/trackClipHandlers
 import { libraryBridgeHandlers } from '@/lib/bridge/handlers/libraryHandlers'
 import { previewBridgeHandlers } from '@/lib/bridge/handlers/previewHandlers'
 import { audioDeviceBridgeHandlers } from '@/lib/bridge/handlers/audioDeviceHandlers'
+import { midiDeviceBridgeHandlers } from '@/lib/bridge/handlers/midiDeviceHandlers'
 import { mixdownBridgeHandlers } from '@/lib/bridge/handlers/mixdownHandlers'
 import { stemBridgeHandlers } from '@/lib/bridge/handlers/stemHandlers'
 import { channelSplitBridgeHandlers } from '@/lib/bridge/handlers/channelSplitHandlers'
@@ -416,6 +417,7 @@ const inboundHandlers = {
   ...libraryBridgeHandlers,
   ...previewBridgeHandlers,
   ...audioDeviceBridgeHandlers,
+  ...midiDeviceBridgeHandlers,
   ...mixdownBridgeHandlers,
   ...stemBridgeHandlers,
   ...channelSplitBridgeHandlers,

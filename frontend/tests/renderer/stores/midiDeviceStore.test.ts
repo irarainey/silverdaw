@@ -1,0 +1,94 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { send as sendBridge } from '@/lib/bridgeService'
+import type { MidiInputDevice } from '@shared/bridge-protocol'
+
+vi.mock('@/lib/bridgeService', () => ({
+  send: vi.fn()
+}))
+
+function input(identifier: string, overrides: Partial<MidiInputDevice> = {}): MidiInputDevice {
+  return {
+    name: identifier,
+    identifier,
+    connected: true,
+    enabled: false,
+    lastActivityMs: null,
+    ...overrides
+  }
+}
+
+describe('midiDeviceStore', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('starts empty and un-hydrated', () => {
+    const store = useMidiDeviceStore()
+    expect(store.inputs).toEqual([])
+    expect(store.hydrated).toBe(false)
+  })
+
+  it('mirrors the input list and marks itself hydrated on applyList', () => {
+    const store = useMidiDeviceStore()
+    store.applyList({ inputs: [input('launchkey'), input('keystation', { enabled: true })] })
+    expect(store.inputs).toEqual([input('launchkey'), input('keystation', { enabled: true })])
+    expect(store.hydrated).toBe(true)
+  })
+
+  it('copies the payload array so later mutation does not leak back', () => {
+    const store = useMidiDeviceStore()
+    const payload = { inputs: [input('device-a')] }
+    store.applyList(payload)
+    payload.inputs.push(input('device-b'))
+    expect(store.inputs).toEqual([input('device-a')])
+  })
+
+  it('replaces the list on a subsequent applyList', () => {
+    const store = useMidiDeviceStore()
+    store.applyList({ inputs: [input('device-a')] })
+    store.applyList({ inputs: [] })
+    expect(store.inputs).toEqual([])
+    expect(store.hydrated).toBe(true)
+  })
+
+  it('sends MIDI_DEVICES_REQUEST when requestList is called', () => {
+    const store = useMidiDeviceStore()
+    store.requestList()
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DEVICES_REQUEST')
+  })
+
+  it('applies a session-only input change through the bridge', () => {
+    const store = useMidiDeviceStore()
+    store.setInputEnabledForSession('launchkey', true)
+
+    expect(store.enabledByIdentifier).toEqual({ launchkey: true })
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_INPUTS_SET', {
+      identifiers: ['launchkey']
+    })
+  })
+
+  it('keeps the rescan state until the refreshed list arrives', () => {
+    const store = useMidiDeviceStore()
+    vi.mocked(sendBridge).mockReturnValue(true)
+
+    store.requestRescan()
+
+    expect(store.rescanning).toBe(true)
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DEVICES_REQUEST')
+
+    store.applyList({ inputs: [input('launchkey')] })
+    expect(store.rescanning).toBe(false)
+  })
+
+  it('clears the rescan state immediately when the bridge is unavailable', () => {
+    const store = useMidiDeviceStore()
+    vi.mocked(sendBridge).mockReturnValue(false)
+
+    store.requestRescan()
+
+    expect(store.rescanning).toBe(false)
+  })
+})

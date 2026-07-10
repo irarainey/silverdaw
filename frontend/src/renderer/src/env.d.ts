@@ -104,6 +104,8 @@ declare global {
       setAudioOutput(partial: { typeName: string | null; deviceName: string | null }): void
       getKeepAwakeByDevice(): Promise<Record<string, boolean>>
       setKeepAwakeForDevice(deviceName: string, enabled: boolean): void
+      getEnabledMidiInputs(): Promise<Record<string, boolean>>
+      setMidiInputEnabled(identifier: string, enabled: boolean): void
       // ── Autosave folder + manifest IPCs ───────────────────────────────
       resolveAutosaveDir(projectId: string): Promise<{ dir: string; filePath: string } | null>
       writeAutosaveManifest(manifest: {

@@ -19,6 +19,7 @@ import {
   sanitiseBrakePrefs,
   sanitiseBackspinPrefs,
   sanitiseKeepAwakeByDevice,
+  sanitiseEnabledMidiInputs,
   sanitiseUiPrefs,
   type AudioOutputPrefs,
   type AutosavePrefs,
@@ -108,6 +109,7 @@ export class PrefsService {
               : null
         },
         keepAwakeByDevice: sanitiseKeepAwakeByDevice(parsed.keepAwakeByDevice),
+        enabledMidiInputs: sanitiseEnabledMidiInputs(parsed.enabledMidiInputs),
         brake: sanitiseBrakePrefs(parsed.brake, defaults.brake),
         backspin: sanitiseBackspinPrefs(parsed.backspin, defaults.backspin),
         recentProjects: sanitiseRecentList(parsed.recentProjects),

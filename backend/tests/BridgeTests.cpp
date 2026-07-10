@@ -9,6 +9,7 @@
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
+#include "MidiDeviceCommands.h"
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -196,6 +197,32 @@ void testBridgeOptionalReadersRejectWrongType()
     }
 }
 
+// MIDI enumeration is host-dependent (a CI box may have zero devices), so the
+// contract we can always assert is structural: an object with an `inputs` array
+// of device objects. Contents are whatever the machine actually has.
+void testMidiDevicesEnvelopeShape()
+{
+    const auto envelope = silverdaw::buildMidiDevicesListEnvelope();
+    require(envelope.isObject(), "MIDI devices envelope should be an object");
+
+    const auto inputs = envelope["inputs"];
+    require(inputs.isArray(), "MIDI devices envelope should carry an inputs array");
+
+    for (const auto& entry : *inputs.getArray())
+    {
+        require(entry.isObject(), "each MIDI input entry should be an object");
+        require(entry["name"].isString(), "each MIDI input should have a name");
+        require(entry["identifier"].isString(), "each MIDI input should have an identifier");
+        require(entry["connected"].isBool(), "each MIDI input should report connection state");
+        require(entry["enabled"].isBool(), "each MIDI input should report enabled state");
+        require(entry.getDynamicObject()->hasProperty("lastActivityMs"),
+                "each MIDI input should include nullable activity state");
+        const auto lastActivity = entry["lastActivityMs"];
+        require(lastActivity.isVoid() || lastActivity.isDouble(),
+                "MIDI input activity should be null or a millisecond timestamp");
+    }
+}
+
 } // namespace
 
 void addBridgeTests(std::vector<TestCase>& tests)
@@ -203,6 +230,7 @@ void addBridgeTests(std::vector<TestCase>& tests)
     tests.push_back({"Bridge auth token validation", testBridgeAuthTokenValidation});
     tests.push_back({"Bridge payload helpers reject malformed values", testBridgePayloadHelpersRejectMalformed});
     tests.push_back({"Bridge optional readers reject wrong types", testBridgeOptionalReadersRejectWrongType});
+    tests.push_back({"Bridge MIDI devices envelope shape", testMidiDevicesEnvelopeShape});
 }
 
 } // namespace silverdaw::tests

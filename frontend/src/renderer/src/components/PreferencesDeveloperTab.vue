@@ -4,6 +4,7 @@ defineProps<{
   initialDevToolsEnabled: boolean
   initialLogDirectory: string
   chooseLogDir: () => Promise<void>
+  openMidiMonitor: () => void
 }>()
 
 const loggingEnabled = defineModel<boolean>('loggingEnabled', { required: true })
@@ -64,11 +65,27 @@ const logDirectory = defineModel<string>('logDirectory', { required: true })
       <span class="flex-1">
         <span class="block font-medium text-zinc-200">Show Developer Tools</span>
         <span class="mt-0.5 block text-zinc-500">
-          Shows the Debug menu and allows DevTools shortcuts in
-          packaged builds. Enable only when diagnosing the app.
+          Allows the Chromium DevTools window and its shortcuts in packaged
+          builds. Enable only when diagnosing the app.
         </span>
       </span>
     </label>
+
+    <div class="border-t border-zinc-800 pt-4">
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        MIDI diagnostics
+      </h2>
+      <p class="mb-3 text-zinc-500">
+        Inspect the control codes and values sent by enabled MIDI input devices.
+      </p>
+      <button
+        type="button"
+        class="rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-700 focus:outline-none"
+        @click="openMidiMonitor"
+      >
+        Open MIDI Monitor…
+      </button>
+    </div>
 
     <p
       v-if="loggingEnabled !== initialLoggingEnabled || devToolsEnabled !== initialDevToolsEnabled || logDirectory !== initialLogDirectory"

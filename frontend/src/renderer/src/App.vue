@@ -9,6 +9,7 @@ import NotificationToasts from '@/components/NotificationToasts.vue'
 import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
 import AboutDialog from '@/components/AboutDialog.vue'
 import PreferencesDialog from '@/components/PreferencesDialog.vue'
+import MidiMonitorDialog from '@/components/MidiMonitorDialog.vue'
 import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
 import ExportMixdownDialog from '@/components/ExportMixdownDialog.vue'
 import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
@@ -48,6 +49,7 @@ import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
 import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useAppStore } from '@/stores/appStore'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 
 const project = useProjectStore()
 const transport = useTransportStore()
@@ -55,12 +57,14 @@ const ui = useUiStore()
 const library = useLibraryStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
+const midiDevices = useMidiDeviceStore()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const exportMixdownOpen = ref(false)
 const diagnosticsBusy = ref(false)
+const midiMonitorOpen = ref(false)
 const sampleRatePromptState = useSampleRateMismatchPromptState()
 const mixdownState = useMixdownState()
 // Recovery blocks startup until each autosave entry is resolved.
@@ -135,6 +139,7 @@ function isShortcutModalOpen(): boolean {
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
     exportMixdownOpen.value ||
+    midiMonitorOpen.value ||
     mixdownState.value !== null ||
     audioUnavailableOpen.value ||
     sampleRatePromptState.value.open ||
@@ -394,6 +399,7 @@ const { handleMenuAction } = useAppMenuActions({
   preferencesOpen,
   projectPropertiesOpen,
   exportMixdownOpen,
+  midiMonitorOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isShortcutModalOpen,
@@ -449,6 +455,14 @@ const { handleMenuAction } = useAppMenuActions({
     <PreferencesDialog
       :open="preferencesOpen"
       @close="preferencesOpen = false"
+      @midi-monitor="midiMonitorOpen = true"
+    />
+    <MidiMonitorDialog
+      :open="midiMonitorOpen"
+      :inputs="midiDevices.inputs"
+      :messages="midiDevices.monitorMessages"
+      :clear="midiDevices.clearMonitorMessages"
+      @close="midiMonitorOpen = false"
     />
 
     <ProjectPropertiesDialog

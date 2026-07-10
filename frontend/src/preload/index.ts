@@ -191,6 +191,11 @@ const api = {
   setKeepAwakeForDevice: (deviceName: string, enabled: boolean): void => {
     ipcRenderer.send(IPC.prefs.setKeepAwakeForDevice, deviceName, enabled)
   },
+  getEnabledMidiInputs: (): Promise<Record<string, boolean>> =>
+    ipcRenderer.invoke(IPC.prefs.getEnabledMidiInputs),
+  setMidiInputEnabled: (identifier: string, enabled: boolean): void => {
+    ipcRenderer.send(IPC.prefs.setMidiInputEnabled, identifier, enabled)
+  },
   // ─── Stem-separation preferences ────────────────────────────────────────
   getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),
   /** Stem GPU intent is gated on detection but persisted regardless. */

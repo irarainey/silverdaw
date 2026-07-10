@@ -7,6 +7,8 @@ import {
   isEngineErrorPayload,
   isEngineAudioStatusPayload,
   isLibraryItemAnalysisPayload,
+  isMidiDevicesListPayload,
+  isMidiMessagePayload,
   isPlayheadUpdatePayload,
   isPongPayload,
   isPreviewEndedPayload,
@@ -61,6 +63,8 @@ const INBOUND_TYPES = {
   PREVIEW_ENDED: true,
   AUDIO_DEVICES_LIST: true,
   AUDIO_DEVICE_CHANGED: true,
+  MIDI_DEVICES_LIST: true,
+  MIDI_MESSAGE: true,
   EDIT_UNDO_STATE: true,
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
@@ -113,6 +117,56 @@ describe('isReadyPayload', () => {
   it('rejects missing or wrong-typed version', () => {
     expect(isReadyPayload({})).toBe(false)
     expect(isReadyPayload({ version: 1 })).toBe(false)
+  })
+})
+
+describe('isMidiDevicesListPayload', () => {
+  it('accepts an inputs array with status and activity', () => {
+    expect(isMidiDevicesListPayload({ inputs: [] })).toBe(true)
+    expect(isMidiDevicesListPayload({
+      inputs: [{
+        name: 'Launchkey MK3',
+        identifier: 'launchkey',
+        connected: true,
+        enabled: true,
+        lastActivityMs: 1234
+      }]
+    })).toBe(true)
+  })
+
+  describe('isMidiMessagePayload', () => {
+    it('accepts a MIDI control-change message', () => {
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 0xb0,
+        data1: 74,
+        data2: 127
+      })).toBe(true)
+    })
+
+    it('accepts absent data bytes and rejects invalid byte ranges', () => {
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 0xfa,
+        data1: null,
+        data2: null
+      })).toBe(true)
+      expect(isMidiMessagePayload({
+        deviceIdentifier: 'controller',
+        timestampMs: 1234,
+        statusByte: 256,
+        data1: null,
+        data2: null
+      })).toBe(false)
+    })
+  })
+
+  it('rejects a missing or wrong-typed inputs field', () => {
+    expect(isMidiDevicesListPayload({})).toBe(false)
+    expect(isMidiDevicesListPayload({ inputs: [{ name: 'Launchkey' }] })).toBe(false)
+    expect(isMidiDevicesListPayload(null)).toBe(false)
   })
 })
 

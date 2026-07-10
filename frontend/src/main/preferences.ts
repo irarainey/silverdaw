@@ -142,6 +142,8 @@ export interface Preferences {
   audioOutput: AudioOutputPrefs
   /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
   keepAwakeByDevice: Record<string, boolean>
+  /** Enabled MIDI inputs, keyed by JUCE's stable device identifier. */
+  enabledMidiInputs: Record<string, boolean>
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
@@ -221,6 +223,7 @@ export function buildDefaultPrefs(): Preferences {
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
     keepAwakeByDevice: {},
+    enabledMidiInputs: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
     stems: {
@@ -375,6 +378,10 @@ export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolea
     if (enabled === true) out[trimmed] = true
   }
   return out
+}
+
+export function sanitiseEnabledMidiInputs(input: unknown): Record<string, boolean> {
+  return sanitiseKeepAwakeByDevice(input)
 }
 
 // A located model directory is kept only when it is a non-empty string; anything

@@ -191,6 +191,22 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     prefs.schedulePrefsSave()
   })
 
+  ipcMain.handle(
+    IPC.prefs.getEnabledMidiInputs,
+    (): Record<string, boolean> => ({ ...prefs.get().enabledMidiInputs })
+  )
+
+  ipcMain.on(IPC.prefs.setMidiInputEnabled, (_evt, identifier: unknown, enabled: unknown) => {
+    if (typeof identifier !== 'string' || typeof enabled !== 'boolean') return
+    const key = identifier.trim()
+    if (key.length === 0) return
+    const next = { ...prefs.get().enabledMidiInputs }
+    if (enabled) next[key] = true
+    else delete next[key]
+    prefs.get().enabledMidiInputs = next
+    prefs.schedulePrefsSave()
+  })
+
   // ─── Stem-separation preferences (GPU intent) ───────────────────────────
   ipcMain.handle(IPC.prefs.getStems, () => ({ ...prefs.get().stems }))
 

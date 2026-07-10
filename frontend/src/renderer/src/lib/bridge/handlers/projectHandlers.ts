@@ -6,6 +6,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -39,6 +40,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     }
     // Seed audio devices as soon as the bridge is ready.
     useAudioDeviceStore().requestInitialList()
+    void useMidiDeviceStore().applyEnabledInputsOnReady()
     // The backend resets to its keep-awake default on each connect; re-apply the saved override.
     void useAudioDeviceStore().applyKeepAwakeOnReady()
     // The backend also resets to its built-in brake defaults on connect; re-apply the saved settings.

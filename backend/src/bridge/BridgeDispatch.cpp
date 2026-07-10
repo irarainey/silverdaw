@@ -10,6 +10,7 @@
 #include "LibraryCommands.h"
 #include "Log.h"
 #include "MarkerCommands.h"
+#include "MidiDeviceCommands.h"
 #include "MixdownCommands.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
@@ -679,6 +680,22 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     return true;
 }
 
+bool dispatchMidi(const DispatchContext& ctx)
+{
+    if (ctx.type == "MIDI_DEVICES_REQUEST")
+    {
+        silverdaw::log::debug("bridge", "recv MIDI_DEVICES_REQUEST");
+        silverdaw::handleMidiDevicesRequest(ctx.bridge);
+        return true;
+    }
+    if (ctx.type == "MIDI_INPUTS_SET")
+    {
+        silverdaw::handleMidiInputsSet(ctx.payload, ctx.bridge);
+        return true;
+    }
+    return false;
+}
+
 bool dispatchMixdown(const DispatchContext& ctx)
 {
     const auto& type = ctx.type;
@@ -835,8 +852,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     const bool handled = dispatchClip(ctx) || dispatchLibrary(ctx) || dispatchTransport(ctx) ||
                          dispatchPreview(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
                          dispatchWaveform(ctx) || dispatchProject(ctx) || dispatchMarker(ctx) ||
-                         dispatchAudioDevice(ctx) || dispatchMixdown(ctx) || dispatchStem(ctx) ||
-                         dispatchUndo(ctx) || dispatchTransition(ctx);
+                         dispatchAudioDevice(ctx) || dispatchMidi(ctx) || dispatchMixdown(ctx) ||
+                         dispatchStem(ctx) || dispatchUndo(ctx) || dispatchTransition(ctx);
     if (!handled)
     {
         silverdaw::log::warn("bridge", "unhandled message type: " + type);

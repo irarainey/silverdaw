@@ -30,6 +30,7 @@ export interface AppMenuActionsDeps {
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
+  midiMonitorOpen: Ref<boolean>
   /** True while the diagnostics bundle is being built — drives the wait spinner. */
   diagnosticsBusy: Ref<boolean>
   guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
@@ -54,6 +55,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'edit.preferences') {
       deps.preferencesOpen.value = true
+      return
+    }
+    if (action === 'debug.midiMonitor') {
+      deps.midiMonitorOpen.value = true
       return
     }
     // Diagnostics zips local log files — no backend needed, so it stays reachable even

@@ -425,6 +425,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ClipCommands.cpp
     src/commands/LibraryCommands.cpp
     src/commands/MarkerCommands.cpp
+    src/commands/MidiDeviceCommands.cpp
     src/commands/MixdownCommands.cpp
     src/commands/PreviewCommands.cpp
     src/commands/ProjectCommands.cpp

@@ -600,6 +600,31 @@ export const AudioDeviceChangedPayloadSchema = z.object({
 })
 export type AudioDeviceChangedPayload = z.infer<typeof AudioDeviceChangedPayloadSchema>
 
+/** Connected MIDI input devices and their enabled/activity state. */
+export const MidiInputDeviceSchema = z.object({
+  name: z.string(),
+  identifier: z.string(),
+  connected: z.boolean(),
+  enabled: z.boolean(),
+  lastActivityMs: z.number().nullable()
+})
+export type MidiInputDevice = z.infer<typeof MidiInputDeviceSchema>
+
+export const MidiDevicesListPayloadSchema = z.object({
+  inputs: z.array(MidiInputDeviceSchema)
+})
+export type MidiDevicesListPayload = z.infer<typeof MidiDevicesListPayloadSchema>
+
+/** Latest MIDI short message received from an enabled input. */
+export const MidiMessagePayloadSchema = z.object({
+  deviceIdentifier: z.string(),
+  timestampMs: z.number(),
+  statusByte: z.number().int().min(0).max(255),
+  data1: z.number().int().min(0).max(127).nullable(),
+  data2: z.number().int().min(0).max(127).nullable()
+})
+export type MidiMessagePayload = z.infer<typeof MidiMessagePayloadSchema>
+
 /** Backend `juce::UndoManager` head state for Edit menu enablement/labels. */
 export const EditUndoStatePayloadSchema = z.object({
   canUndo: z.boolean(),
@@ -808,6 +833,8 @@ export interface BridgeInboundMap {
   PREVIEW_ENDED: PreviewEndedPayload
   AUDIO_DEVICES_LIST: AudioDevicesListPayload
   AUDIO_DEVICE_CHANGED: AudioDeviceChangedPayload
+  MIDI_DEVICES_LIST: MidiDevicesListPayload
+  MIDI_MESSAGE: MidiMessagePayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -872,6 +899,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PREVIEW_ENDED',
   'AUDIO_DEVICES_LIST',
   'AUDIO_DEVICE_CHANGED',
+  'MIDI_DEVICES_LIST',
+  'MIDI_MESSAGE',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',
@@ -1045,6 +1074,14 @@ export function isAudioDevicesListPayload(value: unknown): value is AudioDevices
 
 export function isAudioDeviceChangedPayload(value: unknown): value is AudioDeviceChangedPayload {
   return AudioDeviceChangedPayloadSchema.safeParse(value).success
+}
+
+export function isMidiDevicesListPayload(value: unknown): value is MidiDevicesListPayload {
+  return MidiDevicesListPayloadSchema.safeParse(value).success
+}
+
+export function isMidiMessagePayload(value: unknown): value is MidiMessagePayload {
+  return MidiMessagePayloadSchema.safeParse(value).success
 }
 
 export function isEditUndoStatePayload(value: unknown): value is EditUndoStatePayload {

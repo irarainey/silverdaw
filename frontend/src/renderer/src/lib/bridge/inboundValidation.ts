@@ -11,6 +11,8 @@ import {
   isBridgeInboundType,
   isAudioDeviceChangedPayload,
   isAudioDevicesListPayload,
+  isMidiDevicesListPayload,
+  isMidiMessagePayload,
   isClipAckPayload,
   isClipEditorPeaksReadyPayload,
   isClipWarpAppliedPayload,
@@ -145,6 +147,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isAudioDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'AUDIO_DEVICE_CHANGED':
       return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MIDI_DEVICES_LIST':
+      return isMidiDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'MIDI_MESSAGE':
+      return isMidiMessagePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'EDIT_UNDO_STATE':
       return isEditUndoStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'AUDIO_FILE_PROBED':

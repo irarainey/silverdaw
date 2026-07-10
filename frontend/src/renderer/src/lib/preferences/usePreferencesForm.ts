@@ -4,6 +4,7 @@ import type { VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, Ot
 import { useAppStore } from '@/stores/appStore'
 import { useUiStore, type SkipButtonTarget, type WaveformDisplayMode } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import type { BrakeDurationDto, BrakeCurveDto, BackspinDurationDto, BackspinIntensityDto } from '@shared/types'
@@ -27,6 +28,9 @@ export interface PreferencesForm {
   keepAwakeByDeviceDraft: Ref<Record<string, boolean>>
   /** Enable / disable a device's draft keep-awake toggle. */
   setDeviceKeepAwake: (deviceName: string, enabled: boolean) => void
+  enabledMidiInputsDraft: Ref<Record<string, boolean>>
+  setMidiInputEnabled: (identifier: string, enabled: boolean) => void
+  discardMidiInputChanges: () => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
@@ -73,6 +77,7 @@ export function usePreferencesForm(): PreferencesForm {
   const appStore = useAppStore()
   const ui = useUiStore()
   const audioDevices = useAudioDeviceStore()
+  const midiDevices = useMidiDeviceStore()
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
@@ -140,6 +145,31 @@ export function usePreferencesForm(): PreferencesForm {
     if (enabled) next[deviceName] = true
     else delete next[deviceName]
     keepAwakeByDeviceDraft.value = next
+  }
+
+  const enabledMidiInputsDraft = ref<Record<string, boolean>>({})
+  const initialEnabledMidiInputs = ref<Record<string, boolean>>({})
+
+  function enabledMidiInputsChanged(): boolean {
+    const draft = enabledMidiInputsDraft.value
+    const initial = initialEnabledMidiInputs.value
+    const identifiers = new Set([...Object.keys(draft), ...Object.keys(initial)])
+    for (const identifier of identifiers) {
+      if ((draft[identifier] ?? false) !== (initial[identifier] ?? false)) return true
+    }
+    return false
+  }
+
+  function setMidiInputEnabled(identifier: string, enabled: boolean): void {
+    const next = { ...enabledMidiInputsDraft.value }
+    if (enabled) next[identifier] = true
+    else delete next[identifier]
+    enabledMidiInputsDraft.value = next
+  }
+
+  function discardMidiInputChanges(): void {
+    enabledMidiInputsDraft.value = { ...initialEnabledMidiInputs.value }
+    midiDevices.applyEnabledInputs(initialEnabledMidiInputs.value)
   }
 
   const brakeDuration = ref<BrakeDurationDto>('medium')
@@ -241,6 +271,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value !== initialAudioOutputTypeName.value ||
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
       keepAwakeMapChanged() ||
+      enabledMidiInputsChanged() ||
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
@@ -249,12 +280,13 @@ export function usePreferencesForm(): PreferencesForm {
 
   async function loadCurrent(): Promise<void> {
     try {
-      const [debugVal, qol, autosave, audioPref, keepAwakeByDevice] = await Promise.all([
+      const [debugVal, qol, autosave, audioPref, keepAwakeByDevice, enabledMidiInputs] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
         window.silverdaw.getQolPrefs(),
         window.silverdaw.getAutosaveConfig(),
         window.silverdaw.getAudioOutput(),
-        window.silverdaw.getKeepAwakeByDevice()
+        window.silverdaw.getKeepAwakeByDevice(),
+        window.silverdaw.getEnabledMidiInputs()
       ])
       loggingEnabled.value = debugVal.loggingEnabled
       devToolsEnabled.value = debugVal.devToolsEnabled
@@ -270,6 +302,7 @@ export function usePreferencesForm(): PreferencesForm {
       // Keep-awake is pinned per physical device; seed the draft map.
       audioDevices.keepAwakeByDevice = { ...keepAwakeByDevice }
       keepAwakeByDeviceDraft.value = { ...keepAwakeByDevice }
+      enabledMidiInputsDraft.value = { ...enabledMidiInputs }
       const brakePrefs = await window.silverdaw.getBrakeSettings()
       brakeDuration.value = brakePrefs.duration
       brakeCurve.value = brakePrefs.curve
@@ -299,6 +332,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputTypeName.value = null
       audioOutputDeviceName.value = null
       keepAwakeByDeviceDraft.value = {}
+      enabledMidiInputsDraft.value = {}
       brakeDuration.value = 'medium'
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
@@ -354,6 +388,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialAudioOutputTypeName.value = audioOutputTypeName.value
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
     initialKeepAwakeByDevice.value = { ...keepAwakeByDeviceDraft.value }
+    initialEnabledMidiInputs.value = { ...enabledMidiInputsDraft.value }
     initialBrakeDuration.value = brakeDuration.value
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
@@ -473,6 +508,17 @@ export function usePreferencesForm(): PreferencesForm {
         if (next !== (initial[name] ?? false)) audioDevices.setKeepAwakeForDevice(name, next)
       }
     }
+    if (enabledMidiInputsChanged()) {
+      const draft = enabledMidiInputsDraft.value
+      const initial = initialEnabledMidiInputs.value
+      const identifiers = new Set([...Object.keys(draft), ...Object.keys(initial)])
+      for (const identifier of identifiers) {
+        if ((draft[identifier] ?? false) !== (initial[identifier] ?? false)) {
+          window.silverdaw.setMidiInputEnabled(identifier, draft[identifier] === true)
+        }
+      }
+      midiDevices.applyEnabledInputs(draft)
+    }
     if (
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value
@@ -540,6 +586,9 @@ export function usePreferencesForm(): PreferencesForm {
     pickBackend,
     keepAwakeByDeviceDraft,
     setDeviceKeepAwake,
+    enabledMidiInputsDraft,
+    setMidiInputEnabled,
+    discardMidiInputChanges,
     brakeDuration,
     brakeCurve,
     backspinDuration,
