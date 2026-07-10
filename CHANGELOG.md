@@ -9,6 +9,7 @@
 ### Changed
 
 - Splitting, duplicating, and pasting clips now reuse loaded waveform data for faster editing.
+- Startup now defers timeline graphics until they are needed.
 
 ## 1.1.0
 

@@ -415,7 +415,7 @@ const { handleMenuAction } = useAppMenuActions({
     <TransportBar />
 
     <main class="flex-1 overflow-hidden">
-      <TimelineView />
+      <TimelineView v-if="!startupScreenVisible" />
     </main>
 
     <LibraryPanel

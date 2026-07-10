@@ -2396,6 +2396,11 @@ tracks. Values are stored in native units; only the lane renderer normalises to 
 
 ## Rendering performance
 
+The timeline component stays unmounted while the startup screen is visible.
+PixiJS can warm through the shared idle loader during that time, but WebGL
+application creation, observers, and the first timeline draw wait until the
+user starts or opens a project.
+
 The timeline canvas is PixiJS. All world-space content (clip blocks, waveforms, grid lines,
 ruler ticks) is drawn once at absolute world coordinates into a `tracksLayer` / `rulerTicksLayer`,
 which are then translated by `-scrollX` / `-scrollY` on every scroll change. The result: scroll
