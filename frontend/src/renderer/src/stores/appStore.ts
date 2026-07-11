@@ -15,6 +15,8 @@ interface AppState {
   startupFlowComplete: boolean
   /** Session-scoped gate so the start screen appears at most once. */
   startScreenDismissed: boolean
+  /** Recent project selected while the startup screen waits for the engine or load result. */
+  openingRecentProjectPath: string | null
   hydrated: boolean
 }
 
@@ -28,6 +30,7 @@ export const useAppStore = defineStore('app', {
     recentProjects: [],
     startupFlowComplete: false,
     startScreenDismissed: false,
+    openingRecentProjectPath: null,
     hydrated: false
   }),
 
@@ -82,6 +85,14 @@ export const useAppStore = defineStore('app', {
 
     dismissStartScreen(): void {
       this.startScreenDismissed = true
+    },
+
+    beginRecentProjectOpen(filePath: string): void {
+      this.openingRecentProjectPath = filePath
+    },
+
+    finishRecentProjectOpen(): void {
+      this.openingRecentProjectPath = null
     },
 
     markStartupFlowComplete(): void {

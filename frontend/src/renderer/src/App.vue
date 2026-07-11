@@ -345,9 +345,15 @@ async function openProjectByPath(filePath: string): Promise<void> {
     return
   }
   guardAgainstUnsavedChanges(async () => {
-    await window.silverdaw.prepareProjectOpen(filePath)
-    project.requestLoad(filePath)
-    // PROJECT_STATE hides StartupScreen without exposing the empty timeline.
+    try {
+      await window.silverdaw.prepareProjectOpen(filePath)
+      project.requestLoad(filePath)
+      // PROJECT_STATE hides StartupScreen without exposing the empty timeline.
+    } catch (err) {
+      appStore.finishRecentProjectOpen()
+      log.warn('project', `prepareProjectOpen failed: ${String(err)}`)
+      notifications.pushError(`Could not open project: ${String(err)}`)
+    }
   })
 }
 
@@ -358,8 +364,17 @@ async function openRecentPath(filePath: string): Promise<void> {
   // bridge), so they run immediately; the actual load defers to `openProjectByPath`,
   // which waits for `bridgeReady` if the picker was clicked before the engine finished
   // opening — so an early click is never silently dropped.
-  const exists = await window.silverdaw.projectFileExists(filePath)
+  let exists: boolean
+  try {
+    exists = await window.silverdaw.projectFileExists(filePath)
+  } catch (err) {
+    appStore.finishRecentProjectOpen()
+    log.warn('app', `recent project check failed: ${String(err)}`)
+    notifications.pushError(`Could not open project: ${String(err)}`)
+    return
+  }
   if (!exists) {
+    appStore.finishRecentProjectOpen()
     log.warn('app', `recent project missing: ${filePath}`)
     window.silverdaw.removeRecentProject(filePath)
     await appStore.refreshRecentProjects()
@@ -381,7 +396,9 @@ function onStartScreenOpen(): void {
 }
 
 function onStartScreenRecent(filePath: string): void {
+  if (appStore.openingRecentProjectPath !== null) return
   // Dismissal is driven by the project-loaded gate.
+  appStore.beginRecentProjectOpen(filePath)
   void openRecentPath(filePath)
 }
 
