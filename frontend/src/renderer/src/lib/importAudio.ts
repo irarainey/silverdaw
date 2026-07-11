@@ -1,7 +1,10 @@
 // Shared audio import flow: dialog, decode, project/library update, backend load.
 
-import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audioDecode'
 import { send as sendBridge, probeAudioFile } from '@/lib/bridgeService'
+import {
+  prepareAudioImport,
+  type GeneratedAudioGeometry
+} from '@/lib/audioImportPreparation'
 import { log } from '@/lib/log'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -11,22 +14,6 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
 import { saveProjectMedia, getProjectMedia } from '@/lib/library/projectMedia'
-
-/** Backend-native formats; AAC/M4A/MP4 need renderer decode + temp WAV on Windows. */
-const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
-  '.wav',
-  '.aif',
-  '.aiff',
-  '.flac',
-  '.mp3',
-  '.wma'
-])
-
-function fileExtensionOf(filePath: string): string {
-  const dot = filePath.lastIndexOf('.')
-  if (dot < 0) return ''
-  return filePath.slice(dot).toLowerCase()
-}
 
 function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
   if (!detectedKey) return metadata
@@ -40,30 +27,6 @@ function withRedetectedKey(metadata: AudioMetadata | null, detectedKey: string |
     next.key = detectedKey
   }
   return next
-}
-
-/** Use the source path when native; otherwise write decoded PCM to a temp WAV. */
-async function resolvePlaybackPath(
-  sourcePath: string,
-  decoded: { sampleRate: number; channels: Float32Array[] }
-): Promise<string> {
-  if (BACKEND_NATIVE_EXTS.has(fileExtensionOf(sourcePath))) return sourcePath
-  log.info('import', `transcode start ${sourcePath}`)
-  try {
-    const wavPath = await window.silverdaw.writeTempWav({
-      sourcePath,
-      channels: decoded.channels,
-      sampleRate: decoded.sampleRate
-    })
-    if (wavPath) {
-      log.info('import', `transcode done -> ${wavPath}`)
-      return wavPath
-    }
-    log.warn('import', `transcode returned null for ${sourcePath}`)
-  } catch (err) {
-    log.error('import', `transcode failed for ${sourcePath}: ${String(err)}`)
-  }
-  return sourcePath
 }
 
 /** Probe true sample rates before batched import; prompt only when buckets mismatch. */
@@ -191,6 +154,15 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
   }
 }
 
+export interface AudioImportOptions {
+  kind?: LibraryItem['kind']
+  name?: string
+  derivedFrom?: LibraryItem['derivedFrom']
+  generatedAudio?: GeneratedAudioGeometry
+  inheritedMetadata?: AudioMetadata | null
+  inheritedMediaId?: string
+}
+
 /** Open one file and add it to the library, then place it on `trackId`. */
 export async function importAudioIntoTrack(
   trackId: string,
@@ -238,11 +210,7 @@ export async function importAudioIntoLibrary(
     fileName: string
     data: ArrayBuffer
   },
-  options?: {
-    kind?: LibraryItem['kind']
-    name?: string
-    derivedFrom?: LibraryItem['derivedFrom']
-  }
+  options?: AudioImportOptions
 ): Promise<string | null> {
   const library = useLibraryStore()
   const importEntryId = library.beginImport(opened.fileName)
@@ -254,23 +222,20 @@ export async function importAudioIntoLibrary(
       return existing.id
     }
 
-    const [decoded, metadata] = await Promise.all([
-      decodeAudioToPeaks(opened.data),
-      window.silverdaw.readAudioMetadata(opened.filePath).catch(() => null)
-    ])
-    // Web Audio may resample; ask the backend for the file's true rate.
-    const probe = await probeAudioFile(opened.filePath, { timeoutMs: 5000 })
-    const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
-    const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
+    const generatedAudio = options?.generatedAudio
+    const { decoded, metadata, detectedKey, trueSampleRate, playbackFilePath } =
+      await prepareAudioImport(opened, generatedAudio)
     const enrichedMetadata = withDetectedKey(metadata, detectedKey)
-    const playbackFilePath = await resolvePlaybackPath(opened.filePath, decoded)
     // Media GUID: a root import mints a new one and saves the file's tags + cover into
     // the project media store; a derived item (a stem) carries over its source's GUID,
     // whose media was already saved at the source's import — so cover art + tags are
     // shared from one entry and survive the origin being removed.
-    const sourceMediaId = options?.derivedFrom?.sourceItemId
-      ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
-      : undefined
+    const sourceMediaId =
+      options && 'inheritedMediaId' in options
+        ? options.inheritedMediaId
+        : options?.derivedFrom?.sourceItemId
+          ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
+          : undefined
     const mediaId = sourceMediaId ?? crypto.randomUUID()
     if (!sourceMediaId) {
       await saveProjectMedia(mediaId, opened.filePath)
@@ -278,9 +243,9 @@ export async function importAudioIntoLibrary(
     const itemId = library.addItem({
       filePath: opened.filePath,
       fileName: opened.fileName,
-      durationMs: decoded.durationMs,
+      durationMs: generatedAudio?.durationMs ?? decoded.durationMs,
       sampleRate: trueSampleRate,
-      channelCount: decoded.channelCount,
+      channelCount: generatedAudio?.channelCount ?? decoded.channelCount,
       peaks: decoded.peaks,
       peaksPerSecond: decoded.peaksPerSecond,
       playbackFilePath,
@@ -296,7 +261,10 @@ export async function importAudioIntoLibrary(
     // Display identity: a root import already holds the file's own tags + cover; a
     // derived item is a tagless WAV, so resolve the shared cover from the media store.
     if (sourceMediaId) {
-      const media = await getProjectMedia(mediaId)
+      const media =
+        options && 'inheritedMetadata' in options
+          ? options.inheritedMetadata
+          : await getProjectMedia(mediaId)
       library.setItemMetadata(itemId, media ?? enrichedMetadata)
     } else {
       library.setItemMetadata(itemId, enrichedMetadata)
@@ -338,16 +306,9 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
       return
     }
 
-    const [decoded, metadata] = await Promise.all([
-      decodeAudioToPeaks(opened.data),
-      window.silverdaw.readAudioMetadata(item.filePath).catch(() => null)
-    ])
-    // Same true-rate probe rationale as `importAudioIntoLibrary`.
-    const probe = await probeAudioFile(item.filePath, { timeoutMs: 5000 })
-    const trueSampleRate = probe.ok ? probe.sampleRate : decoded.sampleRate
-    const detectedKey = detectMusicalKey(decoded.channels, decoded.sampleRate)
+    const { decoded, metadata, detectedKey, trueSampleRate, playbackFilePath } =
+      await prepareAudioImport(opened)
     const enrichedMetadata = withRedetectedKey(metadata, detectedKey)
-    const playbackFilePath = await resolvePlaybackPath(item.filePath, decoded)
 
     library.setItemAudioDetails(item.id, decoded.durationMs, trueSampleRate, decoded.channelCount)
     library.setItemPeaks(item.id, decoded.peaks, trueSampleRate, decoded.peaksPerSecond)

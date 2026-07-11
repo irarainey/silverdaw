@@ -13,6 +13,7 @@ import {
   cancelModelFlow,
   useStemModelFlow,
   abandonActiveStemSeparation,
+  cancelActiveStemSeparation,
   loadStemQualityPreference
 } from '@/lib/stems/stemSeparationFlow'
 import { clearStemSeparationState, snapshotStemSeparationState } from '@/lib/stemSeparationState'
@@ -340,6 +341,62 @@ describe('stem selection dialog', () => {
       'STEM_SEPARATE',
       expect.objectContaining({ useGpu: false })
     )
+  })
+
+  it('shows preparing immediately and reads independent preparation inputs in parallel', async () => {
+    let resolveModelDir: ((path: string) => void) | undefined
+    api.getStemModelDir.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveModelDir = resolve
+      })
+    )
+
+    await requestStemSeparationForClip('c1')
+    const preferenceReadsBeforeDispatch = api.getStemPrefs.mock.calls.length
+    for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
+    const confirmation = confirmStemSelection()
+    await vi.waitFor(() => expect(registerStemJob).toHaveBeenCalledWith('job-123', expect.anything()))
+
+    expect(snapshotStemSeparationState()).toMatchObject({ jobId: 'job-123', stage: 'prepare' })
+    // One read determines model requirements before dispatch; preparation itself adds
+    // exactly one snapshot shared by GPU, cleanup, and backup-model decisions.
+    expect(api.getStemPrefs).toHaveBeenCalledTimes(preferenceReadsBeforeDispatch + 2)
+    expect(api.getStemGpuStatus).toHaveBeenCalledTimes(1)
+    expect(api.getVocalPackPath).toHaveBeenCalledTimes(1)
+    expect(api.getRhythmPackPath).toHaveBeenCalledTimes(1)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    resolveModelDir?.('C:\\models\\htdemucs-ft')
+    await confirmation
+    expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', FULL_DISPATCH)
+  })
+
+  it('does not dispatch when the user cancels during preparation', async () => {
+    let resolveModelDir: ((path: string) => void) | undefined
+    api.getStemModelDir.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveModelDir = resolve
+      })
+    )
+
+    await requestStemSeparationForClip('c1')
+    for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
+    const confirmation = confirmStemSelection()
+    await vi.waitFor(() => expect(registerStemJob).toHaveBeenCalled())
+
+    cancelActiveStemSeparation()
+    expect(snapshotStemSeparationState()).toBeNull()
+
+    await requestStemSeparationForClip('c1')
+    for (const stem of ALL_STEMS) toggleStemSelection(stem as never)
+    await confirmStemSelection()
+
+    resolveModelDir?.('C:\\models\\htdemucs-ft')
+    await confirmation
+
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', FULL_DISPATCH)
+    expect(forgetStemJob).toHaveBeenCalledWith('job-123')
   })
 
   it('does not start when no stem is ticked', async () => {

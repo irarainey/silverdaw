@@ -13,6 +13,11 @@
 - Startup now connects to the audio engine sooner when it becomes available.
 - Fast launches no longer pause on startup steps that have already completed.
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
+- Stem separation is now faster, more reliable, and clearer about progress and saved cleanup settings.
+
+### Fixed
+
+- Recent projects now show an opening indicator while the audio engine finishes starting.
 
 ## 1.1.0
 

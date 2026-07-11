@@ -1492,8 +1492,17 @@ Fast/Balanced/Best knob is a real speed/quality control on either engine.
 is skipped and `other = mixture − (vocals + drums + bass)` is synthesised instead
 — a mixture-consistency residual that is faster and loses no energy. Separation
 runs on a background thread and never touches the audio callback; progress is
-reported via `STEM_PROGRESS`, each stem lands the instant its WAV is written
-(`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
+reported via `STEM_PROGRESS` at most every 100 ms while stage changes and the
+terminal update pass through immediately. Each stem lands as soon as its WAV is
+written (`STEM_PARTIAL`), and `STEM_READY` waits for in-flight imports before
+backfilling the rest and reporting completion. The renderer opens the preparing
+state before resolving request settings, reads the stem preferences once for
+dispatch, and resolves independent model paths and GPU status concurrently.
+Generated-stem envelopes include their sample rate, duration, and channel count.
+The import path still decodes each WAV for waveform peaks, but uses that
+authoritative geometry and the source's cached project media to skip file
+metadata extraction, sample-rate probing, musical-key detection, playback-path
+resolution, and repeated project-media reads.
 
 **The Separate Stems dialog** lets the user tick which of **vocals / drums / bass /
 other** to extract. It opens with **nothing ticked** (Start stays disabled until at
@@ -1575,8 +1584,8 @@ vocal estimate is the one already extracted for the vocals stem, or one internal
 vocal pass when vocals wasn't selected. The model applies its mask in-graph and returns the masked per-stem spectrogram
 (the host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, preset-driven chunk
 overlap); it is exported at an 8 s window (the largest that fits a modest GPU's
-VRAM) and the runner transparently retries on the CPU provider if DirectML runs
-out of memory. The host pipeline is unit-tested by an identity round-trip, and
+VRAM). Recoverable DirectML failures are handled by the hybrid separator's
+shared CPU fallback. The host pipeline is unit-tested by an identity round-trip, and
 the C++ runner was validated end-to-end against a numpy reference (drums/bass RMS
 matched to four decimals). htdemucs is the backup when the pack is absent.
 
@@ -1599,11 +1608,20 @@ on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports a
 inactive or without a vendorId must still be offered. The path is hardened
 against recoverable GPU faults — both a timeout/TDR device reset **and** running
 out of (often shared, integrated-GPU) memory transparently retry the whole job on
-the CPU (`isRecoverableGpuFault` in `OnnxStemSeparator.cpp`) so the user still
-gets their stems. On memory-constrained integrated GPUs the fixed-shape RoFormer
-models may simply not fit, in which case the run falls back to the CPU; GPU
-acceleration is therefore treated as a best-effort, dedicated-GPU-oriented
-option rather than a guaranteed speed-up.
+the CPU so the user still gets their stems. After either failure, the backend
+quarantines DirectML for the lifetime of that process. Later jobs route directly
+to the CPU instead of retrying a GPU already known to fail; restarting the
+backend clears the quarantine. Model, decode, cancellation, and unrelated ONNX
+errors do not quarantine the GPU. On memory-constrained integrated GPUs the
+fixed-shape RoFormer models may simply not fit, in which case the run falls back
+to the CPU; GPU acceleration is therefore treated as a best-effort,
+dedicated-GPU-oriented option rather than a guaranteed speed-up.
+
+The raw, denormalised stereo mixture used by the RoFormer packs is built once
+per job and shared by the vocal and rhythm paths. Backup-only htdemucs jobs do
+not build it. Fixed-shape ONNX tensor wrappers are also reused across chunks,
+and the rhythm spectral engine keeps its iSTFT working buffers for the next
+stem and chunk instead of reallocating them.
 
 Inference runs on **one thread per physical core**, bounded by the historical
 `logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
@@ -1620,6 +1638,13 @@ the `logical − 2` bound leaves headroom for the backend's websocket-send and
 message threads, so the progress bar keeps flowing. On the GPU path the compute
 runs on the adapter instead.
 
+When the vocal and rhythm quality packs are both active, vocal cleanup runs on
+one reserved processor while rhythm inference uses the model worker pool. The
+separation thread continues to own progress and stem-ready callbacks, so the
+vocal can be published as soon as cleanup finishes without concurrent bridge
+callbacks. Cancellation stops both tasks, and a failed GPU attempt still
+discards its staged notifications before the CPU retry.
+
 Cancellation aborts the **in-flight** ONNX run rather than waiting for the
 current chunk (which can take tens of seconds on a slow CPU) to finish. Each
 `Session::Run` is wrapped by `runCancellable()` (`stems/StemRunCancellation.h`),
@@ -1630,7 +1655,10 @@ boundary and the resulting `Ort::Exception` is translated to a normal
 second instead of up to a whole chunk later.
 
 The separation-progress dialog is driven by the reactive `stemSeparationState`
-and stays open through a final **"Writing files…"** phase: on `STEM_READY` the
+and reports **"Loading … model…"** while an uncached ONNX session is being
+created. Cached sessions skip that stage. If DirectML has fallen back, the
+dialog reports that separation is continuing on the CPU. The dialog stays open
+through a final **"Writing files…"** phase: on `STEM_READY` the
 renderer marks the job finalising (`markStemSeparationFinalizing`) and only
 clears the state — dismissing the dialog — once the stems have been read,
 imported, and placed on the timeline. This stops the dialog from vanishing
@@ -1720,6 +1748,14 @@ paths keeps the added energy from clipping. The whole pass is non-destructive �
 only shapes the freshly written stem WAVs and never touches the user's source, and
 it is a guaranteed no-op when disabled, empty, or silent. See
 [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for RNNoise attribution.
+
+When verbose diagnostic logging is enabled, `stem-perf` entries record renderer
+preparation and import durations, backend decode, normalisation, separation and
+WAV-write durations, ONNX session cache hits or misses, progress-message counts
+and each job's total duration. RoFormer profile entries further split each run
+into setup, host STFT/tensor preparation, ONNX inference, synthesis,
+overlap-add, and finalisation. These timings are emitted in Release builds and
+run only on the existing stem worker or renderer orchestration paths.
 
 ## Library panel
 

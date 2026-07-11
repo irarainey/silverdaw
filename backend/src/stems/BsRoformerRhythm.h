@@ -12,8 +12,8 @@
 // Compiled only when SILVERDAW_ENABLE_STEM_SEPARATION is on (it needs ONNX
 // Runtime); the hybrid path falls back to the htdemucs drums/bass specialists
 // when a rhythm model is not configured, so this is purely an opt-in quality
-// upgrade. On a DirectML out-of-memory failure it transparently retries on the
-// CPU execution provider.
+// upgrade. Recoverable DirectML failures propagate to the hybrid separator,
+// which owns the process-wide CPU fallback policy.
 
 #include <functional>
 #include <memory>
@@ -46,7 +46,9 @@ public:
     BsRoformerRhythmStems separate(const juce::File& modelFile,
                                    const juce::AudioBuffer<float>& mixture, bool useGpu,
                                    double overlap, const std::function<void(double)>& onProgress,
-                                   const std::function<bool()>& shouldCancel);
+                                   const std::function<bool()>& shouldCancel,
+                                   const std::function<void(bool)>& onModelLoadState = {},
+                                   const juce::String& performanceJobId = {});
 
 private:
     struct Impl;

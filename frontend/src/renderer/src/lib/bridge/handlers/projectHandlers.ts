@@ -31,6 +31,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   PROJECT_STATE: (payload) => {
     // Authoritative snapshot after AUTH reconciles optimistic state.
     useProjectStore().applyProjectStateSnapshot(payload)
+    useAppStore().finishRecentProjectOpen()
     useTransportStore().setPlaybackState(false)
     useTransportStore().setBridgeReady(true)
     // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
@@ -90,6 +91,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
 
   PROJECT_LOAD_FAILED: (payload) => {
     log.warn('bridge', `PROJECT_LOAD_FAILED ${payload.filePath}: ${payload.error}`)
+    useAppStore().finishRecentProjectOpen()
     useProjectStore().notifyProjectLoadFailed(payload.error)
     useNotificationsStore().pushError(
       `Could not open project: ${payload.error || payload.filePath}`

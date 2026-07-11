@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "Log.h"
 #include "MelRoformerSpectral.h"
 #include "OnnxLogging.h"
+#include "RoformerPerformance.h"
 #include "StemRunCancellation.h"
 #include "StemSeparator.h"
 
@@ -69,11 +71,22 @@ struct MelRoformerVocals::Impl
     Ort::Session& sessionFor(const juce::File& modelFile)
     {
         const auto path = modelFile.getFullPathName();
+        const bool cacheHit = session != nullptr && sessionPath == path;
+        const auto started = std::chrono::steady_clock::now();
         if (session == nullptr || sessionPath != path)
         {
             session = std::make_unique<Ort::Session>(env, path.toWideCharPointer(), sessionOptions);
             sessionPath = path;
         }
+        const auto duration = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - started)
+                                  .count();
+        silverdaw::log::info(
+            "stem-perf",
+            "session model=" + modelFile.getFileNameWithoutExtension() +
+                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
+                " durationMs=" + juce::String(duration, 1));
         return *session;
     }
 };
@@ -84,7 +97,9 @@ MelRoformerVocals::~MelRoformerVocals() = default;
 juce::AudioBuffer<float> MelRoformerVocals::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
     double overlap, const std::function<void(double)>& onProgress,
-    const std::function<bool()>& shouldCancel)
+    const std::function<bool()>& shouldCancel,
+    const std::function<void(bool)>& onModelLoadState,
+    const juce::String& performanceJobId)
 {
     using Spec = MelRoformerSpectral;
     const int numSamples = mixture.getNumSamples();
@@ -93,7 +108,19 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
     if (numSamples <= 0) return vocals;
 
     impl->configureProvider(useGpu);
+    const bool cacheMiss =
+        impl->session == nullptr || impl->sessionPath != modelFile.getFullPathName();
+    if (cacheMiss && onModelLoadState) onModelLoadState(true);
     Ort::Session& session = impl->sessionFor(modelFile);
+    if (cacheMiss && onModelLoadState) onModelLoadState(false);
+
+    using Clock = std::chrono::steady_clock;
+    const auto elapsedMs = [](Clock::time_point started)
+    {
+        return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+    };
+    RoformerPerformance performance;
+    const auto setupStarted = Clock::now();
 
     Ort::AllocatorWithDefaultOptions allocator;
     const auto inputName = session.GetInputNameAllocated(0, allocator);
@@ -138,6 +165,12 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
                                      static_cast<float>(Spec::kChunkSamples));
 
     const std::array<int64_t, 4> shape{1, Spec::kPackedBins, Spec::kFrames, 2};
+    auto inputTensor = Ort::Value::CreateTensor<float>(memInfo, stft.data(), stft.size(),
+                                                       shape.data(), shape.size());
+    auto outputTensor = Ort::Value::CreateTensor<float>(memInfo, masks.data(), masks.size(),
+                                                        shape.data(), shape.size());
+    const char* inNames[] = {inputName.get()};
+    const char* outNames[] = {outputName.get()};
     // Chunk stride from the quality preset's overlap: higher overlap blends more
     // neighbouring windows (smoother seams) at the cost of more model runs. The
     // chunk recombination is normalised by an accumulated window counter, so any
@@ -148,6 +181,7 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
                     static_cast<int>(Spec::kChunkSamples * (1.0 - ov))));
     const int totalSteps = std::max(1, (numSamples + step - 1) / step);
     int stepIndex = 0;
+    performance.setupMs = elapsedMs(setupStarted);
 
     for (int offset = 0; offset < numSamples; offset += step)
     {
@@ -164,6 +198,7 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
             clen = Spec::kChunkSamples;
         }
 
+        const auto hostPrepareStarted = Clock::now();
         std::fill(chunk.begin(), chunk.end(), 0.0f);
         for (int ch = 0; ch < Spec::kChannels; ++ch)
         {
@@ -172,19 +207,19 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
         }
 
         impl->spectral.analyze(chunk.data(), stft.data());
+        performance.hostPrepareMs += elapsedMs(hostPrepareStarted);
 
-        auto inputTensor = Ort::Value::CreateTensor<float>(memInfo, stft.data(), stft.size(),
-                                                           shape.data(), shape.size());
-        auto outputTensor = Ort::Value::CreateTensor<float>(memInfo, masks.data(), masks.size(),
-                                                            shape.data(), shape.size());
-        const char* inNames[] = {inputName.get()};
-        const char* outNames[] = {outputName.get()};
+        const auto inferenceStarted = Clock::now();
         stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
             session.Run(runOptions, inNames, &inputTensor, 1, outNames, &outputTensor, 1);
         });
+        performance.inferenceMs += elapsedMs(inferenceStarted);
 
+        const auto synthesisStarted = Clock::now();
         impl->spectral.synthesize(stft.data(), masks.data(), sep.data());
+        performance.synthesisMs += elapsedMs(synthesisStarted);
 
+        const auto overlapAddStarted = Clock::now();
         for (int ch = 0; ch < Spec::kChannels; ++ch)
         {
             const float* s = sep.data() + static_cast<size_t>(ch) * Spec::kChunkSamples;
@@ -197,13 +232,16 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
             float* c = counter.data() + cstart;
             for (int i = 0; i < clen; ++i) c[i] += hwin[static_cast<size_t>(i)];
         }
+        performance.overlapAddMs += elapsedMs(overlapAddStarted);
 
         ++stepIndex;
+        ++performance.chunks;
         if (onProgress) onProgress(static_cast<double>(stepIndex) / totalSteps);
     }
 
     // Finalise the chunk overlap-add and restore the mixture level so the vocal
     // is residual-consistent with the (unnormalised) drums/bass/other.
+    const auto finaliseStarted = Clock::now();
     const float inv = scale > 0.0f ? 1.0f / scale : 1.0f;
     for (int ch = 0; ch < Spec::kChannels; ++ch)
     {
@@ -212,6 +250,8 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
         for (int i = 0; i < numSamples; ++i)
             out[i] = (t[i] / std::max(counter[static_cast<size_t>(i)], 1.0e-10f)) * inv;
     }
+    performance.finaliseMs = elapsedMs(finaliseStarted);
+    logRoformerPerformance(performanceJobId, "vocals", performance);
     if (onProgress) onProgress(1.0);
     return vocals;
 }

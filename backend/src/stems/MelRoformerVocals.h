@@ -36,7 +36,9 @@ public:
     juce::AudioBuffer<float> separate(const juce::File& modelFile,
                                       const juce::AudioBuffer<float>& mixture, bool useGpu,
                                       double overlap, const std::function<void(double)>& onProgress,
-                                      const std::function<bool()>& shouldCancel);
+                                      const std::function<bool()>& shouldCancel,
+                                      const std::function<void(bool)>& onModelLoadState = {},
+                                      const juce::String& performanceJobId = {});
 
 private:
     struct Impl;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -28,9 +29,10 @@
 #include "StemShifts.h"
 #include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
-#include "VocalDebleeder.h"
-#include "Dereverberator.h"
-#include "VocalRestorer.h"
+#include "StemAudioPreparation.h"
+#include "StemGpuFallback.h"
+#include "StemRhythmOverlap.h"
+#include "StemVocalCleanup.h"
 
 namespace silverdaw
 {
@@ -56,6 +58,22 @@ constexpr double kMaxOverlap = 0.95;
 // slice at each end; the dominant per-segment inference fills the middle band.
 constexpr double kPreparePercent = 2.0;
 constexpr double kSeparatePercent = 98.0;
+
+using PerformanceClock = std::chrono::steady_clock;
+
+double performanceMsSince(PerformanceClock::time_point started)
+{
+    return std::chrono::duration<double, std::milli>(PerformanceClock::now() - started).count();
+}
+
+void logPerformance(const juce::String& jobId, const juce::String& operation,
+                    PerformanceClock::time_point started, const juce::String& detail = {})
+{
+    silverdaw::log::info("stem-perf",
+                         "step job=" + jobId + " operation=" + operation +
+                             " durationMs=" + juce::String(performanceMsSince(started), 1) +
+                             (detail.isNotEmpty() ? " " + detail : juce::String()));
+}
 
 // Progress-cost of a post-separation cleanup pass (denoise/enhance), relative to
 // one specialist model run (= 1.0). Cleanup is far cheaper than inference, but
@@ -222,33 +240,9 @@ Normalisation computeNormalisation(const juce::AudioBuffer<float>& mixture)
 }
 
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
-// A DirectML GPU reset (Windows TDR) or driver fault mid-inference surfaces as an
-// Ort::Exception whose message carries a DXGI device-removed/hung/reset HRESULT.
-// Detect those so a job can transparently fall back to the CPU provider rather
-// than failing outright.
-bool isGpuDeviceLost(const Ort::Exception& e)
-{
-    const juce::String msg = juce::String(e.what()).toLowerCase();
-    return msg.contains("device removed") || msg.contains("device hung") ||
-           msg.contains("device reset") || msg.contains("device lost") ||
-           msg.contains("dxgi_error_device") || msg.contains("887a00");
-}
-
-// Out of GPU memory (E_OUTOFMEMORY 0x8007000E / "not enough memory resources").
-// Common on integrated GPUs, which share a limited slice of system memory: a
-// large transformer MatMul can exceed the DirectML allocation budget. Treated as
-// recoverable so the job retries on the CPU (ample system RAM) instead of failing.
-bool isGpuOutOfMemory(const Ort::Exception& e)
-{
-    const juce::String msg = juce::String(e.what()).toLowerCase();
-    return msg.contains("8007000e") || msg.contains("e_outofmemory") ||
-           msg.contains("not enough memory") || msg.contains("out of memory");
-}
-
-// Any DirectML fault we can recover from by re-running the job on the CPU.
 bool isRecoverableGpuFault(const Ort::Exception& e)
 {
-    return isGpuDeviceLost(e) || isGpuOutOfMemory(e);
+    return isRecoverableGpuFaultMessage(e.what());
 }
 #endif
 
@@ -265,7 +259,12 @@ class OnnxStemSeparator : public StemSeparator
                                   const StemReadyFn& onStemReady,
                                   const StemCancelFn& shouldCancel) override
     {
-        applyExecutionProvider(request.useGpu);
+        StemSeparationRequest effectiveRequest = request;
+        effectiveRequest.useGpu = gpuFallback.shouldUseGpu(request.useGpu);
+        const bool usingQuarantinedFallback = request.useGpu && ! effectiveRequest.useGpu;
+        if (usingQuarantinedFallback)
+            silverdaw::log::info("stems", "DirectML is quarantined for this process; using CPU.");
+        applyExecutionProvider(effectiveRequest.useGpu);
 
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
         // On a recoverable DirectML fault mid-inference — a GPU reset (Windows TDR)
@@ -273,40 +272,62 @@ class OnnxStemSeparator : public StemSeparator
         // retry the whole job on the CPU provider so the user still gets their stems
         // instead of a hard failure. The CPU provider never triggers TDR and draws
         // on ample system RAM, so a single fallback cannot loop. Already-written
-        // stems are re-emitted; the renderer dedupes them per job, so the retry is
-        // idempotent.
-        if (epUsesGpu)
+        // GPU stem notifications are staged until the attempt succeeds. A failed
+        // attempt discards them before the CPU retry overwrites the output files.
+        if (effectiveRequest.useGpu)
         {
+            double gpuPercent = 0.0;
+            const StemProgressFn gpuProgress =
+                [&](const char* stage, double percent, const char* detail)
+            {
+                gpuPercent = std::max(gpuPercent, percent);
+                onProgress(stage, percent, detail);
+            };
+            StemReadyTransaction gpuOutputs(onStemReady);
             try
             {
-                return runSeparation(request, onProgress, onStemReady, shouldCancel);
+                auto result = runSeparation(
+                    effectiveRequest, gpuProgress,
+                    [&](const StemResultFile& stem) { gpuOutputs.stage(stem); },
+                    shouldCancel, false);
+                gpuOutputs.commit();
+                return result;
             }
             catch (const Ort::Exception& e)
             {
                 if (! isRecoverableGpuFault(e)) throw;
+                gpuFallback.quarantine();
                 silverdaw::log::warn("stems",
                                      juce::String("GPU separation failed (") + e.what() +
-                                         "); falling back to CPU and retrying.");
+                                         "); quarantining DirectML and retrying on CPU.");
                 applyExecutionProvider(false);
                 // Force the whole retry — including the RoFormer packs, which
                 // configure their own sessions from the request — onto the CPU,
                 // otherwise they would reconfigure to the GPU and fault again.
-                StemSeparationRequest cpuRequest = request;
+                StemSeparationRequest cpuRequest = effectiveRequest;
                 cpuRequest.useGpu = false;
-                return runSeparation(cpuRequest, onProgress, onStemReady, shouldCancel);
+                const StemProgressFn retryProgress =
+                    [&](const char* stage, double percent, const char* detail)
+                {
+                    onProgress(stage, mapStemRetryPercent(gpuPercent, percent), detail);
+                };
+                return runSeparation(
+                    cpuRequest, retryProgress, onStemReady, shouldCancel, true);
             }
         }
 #endif
-        return runSeparation(request, onProgress, onStemReady, shouldCancel);
+        return runSeparation(
+            effectiveRequest, onProgress, onStemReady, shouldCancel, usingQuarantinedFallback);
     }
 
   private:
     StemSeparationResult runSeparation(const StemSeparationRequest& request,
                                        const StemProgressFn& onProgress,
                                        const StemReadyFn& onStemReady,
-                                       const StemCancelFn& shouldCancel)
+                                       const StemCancelFn& shouldCancel,
+                                       bool usingGpuFallback)
     {
-        onProgress("prepare", 0.0, "");
+        onProgress("prepare", 0.0, usingGpuFallback ? "gpu-fallback" : "");
 
         // Which engine produces each stem. The optional RoFormer quality packs are
         // the primary engine when installed: vocals come from the vocal pack and
@@ -352,10 +373,14 @@ class OnnxStemSeparator : public StemSeparator
 
         if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
 
+        auto stepStarted = PerformanceClock::now();
         auto mixture = decodeStereo44k(request.sourceFile, request.startMs, request.lengthMs);
         const int numSamples = mixture.getNumSamples();
+        logPerformance(request.jobId, "decode-resample", stepStarted,
+                       "samples=" + juce::String(numSamples));
 
         // Centre + scale by the mono mixture statistics before inference.
+        stepStarted = PerformanceClock::now();
         const auto norm = computeNormalisation(mixture);
         for (int ch = 0; ch < kModelChannels; ++ch)
         {
@@ -363,6 +388,7 @@ class OnnxStemSeparator : public StemSeparator
             for (int i = 0; i < numSamples; ++i)
                 d[i] = (d[i] - norm.mean) / norm.std;
         }
+        logPerformance(request.jobId, "normalise", stepStarted);
 
         const auto window = makeTransitionWindow(kSegmentSamples);
         const double overlap = std::clamp(request.overlap, 0.0, kMaxOverlap);
@@ -484,18 +510,21 @@ class OnnxStemSeparator : public StemSeparator
             }
         }
 
-        // Build the raw (denormalised) stereo mixture the RoFormer packs consume.
-        const auto buildRawMix = [&]() {
-            juce::AudioBuffer<float> raw(kModelChannels, numSamples);
-            for (int ch = 0; ch < kModelChannels; ++ch)
+        juce::AudioBuffer<float> rawMix;
+        if (shouldBuildRawStemMixture(haveVocalPack, isSelected("vocals"), useRhythmPack))
+        {
+            const auto rawMixtureStarted = PerformanceClock::now();
+            rawMix = denormaliseStemMixture(mixture, kModelChannels, norm.mean, norm.std);
+            logPerformance(request.jobId, "raw-mixture", rawMixtureStarted);
+        }
+
+        PendingStemVocalCleanup vocalCleanup(
+            shouldCancel,
+            [&](const StemResultFile& resultFile)
             {
-                const float* mix = mixture.getReadPointer(ch);
-                float* d = raw.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    d[i] = mix[i] * norm.std + norm.mean;
-            }
-            return raw;
-        };
+                result.stems.push_back(resultFile);
+                onStemReady(resultFile);
+            });
 
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
@@ -517,6 +546,7 @@ class OnnxStemSeparator : public StemSeparator
                     ? "drums+bass"
                     : stem;
             onProgress("separate", stemBase, sepDetail);
+            const auto separationStarted = PerformanceClock::now();
 
             // The cleanup pass (if any) owns the cost-proportional tail of this
             // stem's band, so the bar keeps advancing while the enhancer/denoiser
@@ -554,12 +584,16 @@ class OnnxStemSeparator : public StemSeparator
                     // Mel-Band RoFormer vocal pack: separate from the RAW (denormalised)
                     // mixture in its own peak-normalised domain; it returns the vocal at
                     // the mixture's level, so no further denormalisation is needed.
-                    auto rawMix = buildRawMix();
                     silverdaw::log::info("stems", "vocals via Mel-Band RoFormer pack");
                     stemBuffer = roformerVocals.separate(
                         request.roformerModelFile, rawMix, request.useGpu, overlap,
                         [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
-                        shouldCancel);
+                        shouldCancel,
+                        [&](bool loading)
+                        {
+                            onProgress(loading ? "load-model" : "separate", stemBase, stem);
+                        },
+                        request.jobId);
 
                     // Capture this (unprocessed) vocal so the rhythm pack can be fed
                     // a vocal-removed mixture — cleanup runs later and must not alter
@@ -580,10 +614,10 @@ class OnnxStemSeparator : public StemSeparator
                     // drums / bass (cascaded separation).
                     if (! rhythmDone)
                     {
-                        auto rawMix = buildRawMix();
                         double rhythmBase = stemBase;
                         double rhythmSpan = sepSpan;
                         juce::AudioBuffer<float> rhythmInput;
+                        const juce::AudioBuffer<float>* rhythmSource = &rawMix;
 
                         if (removeVocalsBeforeRhythm)
                         {
@@ -598,7 +632,13 @@ class OnnxStemSeparator : public StemSeparator
                                 vocalForRemoval = roformerVocals.separate(
                                     request.roformerModelFile, rawMix, request.useGpu, overlap,
                                     [&](double f) { onProgress("separate", stemBase + vocalSpan * f, sepDetail); },
-                                    shouldCancel);
+                                    shouldCancel,
+                                    [&](bool loading)
+                                    {
+                                        onProgress(loading ? "load-model" : "separate", stemBase,
+                                                   loading ? "vocals" : sepDetail);
+                                    },
+                                    request.jobId);
                                 vocalForRemovalReady = true;
                                 rhythmBase = stemBase + vocalSpan;
                                 rhythmSpan = sepSpan - vocalSpan;
@@ -612,12 +652,12 @@ class OnnxStemSeparator : public StemSeparator
                                 for (int i = 0; i < numSamples; ++i)
                                     d[i] = raw[i] - voc[i];
                             }
+                            rhythmSource = &rhythmInput;
                             silverdaw::log::info("stems",
                                 "drums/bass via BS-RoFormer rhythm pack (vocal-removed input)");
                         }
                         else
                         {
-                            rhythmInput = std::move(rawMix);
                             silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
                         }
 
@@ -627,10 +667,23 @@ class OnnxStemSeparator : public StemSeparator
                         // then cache-served instantly on its own iteration).
                         const char* rhythmDetail =
                             (isSelected("drums") && isSelected("bass")) ? "drums+bass" : stem;
-                        rhythmStems = roformerRhythm.separate(
-                            request.rhythmModelFile, rhythmInput, request.useGpu, overlap,
-                            [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, rhythmDetail); },
-                            shouldCancel);
+                        rhythmStems = runStemRhythmWithVocalOverlap(
+                            roformerRhythm, request.rhythmModelFile, *rhythmSource,
+                            request.useGpu, overlap, request.jobId, vocalCleanup,
+                            {
+                                [&](double fraction)
+                                {
+                                    onProgress("separate",
+                                               rhythmBase + rhythmSpan * fraction,
+                                               rhythmDetail);
+                                },
+                                [&](bool loading)
+                                {
+                                    onProgress(loading ? "load-model" : "separate",
+                                               rhythmBase, rhythmDetail);
+                                },
+                                vocalCleanup.cancellation()
+                            });
                         rhythmDone = true;
                     }
                     stemBuffer = juce::String(stem) == "drums" ? rhythmStems.drums
@@ -667,12 +720,49 @@ class OnnxStemSeparator : public StemSeparator
                     }
                 }
             }
+            logPerformance(request.jobId, "separate", separationStarted,
+                           "stem=" + juce::String(stem));
 
             const auto stemBaseName = request.fileNameToken.isNotEmpty()
                 ? request.sourceName + " - " + stem + " - " + request.fileNameToken
                 : request.sourceName + " - " + stem;
             const auto outFile = request.outputDir.getChildFile(
                 juce::File::createLegalFileName(stemBaseName + ".wav"));
+            const bool overlapVocalCleanup =
+                juce::String(stem) == "vocals" && haveVocalPack && useRhythmPack &&
+                (request.vocalEnhance.enabled || request.dereverb.enabled);
+            if (overlapVocalCleanup)
+            {
+                onProgress("cleanup", cleanupBase, stem);
+                auto vocal = std::move(stemBuffer);
+                const auto requestSnapshot = request;
+                // Inference leaves two processors free, so this single cleanup
+                // worker uses reserved capacity instead of oversubscribing ORT.
+                vocalCleanup.start(
+                    [vocal = std::move(vocal), &mixture, requestSnapshot, outFile,
+                     mixtureMean = norm.mean, mixtureStd = norm.std,
+                     numSamples](const StemCancelFn& cancel) mutable
+                    {
+                        const auto cleanupStarted = PerformanceClock::now();
+                        processStemVocalCleanup(
+                            vocal, mixture, mixtureMean, mixtureStd, requestSnapshot, true, {},
+                            cancel);
+                        logPerformance(
+                            requestSnapshot.jobId, "cleanup", cleanupStarted, "stem=vocals");
+                        const auto writeStarted = PerformanceClock::now();
+                        writeStemWav(outFile, vocal);
+                        logPerformance(
+                            requestSnapshot.jobId, "write-wav", writeStarted, "stem=vocals");
+                        return StemResultFile{
+                            "vocals",
+                            outFile,
+                            kModelSampleRate,
+                            static_cast<double>(numSamples) * 1000.0 / kModelSampleRate,
+                            2};
+                    });
+                continue;
+            }
+            const auto cleanupStarted = PerformanceClock::now();
             // Optional vocal cleanup. Applied only to the vocals stem and only
             // after the (unprocessed) vocal has been folded into `extractedSum`,
             // so the `other` residual stays mixture-consistent. RNNoise removes
@@ -681,100 +771,16 @@ class OnnxStemSeparator : public StemSeparator
             if (juce::String(stem) == "vocals"
                 && (request.vocalEnhance.enabled || request.dereverb.enabled))
             {
-                // The RoFormer vocal pack produces a high-SDR stem; the enhance cleanup
-                // (tuned for the dirtier htdemucs vocal) is gentled for it — the cross-stem
-                // de-bleed is skipped entirely (it would gut a clean vocal on dense mixes)
-                // and the denoise / expander run softened. Dereverb is a per-run choice,
-                // independent of the enhance toggle, so the two are gated separately here.
                 const bool vocalFromRoformer = haveVocalPack;
                 onProgress("cleanup", cleanupBase, stem);
-
-                // Progress split: dereverb and the RNNoise denoise are the two heavy passes;
-                // each owns a share of the first 90% of the reserved band, the expander the tail.
-                const double dereverbBand =
-                    request.dereverb.enabled ? (request.vocalEnhance.enabled ? 0.45 : 0.90) : 0.0;
-                const double denoiseStart = cleanupBase + cleanupSpan * dereverbBand;
-                const double denoiseBand =
-                    request.vocalEnhance.enabled ? (0.90 - dereverbBand) : 0.0;
-
-                // Cross-stem de-bleed (htdemucs enhance path only): push down pitched
-                // instrument bleed using instrumental = mixture - vocal. Runs BEFORE dereverb
-                // so the reverb estimate isn't contaminated by other instruments' tails, and
-                // because de-bleed is frame-independent (it needs no envelope of its own).
-                if (request.vocalEnhance.enabled && ! vocalFromRoformer)
-                {
-                    juce::AudioBuffer<float> instrumental(kModelChannels, numSamples);
-                    for (int ch = 0; ch < kModelChannels; ++ch)
+                processStemVocalCleanup(
+                    stemBuffer, mixture, norm.mean, norm.std, request, vocalFromRoformer,
+                    [&](double fraction)
                     {
-                        const float* mix = mixture.getReadPointer(ch);
-                        const float* voc = stemBuffer.getReadPointer(ch);
-                        float* ins = instrumental.getWritePointer(ch);
-                        for (int i = 0; i < numSamples; ++i)
-                            ins[i] = (mix[i] * norm.std + norm.mean) - voc[i];
-                    }
-                    VocalDebleeder::process(stemBuffer, instrumental, kModelSampleRate,
-                                            request.vocalEnhance.strength);
-                }
-
-                // Reverb/echo reduction (per-run). Before the denoise: RNNoise is trained on
-                // dry speech, so tightening the reverberant envelope first helps it.
-                //
-                // Capture the vocal's active loudness BEFORE de-reverb so the final
-                // VocalRestorer stage can match it back — spectral subtraction removes
-                // energy and leaves the stem noticeably quieter, and matching the
-                // loud-frame loudness (not the reverb-filled gaps) restores the level
-                // without re-inflating the tail we just removed.
-                float vocalRefLevel = 0.0f;
-                if (request.dereverb.enabled)
-                {
-                    vocalRefLevel = VocalRestorer::activeLoudness(stemBuffer, kModelSampleRate);
-                    silverdaw::log::info("stems",
-                                         juce::String("applied vocal dereverb strength=")
-                                             + dereverbStrengthToString(request.dereverb.strength));
-                    Dereverberator::process(
-                        stemBuffer, kModelSampleRate, request.dereverb.strength,
-                        [&](double f) {
-                            onProgress("cleanup", cleanupBase + cleanupSpan * dereverbBand * f, stem);
-                        });
-                }
-
-                // RNNoise denoise + sub-bass high-pass / expander (enhance path only).
-                if (request.vocalEnhance.enabled)
-                {
-                    auto vocalOpts = request.vocalEnhance;
-                    vocalOpts.cleanModel = vocalFromRoformer;
-                    const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength, vocalFromRoformer);
-                    silverdaw::log::info("stems",
-                                         juce::String("applied vocal cleanup strength=")
-                                             + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
-                                             + (vocalFromRoformer ? " (clean-model: de-bleed skipped)" : "")
-                                             + " denoiseWet=" + juce::String(wet, 2));
-                    VocalDenoiser::process(
-                        stemBuffer, kModelSampleRate, wet,
-                        [&](double f) {
-                            onProgress("cleanup", denoiseStart + cleanupSpan * denoiseBand * f, stem);
-                        });
-                    VocalEnhancer::process(stemBuffer, kModelSampleRate, vocalOpts);
-                }
-
-                // Final polish (per-run de-reverb only): restore the presence and
-                // level that spectral subtraction strips out, so the de-reverbed
-                // vocal isn't dull/flat OR quieter. Runs LAST — after the denoise +
-                // expander have cleaned the vocal — so the shelves brighten the clean
-                // signal rather than musical noise, and the level match sits after the
-                // expander so it can't lift the floor back over the expander threshold.
-                if (request.dereverb.enabled)
-                {
-                    const auto restore = VocalRestorer::process(
-                        stemBuffer, kModelSampleRate, request.dereverb.strength, vocalRefLevel);
-                    silverdaw::log::info(
-                        "stems",
-                        juce::String("applied vocal restore ref=") + juce::String(restore.referenceLevel, 4)
-                            + " proc=" + juce::String(restore.processedLevel, 4)
-                            + " makeup=" + juce::String(restore.makeupDb, 2) + "dB"
-                            + (restore.clamped ? " (clamped)" : ""));
-                }
-                onProgress("cleanup", stemBase + stemSpan, stem);
+                        onProgress(
+                            "cleanup", cleanupBase + cleanupSpan * fraction, stem);
+                    },
+                    shouldCancel);
             }
             // Optional drum cleanup. Same contract: drums only, applied after the
             // raw drum buffer has been folded into the residual sum.
@@ -822,12 +828,25 @@ class OnnxStemSeparator : public StemSeparator
                 OtherEnhancer::process(stemBuffer, kModelSampleRate, otherOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
+            logPerformance(request.jobId, "cleanup", cleanupStarted,
+                           "stem=" + juce::String(stem));
+            const auto writeStarted = PerformanceClock::now();
             writeStemWav(outFile, stemBuffer);
-            result.stems.push_back({juce::String(stem), outFile});
-            // Let the UI import this stem now, before later stems finish.
-            onStemReady(stem, outFile);
+            logPerformance(request.jobId, "write-wav", writeStarted,
+                           "stem=" + juce::String(stem));
+            const StemResultFile resultFile{
+                juce::String(stem),
+                outFile,
+                kModelSampleRate,
+                static_cast<double>(numSamples) * 1000.0 / kModelSampleRate,
+                2};
+            result.stems.push_back(resultFile);
+            // CPU jobs publish immediately; GPU jobs stage notifications until
+            // the attempt succeeds so fallback cannot race an in-flight import.
+            onStemReady(resultFile);
         }
 
+        vocalCleanup.publishIfReady(true);
         onProgress("write", 100.0, "");
         return result;
     }
@@ -847,7 +866,11 @@ class OnnxStemSeparator : public StemSeparator
                                              const StemCancelFn& shouldCancel, double stemBase,
                                              double stemSpan)
     {
-        Ort::Session& session = getOrCreateSession(modelFileFor(modelDir, stem).getFullPathName());
+        const auto modelPath = modelFileFor(modelDir, stem).getFullPathName();
+        const bool cacheMiss = sessionCache.find(modelPath.toStdString()) == sessionCache.end();
+        if (cacheMiss) onProgress("load-model", stemBase, stem);
+        Ort::Session& session = getOrCreateSession(modelPath);
+        if (cacheMiss) onProgress("separate", stemBase, stem);
 
         Ort::AllocatorWithDefaultOptions allocator;
         const auto inputName = session.GetInputNameAllocated(0, allocator);
@@ -1039,11 +1062,19 @@ class OnnxStemSeparator : public StemSeparator
     {
         const auto key = modelPath.toStdString();
         auto it = sessionCache.find(key);
+        const bool cacheHit = it != sessionCache.end();
+        const auto started = PerformanceClock::now();
         if (it == sessionCache.end())
             it = sessionCache
                      .emplace(key, std::make_unique<Ort::Session>(
                                        env, modelPath.toWideCharPointer(), sessionOptions))
                      .first;
+        silverdaw::log::info(
+            "stem-perf",
+            "session model=" + juce::File(modelPath).getFileNameWithoutExtension() +
+                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
+                " durationMs=" + juce::String(performanceMsSince(started), 1));
         return *it->second;
     }
 
@@ -1051,6 +1082,7 @@ class OnnxStemSeparator : public StemSeparator
     Ort::SessionOptions sessionOptions;
     bool epConfigured = false;
     bool epUsesGpu = false;
+    StemGpuFallbackState gpuFallback;
     // Declared last so cached sessions are destroyed before `env`.
     std::map<std::string, std::unique_ptr<Ort::Session>> sessionCache;
 

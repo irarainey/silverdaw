@@ -714,7 +714,7 @@ export const StemProgressPayloadSchema = z.object({
   jobId: z.string().min(1),
   // Present only for timeline-clip separations; absent for library-source jobs.
   clipId: z.string().min(1).optional(),
-  stage: z.enum(['prepare', 'separate', 'cleanup', 'write']),
+  stage: z.enum(['prepare', 'load-model', 'separate', 'cleanup', 'write']),
   percent: z.number(),
   // Optional context for the current step (e.g. the stem name being separated).
   detail: z.string().optional()
@@ -724,7 +724,10 @@ export type StemProgressPayload = z.infer<typeof StemProgressPayloadSchema>
 /** One separated stem written to disk (non-destructive; the original is untouched). */
 export const StemFileSchema = z.object({
   stem: StemNameSchema,
-  filePath: z.string().min(1)
+  filePath: z.string().min(1),
+  sampleRate: z.number().positive().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  channelCount: z.number().int().positive().optional()
 })
 export type StemFile = z.infer<typeof StemFileSchema>
 
@@ -744,7 +747,10 @@ export const StemPartialPayloadSchema = z.object({
   clipId: z.string().min(1).optional(),
   sourceName: z.string(),
   stem: StemNameSchema,
-  filePath: z.string().min(1)
+  filePath: z.string().min(1),
+  sampleRate: z.number().positive().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  channelCount: z.number().int().positive().optional()
 })
 export type StemPartialPayload = z.infer<typeof StemPartialPayloadSchema>
 

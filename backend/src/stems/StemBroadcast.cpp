@@ -27,16 +27,18 @@ void broadcastPartial(BridgeServer& bridge,
                       const juce::String& jobId,
                       const juce::String& clipId,
                       const juce::String& sourceName,
-                      const juce::String& stem,
-                      const juce::File& file)
+                      const StemResultFile& stem)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("jobId", jobId);
     if (clipId.isNotEmpty())
         obj->setProperty("clipId", clipId);
     obj->setProperty("sourceName", sourceName);
-    obj->setProperty("stem", stem);
-    obj->setProperty("filePath", file.getFullPathName());
+    obj->setProperty("stem", stem.stem);
+    obj->setProperty("filePath", stem.file.getFullPathName());
+    obj->setProperty("sampleRate", stem.sampleRate);
+    obj->setProperty("durationMs", stem.durationMs);
+    obj->setProperty("channelCount", stem.channelCount);
     bridge.broadcast("STEM_PARTIAL", juce::var(obj));
 }
 
@@ -58,6 +60,9 @@ void broadcastReady(BridgeServer& bridge,
         auto* entry = new juce::DynamicObject();
         entry->setProperty("stem", s.stem);
         entry->setProperty("filePath", s.file.getFullPathName());
+        entry->setProperty("sampleRate", s.sampleRate);
+        entry->setProperty("durationMs", s.durationMs);
+        entry->setProperty("channelCount", s.channelCount);
         stemArray.add(juce::var(entry));
     }
     obj->setProperty("stems", stemArray);

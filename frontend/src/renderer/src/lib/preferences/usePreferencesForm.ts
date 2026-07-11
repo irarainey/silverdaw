@@ -7,6 +7,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { log } from '@/lib/log'
 import type { BrakeDurationDto, BrakeCurveDto, BackspinDurationDto, BackspinIntensityDto } from '@shared/types'
 import {
   BACKEND_PREFERENCE,
@@ -70,7 +71,7 @@ export interface PreferencesForm {
   chooseProjectDir: () => Promise<void>
   chooseClipDir: () => Promise<void>
   chooseLogDir: () => Promise<void>
-  save: () => void
+  save: () => Promise<void>
 }
 
 export function usePreferencesForm(): PreferencesForm {
@@ -279,6 +280,42 @@ export function usePreferencesForm(): PreferencesForm {
   )
 
   async function loadCurrent(): Promise<void> {
+    const stemPrefsLoad = window.silverdaw
+      .getStemPrefs()
+      .then((stemPrefs) => {
+        useGpuForStems.value = stemPrefs.useGpu
+        useBackupModel.value = stemPrefs.useBackupModel
+        enhanceVocals.value = stemPrefs.enhanceVocals
+        vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
+        enhanceDrums.value = stemPrefs.enhanceDrums
+        drumEnhanceStrength.value = stemPrefs.drumEnhanceStrength
+        enhanceBass.value = stemPrefs.enhanceBass
+        bassEnhanceStrength.value = stemPrefs.bassEnhanceStrength
+        enhanceOther.value = stemPrefs.enhanceOther
+        otherEnhanceStrength.value = stemPrefs.otherEnhanceStrength
+        log.info(
+          'preferences',
+          `loaded stem cleanup vocals=${stemPrefs.enhanceVocals} drums=${stemPrefs.enhanceDrums} ` +
+            `bass=${stemPrefs.enhanceBass} other=${stemPrefs.enhanceOther}`
+        )
+      })
+      .catch((err) => {
+        log.error(
+          'preferences',
+          `stem cleanup load failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+        useGpuForStems.value = false
+        useBackupModel.value = false
+        enhanceVocals.value = false
+        vocalEnhanceStrength.value = 'medium'
+        enhanceDrums.value = false
+        drumEnhanceStrength.value = 'medium'
+        enhanceBass.value = false
+        bassEnhanceStrength.value = 'medium'
+        enhanceOther.value = false
+        otherEnhanceStrength.value = 'medium'
+      })
+
     try {
       const [debugVal, qol, autosave, audioPref, keepAwakeByDevice, enabledMidiInputs] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
@@ -309,17 +346,6 @@ export function usePreferencesForm(): PreferencesForm {
       const backspinPrefs = await window.silverdaw.getBackspinSettings()
       backspinDuration.value = backspinPrefs.duration
       backspinIntensity.value = backspinPrefs.intensity
-      const stemPrefs = await window.silverdaw.getStemPrefs()
-      useGpuForStems.value = stemPrefs.useGpu
-      useBackupModel.value = stemPrefs.useBackupModel
-      enhanceVocals.value = stemPrefs.enhanceVocals
-      vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
-      enhanceDrums.value = stemPrefs.enhanceDrums
-      drumEnhanceStrength.value = stemPrefs.drumEnhanceStrength
-      enhanceBass.value = stemPrefs.enhanceBass
-      bassEnhanceStrength.value = stemPrefs.bassEnhanceStrength
-      enhanceOther.value = stemPrefs.enhanceOther
-      otherEnhanceStrength.value = stemPrefs.otherEnhanceStrength
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -337,17 +363,9 @@ export function usePreferencesForm(): PreferencesForm {
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
       backspinIntensity.value = 'medium'
-      useGpuForStems.value = false
-      useBackupModel.value = false
-      enhanceVocals.value = false
-      vocalEnhanceStrength.value = 'medium'
-      enhanceDrums.value = false
-      drumEnhanceStrength.value = 'medium'
-      enhanceBass.value = false
-      bassEnhanceStrength.value = 'medium'
-      enhanceOther.value = false
-      otherEnhanceStrength.value = 'medium'
     }
+
+    await stemPrefsLoad
     // UI prefs are already mirrored into uiStore at startup.
     followPlayback.value = ui.followPlayback
     showLibraryTileImages.value = ui.showLibraryTileImages
@@ -419,7 +437,7 @@ export function usePreferencesForm(): PreferencesForm {
     if (picked) logDirectory.value = picked
   }
 
-  function save(): void {
+  async function save(): Promise<void> {
     // Push only deltas; mirror toast changes locally immediately.
     const qolPatch: {
       toasts?: { enabled: boolean }
@@ -531,48 +549,42 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       backspinSettings.setBackspinSettings(backspinDuration.value, backspinIntensity.value)
     }
+    const stemPatch: Parameters<typeof window.silverdaw.setStemPrefs>[0] = {}
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
-      window.silverdaw.setStemPrefs({ useGpu: useGpuForStems.value })
+      stemPatch.useGpu = useGpuForStems.value
     }
     if (useBackupModel.value !== initialUseBackupModel.value) {
-      window.silverdaw.setStemPrefs({ useBackupModel: useBackupModel.value })
+      stemPatch.useBackupModel = useBackupModel.value
     }
     if (
       enhanceVocals.value !== initialEnhanceVocals.value ||
       vocalEnhanceStrength.value !== initialVocalEnhanceStrength.value
     ) {
-      window.silverdaw.setStemPrefs({
-        enhanceVocals: enhanceVocals.value,
-        vocalEnhanceStrength: vocalEnhanceStrength.value
-      })
+      stemPatch.enhanceVocals = enhanceVocals.value
+      stemPatch.vocalEnhanceStrength = vocalEnhanceStrength.value
     }
     if (
       enhanceDrums.value !== initialEnhanceDrums.value ||
       drumEnhanceStrength.value !== initialDrumEnhanceStrength.value
     ) {
-      window.silverdaw.setStemPrefs({
-        enhanceDrums: enhanceDrums.value,
-        drumEnhanceStrength: drumEnhanceStrength.value
-      })
+      stemPatch.enhanceDrums = enhanceDrums.value
+      stemPatch.drumEnhanceStrength = drumEnhanceStrength.value
     }
     if (
       enhanceBass.value !== initialEnhanceBass.value ||
       bassEnhanceStrength.value !== initialBassEnhanceStrength.value
     ) {
-      window.silverdaw.setStemPrefs({
-        enhanceBass: enhanceBass.value,
-        bassEnhanceStrength: bassEnhanceStrength.value
-      })
+      stemPatch.enhanceBass = enhanceBass.value
+      stemPatch.bassEnhanceStrength = bassEnhanceStrength.value
     }
     if (
       enhanceOther.value !== initialEnhanceOther.value ||
       otherEnhanceStrength.value !== initialOtherEnhanceStrength.value
     ) {
-      window.silverdaw.setStemPrefs({
-        enhanceOther: enhanceOther.value,
-        otherEnhanceStrength: otherEnhanceStrength.value
-      })
+      stemPatch.enhanceOther = enhanceOther.value
+      stemPatch.otherEnhanceStrength = otherEnhanceStrength.value
     }
+    if (Object.keys(stemPatch).length > 0) await window.silverdaw.setStemPrefs(stemPatch)
   }
 
   return {

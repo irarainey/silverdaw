@@ -21,7 +21,9 @@ inline int reflectIndex(int index, int samples) noexcept
 
 BsRoformerSpectral::BsRoformerSpectral()
     : fft(kFftOrder), hann(static_cast<size_t>(kNFft)),
-      fftScratch(static_cast<size_t>(2 * kNFft), 0.0f)
+      fftScratch(static_cast<size_t>(2 * kNFft), 0.0f),
+      synthesisAccumulator(static_cast<size_t>(kChunkSamples), 0.0f),
+      synthesisEnvelope(static_cast<size_t>(kChunkSamples), 0.0f)
 {
     // Periodic Hann (divisor n_fft, not n_fft-1) — matches torch.hann_window.
     for (int n = 0; n < kNFft; ++n)
@@ -59,13 +61,11 @@ void BsRoformerSpectral::analyze(const float* planarChunk, float* specReal, floa
 void BsRoformerSpectral::synthesizeStem(const float* stemReal, const float* stemImag,
                                         float* planarOut)
 {
-    std::vector<float> frameTime(static_cast<size_t>(kNFft));
-
     for (int channel = 0; channel < kChannels; ++channel)
     {
         float* out = planarOut + static_cast<size_t>(channel) * kChunkSamples;
-        std::vector<float> acc(static_cast<size_t>(kChunkSamples), 0.0f);
-        std::vector<float> env(static_cast<size_t>(kChunkSamples), 0.0f);
+        std::fill(synthesisAccumulator.begin(), synthesisAccumulator.end(), 0.0f);
+        std::fill(synthesisEnvelope.begin(), synthesisEnvelope.end(), 0.0f);
 
         for (int frame = 0; frame < kFrames; ++frame)
         {
@@ -90,24 +90,22 @@ void BsRoformerSpectral::synthesizeStem(const float* stemReal, const float* stem
 
             fft.performRealOnlyInverseTransform(fftScratch.data()); // normalised by 1/N
 
-            for (int n = 0; n < kNFft; ++n)
-                frameTime[static_cast<size_t>(n)] = fftScratch[static_cast<size_t>(n)];
-
             const int base = frame * kHop - kPad;
             for (int n = 0; n < kNFft; ++n)
             {
                 const int sample = base + n;
                 if (sample < 0 || sample >= kChunkSamples) continue;
                 const float w = hann[static_cast<size_t>(n)];
-                acc[static_cast<size_t>(sample)] += frameTime[static_cast<size_t>(n)] * w;
-                env[static_cast<size_t>(sample)] += w * w;
+                synthesisAccumulator[static_cast<size_t>(sample)] +=
+                    fftScratch[static_cast<size_t>(n)] * w;
+                synthesisEnvelope[static_cast<size_t>(sample)] += w * w;
             }
         }
 
         for (int i = 0; i < kChunkSamples; ++i)
         {
-            const float e = env[static_cast<size_t>(i)];
-            out[i] = e > 1.0e-8f ? acc[static_cast<size_t>(i)] / e : 0.0f;
+            const float e = synthesisEnvelope[static_cast<size_t>(i)];
+            out[i] = e > 1.0e-8f ? synthesisAccumulator[static_cast<size_t>(i)] / e : 0.0f;
         }
     }
 }

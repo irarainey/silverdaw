@@ -17,6 +17,13 @@
 #include "StemSeparator.h"
 #include "StemShifts.h"
 #include "StemMetrics.h"
+#include "StemAudioPreparation.h"
+#include "StemGpuFallback.h"
+#include "StemProgressCoalescer.h"
+#include "StemVocalCleanup.h"
+#if defined(SILVERDAW_STEM_SEPARATION)
+#include "StemRhythmOverlap.h"
+#endif
 
 namespace silverdaw::tests
 {
@@ -56,9 +63,10 @@ class FakeSeparator : public silverdaw::StemSeparator
         silverdaw::StemSeparationResult result;
         const auto file = request.outputDir.getChildFile("vocals.wav");
         file.create();
-        onStemReady("vocals", file);
+        const silverdaw::StemResultFile stem{juce::String("vocals"), file, 44100.0, 1000.0, 2};
+        onStemReady(stem);
         sawStemReady = true;
-        result.stems.push_back({juce::String("vocals"), file});
+        result.stems.push_back(stem);
         return result;
     }
 };
@@ -120,6 +128,169 @@ void testJobPropagatesCancel()
     require(! busy.load(), "busy flag cleared after cancel");
 }
 
+void testProgressCoalescing()
+{
+    silverdaw::StemProgressCoalescer coalescer;
+    const auto start = silverdaw::StemProgressCoalescer::Clock::time_point{};
+
+    require(coalescer.shouldEmitAt("separate", 10.0, "vocals", start),
+            "first progress update is emitted");
+    require(! coalescer.shouldEmitAt("separate", 11.0, "vocals",
+                                     start + std::chrono::milliseconds(50)),
+            "same-context progress is suppressed inside 100 ms");
+    require(coalescer.shouldEmitAt("separate", 12.0, "vocals",
+                                   start + std::chrono::milliseconds(100)),
+            "latest progress is emitted after 100 ms");
+    require(coalescer.shouldEmitAt("cleanup", 12.1, "vocals",
+                                   start + std::chrono::milliseconds(101)),
+            "stage changes are emitted immediately");
+    require(coalescer.shouldEmitAt("cleanup", 12.2, "drums",
+                                   start + std::chrono::milliseconds(102)),
+            "detail changes are emitted immediately");
+    require(coalescer.shouldEmitAt("cleanup", 100.0, "drums",
+                                   start + std::chrono::milliseconds(103)),
+            "terminal progress is emitted immediately");
+}
+
+void testGpuFallbackQuarantine()
+{
+    silverdaw::StemGpuFallbackState fallback;
+    require(fallback.shouldUseGpu(true), "initial GPU request is honoured");
+    require(! fallback.shouldUseGpu(false), "CPU request remains on CPU");
+
+    fallback.quarantine();
+    require(fallback.isQuarantined(), "recoverable failure quarantines the GPU");
+    require(! fallback.shouldUseGpu(true), "later GPU requests route to CPU");
+}
+
+void testGpuFallbackRetryProgress()
+{
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 0.0), 40.0, 1e-9,
+                "CPU retry begins at the completed GPU percentage");
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 50.0), 70.0, 1e-9,
+                "CPU retry maps into the remaining progress range");
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 100.0), 100.0, 1e-9,
+                "CPU retry still ends at 100 percent");
+}
+
+void testGpuAttemptPublishesTransactionally()
+{
+    int published = 0;
+    const silverdaw::StemResultFile stem{
+        "vocals", juce::File("vocals.wav"), 44100.0, 1000.0, 2};
+
+    {
+        silverdaw::StemReadyTransaction failedAttempt(
+            [&](const silverdaw::StemResultFile&) { ++published; });
+        failedAttempt.stage(stem);
+    }
+    require(published == 0, "failed GPU attempt does not publish staged stems");
+
+    silverdaw::StemReadyTransaction successfulAttempt(
+        [&](const silverdaw::StemResultFile&) { ++published; });
+    successfulAttempt.stage(stem);
+    successfulAttempt.commit();
+    require(published == 1, "successful GPU attempt publishes each staged stem");
+}
+
+void testRecoverableGpuFaultMessages()
+{
+    require(silverdaw::isRecoverableGpuFaultMessage("DXGI_ERROR_DEVICE_HUNG 0x887A0006"),
+            "device loss is recoverable");
+    require(silverdaw::isRecoverableGpuFaultMessage("E_OUTOFMEMORY 0x8007000E"),
+            "GPU out of memory is recoverable");
+    require(! silverdaw::isRecoverableGpuFaultMessage("Invalid model input dimensions"),
+            "unrelated ONNX failures are not recoverable GPU faults");
+    require(! silverdaw::isRecoverableGpuFaultMessage("Cancelled"),
+            "cancellation does not quarantine the GPU");
+}
+
+void testStemMixtureDenormalisation()
+{
+    juce::AudioBuffer<float> normalised(2, 3);
+    normalised.setSample(0, 0, -1.0f);
+    normalised.setSample(0, 1, 0.0f);
+    normalised.setSample(0, 2, 1.0f);
+    normalised.setSample(1, 0, 0.25f);
+    normalised.setSample(1, 1, -0.5f);
+    normalised.setSample(1, 2, 0.75f);
+
+    const auto raw = silverdaw::denormaliseStemMixture(normalised, 2, 0.1f, 2.0f);
+    requireNear(raw.getSample(0, 0), -1.9, 1e-6, "left negative sample is preserved");
+    requireNear(raw.getSample(0, 1), 0.1, 1e-6, "mean is restored");
+    requireNear(raw.getSample(0, 2), 2.1, 1e-6, "left positive sample is preserved");
+    requireNear(raw.getSample(1, 0), 0.6, 1e-6, "right sample is preserved");
+    requireNear(raw.getSample(1, 1), -0.9, 1e-6, "right negative sample is preserved");
+    requireNear(raw.getSample(1, 2), 1.6, 1e-6, "right positive sample is preserved");
+}
+
+void testVocalCleanupHonoursCancellation()
+{
+    juce::AudioBuffer<float> vocal(2, 64);
+    juce::AudioBuffer<float> mixture(2, 64);
+    silverdaw::StemSeparationRequest request;
+    request.vocalEnhance.enabled = true;
+
+    bool cancelled = false;
+    try
+    {
+        silverdaw::processStemVocalCleanup(
+            vocal, mixture, 0.0f, 1.0f, request, true, {}, [] { return true; });
+    }
+    catch (const silverdaw::StemSeparationError& error)
+    {
+        cancelled = error.code == silverdaw::StemFailureCode::Cancelled;
+    }
+    require(cancelled, "vocal cleanup stops before work when the job is cancelled");
+}
+
+#if defined(SILVERDAW_STEM_SEPARATION)
+void testPendingVocalCleanupPublishesOnCaller()
+{
+    int published = 0;
+    silverdaw::PendingStemVocalCleanup cleanup(
+        [] { return false; },
+        [&](const silverdaw::StemResultFile& stem)
+        {
+            requireEqual(stem.stem, "vocals", "pending cleanup publishes the vocal result");
+            ++published;
+        });
+    cleanup.start(
+        [](const silverdaw::StemCancelFn&)
+        {
+            return silverdaw::StemResultFile{
+                "vocals", juce::File("vocals.wav"), 44100.0, 1000.0, 2};
+        });
+
+    require(published == 0, "worker completion does not publish from the worker thread");
+    cleanup.publishIfReady(true);
+    require(published == 1, "caller explicitly publishes the completed vocal");
+    require(! cleanup.hasPending(), "published cleanup no longer remains pending");
+}
+
+void testPendingVocalCleanupAbortCancelsWorker()
+{
+    silverdaw::PendingStemVocalCleanup cleanup(
+        [] { return false; }, [](const silverdaw::StemResultFile&) {});
+    const auto cancellation = cleanup.cancellation();
+    require(! cancellation(), "overlap cancellation starts clear");
+    cleanup.abort();
+    require(cancellation(), "aborting overlap is visible to worker cancellation");
+}
+#endif
+
+void testRawStemMixturePlanning()
+{
+    require(! silverdaw::shouldBuildRawStemMixture(false, false, false),
+            "backup-only separation skips the raw mixture");
+    require(! silverdaw::shouldBuildRawStemMixture(true, false, false),
+            "an installed but unused vocal pack skips the raw mixture");
+    require(silverdaw::shouldBuildRawStemMixture(true, true, false),
+            "selected RoFormer vocals require the raw mixture");
+    require(silverdaw::shouldBuildRawStemMixture(false, false, true),
+            "selected RoFormer rhythm requires the raw mixture");
+}
+
 void testDefaultSeparatorFailsFastWithoutModel()
 {
     auto separator = silverdaw::createDefaultStemSeparator();
@@ -130,7 +301,7 @@ void testDefaultSeparatorFailsFastWithoutModel()
     {
         silverdaw::StemSeparationRequest request; // empty modelDir -> no weights
         separator->separate(request, [](const char*, double, const char*) {},
-                            [](const char*, const juce::File&) {}, [] { return false; });
+                            [](const silverdaw::StemResultFile&) {}, [] { return false; });
     }
     catch (const silverdaw::StemSeparationError& e)
     {
@@ -298,6 +469,18 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem failure code strings", testFailureCodeStrings});
     tests.push_back({"stem job runs separator and clears busy", testJobRunsSeparatorAndClearsBusy});
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
+    tests.push_back({"stem progress coalesces without hiding transitions", testProgressCoalescing});
+    tests.push_back({"stem GPU fallback quarantine persists", testGpuFallbackQuarantine});
+    tests.push_back({"stem GPU fallback retry progress is monotonic", testGpuFallbackRetryProgress});
+    tests.push_back({"stem GPU attempt publishes transactionally", testGpuAttemptPublishesTransactionally});
+    tests.push_back({"stem GPU fallback classifies recoverable faults", testRecoverableGpuFaultMessages});
+    tests.push_back({"stem raw mixture denormalisation preserves samples", testStemMixtureDenormalisation});
+    tests.push_back({"stem raw mixture follows the selected execution plan", testRawStemMixturePlanning});
+    tests.push_back({"stem vocal cleanup honours cancellation", testVocalCleanupHonoursCancellation});
+#if defined(SILVERDAW_STEM_SEPARATION)
+    tests.push_back({"stem pending vocal cleanup publishes on caller", testPendingVocalCleanupPublishesOnCaller});
+    tests.push_back({"stem pending vocal cleanup aborts worker", testPendingVocalCleanupAbortCancelsWorker});
+#endif
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
     tests.push_back({"stem quality maps to vocal shifts", testShiftsForStemQuality});

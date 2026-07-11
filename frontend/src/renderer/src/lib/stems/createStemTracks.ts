@@ -18,12 +18,18 @@
 import { importAudioIntoLibrary, libraryItemToClipPlacement } from '@/lib/importAudio'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useProjectStore } from '@/stores/projectStore'
-import { useLibraryStore } from '@/stores/libraryStore'
+import { resolveLibraryItemMediaId, useLibraryStore } from '@/stores/libraryStore'
 import { STEM_NAME_SEPARATOR } from '@/stores/libraryItemHelpers'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
+import { getProjectMedia } from '@/lib/library/projectMedia'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName, StemPartialPayload, StemReadyPayload } from '@shared/bridge-protocol'
+import type {
+  StemFile,
+  StemName,
+  StemPartialPayload,
+  StemReadyPayload
+} from '@shared/bridge-protocol'
 import type { StemSeparationTarget } from '@/lib/stemSeparationState'
 
 const STEM_TRACK_LABEL: Record<StemName, string> = {
@@ -35,9 +41,12 @@ const STEM_TRACK_LABEL: Record<StemName, string> = {
 
 interface StemJob {
   target: StemSeparationTarget
-  // Stems imported (or in flight), so STEM_PARTIAL and the final STEM_READY never
-  // import the same stem twice.
+  sourceMediaId?: string
+  // Completed imports and their in-flight promises are separate so STEM_READY
+  // can await partial imports before reporting completion.
   placed: Set<StemName>
+  imports: Map<StemName, Promise<boolean>>
+  sourceMetadata?: Promise<AudioMetadata | null>
 }
 
 const jobs = new Map<string, StemJob>()
@@ -45,7 +54,13 @@ const jobs = new Map<string, StemJob>()
 /** Record where a job's stems should go before any result arrives. Called by the
  *  separation flow right after STEM_SEPARATE is dispatched. */
 export function registerStemJob(jobId: string, target: StemSeparationTarget): void {
-  jobs.set(jobId, { target, placed: new Set<StemName>() })
+  const library = useLibraryStore()
+  jobs.set(jobId, {
+    target,
+    sourceMediaId: resolveLibraryItemMediaId(library.getItem(target.sourceItemId), library.byId),
+    placed: new Set<StemName>(),
+    imports: new Map<StemName, Promise<boolean>>()
+  })
 }
 
 /** Forget a job's placement state without placing anything. Used when a job is
@@ -55,13 +70,12 @@ export function forgetStemJob(jobId: string): void {
 }
 
 /** Import a single stem into the library (and, for timeline jobs, place it on a
- *  new track). Reserves the stem synchronously (before the first await) so
- *  concurrent/duplicate events are skipped; un-reserves on failure so a later
- *  event can retry. Returns true when the stem was imported. */
-async function importStem(job: StemJob, stem: StemName, filePath: string): Promise<boolean> {
-  if (job.placed.has(stem)) return false
-  job.placed.add(stem)
-
+ *  new track). Returns true when the stem was imported. */
+async function performStemImport(
+  job: StemJob,
+  stemFile: StemFile
+): Promise<boolean> {
+  const { stem, filePath } = stemFile
   const library = useLibraryStore()
   // The caller reserved one batch slot per stem. `importAudioIntoLibrary` notes
   // its own completion, so balance the slot ourselves only when we bail out
@@ -72,10 +86,17 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     const { target } = job
     const sourceItem = library.getItem(target.sourceItemId)
 
-    const opened = await window.silverdaw.readAudioFile(filePath)
+    if (!job.sourceMetadata) {
+      job.sourceMetadata = job.sourceMediaId
+        ? getProjectMedia(job.sourceMediaId)
+        : Promise.resolve(null)
+    }
+    const [opened, sourceMetadata] = await Promise.all([
+      window.silverdaw.readAudioFile(filePath),
+      job.sourceMetadata
+    ])
     if (!opened) {
       log.error('stems', `could not read stem file ${filePath}`)
-      job.placed.delete(stem)
       return false
     }
     const label = STEM_TRACK_LABEL[stem]
@@ -96,10 +117,21 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
         // this for placement), so the stem plays from its own start.
         inMs: target.sourceInMs ?? 0,
         durationMs: 0
-      }
+      },
+      generatedAudio:
+        stemFile.sampleRate !== undefined &&
+        stemFile.durationMs !== undefined &&
+        stemFile.channelCount !== undefined
+          ? {
+              sampleRate: stemFile.sampleRate,
+              durationMs: stemFile.durationMs,
+              channelCount: stemFile.channelCount
+            }
+          : undefined,
+      inheritedMetadata: sourceMetadata,
+      inheritedMediaId: job.sourceMediaId
     })
     if (!itemId) {
-      job.placed.delete(stem)
       return false
     }
     // Stems are sample-aligned with the source, so reuse its analysis instead of
@@ -110,7 +142,6 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     inheritSourceAnalysis(library, itemId, sourceItem, (target.sourceInMs ?? 0) / 1000)
     const audio = library.getItem(itemId)
     if (!audio) {
-      job.placed.delete(stem)
       return false
     }
 
@@ -129,20 +160,39 @@ async function importStem(job: StemJob, stem: StemName, filePath: string): Promi
     return true
   } catch (err) {
     log.error('stems', `failed to import stem ${stem}: ${err instanceof Error ? err.message : String(err)}`)
-    job.placed.delete(stem)
     return false
   } finally {
     if (!delegatedImport) library.noteImportFinished()
   }
 }
 
+function startStemImport(job: StemJob, stemFile: StemFile): Promise<boolean> {
+  if (job.placed.has(stemFile.stem)) return Promise.resolve(false)
+  const existing = job.imports.get(stemFile.stem)
+  if (existing) return existing
+
+  const tracked = performStemImport(job, stemFile).then((imported) => {
+    job.imports.delete(stemFile.stem)
+    if (imported) job.placed.add(stemFile.stem)
+    return imported
+  })
+  job.imports.set(stemFile.stem, tracked)
+  return tracked
+}
+
 /** Incremental: import one stem as soon as the backend reports it written, so the
  *  user sees results appear while the remaining stems are still separating. */
 export async function createTrackFromStem(payload: StemPartialPayload): Promise<void> {
   const job = jobs.get(payload.jobId)
-  if (!job || job.placed.has(payload.stem)) return
+  if (!job || job.placed.has(payload.stem) || job.imports.has(payload.stem)) return
+  const started = performance.now()
   useLibraryStore().beginImportBatch(1)
-  await importStem(job, payload.stem, payload.filePath)
+  const imported = await startStemImport(job, payload)
+  log.info(
+    'stem-perf',
+    `import job=${payload.jobId} stem=${payload.stem} imported=${imported} ` +
+      `durationMs=${(performance.now() - started).toFixed(1)}`
+  )
 }
 
 /** Final pass on STEM_READY: import any stem not already added incrementally, then
@@ -150,19 +200,42 @@ export async function createTrackFromStem(payload: StemPartialPayload): Promise<
 export async function createTracksFromStems(payload: StemReadyPayload): Promise<void> {
   const job = jobs.get(payload.jobId)
   if (!job) return
+  const started = performance.now()
   const library = useLibraryStore()
   const notifications = useNotificationsStore()
 
-  const missing = payload.stems.filter((s) => !job.placed.has(s.stem))
-  if (missing.length > 0) library.beginImportBatch(missing.length)
-  for (const { stem, filePath } of missing) {
-    await importStem(job, stem, filePath)
+  const unresolved = payload.stems.filter(({ stem }) => !job.placed.has(stem))
+  const inFlightAtReady = unresolved.filter(({ stem }) => job.imports.has(stem))
+  const missing = unresolved.filter(({ stem }) => !job.imports.has(stem))
+  await Promise.all(
+    inFlightAtReady.map((stemFile) => startStemImport(job, stemFile))
+  )
+
+  // A failed partial import is eligible for the final ready payload's one retry.
+  const retries = inFlightAtReady.filter(({ stem }) => !job.placed.has(stem))
+  if (retries.length > 0) {
+    library.beginImportBatch(retries.length)
+    for (const stemFile of retries) {
+      await startStemImport(job, stemFile)
+    }
+  }
+  if (missing.length > 0) {
+    library.beginImportBatch(missing.length)
+    for (const stemFile of missing) {
+      await startStemImport(job, stemFile)
+    }
   }
 
   const created = job.placed.size
   const onTimeline = job.target.clipId !== undefined
   const sourceName = job.target.sourceName
   jobs.delete(payload.jobId)
+  log.info(
+    'stem-perf',
+    `ready-imports job=${payload.jobId} missing=${missing.length} awaited=${inFlightAtReady.length} ` +
+      `created=${created} ` +
+      `durationMs=${(performance.now() - started).toFixed(1)}`
+  )
   if (created > 0) {
     notifications.pushInfo(
       onTimeline

@@ -29,6 +29,7 @@ const transport = useTransportStore()
 
 const MAX_STARTUP_RECENTS = 3
 const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
+const projectOpenPending = computed(() => app.openingRecentProjectPath !== null)
 
 // Initial-connect timeout swaps the screen to focused error mode.
 const bridgeFailed = computed(() => transport.bridgeFailureMessage !== null)
@@ -158,7 +159,7 @@ onBeforeUnmount(() => {
       role="dialog"
       aria-modal="false"
       aria-labelledby="startup-title"
-      :aria-busy="!ready && !bridgeFailed"
+      :aria-busy="(!ready && !bridgeFailed) || projectOpenPending"
     >
       <!-- Window controls matching the main title bar. The overlay covers the
            real title bar, so it carries its own minimise / maximise / close
@@ -264,6 +265,7 @@ onBeforeUnmount(() => {
             ref="newButtonEl"
             type="button"
             class="rounded bg-sky-600 px-4 py-2 text-sm font-medium text-zinc-50 hover:bg-sky-500 focus:ring-2 focus:ring-sky-400 focus:outline-none"
+            :disabled="projectOpenPending"
             @click="newProject"
           >
             New Project
@@ -271,6 +273,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="rounded bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:ring-2 focus:ring-zinc-500 focus:outline-none"
+            :disabled="projectOpenPending"
             @click="openProject"
           >
             Open Project…
@@ -296,17 +299,28 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 data-borderless-button="true"
-                class="flex min-w-0 flex-1 flex-col justify-center bg-transparent px-3 py-2 pr-9 text-left"
+                class="flex min-w-0 flex-1 flex-col justify-center bg-transparent px-3 py-2 pr-10 text-left disabled:cursor-wait disabled:opacity-60"
                 :title="recent.path"
+                :disabled="projectOpenPending"
+                :aria-busy="app.openingRecentProjectPath === recent.path"
                 @click="openRecent(recent.path)"
               >
                 <span class="truncate text-zinc-100">{{ recent.name || projectName(recent.path) }}</span>
-                <span class="truncate text-[11px] text-zinc-500">{{ recent.path }}</span>
+                <span class="truncate text-[11px] text-zinc-500">
+                  {{ app.openingRecentProjectPath === recent.path ? 'Opening…' : recent.path }}
+                </span>
               </button>
+              <div
+                v-if="app.openingRecentProjectPath === recent.path"
+                class="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-zinc-700 border-t-zinc-100"
+                aria-hidden="true"
+              />
               <button
+                v-else
                 type="button"
                 data-borderless-button="true"
                 class="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-zinc-500 opacity-0 hover:bg-zinc-700 hover:text-red-400 focus:opacity-100 focus:outline-none focus-visible:opacity-100 group-hover:opacity-100"
+                :disabled="projectOpenPending"
                 :aria-label="`Remove ${recent.name || projectName(recent.path)} from recent projects`"
                 title="Remove from recent projects"
                 @click="removeRecent(recent.path)"

@@ -1,7 +1,6 @@
 // Regression coverage for the stem-preference IPC handler. A prior guard only
 // compared useGpu/quality before persisting, so toggling a cleanup flag on its
-// own (the renderer saves cleanup toggles in their own setStemPrefs call) was
-// silently dropped — stems were always separated with enhancement OFF.
+// own was silently dropped — stems were always separated with enhancement OFF.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 

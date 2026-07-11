@@ -247,7 +247,7 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
   // ─── Stem-separation preferences (GPU intent) ───────────────────────────
   ipcMain.handle(IPC.prefs.getStems, () => ({ ...prefs.get().stems }))
 
-  ipcMain.on(IPC.prefs.setStems, (_evt, partial: unknown) => {
+  ipcMain.handle(IPC.prefs.setStems, (_evt, partial: unknown) => {
     const store = prefs.get()
     const next = sanitiseStemPrefs(partial, store.stems)
     const cur = store.stems
