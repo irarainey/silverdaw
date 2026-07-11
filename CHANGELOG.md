@@ -6,6 +6,14 @@
 
 - Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, and controller feedback.
 
+### Changed
+
+- Splitting, duplicating, and pasting clips now reuse loaded waveform data for faster editing.
+- Startup now defers timeline graphics until they are needed.
+- Startup now connects to the audio engine sooner when it becomes available.
+- Fast launches no longer pause on startup steps that have already completed.
+- Recovery checks now run alongside audio-engine startup for a faster project picker.
+
 ## 1.1.0
 
 ### Added

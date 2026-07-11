@@ -32,6 +32,7 @@ import {
   isTrackAddedPayload,
   isTrackGainAppliedPayload,
   isTrackRemovedPayload,
+  isWaveformFailedPayload,
   isWaveformReadyPayload,
   type BridgeInboundType
 } from '@shared/bridge-protocol'
@@ -55,6 +56,7 @@ const INBOUND_TYPES = {
   PROJECT_RENAMED: true,
   PROJECT_DIRTY: true,
   WAVEFORM_READY: true,
+  WAVEFORM_FAILED: true,
   CLIP_EDITOR_PEAKS_READY: true,
   SAMPLE_SAVED: true,
   LIBRARY_ITEM_ANALYSIS: true,
@@ -682,6 +684,14 @@ describe('isWaveformReadyPayload', () => {
         sampleRate: 44100
       })
     ).toBe(false)
+  })
+})
+
+describe('isWaveformFailedPayload', () => {
+  it('accepts only a clip id and error string', () => {
+    expect(isWaveformFailedPayload({ clipId: 'c1', error: 'decode failed' })).toBe(true)
+    expect(isWaveformFailedPayload({ clipId: 'c1' })).toBe(false)
+    expect(isWaveformFailedPayload({ clipId: 1, error: 'decode failed' })).toBe(false)
   })
 })
 

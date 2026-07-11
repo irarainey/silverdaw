@@ -62,6 +62,7 @@ import {
   isProjectReverbAppliedPayload,
   isProjectDelayAppliedPayload,
   isTrackRemovedPayload,
+  isWaveformFailedPayload,
   isWaveformReadyPayload,
   isEngineAudioStatusPayload,
   type BridgeInboundMessage,
@@ -129,6 +130,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectDirtyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'WAVEFORM_READY':
       return isWaveformReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'WAVEFORM_FAILED':
+      return isWaveformFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_EDITOR_PEAKS_READY':
       return isClipEditorPeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'SAMPLE_SAVED':

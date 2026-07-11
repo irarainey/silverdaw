@@ -19,7 +19,11 @@ import {
   applyProjectStructureReset,
   applyProjectTransport
 } from './projectSnapshotMeta'
-import { applyProjectLibrary } from './projectSnapshotLibrary'
+import {
+  applyProjectLibrary,
+  refreshProjectLibraryMedia
+} from './projectSnapshotLibrary'
+import { filePathKey } from './projectHelpers'
 import { applyProjectTracks, finalizeProjectSnapshot } from './projectSnapshotTracks'
 
 export type { SnapshotTarget } from './projectSnapshotTypes'
@@ -42,8 +46,13 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
   applyProjectStructureReset(target, snapshot, isSoftReplace)
 
   // Hydrate library first so clip rebuild can resolve library items.
-  applyProjectLibrary(target, snapshot)
+  const mediaRefreshes = applyProjectLibrary(target, snapshot)
   const clipsNeedingPeaks = applyProjectTracks(target, snapshot)
+  const backendPeakFilePaths = new Set<string>()
+  for (const clipId of clipsNeedingPeaks) {
+    const filePath = target.clips[clipId]?.filePath
+    if (filePath) backendPeakFilePaths.add(filePathKey(filePath))
+  }
   // Drop any selected ids the snapshot no longer contains (e.g. an undo/redo removed clips) so a
   // stale id can't corrupt a later multi-clip operation. Selection survives soft-replays.
   if (target.selectedClipIds.size > 0 || target.selectedClipId !== null) {
@@ -57,4 +66,5 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
     }
   }
   finalizeProjectSnapshot(target, snapshot, clipsNeedingPeaks, pendingProjectLengthMs)
+  refreshProjectLibraryMedia(mediaRefreshes, backendPeakFilePaths)
 }

@@ -392,7 +392,7 @@ describe('libraryStore', () => {
       variableTempo: true,
       decodedCacheFilePath: 'C:\\cache\\analysis.wav'
     })
-    expect(project.peaksRevision).toBe(1)
+    expect(project.timelineRevision).toBe(1)
     expect(library.imports[0]?.stage).toBe('detectingBeats')
 
     vi.advanceTimersByTime(600)
@@ -1157,14 +1157,14 @@ describe('libraryStore', () => {
       },
       0
     )!
-    const revisionBefore = project.peaksRevision
+    const revisionBefore = project.timelineRevision
     sendMock.mockClear()
 
     const renamed = library.renameItem(savedId, 'New loop')
 
     expect(renamed).toBe(true)
     expect(project.clips[clipId]?.name).toBe('New loop')
-    expect(project.peaksRevision).toBe(revisionBefore + 1)
+    expect(project.timelineRevision).toBe(revisionBefore + 1)
     expect(sendMock).toHaveBeenCalledWith('CLIP_RENAME', { clipId, name: 'New loop' })
   })
 

@@ -26,11 +26,8 @@ function installGlobalErrorLogging(): void {
 
 // Bootstrap order matters here: the appStore caches the startup developer
 // prefs and the renderer logger gates on them. Both need to be settled
-// BEFORE `App.vue` mounts so `AppTitleBar` builds the correct menu list
-// from the very first render (otherwise the Debug menu would flicker on
-// DevTools-enabled sessions and the early `log.info('app', 'mounted')`
-// calls would slip through as no-ops on disabled sessions but still
-// hit the IPC layer on enabled ones).
+// BEFORE `App.vue` mounts so shortcut registration and the renderer logger use
+// the startup snapshot from the first render.
 async function bootstrap(): Promise<void> {
   // Wire the static splash's window controls (declared in `index.html`) to the same
   // paths as the title-bar buttons, so a user can minimise, maximise, or quit during

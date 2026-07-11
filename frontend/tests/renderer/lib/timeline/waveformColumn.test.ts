@@ -166,26 +166,38 @@ describe('sampleInterpolatedPeak', () => {
     expect(actual.min).toBeCloseTo(min, 5)
     expect(actual.max).toBeCloseTo(max, 5)
   }
+  const sample = (pairs: number, fidx: number): { min: number; max: number } =>
+    sampleInterpolatedPeak(peaks, pairs, fidx, { min: 0, max: 0 })
 
   it('returns the exact peak at an integer bucket index', () => {
-    expectClose(sampleInterpolatedPeak(peaks, 2, 0), -0.2, 0.4)
-    expectClose(sampleInterpolatedPeak(peaks, 2, 1), -0.6, 0.8)
+    expectClose(sample(2, 0), -0.2, 0.4)
+    expectClose(sample(2, 1), -0.6, 0.8)
   })
 
   it('linearly interpolates the min and max between adjacent buckets', () => {
-    expectClose(sampleInterpolatedPeak(peaks, 2, 0.5), -0.4, 0.6)
-    expectClose(sampleInterpolatedPeak(peaks, 2, 0.25), -0.3, 0.5)
+    expectClose(sample(2, 0.5), -0.4, 0.6)
+    expectClose(sample(2, 0.25), -0.3, 0.5)
   })
 
   it('clamps a fractional index below zero to the first bucket', () => {
-    expectClose(sampleInterpolatedPeak(peaks, 2, -3), -0.2, 0.4)
+    expectClose(sample(2, -3), -0.2, 0.4)
   })
 
   it('clamps a fractional index past the end to the last bucket', () => {
-    expectClose(sampleInterpolatedPeak(peaks, 2, 5), -0.6, 0.8)
+    expectClose(sample(2, 5), -0.6, 0.8)
   })
 
   it('returns a flat zero column when there are no peaks', () => {
-    expect(sampleInterpolatedPeak(new Float32Array(), 0, 0)).toEqual({ min: 0, max: 0 })
+    expect(sampleInterpolatedPeak(new Float32Array(), 0, 0, { min: 1, max: 1 }))
+      .toEqual({ min: 0, max: 0 })
+  })
+
+  it('reuses a caller-owned output object in the pixel-column hot path', () => {
+    const output = { min: 1, max: 1 }
+
+    expect(sampleInterpolatedPeak(peaks, 2, 0.5, output)).toBe(output)
+    expectClose(output, -0.4, 0.6)
+    sampleInterpolatedPeak(new Float32Array(), 0, 0, output)
+    expect(output).toEqual({ min: 0, max: 0 })
   })
 })

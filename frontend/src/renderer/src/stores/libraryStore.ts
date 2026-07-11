@@ -46,7 +46,7 @@ function touchTimelineClipsForLibraryItem(itemId: string): number {
   for (const clip of Object.values(project.clips)) {
     if (clip?.libraryItemId === itemId) count++
   }
-  if (count > 0) project.peaksRevision++
+  if (count > 0) project.timelineRevision++
   return count
 }
 
@@ -255,7 +255,7 @@ export const useLibraryStore = defineStore('library', {
         normalised === 'auto' ? undefined : normalised
       if (item.audioType === nextStored) return
       item.audioType = nextStored
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
       sendBridge('LIBRARY_ITEM_SET_AUDIO_TYPE', {
         itemId,
         audioType: normalised
@@ -333,7 +333,7 @@ export const useLibraryStore = defineStore('library', {
       item.beats = [beatAnchorSec]
       item.variableTempo = undefined
       item.lowConfidence = undefined
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
       return true
     },
 
@@ -364,7 +364,7 @@ export const useLibraryStore = defineStore('library', {
       item.beatAnchorSec = snap.beatAnchorSec
       item.variableTempo = snap.variableTempo
       item.lowConfidence = snap.lowConfidence
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
     },
 
     /**
@@ -379,7 +379,7 @@ export const useLibraryStore = defineStore('library', {
       if (!Number.isFinite(beatAnchorSec)) return
       item.beatAnchorSec = beatAnchorSec
       item.beats = [beatAnchorSec]
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
     },
 
     /** Blank names clear the override; `LIBRARY_ADD` persists the upsert. */
@@ -467,7 +467,7 @@ export const useLibraryStore = defineStore('library', {
       item.beats = undefined
       item.variableTempo = undefined
       item.lowConfidence = undefined
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
     },
 
     /** Removes unused items; source/sample files cascade-delete unused saved clips. */

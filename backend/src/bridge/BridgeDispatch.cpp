@@ -13,6 +13,7 @@
 #include "MidiDeviceCommands.h"
 #include "MixdownCommands.h"
 #include "PayloadHelpers.h"
+#include "PeakJobCoordinator.h"
 #include "PeaksCache.h"
 #include "PreviewCommands.h"
 #include "ProjectCommands.h"
@@ -68,6 +69,7 @@ struct DispatchContext
     juce::ThreadPool& peakPool;
     const silverdaw::PeaksCache& cache;
     const silverdaw::DecodedCache& decodedCache;
+    silverdaw::PeakJobCoordinator& peakJobs;
     silverdaw::ProjectSession& session;
 };
 } // namespace
@@ -102,7 +104,7 @@ bool dispatchClip(const DispatchContext& ctx)
     {
         silverdaw::log::info("bridge", "recv CLIP_ADD trackId=" + payload.getProperty("trackId", "").toString() +
                                            " clipId=" + payload.getProperty("clipId", "").toString());
-        silverdaw::handleClipAdd(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
+        silverdaw::handleClipAdd(payload, engine, projectState, bridge, peakPool, cache, decodedCache, ctx.peakJobs);
     }
     else if (type == "CLIP_MOVE")
     {
@@ -482,11 +484,13 @@ bool dispatchWaveform(const DispatchContext& ctx)
     auto& peakPool = ctx.peakPool;
     const auto& cache = ctx.cache;
     const auto& decodedCache = ctx.decodedCache;
+    auto& peakJobs = ctx.peakJobs;
 
     if (type == "WAVEFORM_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv WAVEFORM_REQUEST clipId=" + payload.getProperty("clipId", "").toString());
-        silverdaw::handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
+        silverdaw::handleWaveformRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache,
+                                         peakJobs);
     }
     else if (type == "CLIP_EDITOR_PEAKS_REQUEST")
     {
@@ -494,7 +498,8 @@ bool dispatchWaveform(const DispatchContext& ctx)
                               "recv CLIP_EDITOR_PEAKS_REQUEST libId=" +
                                   payload.getProperty("libraryItemId", "").toString() +
                                   " ppS=" + payload.getProperty("peaksPerSecond", "").toString());
-        silverdaw::handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache);
+        silverdaw::handleClipEditorPeaksRequest(payload, engine, projectState, bridge, peakPool, cache, decodedCache,
+                                                peakJobs);
     }
     else
     {
@@ -836,7 +841,8 @@ bool dispatchTransition(const DispatchContext& ctx)
 void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, silverdaw::AudioEngine& engine,
                            silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                            juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                           const silverdaw::DecodedCache& decodedCache, silverdaw::ProjectSession& session)
+                           const silverdaw::DecodedCache& decodedCache, silverdaw::PeakJobCoordinator& peakJobs,
+                           silverdaw::ProjectSession& session)
 {
     // Answer on the message thread so PING proves command-thread responsiveness.
     if (type == "PING")
@@ -852,8 +858,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
 
     // Route to the first domain that owns the type. Type strings are unique, so
     // the chaining order only affects readability, not behaviour.
-    const DispatchContext ctx{type,  payload, engine,       projectState, bridge,
-                              peakPool, cache,   decodedCache, session};
+    const DispatchContext ctx{type, payload, engine, projectState, bridge, peakPool,
+                              cache, decodedCache, peakJobs, session};
     const bool handled = dispatchClip(ctx) || dispatchLibrary(ctx) || dispatchTransport(ctx) ||
                          dispatchPreview(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
                          dispatchWaveform(ctx) || dispatchProject(ctx) || dispatchMarker(ctx) ||

@@ -74,7 +74,7 @@ export const useProjectStore = defineStore('project', {
     tracks: [],
     clips: {},
     markers: [],
-    peaksRevision: 0,
+    timelineRevision: 0,
     currentFilePath: null,
     projectName: DEFAULT_PROJECT_NAME,
     isDirty: false,
@@ -162,7 +162,7 @@ export const useProjectStore = defineStore('project', {
       if (this.selectedClipId === clipId && this.selectedClipIds.size === (clipId ? 1 : 0)) return
       this.selectedClipId = clipId
       this.selectedClipIds = clipId ? new Set([clipId]) : new Set()
-      this.peaksRevision++
+      this.timelineRevision++
     },
 
     /** Ctrl-click: toggle a clip in/out of the multi-selection, keeping a sensible anchor. */
@@ -179,7 +179,7 @@ export const useProjectStore = defineStore('project', {
         this.selectedClipId = clipId
       }
       this.selectedClipIds = next
-      this.peaksRevision++
+      this.timelineRevision++
     },
 
     /** Shift-click: select every clip on the anchor's track between the anchor and `clipId`
@@ -214,7 +214,7 @@ export const useProjectStore = defineStore('project', {
       this.selectedClipIds = next
       // Keep the original anchor so a second Shift-click pivots on the same clip.
       this.selectedClipId = anchorId
-      this.peaksRevision++
+      this.timelineRevision++
     },
 
     /** Clear the whole clip selection. */
@@ -222,7 +222,7 @@ export const useProjectStore = defineStore('project', {
       if (this.selectedClipId === null && this.selectedClipIds.size === 0) return
       this.selectedClipId = null
       this.selectedClipIds = new Set()
-      this.peaksRevision++
+      this.timelineRevision++
     },
 
     /** Drop any selected ids that no longer exist (e.g. after an undo/redo removed clips) so a
@@ -240,7 +240,7 @@ export const useProjectStore = defineStore('project', {
       }
       if (changed) {
         this.selectedClipIds = next
-        this.peaksRevision++
+        this.timelineRevision++
       }
     },
 
@@ -286,7 +286,7 @@ export const useProjectStore = defineStore('project', {
       if (newIds.length > 0) {
         this.selectedClipIds = new Set(newIds)
         this.selectedClipId = newIds[0] ?? null
-        this.peaksRevision++
+        this.timelineRevision++
       }
     },
 
@@ -294,7 +294,7 @@ export const useProjectStore = defineStore('project', {
     selectTrack(trackId: string | null): void {
       if (this.selectedTrackId === trackId) return
       this.selectedTrackId = trackId
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('PROJECT_SET_VIEW', { selectedTrackId: trackId })
     },
 

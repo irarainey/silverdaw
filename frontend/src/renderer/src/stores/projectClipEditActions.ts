@@ -16,6 +16,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
+import { waveformReusePayload } from './project-waveform-state'
 
 export const clipEditActions = {
     /** Split a clip at timeline time while preserving source-time trim math. */
@@ -100,6 +101,7 @@ export const clipEditActions = {
         } else {
           track.clipIds.push(newId)
         }
+        this.timelineRevision++
 
         sendBridge('CLIP_ADD', {
           trackId: clip.trackId,
@@ -108,7 +110,8 @@ export const clipEditActions = {
           positionMs: newClipStartMs,
           inMs: newClipInMs,
           durationMs: newClipDurationMs,
-          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
+          ...waveformReusePayload(clip, library)
         })
         this.pushTrackGain(track)
         if (clip.name) {
@@ -238,6 +241,7 @@ export const clipEditActions = {
         track.clipIds.push(newId)
       }
       this.duplicateTailBySource[clipId] = newId
+      this.timelineRevision++
       const clipEnd = copy.startMs + clipEffDur
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
 
@@ -251,7 +255,8 @@ export const clipEditActions = {
           positionMs: newStartMs,
           inMs: clip.inMs,
           durationMs: clip.durationMs,
-          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {})
+          ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
+          ...waveformReusePayload(clip, useLibraryStore())
         })
         this.pushTrackGain(track)
         if (clip.name) {
@@ -300,7 +305,7 @@ export const clipEditActions = {
         if (tailId === clipId) delete this.duplicateTailBySource[sourceId]
       }
       if (this.selectedClipId === clipId) this.selectedClipId = null
-      this.peaksRevision++
+      this.timelineRevision++
       sendBridge('CLIP_REMOVE', { clipId })
       log.info('project', `removeClip id=${clipId}`)
     }

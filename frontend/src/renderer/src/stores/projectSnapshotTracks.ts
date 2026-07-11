@@ -202,8 +202,9 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
       }
       target.clips[c.id] = placeholder
       track.clipIds.push(c.id)
-      // Missing sources cannot produce peaks.
-      if (!placeholder.unresolved) clipsNeedingPeaks.push(c.id)
+      if (!placeholder.unresolved && placeholder.peaks.length === 0) {
+        clipsNeedingPeaks.push(c.id)
+      }
       const clipEnd = placeholder.startMs + placeholder.durationMs
       if (clipEnd > track.lengthMs) track.lengthMs = clipEnd
       if (track.clipIds.length === 1 && /^Track \d+$/.test(track.name)) {
@@ -262,7 +263,7 @@ export function finalizeProjectSnapshot(
         : null
     target.fxPanelOpen = snapshot.viewFxPanelOpen === true
     target.fxTab = 'track'
-    target.peaksRevision++
+    target.timelineRevision++
   }
 
   // Migration (project LOAD only): rebind pre-existing library-clip windows to their saved

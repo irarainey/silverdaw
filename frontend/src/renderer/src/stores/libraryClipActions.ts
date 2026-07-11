@@ -304,7 +304,7 @@ export const libraryClipActions = {
         }
       })
       // Duration changes need a timeline geometry repaint.
-      if (linkedClips.length > 0) project.peaksRevision++
+      if (linkedClips.length > 0) project.timelineRevision++
       log.info(
         'library',
         `updateLibraryClipTrim id=${itemId} in=${trimIn} dur=${trimDur} propagatedTo=${linkedClips.length}`
@@ -450,7 +450,7 @@ export const libraryClipActions = {
           })
         }
       })
-      if (linkedClips.length > 0) project.peaksRevision++
+      if (linkedClips.length > 0) project.timelineRevision++
       log.info('library', `updateLibraryClipEdit id=${itemId} propagatedTo=${linkedClips.length}`)
       return { ok: true }
     },
@@ -600,7 +600,7 @@ export const libraryClipActions = {
           propagated++
         }
       })
-      if (propagated > 0) project.peaksRevision++
+      if (propagated > 0) project.timelineRevision++
       log.info('library', `updateLibraryClipWarp id=${itemId} propagatedTo=${propagated}`)
       return true
     },

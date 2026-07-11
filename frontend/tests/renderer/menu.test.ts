@@ -45,6 +45,13 @@ describe('View menu — zoom controls', () => {
   })
 })
 
+describe('Debug menu', () => {
+  it('is never shown', () => {
+    expect(buildMenus({ devToolsEnabled: false }).some((menu) => menu.label === 'Debug')).toBe(false)
+    expect(buildMenus({ devToolsEnabled: true }).some((menu) => menu.label === 'Debug')).toBe(false)
+  })
+})
+
 describe('File menu — Recent Projects submenu', () => {
   function recentSubmenu(recentProjects: RecentProject[]): MenuItemDef[] {
     const menus = buildMenus({ devToolsEnabled: false, recentProjects })

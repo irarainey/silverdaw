@@ -6,27 +6,18 @@ import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
-import ImportProgressDialog from '@/components/ImportProgressDialog.vue'
-import AboutDialog from '@/components/AboutDialog.vue'
-import PreferencesDialog from '@/components/PreferencesDialog.vue'
-import MidiMonitorDialog from '@/components/MidiMonitorDialog.vue'
-import ProjectPropertiesDialog from '@/components/ProjectPropertiesDialog.vue'
-import ExportMixdownDialog from '@/components/ExportMixdownDialog.vue'
-import MixdownProgressDialog from '@/components/MixdownProgressDialog.vue'
-import StemSeparationProgressDialog from '@/components/StemSeparationProgressDialog.vue'
-import StemModelDownloadDialog from '@/components/StemModelDownloadDialog.vue'
-import StemSelectionDialog from '@/components/StemSelectionDialog.vue'
-import ChannelSplitDialog from '@/components/ChannelSplitDialog.vue'
-import { loadStemQualityPreference } from '@/lib/stems/stemSeparationFlow'
+import {
+  loadStemQualityPreference,
+  useStemModelFlow,
+  useStemSelection
+} from '@/lib/stems/stemSeparationFlow'
+import { useStemSeparationState } from '@/lib/stemSeparationState'
+import { useChannelSplitSelection } from '@/lib/stems/channelSplitFlow'
 import { useMixdownState } from '@/lib/mixdownState'
-import AudioDeviceUnavailableDialog from '@/components/AudioDeviceUnavailableDialog.vue'
-import SampleRateMismatchDialog from '@/components/SampleRateMismatchDialog.vue'
 import {
   useSampleRateMismatchPromptState,
   resolveSampleRateMismatchPrompt
 } from '@/lib/sampleRatePrompt'
-import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
-import RelinkDialog from '@/components/RelinkDialog.vue'
 import RecoveryDialog, { type RecoverableEntry } from '@/components/RecoveryDialog.vue'
 import StartupScreen from '@/components/StartupScreen.vue'
 import EngineRecoveryOverlay from '@/components/EngineRecoveryOverlay.vue'
@@ -51,6 +42,23 @@ import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useMidiControllerActions } from '@/lib/midi/useMidiControllerActions'
+import {
+  AboutDialog,
+  AudioDeviceUnavailableDialog,
+  ChannelSplitDialog,
+  ExportMixdownDialog,
+  ImportProgressDialog,
+  MidiMonitorDialog,
+  MixdownProgressDialog,
+  PreferencesDialog,
+  ProjectPropertiesDialog,
+  RelinkDialog,
+  SampleRateMismatchDialog,
+  StemModelDownloadDialog,
+  StemSelectionDialog,
+  StemSeparationProgressDialog,
+  UnsavedChangesDialog
+} from '@/lib/app/lazyDialogs'
 
 const project = useProjectStore()
 const transport = useTransportStore()
@@ -69,11 +77,20 @@ const diagnosticsBusy = ref(false)
 const midiMonitorOpen = ref(false)
 const sampleRatePromptState = useSampleRateMismatchPromptState()
 const mixdownState = useMixdownState()
+const stemSelection = useStemSelection()
+const stemModelFlow = useStemModelFlow()
+const stemSeparationState = useStemSeparationState()
+const channelSplitSelection = useChannelSplitSelection()
 // Recovery blocks startup until each autosave entry is resolved.
 const recoveryEntries = ref<RecoverableEntry[]>([])
 const recoveryDialogOpen = ref(false)
 // Cold-launch path parked while recovery runs.
 let pendingOpenAfterRecovery: string | null = null
+type StartupRecoveryData = {
+  pendingOpenPath: string | null
+  recoverableEntries: RecoverableEntry[]
+}
+let startupRecoveryPrefetch: Promise<StartupRecoveryData> | null = null
 // A project open requested before `bridgeReady` (e.g. a fast click on the startup
 // picker): the latest requested path, plus the single watcher that fires it once the
 // bridge is ready. Coalesced so rapid clicks resolve to one load of the last choice.
@@ -119,6 +136,8 @@ onMounted(() => {
   unsubscribeBackendStatus = window.silverdaw.onBackendStatus(handleBackendStatus)
   unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
+  // These main-process reads do not depend on the backend, so overlap them with its startup.
+  prefetchStartupRecovery()
   connectBridge()
   startBridgeConnectionTimer()
   // Hydrate persisted panel sizes after first paint.
@@ -227,26 +246,40 @@ const stopBridgeTimerWatcher = watch(
       bridgeTimer = null
     }
     if (!ready) return
-    // ── Startup coordinator ────────────────────────────────────────────
-    // Recovery data is main-process IPC (no backend needed), so it resolves on the
-    // handshake — the picker no longer waits for the audio device to finish opening.
-    void window.silverdaw.consumePendingOpenPath().then((filePath) => {
-      if (filePath) pendingOpenAfterRecovery = filePath
-      runStartupRecoveryFlow()
-    })
+    void runStartupRecoveryFlow()
   }
 )
 
-/** Drive the recovery-then-launch flow once the bridge is ready. */
-function runStartupRecoveryFlow(): void {
-  void window.silverdaw.listRecoverableAutosaves().then((entries) => {
-    if (entries.length > 0) {
-      recoveryEntries.value = entries
+/** Start backend-independent recovery reads once and share their result. */
+function prefetchStartupRecovery(): Promise<StartupRecoveryData> {
+  if (startupRecoveryPrefetch) return startupRecoveryPrefetch
+  startupRecoveryPrefetch = Promise.all([
+    window.silverdaw.consumePendingOpenPath(),
+    window.silverdaw.listRecoverableAutosaves()
+  ]).then(([pendingOpenPath, recoverableEntries]) => ({
+    pendingOpenPath,
+    recoverableEntries
+  }))
+  return startupRecoveryPrefetch
+}
+
+/** Drive the prefetched recovery-then-launch flow once the bridge is ready. */
+async function runStartupRecoveryFlow(): Promise<void> {
+  try {
+    const { pendingOpenPath, recoverableEntries } = await prefetchStartupRecovery()
+    if (pendingOpenPath) pendingOpenAfterRecovery = pendingOpenPath
+    if (recoverableEntries.length > 0) {
+      recoveryEntries.value = recoverableEntries
       recoveryDialogOpen.value = true
       return
     }
     finishStartupFlow()
-  })
+  } catch (err) {
+    log.error('app', `startup recovery scan failed: ${String(err)}`)
+    transport.setBridgeFailure(
+      'Silverdaw could not check for recovered projects. Please relaunch Silverdaw.'
+    )
+  }
 }
 
 /** Finish recovery, consume any parked cold-launch path, then release startup. */
@@ -401,7 +434,6 @@ const { handleMenuAction } = useAppMenuActions({
   preferencesOpen,
   projectPropertiesOpen,
   exportMixdownOpen,
-  midiMonitorOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isShortcutModalOpen,
@@ -416,7 +448,7 @@ const { handleMenuAction } = useAppMenuActions({
     <TransportBar />
 
     <main class="flex-1 overflow-hidden">
-      <TimelineView />
+      <TimelineView v-if="!startupScreenVisible" />
     </main>
 
     <LibraryPanel
@@ -428,9 +460,10 @@ const { handleMenuAction } = useAppMenuActions({
 
     <NotificationToasts />
 
-    <ImportProgressDialog />
+    <ImportProgressDialog v-if="library.imports.length > 0" />
 
     <AboutDialog
+      v-if="aboutOpen"
       :open="aboutOpen"
       @close="aboutOpen = false"
     />
@@ -455,11 +488,13 @@ const { handleMenuAction } = useAppMenuActions({
     </div>
 
     <PreferencesDialog
+      v-if="preferencesOpen"
       :open="preferencesOpen"
       @close="preferencesOpen = false"
       @midi-monitor="midiMonitorOpen = true"
     />
     <MidiMonitorDialog
+      v-if="midiMonitorOpen"
       :open="midiMonitorOpen"
       :inputs="midiDevices.inputs"
       :messages="midiDevices.monitorMessages"
@@ -468,26 +503,29 @@ const { handleMenuAction } = useAppMenuActions({
     />
 
     <ProjectPropertiesDialog
+      v-if="projectPropertiesOpen"
       :open="projectPropertiesOpen"
       @close="projectPropertiesOpen = false"
     />
 
     <ExportMixdownDialog
+      v-if="exportMixdownOpen"
       :open="exportMixdownOpen"
       @close="exportMixdownOpen = false"
     />
 
-    <MixdownProgressDialog />
+    <MixdownProgressDialog v-if="mixdownState !== null" />
 
-    <StemSelectionDialog />
+    <StemSelectionDialog v-if="stemSelection !== null" />
 
-    <StemModelDownloadDialog />
+    <StemModelDownloadDialog v-if="stemModelFlow !== null" />
 
-    <StemSeparationProgressDialog />
+    <StemSeparationProgressDialog v-if="stemSeparationState !== null" />
 
-    <ChannelSplitDialog />
+    <ChannelSplitDialog v-if="channelSplitSelection !== null" />
 
     <AudioDeviceUnavailableDialog
+      v-if="audioUnavailableOpen"
       :open="audioUnavailableOpen"
       :saved-type-name="audioUnavailableSavedTypeName"
       :saved-device-name="audioUnavailableSavedDeviceName"
@@ -495,6 +533,7 @@ const { handleMenuAction } = useAppMenuActions({
     />
 
     <SampleRateMismatchDialog
+      v-if="sampleRatePromptState.open"
       :open="sampleRatePromptState.open"
       :buckets="sampleRatePromptState.buckets"
       :project-sample-rate="sampleRatePromptState.projectSampleRate"
@@ -502,6 +541,7 @@ const { handleMenuAction } = useAppMenuActions({
     />
 
     <UnsavedChangesDialog
+      v-if="unsavedPromptOpen"
       :open="unsavedPromptOpen"
       :project-name="project.projectName"
       @save="onUnsavedPromptSave"
@@ -510,6 +550,7 @@ const { handleMenuAction } = useAppMenuActions({
     />
 
     <RelinkDialog
+      v-if="relinkDialogOpen"
       :open="relinkDialogOpen"
       @close="relinkDialogOpen = false"
     />

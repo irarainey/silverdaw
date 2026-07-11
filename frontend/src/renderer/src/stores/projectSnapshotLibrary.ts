@@ -7,13 +7,20 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { getProjectMedia, getItemCover } from '@/lib/library/projectMedia'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import type { AudioMetadata } from '@shared/types'
-import { filePathToBasename } from './projectHelpers'
+import { filePathKey, filePathToBasename } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
+
+export interface LibraryMediaRefresh {
+  itemId: string
+  filePath: string
+  mediaId?: string
+}
 
 export async function refreshLibraryItemMedia(
   itemId: string,
   filePath: string,
-  mediaId?: string
+  mediaId?: string,
+  peaksExpectedFromBackend = false
 ): Promise<void> {
   const library = useLibraryStore()
   try {
@@ -46,7 +53,7 @@ export async function refreshLibraryItemMedia(
   // no waveform in the library or clip editor after a project reload.
   const needsDetails = item.durationMs <= 0
   const needsPeaks = item.peaks.length === 0
-  if (!needsDetails && !needsPeaks) return
+  if (!needsDetails && (!needsPeaks || peaksExpectedFromBackend)) return
 
   try {
     const opened = await window.silverdaw.readAudioFile(filePath)
@@ -72,8 +79,12 @@ export async function refreshLibraryItemMedia(
 }
 
 /** Hydrate library rows from the snapshot and suppress echoing them back. */
-export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectStatePayload): void {
+export function applyProjectLibrary(
+  _target: SnapshotTarget,
+  snapshot: ProjectStatePayload
+): LibraryMediaRefresh[] {
   const library = useLibraryStore()
+  const mediaRefreshes: LibraryMediaRefresh[] = []
   // Hydrate library first and suppress echoing snapshot items back to the backend.
   if (snapshot.library) {
     for (const item of snapshot.library) {
@@ -160,7 +171,7 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
       // own embedded tags inside refreshLibraryItemMedia.
       const reloadKind = item.kind ?? 'source'
       if (reloadKind === 'source' || reloadKind === 'sample' || reloadKind === 'stem') {
-        void refreshLibraryItemMedia(libId, item.filePath, item.mediaId)
+        mediaRefreshes.push({ itemId: libId, filePath: item.filePath, mediaId: item.mediaId })
       }
     }
     for (const item of library.items) {
@@ -179,5 +190,29 @@ export function applyProjectLibrary(_target: SnapshotTarget, snapshot: ProjectSt
         source.lowConfidence === true
       )
     }
+  }
+  return mediaRefreshes
+}
+
+export function refreshProjectLibraryMedia(
+  mediaRefreshes: readonly LibraryMediaRefresh[],
+  backendPeakFilePaths: ReadonlySet<string>
+): void {
+  for (const refresh of mediaRefreshes) {
+    void refreshLibraryItemMedia(
+      refresh.itemId,
+      refresh.filePath,
+      refresh.mediaId,
+      backendPeakFilePaths.has(filePathKey(refresh.filePath))
+    )
+  }
+}
+
+export function refreshLibraryPeaksForPath(filePath: string): void {
+  const library = useLibraryStore()
+  const pathKey = filePathKey(filePath)
+  for (const item of library.items) {
+    if (item.kind === 'clip' || item.peaks.length > 0 || filePathKey(item.filePath) !== pathKey) continue
+    void refreshLibraryItemMedia(item.id, item.filePath, item.mediaId)
   }
 }

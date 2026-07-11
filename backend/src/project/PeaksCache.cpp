@@ -24,6 +24,16 @@ constexpr int kHeaderSize = 28;
 // Defensive upper bound on stored lanes (mono summary = 1, stereo = 3).
 constexpr std::uint32_t kMaxLaneCount = 8U;
 
+struct TemporaryFileCleanup
+{
+    juce::File file;
+
+    ~TemporaryFileCleanup()
+    {
+        file.deleteFile();
+    }
+};
+
 void writeU32(std::uint8_t* dest, std::uint32_t value)
 {
     dest[0] = static_cast<std::uint8_t>(value & 0xFFU);
@@ -145,10 +155,11 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
         return;
     }
 
+    const std::lock_guard<std::mutex> lock(storeMutex);
     const auto target = cacheFileFor(sourceFile, result.peaksPerSecond);
     // Sibling-temp rename prevents crash-truncated cache files from being honoured.
-    const auto tmp = target.getSiblingFile(target.getFileName() + ".tmp");
-    tmp.deleteFile();
+    const auto tmp = target.getSiblingFile(target.getFileName() + "." + juce::Uuid().toString() + ".tmp");
+    const TemporaryFileCleanup cleanup{tmp};
 
     std::uint8_t hdr[kHeaderSize]{};
     const auto laneCount = result.laneCount > 0 ? result.laneCount : 1;

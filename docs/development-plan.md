@@ -153,6 +153,11 @@ type-checked list of every currently-defined envelope.
 
 **Disk only:** audio files, peak caches, rendered stems, exported mixdowns, project files. The backend writes them to a stable location and sends the path; the renderer reads them via main-process IPC. No bulk bytes ever cross the WebSocket.
 
+`CLIP_ADD.requestWaveform` is optional and defaults to `true`. Split, duplicate,
+and paste operations set it to `false` only when the renderer has complete
+inherited waveform data; missing, incomplete, and older payloads continue to
+request peaks.
+
 `WAVEFORM_READY` / `CLIP_EDITOR_PEAKS_READY` include the actual peak rate used
 for the cached peak array. This can differ slightly from the requested nominal
 rate (for example 500 peaks/sec) because waveform buckets contain a whole

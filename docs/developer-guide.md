@@ -85,7 +85,8 @@ Threading invariants:
   thread via `juce::MessageManager::callAsync`.
 - **IXWebSocket I/O threads**: parse JSON, gate AUTH, then callAsync to the message thread.
 - **Peaks worker pool**: `juce::ThreadPool` of 4 workers computes / loads waveform peaks off the
-  message thread, writes them to disk in the cache, and emits a small `WAVEFORM_READY` envelope.
+  message thread. Requests for the same source and resolution share one job, which writes the
+  disk cache and emits a small `WAVEFORM_READY` envelope for every waiting clip.
 
 ## Project layout
 
@@ -437,6 +438,9 @@ Clips reference their audio via `libraryItemId` — the source file path lives o
 library item itself. The backend resolves the actual on-disk file (always preferring the
 decoded-WAV cache) at the time it loads the clip's audio source.
 
+- `CLIP_ADD.requestWaveform` is optional and defaults to `true`. The renderer
+  sends `false` only when a split, duplicate, or pasted clip already has complete
+  waveform data inherited from a live source clip.
 - `type` is an UPPER_SNAKE_CASE discriminator.
 - `payload` is a JSON object or omitted.
 - Every connection's first envelope must be
@@ -458,7 +462,8 @@ themselves; the renderer reads it via main's `peaks:readCacheFile` IPC and parse
 header + float32 payload locally. This mirrors how the same architecture treats audio files,
 project files, stems and mixdowns — the WebSocket carries the control plane, the
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
-it was designed for.
+it was designed for. `WAVEFORM_FAILED { clipId, error }` triggers renderer-side decoding as a
+recovery path when the backend cannot produce peaks.
 
 The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts).
@@ -510,12 +515,13 @@ device and capability matrix is
 [MIDI deck controllers](midi-controllers.md); the JSON schema is documented in
 [`backend/resources/midi-mappings/README.md`](../backend/resources/midi-mappings/README.md).
 
-The backend loads every
-`backend/resources/midi-mappings/*.json` file on first use. Development builds
-fall back to that source directory; CMake copies the same directory beside the
-backend executable and electron-builder packages it unchanged. Profiles are
-validated for types, value ranges, model-name conflicts, and overlapping input
-bindings. Device matching is case-insensitive, uses token boundaries, honours
+The source profiles live in
+`backend/resources/midi-mappings/*.json`. CMake copies them to a
+`midi-mappings` directory beside the backend executable, which is the runtime
+location loaded by packaged builds. Development runs fall back to the source
+directory when that copied directory is unavailable. Profiles are validated for
+types, value ranges, model-name conflicts, and overlapping input bindings.
+Device matching is case-insensitive, uses token boundaries, honours
 `excludedModels`, and selects the longest matching model name.
 
 `MidiInputMonitor` owns connected inputs:
@@ -575,12 +581,18 @@ set of retries. The supervisor pushes coarse process status — `restarting`,
 `recovered`, `failed` — to the renderer, and an intentional app shutdown marks
 the next exit as expected so it is not respawned. Covered by Vitest specs.
 
-### Liveness watchdog (renderer)
+### Renderer connection and liveness
 
 The backend only pushes data while playing, so an idle session has no inbound
 traffic to prove the engine's message thread is still alive.
 [`bridgeService.ts`](../frontend/src/renderer/src/lib/bridgeService.ts) runs a
-watchdog that, after a quiet spell (`WATCHDOG_IDLE_MS`, 3 s), sends a `PING` and
+bounded 100 ms retry cadence while waiting for its first socket connection.
+After ten attempts, or after any successful connection, retries use a 1–5 s
+exponential backoff so sustained failures do not cause continuous connection
+attempts. The same recovery backoff applies to later connection losses.
+
+The bridge also runs a watchdog that, after a quiet spell
+(`WATCHDOG_IDLE_MS`, 3 s), sends a `PING` and
 expects a `PONG` answered on the JUCE message thread. `WATCHDOG_MAX_MISSED` (3)
 consecutive missed replies (each timed out after `WATCHDOG_PONG_TIMEOUT_MS`, 2 s)
 declare the engine hung and trigger a supervised restart via `restartBackend`.
@@ -590,6 +602,10 @@ library import or BPM analysis — to avoid false restarts. A large positive clo
 drift (`WATCHDOG_DRIFT_MS`, 4 s) is read as an OS sleep/resume and resets the
 watchdog rather than counting the gap as missed pongs. In practice this surfaces
 a wedged engine within roughly 7–11 s.
+
+The startup screen has one 500 ms minimum loading dwell. During that dwell it
+coalesces backend status changes, then displays only the current status if
+startup is still in progress. Completed phases do not add separate delays.
 
 ### Recovery coordinator (renderer)
 
@@ -1005,14 +1021,18 @@ Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (t
 hasn't been reconciled yet. `StartupScreen` is the single boot-and-landing surface — it
 mounts at app boot (before the bridge is up) and stays visible until the project becomes
 non-empty (file path, tracks, or library items) or the user explicitly dismisses it via
-**New Project**. An inline status row walks the boot phases ("Waiting for the backend
-to start…", "Connecting to audio engine…", "Scanning audio devices…", "Checking for
-recovered projects…") and hides once everything is ready. New / Open / Recent buttons
-disable while loading, then enable. On a terminal bridge failure the whole screen
-swaps to a focused error view with a single Quit action; project actions are hidden
-because they cannot recover the app. A 30-second timeout fires the failure path if the
-bridge handshake never completes. The `RecoveryDialog` stacks above the StartupScreen
-via z-index when crash-recovery autosaves are available.
+**New Project**. The loading screen has one 500 ms minimum dwell, coalesces intermediate
+backend statuses, and displays only the current phase if startup is still in progress.
+New / Open / Recent buttons enable when startup coordination finishes. On a terminal
+startup failure the whole screen swaps to a focused error view with a single Quit
+action; project actions are hidden because they cannot recover the app. A 60-second
+timeout fires the failure path if the bridge handshake never completes.
+
+The renderer starts consuming the pending launch path and scanning recoverable
+autosaves as soon as it mounts. These main-process IPC calls run in parallel with
+backend startup, but their results are applied only after the bridge handshake. The
+`RecoveryDialog` then stacks above the `StartupScreen` when recoverable autosaves are
+available.
 
 ## Audio formats
 
@@ -1943,9 +1963,9 @@ Selecting **Save** persists enabled identifiers in `preferences.json`;
 **Cancel** restores the pre-dialog selection. Persisted deck 1/2 enablement is
 re-applied after a backend reconnect.
 
-The **MIDI Monitor** is available from **Preferences ▸ Developer** and the
-**Debug** menu. It retains the latest 200 raw messages from enabled inputs and
-shows timestamp, device, message kind, controller code, and value. See
+The **MIDI Monitor** is available from **Preferences ▸ Developer**. It retains
+the latest 200 raw messages from enabled inputs and shows timestamp, device,
+message kind, controller code, and value. See
 [MIDI deck controllers](midi-controllers.md) for setup, all supported model
 names, mapped behavior, controller feedback, and troubleshooting.
 
@@ -2039,8 +2059,8 @@ Persisted fields:
   **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
   the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
   to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
-- **Show Developer Tools** — gates the visibility of the **Debug** menu and
-  DevTools shortcuts independently of file logging.
+- **Show Developer Tools** — enables DevTools shortcuts independently of file
+  logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
   `stems.quality` (Fast / Balanced / Best — the inference + RoFormer chunk
   overlap), `stems.useBackupModel` (force the htdemucs backup for every stem,
@@ -2390,6 +2410,16 @@ tracks. Values are stored in native units; only the lane renderer normalises to 
 
 ## Rendering performance
 
+The timeline component stays unmounted while the startup screen is visible.
+PixiJS can warm through the shared idle loader during that time, but WebGL
+application creation, observers, and the first timeline draw wait until the
+user starts or opens a project.
+
+Dialogs that cannot appear during startup use async Vue components and
+parent-level visibility gates. Their component code is requested only when the
+corresponding dialog or progress state becomes active, keeping it out of the
+initial renderer module graph.
+
 The timeline canvas is PixiJS. All world-space content (clip blocks, waveforms, grid lines,
 ruler ticks) is drawn once at absolute world coordinates into a `tracksLayer` / `rulerTicksLayer`,
 which are then translated by `-scrollX` / `-scrollY` on every scroll change. The result: scroll
@@ -2405,6 +2435,14 @@ Older projects that lack a stored pyramid auto-bake one on the next load. The
 clip's beat-marker loop **stride-steps** by a precomputed `ceil(minMarkerSpacingPx /
 pxPerBeat)` so a 5-minute clip at 120 BPM doesn't iterate every beat when only a
 handful of markers fit on screen.
+
+**Live clip peak reuse.** Split, duplicate, and paste operations reuse complete
+summary peaks and, for stereo sources, both channel arrays already held by the
+source clip. Their `CLIP_ADD` payload sets `requestWaveform` to `false`, so the
+backend does not reload and re-announce the same cache file. Missing, incomplete,
+and older payloads default to requesting waveform data. Matching
+`WAVEFORM_READY` envelopes are also ignored before cache-file IPC when the
+renderer already holds data with the announced shape, rate, and sample rate.
 
 **Hot-path library lookups** go through the `libraryStore.byId` Pinia getter (an
 `O(items)`-built `Record<string, LibraryItem>` cached and refreshed only when the

@@ -65,7 +65,7 @@ export const importActions = {
       // Keep backend decoded-WAV cache path separate from renderer clip-add paths.
       item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined
       // One unconditional repaint is cheaper than searching for matching clips.
-      useProjectStore().peaksRevision++
+      useProjectStore().timelineRevision++
       // Beat-align this item's placed clips to the project bar grid once beats are
       // known. Runs now (covers a clip dropped at a tempo the project already uses)
       // AND is re-run from PROJECT_BPM_APPLIED via `flushGridAlignAfterBpm`: a

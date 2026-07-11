@@ -571,6 +571,88 @@ describe('projectStore', () => {
     )
   })
 
+  it('skips waveform generation when a pasted stereo clip inherits every peak lane', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const sourceTrackId = project.addTrack()
+    const targetTrackId = project.addTrack()
+    const summary = new Float32Array([-0.5, 0.5])
+    library.addItem({
+      id: 'lib-copy',
+      kind: 'source',
+      filePath: 'C:\\audio\\copy.wav',
+      fileName: 'copy.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: summary,
+      peaksPerSecond: 500,
+      fromSnapshot: true
+    })
+    library.setItemChannelPeaks(
+      'lib-copy',
+      [new Float32Array([-0.6, 0.6]), new Float32Array([-0.4, 0.4])],
+      500
+    )
+    const sourceClipId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-copy',
+        filePath: 'C:\\audio\\copy.wav',
+        fileName: 'copy.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: summary,
+        peaksPerSecond: 500
+      },
+      0
+    )
+    project.selectClip(sourceClipId)
+    expect(project.copySelectedClip()).toBe(true)
+    project.selectTrack(targetTrackId)
+    sendMock.mockClear()
+
+    const pastedId = project.pasteClipAtPlayhead(2_000)
+
+    expect(pastedId).toBeTruthy()
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_ADD',
+      expect.objectContaining({ clipId: pastedId, requestWaveform: false })
+    )
+  })
+
+  it('requests waveform generation when paste has no live peak source', () => {
+    const project = useProjectStore()
+    const sourceTrackId = project.addTrack()
+    const targetTrackId = project.addTrack()
+    const sourceClipId = project.addClipToTrack(
+      sourceTrackId,
+      {
+        libraryItemId: 'lib-copy',
+        filePath: 'C:\\audio\\copy.wav',
+        fileName: 'copy.wav',
+        durationMs: 1_000,
+        sampleRate: 44_100,
+        channelCount: 1,
+        peaks: new Float32Array([-0.5, 0.5]),
+        peaksPerSecond: 500
+      },
+      0
+    )
+    project.selectClip(sourceClipId)
+    expect(project.copySelectedClip()).toBe(true)
+    project.removeClip(sourceClipId ?? '')
+    project.selectTrack(targetTrackId)
+    sendMock.mockClear()
+
+    const pastedId = project.pasteClipAtPlayhead(2_000)
+    const clipAdd = sendMock.mock.calls.find(([type]) => type === 'CLIP_ADD')
+
+    expect(pastedId).toBeTruthy()
+    expect(clipAdd?.[1]).not.toHaveProperty('requestWaveform')
+  })
+
   it('does not split linked library-clip timeline instances', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
@@ -817,6 +899,49 @@ describe('projectStore', () => {
     })
     expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_ADD', expect.anything())
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'c1' })
+  })
+
+  it('does not request peaks for a snapshot clip when its library item already has them', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const peaks = new Float32Array([-0.5, 0.5])
+    library.addItem({
+      id: 'l1',
+      filePath: 'C:\\audio\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 1_000,
+      sampleRate: 48_000,
+      channelCount: 2,
+      peaks,
+      fromSnapshot: true
+    })
+    sendMock.mockClear()
+
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Loaded Mix',
+      reset: false,
+      bpm: 120,
+      tracks: [
+        {
+          id: 't1',
+          name: 'Drums',
+          gain: 1,
+          clips: [
+            {
+              id: 'c1',
+              libraryItemId: 'l1',
+              offsetMs: 0,
+              inMs: 0,
+              durationMs: 1_000
+            }
+          ]
+        }
+      ]
+    })
+
+    expect(project.clips.c1?.peaks).toBe(peaks)
+    expect(sendMock).not.toHaveBeenCalledWith('WAVEFORM_REQUEST', expect.anything())
   })
 
   it('relinks every library item sharing a missing source and refreshes placed clips', () => {

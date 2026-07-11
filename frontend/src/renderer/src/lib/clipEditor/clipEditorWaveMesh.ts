@@ -7,11 +7,11 @@
 // uploads as a single GPU batch instead of thousands of `fillRect` calls.
 //
 // The editor draws one or two lanes. Mesh shells are pooled and reused across
-// redraws (swap geometry, release the prior frame's GPU buffers) so that at high
-// zoom — where auto-follow scroll triggers a rebuild almost every frame — there is
-// no per-frame Mesh/geometry allocation churn or GPU buffer thrash.
+// redraws so high-zoom auto-follow does not recreate MeshGeometry or its GPU
+// buffer resources every frame.
 
 import type { Container, Mesh, MeshGeometry, Texture } from 'pixi.js'
+import { updateWaveMeshGeometry } from '@/lib/wave-mesh-geometry'
 
 export interface WaveMeshCtors {
   MeshCtor: typeof Mesh | null
@@ -27,10 +27,9 @@ export interface WaveMeshBuilder {
   /** Append one axis-aligned quad spanning `[x0,x1] × [y0,y1]`. */
   pushQuad: (x0: number, y0: number, x1: number, y1: number) => void
   /**
-   * Upload the accumulated quads as a tinted Mesh added to `layer`, reusing a
-   * pooled Mesh shell (swapping in fresh geometry and releasing the previous
-   * frame's GPU buffers) so redraws don't churn allocations. Returns false when
-   * there is nothing to draw or Pixi is not ready.
+   * Upload the accumulated quads as a tinted Mesh added to `layer`, reusing its
+   * pooled shell and geometry resources. Returns false when there is nothing to
+   * draw or Pixi is not ready.
    */
   flush: (layer: Container, tint: number, alpha: number) => boolean
   /** Forget pooled meshes (call when the Pixi app is torn down/rebuilt). */
@@ -117,9 +116,7 @@ export function createWaveMeshBuilder(ctors: WaveMeshCtors): WaveMeshBuilder {
       // the default Geometry.destroy() left behind. Pixi's Buffer `data` setter
       // handles in-place re-upload and resize, so no geometry teardown per frame.
       const geo = existing.geometry as MeshGeometry
-      geo.positions = positions
-      geo.uvs = new Float32Array(positions.length)
-      geo.indices = meshIndices
+      updateWaveMeshGeometry(geo, positions, meshIndices)
       existing.tint = tint
       existing.alpha = alpha
       layer.addChild(existing)

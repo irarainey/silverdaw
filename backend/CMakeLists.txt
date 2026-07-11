@@ -427,6 +427,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/MarkerCommands.cpp
     src/commands/MidiDeviceCommands.cpp
     src/commands/MixdownCommands.cpp
+    src/commands/PeakJobCoordinator.cpp
     src/commands/PreviewCommands.cpp
     src/commands/ProjectCommands.cpp
     src/commands/ProjectFxCommands.cpp
