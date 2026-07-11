@@ -61,6 +61,8 @@ private:
     juce::dsp::FFT fft;
     std::vector<float> hann;       // analysis/synthesis window, size kNFft
     std::vector<float> fftScratch; // 2*kNFft work buffer, reused per window
+    std::vector<float> synthesisAccumulator;
+    std::vector<float> synthesisEnvelope;
 };
 
 } // namespace silverdaw

@@ -31,9 +31,8 @@
 #include "MelRoformerVocals.h"
 #include "StemAudioPreparation.h"
 #include "StemGpuFallback.h"
-#include "VocalDebleeder.h"
-#include "Dereverberator.h"
-#include "VocalRestorer.h"
+#include "StemRhythmOverlap.h"
+#include "StemVocalCleanup.h"
 
 namespace silverdaw
 {
@@ -519,6 +518,14 @@ class OnnxStemSeparator : public StemSeparator
             logPerformance(request.jobId, "raw-mixture", rawMixtureStarted);
         }
 
+        PendingStemVocalCleanup vocalCleanup(
+            shouldCancel,
+            [&](const StemResultFile& resultFile)
+            {
+                result.stems.push_back(resultFile);
+                onStemReady(resultFile);
+            });
+
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
             const auto* stem = kStemNames[s];
@@ -585,7 +592,8 @@ class OnnxStemSeparator : public StemSeparator
                         [&](bool loading)
                         {
                             onProgress(loading ? "load-model" : "separate", stemBase, stem);
-                        });
+                        },
+                        request.jobId);
 
                     // Capture this (unprocessed) vocal so the rhythm pack can be fed
                     // a vocal-removed mixture — cleanup runs later and must not alter
@@ -629,7 +637,8 @@ class OnnxStemSeparator : public StemSeparator
                                     {
                                         onProgress(loading ? "load-model" : "separate", stemBase,
                                                    loading ? "vocals" : sepDetail);
-                                    });
+                                    },
+                                    request.jobId);
                                 vocalForRemovalReady = true;
                                 rhythmBase = stemBase + vocalSpan;
                                 rhythmSpan = sepSpan - vocalSpan;
@@ -658,14 +667,22 @@ class OnnxStemSeparator : public StemSeparator
                         // then cache-served instantly on its own iteration).
                         const char* rhythmDetail =
                             (isSelected("drums") && isSelected("bass")) ? "drums+bass" : stem;
-                        rhythmStems = roformerRhythm.separate(
-                            request.rhythmModelFile, *rhythmSource, request.useGpu, overlap,
-                            [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, rhythmDetail); },
-                            shouldCancel,
-                            [&](bool loading)
+                        rhythmStems = runStemRhythmWithVocalOverlap(
+                            roformerRhythm, request.rhythmModelFile, *rhythmSource,
+                            request.useGpu, overlap, request.jobId, vocalCleanup,
                             {
-                                onProgress(loading ? "load-model" : "separate", rhythmBase,
-                                           rhythmDetail);
+                                [&](double fraction)
+                                {
+                                    onProgress("separate",
+                                               rhythmBase + rhythmSpan * fraction,
+                                               rhythmDetail);
+                                },
+                                [&](bool loading)
+                                {
+                                    onProgress(loading ? "load-model" : "separate",
+                                               rhythmBase, rhythmDetail);
+                                },
+                                vocalCleanup.cancellation()
                             });
                         rhythmDone = true;
                     }
@@ -711,6 +728,40 @@ class OnnxStemSeparator : public StemSeparator
                 : request.sourceName + " - " + stem;
             const auto outFile = request.outputDir.getChildFile(
                 juce::File::createLegalFileName(stemBaseName + ".wav"));
+            const bool overlapVocalCleanup =
+                juce::String(stem) == "vocals" && haveVocalPack && useRhythmPack &&
+                (request.vocalEnhance.enabled || request.dereverb.enabled);
+            if (overlapVocalCleanup)
+            {
+                onProgress("cleanup", cleanupBase, stem);
+                auto vocal = std::move(stemBuffer);
+                const auto requestSnapshot = request;
+                // Inference leaves two processors free, so this single cleanup
+                // worker uses reserved capacity instead of oversubscribing ORT.
+                vocalCleanup.start(
+                    [vocal = std::move(vocal), &mixture, requestSnapshot, outFile,
+                     mixtureMean = norm.mean, mixtureStd = norm.std,
+                     numSamples](const StemCancelFn& cancel) mutable
+                    {
+                        const auto cleanupStarted = PerformanceClock::now();
+                        processStemVocalCleanup(
+                            vocal, mixture, mixtureMean, mixtureStd, requestSnapshot, true, {},
+                            cancel);
+                        logPerformance(
+                            requestSnapshot.jobId, "cleanup", cleanupStarted, "stem=vocals");
+                        const auto writeStarted = PerformanceClock::now();
+                        writeStemWav(outFile, vocal);
+                        logPerformance(
+                            requestSnapshot.jobId, "write-wav", writeStarted, "stem=vocals");
+                        return StemResultFile{
+                            "vocals",
+                            outFile,
+                            kModelSampleRate,
+                            static_cast<double>(numSamples) * 1000.0 / kModelSampleRate,
+                            2};
+                    });
+                continue;
+            }
             const auto cleanupStarted = PerformanceClock::now();
             // Optional vocal cleanup. Applied only to the vocals stem and only
             // after the (unprocessed) vocal has been folded into `extractedSum`,
@@ -720,100 +771,16 @@ class OnnxStemSeparator : public StemSeparator
             if (juce::String(stem) == "vocals"
                 && (request.vocalEnhance.enabled || request.dereverb.enabled))
             {
-                // The RoFormer vocal pack produces a high-SDR stem; the enhance cleanup
-                // (tuned for the dirtier htdemucs vocal) is gentled for it — the cross-stem
-                // de-bleed is skipped entirely (it would gut a clean vocal on dense mixes)
-                // and the denoise / expander run softened. Dereverb is a per-run choice,
-                // independent of the enhance toggle, so the two are gated separately here.
                 const bool vocalFromRoformer = haveVocalPack;
                 onProgress("cleanup", cleanupBase, stem);
-
-                // Progress split: dereverb and the RNNoise denoise are the two heavy passes;
-                // each owns a share of the first 90% of the reserved band, the expander the tail.
-                const double dereverbBand =
-                    request.dereverb.enabled ? (request.vocalEnhance.enabled ? 0.45 : 0.90) : 0.0;
-                const double denoiseStart = cleanupBase + cleanupSpan * dereverbBand;
-                const double denoiseBand =
-                    request.vocalEnhance.enabled ? (0.90 - dereverbBand) : 0.0;
-
-                // Cross-stem de-bleed (htdemucs enhance path only): push down pitched
-                // instrument bleed using instrumental = mixture - vocal. Runs BEFORE dereverb
-                // so the reverb estimate isn't contaminated by other instruments' tails, and
-                // because de-bleed is frame-independent (it needs no envelope of its own).
-                if (request.vocalEnhance.enabled && ! vocalFromRoformer)
-                {
-                    juce::AudioBuffer<float> instrumental(kModelChannels, numSamples);
-                    for (int ch = 0; ch < kModelChannels; ++ch)
+                processStemVocalCleanup(
+                    stemBuffer, mixture, norm.mean, norm.std, request, vocalFromRoformer,
+                    [&](double fraction)
                     {
-                        const float* mix = mixture.getReadPointer(ch);
-                        const float* voc = stemBuffer.getReadPointer(ch);
-                        float* ins = instrumental.getWritePointer(ch);
-                        for (int i = 0; i < numSamples; ++i)
-                            ins[i] = (mix[i] * norm.std + norm.mean) - voc[i];
-                    }
-                    VocalDebleeder::process(stemBuffer, instrumental, kModelSampleRate,
-                                            request.vocalEnhance.strength);
-                }
-
-                // Reverb/echo reduction (per-run). Before the denoise: RNNoise is trained on
-                // dry speech, so tightening the reverberant envelope first helps it.
-                //
-                // Capture the vocal's active loudness BEFORE de-reverb so the final
-                // VocalRestorer stage can match it back — spectral subtraction removes
-                // energy and leaves the stem noticeably quieter, and matching the
-                // loud-frame loudness (not the reverb-filled gaps) restores the level
-                // without re-inflating the tail we just removed.
-                float vocalRefLevel = 0.0f;
-                if (request.dereverb.enabled)
-                {
-                    vocalRefLevel = VocalRestorer::activeLoudness(stemBuffer, kModelSampleRate);
-                    silverdaw::log::info("stems",
-                                         juce::String("applied vocal dereverb strength=")
-                                             + dereverbStrengthToString(request.dereverb.strength));
-                    Dereverberator::process(
-                        stemBuffer, kModelSampleRate, request.dereverb.strength,
-                        [&](double f) {
-                            onProgress("cleanup", cleanupBase + cleanupSpan * dereverbBand * f, stem);
-                        });
-                }
-
-                // RNNoise denoise + sub-bass high-pass / expander (enhance path only).
-                if (request.vocalEnhance.enabled)
-                {
-                    auto vocalOpts = request.vocalEnhance;
-                    vocalOpts.cleanModel = vocalFromRoformer;
-                    const float wet = vocalDenoiseWetFor(request.vocalEnhance.strength, vocalFromRoformer);
-                    silverdaw::log::info("stems",
-                                         juce::String("applied vocal cleanup strength=")
-                                             + vocalEnhanceStrengthToString(request.vocalEnhance.strength)
-                                             + (vocalFromRoformer ? " (clean-model: de-bleed skipped)" : "")
-                                             + " denoiseWet=" + juce::String(wet, 2));
-                    VocalDenoiser::process(
-                        stemBuffer, kModelSampleRate, wet,
-                        [&](double f) {
-                            onProgress("cleanup", denoiseStart + cleanupSpan * denoiseBand * f, stem);
-                        });
-                    VocalEnhancer::process(stemBuffer, kModelSampleRate, vocalOpts);
-                }
-
-                // Final polish (per-run de-reverb only): restore the presence and
-                // level that spectral subtraction strips out, so the de-reverbed
-                // vocal isn't dull/flat OR quieter. Runs LAST — after the denoise +
-                // expander have cleaned the vocal — so the shelves brighten the clean
-                // signal rather than musical noise, and the level match sits after the
-                // expander so it can't lift the floor back over the expander threshold.
-                if (request.dereverb.enabled)
-                {
-                    const auto restore = VocalRestorer::process(
-                        stemBuffer, kModelSampleRate, request.dereverb.strength, vocalRefLevel);
-                    silverdaw::log::info(
-                        "stems",
-                        juce::String("applied vocal restore ref=") + juce::String(restore.referenceLevel, 4)
-                            + " proc=" + juce::String(restore.processedLevel, 4)
-                            + " makeup=" + juce::String(restore.makeupDb, 2) + "dB"
-                            + (restore.clamped ? " (clamped)" : ""));
-                }
-                onProgress("cleanup", stemBase + stemSpan, stem);
+                        onProgress(
+                            "cleanup", cleanupBase + cleanupSpan * fraction, stem);
+                    },
+                    shouldCancel);
             }
             // Optional drum cleanup. Same contract: drums only, applied after the
             // raw drum buffer has been folded into the residual sum.
@@ -879,6 +846,7 @@ class OnnxStemSeparator : public StemSeparator
             onStemReady(resultFile);
         }
 
+        vocalCleanup.publishIfReady(true);
         onProgress("write", 100.0, "");
         return result;
     }

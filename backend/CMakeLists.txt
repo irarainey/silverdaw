@@ -494,11 +494,13 @@ add_library(silverdaw_backend_core STATIC
     src/project/SampleExport.cpp
     src/project/ValueTreeJson.cpp
     # stems (bridge/job plumbing — ONNX-free, always built)
+    src/stems/RoformerPerformance.cpp
     src/stems/StemAudioPreparation.cpp
     src/stems/StemBroadcast.cpp
     src/stems/StemGpuFallback.cpp
     src/stems/StemProgressCoalescer.cpp
     src/stems/StemSeparationEngine.cpp
+    src/stems/StemVocalCleanup.cpp
     src/stems/MelRoformerSpectral.cpp
     src/stems/BsRoformerSpectral.cpp
     src/stems/StemSeparatorFactory.cpp)
@@ -552,7 +554,8 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
         src/stems/InferenceThreads.cpp
         src/stems/OnnxStemSeparator.cpp
         src/stems/MelRoformerVocals.cpp
-        src/stems/BsRoformerRhythm.cpp)
+        src/stems/BsRoformerRhythm.cpp
+        src/stems/StemRhythmOverlap.cpp)
 endif()
 
 if(SILVERDAW_ENABLE_COVERAGE)

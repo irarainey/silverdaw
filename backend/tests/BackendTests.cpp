@@ -56,7 +56,11 @@ int main(int argc, char** argv)
     using namespace silverdaw::tests;
 
     const auto tests = buildRegistry();
-    require(tests.size() == 227, "backend test registry should contain 227 tests");
+#if defined(SILVERDAW_STEM_SEPARATION)
+    require(tests.size() == 230, "backend test registry should contain 230 tests");
+#else
+    require(tests.size() == 228, "backend test registry should contain 228 tests");
+#endif
 
     bool listOnly = false;
     std::string runOnly;

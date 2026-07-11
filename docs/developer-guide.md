@@ -1619,7 +1619,9 @@ dedicated-GPU-oriented option rather than a guaranteed speed-up.
 
 The raw, denormalised stereo mixture used by the RoFormer packs is built once
 per job and shared by the vocal and rhythm paths. Backup-only htdemucs jobs do
-not build it.
+not build it. Fixed-shape ONNX tensor wrappers are also reused across chunks,
+and the rhythm spectral engine keeps its iSTFT working buffers for the next
+stem and chunk instead of reallocating them.
 
 Inference runs on **one thread per physical core**, bounded by the historical
 `logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
@@ -1635,6 +1637,13 @@ throughput with no sibling contention. Reserving the two logical processors of
 the `logical − 2` bound leaves headroom for the backend's websocket-send and
 message threads, so the progress bar keeps flowing. On the GPU path the compute
 runs on the adapter instead.
+
+When the vocal and rhythm quality packs are both active, vocal cleanup runs on
+one reserved processor while rhythm inference uses the model worker pool. The
+separation thread continues to own progress and stem-ready callbacks, so the
+vocal can be published as soon as cleanup finishes without concurrent bridge
+callbacks. Cancellation stops both tasks, and a failed GPU attempt still
+discards its staged notifications before the CPU retry.
 
 Cancellation aborts the **in-flight** ONNX run rather than waiting for the
 current chunk (which can take tens of seconds on a slow CPU) to finish. Each
@@ -1743,7 +1752,9 @@ it is a guaranteed no-op when disabled, empty, or silent. See
 When verbose diagnostic logging is enabled, `stem-perf` entries record renderer
 preparation and import durations, backend decode, normalisation, separation and
 WAV-write durations, ONNX session cache hits or misses, progress-message counts
-and each job's total duration. These timings are emitted in Release builds and
+and each job's total duration. RoFormer profile entries further split each run
+into setup, host STFT/tensor preparation, ONNX inference, synthesis,
+overlap-add, and finalisation. These timings are emitted in Release builds and
 run only on the existing stem worker or renderer orchestration paths.
 
 ## Library panel

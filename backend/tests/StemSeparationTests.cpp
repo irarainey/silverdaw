@@ -20,6 +20,10 @@
 #include "StemAudioPreparation.h"
 #include "StemGpuFallback.h"
 #include "StemProgressCoalescer.h"
+#include "StemVocalCleanup.h"
+#if defined(SILVERDAW_STEM_SEPARATION)
+#include "StemRhythmOverlap.h"
+#endif
 
 namespace silverdaw::tests
 {
@@ -220,6 +224,61 @@ void testStemMixtureDenormalisation()
     requireNear(raw.getSample(1, 2), 1.6, 1e-6, "right positive sample is preserved");
 }
 
+void testVocalCleanupHonoursCancellation()
+{
+    juce::AudioBuffer<float> vocal(2, 64);
+    juce::AudioBuffer<float> mixture(2, 64);
+    silverdaw::StemSeparationRequest request;
+    request.vocalEnhance.enabled = true;
+
+    bool cancelled = false;
+    try
+    {
+        silverdaw::processStemVocalCleanup(
+            vocal, mixture, 0.0f, 1.0f, request, true, {}, [] { return true; });
+    }
+    catch (const silverdaw::StemSeparationError& error)
+    {
+        cancelled = error.code == silverdaw::StemFailureCode::Cancelled;
+    }
+    require(cancelled, "vocal cleanup stops before work when the job is cancelled");
+}
+
+#if defined(SILVERDAW_STEM_SEPARATION)
+void testPendingVocalCleanupPublishesOnCaller()
+{
+    int published = 0;
+    silverdaw::PendingStemVocalCleanup cleanup(
+        [] { return false; },
+        [&](const silverdaw::StemResultFile& stem)
+        {
+            requireEqual(stem.stem, "vocals", "pending cleanup publishes the vocal result");
+            ++published;
+        });
+    cleanup.start(
+        [](const silverdaw::StemCancelFn&)
+        {
+            return silverdaw::StemResultFile{
+                "vocals", juce::File("vocals.wav"), 44100.0, 1000.0, 2};
+        });
+
+    require(published == 0, "worker completion does not publish from the worker thread");
+    cleanup.publishIfReady(true);
+    require(published == 1, "caller explicitly publishes the completed vocal");
+    require(! cleanup.hasPending(), "published cleanup no longer remains pending");
+}
+
+void testPendingVocalCleanupAbortCancelsWorker()
+{
+    silverdaw::PendingStemVocalCleanup cleanup(
+        [] { return false; }, [](const silverdaw::StemResultFile&) {});
+    const auto cancellation = cleanup.cancellation();
+    require(! cancellation(), "overlap cancellation starts clear");
+    cleanup.abort();
+    require(cancellation(), "aborting overlap is visible to worker cancellation");
+}
+#endif
+
 void testRawStemMixturePlanning()
 {
     require(! silverdaw::shouldBuildRawStemMixture(false, false, false),
@@ -417,6 +476,11 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem GPU fallback classifies recoverable faults", testRecoverableGpuFaultMessages});
     tests.push_back({"stem raw mixture denormalisation preserves samples", testStemMixtureDenormalisation});
     tests.push_back({"stem raw mixture follows the selected execution plan", testRawStemMixturePlanning});
+    tests.push_back({"stem vocal cleanup honours cancellation", testVocalCleanupHonoursCancellation});
+#if defined(SILVERDAW_STEM_SEPARATION)
+    tests.push_back({"stem pending vocal cleanup publishes on caller", testPendingVocalCleanupPublishesOnCaller});
+    tests.push_back({"stem pending vocal cleanup aborts worker", testPendingVocalCleanupAbortCancelsWorker});
+#endif
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
     tests.push_back({"stem quality maps to vocal shifts", testShiftsForStemQuality});

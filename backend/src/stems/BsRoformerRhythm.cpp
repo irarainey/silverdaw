@@ -16,6 +16,7 @@
 #include "InferenceThreads.h"
 #include "Log.h"
 #include "OnnxLogging.h"
+#include "RoformerPerformance.h"
 #include "StemRunCancellation.h"
 #include "StemSeparator.h"
 
@@ -99,13 +100,22 @@ struct BsRoformerRhythm::Impl
                               bool useGpu, double overlap,
                               const std::function<void(double)>& onProgress,
                               const std::function<void(bool)>& onModelLoadState,
-                              const std::function<bool()>& shouldCancel)
+                              const std::function<bool()>& shouldCancel,
+                              const juce::String& performanceJobId)
     {
         configureProvider(useGpu);
         const bool cacheMiss = session == nullptr || sessionPath != modelFile.getFullPathName();
         if (cacheMiss && onModelLoadState) onModelLoadState(true);
         Ort::Session& sess = sessionFor(modelFile);
         if (cacheMiss && onModelLoadState) onModelLoadState(false);
+
+        using Clock = std::chrono::steady_clock;
+        const auto elapsedMs = [](Clock::time_point started)
+        {
+            return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+        };
+        RoformerPerformance performance;
+        const auto setupStarted = Clock::now();
 
         Ort::AllocatorWithDefaultOptions allocator;
         const auto inRealName = sess.GetInputNameAllocated(0, allocator);
@@ -154,6 +164,18 @@ struct BsRoformerRhythm::Impl
         const std::array<int64_t, 4> inShape{1, Spec::kChannels, Spec::kBins, Spec::kFrames};
         const std::array<int64_t, 5> outShape{1, Spec::kNumStems, Spec::kChannels, Spec::kBins,
                                               Spec::kFrames};
+        std::array<Ort::Value, 2> inputs{
+            Ort::Value::CreateTensor<float>(memInfo, specReal.data(), specReal.size(),
+                                            inShape.data(), inShape.size()),
+            Ort::Value::CreateTensor<float>(memInfo, specImag.data(), specImag.size(),
+                                            inShape.data(), inShape.size())};
+        std::array<Ort::Value, 2> outputs{
+            Ort::Value::CreateTensor<float>(memInfo, outReal.data(), outReal.size(),
+                                            outShape.data(), outShape.size()),
+            Ort::Value::CreateTensor<float>(memInfo, outImag.data(), outImag.size(),
+                                            outShape.data(), outShape.size())};
+        const char* inNames[] = {inRealName.get(), inImagName.get()};
+        const char* outNames[] = {outRealName.get(), outImagName.get()};
         // Chunk stride from the quality preset's overlap (higher overlap = more
         // model runs, smoother seams). The recombination is normalised by an
         // accumulated counter, so any overlap reconstructs at unity gain.
@@ -163,6 +185,7 @@ struct BsRoformerRhythm::Impl
                         static_cast<int>(Spec::kChunkSamples * (1.0 - ov))));
         const int totalSteps = std::max(1, (numSamples + step - 1) / step);
         int stepIndex = 0;
+        performance.setupMs = elapsedMs(setupStarted);
 
         // OLA one stem's reconstruction (already in `sep`) into its accumulator.
         const auto overlapAdd = [&](std::vector<float>& acc, int cstart, int clen)
@@ -189,6 +212,7 @@ struct BsRoformerRhythm::Impl
                 clen = Spec::kChunkSamples;
             }
 
+            const auto hostPrepareStarted = Clock::now();
             std::fill(chunk.begin(), chunk.end(), 0.0f);
             for (int ch = 0; ch < Spec::kChannels; ++ch)
             {
@@ -197,38 +221,38 @@ struct BsRoformerRhythm::Impl
             }
 
             impl_analyze(specReal, specImag, chunk);
+            performance.hostPrepareMs += elapsedMs(hostPrepareStarted);
 
-            std::array<Ort::Value, 2> inputs{
-                Ort::Value::CreateTensor<float>(memInfo, specReal.data(), specReal.size(),
-                                                inShape.data(), inShape.size()),
-                Ort::Value::CreateTensor<float>(memInfo, specImag.data(), specImag.size(),
-                                                inShape.data(), inShape.size())};
-            std::array<Ort::Value, 2> outputs{
-                Ort::Value::CreateTensor<float>(memInfo, outReal.data(), outReal.size(),
-                                                outShape.data(), outShape.size()),
-                Ort::Value::CreateTensor<float>(memInfo, outImag.data(), outImag.size(),
-                                                outShape.data(), outShape.size())};
-            const char* inNames[] = {inRealName.get(), inImagName.get()};
-            const char* outNames[] = {outRealName.get(), outImagName.get()};
+            const auto inferenceStarted = Clock::now();
             stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
                 sess.Run(runOptions, inNames, inputs.data(), inputs.size(), outNames,
                          outputs.data(), outputs.size());
             });
+            performance.inferenceMs += elapsedMs(inferenceStarted);
 
             // Reconstruct drums + bass from their output-tensor slices.
+            const auto synthesisStarted = Clock::now();
             spectral.synthesizeStem(outReal.data() + static_cast<size_t>(kDrumsIndex) * Spec::kSpecFloats,
                                     outImag.data() + static_cast<size_t>(kDrumsIndex) * Spec::kSpecFloats,
                                     sep.data());
+            performance.synthesisMs += elapsedMs(synthesisStarted);
+            auto overlapAddStarted = Clock::now();
             overlapAdd(drumsAcc, cstart, clen);
+            performance.overlapAddMs += elapsedMs(overlapAddStarted);
+            const auto bassSynthesisStarted = Clock::now();
             spectral.synthesizeStem(outReal.data() + static_cast<size_t>(kBassIndex) * Spec::kSpecFloats,
                                     outImag.data() + static_cast<size_t>(kBassIndex) * Spec::kSpecFloats,
                                     sep.data());
+            performance.synthesisMs += elapsedMs(bassSynthesisStarted);
+            overlapAddStarted = Clock::now();
             overlapAdd(bassAcc, cstart, clen);
 
             for (int i = 0; i < clen; ++i)
                 counter[static_cast<size_t>(cstart + i)] += hwin[static_cast<size_t>(i)];
+            performance.overlapAddMs += elapsedMs(overlapAddStarted);
 
             ++stepIndex;
+            ++performance.chunks;
             if (onProgress) onProgress(static_cast<double>(stepIndex) / totalSteps);
         }
 
@@ -242,8 +266,11 @@ struct BsRoformerRhythm::Impl
                     o[i] = a[i] / std::max(counter[static_cast<size_t>(i)], 1.0e-10f);
             }
         };
+        const auto finaliseStarted = Clock::now();
         finalise(drumsAcc, out.drums);
         finalise(bassAcc, out.bass);
+        performance.finaliseMs = elapsedMs(finaliseStarted);
+        logRoformerPerformance(performanceJobId, "rhythm", performance);
         if (onProgress) onProgress(1.0);
         return out;
     }
@@ -262,11 +289,13 @@ BsRoformerRhythmStems BsRoformerRhythm::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
     double overlap, const std::function<void(double)>& onProgress,
     const std::function<bool()>& shouldCancel,
-    const std::function<void(bool)>& onModelLoadState)
+    const std::function<void(bool)>& onModelLoadState,
+    const juce::String& performanceJobId)
 {
     if (mixture.getNumSamples() <= 0) return {};
     return impl->run(
-        modelFile, mixture, useGpu, overlap, onProgress, onModelLoadState, shouldCancel);
+        modelFile, mixture, useGpu, overlap, onProgress, onModelLoadState, shouldCancel,
+        performanceJobId);
 }
 
 } // namespace silverdaw
