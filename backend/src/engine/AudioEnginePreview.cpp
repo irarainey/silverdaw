@@ -108,6 +108,10 @@ void AudioEngine::unloadPreview()
     preview.retiredWarps.clear();
     preview.envelopeSnapshot.reset();
     preview.retiredEnvelopes.clear();
+    preview.brakeSnapshot.reset();
+    preview.retiredBrakes.clear();
+    preview.backspinSnapshot.reset();
+    preview.retiredBackspins.clear();
     preview.readerSource.reset();
     preview.sourceFile = juce::File();
     preview.inMs = 0.0;

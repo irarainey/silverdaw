@@ -424,7 +424,51 @@ void testBusGraphPanAppliedThroughMix()
     bg.releaseResources();
 }
 
-// Stress the lock-free setters (pan/sends/peaks) and the locked tone setter
+void testBusGraphStructuralEditsDoNotDropAudio()
+{
+    constexpr int kBlock = 128;
+    constexpr double kRate = 48000.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    ConstantSource steady(0.25F);
+    bg.attachClip("t1", "steady", &steady);
+
+    std::atomic<bool> finished{false};
+    std::thread writer([&]() {
+        for (int i = 0; i < 1000; ++i)
+        {
+            auto churn = std::make_unique<ConstantSource>(0.1F);
+            bg.attachClip("t1", "churn", churn.get());
+            bg.detachClip("churn", churn.get());
+            churn.reset();
+        }
+        finished.store(true, std::memory_order_release);
+    });
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    int renderedBlocks = 0;
+    bool sawSilentBlock = false;
+    while (! finished.load(std::memory_order_acquire) || renderedBlocks < 100)
+    {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        sawSilentBlock =
+            sawSilentBlock || out.getMagnitude(0, 0, kBlock) < 0.24F;
+        ++renderedBlocks;
+    }
+
+    writer.join();
+    require(! sawSilentBlock,
+            "structural graph edits must not silence a continuously playing track");
+    require(bg.audioBlocksSkipped() == 0,
+            "lock-free structural graph edits must not skip callback blocks");
+    bg.detachClip("steady", &steady);
+    bg.releaseResources();
+}
+
+// Stress the lock-free setters (pan/sends/peaks/tone)
 // concurrently with the audio callback: output must stay finite, no crash or
 // deadlock, and the final published state must take effect deterministically.
 void testBusGraphConcurrentParamUpdatesAreSafe()
@@ -756,6 +800,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
+    tests.push_back({"BusGraph structural edits do not drop callback audio", testBusGraphStructuralEditsDoNotDropAudio});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});

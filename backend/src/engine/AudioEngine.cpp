@@ -493,14 +493,7 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
 void AudioEngine::pause()
 {
     master.setPlaying(false);
-    // Retire replaced snapshots/processors until the audio thread is quiescent.
-    for (auto& [id, track] : tracks)
-    {
-        track->retiredWarps.clear();
-        track->retiredEnvelopes.clear();
-        track->retiredEdgeFades.clear();
-    }
-    retiredAutomation.clear();
+    reclaimRetiredPlaybackSnapshots();
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
 }
 
@@ -515,12 +508,43 @@ void AudioEngine::stop()
         {
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
         }
+    }
+    reclaimRetiredPlaybackSnapshots();
+    silverdaw::log::info("engine", "stop");
+}
+
+void AudioEngine::reclaimRetiredPlaybackSnapshots()
+{
+    // Publishing an equivalent graph snapshot makes every callback that could
+    // still hold a superseded clip/automation pointer finish before reclamation.
+    busGraph.synchronizeRenderThread();
+    for (auto& [id, track] : tracks)
+    {
         track->retiredWarps.clear();
         track->retiredEnvelopes.clear();
         track->retiredEdgeFades.clear();
+        track->retiredBrakes.clear();
+        track->retiredBackspins.clear();
     }
     retiredAutomation.clear();
-    silverdaw::log::info("engine", "stop");
+}
+
+std::size_t AudioEngine::retiredPlaybackSnapshotCount() const noexcept
+{
+    std::size_t count = retiredAutomation.size()
+                      + preview.retiredWarps.size()
+                      + preview.retiredEnvelopes.size()
+                      + preview.retiredBrakes.size()
+                      + preview.retiredBackspins.size();
+    for (const auto& [id, track] : tracks)
+    {
+        count += track->retiredWarps.size()
+               + track->retiredEnvelopes.size()
+               + track->retiredEdgeFades.size()
+               + track->retiredBrakes.size()
+               + track->retiredBackspins.size();
+    }
+    return count;
 }
 
 void AudioEngine::setMasterGain(float gain)
