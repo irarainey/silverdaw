@@ -22,8 +22,13 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
-import type { StemName, StemQuality, DereverbStrength, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from '@shared/bridge-protocol'
-import type { StemModelState, StemModelDownloadProgress, EnsureStemModelResult } from '@shared/types'
+import type { StemName, StemQuality, DereverbStrength } from '@shared/bridge-protocol'
+import type {
+  StemModelState,
+  StemModelDownloadProgress,
+  EnsureStemModelResult,
+  StemPrefsDto
+} from '@shared/types'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
 const ALL_STEMS: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -45,20 +50,28 @@ export interface StemSelectionState {
 
 const selection: Ref<StemSelectionState | null> = ref(null)
 
-// Guards the dispatch preamble against a double-trigger. The backend separator is
-// single-slot: `stemSeparationState` covers a job once `beginStemSeparation` runs, but
-// `dispatchSeparation` first does several async preference/model-path lookups — a window
-// in which a second trigger (an impatient click, or two entry points) could fire a
-// duplicate STEM_SEPARATE that the backend can only reject with an error toast. This flag
-// closes that window; together with the active-state check a duplicate never reaches the
-// backend.
-let dispatchInFlight = false
+// A token prevents duplicate preparation and invalidates pending IPC on cancellation.
+let activePreparation: symbol | null = null
 
 // The last-used separation quality, persisted with application preferences so the
 // picker reopens on the user's choice instead of resetting each time. Cached in the
 // module (and primed once at startup via loadStemQualityPreference) so the dialog can
 // seed it synchronously when it opens; setStemQuality keeps it and the store in sync.
 let preferredQuality: StemQuality = 'balanced'
+
+const DEFAULT_STEM_PREFS: StemPrefsDto = {
+  useGpu: false,
+  quality: 'balanced',
+  useBackupModel: false,
+  enhanceVocals: false,
+  vocalEnhanceStrength: 'medium',
+  enhanceDrums: false,
+  drumEnhanceStrength: 'medium',
+  enhanceBass: false,
+  bassEnhanceStrength: 'medium',
+  enhanceOther: false,
+  otherEnhanceStrength: 'medium'
+}
 
 export function useStemSelection(): Readonly<Ref<StemSelectionState | null>> {
   return readonly(selection)
@@ -91,6 +104,19 @@ export function abandonActiveStemSeparation(reason: string): void {
   clearStemSeparationState()
   useNotificationsStore().pushError(reason)
   log.warn('stems', `active separation abandoned jobId=${active.jobId}: ${reason}`)
+}
+
+export function cancelActiveStemSeparation(): void {
+  const active = snapshotStemSeparationState()
+  if (active === null) return
+  if (activePreparation !== null) {
+    activePreparation = null
+    forgetStemJob(active.jobId)
+    clearStemSeparationState()
+    log.info('stems', `cancelled during preparation jobId=${active.jobId}`)
+    return
+  }
+  sendBridge('STEM_SEPARATE_CANCEL', { jobId: active.jobId })
 }
 
 function stripExtension(name: string): string {
@@ -508,22 +534,47 @@ async function dispatchSeparation(
   // Reject a duplicate before it reaches the single-slot backend. The check-and-set is
   // synchronous (no await between), so a second concurrent call is blocked; `state`
   // covers the window after the job is registered.
-  if (dispatchInFlight || snapshotStemSeparationState() !== null) {
+  if (activePreparation !== null || snapshotStemSeparationState() !== null) {
     log.warn('stems', 'ignored duplicate stem separation (one is already in progress)')
     return
   }
-  dispatchInFlight = true
+  const preparation = Symbol('stem-preparation')
+  activePreparation = preparation
+  const preparationStarted = performance.now()
   const notifications = useNotificationsStore()
-  let jobId: string | null = null
+  const jobId = crypto.randomUUID()
+  registerStemJob(jobId, target)
+  beginStemSeparation(jobId, target, stems)
   try {
-    const modelDir = await window.silverdaw.getStemModelDir()
-    const useGpu = await resolveUseGpu()
-    const enhance = await resolveStemEnhance()
-    const roformerModelPath = await resolveVocalPackPath()
-    const rhythmModelPath = await resolveRhythmPackPath()
-    jobId = crypto.randomUUID()
-    registerStemJob(jobId, target)
-    beginStemSeparation(jobId, target, stems)
+    const [modelDir, prefs, gpu, vocalPackPath, rhythmPackPath] = await Promise.all([
+      window.silverdaw.getStemModelDir(),
+      window.silverdaw.getStemPrefs().catch((err) => {
+        log.warn(
+          'stems',
+          `getStemPrefs failed, using safe defaults: ${err instanceof Error ? err.message : String(err)}`
+        )
+        return DEFAULT_STEM_PREFS
+      }),
+      window.silverdaw.getStemGpuStatus().catch((err) => {
+        log.warn(
+          'stems',
+          `getStemGpuStatus failed, defaulting to CPU: ${err instanceof Error ? err.message : String(err)}`
+        )
+        return { available: false, name: null }
+      }),
+      window.silverdaw.getVocalPackPath().catch(() => null),
+      window.silverdaw.getRhythmPackPath().catch(() => null)
+    ])
+    const useGpu = prefs.useGpu && gpu.available
+    const useBackupModel = prefs.useBackupModel
+    const roformerModelPath =
+      !useBackupModel && vocalPackPath && vocalPackPath.length > 0 ? vocalPackPath : undefined
+    const rhythmModelPath =
+      !useBackupModel && rhythmPackPath && rhythmPackPath.length > 0 ? rhythmPackPath : undefined
+    if (activePreparation !== preparation || snapshotStemSeparationState()?.jobId !== jobId) {
+      log.info('stems', `skipped dispatch for abandoned preparation jobId=${jobId}`)
+      return
+    }
     sendBridge('STEM_SEPARATE', {
       jobId,
       sourceItemId: target.sourceItemId,
@@ -535,60 +586,6 @@ async function dispatchSeparation(
       stems: [...stems],
       quality,
       useGpu,
-      enhanceVocals: enhance.enhanceVocals,
-      vocalEnhanceStrength: enhance.vocalEnhanceStrength,
-      enhanceDrums: enhance.enhanceDrums,
-      drumEnhanceStrength: enhance.drumEnhanceStrength,
-      enhanceBass: enhance.enhanceBass,
-      bassEnhanceStrength: enhance.bassEnhanceStrength,
-      enhanceOther: enhance.enhanceOther,
-      otherEnhanceStrength: enhance.otherEnhanceStrength,
-      // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
-      // strength only when the user enabled it for a vocals run.
-      ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
-    })
-    log.info(
-      'stems',
-      `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
-        `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
-        `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
-        `enhanceVocals=${enhance.enhanceVocals ? enhance.vocalEnhanceStrength : 'off'} ` +
-        `enhanceDrums=${enhance.enhanceDrums ? enhance.drumEnhanceStrength : 'off'} ` +
-        `enhanceBass=${enhance.enhanceBass ? enhance.bassEnhanceStrength : 'off'} ` +
-        `enhanceOther=${enhance.enhanceOther ? enhance.otherEnhanceStrength : 'off'}`
-    )
-  } catch (err) {
-    // A preparation failure (prefs / model-dir / pack-path lookup) must not leave a
-    // half-registered job or a stuck progress dialog — clean up and surface it.
-    if (jobId !== null) {
-      forgetStemJob(jobId)
-      clearStemSeparationState()
-    }
-    notifications.pushError('Could not start stem separation.')
-    log.error('stems', `dispatch failed: ${err instanceof Error ? err.message : String(err)}`)
-  } finally {
-    dispatchInFlight = false
-  }
-}
-
-/**
- * Resolves the optional per-stem cleanup settings from the persisted stem prefs.
- * Any lookup failure disables cleanup — the safe default that never alters a
- * stem the user didn't ask to process.
- */
-async function resolveStemEnhance(): Promise<{
-  enhanceVocals: boolean
-  vocalEnhanceStrength: VocalEnhanceStrength
-  enhanceDrums: boolean
-  drumEnhanceStrength: DrumEnhanceStrength
-  enhanceBass: boolean
-  bassEnhanceStrength: BassEnhanceStrength
-  enhanceOther: boolean
-  otherEnhanceStrength: OtherEnhanceStrength
-}> {
-  try {
-    const prefs = await window.silverdaw.getStemPrefs()
-    return {
       enhanceVocals: prefs.enhanceVocals,
       vocalEnhanceStrength: prefs.vocalEnhanceStrength,
       enhanceDrums: prefs.enhanceDrums,
@@ -596,79 +593,33 @@ async function resolveStemEnhance(): Promise<{
       enhanceBass: prefs.enhanceBass,
       bassEnhanceStrength: prefs.bassEnhanceStrength,
       enhanceOther: prefs.enhanceOther,
-      otherEnhanceStrength: prefs.otherEnhanceStrength
-    }
-  } catch (err) {
-    log.warn(
-      'stems',
-      `resolveStemEnhance failed, disabling cleanup: ${err instanceof Error ? err.message : String(err)}`
+      otherEnhanceStrength: prefs.otherEnhanceStrength,
+      // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
+      // strength only when the user enabled it for a vocals run.
+      ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
+    })
+    log.info(
+      'stem-perf',
+      `dispatch job=${jobId} preparationMs=${(performance.now() - preparationStarted).toFixed(1)}`
     )
-    return {
-      enhanceVocals: false,
-      vocalEnhanceStrength: 'medium',
-      enhanceDrums: false,
-      drumEnhanceStrength: 'medium',
-      enhanceBass: false,
-      bassEnhanceStrength: 'medium',
-      enhanceOther: false,
-      otherEnhanceStrength: 'medium'
-    }
-  }
-}
-
-/**
- * Resolves the Mel-Band RoFormer "Vocal Quality Pack" core .onnx path for the
- * request. The packs are the primary engine, so this returns the path whenever
- * the pack is installed — UNLESS the user forced the htdemucs backup model. Any
- * lookup failure (or pack absent) returns undefined, so the backend falls back
- * to the htdemucs vocal specialist.
- */
-async function resolveVocalPackPath(): Promise<string | undefined> {
-  try {
-    const prefs = await window.silverdaw.getStemPrefs()
-    if (prefs.useBackupModel) return undefined
-    const path = await window.silverdaw.getVocalPackPath()
-    return path && path.length > 0 ? path : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Resolves the 4-stem BS-RoFormer "Rhythm Quality Pack" core .onnx path for the
- * request. Used automatically whenever the pack is installed, unless the user
- * forced the htdemucs backup model. Any lookup failure (or pack absent) returns
- * undefined, so the backend falls back to the htdemucs drums/bass specialists.
- */
-async function resolveRhythmPackPath(): Promise<string | undefined> {
-  try {
-    const prefs = await window.silverdaw.getStemPrefs()
-    if (prefs.useBackupModel) return undefined
-    const path = await window.silverdaw.getRhythmPackPath()
-    return path && path.length > 0 ? path : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Effective GPU usage for a separation: the user's persisted `stems.useGpu`
- * preference, gated by live GPU detection so a machine without a hardware GPU
- * always runs on the CPU regardless of the stored value. Any lookup failure
- * falls back to the CPU (false) — the safe default.
- */
-async function resolveUseGpu(): Promise<boolean> {
-  try {
-    const [prefs, gpu] = await Promise.all([
-      window.silverdaw.getStemPrefs(),
-      window.silverdaw.getStemGpuStatus()
-    ])
-    return prefs.useGpu && gpu.available
-  } catch (err) {
-    log.warn(
+    log.info(
       'stems',
-      `resolveUseGpu failed, defaulting to CPU: ${err instanceof Error ? err.message : String(err)}`
+      `dispatch STEM_SEPARATE jobId=${jobId} source=${target.sourceItemId} ` +
+        `clip=${target.clipId ?? '(library)'} stems=${stems.join(',')} quality=${quality} ` +
+        `useGpu=${useGpu} dereverb=${dereverb ?? 'off'} ` +
+        `enhanceVocals=${prefs.enhanceVocals ? prefs.vocalEnhanceStrength : 'off'} ` +
+        `enhanceDrums=${prefs.enhanceDrums ? prefs.drumEnhanceStrength : 'off'} ` +
+        `enhanceBass=${prefs.enhanceBass ? prefs.bassEnhanceStrength : 'off'} ` +
+        `enhanceOther=${prefs.enhanceOther ? prefs.otherEnhanceStrength : 'off'}`
     )
-    return false
+  } catch (err) {
+    // A preparation failure (prefs / model-dir / pack-path lookup) must not leave a
+    // half-registered job or a stuck progress dialog — clean up and surface it.
+    forgetStemJob(jobId)
+    clearStemSeparationState()
+    notifications.pushError('Could not start stem separation.')
+    log.error('stems', `dispatch failed: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    if (activePreparation === preparation) activePreparation = null
   }
 }

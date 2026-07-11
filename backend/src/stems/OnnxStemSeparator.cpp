@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -56,6 +57,22 @@ constexpr double kMaxOverlap = 0.95;
 // slice at each end; the dominant per-segment inference fills the middle band.
 constexpr double kPreparePercent = 2.0;
 constexpr double kSeparatePercent = 98.0;
+
+using PerformanceClock = std::chrono::steady_clock;
+
+double performanceMsSince(PerformanceClock::time_point started)
+{
+    return std::chrono::duration<double, std::milli>(PerformanceClock::now() - started).count();
+}
+
+void logPerformance(const juce::String& jobId, const juce::String& operation,
+                    PerformanceClock::time_point started, const juce::String& detail = {})
+{
+    silverdaw::log::info("stem-perf",
+                         "step job=" + jobId + " operation=" + operation +
+                             " durationMs=" + juce::String(performanceMsSince(started), 1) +
+                             (detail.isNotEmpty() ? " " + detail : juce::String()));
+}
 
 // Progress-cost of a post-separation cleanup pass (denoise/enhance), relative to
 // one specialist model run (= 1.0). Cleanup is far cheaper than inference, but
@@ -352,10 +369,14 @@ class OnnxStemSeparator : public StemSeparator
 
         if (shouldCancel()) throw StemSeparationError(StemFailureCode::Cancelled, "Cancelled");
 
+        auto stepStarted = PerformanceClock::now();
         auto mixture = decodeStereo44k(request.sourceFile, request.startMs, request.lengthMs);
         const int numSamples = mixture.getNumSamples();
+        logPerformance(request.jobId, "decode-resample", stepStarted,
+                       "samples=" + juce::String(numSamples));
 
         // Centre + scale by the mono mixture statistics before inference.
+        stepStarted = PerformanceClock::now();
         const auto norm = computeNormalisation(mixture);
         for (int ch = 0; ch < kModelChannels; ++ch)
         {
@@ -363,6 +384,7 @@ class OnnxStemSeparator : public StemSeparator
             for (int i = 0; i < numSamples; ++i)
                 d[i] = (d[i] - norm.mean) / norm.std;
         }
+        logPerformance(request.jobId, "normalise", stepStarted);
 
         const auto window = makeTransitionWindow(kSegmentSamples);
         const double overlap = std::clamp(request.overlap, 0.0, kMaxOverlap);
@@ -517,6 +539,7 @@ class OnnxStemSeparator : public StemSeparator
                     ? "drums+bass"
                     : stem;
             onProgress("separate", stemBase, sepDetail);
+            const auto separationStarted = PerformanceClock::now();
 
             // The cleanup pass (if any) owns the cost-proportional tail of this
             // stem's band, so the bar keeps advancing while the enhancer/denoiser
@@ -667,12 +690,15 @@ class OnnxStemSeparator : public StemSeparator
                     }
                 }
             }
+            logPerformance(request.jobId, "separate", separationStarted,
+                           "stem=" + juce::String(stem));
 
             const auto stemBaseName = request.fileNameToken.isNotEmpty()
                 ? request.sourceName + " - " + stem + " - " + request.fileNameToken
                 : request.sourceName + " - " + stem;
             const auto outFile = request.outputDir.getChildFile(
                 juce::File::createLegalFileName(stemBaseName + ".wav"));
+            const auto cleanupStarted = PerformanceClock::now();
             // Optional vocal cleanup. Applied only to the vocals stem and only
             // after the (unprocessed) vocal has been folded into `extractedSum`,
             // so the `other` residual stays mixture-consistent. RNNoise removes
@@ -822,10 +848,21 @@ class OnnxStemSeparator : public StemSeparator
                 OtherEnhancer::process(stemBuffer, kModelSampleRate, otherOpts);
                 onProgress("cleanup", stemBase + stemSpan, stem);
             }
+            logPerformance(request.jobId, "cleanup", cleanupStarted,
+                           "stem=" + juce::String(stem));
+            const auto writeStarted = PerformanceClock::now();
             writeStemWav(outFile, stemBuffer);
-            result.stems.push_back({juce::String(stem), outFile});
+            logPerformance(request.jobId, "write-wav", writeStarted,
+                           "stem=" + juce::String(stem));
+            const StemResultFile resultFile{
+                juce::String(stem),
+                outFile,
+                kModelSampleRate,
+                static_cast<double>(numSamples) * 1000.0 / kModelSampleRate,
+                2};
+            result.stems.push_back(resultFile);
             // Let the UI import this stem now, before later stems finish.
-            onStemReady(stem, outFile);
+            onStemReady(resultFile);
         }
 
         onProgress("write", 100.0, "");
@@ -1039,11 +1076,19 @@ class OnnxStemSeparator : public StemSeparator
     {
         const auto key = modelPath.toStdString();
         auto it = sessionCache.find(key);
+        const bool cacheHit = it != sessionCache.end();
+        const auto started = PerformanceClock::now();
         if (it == sessionCache.end())
             it = sessionCache
                      .emplace(key, std::make_unique<Ort::Session>(
                                        env, modelPath.toWideCharPointer(), sessionOptions))
                      .first;
+        silverdaw::log::info(
+            "stem-perf",
+            "session model=" + juce::File(modelPath).getFileNameWithoutExtension() +
+                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
+                " durationMs=" + juce::String(performanceMsSince(started), 1));
         return *it->second;
     }
 

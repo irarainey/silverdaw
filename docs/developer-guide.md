@@ -1492,8 +1492,17 @@ Fast/Balanced/Best knob is a real speed/quality control on either engine.
 is skipped and `other = mixture − (vocals + drums + bass)` is synthesised instead
 — a mixture-consistency residual that is faster and loses no energy. Separation
 runs on a background thread and never touches the audio callback; progress is
-reported via `STEM_PROGRESS`, each stem lands the instant its WAV is written
-(`STEM_PARTIAL`), and `STEM_READY` backfills the rest.
+reported via `STEM_PROGRESS` at most every 100 ms while stage changes and the
+terminal update pass through immediately. Each stem lands as soon as its WAV is
+written (`STEM_PARTIAL`), and `STEM_READY` waits for in-flight imports before
+backfilling the rest and reporting completion. The renderer opens the preparing
+state before resolving request settings, reads the stem preferences once for
+dispatch, and resolves independent model paths and GPU status concurrently.
+Generated-stem envelopes include their sample rate, duration, and channel count.
+The import path still decodes each WAV for waveform peaks, but uses that
+authoritative geometry and the source's cached project media to skip file
+metadata extraction, sample-rate probing, musical-key detection, playback-path
+resolution, and repeated project-media reads.
 
 **The Separate Stems dialog** lets the user tick which of **vocals / drums / bass /
 other** to extract. It opens with **nothing ticked** (Start stays disabled until at
@@ -1720,6 +1729,12 @@ paths keeps the added energy from clipping. The whole pass is non-destructive �
 only shapes the freshly written stem WAVs and never touches the user's source, and
 it is a guaranteed no-op when disabled, empty, or silent. See
 [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) for RNNoise attribution.
+
+When verbose diagnostic logging is enabled, `stem-perf` entries record renderer
+preparation and import durations, backend decode, normalisation, separation and
+WAV-write durations, ONNX session cache hits or misses, progress-message counts
+and each job's total duration. These timings are emitted in Release builds and
+run only on the existing stem worker or renderer orchestration paths.
 
 ## Library panel
 

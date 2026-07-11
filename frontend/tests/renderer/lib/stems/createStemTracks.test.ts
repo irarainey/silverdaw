@@ -35,12 +35,34 @@ const beginImportBatch = vi.fn()
 const noteImportFinished = vi.fn()
 const setItemAnalysis = vi.fn()
 const setItemKey = vi.fn()
+const sourceLibraryItem = {
+  id: 'src-item',
+  kind: 'source',
+  filePath: 'C:\\music\\Song.mp3',
+  mediaId: 'media-1'
+}
+const byId: Record<string, typeof sourceLibraryItem> = {
+  'src-item': sourceLibraryItem
+}
 const getItem = vi.fn((id: string) =>
-  id === 'src-item' ? { id, kind: 'source', filePath: 'C:\\music\\Song.mp3' } : { id }
+  id === 'src-item' ? byId['src-item'] : { id }
 )
 vi.mock('@/stores/libraryStore', () => ({
-  useLibraryStore: () => ({ beginImportBatch, noteImportFinished, getItem, setItemAnalysis, setItemKey })
+  useLibraryStore: () => ({
+    beginImportBatch,
+    noteImportFinished,
+    getItem,
+    setItemAnalysis,
+    setItemKey,
+    byId
+  }),
+  resolveLibraryItemMediaId: (item: { mediaId?: string } | undefined) => item?.mediaId
 }))
+
+const { getProjectMedia } = vi.hoisted(() => ({
+  getProjectMedia: vi.fn(async () => ({ artist: 'Artist' }))
+}))
+vi.mock('@/lib/library/projectMedia', () => ({ getProjectMedia }))
 
 const pushInfo = vi.fn()
 const pushError = vi.fn()
@@ -68,8 +90,20 @@ function payload(): StemReadyPayload {
     clipId: 'src',
     sourceName: 'Song',
     stems: [
-      { stem: 'vocals', filePath: 'C:\\stems\\vocals.wav' },
-      { stem: 'drums', filePath: 'C:\\stems\\drums.wav' }
+      {
+        stem: 'vocals',
+        filePath: 'C:\\stems\\vocals.wav',
+        sampleRate: 44100,
+        durationMs: 50000,
+        channelCount: 2
+      },
+      {
+        stem: 'drums',
+        filePath: 'C:\\stems\\drums.wav',
+        sampleRate: 44100,
+        durationMs: 50000,
+        channelCount: 2
+      }
     ]
   }
 }
@@ -80,12 +114,16 @@ function partial(stem: 'vocals' | 'drums'): StemPartialPayload {
     clipId: 'src',
     sourceName: 'Song',
     stem,
-    filePath: `C:\\stems\\${stem}.wav`
+    filePath: `C:\\stems\\${stem}.wav`,
+    sampleRate: 44100,
+    durationMs: 50000,
+    channelCount: 2
   }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  byId['src-item'] = sourceLibraryItem
   vi.stubGlobal('window', { silverdaw: { readAudioFile } })
   readAudioFile.mockResolvedValue({ filePath: 'x', fileName: 'x.wav', data: new ArrayBuffer(0) })
   importAudioIntoLibrary.mockResolvedValue('item-1')
@@ -113,20 +151,43 @@ describe('createTracksFromStems (timeline target)', () => {
     expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
       1,
       expect.anything(),
-      {
+      expect.objectContaining({
         kind: 'stem',
         name: 'Vocals — Song',
-        derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
-      }
+        derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 },
+        generatedAudio: { sampleRate: 44100, durationMs: 50000, channelCount: 2 },
+        inheritedMetadata: { artist: 'Artist' }
+      })
     )
     expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
-      {
+      expect.objectContaining({
         kind: 'stem',
         name: 'Drums — Song',
-        derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
-      }
+        derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 },
+        generatedAudio: { sampleRate: 44100, durationMs: 50000, channelCount: 2 },
+        inheritedMetadata: { artist: 'Artist' }
+      })
+    )
+    expect(getProjectMedia).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the source media identity if the source is removed before later stems arrive', async () => {
+    delete byId['src-item']
+
+    await createTracksFromStems(payload())
+
+    expect(importAudioIntoLibrary).toHaveBeenCalledTimes(2)
+    expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({ inheritedMediaId: 'media-1' })
+    )
+    expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ inheritedMediaId: 'media-1' })
     )
   })
 
@@ -159,6 +220,54 @@ describe('createTracksFromStems (timeline target)', () => {
     // Vocals is not re-created; only the remaining drums stem is added.
     expect(addTrack).toHaveBeenCalledTimes(2)
     expect(setTrackName).toHaveBeenNthCalledWith(2, 'track-new', 'Drums — Song')
+    expect(pushInfo).toHaveBeenCalledWith('Added 2 stem tracks from Song')
+  })
+
+  it('awaits an in-flight partial import before reporting completion', async () => {
+    let resolveImport: ((itemId: string) => void) | undefined
+    importAudioIntoLibrary.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveImport = resolve
+      })
+    )
+    const vocalsOnly = { ...payload(), stems: [payload().stems[0]!] }
+
+    const partialImport = createTrackFromStem(partial('vocals'))
+    await vi.waitFor(() => expect(importAudioIntoLibrary).toHaveBeenCalledTimes(1))
+    const readyImport = createTracksFromStems(vocalsOnly)
+    await Promise.resolve()
+
+    expect(pushInfo).not.toHaveBeenCalled()
+    resolveImport?.('item-1')
+    await partialImport
+    await readyImport
+
+    expect(importAudioIntoLibrary).toHaveBeenCalledTimes(1)
+    expect(pushInfo).toHaveBeenCalledWith('Added 1 stem track from Song')
+  })
+
+  it('awaits partial imports before starting missing ready imports', async () => {
+    let resolveVocals: ((itemId: string) => void) | undefined
+    importAudioIntoLibrary
+      .mockReturnValueOnce(
+        new Promise<string>((resolve) => {
+          resolveVocals = resolve
+        })
+      )
+      .mockResolvedValueOnce('item-2')
+
+    const partialImport = createTrackFromStem(partial('vocals'))
+    await vi.waitFor(() => expect(importAudioIntoLibrary).toHaveBeenCalledTimes(1))
+    const readyImport = createTracksFromStems(payload())
+    await Promise.resolve()
+
+    expect(readAudioFile).toHaveBeenCalledTimes(1)
+    resolveVocals?.('item-1')
+    await partialImport
+    await readyImport
+
+    expect(readAudioFile).toHaveBeenCalledTimes(2)
+    expect(importAudioIntoLibrary).toHaveBeenCalledTimes(2)
     expect(pushInfo).toHaveBeenCalledWith('Added 2 stem tracks from Song')
   })
 
@@ -228,11 +337,15 @@ describe('createTracksFromStems (timeline target)', () => {
     )
     // The window start is recorded on the stem's provenance so the backend can
     // apply the same shift authoritatively.
-    expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(1, expect.anything(), {
-      kind: 'stem',
-      name: 'Vocals \u2014 Song',
-      derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 200, durationMs: 0 }
-    })
+    expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        kind: 'stem',
+        name: 'Vocals \u2014 Song',
+        derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 200, durationMs: 0 }
+      })
+    )
   })
 
   it('never copies a low-confidence source flag onto the stem (defers to the source)', async () => {
@@ -287,7 +400,7 @@ describe('createTracksFromStems (library target)', () => {
     expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(
       1,
       expect.anything(),
-      {
+      expect.objectContaining({
         kind: 'stem',
         name: 'Vocals — Song',
         derivedFrom: {
@@ -296,7 +409,7 @@ describe('createTracksFromStems (library target)', () => {
           inMs: 0,
           durationMs: 0
         }
-      }
+      })
     )
   })
 })

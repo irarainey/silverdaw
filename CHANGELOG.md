@@ -13,6 +13,12 @@
 - Startup now connects to the audio engine sooner when it becomes available.
 - Fast launches no longer pause on startup steps that have already completed.
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
+- Stem separation now starts preparing immediately and imports generated stems with less redundant processing.
+
+### Fixed
+
+- Stem separation now waits for every generated stem to finish importing before reporting completion.
+- Stem cleanup checkboxes now reflect their persisted settings even if another preference cannot be loaded.
 
 ## 1.1.0
 

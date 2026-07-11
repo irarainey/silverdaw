@@ -891,7 +891,10 @@ describe('isStemPartialPayload', () => {
         clipId: 'c1',
         sourceName: 'Loop',
         stem: 'drums',
-        filePath: '/cache/drums.wav'
+        filePath: '/cache/drums.wav',
+        sampleRate: 44100,
+        durationMs: 50000,
+        channelCount: 2
       })
     ).toBe(true)
   })
@@ -902,6 +905,15 @@ describe('isStemPartialPayload', () => {
     ).toBe(false)
     expect(
       isStemPartialPayload({ jobId: 'j1', clipId: 'c1', sourceName: 'Loop', stem: 'drums', filePath: '' })
+    ).toBe(false)
+    expect(
+      isStemPartialPayload({
+        jobId: 'j1',
+        sourceName: 'Loop',
+        stem: 'drums',
+        filePath: '/x.wav',
+        channelCount: 0
+      })
     ).toBe(false)
   })
 })
@@ -914,7 +926,13 @@ describe('isStemReadyPayload', () => {
         clipId: 'c1',
         sourceName: 'Loop',
         stems: [
-          { stem: 'vocals', filePath: '/cache/vocals.wav' },
+          {
+            stem: 'vocals',
+            filePath: '/cache/vocals.wav',
+            sampleRate: 44100,
+            durationMs: 50000,
+            channelCount: 2
+          },
           { stem: 'drums', filePath: '/cache/drums.wav' },
           { stem: 'bass', filePath: '/cache/bass.wav' },
           { stem: 'other', filePath: '/cache/other.wav' }

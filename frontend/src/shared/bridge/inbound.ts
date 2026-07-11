@@ -724,7 +724,10 @@ export type StemProgressPayload = z.infer<typeof StemProgressPayloadSchema>
 /** One separated stem written to disk (non-destructive; the original is untouched). */
 export const StemFileSchema = z.object({
   stem: StemNameSchema,
-  filePath: z.string().min(1)
+  filePath: z.string().min(1),
+  sampleRate: z.number().positive().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  channelCount: z.number().int().positive().optional()
 })
 export type StemFile = z.infer<typeof StemFileSchema>
 
@@ -744,7 +747,10 @@ export const StemPartialPayloadSchema = z.object({
   clipId: z.string().min(1).optional(),
   sourceName: z.string(),
   stem: StemNameSchema,
-  filePath: z.string().min(1)
+  filePath: z.string().min(1),
+  sampleRate: z.number().positive().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  channelCount: z.number().int().positive().optional()
 })
 export type StemPartialPayload = z.infer<typeof StemPartialPayloadSchema>
 

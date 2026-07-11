@@ -31,8 +31,7 @@ void broadcastPartial(BridgeServer& bridge,
                       const juce::String& jobId,
                       const juce::String& clipId,
                       const juce::String& sourceName,
-                      const juce::String& stem,
-                      const juce::File& file);
+                      const StemResultFile& stem);
 
 void broadcastReady(BridgeServer& bridge,
                     const juce::String& jobId,

@@ -46,6 +46,9 @@ struct StemResultFile
 {
     juce::String stem;
     juce::File file;
+    double sampleRate = 0.0;
+    double durationMs = 0.0;
+    int channelCount = 0;
 };
 
 struct StemSeparationResult
@@ -154,8 +157,7 @@ struct StemSeparationRequest
 using StemProgressFn = std::function<void(const char* stage, double percent, const char* detail)>;
 // Per-stem completion sink: invoked on the worker thread the instant a stem's
 // WAV is written, so the UI can place its track while later stems still run.
-// `stem` is the canonical name; `file` is the written WAV.
-using StemReadyFn = std::function<void(const char* stem, const juce::File& file)>;
+using StemReadyFn = std::function<void(const StemResultFile& stem)>;
 // Polled at safe points so a long separation can bail promptly on cancel.
 using StemCancelFn = std::function<bool()>;
 

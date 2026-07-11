@@ -309,17 +309,6 @@ export function usePreferencesForm(): PreferencesForm {
       const backspinPrefs = await window.silverdaw.getBackspinSettings()
       backspinDuration.value = backspinPrefs.duration
       backspinIntensity.value = backspinPrefs.intensity
-      const stemPrefs = await window.silverdaw.getStemPrefs()
-      useGpuForStems.value = stemPrefs.useGpu
-      useBackupModel.value = stemPrefs.useBackupModel
-      enhanceVocals.value = stemPrefs.enhanceVocals
-      vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
-      enhanceDrums.value = stemPrefs.enhanceDrums
-      drumEnhanceStrength.value = stemPrefs.drumEnhanceStrength
-      enhanceBass.value = stemPrefs.enhanceBass
-      bassEnhanceStrength.value = stemPrefs.bassEnhanceStrength
-      enhanceOther.value = stemPrefs.enhanceOther
-      otherEnhanceStrength.value = stemPrefs.otherEnhanceStrength
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -337,6 +326,23 @@ export function usePreferencesForm(): PreferencesForm {
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
       backspinIntensity.value = 'medium'
+    }
+
+    // Stem settings must reflect their persisted values even when an unrelated
+    // preferences request fails; separation resolves them independently too.
+    try {
+      const stemPrefs = await window.silverdaw.getStemPrefs()
+      useGpuForStems.value = stemPrefs.useGpu
+      useBackupModel.value = stemPrefs.useBackupModel
+      enhanceVocals.value = stemPrefs.enhanceVocals
+      vocalEnhanceStrength.value = stemPrefs.vocalEnhanceStrength
+      enhanceDrums.value = stemPrefs.enhanceDrums
+      drumEnhanceStrength.value = stemPrefs.drumEnhanceStrength
+      enhanceBass.value = stemPrefs.enhanceBass
+      bassEnhanceStrength.value = stemPrefs.bassEnhanceStrength
+      enhanceOther.value = stemPrefs.enhanceOther
+      otherEnhanceStrength.value = stemPrefs.otherEnhanceStrength
+    } catch {
       useGpuForStems.value = false
       useBackupModel.value = false
       enhanceVocals.value = false

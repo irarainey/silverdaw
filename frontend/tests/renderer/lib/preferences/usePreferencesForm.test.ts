@@ -26,6 +26,7 @@ const DEFAULTS = {
   stems: {
     useGpu: false,
     quality: 'balanced' as const,
+    useBackupModel: false,
     enhanceVocals: false,
     vocalEnhanceStrength: 'medium' as const,
     enhanceDrums: false,
@@ -131,5 +132,41 @@ describe('usePreferencesForm', () => {
     expect(form.hasChanges.value).toBe(true)
     form.save()
     expect(window.silverdaw.setStemPrefs).toHaveBeenCalledWith({ useGpu: true })
+  })
+
+  it('loads stem preferences independently of unrelated preference failures', async () => {
+    vi.mocked(window.silverdaw.getQolPrefs).mockRejectedValueOnce(new Error('unavailable'))
+    vi.mocked(window.silverdaw.getStemPrefs).mockResolvedValueOnce({
+      ...DEFAULTS.stems,
+      enhanceVocals: true,
+      enhanceDrums: true,
+      enhanceBass: true,
+      enhanceOther: true
+    })
+    const form = usePreferencesForm()
+
+    await form.loadCurrent()
+
+    expect(form.enhanceVocals.value).toBe(true)
+    expect(form.enhanceDrums.value).toBe(true)
+    expect(form.enhanceBass.value).toBe(true)
+    expect(form.enhanceOther.value).toBe(true)
+  })
+
+  it('persists cleanup as disabled regardless of its retained strength', async () => {
+    vi.mocked(window.silverdaw.getStemPrefs).mockResolvedValueOnce({
+      ...DEFAULTS.stems,
+      enhanceVocals: true
+    })
+    const form = usePreferencesForm()
+    await form.loadCurrent()
+
+    form.enhanceVocals.value = false
+    form.save()
+
+    expect(window.silverdaw.setStemPrefs).toHaveBeenCalledWith({
+      enhanceVocals: false,
+      vocalEnhanceStrength: 'medium'
+    })
   })
 })

@@ -17,6 +17,7 @@
 #include "StemSeparator.h"
 #include "StemShifts.h"
 #include "StemMetrics.h"
+#include "StemProgressCoalescer.h"
 
 namespace silverdaw::tests
 {
@@ -56,9 +57,10 @@ class FakeSeparator : public silverdaw::StemSeparator
         silverdaw::StemSeparationResult result;
         const auto file = request.outputDir.getChildFile("vocals.wav");
         file.create();
-        onStemReady("vocals", file);
+        const silverdaw::StemResultFile stem{juce::String("vocals"), file, 44100.0, 1000.0, 2};
+        onStemReady(stem);
         sawStemReady = true;
-        result.stems.push_back({juce::String("vocals"), file});
+        result.stems.push_back(stem);
         return result;
     }
 };
@@ -120,6 +122,30 @@ void testJobPropagatesCancel()
     require(! busy.load(), "busy flag cleared after cancel");
 }
 
+void testProgressCoalescing()
+{
+    silverdaw::StemProgressCoalescer coalescer;
+    const auto start = silverdaw::StemProgressCoalescer::Clock::time_point{};
+
+    require(coalescer.shouldEmitAt("separate", 10.0, "vocals", start),
+            "first progress update is emitted");
+    require(! coalescer.shouldEmitAt("separate", 11.0, "vocals",
+                                     start + std::chrono::milliseconds(50)),
+            "same-context progress is suppressed inside 100 ms");
+    require(coalescer.shouldEmitAt("separate", 12.0, "vocals",
+                                   start + std::chrono::milliseconds(100)),
+            "latest progress is emitted after 100 ms");
+    require(coalescer.shouldEmitAt("cleanup", 12.1, "vocals",
+                                   start + std::chrono::milliseconds(101)),
+            "stage changes are emitted immediately");
+    require(coalescer.shouldEmitAt("cleanup", 12.2, "drums",
+                                   start + std::chrono::milliseconds(102)),
+            "detail changes are emitted immediately");
+    require(coalescer.shouldEmitAt("cleanup", 100.0, "drums",
+                                   start + std::chrono::milliseconds(103)),
+            "terminal progress is emitted immediately");
+}
+
 void testDefaultSeparatorFailsFastWithoutModel()
 {
     auto separator = silverdaw::createDefaultStemSeparator();
@@ -130,7 +156,7 @@ void testDefaultSeparatorFailsFastWithoutModel()
     {
         silverdaw::StemSeparationRequest request; // empty modelDir -> no weights
         separator->separate(request, [](const char*, double, const char*) {},
-                            [](const char*, const juce::File&) {}, [] { return false; });
+                            [](const silverdaw::StemResultFile&) {}, [] { return false; });
     }
     catch (const silverdaw::StemSeparationError& e)
     {
@@ -298,6 +324,7 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem failure code strings", testFailureCodeStrings});
     tests.push_back({"stem job runs separator and clears busy", testJobRunsSeparatorAndClearsBusy});
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
+    tests.push_back({"stem progress coalesces without hiding transitions", testProgressCoalescing});
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
     tests.push_back({"stem quality maps to vocal shifts", testShiftsForStemQuality});

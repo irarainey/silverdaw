@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <vector>
 
@@ -73,11 +74,22 @@ struct BsRoformerRhythm::Impl
     Ort::Session& sessionFor(const juce::File& modelFile)
     {
         const auto path = modelFile.getFullPathName();
+        const bool cacheHit = session != nullptr && sessionPath == path;
+        const auto started = std::chrono::steady_clock::now();
         if (session == nullptr || sessionPath != path)
         {
             session = std::make_unique<Ort::Session>(env, path.toWideCharPointer(), sessionOptions);
             sessionPath = path;
         }
+        const auto duration = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - started)
+                                  .count();
+        silverdaw::log::info(
+            "stem-perf",
+            "session model=" + modelFile.getFileNameWithoutExtension() +
+                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
+                " durationMs=" + juce::String(duration, 1));
         return *session;
     }
 
