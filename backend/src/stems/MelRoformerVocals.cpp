@@ -96,7 +96,8 @@ MelRoformerVocals::~MelRoformerVocals() = default;
 juce::AudioBuffer<float> MelRoformerVocals::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
     double overlap, const std::function<void(double)>& onProgress,
-    const std::function<bool()>& shouldCancel)
+    const std::function<bool()>& shouldCancel,
+    const std::function<void(bool)>& onModelLoadState)
 {
     using Spec = MelRoformerSpectral;
     const int numSamples = mixture.getNumSamples();
@@ -105,7 +106,11 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
     if (numSamples <= 0) return vocals;
 
     impl->configureProvider(useGpu);
+    const bool cacheMiss =
+        impl->session == nullptr || impl->sessionPath != modelFile.getFullPathName();
+    if (cacheMiss && onModelLoadState) onModelLoadState(true);
     Ort::Session& session = impl->sessionFor(modelFile);
+    if (cacheMiss && onModelLoadState) onModelLoadState(false);
 
     Ort::AllocatorWithDefaultOptions allocator;
     const auto inputName = session.GetInputNameAllocated(0, allocator);

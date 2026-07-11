@@ -29,6 +29,8 @@
 #include "StemShifts.h"
 #include "BsRoformerRhythm.h"
 #include "MelRoformerVocals.h"
+#include "StemAudioPreparation.h"
+#include "StemGpuFallback.h"
 #include "VocalDebleeder.h"
 #include "Dereverberator.h"
 #include "VocalRestorer.h"
@@ -239,33 +241,9 @@ Normalisation computeNormalisation(const juce::AudioBuffer<float>& mixture)
 }
 
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
-// A DirectML GPU reset (Windows TDR) or driver fault mid-inference surfaces as an
-// Ort::Exception whose message carries a DXGI device-removed/hung/reset HRESULT.
-// Detect those so a job can transparently fall back to the CPU provider rather
-// than failing outright.
-bool isGpuDeviceLost(const Ort::Exception& e)
-{
-    const juce::String msg = juce::String(e.what()).toLowerCase();
-    return msg.contains("device removed") || msg.contains("device hung") ||
-           msg.contains("device reset") || msg.contains("device lost") ||
-           msg.contains("dxgi_error_device") || msg.contains("887a00");
-}
-
-// Out of GPU memory (E_OUTOFMEMORY 0x8007000E / "not enough memory resources").
-// Common on integrated GPUs, which share a limited slice of system memory: a
-// large transformer MatMul can exceed the DirectML allocation budget. Treated as
-// recoverable so the job retries on the CPU (ample system RAM) instead of failing.
-bool isGpuOutOfMemory(const Ort::Exception& e)
-{
-    const juce::String msg = juce::String(e.what()).toLowerCase();
-    return msg.contains("8007000e") || msg.contains("e_outofmemory") ||
-           msg.contains("not enough memory") || msg.contains("out of memory");
-}
-
-// Any DirectML fault we can recover from by re-running the job on the CPU.
 bool isRecoverableGpuFault(const Ort::Exception& e)
 {
-    return isGpuDeviceLost(e) || isGpuOutOfMemory(e);
+    return isRecoverableGpuFaultMessage(e.what());
 }
 #endif
 
@@ -282,7 +260,12 @@ class OnnxStemSeparator : public StemSeparator
                                   const StemReadyFn& onStemReady,
                                   const StemCancelFn& shouldCancel) override
     {
-        applyExecutionProvider(request.useGpu);
+        StemSeparationRequest effectiveRequest = request;
+        effectiveRequest.useGpu = gpuFallback.shouldUseGpu(request.useGpu);
+        const bool usingQuarantinedFallback = request.useGpu && ! effectiveRequest.useGpu;
+        if (usingQuarantinedFallback)
+            silverdaw::log::info("stems", "DirectML is quarantined for this process; using CPU.");
+        applyExecutionProvider(effectiveRequest.useGpu);
 
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
         // On a recoverable DirectML fault mid-inference — a GPU reset (Windows TDR)
@@ -290,40 +273,62 @@ class OnnxStemSeparator : public StemSeparator
         // retry the whole job on the CPU provider so the user still gets their stems
         // instead of a hard failure. The CPU provider never triggers TDR and draws
         // on ample system RAM, so a single fallback cannot loop. Already-written
-        // stems are re-emitted; the renderer dedupes them per job, so the retry is
-        // idempotent.
-        if (epUsesGpu)
+        // GPU stem notifications are staged until the attempt succeeds. A failed
+        // attempt discards them before the CPU retry overwrites the output files.
+        if (effectiveRequest.useGpu)
         {
+            double gpuPercent = 0.0;
+            const StemProgressFn gpuProgress =
+                [&](const char* stage, double percent, const char* detail)
+            {
+                gpuPercent = std::max(gpuPercent, percent);
+                onProgress(stage, percent, detail);
+            };
+            StemReadyTransaction gpuOutputs(onStemReady);
             try
             {
-                return runSeparation(request, onProgress, onStemReady, shouldCancel);
+                auto result = runSeparation(
+                    effectiveRequest, gpuProgress,
+                    [&](const StemResultFile& stem) { gpuOutputs.stage(stem); },
+                    shouldCancel, false);
+                gpuOutputs.commit();
+                return result;
             }
             catch (const Ort::Exception& e)
             {
                 if (! isRecoverableGpuFault(e)) throw;
+                gpuFallback.quarantine();
                 silverdaw::log::warn("stems",
                                      juce::String("GPU separation failed (") + e.what() +
-                                         "); falling back to CPU and retrying.");
+                                         "); quarantining DirectML and retrying on CPU.");
                 applyExecutionProvider(false);
                 // Force the whole retry — including the RoFormer packs, which
                 // configure their own sessions from the request — onto the CPU,
                 // otherwise they would reconfigure to the GPU and fault again.
-                StemSeparationRequest cpuRequest = request;
+                StemSeparationRequest cpuRequest = effectiveRequest;
                 cpuRequest.useGpu = false;
-                return runSeparation(cpuRequest, onProgress, onStemReady, shouldCancel);
+                const StemProgressFn retryProgress =
+                    [&](const char* stage, double percent, const char* detail)
+                {
+                    onProgress(stage, mapStemRetryPercent(gpuPercent, percent), detail);
+                };
+                return runSeparation(
+                    cpuRequest, retryProgress, onStemReady, shouldCancel, true);
             }
         }
 #endif
-        return runSeparation(request, onProgress, onStemReady, shouldCancel);
+        return runSeparation(
+            effectiveRequest, onProgress, onStemReady, shouldCancel, usingQuarantinedFallback);
     }
 
   private:
     StemSeparationResult runSeparation(const StemSeparationRequest& request,
                                        const StemProgressFn& onProgress,
                                        const StemReadyFn& onStemReady,
-                                       const StemCancelFn& shouldCancel)
+                                       const StemCancelFn& shouldCancel,
+                                       bool usingGpuFallback)
     {
-        onProgress("prepare", 0.0, "");
+        onProgress("prepare", 0.0, usingGpuFallback ? "gpu-fallback" : "");
 
         // Which engine produces each stem. The optional RoFormer quality packs are
         // the primary engine when installed: vocals come from the vocal pack and
@@ -506,18 +511,13 @@ class OnnxStemSeparator : public StemSeparator
             }
         }
 
-        // Build the raw (denormalised) stereo mixture the RoFormer packs consume.
-        const auto buildRawMix = [&]() {
-            juce::AudioBuffer<float> raw(kModelChannels, numSamples);
-            for (int ch = 0; ch < kModelChannels; ++ch)
-            {
-                const float* mix = mixture.getReadPointer(ch);
-                float* d = raw.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    d[i] = mix[i] * norm.std + norm.mean;
-            }
-            return raw;
-        };
+        juce::AudioBuffer<float> rawMix;
+        if (shouldBuildRawStemMixture(haveVocalPack, isSelected("vocals"), useRhythmPack))
+        {
+            const auto rawMixtureStarted = PerformanceClock::now();
+            rawMix = denormaliseStemMixture(mixture, kModelChannels, norm.mean, norm.std);
+            logPerformance(request.jobId, "raw-mixture", rawMixtureStarted);
+        }
 
         for (size_t s = 0; s < kStemNames.size(); ++s)
         {
@@ -577,12 +577,15 @@ class OnnxStemSeparator : public StemSeparator
                     // Mel-Band RoFormer vocal pack: separate from the RAW (denormalised)
                     // mixture in its own peak-normalised domain; it returns the vocal at
                     // the mixture's level, so no further denormalisation is needed.
-                    auto rawMix = buildRawMix();
                     silverdaw::log::info("stems", "vocals via Mel-Band RoFormer pack");
                     stemBuffer = roformerVocals.separate(
                         request.roformerModelFile, rawMix, request.useGpu, overlap,
                         [&](double f) { onProgress("separate", stemBase + sepSpan * f, stem); },
-                        shouldCancel);
+                        shouldCancel,
+                        [&](bool loading)
+                        {
+                            onProgress(loading ? "load-model" : "separate", stemBase, stem);
+                        });
 
                     // Capture this (unprocessed) vocal so the rhythm pack can be fed
                     // a vocal-removed mixture — cleanup runs later and must not alter
@@ -603,10 +606,10 @@ class OnnxStemSeparator : public StemSeparator
                     // drums / bass (cascaded separation).
                     if (! rhythmDone)
                     {
-                        auto rawMix = buildRawMix();
                         double rhythmBase = stemBase;
                         double rhythmSpan = sepSpan;
                         juce::AudioBuffer<float> rhythmInput;
+                        const juce::AudioBuffer<float>* rhythmSource = &rawMix;
 
                         if (removeVocalsBeforeRhythm)
                         {
@@ -621,7 +624,12 @@ class OnnxStemSeparator : public StemSeparator
                                 vocalForRemoval = roformerVocals.separate(
                                     request.roformerModelFile, rawMix, request.useGpu, overlap,
                                     [&](double f) { onProgress("separate", stemBase + vocalSpan * f, sepDetail); },
-                                    shouldCancel);
+                                    shouldCancel,
+                                    [&](bool loading)
+                                    {
+                                        onProgress(loading ? "load-model" : "separate", stemBase,
+                                                   loading ? "vocals" : sepDetail);
+                                    });
                                 vocalForRemovalReady = true;
                                 rhythmBase = stemBase + vocalSpan;
                                 rhythmSpan = sepSpan - vocalSpan;
@@ -635,12 +643,12 @@ class OnnxStemSeparator : public StemSeparator
                                 for (int i = 0; i < numSamples; ++i)
                                     d[i] = raw[i] - voc[i];
                             }
+                            rhythmSource = &rhythmInput;
                             silverdaw::log::info("stems",
                                 "drums/bass via BS-RoFormer rhythm pack (vocal-removed input)");
                         }
                         else
                         {
-                            rhythmInput = std::move(rawMix);
                             silverdaw::log::info("stems", "drums/bass via BS-RoFormer rhythm pack");
                         }
 
@@ -651,9 +659,14 @@ class OnnxStemSeparator : public StemSeparator
                         const char* rhythmDetail =
                             (isSelected("drums") && isSelected("bass")) ? "drums+bass" : stem;
                         rhythmStems = roformerRhythm.separate(
-                            request.rhythmModelFile, rhythmInput, request.useGpu, overlap,
+                            request.rhythmModelFile, *rhythmSource, request.useGpu, overlap,
                             [&](double f) { onProgress("separate", rhythmBase + rhythmSpan * f, rhythmDetail); },
-                            shouldCancel);
+                            shouldCancel,
+                            [&](bool loading)
+                            {
+                                onProgress(loading ? "load-model" : "separate", rhythmBase,
+                                           rhythmDetail);
+                            });
                         rhythmDone = true;
                     }
                     stemBuffer = juce::String(stem) == "drums" ? rhythmStems.drums
@@ -861,7 +874,8 @@ class OnnxStemSeparator : public StemSeparator
                 static_cast<double>(numSamples) * 1000.0 / kModelSampleRate,
                 2};
             result.stems.push_back(resultFile);
-            // Let the UI import this stem now, before later stems finish.
+            // CPU jobs publish immediately; GPU jobs stage notifications until
+            // the attempt succeeds so fallback cannot race an in-flight import.
             onStemReady(resultFile);
         }
 
@@ -884,7 +898,11 @@ class OnnxStemSeparator : public StemSeparator
                                              const StemCancelFn& shouldCancel, double stemBase,
                                              double stemSpan)
     {
-        Ort::Session& session = getOrCreateSession(modelFileFor(modelDir, stem).getFullPathName());
+        const auto modelPath = modelFileFor(modelDir, stem).getFullPathName();
+        const bool cacheMiss = sessionCache.find(modelPath.toStdString()) == sessionCache.end();
+        if (cacheMiss) onProgress("load-model", stemBase, stem);
+        Ort::Session& session = getOrCreateSession(modelPath);
+        if (cacheMiss) onProgress("separate", stemBase, stem);
 
         Ort::AllocatorWithDefaultOptions allocator;
         const auto inputName = session.GetInputNameAllocated(0, allocator);
@@ -1096,6 +1114,7 @@ class OnnxStemSeparator : public StemSeparator
     Ort::SessionOptions sessionOptions;
     bool epConfigured = false;
     bool epUsesGpu = false;
+    StemGpuFallbackState gpuFallback;
     // Declared last so cached sessions are destroyed before `env`.
     std::map<std::string, std::unique_ptr<Ort::Session>> sessionCache;
 

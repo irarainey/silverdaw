@@ -14,6 +14,7 @@ const state = useStemSeparationState()
 
 const STAGE_LABELS: Record<StemStage, string> = {
   prepare: 'Preparing audio...',
+  'load-model': 'Loading separation model...',
   separate: 'Separating stems...',
   cleanup: 'Cleaning up stems...',
   write: 'Writing files...'
@@ -50,6 +51,12 @@ const stageLabel = computed(() => {
   const s = state.value?.stage
   if (!s) return ''
   const detail = state.value?.detail
+  if (s === 'prepare' && detail === 'gpu-fallback') {
+    return 'GPU unavailable. Continuing on CPU...'
+  }
+  if (s === 'load-model' && detail && STEM_LABELS[detail]) {
+    return `Loading ${STEM_LABELS[detail]} model...`
+  }
   const verb = STEM_STAGE_VERBS[s]
   if (verb && detail && STEM_LABELS[detail]) {
     return `${verb} ${STEM_LABELS[detail]}...`

@@ -98,10 +98,14 @@ struct BsRoformerRhythm::Impl
     BsRoformerRhythmStems run(const juce::File& modelFile, const juce::AudioBuffer<float>& mixture,
                               bool useGpu, double overlap,
                               const std::function<void(double)>& onProgress,
+                              const std::function<void(bool)>& onModelLoadState,
                               const std::function<bool()>& shouldCancel)
     {
         configureProvider(useGpu);
+        const bool cacheMiss = session == nullptr || sessionPath != modelFile.getFullPathName();
+        if (cacheMiss && onModelLoadState) onModelLoadState(true);
         Ort::Session& sess = sessionFor(modelFile);
+        if (cacheMiss && onModelLoadState) onModelLoadState(false);
 
         Ort::AllocatorWithDefaultOptions allocator;
         const auto inRealName = sess.GetInputNameAllocated(0, allocator);
@@ -257,23 +261,12 @@ BsRoformerRhythm::~BsRoformerRhythm() = default;
 BsRoformerRhythmStems BsRoformerRhythm::separate(
     const juce::File& modelFile, const juce::AudioBuffer<float>& mixture, bool useGpu,
     double overlap, const std::function<void(double)>& onProgress,
-    const std::function<bool()>& shouldCancel)
+    const std::function<bool()>& shouldCancel,
+    const std::function<void(bool)>& onModelLoadState)
 {
     if (mixture.getNumSamples() <= 0) return {};
-    try
-    {
-        return impl->run(modelFile, mixture, useGpu, overlap, onProgress, shouldCancel);
-    }
-    catch (const Ort::Exception& e)
-    {
-        if (useGpu)
-        {
-            silverdaw::log::info("stems", juce::String("Rhythm RoFormer GPU run failed (")
-                                              + e.what() + "); retrying on CPU.");
-            return impl->run(modelFile, mixture, false, overlap, onProgress, shouldCancel);
-        }
-        throw;
-    }
+    return impl->run(
+        modelFile, mixture, useGpu, overlap, onProgress, onModelLoadState, shouldCancel);
 }
 
 } // namespace silverdaw

@@ -14,6 +14,7 @@
 - Fast launches no longer pause on startup steps that have already completed.
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
 - Stem separation now starts preparing immediately and imports generated stems with less redundant processing.
+- Stem separation now avoids repeated audio preparation, shows model loading, and keeps using the CPU after a recoverable GPU failure.
 
 ### Fixed
 

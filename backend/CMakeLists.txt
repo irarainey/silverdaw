@@ -494,7 +494,9 @@ add_library(silverdaw_backend_core STATIC
     src/project/SampleExport.cpp
     src/project/ValueTreeJson.cpp
     # stems (bridge/job plumbing — ONNX-free, always built)
+    src/stems/StemAudioPreparation.cpp
     src/stems/StemBroadcast.cpp
+    src/stems/StemGpuFallback.cpp
     src/stems/StemProgressCoalescer.cpp
     src/stems/StemSeparationEngine.cpp
     src/stems/MelRoformerSpectral.cpp

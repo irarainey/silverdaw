@@ -17,6 +17,8 @@
 #include "StemSeparator.h"
 #include "StemShifts.h"
 #include "StemMetrics.h"
+#include "StemAudioPreparation.h"
+#include "StemGpuFallback.h"
 #include "StemProgressCoalescer.h"
 
 namespace silverdaw::tests
@@ -144,6 +146,90 @@ void testProgressCoalescing()
     require(coalescer.shouldEmitAt("cleanup", 100.0, "drums",
                                    start + std::chrono::milliseconds(103)),
             "terminal progress is emitted immediately");
+}
+
+void testGpuFallbackQuarantine()
+{
+    silverdaw::StemGpuFallbackState fallback;
+    require(fallback.shouldUseGpu(true), "initial GPU request is honoured");
+    require(! fallback.shouldUseGpu(false), "CPU request remains on CPU");
+
+    fallback.quarantine();
+    require(fallback.isQuarantined(), "recoverable failure quarantines the GPU");
+    require(! fallback.shouldUseGpu(true), "later GPU requests route to CPU");
+}
+
+void testGpuFallbackRetryProgress()
+{
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 0.0), 40.0, 1e-9,
+                "CPU retry begins at the completed GPU percentage");
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 50.0), 70.0, 1e-9,
+                "CPU retry maps into the remaining progress range");
+    requireNear(silverdaw::mapStemRetryPercent(40.0, 100.0), 100.0, 1e-9,
+                "CPU retry still ends at 100 percent");
+}
+
+void testGpuAttemptPublishesTransactionally()
+{
+    int published = 0;
+    const silverdaw::StemResultFile stem{
+        "vocals", juce::File("vocals.wav"), 44100.0, 1000.0, 2};
+
+    {
+        silverdaw::StemReadyTransaction failedAttempt(
+            [&](const silverdaw::StemResultFile&) { ++published; });
+        failedAttempt.stage(stem);
+    }
+    require(published == 0, "failed GPU attempt does not publish staged stems");
+
+    silverdaw::StemReadyTransaction successfulAttempt(
+        [&](const silverdaw::StemResultFile&) { ++published; });
+    successfulAttempt.stage(stem);
+    successfulAttempt.commit();
+    require(published == 1, "successful GPU attempt publishes each staged stem");
+}
+
+void testRecoverableGpuFaultMessages()
+{
+    require(silverdaw::isRecoverableGpuFaultMessage("DXGI_ERROR_DEVICE_HUNG 0x887A0006"),
+            "device loss is recoverable");
+    require(silverdaw::isRecoverableGpuFaultMessage("E_OUTOFMEMORY 0x8007000E"),
+            "GPU out of memory is recoverable");
+    require(! silverdaw::isRecoverableGpuFaultMessage("Invalid model input dimensions"),
+            "unrelated ONNX failures are not recoverable GPU faults");
+    require(! silverdaw::isRecoverableGpuFaultMessage("Cancelled"),
+            "cancellation does not quarantine the GPU");
+}
+
+void testStemMixtureDenormalisation()
+{
+    juce::AudioBuffer<float> normalised(2, 3);
+    normalised.setSample(0, 0, -1.0f);
+    normalised.setSample(0, 1, 0.0f);
+    normalised.setSample(0, 2, 1.0f);
+    normalised.setSample(1, 0, 0.25f);
+    normalised.setSample(1, 1, -0.5f);
+    normalised.setSample(1, 2, 0.75f);
+
+    const auto raw = silverdaw::denormaliseStemMixture(normalised, 2, 0.1f, 2.0f);
+    requireNear(raw.getSample(0, 0), -1.9, 1e-6, "left negative sample is preserved");
+    requireNear(raw.getSample(0, 1), 0.1, 1e-6, "mean is restored");
+    requireNear(raw.getSample(0, 2), 2.1, 1e-6, "left positive sample is preserved");
+    requireNear(raw.getSample(1, 0), 0.6, 1e-6, "right sample is preserved");
+    requireNear(raw.getSample(1, 1), -0.9, 1e-6, "right negative sample is preserved");
+    requireNear(raw.getSample(1, 2), 1.6, 1e-6, "right positive sample is preserved");
+}
+
+void testRawStemMixturePlanning()
+{
+    require(! silverdaw::shouldBuildRawStemMixture(false, false, false),
+            "backup-only separation skips the raw mixture");
+    require(! silverdaw::shouldBuildRawStemMixture(true, false, false),
+            "an installed but unused vocal pack skips the raw mixture");
+    require(silverdaw::shouldBuildRawStemMixture(true, true, false),
+            "selected RoFormer vocals require the raw mixture");
+    require(silverdaw::shouldBuildRawStemMixture(false, false, true),
+            "selected RoFormer rhythm requires the raw mixture");
 }
 
 void testDefaultSeparatorFailsFastWithoutModel()
@@ -325,6 +411,12 @@ void addStemSeparationTests(std::vector<TestCase>& tests)
     tests.push_back({"stem job runs separator and clears busy", testJobRunsSeparatorAndClearsBusy});
     tests.push_back({"stem job propagates cancel", testJobPropagatesCancel});
     tests.push_back({"stem progress coalesces without hiding transitions", testProgressCoalescing});
+    tests.push_back({"stem GPU fallback quarantine persists", testGpuFallbackQuarantine});
+    tests.push_back({"stem GPU fallback retry progress is monotonic", testGpuFallbackRetryProgress});
+    tests.push_back({"stem GPU attempt publishes transactionally", testGpuAttemptPublishesTransactionally});
+    tests.push_back({"stem GPU fallback classifies recoverable faults", testRecoverableGpuFaultMessages});
+    tests.push_back({"stem raw mixture denormalisation preserves samples", testStemMixtureDenormalisation});
+    tests.push_back({"stem raw mixture follows the selected execution plan", testRawStemMixturePlanning});
     tests.push_back({"default separator fails fast without model", testDefaultSeparatorFailsFastWithoutModel});
     tests.push_back({"stem quality maps to overlap", testOverlapForStemQuality});
     tests.push_back({"stem quality maps to vocal shifts", testShiftsForStemQuality});

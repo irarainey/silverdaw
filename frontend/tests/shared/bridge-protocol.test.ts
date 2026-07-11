@@ -868,6 +868,9 @@ describe('isStemProgressPayload', () => {
     expect(
       isStemProgressPayload({ jobId: 'j1', clipId: 'c1', stage: 'separate', percent: 42 })
     ).toBe(true)
+    expect(
+      isStemProgressPayload({ jobId: 'j1', stage: 'load-model', percent: 10, detail: 'vocals' })
+    ).toBe(true)
   })
 
   it('rejects an unknown stage', () => {

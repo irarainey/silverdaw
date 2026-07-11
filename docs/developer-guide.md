@@ -1584,8 +1584,8 @@ vocal estimate is the one already extracted for the vocals stem, or one internal
 vocal pass when vocals wasn't selected. The model applies its mask in-graph and returns the masked per-stem spectrogram
 (the host runs STFT n_fft 2048 / hop 441 and per-stem iSTFT, preset-driven chunk
 overlap); it is exported at an 8 s window (the largest that fits a modest GPU's
-VRAM) and the runner transparently retries on the CPU provider if DirectML runs
-out of memory. The host pipeline is unit-tested by an identity round-trip, and
+VRAM). Recoverable DirectML failures are handled by the hybrid separator's
+shared CPU fallback. The host pipeline is unit-tested by an identity round-trip, and
 the C++ runner was validated end-to-end against a numpy reference (drums/bass RMS
 matched to four decimals). htdemucs is the backup when the pack is absent.
 
@@ -1608,11 +1608,18 @@ on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports a
 inactive or without a vendorId must still be offered. The path is hardened
 against recoverable GPU faults — both a timeout/TDR device reset **and** running
 out of (often shared, integrated-GPU) memory transparently retry the whole job on
-the CPU (`isRecoverableGpuFault` in `OnnxStemSeparator.cpp`) so the user still
-gets their stems. On memory-constrained integrated GPUs the fixed-shape RoFormer
-models may simply not fit, in which case the run falls back to the CPU; GPU
-acceleration is therefore treated as a best-effort, dedicated-GPU-oriented
-option rather than a guaranteed speed-up.
+the CPU so the user still gets their stems. After either failure, the backend
+quarantines DirectML for the lifetime of that process. Later jobs route directly
+to the CPU instead of retrying a GPU already known to fail; restarting the
+backend clears the quarantine. Model, decode, cancellation, and unrelated ONNX
+errors do not quarantine the GPU. On memory-constrained integrated GPUs the
+fixed-shape RoFormer models may simply not fit, in which case the run falls back
+to the CPU; GPU acceleration is therefore treated as a best-effort,
+dedicated-GPU-oriented option rather than a guaranteed speed-up.
+
+The raw, denormalised stereo mixture used by the RoFormer packs is built once
+per job and shared by the vocal and rhythm paths. Backup-only htdemucs jobs do
+not build it.
 
 Inference runs on **one thread per physical core**, bounded by the historical
 `logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
@@ -1639,7 +1646,10 @@ boundary and the resulting `Ort::Exception` is translated to a normal
 second instead of up to a whole chunk later.
 
 The separation-progress dialog is driven by the reactive `stemSeparationState`
-and stays open through a final **"Writing files…"** phase: on `STEM_READY` the
+and reports **"Loading … model…"** while an uncached ONNX session is being
+created. Cached sessions skip that stage. If DirectML has fallen back, the
+dialog reports that separation is continuing on the CPU. The dialog stays open
+through a final **"Writing files…"** phase: on `STEM_READY` the
 renderer marks the job finalising (`markStemSeparationFinalizing`) and only
 clears the state — dismissing the dialog — once the stems have been read,
 imported, and placed on the timeline. This stops the dialog from vanishing
