@@ -5,7 +5,9 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 import { usePreferencesForm } from '@/lib/preferences/usePreferencesForm'
+import { log } from '@/lib/log'
 import PreferencesAudioTab from './PreferencesAudioTab.vue'
 import PreferencesMidiTab from './PreferencesMidiTab.vue'
 import PreferencesDeveloperTab from './PreferencesDeveloperTab.vue'
@@ -20,6 +22,7 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'midi-monitor'): void }>()
 
 const audioDevices = useAudioDeviceStore()
 const midiDevices = useMidiDeviceStore()
+const notifications = useNotificationsStore()
 
 const {
   uniqueDevices,
@@ -77,6 +80,7 @@ const {
 } = usePreferencesForm()
 
 const dialogEl = ref<HTMLDivElement | null>(null)
+const saving = ref(false)
 
 type PreferencesTab = 'general' | 'timeline' | 'project' | 'audio' | 'midi' | 'effects' | 'stems' | 'developer'
 const activeTab = ref<PreferencesTab>('general')
@@ -108,6 +112,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
 })
 
+// App mounts this dialog with `open` already true, so hydrate on the initial run.
 watch(
   () => props.open,
   async (isOpen) => {
@@ -117,7 +122,8 @@ watch(
     midiDevices.requestList()
     await loadCurrent()
     requestAnimationFrame(() => dialogEl.value?.focus())
-  }
+  },
+  { immediate: true }
 )
 
 function onCancel(): void {
@@ -125,9 +131,18 @@ function onCancel(): void {
   emit('close')
 }
 
-function onSave(): void {
-  save()
-  emit('close')
+async function onSave(): Promise<void> {
+  if (saving.value) return
+  saving.value = true
+  try {
+    await save()
+    emit('close')
+  } catch (err) {
+    log.error('preferences', `save failed: ${err instanceof Error ? err.message : String(err)}`)
+    notifications.pushError('Could not save preferences.')
+  } finally {
+    saving.value = false
+  }
 }
 
 function onMidiInputEnabled(identifier: string, enabled: boolean): void {
@@ -290,10 +305,10 @@ function onMidiInputEnabled(identifier: string, enabled: boolean): void {
           <button
             type="button"
             class="dialog-btn-primary"
-            :disabled="!hasChanges"
+            :disabled="!hasChanges || saving"
             @click="onSave"
           >
-            Save
+            {{ saving ? 'Saving...' : 'Save' }}
           </button>
         </div>
       </div>

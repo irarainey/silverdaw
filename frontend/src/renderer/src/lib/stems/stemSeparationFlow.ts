@@ -237,7 +237,7 @@ export function setStemQuality(quality: StemQuality): void {
   if (!selection.value) return
   selection.value = { ...selection.value, quality }
   preferredQuality = quality
-  window.silverdaw.setStemPrefs({ quality })
+  void window.silverdaw.setStemPrefs({ quality })
 }
 
 /** Toggle the per-run vocal dereverb (remove reverb/echo) in the picker. */

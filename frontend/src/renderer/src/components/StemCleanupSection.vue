@@ -7,7 +7,7 @@ interface StrengthOption {
   readonly hint: string
 }
 
-defineProps<{
+const props = defineProps<{
   /** Section heading (e.g. "Vocal cleanup"). */
   title: string
   /** Primary checkbox label. */
@@ -18,10 +18,22 @@ defineProps<{
   radioName: string
   /** Intensity choices revealed when cleanup is enabled. */
   options: ReadonlyArray<StrengthOption>
+  enabled: boolean
+  strength: StemEnhanceStrength
 }>()
 
-const enabled = defineModel<boolean>('enabled', { required: true })
-const strength = defineModel<StemEnhanceStrength>('strength', { required: true })
+const emit = defineEmits<{
+  (event: 'update:enabled', value: boolean): void
+  (event: 'update:strength', value: StemEnhanceStrength): void
+}>()
+
+function onEnabledChange(event: Event): void {
+  emit('update:enabled', (event.currentTarget as HTMLInputElement).checked)
+}
+
+function onStrengthChange(value: StemEnhanceStrength): void {
+  emit('update:strength', value)
+}
 </script>
 
 <template>
@@ -31,9 +43,10 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
     </h2>
     <label class="flex cursor-pointer items-start gap-3">
       <input
-        v-model="enabled"
         type="checkbox"
+        :checked="props.enabled"
         class="mt-0.5 h-4 w-4 cursor-pointer accent-sky-500"
+        @change="onEnabledChange"
       >
       <span class="flex-1">
         <span class="block font-medium text-zinc-200">{{ checkboxLabel }}</span>
@@ -42,7 +55,7 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
     </label>
 
     <div
-      v-if="enabled"
+      v-if="props.enabled"
       class="mt-3 space-y-2"
     >
       <label
@@ -51,11 +64,12 @@ const strength = defineModel<StemEnhanceStrength>('strength', { required: true }
         class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
       >
         <input
-          v-model="strength"
           type="radio"
           :name="radioName"
           :value="option.value"
+          :checked="props.strength === option.value"
           class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+          @change="onStrengthChange(option.value)"
         >
         <span class="min-w-0 flex-1 truncate leading-tight">
           <span class="font-medium text-zinc-200">{{ option.label }}</span>

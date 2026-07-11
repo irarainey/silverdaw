@@ -140,7 +140,7 @@ declare global {
       getStemGpuStatus(): Promise<SharedStemGpuStatus>
       locateStemModel(dir: string): Promise<SharedLocateStemModelResult>
       getStemPrefs(): Promise<SharedStemPrefsDto>
-      setStemPrefs(partial: Partial<SharedStemPrefsDto>): void
+      setStemPrefs(partial: Partial<SharedStemPrefsDto>): Promise<void>
       getBrakeSettings(): Promise<SharedBrakePrefsDto>
       setBrakeSettings(partial: Partial<SharedBrakePrefsDto>): void
       getBackspinSettings(): Promise<SharedBackspinPrefsDto>

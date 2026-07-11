@@ -19,6 +19,7 @@
 
 - Stem separation now waits for every generated stem to finish importing before reporting completion.
 - Stem cleanup checkboxes now reflect their persisted settings even if another preference cannot be loaded.
+- Stem cleanup options now remain checked when Preferences is reopened after saving.
 
 ## 1.1.0
 

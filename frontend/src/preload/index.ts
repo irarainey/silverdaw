@@ -210,9 +210,8 @@ const api = {
   // ─── Stem-separation preferences ────────────────────────────────────────
   getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),
   /** Stem GPU intent is gated on detection but persisted regardless. */
-  setStemPrefs: (partial: Partial<StemPrefsDto>): void => {
-    ipcRenderer.send(IPC.prefs.setStems, partial)
-  },
+  setStemPrefs: (partial: Partial<StemPrefsDto>): Promise<void> =>
+    ipcRenderer.invoke(IPC.prefs.setStems, partial),
   // ─── Turntable-brake defaults ───────────────────────────────────────────
   getBrakeSettings: (): Promise<BrakePrefsDto> => ipcRenderer.invoke(IPC.prefs.getBrake),
   setBrakeSettings: (partial: Partial<BrakePrefsDto>): void => {
