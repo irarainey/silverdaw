@@ -234,6 +234,13 @@ void handleClipSetWarp(const juce::var& payload, silverdaw::AudioEngine& engine,
     std::optional<bool> pendingAutoWarp;
     if (payload.hasProperty("pendingAutoWarp"))
         pendingAutoWarp = static_cast<bool>(payload.getProperty("pendingAutoWarp", false));
+    if (warpEnabled.value_or(false) && !engine.canWarpClip(clipId))
+    {
+        silverdaw::log::warn(
+            "warp",
+            "CLIP_SET_WARP rejected clipId=" + clipId + ": unsupported channel count");
+        return;
+    }
     projectState.setClipWarp(clipId, warpEnabled, warpMode, tempoRatio, tempoRatioClear,
                              semitones, cents, pendingAutoWarp);
     bool clipFound = false;

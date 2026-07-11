@@ -158,6 +158,7 @@ class AudioEngine
                      std::optional<double> tempoRatio,
                      std::optional<double> semitones,
                      std::optional<double> cents);
+    bool canWarpClip(const juce::String& clipId) const noexcept;
 
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
 

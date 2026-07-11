@@ -451,6 +451,15 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
         return true;
     }
 
+    if (!WarpProcessor::supportsChannelCount(track->numChannels))
+    {
+        silverdaw::log::warn(
+            "engine",
+            "clip warp rejected " + clipId + ": source has "
+                + juce::String(track->numChannels) + " channels");
+        return false;
+    }
+
     // Silverdaw tempoRatio is project/source; Rubber Band receives the inverse internally.
     // Only rebuild the stretcher when there is none yet or the mode actually changes — a rebuild
     // is a heavy alloc that resets the stretcher's history (an audible glitch mid-playback), so
@@ -502,4 +511,12 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
     }
     return true;
 }
+
+bool AudioEngine::canWarpClip(const juce::String& clipId) const noexcept
+{
+    const auto it = tracks.find(clipId);
+    return it != tracks.end()
+        && WarpProcessor::supportsChannelCount(it->second->numChannels);
+}
+
 } // namespace silverdaw

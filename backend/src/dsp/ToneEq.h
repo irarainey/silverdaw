@@ -26,11 +26,20 @@ public:
         clearState();
         prepared = true;
         recomputeCoeffs();
+        neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
+                                         curLowCutHz, curHighCutHz);
+        neutralIdentitySamples = 0;
         snapRequested.store(false, std::memory_order_relaxed);
     }
 
     /** Clears filter histories on stop/seek without changing targets. */
-    void reset() noexcept { clearState(); }
+    void reset() noexcept
+    {
+        clearState();
+        neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
+                                         curLowCutHz, curHighCutHz);
+        neutralIdentitySamples = 0;
+    }
 
     /** Lock-free message-thread setter; publishes targets and (on snap) a deferred snap flag.
      *  `filter` is the bipolar DJ-style sweep in `[-1, +1]`: negative engages the low-pass
@@ -78,16 +87,36 @@ public:
         {
             snapToTargets();
             recomputeCoeffs();
+            neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
+                                             curLowCutHz, curHighCutHz);
+            neutralIdentitySamples = 0;
+            if (neutralBypassed) clearState();
         }
 
+        const float bassTarget = targetBassDb.load(std::memory_order_relaxed);
+        const float midTarget = targetMidDb.load(std::memory_order_relaxed);
+        const float trebleTarget = targetTrebleDb.load(std::memory_order_relaxed);
+        const float lowCutTarget = targetLowCutHz.load(std::memory_order_relaxed);
+        const float highCutTarget = targetHighCutHz.load(std::memory_order_relaxed);
         const float alpha = blockAlpha(numSamples);
         bool moved = false;
-        moved |= smoothToward(curBassDb, targetBassDb.load(std::memory_order_relaxed), alpha);
-        moved |= smoothToward(curMidDb, targetMidDb.load(std::memory_order_relaxed), alpha);
-        moved |= smoothToward(curTrebleDb, targetTrebleDb.load(std::memory_order_relaxed), alpha);
-        moved |= smoothToward(curLowCutHz, targetLowCutHz.load(std::memory_order_relaxed), alpha);
-        moved |= smoothToward(curHighCutHz, targetHighCutHz.load(std::memory_order_relaxed), alpha);
+        moved |= smoothToward(curBassDb, bassTarget, alpha);
+        moved |= smoothToward(curMidDb, midTarget, alpha);
+        moved |= smoothToward(curTrebleDb, trebleTarget, alpha);
+        moved |= smoothToward(curLowCutHz, lowCutTarget, alpha);
+        moved |= smoothToward(curHighCutHz, highCutTarget, alpha);
         if (moved) recomputeCoeffs();
+
+        const bool currentNeutral = isNeutralState(curBassDb, curMidDb, curTrebleDb,
+                                                   curLowCutHz, curHighCutHz);
+        const bool targetNeutral = isNeutralState(bassTarget, midTarget, trebleTarget,
+                                                  lowCutTarget, highCutTarget);
+        if (neutralBypassed)
+        {
+            if (currentNeutral && targetNeutral) return;
+            neutralBypassed = false;
+            neutralIdentitySamples = 0;
+        }
 
         const int nCh = juce::jmin(buffer.getNumChannels(), channels);
         for (int ch = 0; ch < nCh; ++ch)
@@ -106,6 +135,21 @@ public:
                 x = highCut2.process(ch, x);
                 data[idx] = x;
             }
+        }
+
+        if (currentNeutral && targetNeutral)
+        {
+            neutralIdentitySamples += juce::jmin(numSamples, 2);
+            if (neutralIdentitySamples >= 2)
+            {
+                clearState();
+                neutralBypassed = true;
+                neutralIdentitySamples = 0;
+            }
+        }
+        else
+        {
+            neutralIdentitySamples = 0;
         }
     }
 
@@ -196,6 +240,16 @@ private:
     {
         if (! std::isfinite(db)) return 0.0F;
         return juce::jlimit(-15.0F, 15.0F, db);
+    }
+
+    static bool isNeutralState(float bassDb, float midDb, float trebleDb,
+                               float lowCutHz, float highCutHz) noexcept
+    {
+        return std::abs(bassDb) < kDbEpsilon
+            && std::abs(midDb) < kDbEpsilon
+            && std::abs(trebleDb) < kDbEpsilon
+            && lowCutHz <= kLowCutIdentityHz
+            && highCutHz >= kHighCutIdentityHz;
     }
 
     // Maps the bipolar Filter control to the corner-frequency pair the biquads
@@ -380,6 +434,8 @@ private:
     double sr = 44100.0;
     int channels = 2;
     bool prepared = false;
+    bool neutralBypassed = false;
+    int neutralIdentitySamples = 0;
 
     // Targets published lock-free by the message thread; consumed by `process` on the audio thread.
     std::atomic<float> targetBassDb{0.0F};

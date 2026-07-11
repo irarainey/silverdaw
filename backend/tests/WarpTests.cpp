@@ -9,6 +9,7 @@
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
 #include "MixdownEngine.h"
+#include "OffsetSource.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
@@ -92,6 +93,14 @@ void testWarpProcessorBasicStretch()
         }
     }
     require(sawNonZero, "warp produced no audible output across 8 blocks");
+
+    // Device reconfiguration may increase the host block size after audio has
+    // already passed through Rubber Band. Preparing again must remain valid.
+    warp.prepareToPlay(8192);
+    const int producedAfterReprepare =
+        warp.process(outPtrs.data(), kBlockSamples, readSource);
+    require(producedAfterReprepare == kBlockSamples,
+            "warp must keep producing after a larger re-prepare");
 }
 
 void testWarpTimelineDurationMapping()
@@ -112,12 +121,88 @@ void testWarpTimelineDurationMapping()
             "0.5x tempo ratio should double visible timeline duration");
 }
 
+void testOffsetSourceChunksOversizedWarpRequests()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int preparedBlock = 256;
+    constexpr int requestedSamples = 10000;
+
+    for (const double ratio : {0.25, 1.25, 4.0})
+    {
+        ConstantSource child(0.25F);
+        silverdaw::WarpProcessor warp(
+            1, sampleRate, RubberBand::RubberBandStretcher::OptionEngineFaster);
+        warp.setTempoRatio(ratio);
+        warp.setPitchScale(1.0);
+
+        silverdaw::OffsetSource source(&child);
+        source.setOffsetSamples(0);
+        source.setInSourceSamples(0);
+        source.setClipDurationSamples(50000);
+        source.setWarpProcessor(&warp);
+        source.prepareToPlay(preparedBlock, sampleRate);
+
+        juce::AudioBuffer<float> output(2, requestedSamples);
+        output.clear();
+        juce::AudioSourceChannelInfo info(&output, 0, requestedSamples);
+        source.getNextAudioBlock(info);
+
+        bool sawAudio = false;
+        int silentRun = 0;
+        int longestSilentRun = 0;
+        for (int ch = 0; ch < output.getNumChannels(); ++ch)
+        {
+            silentRun = 0;
+            for (int i = 0; i < requestedSamples; ++i)
+            {
+                const float sample = output.getSample(ch, i);
+                require(std::isfinite(sample), "oversized warped read must stay finite");
+                if (std::abs(sample) > 1.0e-4F)
+                {
+                    sawAudio = true;
+                    silentRun = 0;
+                }
+                else
+                {
+                    longestSilentRun = juce::jmax(longestSilentRun, ++silentRun);
+                }
+            }
+        }
+        require(sawAudio, "oversized warped read must produce audio across scratch chunks");
+        require(longestSilentRun < preparedBlock,
+                "oversized warped read must not insert a silent seam between chunks");
+    }
+
+    silverdaw::WarpProcessor boundedChannels(
+        32, sampleRate, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    require(boundedChannels.getNumChannels() == silverdaw::WarpProcessor::kMaxChannels,
+            "warp channel count must stay within the preallocated pointer capacity");
+
+    ConstantSource unclippedChild(0.25F);
+    silverdaw::WarpProcessor clippedWarp(
+        1, sampleRate, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    clippedWarp.setPitchScale(1.1);
+    silverdaw::OffsetSource clippedSource(&unclippedChild);
+    clippedSource.setOffsetSamples(0);
+    clippedSource.setInSourceSamples(100);
+    clippedSource.setClipDurationSamples(512);
+    clippedSource.setWarpProcessor(&clippedWarp);
+    clippedSource.prepareToPlay(preparedBlock, sampleRate);
+
+    juce::AudioBuffer<float> clippedOutput(1, 5000);
+    juce::AudioSourceChannelInfo clippedInfo(&clippedOutput, 0, clippedOutput.getNumSamples());
+    clippedSource.getNextAudioBlock(clippedInfo);
+    require(clippedOutput.getMagnitude(0, 4000, 1000) < 1.0e-4F,
+            "warped reads must not leak source audio beyond the trimmed clip window");
+}
+
 } // namespace
 
 void addWarpTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch});
     tests.push_back({"Warp timeline duration mapping", testWarpTimelineDurationMapping});
+    tests.push_back({"OffsetSource chunks oversized warp requests", testOffsetSourceChunksOversizedWarpRequests});
 }
 
 } // namespace silverdaw::tests

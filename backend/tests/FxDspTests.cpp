@@ -135,6 +135,65 @@ void testToneEqLowCutDirectionAndShelfRange()
     require(std::abs(flat - 1.0) < 0.02, "Flat tone with the filter centred should be transparent");
 }
 
+void testToneEqNeutralBypassAndReactivation()
+{
+    constexpr double sr = 44100.0;
+    constexpr int n = 256;
+    silverdaw::ToneEq eq;
+    eq.prepare(sr, 2);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        auto* actual = neutral.getWritePointer(ch);
+        auto* copy = expected.getWritePointer(ch);
+        for (int i = 0; i < n; ++i)
+        {
+            const float sample = static_cast<float>((i % 31) - 15) / 31.0F;
+            actual[i] = sample;
+            copy[i] = sample;
+        }
+    }
+    eq.process(neutral, 0, n);
+    bool identical = true;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            identical = identical && neutral.getSample(ch, i) == expected.getSample(ch, i);
+    require(identical,
+            "an untouched Tone EQ must remain a bit-identical neutral bypass");
+
+    eq.setParams(12.0F, -6.0F, 8.0F, 0.5F, /*snap*/ true);
+    juce::AudioBuffer<float> active(2, n);
+    active.clear();
+    active.setSample(0, 0, 1.0F);
+    active.setSample(1, 0, 1.0F);
+    eq.process(active, 0, n);
+
+    eq.setParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ false);
+    for (int block = 0; block < 100; ++block)
+    {
+        active.clear();
+        eq.process(active, 0, n);
+    }
+
+    neutral.makeCopyOf(expected);
+    eq.process(neutral, 0, n);
+    identical = true;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            identical = identical && neutral.getSample(ch, i) == expected.getSample(ch, i);
+    require(identical,
+            "Tone EQ must return to bit-identical bypass after its live neutral glide");
+
+    eq.setParams(12.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    active.clear();
+    eq.process(active, 0, n);
+    require(active.getMagnitude(0, 0, n) == 0.0F
+                && active.getMagnitude(1, 0, n) == 0.0F,
+            "reactivating Tone EQ after bypass must not expose stale filter history");
+}
+
 void testLevelerPassthroughAndCompression()
 {
     constexpr double sr = 44100.0;
@@ -793,6 +852,7 @@ void testLevelerSnapAppliesOnFirstBlock()
 void addFxDspTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
+    tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});

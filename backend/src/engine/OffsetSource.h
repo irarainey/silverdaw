@@ -144,22 +144,15 @@ class OffsetSource : public juce::PositionableAudioSource
     {
         cachedBlockSize.store(blockSize, std::memory_order_relaxed);
         cachedSampleRate.store(sampleRate, std::memory_order_relaxed);
-        warpScratch.setSize(kMaxWarpChannels, juce::jmax(64, blockSize),
+        const int renderScratchSamples = juce::jmax(kRenderScratchSamples, blockSize);
+        warpScratch.setSize(kMaxWarpChannels, renderScratchSamples,
                             /*keepExistingContent*/ false,
                             /*clearExtraSpace*/ true,
                             /*avoidReallocating*/ false);
-        reverseScratch.setSize(kMaxWarpChannels, juce::jmax(64, blockSize),
+        reverseScratch.setSize(kMaxWarpChannels, renderScratchSamples,
                                /*keepExistingContent*/ false,
                                /*clearExtraSpace*/ true,
                                /*avoidReallocating*/ false);
-        // Brake reads a contiguous source span ≤ the sub-chunk it renders (rate ≤ 1).
-        // Sized generously so large read-ahead requests render in few sub-chunks;
-        // `renderBrakeBlock` still chunks to this capacity, so correctness never
-        // depends on the request size.
-        brakeScratch.setSize(kMaxWarpChannels, juce::jmax(8192, blockSize) + 16,
-                             /*keepExistingContent*/ false,
-                             /*clearExtraSpace*/ true,
-                             /*avoidReallocating*/ false);
         if (child != nullptr)
         {
             child->prepareToPlay(blockSize, sampleRate);
@@ -505,16 +498,14 @@ class OffsetSource : public juce::PositionableAudioSource
         return lastGoodWindow;
     }
 
-    // Preallocated warp scratch keeps the audio callback bounded and handles source/output
-    // channel mismatches.
+    // Fixed scratch capacity keeps oversized read-ahead requests allocation-free; reverse,
+    // warp, brake, and backspin render in bounded chunks through these buffers.
     static constexpr int kMaxWarpChannels = 8;
+    static constexpr int kRenderScratchSamples = 1024;
 
     juce::AudioBuffer<float> warpScratch;
     // Holds the mirrored forward read before it is reversed into the caller's planes.
     juce::AudioBuffer<float> reverseScratch;
-    // Holds the contiguous forward source span the brake resamples from.
-    juce::AudioBuffer<float> brakeScratch;
-
     // Renders `count` decelerating ("turntable brake") output samples into dst[*]
     // starting at dstOffset. The source distance consumed since the brake start is
     // the analytic, STATELESS curve `BrakeSnapshot::sourceConsumedAt(u)`, so live
@@ -541,7 +532,7 @@ class OffsetSource : public juce::PositionableAudioSource
         // preserved as a real record-stop is a varispeed). 1.0 for non-warped clips.
         const juce::int64 baseSrc =
             inSrc + static_cast<juce::int64>(static_cast<double>(brakeStart - clipStart) * sourceRateScale);
-        const int scratchCap = brakeScratch.getNumSamples();
+        const int scratchCap = warpScratch.getNumSamples();
         // The span grows with the read rate (≤ sourceRateScale), so size each sub-chunk
         // so the contiguous read still fits the scratch buffer.
         const int maxChunk =
@@ -563,10 +554,10 @@ class OffsetSource : public juce::PositionableAudioSource
             int spanLen = static_cast<int>(spanEndExclusive - spanStart);
             spanLen = juce::jlimit(1, scratchCap, spanLen);
 
-            brakeScratch.clear(0, spanLen);
+            warpScratch.clear(0, spanLen);
             {
                 float* sp[kMaxWarpChannels] = {nullptr};
-                for (int c = 0; c < scratchPlanes; ++c) sp[c] = brakeScratch.getWritePointer(c);
+                for (int c = 0; c < scratchPlanes; ++c) sp[c] = warpScratch.getWritePointer(c);
                 // Forward read, windowed to the clip's source range (rev=false in v1).
                 readChildReversibleBlock(sp, scratchPlanes, baseSrc + spanStart, spanLen,
                                          /*rev*/ false, inSrc, sourceDur);
@@ -587,7 +578,7 @@ class OffsetSource : public juce::PositionableAudioSource
                 const float g = brake.gainAt(u, effLen);
                 for (int c = 0; c < numCh; ++c)
                 {
-                    const float* s = brakeScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
+                    const float* s = warpScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
                     const float p0 = s[k0], p1 = s[k1], p2 = s[k2], p3 = s[k3];
                     // Catmull-Rom: exact for linear data, smooth for audio (low grain).
                     const float out =
@@ -608,7 +599,7 @@ class OffsetSource : public juce::PositionableAudioSource
     // so live and offline render identically regardless of block size. Reads a
     // contiguous forward source span per sub-chunk and 4-point cubic-interpolates;
     // a rate-keyed fade silences the tail as the spin stops. Forward, non-warped
-    // clips only (v1). Reuses `brakeScratch` (brake/backspin are mutually exclusive).
+    // clips only (v1). Reuses `warpScratch` because warp and tail rendering are sequential.
     void renderBackspinBlock(float* const* dst, int numCh, int dstOffset,
                              const BackspinSnapshot& spin, double effLen,
                              juce::int64 tailStart, juce::int64 tailAudibleStart, int count,
@@ -624,7 +615,7 @@ class OffsetSource : public juce::PositionableAudioSource
         const double s0 =
             static_cast<double>(inSrc) + static_cast<double>(tailStart - clipStart) * sourceRateScale;
         const double minSrc = static_cast<double>(inSrc); // never rewind before the clip start
-        const int scratchCap = brakeScratch.getNumSamples();
+        const int scratchCap = warpScratch.getNumSamples();
         const double spinSpeed = spin.getSpinSpeed();
         // Cap the rewind to the source available before the clip start. Without this the
         // spin (which rewinds spinSpeed*T/(p+1) of source) slams into the clip start and
@@ -653,15 +644,15 @@ class OffsetSource : public juce::PositionableAudioSource
             const double posLo = juce::jmax(minSrc, s0 - rewMul * spin.sourceRewoundAt(uEnd, effLen));
 
             const juce::int64 spanStart =
-                juce::jmax(static_cast<juce::int64>(0), static_cast<juce::int64>(std::floor(posLo)) - 1);
+                juce::jmax(inSrc, static_cast<juce::int64>(std::floor(posLo)) - 1);
             const juce::int64 spanEndExclusive = static_cast<juce::int64>(std::ceil(posHi)) + 3;
             int spanLen = static_cast<int>(spanEndExclusive - spanStart);
             spanLen = juce::jlimit(1, scratchCap, spanLen);
 
-            brakeScratch.clear(0, spanLen);
+            warpScratch.clear(0, spanLen);
             {
                 float* sp[kMaxWarpChannels] = {nullptr};
-                for (int c = 0; c < scratchPlanes; ++c) sp[c] = brakeScratch.getWritePointer(c);
+                for (int c = 0; c < scratchPlanes; ++c) sp[c] = warpScratch.getWritePointer(c);
                 readChildReversibleBlock(sp, scratchPlanes, spanStart, spanLen,
                                          /*rev*/ false, inSrc, sourceDur);
             }
@@ -680,7 +671,7 @@ class OffsetSource : public juce::PositionableAudioSource
                 const float g = spin.gainAt(u, effLen);
                 for (int c = 0; c < numCh; ++c)
                 {
-                    const float* s = brakeScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
+                    const float* s = warpScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
                     const float p0 = s[k0], p1 = s[k1], p2 = s[k2], p3 = s[k3];
                     const float out =
                         p1 + 0.5F * frac *
@@ -704,51 +695,80 @@ class OffsetSource : public juce::PositionableAudioSource
 
         if (!rev)
         {
-            child->setNextReadPosition(srcPos);
-            juce::AudioBuffer<float> bufView(const_cast<float**>(dst), numCh, n);
-            juce::AudioSourceChannelInfo info(&bufView, 0, n);
-            child->getNextAudioBlock(info);
+            if (sourceDur <= 0)
+            {
+                child->setNextReadPosition(srcPos);
+                juce::AudioBuffer<float> bufView(dst, numCh, n);
+                juce::AudioSourceChannelInfo info(&bufView, 0, n);
+                child->getNextAudioBlock(info);
+                return;
+            }
+
+            for (int c = 0; c < numCh; ++c)
+                juce::FloatVectorOperations::clear(dst[c], n);
+
+            const juce::int64 localStart = srcPos - inSrc;
+            const juce::int64 validStart =
+                juce::jmax(static_cast<juce::int64>(0), localStart);
+            const juce::int64 validEnd = juce::jmin(localStart + n, sourceDur);
+            const int validCount =
+                static_cast<int>(juce::jmax(static_cast<juce::int64>(0),
+                                            validEnd - validStart));
+            if (validCount > 0)
+            {
+                const int destOffset = static_cast<int>(validStart - localStart);
+                float* validDest[kMaxWarpChannels] = {nullptr};
+                const int planes = juce::jmin(numCh, kMaxWarpChannels);
+                for (int c = 0; c < planes; ++c)
+                    validDest[c] = dst[c] + destOffset;
+                child->setNextReadPosition(inSrc + validStart);
+                juce::AudioBuffer<float> bufView(validDest, planes, validCount);
+                juce::AudioSourceChannelInfo info(&bufView, 0, validCount);
+                child->getNextAudioBlock(info);
+            }
             return;
         }
 
-        if (reverseScratch.getNumChannels() < numCh || reverseScratch.getNumSamples() < n)
-        {
-            reverseScratch.setSize(juce::jmax(reverseScratch.getNumChannels(), numCh),
-                                   juce::jmax(reverseScratch.getNumSamples(), n),
-                                   /*keepExistingContent*/ false,
-                                   /*clearExtraSpace*/ false,
-                                   /*avoidReallocating*/ false);
-        }
-        reverseScratch.clear(0, n);
-
-        const juce::int64 localStart = srcPos - inSrc;
-        const juce::int64 mirroredLocalStart = sourceDur - localStart - n;
-        const juce::int64 validStart = juce::jmax(static_cast<juce::int64>(0), mirroredLocalStart);
-        const juce::int64 validEnd = juce::jmin(mirroredLocalStart + n, sourceDur);
-        const int validCount = static_cast<int>(validEnd - validStart);
         const int scratchPlanes = juce::jmin(numCh, kMaxWarpChannels);
-        if (validCount > 0)
-        {
-            const int destOffset = static_cast<int>(validStart - mirroredLocalStart);
-            float* sp[kMaxWarpChannels] = {nullptr};
-            for (int c = 0; c < scratchPlanes; ++c)
-            {
-                sp[c] = reverseScratch.getWritePointer(c) + destOffset;
-            }
-            child->setNextReadPosition(inSrc + validStart);
-            juce::AudioBuffer<float> bufView(sp, scratchPlanes, validCount);
-            juce::AudioSourceChannelInfo info(&bufView, 0, validCount);
-            child->getNextAudioBlock(info);
-        }
+        const int scratchCapacity = reverseScratch.getNumSamples();
+        if (scratchPlanes <= 0 || scratchCapacity <= 0) return;
 
-        for (int c = 0; c < numCh; ++c)
+        int done = 0;
+        while (done < n)
         {
-            const float* s = reverseScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
-            float* d = dst[c];
-            for (int i = 0, j = n - 1; i < n; ++i, --j)
+            const int chunk = juce::jmin(n - done, scratchCapacity);
+            reverseScratch.clear(0, chunk);
+
+            const juce::int64 localStart = srcPos + done - inSrc;
+            const juce::int64 mirroredLocalStart = sourceDur - localStart - chunk;
+            const juce::int64 validStart =
+                juce::jmax(static_cast<juce::int64>(0), mirroredLocalStart);
+            const juce::int64 validEnd =
+                juce::jmin(mirroredLocalStart + chunk, sourceDur);
+            const int validCount =
+                static_cast<int>(juce::jmax(static_cast<juce::int64>(0),
+                                            validEnd - validStart));
+            if (validCount > 0)
             {
-                d[i] = s[j];
+                const int destOffset = static_cast<int>(validStart - mirroredLocalStart);
+                float* sp[kMaxWarpChannels] = {nullptr};
+                for (int c = 0; c < scratchPlanes; ++c)
+                    sp[c] = reverseScratch.getWritePointer(c) + destOffset;
+                child->setNextReadPosition(inSrc + validStart);
+                juce::AudioBuffer<float> bufView(sp, scratchPlanes, validCount);
+                juce::AudioSourceChannelInfo info(&bufView, 0, validCount);
+                child->getNextAudioBlock(info);
             }
+
+            for (int c = 0; c < numCh; ++c)
+            {
+                const float* s =
+                    reverseScratch.getReadPointer(juce::jmin(c, scratchPlanes - 1));
+                float* d = dst[c] + done;
+                for (int i = 0, j = chunk - 1; i < chunk; ++i, --j)
+                    d[i] = s[j];
+            }
+            done += chunk;
         }
     }
 
@@ -760,54 +780,47 @@ class OffsetSource : public juce::PositionableAudioSource
         const int sourceCh = juce::jmax(1, w.getNumChannels());
         const int destCh = juce::jmax(1, dest.getNumChannels());
 
-        if (warpScratch.getNumChannels() < sourceCh || warpScratch.getNumSamples() < numSamples)
-        {
-            warpScratch.setSize(juce::jmax(warpScratch.getNumChannels(), sourceCh),
-                                juce::jmax(warpScratch.getNumSamples(), numSamples),
-                                /*keepExistingContent*/ false,
-                                /*clearExtraSpace*/ false,
-                                /*avoidReallocating*/ false);
-        }
-        warpScratch.clear(0, numSamples);
-
-        float* warpOut[kMaxWarpChannels] = {nullptr};
         const int outPlanes = juce::jmin(sourceCh, kMaxWarpChannels);
-        for (int c = 0; c < outPlanes; ++c)
-        {
-            warpOut[c] = warpScratch.getWritePointer(c);
-        }
+        const int scratchCapacity = warpScratch.getNumSamples();
+        if (outPlanes <= 0 || scratchCapacity <= 0) return;
 
         auto readSource =
             [this, sourceCh, rev, inSrc, sourceDur](float* const* dst, juce::int64 srcPos, int n)
         {
             readChildReversibleBlock(dst, sourceCh, srcPos, n, rev, inSrc, sourceDur);
         };
-        w.process(warpOut, numSamples, readSource);
 
-        if (sourceCh == 1 && destCh > 1)
+        int done = 0;
+        while (done < numSamples)
         {
-            const float* src = warpScratch.getReadPointer(0);
-            for (int c = 0; c < destCh; ++c)
+            const int chunk = juce::jmin(numSamples - done, scratchCapacity);
+            warpScratch.clear(0, chunk);
+
+            float* warpOut[kMaxWarpChannels] = {nullptr};
+            for (int c = 0; c < outPlanes; ++c)
+                warpOut[c] = warpScratch.getWritePointer(c);
+            w.process(warpOut, chunk, readSource);
+
+            if (sourceCh == 1 && destCh > 1)
             {
-                juce::FloatVectorOperations::copy(
-                    dest.getWritePointer(c, startSample), src, numSamples);
+                const float* src = warpScratch.getReadPointer(0);
+                for (int c = 0; c < destCh; ++c)
+                    juce::FloatVectorOperations::copy(
+                        dest.getWritePointer(c, startSample + done), src, chunk);
             }
-        }
-        else
-        {
-            const int common = juce::jmin(sourceCh, destCh);
-            for (int c = 0; c < common; ++c)
+            else
             {
-                juce::FloatVectorOperations::copy(
-                    dest.getWritePointer(c, startSample),
-                    warpScratch.getReadPointer(c),
-                    numSamples);
+                const int common = juce::jmin(sourceCh, destCh);
+                for (int c = 0; c < common; ++c)
+                    juce::FloatVectorOperations::copy(
+                        dest.getWritePointer(c, startSample + done),
+                        warpScratch.getReadPointer(c),
+                        chunk);
+                for (int c = common; c < destCh; ++c)
+                    juce::FloatVectorOperations::clear(
+                        dest.getWritePointer(c, startSample + done), chunk);
             }
-            for (int c = common; c < destCh; ++c)
-            {
-                juce::FloatVectorOperations::clear(
-                    dest.getWritePointer(c, startSample), numSamples);
-            }
+            done += chunk;
         }
     }
 };

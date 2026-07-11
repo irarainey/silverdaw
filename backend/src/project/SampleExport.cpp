@@ -132,6 +132,19 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
         return false;
     }
 
+    const bool renderWarped =
+        warpOptions.has_value() &&
+        warpOptions->enabled &&
+        (std::abs(warpOptions->tempoRatio - 1.0) > 1e-4 ||
+         std::abs(pitchScaleFor(warpOptions->semitones, warpOptions->cents) - 1.0) > 1e-4);
+    if (renderWarped && !silverdaw::WarpProcessor::supportsChannelCount(outChannels))
+    {
+        error = "Warped export supports audio with up to "
+              + juce::String(silverdaw::WarpProcessor::kMaxChannels)
+              + " channels";
+        return false;
+    }
+
     if (auto parent = outputFile.getParentDirectory(); !parent.exists() && parent.createDirectory().failed())
     {
         error = "Could not create sample folder";
@@ -160,12 +173,6 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
     constexpr int kBlock = 8192;
     juce::AudioBuffer<float> buffer(outChannels, kBlock);
     std::vector<float*> outputPtrs(static_cast<std::size_t>(outChannels));
-    const bool renderWarped =
-        warpOptions.has_value() &&
-        warpOptions->enabled &&
-        (std::abs(warpOptions->tempoRatio - 1.0) > 1e-4 ||
-         std::abs(pitchScaleFor(warpOptions->semitones, warpOptions->cents) - 1.0) > 1e-4);
-
     if (renderWarped)
     {
         silverdaw::WarpProcessor warp(outChannels, reader->sampleRate, sampleWarpModeOptions(warpOptions->mode));
