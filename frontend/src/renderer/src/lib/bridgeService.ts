@@ -23,6 +23,7 @@ import {
 
 import { validateInbound } from '@/lib/bridge/inboundValidation'
 import { validateOutboundEnvelope } from '@/lib/bridge/outboundValidation'
+import { BridgeReconnectPolicy } from '@/lib/bridgeReconnectPolicy'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 import { transportBridgeHandlers } from '@/lib/bridge/handlers/transportHandlers'
 import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
@@ -38,8 +39,6 @@ import { meterBridgeHandlers } from '@/lib/bridge/handlers/meterHandlers'
 
 const BRIDGE_HOST = '127.0.0.1'
 const DEFAULT_BRIDGE_PORT = 8765
-const RECONNECT_DELAY_MS = 1000
-const MAX_RECONNECT_DELAY_MS = 5000
 
 // ─── Liveness watchdog tuning ───────────────────────────────────────────────
 // Idle sessions need PING/PONG to prove the engine message thread still responds.
@@ -54,8 +53,8 @@ const WATCHDOG_MAX_MISSED = 3
 const WATCHDOG_DRIFT_MS = 4000
 
 let socket: WebSocket | null = null
-let reconnectDelay = RECONNECT_DELAY_MS
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+const reconnectPolicy = new BridgeReconnectPolicy()
 let stopped = false
 let socketHeartbeat: ReturnType<typeof setInterval> | null = null
 let outboundCount = 0
@@ -223,7 +222,7 @@ function openSocket(conn: BridgeConnection): void {
   socket = ws
 
   ws.addEventListener('open', () => {
-    reconnectDelay = RECONNECT_DELAY_MS
+    reconnectPolicy.markConnected()
     // Fresh socket: reset liveness state before AUTH.
     pendingPing = null
     missedPongs = 0
@@ -280,6 +279,7 @@ export function disconnect(): void {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  reconnectPolicy.reset()
   if (socket) {
     socket.close()
     socket = null
@@ -383,11 +383,11 @@ export function probeAudioFile(
 
 function scheduleReconnect(): void {
   if (reconnectTimer) return
+  const delayMs = reconnectPolicy.nextDelayMs()
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
-    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS)
     connect()
-  }, reconnectDelay)
+  }, delayMs)
 }
 
 // Domain-grouped handlers replace a hand-maintained switch. The merged literal is

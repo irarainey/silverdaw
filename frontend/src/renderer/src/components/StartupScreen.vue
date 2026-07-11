@@ -46,7 +46,7 @@ function toggleMaximizeWindow(): void {
   window.silverdaw.toggleMaximizeWindow()
 }
 
-// All startup gates resolved; phase dwell below still controls readiness. Uses the
+// All startup gates resolved; minimum dwell below still controls readiness. Uses the
 // handshake (not the post-open PROJECT_STATE) so the picker appears while the audio
 // device is still opening. Deliberately NOT gated on the audio-device scan: that scan
 // is background work for Preferences and would otherwise pull the picker back to the
@@ -65,59 +65,32 @@ const liveStatusText = computed(() => {
   return ''
 })
 
-// Minimum phase dwell keeps fast startup transitions readable.
-const MIN_PHASE_MS = 500
+// A single minimum dwell prevents a fast launch from flashing the loading screen.
+const MIN_STARTUP_DWELL_MS = 500
 
 // The static pre-mount splash (index.html) opens on this exact string; the Vue loading
-// screen starts on it too and holds it for one dwell, so the hand-off from the splash
-// shows no text jump before the first live status ("Waiting for the audio engine…") appears.
+// screen starts on it too, so the hand-off from the splash has no text jump.
 const SPLASH_STATUS = 'Loading Silverdaw…'
 
-// Queue phase changes so bursts remain readable.
 const statusText = ref(SPLASH_STATUS)
-const phaseQueue: string[] = []
-const phaseQueueLength = ref(0)
-const phaseTimerActive = ref(false)
-let phaseTimer: ReturnType<typeof setTimeout> | null = null
-
-function showNextPhase(): void {
-  const next = phaseQueue.shift()
-  phaseQueueLength.value = phaseQueue.length
-  if (next === undefined) {
-    phaseTimer = null
-    phaseTimerActive.value = false
-    return
-  }
-  statusText.value = next
-  phaseTimerActive.value = true
-  phaseTimer = setTimeout(showNextPhase, MIN_PHASE_MS)
-}
-
-// Dwell on the seeded splash status first so the immediate live-status watch below queues
-// behind it (phaseTimer is non-null) instead of overwriting the first frame.
-phaseTimerActive.value = true
-phaseTimer = setTimeout(showNextPhase, MIN_PHASE_MS)
+const minimumDwellComplete = ref(false)
+let minimumDwellTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+  minimumDwellTimer = null
+  minimumDwellComplete.value = true
+  statusText.value = liveStatusText.value || SPLASH_STATUS
+}, MIN_STARTUP_DWELL_MS)
 
 watch(
   liveStatusText,
   (text) => {
-    // Do not dwell on a blank terminal status.
-    if (text === '') return
-    const tail = phaseQueue.length > 0 ? phaseQueue[phaseQueue.length - 1] : statusText.value
-    if (text === tail) return
-    phaseQueue.push(text)
-    phaseQueueLength.value = phaseQueue.length
-    if (phaseTimer === null) showNextPhase()
-  },
-  { immediate: true }
+    if (minimumDwellComplete.value && text !== '') statusText.value = text
+  }
 )
 
-// Ready only after all queued phases have completed their dwell. Latched: once the
-// picker is shown, the startup screen must NEVER revert to the spinner (only a terminal
+// Ready after one total dwell rather than one dwell per status. Latched: once the picker
+// is shown, the startup screen must NEVER revert to the spinner (only a terminal
 // bridge failure, handled separately above, or the screen closing on project load).
-const readyNow = computed(
-  () => allResolved.value && phaseQueueLength.value === 0 && !phaseTimerActive.value
-)
+const readyNow = computed(() => allResolved.value && minimumDwellComplete.value)
 const ready = ref(false)
 watch(readyNow, (now) => { if (now) ready.value = true }, { immediate: true })
 
@@ -163,9 +136,9 @@ watch(ready, async (now) => {
 })
 
 onBeforeUnmount(() => {
-  if (phaseTimer !== null) {
-    clearTimeout(phaseTimer)
-    phaseTimer = null
+  if (minimumDwellTimer !== null) {
+    clearTimeout(minimumDwellTimer)
+    minimumDwellTimer = null
   }
 })
 </script>

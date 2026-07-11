@@ -581,12 +581,18 @@ set of retries. The supervisor pushes coarse process status — `restarting`,
 `recovered`, `failed` — to the renderer, and an intentional app shutdown marks
 the next exit as expected so it is not respawned. Covered by Vitest specs.
 
-### Liveness watchdog (renderer)
+### Renderer connection and liveness
 
 The backend only pushes data while playing, so an idle session has no inbound
 traffic to prove the engine's message thread is still alive.
 [`bridgeService.ts`](../frontend/src/renderer/src/lib/bridgeService.ts) runs a
-watchdog that, after a quiet spell (`WATCHDOG_IDLE_MS`, 3 s), sends a `PING` and
+bounded 100 ms retry cadence while waiting for its first socket connection.
+After ten attempts, or after any successful connection, retries use a 1–5 s
+exponential backoff so sustained failures do not cause continuous connection
+attempts. The same recovery backoff applies to later connection losses.
+
+The bridge also runs a watchdog that, after a quiet spell
+(`WATCHDOG_IDLE_MS`, 3 s), sends a `PING` and
 expects a `PONG` answered on the JUCE message thread. `WATCHDOG_MAX_MISSED` (3)
 consecutive missed replies (each timed out after `WATCHDOG_PONG_TIMEOUT_MS`, 2 s)
 declare the engine hung and trigger a supervised restart via `restartBackend`.
@@ -596,6 +602,10 @@ library import or BPM analysis — to avoid false restarts. A large positive clo
 drift (`WATCHDOG_DRIFT_MS`, 4 s) is read as an OS sleep/resume and resets the
 watchdog rather than counting the gap as missed pongs. In practice this surfaces
 a wedged engine within roughly 7–11 s.
+
+The startup screen has one 500 ms minimum loading dwell. During that dwell it
+coalesces backend status changes, then displays only the current status if
+startup is still in progress. Completed phases do not add separate delays.
 
 ### Recovery coordinator (renderer)
 
@@ -1011,14 +1021,18 @@ Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (t
 hasn't been reconciled yet. `StartupScreen` is the single boot-and-landing surface — it
 mounts at app boot (before the bridge is up) and stays visible until the project becomes
 non-empty (file path, tracks, or library items) or the user explicitly dismisses it via
-**New Project**. An inline status row walks the boot phases ("Waiting for the backend
-to start…", "Connecting to audio engine…", "Scanning audio devices…", "Checking for
-recovered projects…") and hides once everything is ready. New / Open / Recent buttons
-disable while loading, then enable. On a terminal bridge failure the whole screen
-swaps to a focused error view with a single Quit action; project actions are hidden
-because they cannot recover the app. A 30-second timeout fires the failure path if the
-bridge handshake never completes. The `RecoveryDialog` stacks above the StartupScreen
-via z-index when crash-recovery autosaves are available.
+**New Project**. The loading screen has one 500 ms minimum dwell, coalesces intermediate
+backend statuses, and displays only the current phase if startup is still in progress.
+New / Open / Recent buttons enable when startup coordination finishes. On a terminal
+startup failure the whole screen swaps to a focused error view with a single Quit
+action; project actions are hidden because they cannot recover the app. A 60-second
+timeout fires the failure path if the bridge handshake never completes.
+
+The renderer starts consuming the pending launch path and scanning recoverable
+autosaves as soon as it mounts. These main-process IPC calls run in parallel with
+backend startup, but their results are applied only after the bridge handshake. The
+`RecoveryDialog` then stacks above the `StartupScreen` when recoverable autosaves are
+available.
 
 ## Audio formats
 
@@ -2400,6 +2414,11 @@ The timeline component stays unmounted while the startup screen is visible.
 PixiJS can warm through the shared idle loader during that time, but WebGL
 application creation, observers, and the first timeline draw wait until the
 user starts or opens a project.
+
+Dialogs that cannot appear during startup use async Vue components and
+parent-level visibility gates. Their component code is requested only when the
+corresponding dialog or progress state becomes active, keeping it out of the
+initial renderer module graph.
 
 The timeline canvas is PixiJS. All world-space content (clip blocks, waveforms, grid lines,
 ruler ticks) is drawn once at absolute world coordinates into a `tracksLayer` / `rulerTicksLayer`,
