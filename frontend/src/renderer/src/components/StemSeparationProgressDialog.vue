@@ -13,10 +13,10 @@ import { log } from '@/lib/log'
 const state = useStemSeparationState()
 
 const STAGE_LABELS: Record<StemStage, string> = {
-  prepare: 'Preparing audio…',
-  separate: 'Separating stems…',
-  cleanup: 'Cleaning up stems…',
-  write: 'Writing files…'
+  prepare: 'Preparing audio...',
+  separate: 'Separating stems...',
+  cleanup: 'Cleaning up stems...',
+  write: 'Writing files...'
 }
 
 // Friendly labels keep backend stem names out of user-facing text.
@@ -52,7 +52,7 @@ const stageLabel = computed(() => {
   const detail = state.value?.detail
   const verb = STEM_STAGE_VERBS[s]
   if (verb && detail && STEM_LABELS[detail]) {
-    return `${verb} ${STEM_LABELS[detail]}`
+    return `${verb} ${STEM_LABELS[detail]}...`
   }
   return STAGE_LABELS[s]
 })
