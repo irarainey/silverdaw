@@ -80,6 +80,7 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
 
     constexpr int kCallCount = 2000; // > 100 Hz over a typical real-time second.
     std::atomic<bool> readerStop{false};
+    std::atomic<bool> readerStarted{false};
     std::atomic<long> readerLoops{0};
 
     // Fake "audio thread": continuously reads cheap engine getters that
@@ -96,8 +97,11 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
             (void) engine.getPreviewDurationMs();
             (void) engine.getPreviewGeneration();
             readerLoops.fetch_add(1, std::memory_order_relaxed);
+            readerStarted.store(true, std::memory_order_release);
         }
     });
+    while (!readerStarted.load(std::memory_order_acquire))
+        std::this_thread::yield();
 
     // Drive setPreviewWarp on the main thread. Each iteration toggles
     // mode + tempo + pitch so the call exercises the same branches
@@ -157,6 +161,55 @@ void testAudioEngineAddClipConsumesPreOpenedReader()
                             0.0, 1.0F, &err),
             "addClip with a null reader must fail rather than attach a silent clip");
     require(err.isNotEmpty(), "a null-reader addClip failure should report an error");
+}
+
+void testAudioEngineReclaimsRetiredPlaybackSnapshots()
+{
+    const auto dir = makeTempDir("retired-playback-snapshots");
+    silverdaw::AudioEngine engine;
+    engine.initialiseGraph();
+
+    const auto wav = writeTestWav(dir, "effects.wav", 1.0);
+    require(engine.addClip("t1", "c1", wav, 0.0),
+            "snapshot reclamation test clip should load");
+
+    require(engine.setClipBrake("c1", 0.2), "first clip brake should apply");
+    require(engine.setClipBrake("c1", 0.3), "replacement clip brake should apply");
+    require(engine.setClipBackspin("c1", 0.2), "clip backspin should replace the brake");
+    require(engine.setClipBackspin("c1", 0.3), "replacement clip backspin should apply");
+    require(engine.retiredPlaybackSnapshotCount() > 0,
+            "replaced clip effects should remain retired until a quiescent boundary");
+
+    engine.pause();
+    require(engine.retiredPlaybackSnapshotCount() == 0,
+            "pause should reclaim every retired clip and automation snapshot");
+
+    require(engine.setClipBrake("c1", 0.2), "clip brake should apply after pause");
+    require(engine.setClipBackspin("c1", 0.2), "clip backspin should replace it after pause");
+    require(engine.retiredPlaybackSnapshotCount() > 0,
+            "new replacements should enter retirement after pause");
+
+    engine.stop();
+    require(engine.retiredPlaybackSnapshotCount() == 0,
+            "stop should reclaim every retired clip and automation snapshot");
+
+    juce::String previewError;
+    require(engine.loadPreview(wav, 0.0, 500.0, &previewError),
+            "snapshot reclamation preview should load");
+    require(engine.setPreviewBrake(0.2), "first preview brake should apply");
+    require(engine.setPreviewBrake(0.3), "replacement preview brake should apply");
+    require(engine.setPreviewBackspin(0.2), "preview backspin should replace the brake");
+    require(engine.setPreviewBackspin(0.3), "replacement preview backspin should apply");
+    require(engine.retiredPlaybackSnapshotCount() > 0,
+            "preview effect replacements should enter retirement");
+
+    engine.unloadPreview();
+    require(engine.retiredPlaybackSnapshotCount() == 0,
+            "preview teardown should release current and retired effect snapshots");
+
+    require(engine.removeClip("c1"), "snapshot reclamation test clip should unload");
+    engine.shutdown();
+    dir.deleteRecursively();
 }
 
 void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
@@ -1142,6 +1195,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
     tests.push_back({"AudioEngine addClip consumes a pre-opened reader (and fails cleanly on null)", testAudioEngineAddClipConsumesPreOpenedReader});
+    tests.push_back({"AudioEngine reclaims retired playback snapshots", testAudioEngineReclaimsRetiredPlaybackSnapshots});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
     tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});

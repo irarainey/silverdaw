@@ -18,6 +18,11 @@ import {
   type StemSeparationTarget
 } from '@/lib/stemSeparationState'
 import { forgetStemJob, registerStemJob } from '@/lib/stems/createStemTracks'
+import {
+  startDownloadRun,
+  type DownloadRunHandle,
+  type DownloadSource
+} from '@/lib/stems/stemModelDownloadRunner'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
@@ -381,12 +386,13 @@ async function resolveRequiredSources(stems: readonly StemName[]): Promise<StemM
   return requiredModelKinds(stems, useBackup).map((kind) => MODEL_SOURCES[kind])
 }
 
-// The not-yet-installed models to fetch when the user confirms, each paired with
-// its byte total so combined download progress can be computed.
-let pendingSources: ReadonlyArray<{ readonly src: StemModelSource; readonly totalBytes: number }> =
-  []
-// Cancel hook for the model currently downloading (set during confirmModelDownload).
-let activeCancel: (() => void) | null = null
+// The not-yet-installed models to fetch when the user confirms, paired with byte
+// totals and on-disk seed bytes for initialising per-source monotonic progress.
+let pendingSources: ReadonlyArray<{
+  readonly src: StemModelSource
+  readonly totalBytes: number
+  readonly presentBytes: number
+}> = []
 
 /** Required models for the given selection that are not yet installed, paired
  *  with their current on-disk state (for the combined size / progress display). */
@@ -406,12 +412,20 @@ function showDownloadFlow(
   next: FlowNext,
   missing: ReadonlyArray<{ src: StemModelSource; state: StemModelState }>
 ): void {
-  pendingSources = missing.map(({ src, state }) => ({ src, totalBytes: state.totalBytes }))
+  pendingSources = missing.map(({ src, state }) => ({
+    src,
+    totalBytes: state.totalBytes,
+    presentBytes: state.presentBytes
+  }))
   flowNext = next
+  const totalBytes = missing.reduce((sum, { state }) => sum + Math.max(0, state.totalBytes), 0)
   flow.value = {
     phase: 'confirm',
-    receivedBytes: missing.reduce((sum, { state }) => sum + state.presentBytes, 0),
-    totalBytes: missing.reduce((sum, { state }) => sum + state.totalBytes, 0),
+    receivedBytes: missing.reduce(
+      (sum, { state }) => sum + Math.max(0, Math.min(state.presentBytes, Math.max(0, state.totalBytes))),
+      0
+    ),
+    totalBytes,
     fileName: '',
     fileCount: missing.reduce((sum, { state }) => sum + state.fileCount, 0),
     error: ''
@@ -449,77 +463,80 @@ async function ensureModelThenDispatch(
   showDownloadFlow({ kind: 'dispatch', target, stems, quality, dereverb }, missing)
 }
 
-/** User accepted the download. Fetch each missing model in turn, streaming a
- *  single combined progress bar, then run the continuation: open the stem picker
- *  (pre-selection) or dispatch (post-selection). */
+// Active download run handle — identity-scoped so a cancel from a previous run
+// cannot interfere with a new one.
+let activeRunHandle: DownloadRunHandle | null = null
+// Token identifying the current download run; old continuations check this to
+// avoid mutating state belonging to a newer run.
+let activeRunId: symbol | null = null
+
+/** User accepted the download. Delegates to the extracted runner which owns
+ *  bounded concurrency, progress clamping, immediate-error, and cancel semantics. */
 export async function confirmModelDownload(): Promise<void> {
   const current = flow.value
   if (!current || current.phase !== 'confirm') return
-  const next = flowNext
-  const sources = pendingSources
+  const continuation = flowNext
+  const sources = [...pendingSources]
   flow.value = { ...current, phase: 'downloading', error: '' }
 
-  const grand = Math.max(
-    1,
-    sources.reduce((sum, s) => sum + s.totalBytes, 0)
-  )
-  // Bytes from models already finished in this batch; the active model's own
-  // progress (which counts from its already-present bytes) is added on top.
-  let base = 0
-  const report = (received: number, fileName: string): void => {
-    if (!flow.value || flow.value.phase !== 'downloading') return
+  const runToken = Symbol('model-download-run')
+  activeRunId = runToken
+
+  const downloadSources: DownloadSource[] = sources.map(({ src, totalBytes, presentBytes }) => ({
+    totalBytes,
+    presentBytes,
+    ensure: () => src.ensure(),
+    onProgress: (handler: (p: { receivedBytes: number; fileName: string }) => void) =>
+      src.onProgress((p) => handler({ receivedBytes: p.receivedBytes, fileName: p.fileName })),
+    cancel: () => src.cancel()
+  }))
+
+  const { handle, done } = startDownloadRun(downloadSources, (progress) => {
+    if (activeRunId !== runToken) return
+    if (flow.value?.phase !== 'downloading') return
     flow.value = {
       ...flow.value,
-      receivedBytes: Math.min(grand, base + received),
-      totalBytes: grand,
-      fileName
+      receivedBytes: progress.receivedBytes,
+      totalBytes: progress.totalBytes,
+      fileName: progress.fileName
     }
+  })
+
+  activeRunHandle = handle
+
+  const result = await done
+
+  // Identity check: if a newer run was started (cancel→re-enter), bail out
+  if (activeRunId !== runToken) return
+
+  activeRunHandle = null
+  activeRunId = null
+
+  if (result.outcome === 'cancelled' || !flow.value) return
+
+  if (result.outcome === 'error') {
+    flow.value = { ...flow.value, phase: 'error', error: result.error }
+    return
   }
 
-  try {
-    for (const { src, totalBytes } of sources) {
-      const stop = src.onProgress((p) => report(p.receivedBytes, p.fileName))
-      activeCancel = () => src.cancel()
-      let result: EnsureStemModelResult
-      try {
-        result = await src.ensure()
-      } finally {
-        stop()
-        activeCancel = null
-      }
-      // A concurrent cancelModelFlow() nulls the flow; stop quietly then.
-      if (!flow.value) return
-      if (!result.ok) {
-        flow.value = { ...flow.value, phase: 'error', error: result.error }
-        return
-      }
-      base += totalBytes
-    }
-    flow.value = null
-    flowNext = null
-    pendingSources = []
-    if (next?.kind === 'dispatch') {
-      await dispatchSeparation(next.target, next.stems, next.quality, next.dereverb)
-    } else if (next?.kind === 'select') {
-      openPicker(next.target)
-    }
-  } catch (err) {
-    if (flow.value) {
-      flow.value = {
-        ...flow.value,
-        phase: 'error',
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
+  flow.value = null
+  flowNext = null
+  pendingSources = []
+
+  if (continuation?.kind === 'dispatch') {
+    await dispatchSeparation(continuation.target, continuation.stems, continuation.quality, continuation.dereverb)
+  } else if (continuation?.kind === 'select') {
+    openPicker(continuation.target)
   }
 }
 
 /** Dismiss the model flow; aborts an in-progress download. */
 export function cancelModelFlow(): void {
   if (flow.value?.phase === 'downloading') {
-    activeCancel?.()
+    activeRunHandle?.cancel()
   }
-  activeCancel = null
+  activeRunHandle = null
+  activeRunId = null
   pendingSources = []
   flowNext = null
   flow.value = null

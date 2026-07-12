@@ -5,9 +5,12 @@
 #include "TrackChain.h"
 
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
@@ -22,9 +25,10 @@ public:
     struct TrackRuntime final : public juce::AudioSource
     {
         juce::String trackId;
-        juce::MixerAudioSource innerMixer;
         TrackChain chain;
-        int clipCount = 0;
+        // Message-thread-owned source list. The audio thread reads an immutable copy
+        // from RenderSnapshot, never this vector directly.
+        std::vector<juce::AudioSource*> clips;
         // Scalar mix params: atomically published by message-thread setters and
         // read by the audio thread, so setTrackSends/setTrackPan need no lock.
         std::atomic<float> reverbSend{0.0F};
@@ -34,37 +38,19 @@ public:
         std::atomic<float> panGainR{1.0F};
         std::atomic<float> peakL{0.0F};
         std::atomic<float> peakR{0.0F};
+        std::atomic<bool> automationResetRequested{false};
+        // Message-thread-owned pointer copied into each immutable RenderSnapshot.
+        const TrackAutomationSnapshot* publishedAutomation = nullptr;
+        const TrackAutomationSnapshot* lastAutomationSnapshot = nullptr;
+        std::size_t automationSegments[TrackAutomationSnapshot::kNumParams] = {};
+        juce::int64 automationLastEndSamples = -1;
 
-        void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
-        {
-            innerMixer.prepareToPlay(samplesPerBlockExpected, sampleRate);
-            chain.prepare(sampleRate, samplesPerBlockExpected, /*numChannels*/ 2);
-        }
+        void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
+        void releaseResources() override;
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override;
 
-        void releaseResources() override
-        {
-            innerMixer.releaseResources();
-            chain.reset();
-        }
-
-        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
-        {
-            innerMixer.getNextAudioBlock(info);
-            if (info.buffer == nullptr || info.numSamples <= 0)
-                return;
-            chain.process(*info.buffer, info.startSample, info.numSamples);
-
-            const int numCh = info.buffer->getNumChannels();
-            if (numCh > 0)
-                atomicMaxFloat(peakL,
-                               info.buffer->getMagnitude(0, info.startSample, info.numSamples));
-            if (numCh > 1)
-                atomicMaxFloat(peakR,
-                               info.buffer->getMagnitude(1, info.startSample, info.numSamples));
-            else if (numCh > 0)
-                atomicMaxFloat(peakR,
-                               info.buffer->getMagnitude(0, info.startSample, info.numSamples));
-        }
+        void renderClips(const std::vector<juce::AudioSource*>& sources,
+                         const juce::AudioSourceChannelInfo& info);
 
         void consumePeaks(float& outL, float& outR) noexcept
         {
@@ -73,6 +59,10 @@ public:
         }
 
     private:
+        juce::AudioBuffer<float> mixScratch;
+        int preparedBlockSize = 0;
+        double preparedRate = 0.0;
+
         static void atomicMaxFloat(std::atomic<float>& a, float v) noexcept
         {
             float cur = a.load(std::memory_order_relaxed);
@@ -82,259 +72,61 @@ public:
         }
     };
 
-    BusGraph() = default;
+private:
+    struct RenderTrack
+    {
+        TrackRuntime* runtime = nullptr;
+        std::vector<juce::AudioSource*> clips;
+        const TrackAutomationSnapshot* automation = nullptr;
+    };
+
+    struct RenderSnapshot
+    {
+        std::vector<RenderTrack> tracks;
+        bool hasAutomation = false;
+    };
+
+    class RenderReadGuard
+    {
+    public:
+        explicit RenderReadGuard(BusGraph& owner) noexcept;
+        ~RenderReadGuard();
+
+        const RenderSnapshot& get() const noexcept { return *snapshot; }
+
+    private:
+        BusGraph& graph;
+        const RenderSnapshot* snapshot = nullptr;
+    };
+
+public:
+    BusGraph();
     ~BusGraph() override = default;
 
     BusGraph(const BusGraph&) = delete;
     BusGraph& operator=(const BusGraph&) = delete;
 
-    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
-    {
-        const juce::ScopedLock sl(lock);
-        preparedMax = juce::jmax(1, samplesPerBlockExpected);
-        preparedRate = sampleRate;
-        scratch.setSize(/*numChannels*/ 2, preparedMax, /*keepExisting*/ false,
-                        /*clearExtra*/ true, /*avoidReallocating*/ false);
-        scratch.clear();
-        reverbSendBuf.setSize(2, preparedMax, false, true, false);
-        delaySendBuf.setSize(2, preparedMax, false, true, false);
-        reverbSendBuf.clear();
-        delaySendBuf.clear();
-        sharedFx.prepare(preparedRate, preparedMax);
-        for (auto& kv : runtimes)
-            kv.second->prepareToPlay(preparedMax, preparedRate);
-    }
-
-    void releaseResources() override
-    {
-        const juce::ScopedLock sl(lock);
-        for (auto& kv : runtimes)
-            kv.second->releaseResources();
-    }
-
-    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
-    {
-        if (info.buffer == nullptr || info.numSamples <= 0) return;
-
-        for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
-            info.buffer->clear(ch, info.startSample, info.numSamples);
-
-        // Bounded real-time mitigation: never block the audio thread (the hard
-        // invariant forbids it). If the message thread is mid-mutation we skip
-        // this block (already cleared above -> silence) and record it for the
-        // debug logs, rather than waiting and risking priority inversion.
-        // The lock now guards only structural graph edits (attach/detach/clear)
-        // and prepare/release; all DSP param mutation (TrackChain/SharedFx) is
-        // published lock-free, so live FX automation no longer contends here.
-        const juce::ScopedTryLock sl(lock);
-        if (! sl.isLocked())
-        {
-            skippedBlocks.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        // NOTE: do NOT early-return on empty runtimes; shared FX tails still need pumping.
-        if (preparedMax <= 0) return;
-
-        const int outChannels = juce::jmin(scratch.getNumChannels(),
-                                           info.buffer->getNumChannels());
-        if (outChannels <= 0) return;
-
-        const int sendChannels = juce::jmin(2, outChannels);
-
-        // Block-start transport position for automation sampling (the master clock
-        // increments after the child renders, so this is the block's first sample).
-        const juce::int64 blockStartSamples =
-            timelineSamplesPtr != nullptr ? timelineSamplesPtr->load(std::memory_order_relaxed) : 0;
-        const double rate = preparedRate > 0.0 ? preparedRate : 44100.0;
-
-        // When any track is automated, cap the sub-block to a fixed control quantum
-        // so the curve is sampled at the same granularity live (small device blocks)
-        // and offline (large mixdown blocks) — keeping the two paths in parity. With
-        // no automation the chunk stays the full prepared block (zero overhead).
-        const int chunk = trackAutomation.empty()
-                              ? preparedMax
-                              : juce::jmin(preparedMax, kAutomationControlQuantum);
-
-        int remaining = info.numSamples;
-        int dst = info.startSample;
-        while (remaining > 0)
-        {
-            const int n = juce::jmin(remaining, chunk);
-            const juce::int64 subStartSamples = blockStartSamples + (dst - info.startSample);
-
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                reverbSendBuf.clear(ch, 0, n);
-                delaySendBuf.clear(ch, 0, n);
-            }
-
-            for (auto& kv : runtimes)
-            {
-                applyTrackAutomation(kv.first, *kv.second, subStartSamples, n, rate);
-
-                scratch.clear(0, n);
-                juce::AudioSourceChannelInfo sub(&scratch, 0, n);
-                kv.second->getNextAudioBlock(sub);
-
-                const float rSend = kv.second->reverbSend.load(std::memory_order_relaxed);
-                const float dSend = kv.second->delaySend.load(std::memory_order_relaxed);
-                for (int ch = 0; ch < sendChannels; ++ch)
-                {
-                    if (rSend != 0.0F)
-                        reverbSendBuf.addFrom(ch, 0, scratch, ch, 0, n, rSend);
-                    if (dSend != 0.0F)
-                        delaySendBuf.addFrom(ch, 0, scratch, ch, 0, n, dSend);
-                }
-                if (kv.second->pan.load(std::memory_order_relaxed) == 0.0F || outChannels < 2)
-                {
-                    for (int ch = 0; ch < outChannels; ++ch)
-                        info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
-                }
-                else
-                {
-                    info.buffer->addFrom(0, dst, scratch, 0, 0, n,
-                                         kv.second->panGainL.load(std::memory_order_relaxed));
-                    info.buffer->addFrom(1, dst, scratch, 1, 0, n,
-                                         kv.second->panGainR.load(std::memory_order_relaxed));
-                    for (int ch = 2; ch < outChannels; ++ch)
-                        info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
-                }
-            }
-
-            sharedFx.process(reverbSendBuf, delaySendBuf, *info.buffer, dst, n);
-
-            remaining -= n;
-            dst += n;
-        }
-    }
-
+    void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
+    void releaseResources() override;
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override;
 
     void attachClip(const juce::String& trackId,
                     const juce::String& clipId,
-                    juce::AudioSource* clipTransport)
-    {
-        if (clipTransport == nullptr || trackId.isEmpty() || clipId.isEmpty()) return;
-        const juce::ScopedLock sl(lock);
-
-        auto rIt = runtimes.find(trackId);
-        if (rIt == runtimes.end())
-        {
-            auto rt = std::make_unique<TrackRuntime>();
-            rt->trackId = trackId;
-            if (preparedMax > 0)
-                rt->prepareToPlay(preparedMax, preparedRate);
-            rIt = runtimes.emplace(trackId, std::move(rt)).first;
-        }
-        auto* rt = rIt->second.get();
-        rt->innerMixer.addInputSource(clipTransport, false);
-        ++rt->clipCount;
-        clipToTrack[clipId] = rt;
-
-        auto toneIt = pendingTone.find(trackId);
-        if (toneIt != pendingTone.end())
-        {
-            const auto& t = toneIt->second;
-            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.filter, /*snap*/ true);
-        }
-
-        auto levelerIt = pendingLeveler.find(trackId);
-        if (levelerIt != pendingLeveler.end())
-        {
-            rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
-        }
-
-        auto sendIt = pendingSends.find(trackId);
-        if (sendIt != pendingSends.end())
-        {
-            rt->reverbSend.store(sendIt->second.reverbSend, std::memory_order_relaxed);
-            rt->delaySend.store(sendIt->second.delaySend, std::memory_order_relaxed);
-        }
-
-        auto panIt = pendingPans.find(trackId);
-        if (panIt != pendingPans.end())
-        {
-            float gL = 1.0F;
-            float gR = 1.0F;
-            equalPowerPanGains(panIt->second, gL, gR);
-            rt->pan.store(panIt->second, std::memory_order_relaxed);
-            rt->panGainL.store(gL, std::memory_order_relaxed);
-            rt->panGainR.store(gR, std::memory_order_relaxed);
-        }
-    }
+                    juce::AudioSource* clipTransport);
 
     void detachClip(const juce::String& clipId,
-                    juce::AudioSource* clipTransport)
-    {
-        if (clipTransport == nullptr || clipId.isEmpty()) return;
-        const juce::ScopedLock sl(lock);
-        auto it = clipToTrack.find(clipId);
-        if (it == clipToTrack.end() || it->second == nullptr) return;
-        auto* rt = it->second;
-        rt->innerMixer.removeInputSource(clipTransport);
-        if (--rt->clipCount <= 0)
-        {
-            rt->releaseResources();
-            runtimes.erase(rt->trackId);
-        }
-        clipToTrack.erase(it);
-    }
+                    juce::AudioSource* clipTransport);
 
     bool consumeTrackPeaks(const juce::String& trackId,
-                           float& outL, float& outR) noexcept
-    {
-        // Lock-free: the map is only ever mutated on this (message) thread, and
-        // peaks are atomic, so this read cannot race the audio thread.
-        auto it = runtimes.find(trackId);
-        if (it == runtimes.end())
-        {
-            outL = 0.0F;
-            outR = 0.0F;
-            return false;
-        }
-        it->second->consumePeaks(outL, outR);
-        return true;
-    }
+                           float& outL, float& outR) noexcept;
 
     void setTrackTone(const juce::String& trackId,
                       float bassDb, float midDb, float trebleDb, float filter,
-                      bool snap)
-    {
-        if (trackId.isEmpty()) return;
-        // Lock-free: `pendingTone` and the runtime map are message-thread-only (serialised vs
-        // attach/detach/clear), and `ToneEq` publishes its params atomically, so the audio
-        // thread's read-only map iteration is never raced.
-        pendingTone[trackId] = {bassDb, midDb, trebleDb, filter};
-        auto it = runtimes.find(trackId);
-        if (it != runtimes.end())
-            it->second->chain.setTone(bassDb, midDb, trebleDb, filter, snap);
-    }
+                      bool snap);
 
-    void setTrackLeveler(const juce::String& trackId, float amount, bool snap)
-    {
-        if (trackId.isEmpty()) return;
-        const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
-        // Lock-free: see `setTrackTone`; `Leveler` publishes its param atomically.
-        pendingLeveler[trackId] = a;
-        auto it = runtimes.find(trackId);
-        if (it != runtimes.end())
-            it->second->chain.setLeveler(a, snap);
-    }
+    void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
 
-    void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
-    {
-        if (trackId.isEmpty()) return;
-        const float r = juce::jlimit(0.0F, 1.0F, std::isfinite(reverbSend) ? reverbSend : 0.0F);
-        const float d = juce::jlimit(0.0F, 1.0F, std::isfinite(delaySend) ? delaySend : 0.0F);
-        // Lock-free: publishes atomic scalars; pending* and the map are
-        // message-thread-only, so this never contends the audio callback.
-        pendingSends[trackId] = {r, d};
-        auto it = runtimes.find(trackId);
-        if (it != runtimes.end())
-        {
-            it->second->reverbSend.store(r, std::memory_order_relaxed);
-            it->second->delaySend.store(d, std::memory_order_relaxed);
-        }
-    }
+    void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
     static void equalPowerPanGains(float pan, float& gainL, float& gainR) noexcept
     {
@@ -344,46 +136,14 @@ public:
         gainR = juce::MathConstants<float>::sqrt2 * std::sin(theta);
     }
 
-    void setTrackPan(const juce::String& trackId, float pan)
-    {
-        if (trackId.isEmpty()) return;
-        const float p = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
-        float gL = 1.0F;
-        float gR = 1.0F;
-        equalPowerPanGains(p, gL, gR);
-        // Lock-free: publishes atomic scalars. Map/pending* are message-thread-only.
-        // A concurrent audio read may briefly see a mismatched pan/gain pair; each
-        // value is individually valid so the worst case is a one-block transient.
-        pendingPans[trackId] = p;
-        auto it = runtimes.find(trackId);
-        if (it != runtimes.end())
-        {
-            it->second->panGainL.store(gL, std::memory_order_relaxed);
-            it->second->panGainR.store(gR, std::memory_order_relaxed);
-            it->second->pan.store(p, std::memory_order_relaxed);
-        }
-    }
+    void setTrackPan(const juce::String& trackId, float pan);
 
-    void setProjectReverb(float size, float decay, float tone, float mix, bool snap)
-    {
-        // Lock-free: `SharedFx` publishes targets + a deferred snap flag atomically; the
-        // persistent target atomics are re-snapped by `sharedFx.prepare` after device changes.
-        sharedFx.setReverbParams(size, decay, tone, mix, snap);
-    }
+    void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
 
     void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap,
-                         bool applyTimeNow)
-    {
-        // Lock-free: see `setProjectReverb`.
-        sharedFx.setDelayParams(delayMs, feedback, tone, mix, snap, applyTimeNow);
-    }
+                         bool applyTimeNow);
 
-    void resetSharedFx()
-    {
-        // Lock-free: schedules the reset for the next audio block instead of mutating
-        // decay state from the message thread.
-        sharedFx.requestReset();
-    }
+    void resetSharedFx();
 
     /** Wire the block-start transport counter for automation sampling (once, at setup). */
     void setTimelineSamplesSource(const std::atomic<juce::int64>* p) noexcept
@@ -393,65 +153,26 @@ public:
 
     /** Force the next automated block to snap (no glide) — call on transport start
      *  so playback lands exactly on the curve value at the playhead. */
-    void snapAutomationCursors() noexcept
-    {
-        const juce::ScopedLock sl(lock);
-        for (auto& kv : trackAutomation) kv.second.lastEndSamples = -1;
-    }
+    void snapAutomationCursors() noexcept;
 
     /** Snap one param's DSP target back to its neutral default — used when a lane is
      *  cleared so the chain stops holding the last automated value. */
-    void snapParamToDefault(const juce::String& trackId, AutomationParam p) noexcept
-    {
-        const juce::ScopedLock sl(lock);
-        auto it = runtimes.find(trackId);
-        if (it == runtimes.end()) return;
-        auto& rt = *it->second;
-        switch (p)
-        {
-            case AutomationParam::filter: rt.chain.setFilterTarget(0.0F, true); break;
-            case AutomationParam::toneBass: rt.chain.setBassTarget(0.0F, true); break;
-            case AutomationParam::toneMid: rt.chain.setMidTarget(0.0F, true); break;
-            case AutomationParam::toneTreble: rt.chain.setTrebleTarget(0.0F, true); break;
-            case AutomationParam::leveler: rt.chain.setLeveler(0.0F, true); break;
-            case AutomationParam::level: rt.chain.setLevelTarget(0.0F, true); break;
-            case AutomationParam::reverbSend: rt.reverbSend.store(0.0F, std::memory_order_relaxed); break;
-            case AutomationParam::delaySend: rt.delaySend.store(0.0F, std::memory_order_relaxed); break;
-            case AutomationParam::pan:
-                rt.pan.store(0.0F, std::memory_order_relaxed);
-                rt.panGainL.store(1.0F, std::memory_order_relaxed);
-                rt.panGainR.store(1.0F, std::memory_order_relaxed);
-                break;
-            case AutomationParam::count_: break;
-        }
-    }
+    void snapParamToDefault(const juce::String& trackId, AutomationParam p) noexcept;
 
     /** Publish a track's automation snapshot (or nullptr to clear). The snapshot
      *  memory is owned + retired by the caller (AudioEngine). Resets the sampling
      *  cursor when the pointer changes so the next block re-seeks cleanly. */
-    void setTrackAutomationPtr(const juce::String& trackId, const TrackAutomationSnapshot* snap)
-    {
-        if (trackId.isEmpty()) return;
-        const juce::ScopedLock sl(lock);
-        if (snap == nullptr)
-        {
-            trackAutomation.erase(trackId);
-            return;
-        }
-        auto& st = trackAutomation[trackId];
-        if (st.snapshot != snap)
-        {
-            st.snapshot = snap;
-            for (auto& s : st.seg) s = 0;
-            st.lastEndSamples = -1;
-        }
-    }
+    void setTrackAutomationPtr(const juce::String& trackId, const TrackAutomationSnapshot* snap);
 
     bool sharedFxTerminated()
     {
         // Lock-free: reads atomic done flags written by the audio-thread tail detectors.
         return sharedFx.bothTerminated();
     }
+
+    /** Publish an equivalent render snapshot and wait for any callback using the
+     *  previous snapshot. Message thread only; never called from the audio callback. */
+    void synchronizeRenderThread();
 
     struct TrackPeakSnapshot
     {
@@ -460,86 +181,37 @@ public:
         float peakR;
     };
 
-    void drainAllTrackPeaks(std::vector<TrackPeakSnapshot>& out)
-    {
-        // Lock-free: message-thread-only map iteration; peaks are atomic.
-        out.clear();
-        out.reserve(runtimes.size());
-        for (auto& kv : runtimes)
-        {
-            float l = 0.0F;
-            float r = 0.0F;
-            kv.second->consumePeaks(l, r);
-            out.push_back({kv.first, l, r});
-        }
-    }
+    void drainAllTrackPeaks(std::vector<TrackPeakSnapshot>& out);
 
-    // Total audio blocks skipped because the audio thread could not acquire the
-    // lock (message-thread mutation in flight). Monotonic; for debug telemetry.
+    // Retained for diagnostics compatibility. Lock-free snapshots keep this at zero.
     juce::uint64 audioBlocksSkipped() const noexcept
     {
         return skippedBlocks.load(std::memory_order_relaxed);
     }
 
-    void clear()
-    {
-        const juce::ScopedLock sl(lock);
-        for (auto& kv : runtimes)
-            kv.second->releaseResources();
-        runtimes.clear();
-        clipToTrack.clear();
-        pendingTone.clear();
-        pendingLeveler.clear();
-        pendingSends.clear();
-        pendingPans.clear();
-        trackAutomation.clear();
-        sharedFx.reset();
-    }
+    void clear();
 
 private:
     juce::CriticalSection lock;
 
-    // Samples this track's automation curves at `subStartSamples` and writes the
-    // results into the live DSP targets, snapping the smoother on a transport
-    // discontinuity (seek/loop). Audio thread, under `lock`; allocation-free.
-    void applyTrackAutomation(const juce::String& trackId, TrackRuntime& rt,
-                              juce::int64 subStartSamples, int numSamples, double rate) noexcept
-    {
-        auto it = trackAutomation.find(trackId);
-        if (it == trackAutomation.end()) return;
-        auto& st = it->second;
-        const TrackAutomationSnapshot* snap = st.snapshot;
-        if (snap == nullptr) return;
+    const RenderSnapshot* pinRenderSnapshot() noexcept;
 
-        const bool discontinuity = (subStartSamples != st.lastEndSamples);
-        const double ms = static_cast<double>(subStartSamples) / rate * 1000.0;
+    std::unique_ptr<RenderSnapshot> buildRenderSnapshot() const;
 
-        const auto sample = [&](AutomationParam p) {
-            const int pi = static_cast<int>(p);
-            return snap->curve(p).valueAtMs(ms, st.seg[pi]);
-        };
-        if (snap->hasParam(AutomationParam::filter)) rt.chain.setFilterTarget(sample(AutomationParam::filter), discontinuity);
-        if (snap->hasParam(AutomationParam::toneBass)) rt.chain.setBassTarget(sample(AutomationParam::toneBass), discontinuity);
-        if (snap->hasParam(AutomationParam::toneMid)) rt.chain.setMidTarget(sample(AutomationParam::toneMid), discontinuity);
-        if (snap->hasParam(AutomationParam::toneTreble)) rt.chain.setTrebleTarget(sample(AutomationParam::toneTreble), discontinuity);
-        if (snap->hasParam(AutomationParam::leveler)) rt.chain.setLeveler(sample(AutomationParam::leveler), discontinuity);
-        if (snap->hasParam(AutomationParam::level)) rt.chain.setLevelTarget(sample(AutomationParam::level), discontinuity);
-        if (snap->hasParam(AutomationParam::reverbSend)) rt.reverbSend.store(sample(AutomationParam::reverbSend), std::memory_order_relaxed);
-        if (snap->hasParam(AutomationParam::delaySend)) rt.delaySend.store(sample(AutomationParam::delaySend), std::memory_order_relaxed);
-        if (snap->hasParam(AutomationParam::pan))
-        {
-            const float p = sample(AutomationParam::pan);
-            float gL = 1.0F, gR = 1.0F;
-            equalPowerPanGains(p, gL, gR);
-            rt.pan.store(p, std::memory_order_relaxed);
-            rt.panGainL.store(gL, std::memory_order_relaxed);
-            rt.panGainR.store(gR, std::memory_order_relaxed);
-        }
+    std::unique_ptr<RenderSnapshot> buildRenderSnapshotExcluding(
+        const juce::AudioSource* excluded) const;
 
-        st.lastEndSamples = subStartSamples + numSamples;
-    }
+    void publishRenderSnapshot();
+    void publishEmptyRenderSnapshot();
+    void publishRenderSnapshot(std::unique_ptr<RenderSnapshot> next) noexcept;
+
+    void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap,
+                              juce::int64 subStartSamples, int numSamples, double rate) noexcept;
 
     std::atomic<juce::uint64> skippedBlocks{0};
+    std::unique_ptr<RenderSnapshot> currentRenderSnapshot;
+    std::atomic<const RenderSnapshot*> publishedRenderSnapshot{nullptr};
+    std::atomic<const RenderSnapshot*> renderHazard{nullptr};
     std::unordered_map<juce::String, std::unique_ptr<TrackRuntime>> runtimes;
     std::unordered_map<juce::String, TrackRuntime*> clipToTrack;
 
@@ -562,6 +234,7 @@ private:
     std::unordered_map<juce::String, SendParams> pendingSends;
 
     std::unordered_map<juce::String, float> pendingPans;
+    std::unordered_map<juce::String, const TrackAutomationSnapshot*> pendingAutomation;
 
     SharedFx sharedFx;
     juce::AudioBuffer<float> reverbSendBuf;
@@ -575,17 +248,6 @@ private:
     // sampling the curves identically regardless of their differing block sizes.
     static constexpr int kAutomationControlQuantum = 256;
 
-    // Per-track effect automation. The snapshot pointer is owned by AudioEngine
-    // (retire queue); BusGraph holds it plus the audio-thread sampling cursors.
-    // The whole map is read/written only under `lock`, so the message thread's
-    // pointer swap and the audio thread's cursor walk never race.
-    struct AutomationState
-    {
-        const TrackAutomationSnapshot* snapshot = nullptr;
-        std::size_t seg[TrackAutomationSnapshot::kNumParams] = {};
-        juce::int64 lastEndSamples = -1; // for seek/loop discontinuity detection
-    };
-    std::unordered_map<juce::String, AutomationState> trackAutomation;
     // Block-start transport counter, read live on the audio thread (MasterClock).
     const std::atomic<juce::int64>* timelineSamplesPtr = nullptr;
 };

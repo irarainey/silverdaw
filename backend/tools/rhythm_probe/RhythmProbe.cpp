@@ -22,12 +22,15 @@ void writeWav(const juce::File& outFile, const juce::AudioBuffer<float>& buf, do
 {
     juce::WavAudioFormat wav;
     outFile.deleteFile();
-    std::unique_ptr<juce::FileOutputStream> os(outFile.createOutputStream());
+    std::unique_ptr<juce::OutputStream> os(outFile.createOutputStream());
+    const auto writerOptions = juce::AudioFormatWriterOptions{}
+                                   .withSampleRate(sampleRate)
+                                   .withNumChannels(2)
+                                   .withBitsPerSample(24);
     std::unique_ptr<juce::AudioFormatWriter> writer(
-        wav.createWriterFor(os.get(), sampleRate, 2, 24, {}, 0));
+        wav.createWriterFor(os, writerOptions));
     if (writer != nullptr)
     {
-        os.release();
         writer->writeFromAudioSampleBuffer(buf, 0, buf.getNumSamples());
         writer.reset();
         std::printf("wrote %s\n", outFile.getFullPathName().toRawUTF8());

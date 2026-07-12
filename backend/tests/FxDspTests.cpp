@@ -135,6 +135,65 @@ void testToneEqLowCutDirectionAndShelfRange()
     require(std::abs(flat - 1.0) < 0.02, "Flat tone with the filter centred should be transparent");
 }
 
+void testToneEqNeutralBypassAndReactivation()
+{
+    constexpr double sr = 44100.0;
+    constexpr int n = 256;
+    silverdaw::ToneEq eq;
+    eq.prepare(sr, 2);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        auto* actual = neutral.getWritePointer(ch);
+        auto* copy = expected.getWritePointer(ch);
+        for (int i = 0; i < n; ++i)
+        {
+            const float sample = static_cast<float>((i % 31) - 15) / 31.0F;
+            actual[i] = sample;
+            copy[i] = sample;
+        }
+    }
+    eq.process(neutral, 0, n);
+    bool identical = true;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            identical = identical && neutral.getSample(ch, i) == expected.getSample(ch, i);
+    require(identical,
+            "an untouched Tone EQ must remain a bit-identical neutral bypass");
+
+    eq.setParams(12.0F, -6.0F, 8.0F, 0.5F, /*snap*/ true);
+    juce::AudioBuffer<float> active(2, n);
+    active.clear();
+    active.setSample(0, 0, 1.0F);
+    active.setSample(1, 0, 1.0F);
+    eq.process(active, 0, n);
+
+    eq.setParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ false);
+    for (int block = 0; block < 100; ++block)
+    {
+        active.clear();
+        eq.process(active, 0, n);
+    }
+
+    neutral.makeCopyOf(expected);
+    eq.process(neutral, 0, n);
+    identical = true;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            identical = identical && neutral.getSample(ch, i) == expected.getSample(ch, i);
+    require(identical,
+            "Tone EQ must return to bit-identical bypass after its live neutral glide");
+
+    eq.setParams(12.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    active.clear();
+    eq.process(active, 0, n);
+    require(active.getMagnitude(0, 0, n) == 0.0F
+                && active.getMagnitude(1, 0, n) == 0.0F,
+            "reactivating Tone EQ after bypass must not expose stale filter history");
+}
+
 void testLevelerPassthroughAndCompression()
 {
     constexpr double sr = 44100.0;
@@ -304,9 +363,14 @@ void testSharedFxRoomTailRingsAndTerminates()
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < n; ++i)
             sendR.setSample(ch, i, 0.5F);
-    out.clear();
-    fx.process(sendR, sendD, out, 0, n);
-    require(out.getMagnitude(0, 0, n) > 0.0, "Room must produce wet output while fed");
+    bool producedWet = false;
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        producedWet = producedWet || out.getMagnitude(0, 0, n) > 0.0F;
+    }
+    require(producedWet, "Room must produce wet output while fed");
     require(! fx.reverbTerminated(), "Room must not report terminated while being fed");
 
     bool sawTail = false;
@@ -326,6 +390,42 @@ void testSharedFxRoomTailRingsAndTerminates()
     }
     require(sawTail, "Room tail must keep ringing after the input stops");
     require(terminated, "Room tail must self-terminate within the safety cap");
+
+    fx.setReverbParams(0.8F, 0.7F, 0.6F, 1.0F, /*snap*/ false);
+    for (int b = 0; b < 64; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        require(out.getMagnitude(0, 0, n) == 0.0F,
+                "terminated Room must stay silent while consuming controls");
+    }
+
+    sendR.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            sendR.setSample(ch, i, 0.5F);
+
+    silverdaw::SharedFx fresh;
+    fresh.prepare(sr, n);
+    fresh.setReverbParams(0.8F, 0.7F, 0.6F, 1.0F, /*snap*/ true);
+    fresh.setDelayParams(250.0, 0.0F, 0.0F, 0.0F,
+                         /*snap*/ true, /*applyTimeNow*/ true);
+    juce::AudioBuffer<float> freshOut(2, n);
+
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        freshOut.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        fresh.process(sendR, sendD, freshOut, 0, n);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < n; ++i)
+                requireNear(out.getSample(ch, i), freshOut.getSample(ch, i), 1.0e-6,
+                            "restarted Room must match a clean snapped processor");
+    }
+    require(out.getMagnitude(0, 0, n) > 0.0F,
+            "restarted Room must produce wet output");
+    require(!fx.reverbTerminated(), "restarted Room must clear its terminated state");
 }
 
 void testSharedFxEchoRepeatsAndTerminates()
@@ -365,6 +465,67 @@ void testSharedFxEchoRepeatsAndTerminates()
         }
     }
     require(terminated, "Echo tail must self-terminate within the safety cap");
+
+    constexpr double idleAppliedDelayMs = 3.0;
+    constexpr double deferredDelayMs = 4.0;
+    fx.setDelayParams(idleAppliedDelayMs, 0.3F, 0.4F, 0.8F,
+                      /*snap*/ false, /*applyTimeNow*/ true);
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        require(out.getMagnitude(0, 0, n) == 0.0F,
+                "terminated Echo must stay silent while consuming controls");
+    }
+    fx.setDelayParams(deferredDelayMs, 0.3F, 0.4F, 0.8F,
+                      /*snap*/ false, /*applyTimeNow*/ false);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) == 0.0F,
+            "deferred Echo controls must not restart a terminated tail");
+
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(!fx.echoTerminated(), "restarted Echo must clear its terminated state");
+
+    silverdaw::SharedFx fresh;
+    fresh.prepare(sr, n);
+    fresh.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fresh.setDelayParams(delayMs, 0.5F, 1.0F, 1.0F,
+                         /*snap*/ true, /*applyTimeNow*/ true);
+    juce::AudioBuffer<float> silence(2, n);
+    juce::AudioBuffer<float> freshOut(2, n);
+    silence.clear();
+    freshOut.clear();
+    fresh.process(sendR, silence, freshOut, 0, n);
+    fresh.setDelayParams(idleAppliedDelayMs, 0.3F, 0.4F, 0.8F,
+                         /*snap*/ false, /*applyTimeNow*/ true);
+    for (int b = 0; b < 4; ++b)
+    {
+        freshOut.clear();
+        fresh.process(sendR, silence, freshOut, 0, n);
+    }
+    fresh.setDelayParams(deferredDelayMs, 0.3F, 0.4F, 0.8F,
+                         /*snap*/ false, /*applyTimeNow*/ false);
+    freshOut.clear();
+    fresh.process(sendR, silence, freshOut, 0, n);
+    freshOut.clear();
+    fresh.process(sendR, sendD, freshOut, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(out.getSample(ch, i) == freshOut.getSample(ch, i),
+                    "restarted Echo must match a clean processor exactly");
+    const int appliedDelaySample =
+        static_cast<int>(std::round(idleAppliedDelayMs * sr / 1000.0));
+    const int deferredDelaySample =
+        static_cast<int>(std::round(deferredDelayMs * sr / 1000.0));
+    require(std::abs(out.getSample(0, appliedDelaySample)) > 0.1F,
+            "delay-time publication must be consumed while Echo is bypassed");
+    require(std::abs(out.getSample(0, deferredDelaySample)) < 1.0e-5F,
+            "a deferred delay target must not replace the active idle-published time");
 }
 
 void testEqualPowerPanGains()
@@ -424,7 +585,51 @@ void testBusGraphPanAppliedThroughMix()
     bg.releaseResources();
 }
 
-// Stress the lock-free setters (pan/sends/peaks) and the locked tone setter
+void testBusGraphStructuralEditsDoNotDropAudio()
+{
+    constexpr int kBlock = 128;
+    constexpr double kRate = 48000.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    ConstantSource steady(0.25F);
+    bg.attachClip("t1", "steady", &steady);
+
+    std::atomic<bool> finished{false};
+    std::thread writer([&]() {
+        for (int i = 0; i < 1000; ++i)
+        {
+            auto churn = std::make_unique<ConstantSource>(0.1F);
+            bg.attachClip("t1", "churn", churn.get());
+            bg.detachClip("churn", churn.get());
+            churn.reset();
+        }
+        finished.store(true, std::memory_order_release);
+    });
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    int renderedBlocks = 0;
+    bool sawSilentBlock = false;
+    while (! finished.load(std::memory_order_acquire) || renderedBlocks < 100)
+    {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        sawSilentBlock =
+            sawSilentBlock || out.getMagnitude(0, 0, kBlock) < 0.24F;
+        ++renderedBlocks;
+    }
+
+    writer.join();
+    require(! sawSilentBlock,
+            "structural graph edits must not silence a continuously playing track");
+    require(bg.audioBlocksSkipped() == 0,
+            "lock-free structural graph edits must not skip callback blocks");
+    bg.detachClip("steady", &steady);
+    bg.releaseResources();
+}
+
+// Stress the lock-free setters (pan/sends/peaks/tone)
 // concurrently with the audio callback: output must stay finite, no crash or
 // deadlock, and the final published state must take effect deterministically.
 void testBusGraphConcurrentParamUpdatesAreSafe()
@@ -676,6 +881,26 @@ void testSharedFxRequestResetCutsTailNextBlock()
     fx.process(sendR, sendD, out, 0, n);
     require(out.getMagnitude(0, 0, n) < tail * 0.01,
             "requestReset must clear the reverb tail on the next processed block");
+
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fx.setDelayParams(5.0, 0.8F, 1.0F, 1.0F,
+                      /*snap*/ true, /*applyTimeNow*/ true);
+    fx.requestReset();
+    sendR.clear();
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) > 0.1F,
+            "Echo must be audible before its reset");
+
+    fx.requestReset();
+    sendD.clear();
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) < 1.0e-6F,
+            "requestReset must invalidate the Echo tail on the next processed block");
 }
 
 // M3: snap is now a deferred flag consumed by process. A snapped Tone EQ must
@@ -749,6 +974,7 @@ void testLevelerSnapAppliesOnFirstBlock()
 void addFxDspTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
+    tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});
@@ -756,6 +982,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
+    tests.push_back({"BusGraph structural edits do not drop callback audio", testBusGraphStructuralEditsDoNotDropAudio});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});

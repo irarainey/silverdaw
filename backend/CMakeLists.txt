@@ -446,8 +446,11 @@ add_library(silverdaw_backend_core STATIC
     src/midi/MidiControllerProfiles.cpp
     # dsp
     src/dsp/BpmDetector.cpp
+    src/dsp/BpmAnalysisHelpers.cpp
     src/dsp/LoudnessAnalyzer.cpp
     src/dsp/EnhancerDsp.cpp
+    src/dsp/SharedFx.cpp
+    src/dsp/ToneEq.cpp
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
     src/dsp/VocalDebleeder.cpp
@@ -460,11 +463,19 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/Waveform.cpp
     # engine
     src/engine/AudioEngine.cpp
+    src/engine/AudioEngineDevice.cpp
+    src/engine/AudioEngineTransport.cpp
+    src/engine/AudioEngineMix.cpp
     src/engine/AudioEngineClipEdit.cpp
     src/engine/AudioEngineClips.cpp
     src/engine/AudioEnginePreview.cpp
+    src/engine/BusGraph.cpp
+    src/engine/BusGraphRender.cpp
     src/engine/DecodedCache.cpp
     src/engine/EnginePlaybackPath.cpp
+    src/engine/OffsetSource.cpp
+    src/engine/OffsetSourceWarpRender.cpp
+    src/engine/OffsetSourceTailRender.cpp
     # mixdown
     src/mixdown/MixdownBroadcast.cpp
     src/mixdown/MixdownEngine.cpp

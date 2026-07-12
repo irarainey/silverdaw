@@ -174,6 +174,19 @@ void testOffsetSourceReversesClipWindow()
     for (int i = 0; i < dur; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-3,
                     "clearing the reverse flag restores forward source order");
+
+    constexpr int largeRequest = 10000;
+    os.setClipDurationSamples(largeRequest);
+    os.setReversed(true);
+    juce::AudioBuffer<float> large(1, largeRequest);
+    juce::AudioSourceChannelInfo largeInfo(&large, 0, largeRequest);
+    os.setNextReadPosition(0);
+    os.getNextAudioBlock(largeInfo);
+    for (int i = 0; i < largeRequest; ++i)
+        requireNear(large.getSample(0, i),
+                    static_cast<float>(inSrc + (largeRequest - 1 - i)),
+                    1.0e-3,
+                    "oversized reverse reads must remain seamless across scratch chunks");
 }
 
 
@@ -640,7 +653,7 @@ void testOffsetSourceBrakeLargeBlockMatchesPiecewise()
 
     RampSource child;
     OffsetSource os(&child);
-    os.prepareToPlay(256, 48000.0); // brakeScratch ~ 8208 samples
+    os.prepareToPlay(256, 48000.0);
 
     const juce::int64 inSrc = 0;
     const juce::int64 dur = 16000;

@@ -232,6 +232,17 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
     track.prefetchDirty = false;
 }
 
+void AudioEngine::scheduleTrackPrefetchAfterEdit(Track& track)
+{
+    if (master.isPlaying())
+        rebuildTrackPrefetch(track);
+    else
+    {
+        track.prefetchDirty = true;
+        rebuildTimer.startTimer(kRebuildDebounceMs);
+    }
+}
+
 void AudioEngine::flushAllDirtyRebuildsSync()
 {
     for (auto& [id, track] : tracks)

@@ -9,7 +9,7 @@ using RubberBand::RubberBandStretcher;
 
 WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
                              RubberBandStretcher::Options modeOptions)
-    : numChannels(juce::jmax(1, numChannelsArg)), sampleRate(sampleRateArg)
+    : numChannels(juce::jlimit(1, kMaxChannels, numChannelsArg)), sampleRate(sampleRateArg)
 {
     // Real-time mode is mandatory for the audio callback; high-consistency pitch avoids live artefacts.
     const auto options = modeOptions
@@ -21,6 +21,7 @@ WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
                                                        1.0, // initial time ratio (output / input)
                                                        1.0  // initial pitch scale
     );
+    stretcher->setMaxProcessSize(static_cast<size_t>(kProcessFeedSamples));
     outputScratchPtrs.resize(static_cast<size_t>(numChannels));
     doReset();
 }
@@ -29,12 +30,13 @@ WarpProcessor::~WarpProcessor() = default;
 
 void WarpProcessor::prepareToPlay(int maxBlockSamples)
 {
-    // Pre-allocate the 0.25-ratio worst case so `process()` never touches the heap.
-    const int worstCase = juce::jmax(maxBlockSamples * 4, 1024);
-    if (worstCase <= allocatedBlockSamples) return;
-    allocatedBlockSamples = worstCase;
-    sourceScratch.assign(static_cast<size_t>(numChannels), std::vector<float>(static_cast<size_t>(worstCase)));
-    discardScratch.assign(static_cast<size_t>(numChannels), std::vector<float>(static_cast<size_t>(worstCase)));
+    juce::ignoreUnused(maxBlockSamples);
+    if (allocatedBlockSamples == kProcessFeedSamples) return;
+    allocatedBlockSamples = kProcessFeedSamples;
+    sourceScratch.assign(static_cast<size_t>(numChannels),
+                         std::vector<float>(static_cast<size_t>(kProcessFeedSamples)));
+    discardScratch.assign(static_cast<size_t>(numChannels),
+                          std::vector<float>(static_cast<size_t>(kProcessFeedSamples)));
     sourceScratchPtrs.resize(static_cast<size_t>(numChannels));
     discardScratchPtrs.resize(static_cast<size_t>(numChannels));
     for (int c = 0; c < numChannels; ++c)
@@ -57,7 +59,8 @@ void WarpProcessor::doReset()
         int remaining = pad;
         while (remaining > 0)
         {
-            const int chunk = std::min(remaining, allocatedBlockSamples);
+            const int chunk = std::min({remaining, allocatedBlockSamples,
+                                        kProcessFeedSamples});
             for (int c = 0; c < numChannels; ++c)
             {
                 std::fill(sourceScratch[c].begin(), sourceScratch[c].begin() + chunk, 0.0f);
@@ -112,6 +115,7 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
     if (wantsSeek)
     {
         nextSourceSample = pendingSourceSeek.load(std::memory_order_acquire);
+        logicalSourceSample = static_cast<double>(nextSourceSample);
         doReset();
     }
     else if (wantsReset)
@@ -121,12 +125,19 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
 
     int produced = 0;
     int safety = 0;
-    while (produced < numOutputSamples && safety++ < 64)
+    const int feedChunk = std::min(allocatedBlockSamples, kProcessFeedSamples);
+    const auto worstCaseInput =
+        static_cast<int64_t>(numOutputSamples) * 4;
+    const int maxFeedIterations =
+        static_cast<int>((worstCaseInput + feedChunk - 1) / feedChunk) + 8;
+    const int maxIterations = maxFeedIterations * 3 + 16;
+    while (produced < numOutputSamples && safety++ < maxIterations)
     {
         const int available = static_cast<int>(stretcher->available());
         if (available > 0 && outputDelayToDiscard > 0)
         {
-            const int drop = std::min({available, outputDelayToDiscard, allocatedBlockSamples});
+            const int drop =
+                std::min({available, outputDelayToDiscard, kProcessFeedSamples});
             stretcher->retrieve(discardScratchPtrs.data(), static_cast<size_t>(drop));
             outputDelayToDiscard -= drop;
             continue;
@@ -140,11 +151,12 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
             continue;
         }
 
-        const int chunk = std::min(allocatedBlockSamples, 1024);
-        readSource(sourceScratchPtrs.data(), nextSourceSample, chunk);
-        stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(chunk), false);
-        nextSourceSample += chunk;
+        readSource(sourceScratchPtrs.data(), nextSourceSample, feedChunk);
+        stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(feedChunk), false);
+        nextSourceSample += feedChunk;
     }
+
+    logicalSourceSample += static_cast<double>(numOutputSamples) * appliedTempoRatio;
 
     // Silence-fill rare priming shortfalls to keep the output contract stable.
     if (produced < numOutputSamples)
@@ -153,6 +165,10 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
         {
             std::fill(output[c] + produced, output[c] + numOutputSamples, 0.0f);
         }
+        // Do not carry delayed output across the inserted silence. Resume from the
+        // audible timeline cursor rather than Rubber Band's read-ahead frontier.
+        nextSourceSample = static_cast<juce::int64>(std::llround(logicalSourceSample));
+        doReset();
     }
     return produced;
 }

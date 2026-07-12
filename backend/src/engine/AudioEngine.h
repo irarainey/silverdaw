@@ -139,6 +139,9 @@ class AudioEngine
     // Total audio blocks the bus graph dropped under message-thread contention.
     juce::uint64 busGraphSkippedBlocks() const noexcept { return busGraph.audioBlocksSkipped(); }
 
+    /** Number of superseded render snapshots awaiting a safe reclamation point. */
+    std::size_t retiredPlaybackSnapshotCount() const noexcept;
+
     // Drains audio-thread block-timing for non-RT perf logging.
     MasterClockSource::AudioPerfSnapshot drainAudioPerf() noexcept { return master.drainAudioPerf(); }
 
@@ -155,6 +158,7 @@ class AudioEngine
                      std::optional<double> tempoRatio,
                      std::optional<double> semitones,
                      std::optional<double> cents);
+    bool canWarpClip(const juce::String& clipId) const noexcept;
 
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
 
@@ -348,6 +352,12 @@ class AudioEngine
     double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
 
     void rebuildTrackPrefetch(Track& track);
+
+    // Schedules the post-edit prefetch rebuild: immediately if playing (must drain stale
+    // read-ahead at once), or marks dirty + starts the debounce timer if stopped.
+    void scheduleTrackPrefetchAfterEdit(Track& track);
+
+    void reclaimRetiredPlaybackSnapshots();
 
     // Rebuilds the preview transport's read-ahead buffer so a changed envelope/gain is heard from
     // the first played block. JUCE's BufferingAudioSource won't invalidate an already-cached region

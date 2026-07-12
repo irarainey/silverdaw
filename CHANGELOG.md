@@ -14,9 +14,13 @@
 - Fast launches no longer pause on startup steps that have already completed.
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
 - Stem separation is now faster, more reliable, and clearer about progress and saved cleanup settings.
+- Tracks with neutral Tone controls now skip inactive filtering during playback.
+- Shared room and echo effects now stop processing once their tails are silent.
 
 ### Fixed
 
+- Audio playback now remains uninterrupted while clips or automation are changed.
+- Repeated brake and backspin edits now release superseded audio state when playback stops.
 - Recent projects now show an opening indicator while the audio engine finishes starting.
 
 ## 1.1.0

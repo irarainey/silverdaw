@@ -30,6 +30,15 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
         if (outError != nullptr) *outError = "could not decode: " + filePath.getFullPathName();
         return false;
     }
+    if (initialWarpEnabled.value_or(false)
+        && !WarpProcessor::supportsChannelCount(static_cast<int>(reader->numChannels)))
+    {
+        if (outError != nullptr)
+            *outError = "Warp supports audio with up to "
+                      + juce::String(WarpProcessor::kMaxChannels) + " channels";
+        delete reader;
+        return false;
+    }
 
     preview.sampleRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
     preview.sourceDurationMs =
@@ -108,6 +117,10 @@ void AudioEngine::unloadPreview()
     preview.retiredWarps.clear();
     preview.envelopeSnapshot.reset();
     preview.retiredEnvelopes.clear();
+    preview.brakeSnapshot.reset();
+    preview.retiredBrakes.clear();
+    preview.backspinSnapshot.reset();
+    preview.retiredBackspins.clear();
     preview.readerSource.reset();
     preview.sourceFile = juce::File();
     preview.inMs = 0.0;
@@ -148,11 +161,20 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         updatePreviewMetronomeMapping();
         return true;
     }
+    const int channels =
+        preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
+    if (!WarpProcessor::supportsChannelCount(channels))
+    {
+        silverdaw::log::warn(
+            "engine",
+            "preview warp rejected: source has " + juce::String(channels) + " channels");
+        return false;
+    }
+
     const juce::String requestedMode = mode.has_value() ? *mode : preview.warpMode;
     const bool needRebuild = (preview.warp == nullptr) || (requestedMode != preview.warpMode);
     if (needRebuild)
     {
-        const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
         const auto& dm = deviceManager.getAudioDeviceSetup();
         auto wp = makeWarpProcessor(channels, preview.sampleRate,
                                     static_cast<int>(dm.bufferSize), requestedMode,

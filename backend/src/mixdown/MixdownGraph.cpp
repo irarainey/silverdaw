@@ -91,6 +91,13 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
 
     if (clip.warpEnabled)
     {
+        if (!WarpProcessor::supportsChannelCount(out->sourceChannels))
+        {
+            outError = "Warp supports audio with up to "
+                     + juce::String(WarpProcessor::kMaxChannels)
+                     + " channels for clip " + clip.id;
+            return nullptr;
+        }
         out->warp = std::make_unique<WarpProcessor>(out->sourceChannels,
                                                     out->sourceRate,
                                                     parseWarpMode(clip.warpMode));

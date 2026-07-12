@@ -64,15 +64,7 @@ bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
     track->offsetSource->setOffsetSamples(newOffsetSamples);
     track->offsetSource->requestWarpReseek();
 
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
 
     return true;
 }
@@ -110,15 +102,7 @@ bool AudioEngine::setClipTrim(const juce::String& clipId, double startMs, double
     // Message-thread writes are published for bounded, lock-free audio-thread reads.
     track->offsetSource->setClipWindowAtomic(offsetSamples, inSampleOffset, durSamples);
 
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
 
     return true;
 }
@@ -156,15 +140,7 @@ bool AudioEngine::setClipEnvelope(const juce::String& clipId, const juce::Array<
     // The envelope is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
     // carry the old gain. Rebuild the prefetch so the new envelope is audible from the first
     // played block rather than only after the stale buffer drains.
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
 
@@ -190,15 +166,7 @@ bool AudioEngine::setClipReversed(const juce::String& clipId, bool reversed)
     // Reversal is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
     // carry the old direction. Rebuild the prefetch so the change is audible from the first
     // played block rather than only after the stale buffer drains.
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
 
@@ -240,15 +208,7 @@ bool AudioEngine::setClipEdgeFade(const juce::String& clipId,
     // The edge fade is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
     // carry the old shape. Rebuild the prefetch so the new fade is audible from the first played
     // block rather than only after the stale buffer drains.
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
 
@@ -346,15 +306,7 @@ bool AudioEngine::setClipBrake(const juce::String& clipId, double brakeSeconds, 
     // The brake is applied upstream of the JUCE read-ahead buffer, so already-buffered samples
     // carry the old direction/rate. Rebuild the prefetch so the change is audible from the first
     // played block rather than only after the stale buffer drains.
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
 
@@ -404,15 +356,7 @@ bool AudioEngine::setClipBackspin(const juce::String& clipId, double backspinSec
     }
     track->backspinSnapshot = (published != nullptr) ? std::move(snapshot) : nullptr;
 
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
 
@@ -438,17 +382,18 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
             track->retiredWarps.push_back(std::move(track->warp));
         }
         track->warpMode = {};
-        if (master.isPlaying())
-        {
-            rebuildTrackPrefetch(*track);
-        }
-        else
-        {
-            track->prefetchDirty = true;
-            rebuildTimer.startTimer(kRebuildDebounceMs);
-        }
+        scheduleTrackPrefetchAfterEdit(*track);
         silverdaw::log::info("engine", "clip warp disabled " + clipId);
         return true;
+    }
+
+    if (!WarpProcessor::supportsChannelCount(track->numChannels))
+    {
+        silverdaw::log::warn(
+            "engine",
+            "clip warp rejected " + clipId + ": source has "
+                + juce::String(track->numChannels) + " channels");
+        return false;
     }
 
     // Silverdaw tempoRatio is project/source; Rubber Band receives the inverse internally.
@@ -491,15 +436,15 @@ bool AudioEngine::setClipWarp(const juce::String& clipId,
         }
     }
 
-    if (master.isPlaying())
-    {
-        rebuildTrackPrefetch(*track);
-    }
-    else
-    {
-        track->prefetchDirty = true;
-        rebuildTimer.startTimer(kRebuildDebounceMs);
-    }
+    scheduleTrackPrefetchAfterEdit(*track);
     return true;
 }
+
+bool AudioEngine::canWarpClip(const juce::String& clipId) const noexcept
+{
+    const auto it = tracks.find(clipId);
+    return it != tracks.end()
+        && WarpProcessor::supportsChannelCount(it->second->numChannels);
+}
+
 } // namespace silverdaw

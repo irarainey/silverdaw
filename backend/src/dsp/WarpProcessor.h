@@ -30,6 +30,13 @@ inline RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String
 class WarpProcessor
 {
   public:
+    static constexpr int kMaxChannels = 8;
+
+    static bool supportsChannelCount(int channelCount) noexcept
+    {
+        return channelCount > 0 && channelCount <= kMaxChannels;
+    }
+
     WarpProcessor(int numChannels, double sampleRate, RubberBand::RubberBandStretcher::Options modeOptions);
     ~WarpProcessor();
 
@@ -91,6 +98,8 @@ class WarpProcessor
     }
 
   private:
+    static constexpr int kProcessFeedSamples = 1024;
+
     void applyPendingParams() noexcept;
     void doReset();
 
@@ -111,6 +120,7 @@ class WarpProcessor
 
     // Audio-thread source cursor.
     juce::int64 nextSourceSample{0};
+    double logicalSourceSample{0.0};
     int outputDelayToDiscard{0};
 
     // Pre-allocated callback scratch for the largest block Rubber Band can demand.
