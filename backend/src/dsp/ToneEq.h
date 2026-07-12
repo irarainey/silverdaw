@@ -18,140 +18,28 @@ public:
     ToneEq() = default;
 
     /** Recalled on sample-rate or channel-count changes. */
-    void prepare(double sampleRate, int numChannels) noexcept
-    {
-        sr = (sampleRate > 0.0 && std::isfinite(sampleRate)) ? sampleRate : 44100.0;
-        channels = juce::jlimit(1, kMaxChannels, numChannels);
-        snapToTargets();
-        clearState();
-        prepared = true;
-        recomputeCoeffs();
-        neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
-                                         curLowCutHz, curHighCutHz);
-        neutralIdentitySamples = 0;
-        snapRequested.store(false, std::memory_order_relaxed);
-    }
+    void prepare(double sampleRate, int numChannels) noexcept;
 
     /** Clears filter histories on stop/seek without changing targets. */
-    void reset() noexcept
-    {
-        clearState();
-        neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
-                                         curLowCutHz, curHighCutHz);
-        neutralIdentitySamples = 0;
-    }
+    void reset() noexcept;
 
     /** Lock-free message-thread setter; publishes targets and (on snap) a deferred snap flag.
      *  `filter` is the bipolar DJ-style sweep in `[-1, +1]`: negative engages the low-pass
      *  (High Cut), positive engages the high-pass (Low Cut), centre (0) is transparent. */
-    void setParams(float bassDb, float midDb, float trebleDb, float filter, bool snap) noexcept
-    {
-        targetBassDb.store(sanitizeDb(bassDb), std::memory_order_relaxed);
-        targetMidDb.store(sanitizeDb(midDb), std::memory_order_relaxed);
-        targetTrebleDb.store(sanitizeDb(trebleDb), std::memory_order_relaxed);
-
-        float lowCutHz = kLowCutOffHz;
-        float highCutHz = kHighCutOffHz;
-        filterToCorners(filter, lowCutHz, highCutHz);
-        targetLowCutHz.store(lowCutHz, std::memory_order_relaxed);
-        targetHighCutHz.store(highCutHz, std::memory_order_relaxed);
-
-        // Release pairs with the acquire in `process`, so a consumed snap also sees the targets.
-        if (snap) snapRequested.store(true, std::memory_order_release);
-    }
+    void setParams(float bassDb, float midDb, float trebleDb, float filter, bool snap) noexcept;
 
     /** Audio-thread-safe filter-only target update for per-track automation. Touches only the
      *  filter corners (not bass/mid/treble), so a curve can sweep the Filter while the manual
      *  EQ stays put. `snap` is set on a transport discontinuity (seek/loop) so the sweep jumps
      *  to the curve value instead of gliding the 20 ms smoother across the jump. */
-    void setFilterTarget(float filter, bool snap) noexcept
-    {
-        float lowCutHz = kLowCutOffHz;
-        float highCutHz = kHighCutOffHz;
-        filterToCorners(filter, lowCutHz, highCutHz);
-        targetLowCutHz.store(lowCutHz, std::memory_order_relaxed);
-        targetHighCutHz.store(highCutHz, std::memory_order_relaxed);
-        if (snap) snapRequested.store(true, std::memory_order_release);
-    }
+    void setFilterTarget(float filter, bool snap) noexcept;
 
     /** Audio-thread per-band dB automation (touches one shelf/peak target only). */
     void setBassTarget(float db, bool snap) noexcept { targetBassDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
     void setMidTarget(float db, bool snap) noexcept { targetMidDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
     void setTrebleTarget(float db, bool snap) noexcept { targetTrebleDb.store(sanitizeDb(db), std::memory_order_relaxed); if (snap) snapRequested.store(true, std::memory_order_release); }
 
-    void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
-    {
-        if (! prepared || numSamples <= 0) return;
-
-        if (snapRequested.exchange(false, std::memory_order_acquire))
-        {
-            snapToTargets();
-            recomputeCoeffs();
-            neutralBypassed = isNeutralState(curBassDb, curMidDb, curTrebleDb,
-                                             curLowCutHz, curHighCutHz);
-            neutralIdentitySamples = 0;
-            if (neutralBypassed) clearState();
-        }
-
-        const float bassTarget = targetBassDb.load(std::memory_order_relaxed);
-        const float midTarget = targetMidDb.load(std::memory_order_relaxed);
-        const float trebleTarget = targetTrebleDb.load(std::memory_order_relaxed);
-        const float lowCutTarget = targetLowCutHz.load(std::memory_order_relaxed);
-        const float highCutTarget = targetHighCutHz.load(std::memory_order_relaxed);
-        const float alpha = blockAlpha(numSamples);
-        bool moved = false;
-        moved |= smoothToward(curBassDb, bassTarget, alpha);
-        moved |= smoothToward(curMidDb, midTarget, alpha);
-        moved |= smoothToward(curTrebleDb, trebleTarget, alpha);
-        moved |= smoothToward(curLowCutHz, lowCutTarget, alpha);
-        moved |= smoothToward(curHighCutHz, highCutTarget, alpha);
-        if (moved) recomputeCoeffs();
-
-        const bool currentNeutral = isNeutralState(curBassDb, curMidDb, curTrebleDb,
-                                                   curLowCutHz, curHighCutHz);
-        const bool targetNeutral = isNeutralState(bassTarget, midTarget, trebleTarget,
-                                                  lowCutTarget, highCutTarget);
-        if (neutralBypassed)
-        {
-            if (currentNeutral && targetNeutral) return;
-            neutralBypassed = false;
-            neutralIdentitySamples = 0;
-        }
-
-        const int nCh = juce::jmin(buffer.getNumChannels(), channels);
-        for (int ch = 0; ch < nCh; ++ch)
-        {
-            float* data = buffer.getWritePointer(ch);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const int idx = startSample + i;
-                float x = data[idx];
-                x = bass.process(ch, x);
-                x = mid.process(ch, x);
-                x = treble.process(ch, x);
-                x = lowCut1.process(ch, x);
-                x = lowCut2.process(ch, x);
-                x = highCut1.process(ch, x);
-                x = highCut2.process(ch, x);
-                data[idx] = x;
-            }
-        }
-
-        if (currentNeutral && targetNeutral)
-        {
-            neutralIdentitySamples += juce::jmin(numSamples, 2);
-            if (neutralIdentitySamples >= 2)
-            {
-                clearState();
-                neutralBypassed = true;
-                neutralIdentitySamples = 0;
-            }
-        }
-        else
-        {
-            neutralIdentitySamples = 0;
-        }
-    }
+    void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept;
 
 private:
     static constexpr int kMaxChannels = 2;
@@ -212,19 +100,7 @@ private:
         }
 
         void setNormalized(double nb0, double nb1, double nb2, double a0, double na1,
-                           double na2) noexcept
-        {
-            if (! (std::isfinite(a0)) || std::abs(a0) < 1.0e-12) { setIdentity(); return; }
-            const double inv = 1.0 / a0;
-            b0 = static_cast<float>(nb0 * inv);
-            b1 = static_cast<float>(nb1 * inv);
-            b2 = static_cast<float>(nb2 * inv);
-            a1 = static_cast<float>(na1 * inv);
-            a2 = static_cast<float>(na2 * inv);
-            if (! (std::isfinite(b0) && std::isfinite(b1) && std::isfinite(b2)
-                   && std::isfinite(a1) && std::isfinite(a2)))
-                setIdentity();
-        }
+                           double na2) noexcept;
 
         void clear() noexcept
         {
@@ -243,191 +119,21 @@ private:
     }
 
     static bool isNeutralState(float bassDb, float midDb, float trebleDb,
-                               float lowCutHz, float highCutHz) noexcept
-    {
-        return std::abs(bassDb) < kDbEpsilon
-            && std::abs(midDb) < kDbEpsilon
-            && std::abs(trebleDb) < kDbEpsilon
-            && lowCutHz <= kLowCutIdentityHz
-            && highCutHz >= kHighCutIdentityHz;
-    }
-
+                               float lowCutHz, float highCutHz) noexcept;
     // Maps the bipolar Filter control to the corner-frequency pair the biquads
     // consume. Only one side is ever engaged; the other parks at its off
     // sentinel so the unused stage resolves to identity in `recomputeCoeffs`.
-    static void filterToCorners(float filter, float& lowCutHz, float& highCutHz) noexcept
-    {
-        const float f = std::isfinite(filter) ? juce::jlimit(-1.0F, 1.0F, filter) : 0.0F;
-        if (f > kFilterEpsilon)
-        {
-            lowCutHz = kHpfMinHz * std::pow(kHpfMaxHz / kHpfMinHz, f);
-            highCutHz = kHighCutOffHz;
-        }
-        else if (f < -kFilterEpsilon)
-        {
-            highCutHz = kLpfMaxHz * std::pow(kLpfMinHz / kLpfMaxHz, -f);
-            lowCutHz = kLowCutOffHz;
-        }
-        else
-        {
-            lowCutHz = kLowCutOffHz;
-            highCutHz = kHighCutOffHz;
-        }
-    }
-
-    float blockAlpha(int numSamples) const noexcept
-    {
-        // Block-size-independent glide.
-        const double a = std::exp(-static_cast<double>(numSamples)
-                                  / (kSmoothTauSeconds * sr));
-        return static_cast<float>(juce::jlimit(0.0, 1.0, a));
-    }
-
-    static bool smoothToward(float& cur, float target, float alpha) noexcept
-    {
-        if (std::abs(target - cur) < 1.0e-4F)
-        {
-            if (cur != target)
-            {
-                cur = target; // settle exactly to avoid endless tiny recomputes
-                return true;
-            }
-            return false;
-        }
-        cur = target + (cur - target) * alpha;
-        return true;
-    }
-
-    void snapToTargets() noexcept
-    {
-        curBassDb = targetBassDb.load(std::memory_order_relaxed);
-        curMidDb = targetMidDb.load(std::memory_order_relaxed);
-        curTrebleDb = targetTrebleDb.load(std::memory_order_relaxed);
-        curLowCutHz = targetLowCutHz.load(std::memory_order_relaxed);
-        curHighCutHz = targetHighCutHz.load(std::memory_order_relaxed);
-    }
-
-    void clearState() noexcept
-    {
-        bass.clear();
-        mid.clear();
-        treble.clear();
-        lowCut1.clear();
-        lowCut2.clear();
-        highCut1.clear();
-        highCut2.clear();
-    }
-
-    void recomputeCoeffs() noexcept
-    {
-        designLowShelf(bass, kBassHz, curBassDb);
-        designPeak(mid, kMidHz, curMidDb);
-        designHighShelf(treble, kTrebleHz, curTrebleDb);
-        if (curLowCutHz > kLowCutIdentityHz)
-        {
-            designHighPass(lowCut1, static_cast<double>(curLowCutHz), kButterQ1);
-            designHighPass(lowCut2, static_cast<double>(curLowCutHz), kButterQ2);
-        }
-        else
-        {
-            lowCut1.setIdentity();
-            lowCut2.setIdentity();
-        }
-        if (curHighCutHz < kHighCutIdentityHz)
-        {
-            designLowPass(highCut1, static_cast<double>(curHighCutHz), kButterQ1);
-            designLowPass(highCut2, static_cast<double>(curHighCutHz), kButterQ2);
-        }
-        else
-        {
-            highCut1.setIdentity();
-            highCut2.setIdentity();
-        }
-    }
-
-    void designPeak(Biquad& f, double freq, float gainDb) noexcept
-    {
-        if (std::abs(gainDb) < kDbEpsilon) { f.setIdentity(); return; }
-        const double w0 = omega(freq);
-        const double cw = std::cos(w0);
-        const double sw = std::sin(w0);
-        const double A = std::pow(10.0, gainDb / 40.0);
-        const double alpha = sw / (2.0 * kMidQ);
-
-        f.setNormalized(1.0 + alpha * A, -2.0 * cw, 1.0 - alpha * A,
-                        1.0 + alpha / A, -2.0 * cw, 1.0 - alpha / A);
-    }
-
-    void designLowShelf(Biquad& f, double freq, float gainDb) noexcept
-    {
-        if (std::abs(gainDb) < kDbEpsilon) { f.setIdentity(); return; }
-        const double w0 = omega(freq);
-        const double cw = std::cos(w0);
-        const double sw = std::sin(w0);
-        const double A = std::pow(10.0, gainDb / 40.0);
-        const double alpha = (sw / 2.0)
-            * std::sqrt((A + 1.0 / A) * (1.0 / kShelfSlope - 1.0) + 2.0);
-        const double twoSqrtAAlpha = 2.0 * std::sqrt(A) * alpha;
-
-        f.setNormalized(A * ((A + 1.0) - (A - 1.0) * cw + twoSqrtAAlpha),
-                        2.0 * A * ((A - 1.0) - (A + 1.0) * cw),
-                        A * ((A + 1.0) - (A - 1.0) * cw - twoSqrtAAlpha),
-                        (A + 1.0) + (A - 1.0) * cw + twoSqrtAAlpha,
-                        -2.0 * ((A - 1.0) + (A + 1.0) * cw),
-                        (A + 1.0) + (A - 1.0) * cw - twoSqrtAAlpha);
-    }
-
-    void designHighShelf(Biquad& f, double freq, float gainDb) noexcept
-    {
-        if (std::abs(gainDb) < kDbEpsilon) { f.setIdentity(); return; }
-        const double w0 = omega(freq);
-        const double cw = std::cos(w0);
-        const double sw = std::sin(w0);
-        const double A = std::pow(10.0, gainDb / 40.0);
-        const double alpha = (sw / 2.0)
-            * std::sqrt((A + 1.0 / A) * (1.0 / kShelfSlope - 1.0) + 2.0);
-        const double twoSqrtAAlpha = 2.0 * std::sqrt(A) * alpha;
-
-        f.setNormalized(A * ((A + 1.0) + (A - 1.0) * cw + twoSqrtAAlpha),
-                        -2.0 * A * ((A - 1.0) + (A + 1.0) * cw),
-                        A * ((A + 1.0) + (A - 1.0) * cw - twoSqrtAAlpha),
-                        (A + 1.0) - (A - 1.0) * cw + twoSqrtAAlpha,
-                        2.0 * ((A - 1.0) - (A + 1.0) * cw),
-                        (A + 1.0) - (A - 1.0) * cw - twoSqrtAAlpha);
-    }
-
-    void designHighPass(Biquad& f, double freq, double q) noexcept
-    {
-        const double w0 = omega(freq);
-        const double cw = std::cos(w0);
-        const double sw = std::sin(w0);
-        const double alpha = sw / (2.0 * q);
-        const double onePlusCw = 1.0 + cw;
-
-        // High-pass needs (1 + cos w0); the low-pass numerator would invert Low Cut.
-        f.setNormalized(onePlusCw / 2.0, -onePlusCw, onePlusCw / 2.0,
-                        1.0 + alpha, -2.0 * cw, 1.0 - alpha);
-    }
-
-    void designLowPass(Biquad& f, double freq, double q) noexcept
-    {
-        const double w0 = omega(freq);
-        const double cw = std::cos(w0);
-        const double sw = std::sin(w0);
-        const double alpha = sw / (2.0 * q);
-        const double oneMinusCw = 1.0 - cw;
-
-        // Low-pass mirrors the high-pass numerator for High Cut.
-        f.setNormalized(oneMinusCw / 2.0, oneMinusCw, oneMinusCw / 2.0,
-                        1.0 + alpha, -2.0 * cw, 1.0 - alpha);
-    }
-
-    double omega(double freq) const noexcept
-    {
-        // Keep the corner safely below Nyquist.
-        const double f = juce::jlimit(1.0, sr * 0.49, freq);
-        return 2.0 * juce::MathConstants<double>::pi * f / sr;
-    }
+    static void filterToCorners(float filter, float& lowCutHz, float& highCutHz) noexcept;
+    static bool smoothToward(float& cur, float target, float alpha) noexcept;
+    void snapToTargets() noexcept;
+    void clearState() noexcept;
+    void recomputeCoeffs() noexcept;
+    void designPeak(Biquad& f, double freq, float gainDb) noexcept;
+    void designLowShelf(Biquad& f, double freq, float gainDb) noexcept;
+    void designHighShelf(Biquad& f, double freq, float gainDb) noexcept;
+    void designHighPass(Biquad& f, double freq, double q) noexcept;
+    void designLowPass(Biquad& f, double freq, double q) noexcept;
+    double omega(double freq) const noexcept;
 
     Biquad bass, mid, treble, lowCut1, lowCut2, highCut1, highCut2;
 

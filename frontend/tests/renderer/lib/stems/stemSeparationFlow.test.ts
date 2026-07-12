@@ -73,18 +73,27 @@ type ProgressHandler = (p: {
   fileCount: number
 }) => void
 
-// The currently-subscribed download progress handler. The flow subscribes to one
-// source at a time, so a single slot mirrors real behaviour; ensure* mocks call
-// it to simulate streamed progress.
-let progressHandler: ProgressHandler | null = null
+// Per-source progress handlers — the flow subscribes simultaneously to each
+// active source, so each needs its own slot; ensure* mocks call the right one.
+const progressHandlers = {
+  vocal: null as ProgressHandler | null,
+  rhythm: null as ProgressHandler | null,
+  htdemucs: null as ProgressHandler | null
+}
 
 const INSTALLED_STATE = { installed: true, presentBytes: 100, totalBytes: 100, fileCount: 2 }
 
-function captureProgress(handler: ProgressHandler): () => void {
-  progressHandler = handler
-  return () => {
-    progressHandler = null
-  }
+function captureVocalProgress(handler: ProgressHandler): () => void {
+  progressHandlers.vocal = handler
+  return () => { progressHandlers.vocal = null }
+}
+function captureRhythmProgress(handler: ProgressHandler): () => void {
+  progressHandlers.rhythm = handler
+  return () => { progressHandlers.rhythm = null }
+}
+function captureHtdemucsProgress(handler: ProgressHandler): () => void {
+  progressHandlers.htdemucs = handler
+  return () => { progressHandlers.htdemucs = null }
 }
 
 type EnsureResult = { ok: true } | { ok: false; error: string }
@@ -116,19 +125,19 @@ const api = {
   getStemModelState: vi.fn(async () => INSTALLED_STATE),
   ensureStemModel: vi.fn(async (): Promise<EnsureResult> => ({ ok: true })),
   cancelStemModelDownload: vi.fn(),
-  onStemModelDownloadProgress: vi.fn(captureProgress),
+  onStemModelDownloadProgress: vi.fn(captureHtdemucsProgress),
   // Mel-Band RoFormer vocal pack (primary)
   getVocalPackState: vi.fn(async () => INSTALLED_STATE),
   getVocalPackPath: vi.fn(async () => 'C:\\models\\mel\\core.onnx'),
   ensureVocalPack: vi.fn(async (): Promise<EnsureResult> => ({ ok: true })),
   cancelVocalPackDownload: vi.fn(),
-  onVocalPackDownloadProgress: vi.fn(captureProgress),
+  onVocalPackDownloadProgress: vi.fn(captureVocalProgress),
   // BS-RoFormer rhythm pack (primary)
   getRhythmPackState: vi.fn(async () => INSTALLED_STATE),
   getRhythmPackPath: vi.fn(async () => 'C:\\models\\bs\\core.onnx'),
   ensureRhythmPack: vi.fn(async (): Promise<EnsureResult> => ({ ok: true })),
   cancelRhythmPackDownload: vi.fn(),
-  onRhythmPackDownloadProgress: vi.fn(captureProgress),
+  onRhythmPackDownloadProgress: vi.fn(captureRhythmProgress),
   setStemPrefs: vi.fn()
 }
 
@@ -184,7 +193,7 @@ function packsMissing(vocalTotal: number, rhythmTotal: number): void {
  *  that pack's install state to installed (so a later state check passes). */
 function packsInstallOnEnsure(): void {
   api.ensureVocalPack.mockImplementation(async () => {
-    progressHandler?.({
+    progressHandlers.vocal?.({
       receivedBytes: 800,
       totalBytes: 800,
       fileName: 'mel-band-roformer.onnx',
@@ -195,7 +204,7 @@ function packsInstallOnEnsure(): void {
     return { ok: true }
   })
   api.ensureRhythmPack.mockImplementation(async () => {
-    progressHandler?.({
+    progressHandlers.rhythm?.({
       receivedBytes: 400,
       totalBytes: 400,
       fileName: 'bs-roformer-rhythm.onnx',
@@ -212,7 +221,9 @@ beforeEach(async () => {
   clearStemSeparationState()
   cancelStemSelection()
   cancelModelFlow()
-  progressHandler = null
+  progressHandlers.vocal = null
+  progressHandlers.rhythm = null
+  progressHandlers.htdemucs = null
   vi.stubGlobal('window', { silverdaw: api })
   vi.stubGlobal('crypto', { randomUUID: () => 'job-123' })
   api.getStemModelDir.mockResolvedValue('C:\\models\\htdemucs-ft')
@@ -225,9 +236,9 @@ beforeEach(async () => {
   api.getRhythmPackPath.mockResolvedValue('C:\\models\\bs\\core.onnx')
   api.ensureVocalPack.mockResolvedValue({ ok: true })
   api.ensureRhythmPack.mockResolvedValue({ ok: true })
-  api.onVocalPackDownloadProgress.mockImplementation(captureProgress)
-  api.onRhythmPackDownloadProgress.mockImplementation(captureProgress)
-  api.onStemModelDownloadProgress.mockImplementation(captureProgress)
+  api.onVocalPackDownloadProgress.mockImplementation(captureVocalProgress)
+  api.onRhythmPackDownloadProgress.mockImplementation(captureRhythmProgress)
+  api.onStemModelDownloadProgress.mockImplementation(captureHtdemucsProgress)
   // Reset the module-cached preferred quality to the default before each test.
   await loadStemQualityPreference()
   vi.clearAllMocks()
@@ -544,23 +555,31 @@ describe('stemSeparationFlow', () => {
     expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', FULL_DISPATCH)
   })
 
-  it('surfaces an error when a pack download fails', async () => {
+  it('surfaces an error when a pack download fails and cancels the concurrent other', async () => {
     packsMissing(800, 400)
     api.ensureVocalPack.mockResolvedValue({ ok: false, error: 'integrity check failed' })
+    // Rhythm starts concurrently; keep it pending so the cancel can be observed
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
 
     await requestStemSeparationForClip('c1')
-    await confirmModelDownload()
+    const downloading = confirmModelDownload()
+
+    // Vocal fails → rhythm is cancelled; wait for that, then let it resolve
+    await vi.waitFor(() => expect(api.cancelRhythmPackDownload).toHaveBeenCalled())
+    resolveRhythm({ ok: false, error: 'cancelled' })
+    await downloading
 
     const flow = useStemModelFlow().value
     expect(flow?.phase).toBe('error')
     expect(flow?.error).toBe('integrity check failed')
-    // The second pack is not attempted once the first fails.
-    expect(api.ensureRhythmPack).not.toHaveBeenCalled()
+    // Both packs start concurrently; rhythm is cancelled when vocal fails
+    expect(api.ensureRhythmPack).toHaveBeenCalled()
     expect(useStemSelection().value).toBeNull()
     expect(sendMock).not.toHaveBeenCalled()
   })
 
-  it('cancel during download aborts the active pack and clears the flow', async () => {
+  it('cancel during download aborts all active downloads and clears the flow', async () => {
     packsMissing(800, 400)
     let resolveEnsure: (v: { ok: false; error: string }) => void = () => {}
     api.ensureVocalPack.mockImplementation(
@@ -575,7 +594,9 @@ describe('stemSeparationFlow', () => {
     expect(useStemModelFlow().value?.phase).toBe('downloading')
 
     cancelModelFlow()
+    // Both vocal and rhythm are active at cancel time; both must be aborted
     expect(api.cancelVocalPackDownload).toHaveBeenCalled()
+    expect(api.cancelRhythmPackDownload).toHaveBeenCalled()
     expect(useStemModelFlow().value).toBeNull()
 
     resolveEnsure({ ok: false, error: 'download aborted' })
@@ -613,5 +634,303 @@ describe('abandonActiveStemSeparation', () => {
     abandonActiveStemSeparation('engine restarted')
     expect(forgetStemJob).not.toHaveBeenCalled()
     expect(pushError).not.toHaveBeenCalled()
+  })
+})
+
+describe('model download concurrency', () => {
+  it('starts both quality packs simultaneously before either resolves', async () => {
+    packsMissing(800, 400)
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+
+    await requestStemSeparationForClip('c1')
+    const downloading = confirmModelDownload()
+
+    // Both ensure() calls are in flight before either resolves
+    expect(api.ensureVocalPack).toHaveBeenCalledTimes(1)
+    expect(api.ensureRhythmPack).toHaveBeenCalledTimes(1)
+
+    resolveVocal({ ok: true })
+    resolveRhythm({ ok: true })
+    await downloading
+
+    expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).not.toBeNull()
+  })
+
+  it('third source waits until a slot is free (concurrency limit of 2)', async () => {
+    // Pre-selection check sees packs as installed (picker opens directly)
+    api.getVocalPackState.mockResolvedValueOnce(INSTALLED_STATE)
+    api.getRhythmPackState.mockResolvedValueOnce(INSTALLED_STATE)
+    // Post-selection check (vocals + other, partial → requires all 3 sources) sees all missing
+    api.getVocalPackState.mockResolvedValue({ installed: false, presentBytes: 0, totalBytes: 800, fileCount: 2 })
+    api.getRhythmPackState.mockResolvedValue({ installed: false, presentBytes: 0, totalBytes: 400, fileCount: 1 })
+    api.getStemModelState.mockResolvedValue({ installed: false, presentBytes: 0, totalBytes: 600, fileCount: 1 })
+
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+    api.ensureStemModel.mockResolvedValue({ ok: true })
+
+    await requestStemSeparationForClip('c1')  // picker opens (pre-check sees installed)
+    toggleStemSelection('vocals')
+    toggleStemSelection('other')  // partial selection → htdemucs also required
+    confirmStemSelection()
+
+    await vi.waitFor(() => expect(useStemModelFlow().value?.phase).toBe('confirm'))
+    const downloading = confirmModelDownload()
+
+    // Vocal and rhythm fill the 2 slots; htdemucs must not have started yet
+    expect(api.ensureVocalPack).toHaveBeenCalledTimes(1)
+    expect(api.ensureRhythmPack).toHaveBeenCalledTimes(1)
+    expect(api.ensureStemModel).not.toHaveBeenCalled()
+
+    // Freeing one slot by resolving vocal triggers htdemucs
+    resolveVocal({ ok: true })
+    await vi.waitFor(() => expect(api.ensureStemModel).toHaveBeenCalledTimes(1))
+
+    resolveRhythm({ ok: true })
+    await downloading
+
+    expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', expect.objectContaining({ stems: ['vocals', 'other'] }))
+  })
+
+  it('interleaved and regressing progress events produce monotonic aggregate bytes', async () => {
+    packsMissing(800, 400)
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+
+    await requestStemSeparationForClip('c1')
+    confirmModelDownload()
+
+    // Handlers are registered synchronously during confirmModelDownload
+    progressHandlers.vocal?.({ receivedBytes: 300, totalBytes: 800, fileName: 'vocals.onnx', fileIndex: 0, fileCount: 2 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(300)
+
+    progressHandlers.rhythm?.({ receivedBytes: 200, totalBytes: 400, fileName: 'rhythm.onnx', fileIndex: 0, fileCount: 1 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(500)
+
+    // Regressing vocal event must be ignored (monotonic)
+    progressHandlers.vocal?.({ receivedBytes: 250, totalBytes: 800, fileName: 'vocals.onnx', fileIndex: 0, fileCount: 2 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(500)
+
+    // Advancing vocal
+    progressHandlers.vocal?.({ receivedBytes: 600, totalBytes: 800, fileName: 'vocals.onnx', fileIndex: 0, fileCount: 2 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(800)
+
+    resolveVocal({ ok: true })
+    resolveRhythm({ ok: true })
+    await vi.waitFor(() => expect(useStemModelFlow().value).toBeNull())
+  })
+
+  it('first failure cancels other active downloads and prevents continuation', async () => {
+    packsMissing(800, 400)
+    api.ensureVocalPack.mockResolvedValue({ ok: false, error: 'network error' })
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+
+    await requestStemSeparationForClip('c1')
+    const downloading = confirmModelDownload()
+
+    // Vocal failure triggers rhythm cancellation
+    await vi.waitFor(() => expect(api.cancelRhythmPackDownload).toHaveBeenCalled())
+    resolveRhythm({ ok: false, error: 'cancelled' })
+    await downloading
+
+    expect(useStemModelFlow().value?.phase).toBe('error')
+    expect(useStemModelFlow().value?.error).toBe('network error')
+    // Continuation must not have run
+    expect(useStemSelection().value).toBeNull()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('cancel aborts all active sources', async () => {
+    packsMissing(800, 400)
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+
+    await requestStemSeparationForClip('c1')
+    const downloading = confirmModelDownload()
+
+    cancelModelFlow()
+
+    expect(api.cancelVocalPackDownload).toHaveBeenCalled()
+    expect(api.cancelRhythmPackDownload).toHaveBeenCalled()
+    expect(useStemModelFlow().value).toBeNull()
+
+    resolveVocal({ ok: false, error: 'cancelled' })
+    resolveRhythm({ ok: false, error: 'cancelled' })
+    await downloading
+
+    expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).toBeNull()
+  })
+
+  it('success continuation runs exactly once after all sources succeed', async () => {
+    packsMissing(800, 400)
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+
+    await requestStemSeparationForClip('c1')
+    const downloading = confirmModelDownload()
+
+    resolveVocal({ ok: true })
+    resolveRhythm({ ok: true })
+    await downloading
+
+    // Continuation (open picker) ran exactly once
+    expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).not.toBeNull()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('cancel→re-enter: old promises settling do not affect the new flow', async () => {
+    packsMissing(800, 400)
+    let resolveVocalOld!: (v: EnsureResult) => void
+    let resolveRhythmOld!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocalOld = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythmOld = res }))
+
+    await requestStemSeparationForClip('c1')
+    const firstRun = confirmModelDownload()
+    expect(useStemModelFlow().value?.phase).toBe('downloading')
+
+    // Cancel the first run mid-flight
+    cancelModelFlow()
+    expect(useStemModelFlow().value).toBeNull()
+
+    // Re-enter: start a new download (same missing packs scenario)
+    packsMissing(800, 400)
+    packsInstallOnEnsure()
+    await requestStemSeparationForClip('c1')
+    expect(useStemModelFlow().value?.phase).toBe('confirm')
+    const secondRun = confirmModelDownload()
+
+    // Old promises from run 1 settle late — must not corrupt the new flow
+    resolveVocalOld({ ok: false, error: 'stale error from old run' })
+    resolveRhythmOld({ ok: false, error: 'stale cancelled' })
+    await firstRun
+
+    // Second run should complete successfully, not be stuck in error
+    await secondRun
+    expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).not.toBeNull()
+  })
+
+  it('cancel→re-enter: late progress from old run does not update new flow', async () => {
+    packsMissing(800, 400)
+    let resolveVocalOld!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocalOld = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>(() => {}))
+
+    await requestStemSeparationForClip('c1')
+    confirmModelDownload()
+
+    // Capture the old progress handler before cancel disposes it
+    const oldVocalHandler = progressHandlers.vocal
+
+    cancelModelFlow()
+
+    // Set up new run
+    packsMissing(800, 400)
+    let resolveVocalNew!: (v: EnsureResult) => void
+    let resolveRhythmNew!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocalNew = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythmNew = res }))
+    await requestStemSeparationForClip('c1')
+    confirmModelDownload()
+    expect(useStemModelFlow().value?.phase).toBe('downloading')
+    expect(useStemModelFlow().value?.receivedBytes).toBe(0)
+
+    // Old handler was disposed by cancel — calling it is a no-op
+    oldVocalHandler?.({ receivedBytes: 500, totalBytes: 800, fileName: 'stale.onnx', fileIndex: 0, fileCount: 2 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(0)
+    expect(useStemModelFlow().value?.fileName).toBe('')
+
+    // New handler works correctly
+    progressHandlers.vocal?.({ receivedBytes: 200, totalBytes: 800, fileName: 'fresh.onnx', fileIndex: 0, fileCount: 2 })
+    expect(useStemModelFlow().value?.receivedBytes).toBe(200)
+
+    resolveVocalOld({ ok: true })
+    resolveVocalNew({ ok: true })
+    resolveRhythmNew({ ok: true })
+    await vi.waitFor(() => expect(useStemModelFlow().value).toBeNull())
+  })
+
+  it('first failure transitions to error immediately even if peers never settle', async () => {
+    packsMissing(800, 400)
+    api.ensureVocalPack.mockResolvedValue({ ok: false, error: 'checksum mismatch' })
+    // Rhythm never settles — simulates a hung IPC peer
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>(() => {}))
+
+    await requestStemSeparationForClip('c1')
+    const downloading = confirmModelDownload()
+
+    // Must resolve with error without waiting for the stuck peer
+    await downloading
+
+    expect(useStemModelFlow().value?.phase).toBe('error')
+    expect(useStemModelFlow().value?.error).toBe('checksum mismatch')
+    expect(api.cancelRhythmPackDownload).toHaveBeenCalled()
+    expect(useStemSelection().value).toBeNull()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('clamps oversized presentBytes seed in aggregate progress display', async () => {
+    // presentBytes > totalBytes — the confirm dialog shows clamped values
+    api.getVocalPackState.mockResolvedValue({
+      installed: false,
+      presentBytes: 9999,
+      totalBytes: 800,
+      fileCount: 2
+    })
+    api.getRhythmPackState.mockResolvedValue({
+      installed: false,
+      presentBytes: 500,
+      totalBytes: 400,
+      fileCount: 1
+    })
+
+    await requestStemSeparationForClip('c1')
+    // confirm dialog shows sum of presentBytes (capped per-source by the runner)
+    const flowState = useStemModelFlow().value
+    expect(flowState?.phase).toBe('confirm')
+
+    // Start download with those seeds
+    let resolveVocal!: (v: EnsureResult) => void
+    let resolveRhythm!: (v: EnsureResult) => void
+    api.ensureVocalPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveVocal = res }))
+    api.ensureRhythmPack.mockReturnValue(new Promise<EnsureResult>((res) => { resolveRhythm = res }))
+    confirmModelDownload()
+
+    // Aggregate must never exceed totalBytes (1200)
+    expect(useStemModelFlow().value?.receivedBytes).toBeLessThanOrEqual(1200)
+
+    resolveVocal({ ok: true })
+    resolveRhythm({ ok: true })
+    await vi.waitFor(() => expect(useStemModelFlow().value).toBeNull())
+  })
+
+  it('succeeds with receivedBytes at total even when no progress events fire', async () => {
+    packsMissing(800, 400)
+    // ensure() returns ok immediately without any progress events
+    api.ensureVocalPack.mockResolvedValue({ ok: true })
+    api.ensureRhythmPack.mockResolvedValue({ ok: true })
+
+    await requestStemSeparationForClip('c1')
+    await confirmModelDownload()
+
+    // Flow completed — picker opened
+    expect(useStemModelFlow().value).toBeNull()
+    expect(useStemSelection().value).not.toBeNull()
   })
 })

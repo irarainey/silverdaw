@@ -363,9 +363,14 @@ void testSharedFxRoomTailRingsAndTerminates()
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < n; ++i)
             sendR.setSample(ch, i, 0.5F);
-    out.clear();
-    fx.process(sendR, sendD, out, 0, n);
-    require(out.getMagnitude(0, 0, n) > 0.0, "Room must produce wet output while fed");
+    bool producedWet = false;
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        producedWet = producedWet || out.getMagnitude(0, 0, n) > 0.0F;
+    }
+    require(producedWet, "Room must produce wet output while fed");
     require(! fx.reverbTerminated(), "Room must not report terminated while being fed");
 
     bool sawTail = false;
@@ -385,6 +390,42 @@ void testSharedFxRoomTailRingsAndTerminates()
     }
     require(sawTail, "Room tail must keep ringing after the input stops");
     require(terminated, "Room tail must self-terminate within the safety cap");
+
+    fx.setReverbParams(0.8F, 0.7F, 0.6F, 1.0F, /*snap*/ false);
+    for (int b = 0; b < 64; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        require(out.getMagnitude(0, 0, n) == 0.0F,
+                "terminated Room must stay silent while consuming controls");
+    }
+
+    sendR.clear();
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            sendR.setSample(ch, i, 0.5F);
+
+    silverdaw::SharedFx fresh;
+    fresh.prepare(sr, n);
+    fresh.setReverbParams(0.8F, 0.7F, 0.6F, 1.0F, /*snap*/ true);
+    fresh.setDelayParams(250.0, 0.0F, 0.0F, 0.0F,
+                         /*snap*/ true, /*applyTimeNow*/ true);
+    juce::AudioBuffer<float> freshOut(2, n);
+
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        freshOut.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        fresh.process(sendR, sendD, freshOut, 0, n);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < n; ++i)
+                requireNear(out.getSample(ch, i), freshOut.getSample(ch, i), 1.0e-6,
+                            "restarted Room must match a clean snapped processor");
+    }
+    require(out.getMagnitude(0, 0, n) > 0.0F,
+            "restarted Room must produce wet output");
+    require(!fx.reverbTerminated(), "restarted Room must clear its terminated state");
 }
 
 void testSharedFxEchoRepeatsAndTerminates()
@@ -424,6 +465,67 @@ void testSharedFxEchoRepeatsAndTerminates()
         }
     }
     require(terminated, "Echo tail must self-terminate within the safety cap");
+
+    constexpr double idleAppliedDelayMs = 3.0;
+    constexpr double deferredDelayMs = 4.0;
+    fx.setDelayParams(idleAppliedDelayMs, 0.3F, 0.4F, 0.8F,
+                      /*snap*/ false, /*applyTimeNow*/ true);
+    for (int b = 0; b < 4; ++b)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        require(out.getMagnitude(0, 0, n) == 0.0F,
+                "terminated Echo must stay silent while consuming controls");
+    }
+    fx.setDelayParams(deferredDelayMs, 0.3F, 0.4F, 0.8F,
+                      /*snap*/ false, /*applyTimeNow*/ false);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) == 0.0F,
+            "deferred Echo controls must not restart a terminated tail");
+
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(!fx.echoTerminated(), "restarted Echo must clear its terminated state");
+
+    silverdaw::SharedFx fresh;
+    fresh.prepare(sr, n);
+    fresh.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fresh.setDelayParams(delayMs, 0.5F, 1.0F, 1.0F,
+                         /*snap*/ true, /*applyTimeNow*/ true);
+    juce::AudioBuffer<float> silence(2, n);
+    juce::AudioBuffer<float> freshOut(2, n);
+    silence.clear();
+    freshOut.clear();
+    fresh.process(sendR, silence, freshOut, 0, n);
+    fresh.setDelayParams(idleAppliedDelayMs, 0.3F, 0.4F, 0.8F,
+                         /*snap*/ false, /*applyTimeNow*/ true);
+    for (int b = 0; b < 4; ++b)
+    {
+        freshOut.clear();
+        fresh.process(sendR, silence, freshOut, 0, n);
+    }
+    fresh.setDelayParams(deferredDelayMs, 0.3F, 0.4F, 0.8F,
+                         /*snap*/ false, /*applyTimeNow*/ false);
+    freshOut.clear();
+    fresh.process(sendR, silence, freshOut, 0, n);
+    freshOut.clear();
+    fresh.process(sendR, sendD, freshOut, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(out.getSample(ch, i) == freshOut.getSample(ch, i),
+                    "restarted Echo must match a clean processor exactly");
+    const int appliedDelaySample =
+        static_cast<int>(std::round(idleAppliedDelayMs * sr / 1000.0));
+    const int deferredDelaySample =
+        static_cast<int>(std::round(deferredDelayMs * sr / 1000.0));
+    require(std::abs(out.getSample(0, appliedDelaySample)) > 0.1F,
+            "delay-time publication must be consumed while Echo is bypassed");
+    require(std::abs(out.getSample(0, deferredDelaySample)) < 1.0e-5F,
+            "a deferred delay target must not replace the active idle-published time");
 }
 
 void testEqualPowerPanGains()
@@ -779,6 +881,26 @@ void testSharedFxRequestResetCutsTailNextBlock()
     fx.process(sendR, sendD, out, 0, n);
     require(out.getMagnitude(0, 0, n) < tail * 0.01,
             "requestReset must clear the reverb tail on the next processed block");
+
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fx.setDelayParams(5.0, 0.8F, 1.0F, 1.0F,
+                      /*snap*/ true, /*applyTimeNow*/ true);
+    fx.requestReset();
+    sendR.clear();
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) > 0.1F,
+            "Echo must be audible before its reset");
+
+    fx.requestReset();
+    sendD.clear();
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+    require(out.getMagnitude(0, 0, n) < 1.0e-6F,
+            "requestReset must invalidate the Echo tail on the next processed block");
 }
 
 // M3: snap is now a deferred flag consumed by process. A snapped Tone EQ must

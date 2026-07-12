@@ -80,6 +80,7 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
 
     constexpr int kCallCount = 2000; // > 100 Hz over a typical real-time second.
     std::atomic<bool> readerStop{false};
+    std::atomic<bool> readerStarted{false};
     std::atomic<long> readerLoops{0};
 
     // Fake "audio thread": continuously reads cheap engine getters that
@@ -96,8 +97,11 @@ void testAudioEngineSetPreviewWarpUnderRapidCalls()
             (void) engine.getPreviewDurationMs();
             (void) engine.getPreviewGeneration();
             readerLoops.fetch_add(1, std::memory_order_relaxed);
+            readerStarted.store(true, std::memory_order_release);
         }
     });
+    while (!readerStarted.load(std::memory_order_acquire))
+        std::this_thread::yield();
 
     // Drive setPreviewWarp on the main thread. Each iteration toggles
     // mode + tempo + pitch so the call exercises the same branches

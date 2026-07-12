@@ -353,6 +353,10 @@ class AudioEngine
 
     void rebuildTrackPrefetch(Track& track);
 
+    // Schedules the post-edit prefetch rebuild: immediately if playing (must drain stale
+    // read-ahead at once), or marks dirty + starts the debounce timer if stopped.
+    void scheduleTrackPrefetchAfterEdit(Track& track);
+
     void reclaimRetiredPlaybackSnapshots();
 
     // Rebuilds the preview transport's read-ahead buffer so a changed envelope/gain is heard from
