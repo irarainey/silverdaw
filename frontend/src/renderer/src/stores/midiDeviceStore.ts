@@ -10,7 +10,12 @@ import type {
   MidiInputDevice,
   MidiMessagePayload
 } from '@shared/bridge-protocol'
-import type { MidiDeckSelection } from '@shared/types'
+import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
+import type { MidiDeckSelection, MidiDevicePreferences } from '@shared/types'
+import {
+  releaseMidiPlaybackHoldsForDeck,
+  releaseMidiPlaybackHoldsForDevice
+} from '@/lib/midi/midiPlaybackHold'
 
 const RESCAN_SAFETY_MS = 6000
 const MAX_MONITOR_MESSAGES = 200
@@ -22,6 +27,7 @@ interface MidiDeviceState {
   /** Persisted enabled inputs, keyed by JUCE device identifier. */
   enabledByIdentifier: Record<string, boolean>
   deckSelectionByIdentifier: Record<string, MidiDeckSelection>
+  devicePreferencesByIdentifier: Record<string, MidiDevicePreferences>
   /** True after the first MIDI_DEVICES_LIST arrives. */
   hydrated: boolean
   /** Apply saved deck assignments after the backend confirms which inputs opened. */
@@ -41,6 +47,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
     inputs: [],
     enabledByIdentifier: {},
     deckSelectionByIdentifier: {},
+    devicePreferencesByIdentifier: {},
     hydrated: false,
     deckSelectionSyncPending: false,
     rescanning: false,
@@ -54,6 +61,14 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
 
   actions: {
     applyList(payload: MidiDevicesListPayload): void {
+      const enabledIdentifiers = new Set(
+        payload.inputs.filter((input) => input.enabled).map((input) => input.identifier)
+      )
+      for (const input of this.inputs) {
+        if (input.enabled && !enabledIdentifiers.has(input.identifier)) {
+          releaseMidiPlaybackHoldsForDevice(input.identifier)
+        }
+      }
       this.inputs = [...payload.inputs]
       this.hydrated = true
       this.finishRescan()
@@ -105,16 +120,37 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
         [payload.deviceIdentifier]: selection
       }
       if (!payload.deck1Enabled) {
+        releaseMidiPlaybackHoldsForDeck(payload.deviceIdentifier, 1)
         this.shiftPressed[1] = false
         this.syncPressed[1] = false
         this.jogTouched[1] = false
       }
       if (!payload.deck2Enabled) {
+        releaseMidiPlaybackHoldsForDeck(payload.deviceIdentifier, 2)
         this.shiftPressed[2] = false
         this.syncPressed[2] = false
         this.jogTouched[2] = false
       }
       window.silverdaw.setMidiDeckSelection(payload.deviceIdentifier, selection)
+    },
+
+    isScrubAudioEnabled(identifier: string): boolean {
+      return (
+        this.devicePreferencesByIdentifier[identifier]?.scrubAudioEnabled ??
+        DEFAULT_MIDI_DEVICE_PREFERENCES.scrubAudioEnabled
+      )
+    },
+
+    applyDevicePreferences(preferences: Record<string, MidiDevicePreferences>): void {
+      this.devicePreferencesByIdentifier = Object.fromEntries(
+        Object.entries(preferences).map(([identifier, value]) => [
+          identifier,
+          {
+            scrubAudioEnabled: value.scrubAudioEnabled,
+            crossfaderDirection: value.crossfaderDirection
+          }
+        ])
+      )
     },
 
     /** Ask the backend to enumerate MIDI inputs; the reply lands in `applyList`. */
@@ -135,6 +171,13 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       } catch (err) {
         log.warn('midi', `deck selection hydrate failed: ${String(err)}`)
         this.deckSelectionByIdentifier = {}
+      }
+      try {
+        this.devicePreferencesByIdentifier =
+          await window.silverdaw.getMidiDevicePreferences()
+      } catch (err) {
+        log.warn('midi', `device preference hydrate failed: ${String(err)}`)
+        this.devicePreferencesByIdentifier = {}
       }
       this.pushEnabledInputs()
       this.requestList()

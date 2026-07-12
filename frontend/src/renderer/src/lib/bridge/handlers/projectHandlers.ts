@@ -35,6 +35,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     const transport = useTransportStore()
     const isInitialBridgeSnapshot = !transport.bridgeReady
     transport.setPlaybackState(false)
+    transport.clearMidiPlaybackHolds()
     transport.setBridgeReady(true)
     // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
     if (payload.reset === true && payload.filePath) {

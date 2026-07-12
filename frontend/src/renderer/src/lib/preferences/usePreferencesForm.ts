@@ -8,7 +8,15 @@ import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { log } from '@/lib/log'
-import type { BrakeDurationDto, BrakeCurveDto, BackspinDurationDto, BackspinIntensityDto } from '@shared/types'
+import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
+import type {
+  BackspinDurationDto,
+  BackspinIntensityDto,
+  BrakeCurveDto,
+  BrakeDurationDto,
+  MidiCrossfaderDirection,
+  MidiDevicePreferences
+} from '@shared/types'
 import {
   BACKEND_PREFERENCE,
   preferredBackendFor,
@@ -31,6 +39,12 @@ export interface PreferencesForm {
   setDeviceKeepAwake: (deviceName: string, enabled: boolean) => void
   enabledMidiInputsDraft: Ref<Record<string, boolean>>
   setMidiInputEnabled: (identifier: string, enabled: boolean) => void
+  midiDevicePreferencesDraft: Ref<Record<string, MidiDevicePreferences>>
+  setMidiScrubAudio: (identifier: string, enabled: boolean) => void
+  setMidiCrossfaderDirection: (
+    identifier: string,
+    direction: MidiCrossfaderDirection
+  ) => void
   discardMidiInputChanges: () => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
@@ -150,6 +164,8 @@ export function usePreferencesForm(): PreferencesForm {
 
   const enabledMidiInputsDraft = ref<Record<string, boolean>>({})
   const initialEnabledMidiInputs = ref<Record<string, boolean>>({})
+  const midiDevicePreferencesDraft = ref<Record<string, MidiDevicePreferences>>({})
+  const initialMidiDevicePreferences = ref<Record<string, MidiDevicePreferences>>({})
 
   function enabledMidiInputsChanged(): boolean {
     const draft = enabledMidiInputsDraft.value
@@ -168,8 +184,54 @@ export function usePreferencesForm(): PreferencesForm {
     enabledMidiInputsDraft.value = next
   }
 
+  function effectiveMidiDevicePreferences(
+    source: Record<string, MidiDevicePreferences>,
+    identifier: string
+  ): MidiDevicePreferences {
+    return source[identifier] ?? {
+      ...DEFAULT_MIDI_DEVICE_PREFERENCES
+    }
+  }
+
+  function midiDevicePreferencesChanged(): boolean {
+    const draft = midiDevicePreferencesDraft.value
+    const initial = initialMidiDevicePreferences.value
+    const identifiers = new Set([...Object.keys(draft), ...Object.keys(initial)])
+    for (const identifier of identifiers) {
+      const next = effectiveMidiDevicePreferences(draft, identifier)
+      const previous = effectiveMidiDevicePreferences(initial, identifier)
+      if (
+        next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
+        next.crossfaderDirection !== previous.crossfaderDirection
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function setMidiScrubAudio(identifier: string, enabled: boolean): void {
+    const current = effectiveMidiDevicePreferences(midiDevicePreferencesDraft.value, identifier)
+    midiDevicePreferencesDraft.value = {
+      ...midiDevicePreferencesDraft.value,
+      [identifier]: { ...current, scrubAudioEnabled: enabled }
+    }
+  }
+
+  function setMidiCrossfaderDirection(
+    identifier: string,
+    direction: MidiCrossfaderDirection
+  ): void {
+    const current = effectiveMidiDevicePreferences(midiDevicePreferencesDraft.value, identifier)
+    midiDevicePreferencesDraft.value = {
+      ...midiDevicePreferencesDraft.value,
+      [identifier]: { ...current, crossfaderDirection: direction }
+    }
+  }
+
   function discardMidiInputChanges(): void {
     enabledMidiInputsDraft.value = { ...initialEnabledMidiInputs.value }
+    midiDevicePreferencesDraft.value = { ...initialMidiDevicePreferences.value }
     midiDevices.applyEnabledInputs(initialEnabledMidiInputs.value)
   }
 
@@ -273,6 +335,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputDeviceName.value !== initialAudioOutputDeviceName.value ||
       keepAwakeMapChanged() ||
       enabledMidiInputsChanged() ||
+      midiDevicePreferencesChanged() ||
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
@@ -317,13 +380,22 @@ export function usePreferencesForm(): PreferencesForm {
       })
 
     try {
-      const [debugVal, qol, autosave, audioPref, keepAwakeByDevice, enabledMidiInputs] = await Promise.all([
+      const [
+        debugVal,
+        qol,
+        autosave,
+        audioPref,
+        keepAwakeByDevice,
+        enabledMidiInputs,
+        midiDevicePreferences
+      ] = await Promise.all([
         window.silverdaw.getDebugPreferences(),
         window.silverdaw.getQolPrefs(),
         window.silverdaw.getAutosaveConfig(),
         window.silverdaw.getAudioOutput(),
         window.silverdaw.getKeepAwakeByDevice(),
-        window.silverdaw.getEnabledMidiInputs()
+        window.silverdaw.getEnabledMidiInputs(),
+        window.silverdaw.getMidiDevicePreferences()
       ])
       loggingEnabled.value = debugVal.loggingEnabled
       devToolsEnabled.value = debugVal.devToolsEnabled
@@ -340,6 +412,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioDevices.keepAwakeByDevice = { ...keepAwakeByDevice }
       keepAwakeByDeviceDraft.value = { ...keepAwakeByDevice }
       enabledMidiInputsDraft.value = { ...enabledMidiInputs }
+      midiDevicePreferencesDraft.value = { ...midiDevicePreferences }
       const brakePrefs = await window.silverdaw.getBrakeSettings()
       brakeDuration.value = brakePrefs.duration
       brakeCurve.value = brakePrefs.curve
@@ -359,6 +432,7 @@ export function usePreferencesForm(): PreferencesForm {
       audioOutputDeviceName.value = null
       keepAwakeByDeviceDraft.value = {}
       enabledMidiInputsDraft.value = {}
+      midiDevicePreferencesDraft.value = {}
       brakeDuration.value = 'medium'
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
@@ -407,6 +481,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialAudioOutputDeviceName.value = audioOutputDeviceName.value
     initialKeepAwakeByDevice.value = { ...keepAwakeByDeviceDraft.value }
     initialEnabledMidiInputs.value = { ...enabledMidiInputsDraft.value }
+    initialMidiDevicePreferences.value = { ...midiDevicePreferencesDraft.value }
     initialBrakeDuration.value = brakeDuration.value
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
@@ -537,6 +612,25 @@ export function usePreferencesForm(): PreferencesForm {
       }
       midiDevices.applyEnabledInputs(draft)
     }
+    if (midiDevicePreferencesChanged()) {
+      const draft = midiDevicePreferencesDraft.value
+      const initial = initialMidiDevicePreferences.value
+      const identifiers = new Set([...Object.keys(draft), ...Object.keys(initial)])
+      for (const identifier of identifiers) {
+        const next = effectiveMidiDevicePreferences(draft, identifier)
+        const previous = effectiveMidiDevicePreferences(initial, identifier)
+        if (
+          next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
+          next.crossfaderDirection !== previous.crossfaderDirection
+        ) {
+          window.silverdaw.setMidiDevicePreferences(identifier, {
+            scrubAudioEnabled: next.scrubAudioEnabled,
+            crossfaderDirection: next.crossfaderDirection
+          })
+        }
+      }
+      midiDevices.applyDevicePreferences(draft)
+    }
     if (
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value
@@ -600,6 +694,9 @@ export function usePreferencesForm(): PreferencesForm {
     setDeviceKeepAwake,
     enabledMidiInputsDraft,
     setMidiInputEnabled,
+    midiDevicePreferencesDraft,
+    setMidiScrubAudio,
+    setMidiCrossfaderDirection,
     discardMidiInputChanges,
     brakeDuration,
     brakeCurve,

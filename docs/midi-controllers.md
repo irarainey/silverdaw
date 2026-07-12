@@ -31,6 +31,18 @@ The enabled state and each controller's deck-selection state are saved by the
 device identifier reported by Windows. If a driver changes that identifier,
 enable the controller again.
 
+Each supported controller tile also has device-specific preferences:
+
+- **Play audio while moving the main timeline** controls whether held platter
+  movement produces scratch audio. It is off by default. When off, the jog wheel
+  still moves the playhead silently.
+- **Crossfader direction** saves either **Left to right** or **Right to left**.
+  The default is **Left to right**. The crossfader remains controller telemetry
+  and does not currently change the audible mix.
+
+These settings remain saved by device identifier while the controller is
+disconnected and return when Windows reports the same device again.
+
 ## What the controls do
 
 The available physical controls vary by profile. When a profile contains the
@@ -46,7 +58,7 @@ corresponding binding, Silverdaw applies these actions:
 | Cue | Moves to the previous timeline marker. |
 | Shift + Cue | Moves to the next timeline marker. Some controllers send a dedicated shifted Cue message. |
 | Sync | Acts as a jog modifier. It does not synchronise tempo. Holding Sync snaps jog movement to timeline grid lines. |
-| Jog wheel or platter | Moves the playhead freely. Touch-sensitive profiles switch between pitch-bend and scratch movement; Shift moves faster. |
+| Jog wheel or platter | Moves the playhead freely. While playing, touching an enabled platter holds the transport until every touched platter is released. Moving a held platter auditions short forward or backward grains from the new playhead position. The Play button pulses while playback is held. Touch-sensitive profiles switch between pitch-bend and scratch movement; Shift moves faster. |
 | Browse encoder | Selects tracks. Pressing it enters clip-browse mode on the selected track; rotation then selects clips, shifted rotation extends the clip range, and another press exits clip-browse mode. |
 | Shift + Browse | On profiles with a mapped Shift button, zooms the timeline when clip-browse mode is not active. Each clockwise or anticlockwise step uses the same increment as Zoom In or Zoom Out. |
 | Hot-cue pads | Jump to the corresponding numbered timeline marker. A shifted or dedicated clear pad removes that numbered marker, or adds a marker at the playhead when the slot is empty. Profiles expose four or eight marker pads according to the hardware. |
@@ -54,7 +66,7 @@ corresponding binding, Silverdaw applies these actions:
 | Channel fader | Changes the currently selected Silverdaw track's volume. |
 | EQ and filter | Changes Bass, Mid, Treble, or Filter on the currently selected track and opens Track FX. Profiles only expose controls present on that model. |
 | Master level | Changes the project master volume on profiles that bind it. |
-| Crossfader | Records the hardware position as MIDI controller state. It does not currently change the audible mix. |
+| Crossfader | Records the hardware position as MIDI controller state. Its saved direction preference does not currently change the audible mix. |
 | Shift and jog touch | Maintain modifier and touch state used by the other mapped actions. |
 
 Physical deck numbers identify the source control; they are not assigned to

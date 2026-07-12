@@ -2,6 +2,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { send as sendBridge } from '@/lib/bridgeService'
+import {
+  handleMidiJogTouch,
+  resetMidiPlaybackHoldForTests
+} from '@/lib/midi/midiPlaybackHold'
+import { useTransportStore } from '@/stores/transportStore'
 import type { MidiInputDevice } from '@shared/bridge-protocol'
 
 vi.mock('@/lib/bridgeService', () => ({
@@ -28,6 +33,7 @@ describe('midiDeviceStore', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     vi.mocked(sendBridge).mockReturnValue(true)
+    resetMidiPlaybackHoldForTests()
     vi.stubGlobal('window', {
       silverdaw: {
         setMidiDeckSelection
@@ -101,6 +107,12 @@ describe('midiDeviceStore', () => {
         getMidiDeckSelections: vi.fn().mockResolvedValue({
           'ddj-rb': { deck1Enabled: false, deck2Enabled: true }
         }),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'rightToLeft'
+          }
+        }),
         setMidiDeckSelection
       }
     })
@@ -122,6 +134,9 @@ describe('midiDeviceStore', () => {
       deck1Enabled: false,
       deck2Enabled: true
     })
+    expect(store.isScrubAudioEnabled('ddj-rb')).toBe(false)
+    expect(store.devicePreferencesByIdentifier['ddj-rb']?.crossfaderDirection)
+      .toBe('rightToLeft')
   })
 
   it('does not send saved deck selection to a disconnected historical identifier', async () => {
@@ -135,6 +150,7 @@ describe('midiDeviceStore', () => {
           current: { deck1Enabled: true, deck2Enabled: false },
           historical: { deck1Enabled: false, deck2Enabled: true }
         }),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({}),
         setMidiDeckSelection
       }
     })
@@ -173,6 +189,34 @@ describe('midiDeviceStore', () => {
       deck1Enabled: true,
       deck2Enabled: false
     })
+  })
+
+  it('defaults timeline scrub audio off for devices without an override', () => {
+    const store = useMidiDeviceStore()
+    expect(store.isScrubAudioEnabled('new-controller')).toBe(false)
+    store.applyDevicePreferences({
+      'new-controller': {
+        scrubAudioEnabled: true,
+        crossfaderDirection: 'leftToRight'
+      }
+    })
+    expect(store.isScrubAudioEnabled('new-controller')).toBe(true)
+  })
+
+  it('resumes a held transport when the touched deck is disabled', () => {
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+    handleMidiJogTouch('ddj-rb', 2, true)
+    vi.mocked(sendBridge).mockClear()
+
+    useMidiDeviceStore().applyDeckSelection({
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.isPlaybackHeld).toBe(false)
   })
 
   it('keeps the rescan state until the refreshed list arrives', () => {

@@ -42,6 +42,41 @@ void AudioEngine::setPositionMs(double ms)
     silverdaw::log::info("engine", "setPositionMs " + juce::String(clampedMs));
 }
 
+bool AudioEngine::scrubPositionMs(double positionMs, double deltaMs)
+{
+    if (master.isPlaying() || deltaMs == 0.0)
+        return false;
+
+    const double sampleRate = master.getSampleRate();
+    if (sampleRate <= 0.0)
+        return false;
+
+    constexpr double kScrubGrainMs = 45.0;
+    const double clampedMs = juce::jmax(0.0, positionMs);
+    const double grainMs = deltaMs < 0.0 ? juce::jmin(kScrubGrainMs, clampedMs)
+                                         : kScrubGrainMs;
+    const double sourceStartMs =
+        deltaMs < 0.0 ? clampedMs - grainMs : clampedMs;
+    const auto logicalSamples =
+        static_cast<juce::int64>(clampedMs * sampleRate / 1000.0);
+    const auto sourceStartSamples =
+        static_cast<juce::int64>(sourceStartMs * sampleRate / 1000.0);
+    rebuildTimer.stopTimer();
+    pendingSeekPrewarm = false;
+    master.setPositionSamples(logicalSamples);
+
+    for (auto& [id, track] : tracks)
+    {
+        if (track->transportSource == nullptr)
+            continue;
+        track->transportSource->setPosition(trackSeekSecondsFor(*track, sourceStartSamples));
+        track->transportSource->start();
+    }
+    master.requestScrub(deltaMs < 0.0 ? -1 : 1,
+                        static_cast<int>(grainMs * sampleRate / 1000.0));
+    return true;
+}
+
 bool AudioEngine::setClipOffsetMs(const juce::String& clipId, double offsetMs)
 {
     auto it = tracks.find(clipId);

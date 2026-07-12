@@ -5,6 +5,8 @@ import { log } from '@/lib/log'
 
 interface TransportState {
   isPlaying: boolean
+  /** Enabled MIDI platter touches, keyed by device and physical deck. */
+  midiPlaybackHoldSources: string[]
   /** Master-clock playhead position in ms. */
   positionMs: number
   bpm: number
@@ -33,6 +35,7 @@ interface TransportState {
 export const useTransportStore = defineStore('transport', {
   state: (): TransportState => ({
     isPlaying: false,
+    midiPlaybackHoldSources: [],
     positionMs: 0,
     bpm: 100,
     connected: false,
@@ -43,6 +46,13 @@ export const useTransportStore = defineStore('transport', {
     audioState: 'starting',
     hasBeenReady: false
   }),
+
+  getters: {
+    midiPlaybackHoldActive: (state): boolean => state.midiPlaybackHoldSources.length > 0,
+    isPlaybackHeld(): boolean {
+      return this.isPlaying && this.midiPlaybackHoldActive
+    }
+  },
 
   actions: {
     setPlaybackState(isPlaying: boolean, positionMs?: number): void {
@@ -56,6 +66,28 @@ export const useTransportStore = defineStore('transport', {
     setPosition(positionMs: number): void {
       this.positionMs = positionMs
     },
+    beginMidiPlaybackHold(source: string): boolean {
+      if (this.midiPlaybackHoldSources.includes(source)) return false
+      const first = this.midiPlaybackHoldSources.length === 0
+      this.midiPlaybackHoldSources = [...this.midiPlaybackHoldSources, source]
+      return first
+    },
+    endMidiPlaybackHold(source: string): boolean {
+      const previousLength = this.midiPlaybackHoldSources.length
+      this.midiPlaybackHoldSources =
+        this.midiPlaybackHoldSources.filter((activeSource) => activeSource !== source)
+      return previousLength > 0 && this.midiPlaybackHoldSources.length === 0
+    },
+    endMidiPlaybackHoldsForDevice(deviceIdentifier: string): boolean {
+      const prefix = `${deviceIdentifier}:`
+      const previousLength = this.midiPlaybackHoldSources.length
+      this.midiPlaybackHoldSources =
+        this.midiPlaybackHoldSources.filter((source) => !source.startsWith(prefix))
+      return previousLength > 0 && this.midiPlaybackHoldSources.length === 0
+    },
+    clearMidiPlaybackHolds(): void {
+      this.midiPlaybackHoldSources = []
+    },
     setBpm(bpm: number): void {
       // Clamp away invalid grid math, but keep full precision to avoid timeline drift.
       this.bpm = Math.min(300, Math.max(20, bpm))
@@ -64,6 +96,7 @@ export const useTransportStore = defineStore('transport', {
       this.connected = connected
       if (!connected) {
         this.isPlaying = false
+        this.clearMidiPlaybackHolds()
         this.bridgeReady = false
         this.handshakeReady = false
         // A fresh connection re-runs the audio-open handshake.

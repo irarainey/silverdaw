@@ -272,6 +272,10 @@ bool dispatchTransport(const DispatchContext& ctx)
     {
         silverdaw::handleTransportSeek(payload, engine, projectState);
     }
+    else if (type == "TRANSPORT_SCRUB")
+    {
+        silverdaw::handleTransportScrub(payload, engine, projectState);
+    }
     else
     {
         return false;

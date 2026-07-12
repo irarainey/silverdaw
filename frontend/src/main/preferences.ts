@@ -1,7 +1,9 @@
 import { app } from 'electron'
 import { join } from 'node:path'
+import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '../shared/types'
 import type {
   DebugPreferences,
+  MidiDevicePreferences,
   MidiDeckSelection,
   RecentProject,
   SkipButtonTarget,
@@ -152,6 +154,8 @@ export interface Preferences {
   enabledMidiInputs: Record<string, boolean>
   /** Pioneer deck activation, keyed by JUCE's stable device identifier. */
   midiDeckSelections: Record<string, MidiDeckSelection>
+  /** MIDI interaction preferences keyed by JUCE's stable device identifier. */
+  midiDevicePreferences: Record<string, MidiDevicePreferences>
   brake: BrakePrefs
   backspin: BackspinPrefs
   stems: StemPrefs
@@ -233,6 +237,7 @@ export function buildDefaultPrefs(): Preferences {
     keepAwakeByDevice: {},
     enabledMidiInputs: {},
     midiDeckSelections: {},
+    midiDevicePreferences: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
     stems: {
@@ -391,6 +396,29 @@ export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolea
 
 export function sanitiseEnabledMidiInputs(input: unknown): Record<string, boolean> {
   return sanitiseKeepAwakeByDevice(input)
+}
+
+export function sanitiseMidiDevicePreferences(
+  input: unknown
+): Record<string, MidiDevicePreferences> {
+  const out: Record<string, MidiDevicePreferences> = {}
+  if (!input || typeof input !== 'object') return out
+  for (const [identifier, preferences] of Object.entries(input as Record<string, unknown>)) {
+    const key = identifier.trim()
+    if (key.length === 0 || !preferences || typeof preferences !== 'object') continue
+    const candidate = preferences as Partial<MidiDevicePreferences>
+    out[key] = {
+      scrubAudioEnabled:
+        typeof candidate.scrubAudioEnabled === 'boolean'
+          ? candidate.scrubAudioEnabled
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.scrubAudioEnabled,
+      crossfaderDirection:
+        candidate.crossfaderDirection === 'rightToLeft'
+          ? 'rightToLeft'
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection
+    }
+  }
+  return out
 }
 
 export function sanitiseMidiDeckSelections(

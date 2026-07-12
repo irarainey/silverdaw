@@ -36,6 +36,9 @@ const {
   setDeviceKeepAwake,
   enabledMidiInputsDraft,
   setMidiInputEnabled,
+  midiDevicePreferencesDraft,
+  setMidiScrubAudio,
+  setMidiCrossfaderDirection,
   discardMidiInputChanges,
   loggingEnabled,
   devToolsEnabled,
@@ -266,6 +269,9 @@ function onMidiInputEnabled(identifier: string, enabled: boolean): void {
               :request-rescan="midiDevices.requestRescan"
               :enabled-by-identifier="enabledMidiInputsDraft"
               :set-input-enabled="onMidiInputEnabled"
+              :device-preferences-by-identifier="midiDevicePreferencesDraft"
+              :set-scrub-audio="setMidiScrubAudio"
+              :set-crossfader-direction="setMidiCrossfaderDirection"
             />
             <PreferencesStemsTab
               v-else-if="activeTab === 'stems'"

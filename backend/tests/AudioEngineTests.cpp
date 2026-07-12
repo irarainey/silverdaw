@@ -624,6 +624,56 @@ void testMasterClockPublishesAudioPerfOffThread()
     auto reset = master.drainAudioPerf();
     require(reset.maxElapsedMs == 0.0, "drain resets the worst-case elapsed accumulator");
 
+    struct RampSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& block) override
+        {
+            for (int ch = 0; ch < block.buffer->getNumChannels(); ++ch)
+            {
+                auto* dst = block.buffer->getWritePointer(ch, block.startSample);
+                for (int i = 0; i < block.numSamples; ++i)
+                    dst[i] = static_cast<float>(i);
+            }
+        }
+    };
+
+    RampSource ramp;
+    silverdaw::OutputKeepAlive scrubKeepAlive;
+    silverdaw::MasterClockSource scrubMaster(ramp, scrubKeepAlive);
+    scrubMaster.prepareToPlay(kBlock, kRate);
+    scrubMaster.setPositionSamples(1234);
+
+    scrubMaster.requestScrub(1, kBlock);
+    buf.clear();
+    scrubMaster.getNextAudioBlock(info);
+    require(buf.getSample(0, 40) < buf.getSample(0, 100),
+            "forward scrub should preserve source direction");
+    require(scrubMaster.getPositionSamples() == 1234,
+            "scrub audio must not advance the held transport");
+
+    scrubMaster.requestScrub(-1, kBlock);
+    buf.clear();
+    scrubMaster.getNextAudioBlock(info);
+    require(buf.getSample(0, 40) > buf.getSample(0, 100),
+            "backward scrub should reverse the auditioned source grain");
+    require(scrubMaster.getPositionSamples() == 1234,
+            "reverse scrub must not advance the held transport");
+
+    ConstantSource steadyScrub(0.1F);
+    silverdaw::OutputKeepAlive steadyKeepAlive;
+    silverdaw::MasterClockSource steadyMaster(steadyScrub, steadyKeepAlive);
+    steadyMaster.prepareToPlay(kBlock, kRate);
+    steadyMaster.requestScrub(1, kBlock * 2);
+    buf.clear();
+    steadyMaster.getNextAudioBlock(info);
+    steadyMaster.requestScrub(1, kBlock * 2);
+    buf.clear();
+    steadyMaster.getNextAudioBlock(info);
+    requireNear(buf.getSample(0, 0), 0.1F, 1.0e-4,
+                "continuous scrub grains must not restart the fade-in");
+
     // Playing: the transport advances by one block and the counter keeps rising.
     keepAlive.setPlaying(true);
     buf.clear();

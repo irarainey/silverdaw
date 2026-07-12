@@ -19,6 +19,7 @@ interface FakeStores {
     bridgeReady: boolean
     engineRecovery: string
     isPlaying: boolean
+    midiPlaybackHoldActive: boolean
     positionMs: number
     bpm: number
     setPlaybackState: ReturnType<typeof vi.fn>
@@ -69,6 +70,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       bridgeReady: true,
       engineRecovery: 'ok',
       isPlaying: false,
+      midiPlaybackHoldActive: false,
       positionMs: 0,
       bpm: 120,
       setPlaybackState: vi.fn(),
@@ -177,11 +179,37 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(false)
   })
 
+  it('Space changes play intent without starting audio while a MIDI platter is held', () => {
+    h.stores.transport.isPlaying = true
+    h.stores.transport.midiPlaybackHoldActive = true
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+    expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(false)
+  })
+
+  it('Space arms resume without starting audio while a MIDI platter is held', () => {
+    h.stores.transport.midiPlaybackHoldActive = true
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+    expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(true)
+  })
+
   it('Space at end-of-project is a no-op', () => {
     h.stores.transport.positionMs = 10_000
     const { e } = makeKey({ code: 'Space' })
     kb.onGlobalShortcutKey(e)
     expect(sendBridge).not.toHaveBeenCalled()
+  })
+
+  it('Space cannot arm held playback at end-of-project', () => {
+    h.stores.transport.midiPlaybackHoldActive = true
+    h.stores.transport.positionMs = 10_000
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).not.toHaveBeenCalled()
+    expect(h.stores.transport.setPlaybackState).not.toHaveBeenCalled()
   })
 
   it('suppresses shortcuts while a modal is open', () => {

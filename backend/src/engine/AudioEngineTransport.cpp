@@ -9,6 +9,7 @@ namespace silverdaw
 
 void AudioEngine::play()
 {
+    master.cancelScrub();
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
     flushAllDirtyRebuildsSync();
@@ -154,6 +155,7 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
 
 void AudioEngine::pause()
 {
+    master.cancelScrub();
     master.setPlaying(false);
     reclaimRetiredPlaybackSnapshots();
     silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
@@ -161,6 +163,7 @@ void AudioEngine::pause()
 
 void AudioEngine::stop()
 {
+    master.cancelScrub();
     master.setPlaying(false);
     master.setPositionSamples(0);
     busGraph.resetSharedFx();

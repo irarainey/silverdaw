@@ -146,6 +146,7 @@ class AudioEngine
     MasterClockSource::AudioPerfSnapshot drainAudioPerf() noexcept { return master.drainAudioPerf(); }
 
     void setPositionMs(double ms);
+    bool scrubPositionMs(double positionMs, double deltaMs);
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
     bool commitClipOffset(const juce::String& clipId);

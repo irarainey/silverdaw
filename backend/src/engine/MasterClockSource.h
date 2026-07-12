@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "OutputKeepAlive.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -47,12 +48,61 @@ class MasterClockSource : public juce::AudioSource
         const juce::ScopedNoDenormals scopedNoDenormals;
         const auto startTicks = juce::Time::getHighResolutionTicks();
         callbackCount.fetch_add(1, std::memory_order_relaxed);
-        if (! keepAlive.isPlaying())
+        const bool playing = keepAlive.isPlaying();
+        const auto requestedGeneration = scrubGeneration.load(std::memory_order_acquire);
+        if (requestedGeneration != activeScrubGeneration)
+        {
+            activeScrubGeneration = requestedGeneration;
+            scrubRendered = scrubRemaining > 0 ? kScrubEdgeFadeSamples : 0;
+            scrubRemaining = scrubRequestedSamples.load(std::memory_order_relaxed);
+        }
+        if (! playing && scrubRemaining <= 0)
         {
             // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital
             // silence. Drop any half-run wake pre-roll so the next play re-arms cleanly.
             wakePrerollRemaining = 0;
             info.clearActiveBufferRegion();
+            publishAudioPerf(startTicks, info.numSamples);
+            return;
+        }
+
+        if (! playing)
+        {
+            info.clearActiveBufferRegion();
+            const int renderSamples = juce::jmin(info.numSamples, scrubRemaining);
+            if (renderSamples <= 0)
+            {
+                publishAudioPerf(startTicks, info.numSamples);
+                return;
+            }
+
+            juce::AudioSourceChannelInfo scrubInfo(info.buffer, info.startSample, renderSamples);
+            child.getNextAudioBlock(scrubInfo);
+            if (scrubDirection.load(std::memory_order_relaxed) < 0)
+            {
+                for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                {
+                    auto* samples = info.buffer->getWritePointer(ch, info.startSample);
+                    std::reverse(samples, samples + renderSamples);
+                }
+            }
+
+            for (int i = 0; i < renderSamples; ++i)
+            {
+                const float fadeIn = juce::jlimit(
+                    0.0F, 1.0F,
+                    static_cast<float>(scrubRendered + i + 1) /
+                        static_cast<float>(kScrubEdgeFadeSamples));
+                const float fadeOut = juce::jlimit(
+                    0.0F, 1.0F,
+                    static_cast<float>(scrubRemaining - i) /
+                        static_cast<float>(kScrubEdgeFadeSamples));
+                const float gain = juce::jmin(fadeIn, fadeOut);
+                for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
+                    info.buffer->getWritePointer(ch, info.startSample)[i] *= gain;
+            }
+            scrubRendered += renderSamples;
+            scrubRemaining -= renderSamples;
             publishAudioPerf(startTicks, info.numSamples);
             return;
         }
@@ -101,6 +151,19 @@ class MasterClockSource : public juce::AudioSource
         keepAlive.setPlaying(p);
         if (p && ! wasPlaying)
             playStartPending.store(true, std::memory_order_release);
+    }
+
+    void requestScrub(int direction, int samples) noexcept
+    {
+        scrubDirection.store(direction < 0 ? -1 : 1, std::memory_order_relaxed);
+        scrubRequestedSamples.store(juce::jmax(0, samples), std::memory_order_relaxed);
+        scrubGeneration.fetch_add(1, std::memory_order_release);
+    }
+
+    void cancelScrub() noexcept
+    {
+        scrubRequestedSamples.store(0, std::memory_order_relaxed);
+        scrubGeneration.fetch_add(1, std::memory_order_release);
     }
     bool isPlaying() const noexcept
     {
@@ -189,6 +252,13 @@ class MasterClockSource : public juce::AudioSource
     // prepareToPlay for the active rate); wakePrerollRemaining counts down the current pre-roll.
     int prerollSamples{0};
     int wakePrerollRemaining{0};
+    std::atomic<std::uint32_t> scrubGeneration{0};
+    std::atomic<int> scrubRequestedSamples{0};
+    std::atomic<int> scrubDirection{1};
+    std::uint32_t activeScrubGeneration{0};
+    int scrubRemaining{0};
+    int scrubRendered{0};
+    static constexpr int kScrubEdgeFadeSamples = 32;
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};
     std::atomic<int> lastNumSamples{0};

@@ -113,6 +113,22 @@ declare global {
         identifier: string,
         selection: { deck1Enabled: boolean; deck2Enabled: boolean }
       ): void
+      getMidiDevicePreferences(): Promise<
+        Record<
+          string,
+          {
+            scrubAudioEnabled: boolean
+            crossfaderDirection: 'leftToRight' | 'rightToLeft'
+          }
+        >
+      >
+      setMidiDevicePreferences(
+        identifier: string,
+        preferences: {
+          scrubAudioEnabled: boolean
+          crossfaderDirection: 'leftToRight' | 'rightToLeft'
+        }
+      ): void
       // ── Autosave folder + manifest IPCs ───────────────────────────────
       resolveAutosaveDir(projectId: string): Promise<{ dir: string; filePath: string } | null>
       writeAutosaveManifest(manifest: {

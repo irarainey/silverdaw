@@ -60,4 +60,16 @@ describe('project bridge handlers', () => {
     expect(requestAudioDevices).toHaveBeenCalledTimes(2)
     expect(applyMidiInputs).toHaveBeenCalledTimes(2)
   })
+
+  it('clears transient MIDI playback holds on a project snapshot', () => {
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+    transport.beginMidiPlaybackHold('ddj-rb:2')
+
+    projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
+
+    expect(transport.isPlaying).toBe(false)
+    expect(transport.midiPlaybackHoldActive).toBe(false)
+    expect(transport.midiPlaybackHoldSources).toEqual([])
+  })
 })

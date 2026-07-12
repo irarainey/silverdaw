@@ -577,13 +577,20 @@ Device matching is case-insensitive, uses token boundaries, honours
 The renderer converts semantic controls into operational actions in
 `midiControllerActions.ts` and `midiBrowseActions.ts`. Jog movement is
 animation-frame coalesced; normal movement is free, Shift moves faster, and a
-held Sync modifier snaps movement to timeline grid lines. Browse controls switch between track
-selection, clip selection/range extension, and Shift-modified timeline zoom; clockwise zooms in
-and anticlockwise zooms out. Absolute channel
-faders, Tone EQ, and Filter target the currently selected track, with a short
-catch-up transition when hardware and software positions differ. Master volume
-is applied to the project. Crossfader input is retained as controller telemetry
-but does not currently alter the audible mix.
+held Sync modifier snaps movement to timeline grid lines. Touching an enabled
+jog platter while playing pauses the backend without clearing renderer play
+intent. Movement while held sends short directional scrub grains through the
+audio output without advancing normal transport playback unless that device's
+saved scrub-audio preference is off. Per-device MIDI preferences are keyed by
+the Windows/JUCE identifier and also retain the selected crossfader direction.
+The final platter release resumes playback, while an explicit pause cancels
+that resume. Browse controls switch between track selection, clip
+selection/range extension, and Shift-modified timeline zoom; clockwise zooms
+in and anticlockwise zooms out.
+Absolute channel faders, Tone EQ, and Filter target the currently selected
+track, with a short catch-up transition when hardware and software positions
+differ. Master volume is applied to the project. Crossfader input is retained
+as controller telemetry but does not currently alter the audible mix.
 
 If a profile defines output bindings, the backend opens one unambiguous MIDI
 output whose name matches the input. It can then send selected-track meters,

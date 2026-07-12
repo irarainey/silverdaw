@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   AudioMetadata,
   DebugPreferences,
+  MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
   UiPreferences
@@ -206,6 +207,14 @@ const api = {
     ipcRenderer.invoke(IPC.prefs.getMidiDeckSelections),
   setMidiDeckSelection: (identifier: string, selection: MidiDeckSelection): void => {
     ipcRenderer.send(IPC.prefs.setMidiDeckSelection, identifier, selection)
+  },
+  getMidiDevicePreferences: (): Promise<Record<string, MidiDevicePreferences>> =>
+    ipcRenderer.invoke(IPC.prefs.getMidiDevicePreferences),
+  setMidiDevicePreferences: (
+    identifier: string,
+    preferences: MidiDevicePreferences
+  ): void => {
+    ipcRenderer.send(IPC.prefs.setMidiDevicePreferences, identifier, preferences)
   },
   // ─── Stem-separation preferences ────────────────────────────────────────
   getStemPrefs: (): Promise<StemPrefsDto> => ipcRenderer.invoke(IPC.prefs.getStems),

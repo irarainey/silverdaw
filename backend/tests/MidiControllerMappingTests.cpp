@@ -77,6 +77,15 @@ void testMidiMappingMapsDeckTransport()
     require(deck2.has_value() && deck2->action == MidiControllerAction::playPause &&
                 deck2->deck == 2,
             "deck 2 Play should map from its configured MIDI channel");
+
+    const auto touch = mapper.mapMessage(0x91, 54, 127);
+    const auto release = mapper.mapMessage(0x91, 54, 0);
+    require(touch.has_value() && touch->action == MidiControllerAction::jogTouch &&
+                touch->deck == 2 && touch->value == 1.0,
+            "deck 2 jog touch should map Note 54 press");
+    require(release.has_value() && release->action == MidiControllerAction::jogTouch &&
+                release->deck == 2 && release->value == 0.0,
+            "deck 2 jog touch should map Note 54 release");
 }
 
 void testMidiMappingMapsShiftedCue()
