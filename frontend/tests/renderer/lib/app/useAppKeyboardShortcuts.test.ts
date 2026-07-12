@@ -215,9 +215,15 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
   it('suppresses shortcuts while a modal is open', () => {
     h = makeDeps({ modalOpen: true })
     kb = useAppKeyboardShortcuts(h.deps)
-    const { e } = makeKey({ code: 'Space' })
-    kb.onGlobalShortcutKey(e)
+    kb.onGlobalShortcutKey(makeKey({ code: 'Space' }).e)
+    kb.onGlobalShortcutKey(makeKey({ key: 'm' }).e)
+    kb.onGlobalShortcutKey(makeKey({ key: '+', ctrlKey: true }).e)
+    kb.onGlobalShortcutKey(makeKey({ key: 'm', shiftKey: true }).e)
+
     expect(sendBridge).not.toHaveBeenCalled()
+    expect(h.stores.project.toggleMarkerAt).not.toHaveBeenCalled()
+    expect(h.stores.ui.requestTimelineZoom).not.toHaveBeenCalled()
+    expect(h.stores.project.toggleMute).not.toHaveBeenCalled()
   })
 
   it('suppresses shortcuts before the bridge is ready', () => {

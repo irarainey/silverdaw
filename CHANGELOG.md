@@ -5,7 +5,6 @@
 ### Added
 
 - Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, controller feedback, and vinyl-style platter holding.
-- MIDI device tiles save timeline scrub audio and crossfader direction preferences per controller.
 
 ### Changed
 
@@ -21,6 +20,7 @@
 
 ### Fixed
 
+- Keyboard shortcuts no longer affect the project while a dialog is open.
 - Warp playback performance is improved.
 - Muted and solo-excluded tracks now skip playback and effects processing.
 - Audio playback now remains uninterrupted while clips or automation are changed.

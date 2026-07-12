@@ -52,6 +52,13 @@ export function releaseMidiPlaybackHoldsForDevice(deviceIdentifier: string): voi
   resumeAfterFinalRelease(transport.endMidiPlaybackHoldsForDevice(deviceIdentifier))
 }
 
+export function releaseAllMidiPlaybackHolds(): void {
+  const transport = useTransportStore()
+  if (!transport.midiPlaybackHoldActive) return
+  transport.clearMidiPlaybackHolds()
+  resumeAfterFinalRelease(true)
+}
+
 export function resetMidiPlaybackHoldForTests(): void {
   useTransportStore().clearMidiPlaybackHolds()
 }

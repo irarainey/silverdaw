@@ -19,6 +19,7 @@ import {
 } from '@/lib/midi/midiBrowseActions'
 import {
   handleMidiJogTouch,
+  releaseAllMidiPlaybackHolds,
   resetMidiPlaybackHoldForTests
 } from '@/lib/midi/midiPlaybackHold'
 import { useProjectStore } from '@/stores/projectStore'
@@ -366,7 +367,7 @@ export function handleMidiControl(payload: MidiControlPayload): void {
   }
 }
 
-export function resetMidiControllerActionsForTests(): void {
+function clearPendingMidiControllerActions(): void {
   if (seekFrame !== null) globalThis.cancelAnimationFrame(seekFrame)
   if (dialFrame !== null) globalThis.cancelAnimationFrame(dialFrame)
   seekFrame = null
@@ -381,6 +382,15 @@ export function resetMidiControllerActionsForTests(): void {
   pendingJogDeviceIdentifier = null
   lastMidiDialValues.clear()
   dialCatchUps.clear()
+}
+
+export function suspendMidiControllerActions(): void {
+  clearPendingMidiControllerActions()
+  releaseAllMidiPlaybackHolds()
+}
+
+export function resetMidiControllerActionsForTests(): void {
+  clearPendingMidiControllerActions()
   resetMidiBrowseActionsForTests()
   resetMidiPlaybackHoldForTests()
 }

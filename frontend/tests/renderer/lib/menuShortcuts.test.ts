@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { collectShortcutBindings } from '@/lib/menuShortcuts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { collectShortcutBindings, registerMenuShortcuts } from '@/lib/menuShortcuts'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('collectShortcutBindings', () => {
   const actions = (): string[] =>
@@ -48,5 +52,35 @@ describe('collectShortcutBindings', () => {
     expect(find('edit.cropProjectToLastClip', (b) => b.accel.key === 't' && b.accel.ctrl && b.accel.shift)).toBe(true)
     // Zoom to Fit on Ctrl+F (menu-dispatched, not a global-handler zoom key).
     expect(find('view.zoomFit', (b) => b.accel.key === 'f' && b.accel.ctrl)).toBe(true)
+  })
+
+  it('does not dispatch menu accelerators while a dialog blocks keyboard input', () => {
+    let keydown: ((event: KeyboardEvent) => void) | null = null
+    const menuAction = vi.fn()
+    vi.stubGlobal('window', {
+      silverdaw: { menuAction },
+      addEventListener: vi.fn(
+        (type: string, listener: (event: KeyboardEvent) => void): void => {
+          if (type === 'keydown') keydown = listener
+        }
+      ),
+      removeEventListener: vi.fn()
+    })
+
+    registerMenuShortcuts({ devToolsEnabled: false }, () => true)
+    const listener = keydown as ((event: KeyboardEvent) => void) | null
+    expect(listener).not.toBeNull()
+    listener?.({
+      key: 's',
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      target: null
+    } as unknown as KeyboardEvent)
+
+    expect(menuAction).not.toHaveBeenCalled()
   })
 })

@@ -2,7 +2,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   handleMidiControl,
-  resetMidiControllerActionsForTests
+  resetMidiControllerActionsForTests,
+  suspendMidiControllerActions
 } from '@/lib/midi/midiControllerActions'
 import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectTypes'
@@ -116,6 +117,60 @@ describe('MIDI controller actions', () => {
 
     expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_PLAY')
     expect(transport.isPlaybackHeld).toBe(false)
+  })
+
+  it('cancels queued movement and releases platter holds when MIDI is suspended', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 1,
+      pressed: true
+    })
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'relative',
+      control: 'jogScratch',
+      deck: 1,
+      value: 10
+    })
+
+    suspendMidiControllerActions()
+    animationFrame?.(0)
+
+    expect(transport.midiPlaybackHoldActive).toBe(false)
+    expect(sendMock).toHaveBeenNthCalledWith(1, 'TRANSPORT_PAUSE')
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'TRANSPORT_PLAY')
+    expect(sendMock).toHaveBeenCalledTimes(2)
+    expect(transport.positionMs).toBe(0)
+  })
+
+  it('cancels an in-progress physical dial catch-up when MIDI is suspended', () => {
+    seedProject()
+    const project = useProjectStore()
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'absolute',
+      control: 'masterVolume',
+      deck: null,
+      value: 0.2
+    })
+    expect(project.masterVolume).toBe(1)
+
+    suspendMidiControllerActions()
+    animationFrame?.(globalThis.performance.now() + 200)
+
+    expect(project.masterVolume).toBe(1)
+    expect(globalThis.cancelAnimationFrame).toHaveBeenCalled()
+    expect(sendMock).not.toHaveBeenCalled()
   })
 
   it('does not resume when a held jog reaches the end of the project', () => {

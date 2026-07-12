@@ -39,6 +39,7 @@ import { useAppMenuActions } from '@/lib/app/useAppMenuActions'
 import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
 import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
+import { useRenderedDialogPresence } from '@/lib/app/useRenderedDialogPresence'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useMidiControllerActions } from '@/lib/midi/useMidiControllerActions'
@@ -67,7 +68,7 @@ const library = useLibraryStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
-useMidiControllerActions()
+const renderedDialogOpen = useRenderedDialogPresence()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
@@ -134,7 +135,10 @@ onMounted(() => {
   })
   // Backend supervisor status drives startup fast-fail + the engine-recovery overlay.
   unsubscribeBackendStatus = window.silverdaw.onBackendStatus(handleBackendStatus)
-  unregisterShortcuts = registerMenuShortcuts({ devToolsEnabled: appStore.devToolsEnabled })
+  unregisterShortcuts = registerMenuShortcuts(
+    { devToolsEnabled: appStore.devToolsEnabled },
+    isInteractionBlocked
+  )
   window.addEventListener('keydown', onGlobalShortcutKey, { capture: true })
   // These main-process reads do not depend on the backend, so overlap them with its startup.
   prefetchStartupRecovery()
@@ -153,22 +157,31 @@ onMounted(() => {
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────
-// Modal guard stays here because it reads this component's dialog refs.
-function isShortcutModalOpen(): boolean {
+// Immediate refs cover the state change before Vue renders the dialog; the
+// rendered-dialog observer also covers dialogs owned by child components.
+function isInteractionBlocked(): boolean {
   return (
+    renderedDialogOpen.value ||
     aboutOpen.value ||
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
     exportMixdownOpen.value ||
+    diagnosticsBusy.value ||
     midiMonitorOpen.value ||
+    library.imports.length > 0 ||
     mixdownState.value !== null ||
+    stemSelection.value !== null ||
+    stemModelFlow.value !== null ||
+    stemSeparationState.value !== null ||
+    channelSplitSelection.value !== null ||
     audioUnavailableOpen.value ||
     sampleRatePromptState.value.open ||
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
     recoveryDialogOpen.value ||
     startupScreenVisible.value ||
-    ui.clipEditorOpen
+    ui.clipEditorOpen ||
+    transport.engineRecovery !== 'ok'
   )
 }
 
@@ -177,7 +190,7 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
   project,
   ui,
   library,
-  isModalOpen: isShortcutModalOpen,
+  isModalOpen: isInteractionBlocked,
   openExportMixdown: () => {
     exportMixdownOpen.value = true
   }
@@ -418,6 +431,8 @@ const startupScreenVisible = computed(
     library.items.length === 0
 )
 
+useMidiControllerActions(isInteractionBlocked)
+
 onBeforeUnmount(() => {
   log.info('app', 'beforeUnmount')
   unsubscribeMenu?.()
@@ -453,14 +468,14 @@ const { handleMenuAction } = useAppMenuActions({
   exportMixdownOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
-  isModalOpen: isShortcutModalOpen,
+  isModalOpen: isInteractionBlocked,
   openRecentPath
 })
 </script>
 
 <template>
   <div class="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-    <AppTitleBar :window-controls-disabled="isShortcutModalOpen()" />
+    <AppTitleBar :window-controls-disabled="isInteractionBlocked()" />
 
     <TransportBar />
 

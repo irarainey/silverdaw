@@ -112,10 +112,16 @@ export function collectShortcutBindings(opts: BuildMenusOptions): ShortcutBindin
 }
 
 /** Register menu accelerators and return the teardown function. */
-export function registerMenuShortcuts(opts: { devToolsEnabled: boolean }): () => void {
+export function registerMenuShortcuts(
+  opts: { devToolsEnabled: boolean },
+  isBlocked: () => boolean
+): () => void {
   const bindings = collectShortcutBindings(opts)
 
   function onKeyDown(e: KeyboardEvent): void {
+    // Dialog-local controls retain their keyboard behavior, but no accelerator
+    // may dispatch an application action behind the dialog.
+    if (isBlocked()) return
     // Recovery gates the UI; swallow accelerators until the engine is usable.
     if (useTransportStore().engineRecovery !== 'ok') {
       e.preventDefault()
