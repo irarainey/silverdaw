@@ -91,11 +91,6 @@ struct SampleWarpOptions
     double cents = 0.0;
 };
 
-double pitchScaleFor(double semitones, double cents)
-{
-    return std::pow(2.0, (semitones + cents / 100.0) / 12.0);
-}
-
 bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outputFile,
                             double inMs, double durationMs, silverdaw::AudioEngine& engine,
                             double& outDurationMs, double& outSampleRate, int& outChannels,
@@ -136,7 +131,10 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
         warpOptions.has_value() &&
         warpOptions->enabled &&
         (std::abs(warpOptions->tempoRatio - 1.0) > 1e-4 ||
-         std::abs(pitchScaleFor(warpOptions->semitones, warpOptions->cents) - 1.0) > 1e-4);
+         std::abs(silverdaw::warpPitchScale(
+                      warpOptions->semitones, warpOptions->cents)
+                  - 1.0)
+             > 1e-4);
     if (renderWarped && !silverdaw::WarpProcessor::supportsChannelCount(outChannels))
     {
         error = "Warped export supports audio with up to "
@@ -175,10 +173,13 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
     std::vector<float*> outputPtrs(static_cast<std::size_t>(outChannels));
     if (renderWarped)
     {
-        silverdaw::WarpProcessor warp(outChannels, reader->sampleRate, sampleWarpModeOptions(warpOptions->mode));
+        const double pitchScale = silverdaw::warpPitchScale(
+            warpOptions->semitones, warpOptions->cents);
+        silverdaw::WarpProcessor warp(outChannels, reader->sampleRate,
+                                      sampleWarpModeOptions(warpOptions->mode),
+                                      pitchScale);
         warp.prepareToPlay(kBlock);
         warp.setTempoRatio(warpOptions->tempoRatio);
-        warp.setPitchScale(pitchScaleFor(warpOptions->semitones, warpOptions->cents));
         warp.seekSource(startSample);
 
         const auto outSamples = silverdaw::WarpProcessor::timelineSamplesForSourceSamples(

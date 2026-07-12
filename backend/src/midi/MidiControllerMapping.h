@@ -75,6 +75,7 @@ private:
 
 bool supportsMidiControllerMapping(const juce::String& deviceName);
 bool supportsMidiControllerOutput(const juce::String& deviceName);
+std::optional<juce::String> midiControllerManufacturerName(const juce::String& deviceName);
 const char* midiControllerActionName(MidiControllerAction action) noexcept;
 const char* midiControllerValueKindName(MidiControllerValueKind kind) noexcept;
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePreferencesForm } from '@/lib/preferences/usePreferencesForm'
 import { useUiStore } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
+import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import type { UniqueDevice } from '@/lib/audio/audioOutputPicker'
 
 const devicesRef = vi.hoisted(() => ({ value: [] as UniqueDevice[] }))
@@ -47,12 +48,16 @@ function stubSilverdaw(): void {
       getAudioOutput: vi.fn(async () => ({ ...DEFAULTS.audio })),
       getKeepAwakeByDevice: vi.fn(async () => ({})),
       getEnabledMidiInputs: vi.fn(async () => ({})),
+      getMidiDevicePreferences: vi.fn(async () => ({})),
       getBrakeSettings: vi.fn(async () => ({ duration: 'medium', curve: 'curved' })),
       getBackspinSettings: vi.fn(async () => ({ duration: 'long', intensity: 'medium' })),
       getStemPrefs: vi.fn(async () => ({ ...DEFAULTS.stems })),
       setQolPrefs: vi.fn(),
       setDebugPreferences: vi.fn(),
       setAutosaveConfig: vi.fn(),
+      setMidiDevicePreferences: vi.fn((_identifier, preferences) => {
+        structuredClone(preferences)
+      }),
       setStemPrefs: vi.fn(async () => {}),
       chooseDirectory: vi.fn()
     }
@@ -116,6 +121,51 @@ describe('usePreferencesForm', () => {
     await form.save()
 
     expect(selectDevice).toHaveBeenCalledWith('Windows Audio', 'Speakers')
+  })
+
+  it('saves per-device MIDI preferences and updates runtime behavior', async () => {
+    const midiDevices = useMidiDeviceStore()
+    const applyPreferences = vi.spyOn(midiDevices, 'applyDevicePreferences')
+    const form = usePreferencesForm()
+    await form.loadCurrent()
+
+    form.setMidiScrubAudio('ddj-rb', false)
+    form.setMidiCrossfaderDirection('ddj-rb', 'rightToLeft')
+    expect(form.hasChanges.value).toBe(true)
+    await form.save()
+
+    const expected = {
+      'ddj-rb': {
+        scrubAudioEnabled: false,
+        crossfaderDirection: 'rightToLeft' as const
+      }
+    }
+    expect(window.silverdaw.setMidiDevicePreferences).toHaveBeenCalledWith(
+      'ddj-rb',
+      expected['ddj-rb']
+    )
+    expect(applyPreferences).toHaveBeenCalledWith(expected)
+    expect(midiDevices.isScrubAudioEnabled('ddj-rb')).toBe(false)
+  })
+
+  it('discards per-device MIDI preference drafts', async () => {
+    vi.mocked(window.silverdaw.getMidiDevicePreferences).mockResolvedValueOnce({
+      'ddj-rb': {
+        scrubAudioEnabled: false,
+        crossfaderDirection: 'rightToLeft'
+      }
+    })
+    const form = usePreferencesForm()
+    await form.loadCurrent()
+
+    form.setMidiScrubAudio('ddj-rb', true)
+    form.setMidiCrossfaderDirection('ddj-rb', 'leftToRight')
+    form.discardMidiInputChanges()
+
+    expect(form.midiDevicePreferencesDraft.value['ddj-rb']).toEqual({
+      scrubAudioEnabled: false,
+      crossfaderDirection: 'rightToLeft'
+    })
   })
 
   it('save is a no-op against the backend when nothing changed', async () => {

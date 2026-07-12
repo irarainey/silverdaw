@@ -516,8 +516,9 @@ the backend and driven from the shared master transport clock.
 - **Real-time mode** for playback; the same non-destructive warp is applied offline during mixdown export
 - Pitch and tempo adjusted independently, non-destructively (per-clip semitone + cents)
 - Warp settings stored in `ValueTree`; never baked into audio files
-- Auto-warp can match newly dropped/imported clips to the current project BPM,
-  including late activation after BPM analysis finishes
+- Auto-warp matches newly dropped/imported music to the current project BPM by
+  default, including variable-tempo sources via their representative detected
+  BPM and late activation after analysis. A Timeline preference disables it.
 - Multi-track sync via shared master transport clock with per-track latency compensation
 
 ### 7.2 Sample Creation from Clip
@@ -703,8 +704,9 @@ The engine topology uses two runtime objects:
 - **`BusGraph`** — one per engine. The root pull source (replaced the
   former `MixerAudioSource`). Owns block lifecycle deterministically and runs the
   signal flow in a strict order each block (see §7.9.2 below). Pulls
-  each `TrackRuntime` exactly once per block; pulls the shared Reverb and
-  Delay processors exactly once per block; sums into the master bus;
+  each audible `TrackRuntime` exactly once per block; muted and solo-excluded
+  runtimes are omitted from the immutable render snapshot. Pulls the shared
+  Reverb and Delay processors exactly once per block; sums into the master bus;
   hands off to `MeteringSource`.
 
 This deliberately avoids the full `juce::AudioProcessorGraph` migration
@@ -732,8 +734,9 @@ render share one DSP path.
 - Every scratch buffer is **cleared at the start of the block** before
   any pull, so a stale tail from the previous block can never sneak
   into a fresh dry sum.
-- Each `TrackRuntime` is pulled **exactly once** per block; each shared
-  FX is pulled **exactly once** per block; nothing is pulled twice.
+- Each included `TrackRuntime` is pulled **exactly once** per block; muted and
+  solo-excluded runtimes are not pulled. Each shared FX is pulled **exactly
+  once** per block; nothing is pulled twice.
 - Processor state on the shared FX **resets on transport stop and on
   `setNextReadPosition` seeks** (live or mixdown). A reverb tail is
   only valid relative to the dry input that fed it; seeking into the
@@ -1284,8 +1287,9 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 - Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
 - Preview playback through the Clip Editor preview voice is implemented for any library tile; preview-at-project-BPM is deferred to Phase 8
 - Displays duration, detected key, stable/variable BPM badges and coloured key badges per file
-- **Drag-to-timeline** creates a clip at the drop position; auto-warp can match
-  eligible clips to the project BPM when the preference is enabled
+- **Drag-to-timeline** creates a clip at the drop position; default-on auto-warp
+  matches eligible music to the project BPM, including variable-tempo sources
+  via their representative detected BPM. The Timeline preference can disable it.
 - **Saved clips** — right-click a timeline clip → **Save Clip to Library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
 - **Tile images:** library tiles can show embedded cover art or a fallback icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. The fallback is styled **per kind** when no cover shows (an original source: sky music-note on a sky tint; a stem: teal layers icon on a teal tint; a saved sample: indigo bars icon on an indigo tint), plus the persistent stem / sample corner badge. A tile's right-click menu manages its cover art: **Update Image…** (pick a new image, copied into the project's `covers/` dir as a per-item `coverArtOverride` shown on that tile only), **Remove Image** / **Restore Image** (a per-item `coverArtHidden` display flag that suppresses the cover without deleting the shared media-store image). Both are per-item, persisted in the project, and never mutate the GUID-keyed shared media store. List view is deferred to Phase 8.
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
@@ -1751,7 +1755,9 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Clips auto-align to the project **bar** grid after tempo analysis (`project.alignClipToBarGrid`): the first in-window grid beat snaps to the nearest bar line so a clip placed before its beats were known — e.g. one with a silent intro — lands on the bar; gated by the **Align clips to the beat grid after analysis** preference (default on, `ui.alignClipsToGridOnAnalysis`), skips simple samples / locked / tempo-mismatched clips, and re-runs from `PROJECT_BPM_APPLIED` so a first-clip tempo seed is applied before aligning
 - [x] Floating processing panel surfaces staged progress (preparing audio → analysing tempo → analysing beats → applying warp when needed) for both import and reanalysis; OS busy cursor stays in `progress` for the whole lifespan
 - [x] Manual timeline markers: `M` toggles a marker at the nearest playhead grid point, double-clicking the ruler toggles at the nearest grid point, drag moves markers with grid snap, duplicate markers on the same grid point are refused, `Ctrl+←/→` jumps between markers and scrolls them into view, and markers persist as `MARKERS > MARKER[id, positionMs]`
-- [x] Auto warp-to-project-BPM on clip drop/import, gated by the General preference and late-applied after BPM analysis when needed
+- [x] Auto warp-to-project-BPM on clip drop/import, enabled by default and gated
+  by the Timeline preference; variable-tempo music uses its representative
+  detected BPM, and unknown BPMs are applied after analysis
 - [x] Clip pitch shift UI: semitone field + cents trim in the Warp settings dialog / context menu
 
 **Region selection + clip editing:**
@@ -2449,8 +2455,10 @@ Implementation increments (foundations first; each keeps build + tests green):
 
 Most of this cluster either already shipped incrementally or has been
 deprioritised. **Conform-on-drop already happens today** — dropping a library
-item auto-warps to project BPM (gated by `matchProjectTempoOnDrop`) and anchors
-the source downbeat to the grid. In-context library audition was dropped (the
+item auto-warps to project BPM by default (gated by
+`matchProjectTempoOnDrop`), including variable-tempo music using its
+representative detected BPM, and anchors the source downbeat to the grid.
+In-context library audition was dropped (the
 Clip Editor already auditions a clip). What remains is parked for later:
 
 - [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop

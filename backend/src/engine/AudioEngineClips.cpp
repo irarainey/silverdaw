@@ -93,8 +93,10 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
     }
 
     auto track = std::make_unique<Track>();
+    track->trackId = trackId;
     track->sampleRate = reader->sampleRate;
     track->numChannels = static_cast<int>(reader->numChannels);
+    trackAudibility[trackId] = initialGain > 0.0F;
 
     track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
 
@@ -124,7 +126,8 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
                                       track->sampleRate, track->numChannels);
     track->transportSource->setGain(juce::jlimit(kMinTrackGain, kMaxTrackGain, initialGain));
 
-    track->transportSource->start();
+    if (isTrackAudible(trackId))
+        track->transportSource->start();
 
     track->transportSource->setPosition(trackSeekSecondsFor(*track, master.getPositionSamples()));
 
@@ -140,7 +143,8 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
         tracks.erase(it);
     }
 
-    busGraph.attachClip(trackId, clipId, track->transportSource.get());
+    busGraph.attachClip(trackId, clipId, track->transportSource.get(),
+                        isTrackAudible(trackId));
     tracks.emplace(clipId, std::move(track));
 
     if (wasPlaying)
@@ -163,11 +167,85 @@ bool AudioEngine::removeClip(const juce::String& clipId)
         return false;
     }
 
+    const juce::String trackId = it->second->trackId;
     busGraph.detachClip(clipId, it->second->transportSource.get());
     it->second->transportSource->setSource(nullptr);
     tracks.erase(it);
+    const bool trackStillHasClips =
+        std::any_of(tracks.begin(), tracks.end(),
+                    [&trackId](const auto& entry) {
+                        return entry.second->trackId == trackId;
+                    });
+    if (!trackStillHasClips)
+    {
+        pendingTrackBypasses.erase(trackId);
+        trackAudibility.erase(trackId);
+        if (pendingTrackBypasses.empty())
+            trackBypassTimer.stopTimer();
+    }
     master.setContentLoaded(! tracks.empty());
     silverdaw::log::info("engine", "removeClip id=" + clipId);
+    return true;
+}
+
+bool AudioEngine::moveClipToTrack(const juce::String& clipId,
+                                  const juce::String& trackId)
+{
+    auto it = tracks.find(clipId);
+    if (it == tracks.end() || trackId.isEmpty())
+    {
+        silverdaw::log::warn("engine", "moveClipToTrack invalid clip or track id");
+        return false;
+    }
+
+    auto& track = *it->second;
+    const juce::String oldTrackId = track.trackId;
+    if (oldTrackId == trackId) return true;
+
+    busGraph.detachClip(clipId, track.transportSource.get(), false);
+    track.trackId = trackId;
+    const bool destinationAudible = isTrackAudible(trackId);
+
+    if (destinationAudible && track.transportSource != nullptr)
+    {
+        const double seekSeconds =
+            trackSeekSecondsFor(track, master.getPositionSamples());
+        if (track.prefetchDirty)
+            recreateTrackPrefetch(track, seekSeconds);
+        else
+            track.transportSource->setPosition(seekSeconds);
+
+        if (master.isPlaying())
+        {
+            track.transportSource->start();
+            juce::AudioBuffer<float> scratch(
+                juce::jmax(1, track.numChannels), kPrimeReadyTargetSamples);
+            const double deadline = juce::Time::getMillisecondCounterHiRes()
+                + static_cast<double>(kPrimePerTrackTimeoutMs);
+            if (!waitForTrackPrefetch(track, deadline, scratch))
+                silverdaw::log::warn(
+                    "engine", "moved track prefetch incomplete id=" + trackId);
+        }
+    }
+
+    busGraph.attachClip(trackId, clipId, track.transportSource.get(),
+                        destinationAudible, false);
+
+    const bool oldTrackStillHasClips =
+        std::any_of(tracks.begin(), tracks.end(),
+                    [&oldTrackId](const auto& entry) {
+                        return entry.second->trackId == oldTrackId;
+                    });
+    if (!oldTrackStillHasClips)
+    {
+        pendingTrackBypasses.erase(oldTrackId);
+        trackAudibility.erase(oldTrackId);
+        if (pendingTrackBypasses.empty())
+            trackBypassTimer.stopTimer();
+    }
+
+    silverdaw::log::info("engine", "moveClipToTrack id=" + clipId
+        + " trackId=" + trackId);
     return true;
 }
 
@@ -188,10 +266,29 @@ bool AudioEngine::setClipGain(const juce::String& clipId, float gain)
     return true;
 }
 
+void AudioEngine::recreateTrackPrefetch(Track& track, double positionSeconds)
+{
+    track.transportSource->setSource(nullptr);
+    track.bufferingSource = std::make_unique<juce::BufferingAudioSource>(
+        track.offsetSource.get(), readAheadThread,
+        /*deleteSourceWhenDeleted=*/false,
+        kTransportReadAheadSamples, track.numChannels);
+    track.transportSource->setSource(track.bufferingSource.get(),
+                                     0, nullptr,
+                                     track.sampleRate, track.numChannels);
+    track.transportSource->setPosition(positionSeconds);
+    track.prefetchDirty = false;
+}
+
 void AudioEngine::rebuildTrackPrefetch(Track& track)
 {
     if (track.transportSource == nullptr || track.offsetSource == nullptr)
     {
+        return;
+    }
+    if (!isTrackAudible(track.trackId))
+    {
+        track.prefetchDirty = true;
         return;
     }
     const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
@@ -210,17 +307,7 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
         // — the new buffer has an empty valid range, forcing a fresh read from the updated
         // OffsetSource. Safe while stopped: MasterClockSource does not pull the BusGraph, and the
         // retired buffer removes itself from readAheadThread in its destructor.
-        track.transportSource->setSource(nullptr);
-        track.bufferingSource = std::make_unique<juce::BufferingAudioSource>(
-            track.offsetSource.get(), readAheadThread,
-            /*deleteSourceWhenDeleted=*/false,
-            kTransportReadAheadSamples, track.numChannels);
-        track.transportSource->setSource(track.bufferingSource.get(),
-                                         0,       // read-ahead handled by our owned bufferingSource
-                                         nullptr, // ditto — no extra reader thread
-                                         track.sampleRate, track.numChannels);
-        track.transportSource->setPosition(pos);
-        track.prefetchDirty = false;
+        recreateTrackPrefetch(track, pos);
         return;
     }
 
@@ -234,6 +321,11 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
 
 void AudioEngine::scheduleTrackPrefetchAfterEdit(Track& track)
 {
+    if (!isTrackAudible(track.trackId))
+    {
+        track.prefetchDirty = true;
+        return;
+    }
     if (master.isPlaying())
         rebuildTrackPrefetch(track);
     else

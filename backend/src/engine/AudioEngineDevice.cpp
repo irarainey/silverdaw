@@ -133,6 +133,8 @@ juce::String AudioEngine::openDefaultOutputOnly()
 void AudioEngine::shutdown()
 {
     rebuildTimer.stopTimer();
+    trackBypassTimer.stopTimer();
+    pendingTrackBypasses.clear();
     stop();
     unloadPreview();
     deviceManager.removeChangeListener(&deviceChangeListener);
@@ -143,6 +145,7 @@ void AudioEngine::shutdown()
     automationCurrent.clear();
     retiredAutomation.clear();
     tracks.clear();
+    trackAudibility.clear();
     deviceManager.closeAudioDevice();
     readAheadThread.stopThread(1000);
 }

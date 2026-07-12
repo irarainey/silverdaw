@@ -48,6 +48,15 @@ bool supportsMidiControllerOutput(const juce::String& deviceName)
     return profile != nullptr && !profile->outputs.empty();
 }
 
+std::optional<juce::String> midiControllerManufacturerName(const juce::String& deviceName)
+{
+    const auto* profile = findMidiControllerProfile(deviceName);
+    if (profile == nullptr) return std::nullopt;
+
+    const auto separator = profile->name.indexOfChar(' ');
+    return profile->name.substring(0, separator < 0 ? profile->name.length() : separator);
+}
+
 const char* midiControllerActionName(MidiControllerAction action) noexcept
 {
     switch (action)
@@ -130,6 +139,11 @@ std::optional<MidiControllerEvent> MidiControllerMapper::mapMessage(int statusBy
 
     const auto messageType = statusByte & 0xf0;
     const auto channel = statusByte & 0x0f;
+    const auto shiftActive = [this](int deck)
+    {
+        if (deck == 0) return shiftPressed[0] || shiftPressed[1];
+        return deck >= 1 && deck <= 2 && shiftPressed[deck - 1];
+    };
     for (const auto& binding : profile->inputs)
     {
         const auto noteMessage = binding.messageType == 0x90 &&
@@ -153,8 +167,7 @@ std::optional<MidiControllerEvent> MidiControllerMapper::mapMessage(int statusBy
                 shiftPressed[deck - 1] = pressed;
             if (binding.action == MidiControllerAction::jogTouch && deck >= 1 && deck <= 2)
                 jogTouched[deck - 1] = pressed;
-            const auto shifted = deck >= 1 && deck <= 2 && shiftPressed[deck - 1] &&
-                                 binding.shiftedAction.has_value();
+            const auto shifted = shiftActive(deck) && binding.shiftedAction.has_value();
             return buttonEvent(shifted ? *binding.shiftedAction : binding.action, deck, pressed);
         }
 
@@ -162,8 +175,7 @@ std::optional<MidiControllerEvent> MidiControllerMapper::mapMessage(int statusBy
         {
             const auto pressed = messageType == 0x90 && data2 > 0;
             if (!pressed) return std::nullopt;
-            const auto shifted = deck >= 1 && deck <= 2 && shiftPressed[deck - 1] &&
-                                 binding.shiftedAction.has_value();
+            const auto shifted = shiftActive(deck) && binding.shiftedAction.has_value();
             return MidiControllerEvent{
                 shifted ? *binding.shiftedAction : binding.action,
                 MidiControllerValueKind::button, deck, 1.0,
@@ -179,10 +191,12 @@ std::optional<MidiControllerEvent> MidiControllerMapper::mapMessage(int statusBy
                     : data2 - binding.center;
             const auto delta = rawDelta * binding.direction;
             if (delta == 0) return std::nullopt;
+            const auto shifted = shiftActive(deck) && binding.shiftedAction.has_value();
             const auto touched = deck >= 1 && deck <= 2 && jogTouched[deck - 1] &&
                                  binding.touchedAction.has_value();
             return MidiControllerEvent{
-                touched ? *binding.touchedAction : binding.action,
+                shifted ? *binding.shiftedAction
+                        : touched ? *binding.touchedAction : binding.action,
                 MidiControllerValueKind::relative, deck, static_cast<double>(delta)};
         }
 

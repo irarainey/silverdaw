@@ -1,6 +1,7 @@
 <script setup lang="ts">
 defineProps<{
   isPlaying: boolean
+  isPlaybackHeld: boolean
   followPlayback: boolean
   skipBackTitle: string
   playButtonTitle: string
@@ -38,7 +39,13 @@ const emit = defineEmits<{
       type="button"
       data-borderless-button="true"
       class="rounded p-2 hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-zinc-100"
-      :class="isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
+      :class="
+        isPlaybackHeld
+          ? 'animate-pulse bg-sky-600 text-white'
+          : isPlaying
+            ? 'bg-blue-600 text-white'
+            : 'text-zinc-100'
+      "
       :title="playButtonTitle"
       :disabled="playDisabled"
       @click="emit('play')"

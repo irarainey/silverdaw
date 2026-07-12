@@ -1005,6 +1005,46 @@ void testStemInheritsSynthesisedGridPastLastBeat()
     require(last <= 8.0 + 1e-6, "synthesised grid stays within the stem window");
 }
 
+void testVariableTempoAnalysisAppliesPendingAutoWarp()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+    state.setBpm(128.0);
+    state.setBpmSeeded(true);
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 8000.0, 48000, 2),
+            "source library item should add");
+    require(state.setLibraryItemBpm("src", 100.0), "source BPM should apply");
+    require(state.setLibraryItemBeats("src", {0.0, 0.6, 1.2}), "source beats should apply");
+    require(state.setLibraryItemBeatAnchor("src", 0.0), "source anchor should apply");
+    require(state.setLibraryItemVariableTempo("src", true), "source variable tempo should apply");
+    require(state.addLibraryItem("stem", "C:\\audio\\stem.wav", "stem.wav", 8000.0, 48000, 2,
+                                 "", "", "stem", "Drums", "src", "source", 0.0, 8000.0, -1, ""),
+            "derived library item should add");
+    require(state.addTrack("track"), "track should add");
+    require(state.addClip("track", "clip", "stem", 0.0, 8000.0), "clip should add");
+    require(state.setClipWarp("clip", std::nullopt, std::nullopt, std::nullopt,
+                              /*tempoRatioClear=*/false, std::nullopt, std::nullopt,
+                              /*pendingAutoWarp=*/true),
+            "clip should be marked for late auto-warp");
+
+    silverdaw::inheritAnalysisFromSource("stem", "src", engine, state, bridge);
+
+    bool found = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId != "clip") return;
+            found = true;
+            require(info.warpEnabled, "variable-tempo analysis should enable pending auto-warp");
+            require(! info.pendingAutoWarp, "applied auto-warp should clear the pending flag");
+        });
+    require(found, "warped clip should remain in project state");
+    requireNear(state.getClipEffectiveTiming("clip").tempoRatio, 1.28, 1e-6,
+                "late auto-warp should use project BPM divided by representative source BPM");
+}
+
 void testProjectStateManualTempoIsUndoableAndDirtying()
 {
     // A hand-set tempo/beat grid is a deliberate user edit: unlike automatic
@@ -1132,6 +1172,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState metronome toggle persists silently", testProjectStateMetronomeRoundTrip});
     tests.push_back({"Stem inherits a synthesised grid past the last source beat",
                      testStemInheritsSynthesisedGridPastLastBeat});
+    tests.push_back({"Variable-tempo analysis applies pending auto-warp",
+                     testVariableTempoAnalysisAppliesPendingAutoWarp});
 }
 
 } // namespace silverdaw::tests

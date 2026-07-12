@@ -56,7 +56,8 @@
         "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
         "cmake --build '${workspaceFolder}/backend/build' --config Debug --parallel"
       ],
-      "dependsOn": ["backend: kill running"],
+      "dependsOn": ["backend: kill running", "backend: configure"],
+      "dependsOrder": "sequence",
       "group": {
         "kind": "build",
         "isDefault": true

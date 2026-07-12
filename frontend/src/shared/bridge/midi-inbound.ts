@@ -6,6 +6,7 @@ export const MidiInputDeviceSchema = z.object({
   identifier: z.string(),
   connected: z.boolean(),
   enabled: z.boolean(),
+  manufacturer: z.string().nullable().optional(),
   controllerProfile: z.string().nullable(),
   lastActivityMs: z.number().nullable()
 })

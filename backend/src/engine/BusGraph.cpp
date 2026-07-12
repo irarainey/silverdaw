@@ -38,7 +38,9 @@ void BusGraph::releaseResources()
 
 void BusGraph::attachClip(const juce::String& trackId,
                           const juce::String& clipId,
-                          juce::AudioSource* clipTransport)
+                          juce::AudioSource* clipTransport,
+                          bool trackRenderingEnabled,
+                          bool prepareSource)
 {
     if (clipTransport == nullptr || trackId.isEmpty() || clipId.isEmpty()) return;
     const juce::ScopedLock sl(lock);
@@ -55,11 +57,17 @@ void BusGraph::attachClip(const juce::String& trackId,
         createdRuntime = true;
     }
     auto* rt = rIt->second.get();
+    if (createdRuntime)
+    {
+        rt->renderEnabled = trackRenderingEnabled;
+        rt->bypassRequested.store(false, std::memory_order_release);
+        rt->bypassReady.store(false, std::memory_order_release);
+    }
     bool sourcePrepared = false;
     bool clipAdded = false;
     try
     {
-        if (preparedMax > 0)
+        if (prepareSource && preparedMax > 0)
         {
             clipTransport->prepareToPlay(preparedMax, preparedRate);
             sourcePrepared = true;
@@ -118,7 +126,8 @@ void BusGraph::attachClip(const juce::String& trackId,
 }
 
 void BusGraph::detachClip(const juce::String& clipId,
-                          juce::AudioSource* clipTransport)
+                          juce::AudioSource* clipTransport,
+                          bool releaseSource)
 {
     if (clipTransport == nullptr || clipId.isEmpty()) return;
     const juce::ScopedLock sl(lock);
@@ -136,7 +145,8 @@ void BusGraph::detachClip(const juce::String& clipId,
                     rt->clips.end());
     clipToTrack.erase(it);
 
-    clipTransport->releaseResources();
+    if (releaseSource)
+        clipTransport->releaseResources();
 
     if (removeRuntime || rt->clips.empty())
     {
@@ -159,6 +169,51 @@ bool BusGraph::consumeTrackPeaks(const juce::String& trackId,
     }
     it->second->consumePeaks(outL, outR);
     return true;
+}
+
+void BusGraph::requestTrackBypass(const juce::String& trackId)
+{
+    const juce::ScopedLock sl(lock);
+    auto it = runtimes.find(trackId);
+    if (it == runtimes.end() || !it->second->renderEnabled) return;
+    it->second->bypassReady.store(false, std::memory_order_relaxed);
+    it->second->bypassRequested.store(true, std::memory_order_release);
+}
+
+bool BusGraph::finalizeTrackBypass(const juce::String& trackId)
+{
+    const juce::ScopedLock sl(lock);
+    auto it = runtimes.find(trackId);
+    if (it == runtimes.end() || !it->second->renderEnabled) return true;
+    if (!it->second->bypassReady.load(std::memory_order_acquire)) return false;
+
+    it->second->renderEnabled = false;
+    publishRenderSnapshot();
+    it->second->chain.reset();
+    it->second->peakL.store(0.0F, std::memory_order_relaxed);
+    it->second->peakR.store(0.0F, std::memory_order_relaxed);
+    it->second->bypassReady.store(false, std::memory_order_relaxed);
+    return true;
+}
+
+void BusGraph::setTrackRenderingEnabled(const juce::String& trackId, bool enabled)
+{
+    const juce::ScopedLock sl(lock);
+    auto it = runtimes.find(trackId);
+    if (it == runtimes.end()) return;
+    auto& runtime = *it->second;
+    runtime.bypassRequested.store(false, std::memory_order_release);
+    runtime.bypassReady.store(false, std::memory_order_relaxed);
+    if (runtime.renderEnabled == enabled) return;
+
+    runtime.renderEnabled = enabled;
+    publishRenderSnapshot();
+    if (!enabled)
+    {
+        runtime.chain.reset();
+        runtime.peakL.store(0.0F, std::memory_order_relaxed);
+        runtime.peakR.store(0.0F, std::memory_order_relaxed);
+    }
 }
 
 void BusGraph::setTrackTone(const juce::String& trackId,

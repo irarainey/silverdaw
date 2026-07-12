@@ -234,7 +234,10 @@ export function useTimelineViewController(
     getPlayheadPositionMs: () => transport.positionMs,
     getTrackCount: () => project.tracks.length,
     applyScroll,
-    redraw: () => redraw(),
+    redraw: () => {
+      redrawScheduler.cancel()
+      redrawNow()
+    },
     updatePlayhead: () => updatePlayhead()
   })
 

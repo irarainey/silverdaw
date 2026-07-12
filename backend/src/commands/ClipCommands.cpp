@@ -41,7 +41,11 @@ void handleClipMove(const juce::var& payload, silverdaw::AudioEngine& engine, si
     {
         if (projectState.setClipTrack(clipId, newTrackId))
         {
-            engine.setClipGain(clipId, projectState.getEffectiveTrackGain(newTrackId));
+            const float effective =
+                projectState.getEffectiveTrackGain(newTrackId);
+            engine.setClipGain(clipId, effective);
+            engine.setTrackAudible(newTrackId, effective > 0.0F);
+            engine.moveClipToTrack(clipId, newTrackId);
         }
     }
 }

@@ -47,6 +47,13 @@ std::unique_ptr<juce::MidiOutput> openMatchingMidiOutput(const juce::String& inp
     return candidate.has_value() ? juce::MidiOutput::openDevice(candidate->identifier) : nullptr;
 }
 
+bool isMidiInputConnected(const juce::String& identifier)
+{
+    for (const auto& device : juce::MidiInput::getAvailableDevices())
+        if (device.identifier == identifier) return true;
+    return false;
+}
+
 template <std::size_t Size>
 void sendControllerMessages(
     juce::MidiOutput* output,
@@ -157,12 +164,17 @@ public:
         juce::Array<juce::var> inputs;
         for (const auto& device : juce::MidiInput::getAvailableDevices())
         {
+            const auto manufacturer = midiControllerManufacturerName(device.name);
             auto* inputObj = new juce::DynamicObject();
             inputObj->setProperty("name", device.name);
             inputObj->setProperty("identifier", device.identifier);
             inputObj->setProperty("connected", true);
+            inputObj->setProperty("manufacturer",
+                                  manufacturer.has_value()
+                                      ? juce::var(*manufacturer)
+                                      : juce::var());
             inputObj->setProperty("controllerProfile",
-                                  supportsMidiControllerMapping(device.name)
+                                  manufacturer.has_value()
                                       ? juce::var("MIDI deck")
                                       : juce::var());
 
@@ -235,6 +247,7 @@ public:
             broadcastDeckSelection(*active);
             return;
         }
+        if (!isMidiInputConnected(identifier)) return;
         silverdaw::log::warn("midi", "deck selection target is not an enabled input: " +
                                           identifier);
     }

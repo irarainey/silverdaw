@@ -24,6 +24,11 @@ inline RubberBand::RubberBandStretcher::Options parseWarpMode(const juce::String
     return O::OptionEngineFaster | O::OptionTransientsCrisp;
 }
 
+inline double warpPitchScale(double semitones, double cents) noexcept
+{
+    return std::pow(2.0, (semitones + cents / 100.0) / 12.0);
+}
+
 // Lock-free audio-thread wrapper around one `RubberBandStretcher`.
 // Message-thread setters publish atomically; `process` must not allocate or block.
 // Public `tempoRatio` is project/source, but Rubber Band receives its inverse.
@@ -37,7 +42,9 @@ class WarpProcessor
         return channelCount > 0 && channelCount <= kMaxChannels;
     }
 
-    WarpProcessor(int numChannels, double sampleRate, RubberBand::RubberBandStretcher::Options modeOptions);
+    WarpProcessor(int numChannels, double sampleRate,
+                  RubberBand::RubberBandStretcher::Options modeOptions,
+                  double initialPitchScale = 1.0);
     ~WarpProcessor();
 
     WarpProcessor(const WarpProcessor&) = delete;
@@ -85,6 +92,10 @@ class WarpProcessor
         return static_cast<juce::int64>(std::ceil(static_cast<double>(sourceSamples) / tempoRatio));
     }
 
+    static RubberBand::RubberBandStretcher::Options realtimeOptionsFor(
+        RubberBand::RubberBandStretcher::Options modeOptions,
+        double initialPitchScale) noexcept;
+
     /** Audio-thread-safe getter for seek mapping between timeline and source offsets. */
     double getTempoRatio() const noexcept
     {
@@ -117,6 +128,8 @@ class WarpProcessor
     // Audio-thread mirror avoids redundant Rubber Band parameter calls.
     double appliedTempoRatio{1.0};
     double appliedPitchScale{1.0};
+    bool canChangePitchOption = false;
+    bool highConsistencyPitch = false;
 
     // Audio-thread source cursor.
     juce::int64 nextSourceSample{0};

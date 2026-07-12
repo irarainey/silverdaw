@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
 import { registerPreferencesHandlers } from '@main/ipc/preferencesHandlers'
 import {
   buildDefaultPrefs,
+  sanitiseMidiDevicePreferences,
   sanitiseMidiDeckSelections,
   type Preferences
 } from '@main/preferences'
@@ -100,6 +101,31 @@ describe('preferences IPC: setStems', () => {
       wrong: 'enabled'
     })).toEqual({
       valid: { deck1Enabled: true, deck2Enabled: false }
+    })
+  })
+
+  it('persists valid per-device MIDI interaction preferences', () => {
+    const setPreferences = handlers.get('prefs:setMidiDevicePreferences')
+    setPreferences?.({}, 'ddj-rb', {
+      scrubAudioEnabled: false,
+      crossfaderDirection: 'rightToLeft'
+    })
+
+    expect(store.midiDevicePreferences['ddj-rb']).toEqual({
+      scrubAudioEnabled: false,
+      crossfaderDirection: 'rightToLeft'
+    })
+    expect(flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('defaults corrupt MIDI device preference fields safely', () => {
+    expect(sanitiseMidiDevicePreferences({
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
+      partial: { scrubAudioEnabled: 'no' },
+      wrong: 'enabled'
+    })).toEqual({
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
+      partial: { scrubAudioEnabled: false, crossfaderDirection: 'leftToRight' }
     })
   })
 })

@@ -9,7 +9,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
-import { effectiveTempoRatio, isWarpActive } from '@/lib/warp'
+import { effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -143,11 +143,18 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     // Project the first beat into timeline time using the warp that will apply on drop.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
+    const sourceIsSimple = libraryItemIsSimple(item, library.byId)
     const willWarpForSnap =
       item.warpEnabled === true ||
-      (ui.matchProjectTempoOnDrop &&
-        projectHasOtherClips &&
-        item.kind !== 'clip' && item.variableTempo !== true)
+      shouldAutoWarpOnDrop({
+        preferenceEnabled: ui.matchProjectTempoOnDrop,
+        projectHasOtherClips,
+        sourceKind: item.kind,
+        sourceIsSimple,
+        sourceBpm,
+        projectBpm: transport.bpm,
+        variableTempo: item.variableTempo
+      })
     const ratio = isWarpActive({
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
@@ -193,11 +200,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const dropIsSample = libraryItemIsSimple(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
-      (ui.matchProjectTempoOnDrop &&
-        projectHasOtherClips &&
-        !dropIsSample &&
-        item.kind !== 'clip' && item.variableTempo !== true &&
-        typeof item.bpm === 'number' && item.bpm > 0 && transport.bpm > 0)
+      shouldAutoWarpOnDrop({
+        preferenceEnabled: ui.matchProjectTempoOnDrop,
+        projectHasOtherClips,
+        sourceKind: item.kind,
+        sourceIsSimple: dropIsSample,
+        sourceBpm: item.bpm,
+        projectBpm: transport.bpm,
+        variableTempo: item.variableTempo
+      })
     const previewRatio = willWarp
       ? effectiveTempoRatio({
           tempoRatio: item.tempoRatio,

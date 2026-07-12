@@ -111,9 +111,7 @@ async function importChannel(job: ChannelSplitJob, channel: SplitChannel, filePa
     runInUndoGroup(`Add ${label} channel`, () => {
       const trackId = project.addTrack()
       project.setTrackName(trackId, displayName)
-      project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs, {
-        suppressWarpSkipNotice: true
-      })
+      project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs)
     })
     return true
   } catch (err) {

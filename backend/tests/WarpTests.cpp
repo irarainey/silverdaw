@@ -121,6 +121,92 @@ void testWarpTimelineDurationMapping()
             "0.5x tempo ratio should double visible timeline duration");
 }
 
+void testWarpPitchStrategy()
+{
+    using Stretcher = RubberBand::RubberBandStretcher;
+    const auto tempoOnly = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFaster, 1.0);
+    require((tempoOnly & Stretcher::OptionProcessRealTime) != 0,
+            "warp playback must use Rubber Band real-time mode");
+    require((tempoOnly & Stretcher::OptionPitchHighConsistency) == 0,
+            "tempo-only warp should use Rubber Band's lower-cost pitch strategy");
+
+    const auto pitchShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFaster, 1.25);
+    require((pitchShifted & Stretcher::OptionPitchHighConsistency) != 0,
+            "pitch-shifted warp should preserve dynamic-pitch consistency");
+
+    const auto finerAtUnity = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFiner, 1.0);
+    require((finerAtUnity & Stretcher::OptionPitchHighConsistency) != 0,
+            "finer warp must configure immutable dynamic-pitch consistency at construction");
+}
+
+void testWarpFeedsRubberBandOnDemand()
+{
+    constexpr int kBlockSamples = 512;
+    silverdaw::WarpProcessor warp(
+        1, 48000.0, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    warp.prepareToPlay(kBlockSamples);
+    warp.setTempoRatio(1.0);
+
+    std::array<float, kBlockSamples> output{};
+    float* outputPtr = output.data();
+    std::vector<int> sourceRequests;
+    const auto readSource =
+        [&](float* const* dest, juce::int64, int numSamples)
+    {
+        sourceRequests.push_back(numSamples);
+        std::fill(dest[0], dest[0] + numSamples, 0.25F);
+    };
+
+    for (int block = 0; block < 4; ++block)
+        warp.process(&outputPtr, kBlockSamples, readSource);
+
+    require(!sourceRequests.empty(), "warp should request source audio");
+    require(std::all_of(sourceRequests.begin(), sourceRequests.end(),
+                        [](int samples) { return samples > 0 && samples <= 1024; }),
+            "warp source requests must remain within prepared feed capacity");
+    require(std::any_of(sourceRequests.begin(), sourceRequests.end(),
+                        [](int samples) { return samples < 1024; }),
+            "warp should honour Rubber Band source demand instead of always overfeeding");
+}
+
+void testWarpProducesAtExtremeRatios()
+{
+    constexpr int kBlockSamples = 512;
+    silverdaw::WarpProcessor warp(
+        1, 96000.0, RubberBand::RubberBandStretcher::OptionEngineFiner, 0.25);
+    warp.prepareToPlay(kBlockSamples);
+    warp.setTempoRatio(4.0);
+
+    std::array<float, kBlockSamples> output{};
+    float* outputPtr = output.data();
+    bool sawAudio = false;
+    const auto readSource =
+        [](float* const* dest, juce::int64 sourcePos, int numSamples)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const double phase =
+                2.0 * juce::MathConstants<double>::pi * 440.0
+                * static_cast<double>(sourcePos + i) / 96000.0;
+            dest[0][i] = static_cast<float>(std::sin(phase) * 0.5);
+        }
+    };
+
+    for (int block = 0; block < 8; ++block)
+    {
+        const int produced = warp.process(&outputPtr, kBlockSamples, readSource);
+        require(produced == kBlockSamples,
+                "extreme legal warp ratios must satisfy the output block contract");
+        sawAudio = sawAudio
+            || std::any_of(output.begin(), output.end(),
+                           [](float sample) { return std::abs(sample) > 1.0e-4F; });
+    }
+    require(sawAudio, "extreme legal warp ratios must not reset into permanent silence");
+}
+
 void testOffsetSourceChunksOversizedWarpRequests()
 {
     constexpr double sampleRate = 48000.0;
@@ -202,6 +288,9 @@ void addWarpTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"WarpProcessor basic real-time stretch", testWarpProcessorBasicStretch});
     tests.push_back({"Warp timeline duration mapping", testWarpTimelineDurationMapping});
+    tests.push_back({"Warp pitch strategy", testWarpPitchStrategy});
+    tests.push_back({"Warp feeds Rubber Band on demand", testWarpFeedsRubberBandOnDemand});
+    tests.push_back({"Warp produces at extreme ratios", testWarpProducesAtExtremeRatios});
     tests.push_back({"OffsetSource chunks oversized warp requests", testOffsetSourceChunksOversizedWarpRequests});
 }
 

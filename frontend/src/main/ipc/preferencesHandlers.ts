@@ -13,7 +13,7 @@ import type {
   PathPrefs,
   ToastPrefs
 } from '../preferences'
-import type { MidiDeckSelection } from '../../shared/types'
+import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
 import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
@@ -238,6 +238,43 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
         [key]: {
           deck1Enabled: candidate.deck1Enabled,
           deck2Enabled: candidate.deck2Enabled
+        }
+      }
+      prefs.schedulePrefsSave()
+    }
+  )
+
+  ipcMain.handle(
+    IPC.prefs.getMidiDevicePreferences,
+    (): Record<string, MidiDevicePreferences> => ({ ...prefs.get().midiDevicePreferences })
+  )
+
+  ipcMain.on(
+    IPC.prefs.setMidiDevicePreferences,
+    (_evt, identifier: unknown, preferences: unknown) => {
+      if (typeof identifier !== 'string' || !preferences || typeof preferences !== 'object') return
+      const key = identifier.trim()
+      const candidate = preferences as Partial<MidiDevicePreferences>
+      if (
+        key.length === 0 ||
+        typeof candidate.scrubAudioEnabled !== 'boolean' ||
+        (candidate.crossfaderDirection !== 'leftToRight' &&
+          candidate.crossfaderDirection !== 'rightToLeft')
+      ) {
+        return
+      }
+      const current = prefs.get().midiDevicePreferences[key]
+      if (
+        current?.scrubAudioEnabled === candidate.scrubAudioEnabled &&
+        current.crossfaderDirection === candidate.crossfaderDirection
+      ) {
+        return
+      }
+      prefs.get().midiDevicePreferences = {
+        ...prefs.get().midiDevicePreferences,
+        [key]: {
+          scrubAudioEnabled: candidate.scrubAudioEnabled,
+          crossfaderDirection: candidate.crossfaderDirection
         }
       }
       prefs.schedulePrefsSave()

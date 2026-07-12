@@ -6,7 +6,7 @@ import {
   effectiveTempoRatio,
   isWarpActive,
   isWarpPending,
-  variableTempoWarpSkippedMessage
+  shouldAutoWarpOnDrop
 } from '@/lib/warp'
 
 describe('warp helpers', () => {
@@ -72,17 +72,30 @@ describe('warp helpers', () => {
     })
   })
 
-  describe('variableTempoWarpSkippedMessage', () => {
-    it('names the source and points at manual warping', () => {
-      const msg = variableTempoWarpSkippedMessage('California Soul')
-      expect(msg).toContain('"California Soul"')
-      expect(msg).toContain('variable tempo')
-      expect(msg).toMatch(/split/i)
+  describe('shouldAutoWarpOnDrop', () => {
+    const eligible = {
+      preferenceEnabled: true,
+      projectHasOtherClips: true,
+      sourceKind: 'source' as const,
+      sourceIsSimple: false,
+      sourceBpm: 100,
+      projectBpm: 120
+    }
+
+    it('keeps variable-tempo music eligible when a representative BPM exists', () => {
+      expect(shouldAutoWarpOnDrop({ ...eligible, variableTempo: true })).toBe(true)
     })
 
-    it('falls back to a generic subject when no name is given', () => {
-      expect(variableTempoWarpSkippedMessage()).toMatch(/^This clip/)
-      expect(variableTempoWarpSkippedMessage('   ')).toMatch(/^This clip/)
+    it('honours the preference and existing sample/saved-clip exclusions', () => {
+      expect(shouldAutoWarpOnDrop({ ...eligible, preferenceEnabled: false })).toBe(false)
+      expect(shouldAutoWarpOnDrop({ ...eligible, sourceIsSimple: true })).toBe(false)
+      expect(shouldAutoWarpOnDrop({ ...eligible, sourceKind: 'clip' })).toBe(false)
+    })
+
+    it('requires another clip and usable source/project BPM values', () => {
+      expect(shouldAutoWarpOnDrop({ ...eligible, projectHasOtherClips: false })).toBe(false)
+      expect(shouldAutoWarpOnDrop({ ...eligible, sourceBpm: undefined })).toBe(false)
+      expect(shouldAutoWarpOnDrop({ ...eligible, projectBpm: 0 })).toBe(false)
     })
   })
 

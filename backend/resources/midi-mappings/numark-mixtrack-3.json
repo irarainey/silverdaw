@@ -7,7 +7,7 @@
   ],
   "inputs": [
     { "action": "browsePress", "encoding": "button", "message": "note", "data1": 18, "channels": [0], "decks": [0] },
-    { "action": "browseTracks", "encoding": "relativeTwosComplement", "message": "cc", "data1": 23, "direction": -1, "channels": [0], "decks": [0] },
+    { "action": "browseTracks", "shiftedAction": "timelineZoom", "encoding": "relativeTwosComplement", "message": "cc", "data1": 23, "direction": -1, "channels": [0], "decks": [0] },
     { "action": "playPause", "encoding": "button", "message": "note", "data1": 1, "channels": [1, 2], "decks": [1, 2] },
     { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 3, "channels": [1, 2], "decks": [1, 2] },
     { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 2, "channels": [1, 2], "decks": [1, 2] },

@@ -67,6 +67,7 @@ const {
 
     <TransportPlaybackControls
       :is-playing="transport.isPlaying"
+      :is-playback-held="transport.isPlaybackHeld"
       :follow-playback="ui.followPlayback"
       :skip-back-title="skipBackTitle"
       :play-button-title="playButtonTitle"

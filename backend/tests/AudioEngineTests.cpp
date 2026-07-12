@@ -245,16 +245,36 @@ void testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded()
             "play() must open the gate iff priming reports ready (fail-closed)");
     engine.stop();
 
-    // Mute one clip while the master gate is closed, then prime again: this exercises the
-    // play-start gain-settle (the throwaway one-sample pump that clears a stale transport
-    // gain ramp so a freshly-muted track cannot leak a one-block fade-out on the next play).
-    // It must remain crash-free and bounded with the gain change in flight.
-    require(engine.setClipGain("c1", 0.0F), "muting a clip while gated should succeed");
+    // A muted track is excluded from playback. Edits remain live while bypassed,
+    // and unmute must rebuild stale read-ahead before returning it to the graph.
+    require(engine.setClipGain("c1", 0.0F), "muting c1 while gated should succeed");
+    require(engine.setClipGain("c2", 0.0F), "muting c2 while gated should succeed");
+    const auto tBypass = juce::Time::getMillisecondCounterHiRes();
+    engine.setTrackAudible("t1", false);
+    require(juce::Time::getMillisecondCounterHiRes() - tBypass < 250.0,
+            "muting a stopped track must not wait for excluded transports");
+    require(engine.setClipOffsetMs("c1", 250.0),
+            "editing a bypassed track should remain available");
+    require(engine.setClipGain("c1", 1.0F), "restoring c1 gain should succeed");
+    require(engine.setClipGain("c2", 1.0F), "restoring c2 gain should succeed");
+    engine.play();
+    require(engine.isPlaying(),
+            "playback with every track bypassed should not wait for read-ahead");
+    engine.setTrackAudible("t1", true);
     const auto tMute = juce::Time::getMillisecondCounterHiRes();
     engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
     require(juce::Time::getMillisecondCounterHiRes() - tMute < 3000.0,
             "priming after a mute must stay bounded");
-    engine.play();
+
+    engine.setTrackAudible("t2", false);
+    const auto tMove = juce::Time::getMillisecondCounterHiRes();
+    require(engine.moveClipToTrack("c1", "t2"),
+            "a live move into a muted track should update engine graph membership");
+    engine.setTrackAudible("t2", true);
+    require(engine.moveClipToTrack("c1", "t1"),
+            "a live move back to an audible track should resynchronise before publication");
+    require(juce::Time::getMillisecondCounterHiRes() - tMove < 1000.0,
+            "live cross-track moves and unmute must stay bounded");
     engine.stop();
 
     require(engine.removeClip("c1"), "removeClip c1 should succeed");
@@ -623,6 +643,56 @@ void testMasterClockPublishesAudioPerfOffThread()
     // Draining resets the worst-case accumulator.
     auto reset = master.drainAudioPerf();
     require(reset.maxElapsedMs == 0.0, "drain resets the worst-case elapsed accumulator");
+
+    struct RampSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& block) override
+        {
+            for (int ch = 0; ch < block.buffer->getNumChannels(); ++ch)
+            {
+                auto* dst = block.buffer->getWritePointer(ch, block.startSample);
+                for (int i = 0; i < block.numSamples; ++i)
+                    dst[i] = static_cast<float>(i);
+            }
+        }
+    };
+
+    RampSource ramp;
+    silverdaw::OutputKeepAlive scrubKeepAlive;
+    silverdaw::MasterClockSource scrubMaster(ramp, scrubKeepAlive);
+    scrubMaster.prepareToPlay(kBlock, kRate);
+    scrubMaster.setPositionSamples(1234);
+
+    scrubMaster.requestScrub(1, kBlock);
+    buf.clear();
+    scrubMaster.getNextAudioBlock(info);
+    require(buf.getSample(0, 40) < buf.getSample(0, 100),
+            "forward scrub should preserve source direction");
+    require(scrubMaster.getPositionSamples() == 1234,
+            "scrub audio must not advance the held transport");
+
+    scrubMaster.requestScrub(-1, kBlock);
+    buf.clear();
+    scrubMaster.getNextAudioBlock(info);
+    require(buf.getSample(0, 40) > buf.getSample(0, 100),
+            "backward scrub should reverse the auditioned source grain");
+    require(scrubMaster.getPositionSamples() == 1234,
+            "reverse scrub must not advance the held transport");
+
+    ConstantSource steadyScrub(0.1F);
+    silverdaw::OutputKeepAlive steadyKeepAlive;
+    silverdaw::MasterClockSource steadyMaster(steadyScrub, steadyKeepAlive);
+    steadyMaster.prepareToPlay(kBlock, kRate);
+    steadyMaster.requestScrub(1, kBlock * 2);
+    buf.clear();
+    steadyMaster.getNextAudioBlock(info);
+    steadyMaster.requestScrub(1, kBlock * 2);
+    buf.clear();
+    steadyMaster.getNextAudioBlock(info);
+    requireNear(buf.getSample(0, 0), 0.1F, 1.0e-4,
+                "continuous scrub grains must not restart the fade-in");
 
     // Playing: the transport advances by one block and the counter keeps rising.
     keepAlive.setPlaying(true);

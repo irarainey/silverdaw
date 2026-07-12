@@ -215,6 +215,11 @@ void testMidiDevicesEnvelopeShape()
         require(entry["identifier"].isString(), "each MIDI input should have an identifier");
         require(entry["connected"].isBool(), "each MIDI input should report connection state");
         require(entry["enabled"].isBool(), "each MIDI input should report enabled state");
+        require(entry.getDynamicObject()->hasProperty("manufacturer"),
+                "each MIDI input should include nullable manufacturer metadata");
+        const auto manufacturer = entry["manufacturer"];
+        require(manufacturer.isVoid() || manufacturer.isString(),
+                "MIDI input manufacturer should be null or a display name");
         require(entry.getDynamicObject()->hasProperty("controllerProfile"),
                 "each MIDI input should include nullable controller mapping state");
         const auto controllerProfile = entry["controllerProfile"];

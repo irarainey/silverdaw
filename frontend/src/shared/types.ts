@@ -96,6 +96,18 @@ export interface MidiDeckSelection {
   deck2Enabled: boolean
 }
 
+export type MidiCrossfaderDirection = 'leftToRight' | 'rightToLeft'
+
+export interface MidiDevicePreferences {
+  scrubAudioEnabled: boolean
+  crossfaderDirection: MidiCrossfaderDirection
+}
+
+export const DEFAULT_MIDI_DEVICE_PREFERENCES: Readonly<MidiDevicePreferences> = {
+  scrubAudioEnabled: false,
+  crossfaderDirection: 'leftToRight'
+}
+
 // ─── Stem-separation model store (download-on-first-use) ──────────────────────
 
 /** Fast presence summary for the stem-separation model, returned to the renderer. */

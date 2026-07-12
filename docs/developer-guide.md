@@ -142,11 +142,12 @@ scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 ```
 
 Notable hot-path splits include `AudioEngineDevice.cpp`,
-`AudioEngineTransport.cpp`, `AudioEngineMix.cpp`, `BusGraphRender.cpp`,
-`OffsetSourceWarpRender.cpp`, and `OffsetSourceTailRender.cpp` under `engine/`,
-plus `ToneEq.cpp`, `SharedFx.cpp`, `BpmAnalysisHelpers.cpp`, and `DspSmooth.h`
-under `dsp/`. These keep device, transport, rendering, effects, and analysis
-responsibilities out of monolithic implementation files.
+`AudioEngineTransport.cpp`, `AudioEngineAudibility.cpp`,
+`AudioEngineMix.cpp`, `BusGraphRender.cpp`, `OffsetSourceWarpRender.cpp`, and
+`OffsetSourceTailRender.cpp` under `engine/`, plus `ToneEq.cpp`, `SharedFx.cpp`,
+`BpmAnalysisHelpers.cpp`, and `DspSmooth.h` under `dsp/`. These keep device,
+transport, track audibility, rendering, effects, and analysis responsibilities
+out of monolithic implementation files.
 
 ## Current status and roadmap
 
@@ -178,9 +179,11 @@ Silverdaw currently supports the core arrangement workflow:
   Editor's **Slice** mode for grid plus hand-placed markers.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
 - Non-destructive per-clip warp and pitch settings via Rubber Band. Dropped
-  clips can auto-match the project tempo, late auto-warp engages after BPM
-  analysis if needed, and warped clips show a visible **WARP** badge or
-  pending spinner on the timeline.
+  music auto-matches the project tempo by default, including variable-tempo
+  sources using their detected representative BPM. Late auto-warp engages
+  after BPM analysis if needed, and warped clips show a visible **WARP** badge
+  or pending spinner on the timeline. The Timeline preference can disable
+  automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
   (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
@@ -574,13 +577,21 @@ Device matching is case-insensitive, uses token boundaries, honours
 
 The renderer converts semantic controls into operational actions in
 `midiControllerActions.ts` and `midiBrowseActions.ts`. Jog movement is
-animation-frame coalesced; normal movement snaps to timeline grid lines and a
-held Sync modifier selects free movement. Browse controls switch between track
-selection, clip selection/range extension, and timeline zoom. Absolute channel
-faders, Tone EQ, and Filter target the currently selected track, with a short
-catch-up transition when hardware and software positions differ. Master volume
-is applied to the project. Crossfader input is retained as controller telemetry
-but does not currently alter the audible mix.
+animation-frame coalesced; normal movement is free, Shift moves faster, and a
+held Sync modifier snaps movement to timeline grid lines. Touching an enabled
+jog platter while playing pauses the backend without clearing renderer play
+intent. Movement while held sends short directional scrub grains through the
+audio output without advancing normal transport playback unless that device's
+saved scrub-audio preference is off. Per-device MIDI preferences are keyed by
+the Windows/JUCE identifier and also retain the selected crossfader direction.
+The final platter release resumes playback, while an explicit pause cancels
+that resume. Browse controls switch between track selection, clip
+selection/range extension, and Shift-modified timeline zoom; clockwise zooms
+in and anticlockwise zooms out.
+Absolute channel faders, Tone EQ, and Filter target the currently selected
+track, with a short catch-up transition when hardware and software positions
+differ. Master volume is applied to the project. Crossfader input is retained
+as controller telemetry but does not currently alter the audible mix.
 
 If a profile defines output bindings, the backend opens one unambiguous MIDI
 output whose name matches the input. It can then send selected-track meters,
@@ -1983,8 +1994,9 @@ sidebar:
   channels), library tile imagery, and toast notifications.
 - **Timeline** — timeline behaviour: follow-playback auto-scroll, **set project
   tempo from first clip** (seed a new project's BPM from the first clip dropped),
-  **match project tempo on drop** (auto-warp a dropped clip to the project BPM),
-  and the transport **previous / next button target**.
+  **auto-warp clips to project tempo** (default on, including variable-tempo
+  music), beat-grid alignment after analysis, and the transport **previous /
+  next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove** (with a *cannot be
   undone* warning; a file-deleting removal is non-undoable and doesn't dirty the
@@ -2531,6 +2543,19 @@ Auto-follow during playback uses a smooth catch-up:
 On the backend, `BridgeServer::broadcast` suppresses per-envelope log writes for both
 `PLAYHEAD_UPDATE` and `PREVIEW_POSITION` (the only 60 Hz envelopes), so a playing transport
 does not generate 60 log lines / second.
+
+**Warp and track rendering.** Faster/R2 warp processors use Rubber Band's
+lower-cost pitch path while a clip has no pitch shift; pitch-shifted R2 and all
+Finer/R3 processors retain the high-consistency path. Input is supplied according
+to `getSamplesRequired()` with latency-derived bounds instead of fixed 1,024-frame
+pushes. Live playback, preview, mixdown, and sample export share the same pitch
+conversion and processor setup.
+
+Muted and solo-excluded tracks are omitted from immutable `BusGraph` render
+snapshots after one final gain-ramp block. Their clips, warp and pitch processing,
+track effects, sends, and metering are therefore not pulled. Effect and clip
+settings remain editable while excluded. Before a track returns to the graph, its
+transports are reseeked to the master position and stale read-ahead is rebuilt.
 
 **Clip Editor uses the same renderer discipline.** The Clip Editor waveform
 (`lib/clipEditor/useClipEditorWaveform.ts`) is also PixiJS, mirroring the timeline rather

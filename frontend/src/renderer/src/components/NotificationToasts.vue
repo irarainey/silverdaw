@@ -11,7 +11,7 @@ const notifications = useNotificationsStore()
 
 <template>
   <div
-    class="pointer-events-none fixed right-4 bottom-4 z-50 flex max-w-md flex-col-reverse gap-2"
+    class="pointer-events-none fixed right-4 bottom-4 z-[1300] flex max-w-md flex-col-reverse gap-2"
     aria-live="polite"
     aria-atomic="false"
   >

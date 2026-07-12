@@ -39,6 +39,9 @@ public:
         std::atomic<float> peakL{0.0F};
         std::atomic<float> peakR{0.0F};
         std::atomic<bool> automationResetRequested{false};
+        std::atomic<bool> bypassRequested{false};
+        std::atomic<bool> bypassReady{false};
+        bool renderEnabled = true;
         // Message-thread-owned pointer copied into each immutable RenderSnapshot.
         const TrackAutomationSnapshot* publishedAutomation = nullptr;
         const TrackAutomationSnapshot* lastAutomationSnapshot = nullptr;
@@ -112,13 +115,25 @@ public:
 
     void attachClip(const juce::String& trackId,
                     const juce::String& clipId,
-                    juce::AudioSource* clipTransport);
+                    juce::AudioSource* clipTransport,
+                    bool trackRenderingEnabled = true,
+                    bool prepareSource = true);
 
     void detachClip(const juce::String& clipId,
-                    juce::AudioSource* clipTransport);
+                    juce::AudioSource* clipTransport,
+                    bool releaseSource = true);
 
     bool consumeTrackPeaks(const juce::String& trackId,
                            float& outL, float& outR) noexcept;
+
+    /** Let one final gain-ramp block render before removing the track. */
+    void requestTrackBypass(const juce::String& trackId);
+
+    /** Remove a track whose final block has rendered. Returns true when complete. */
+    bool finalizeTrackBypass(const juce::String& trackId);
+
+    /** Immediately include or exclude a track at a quiescent graph boundary. */
+    void setTrackRenderingEnabled(const juce::String& trackId, bool enabled);
 
     void setTrackTone(const juce::String& trackId,
                       float bassDb, float midDb, float trebleDb, float filter,

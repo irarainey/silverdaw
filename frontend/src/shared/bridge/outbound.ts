@@ -449,6 +449,11 @@ export interface TransportSeekPayload {
   positionMs: number
 }
 
+export interface TransportScrubPayload {
+  positionMs: number
+  deltaMs: number
+}
+
 /**
  * Per-session AUTH handshake — MUST be the first envelope on every socket;
  * the backend closes the socket on any other first message or token mismatch.
@@ -513,6 +518,7 @@ export interface BridgeOutboundMap {
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
   TRANSPORT_SEEK: TransportSeekPayload
+  TRANSPORT_SCRUB: TransportScrubPayload
   WAVEFORM_REQUEST: WaveformRequestPayload
   PROJECT_NEW: undefined
   PROJECT_SAVE: ProjectSavePayload
@@ -1102,6 +1108,7 @@ export const bridgeOutboundPayloadKinds: {
   TRANSPORT_PAUSE: 'none',
   TRANSPORT_STOP: 'none',
   TRANSPORT_SEEK: 'payload',
+  TRANSPORT_SCRUB: 'payload',
   WAVEFORM_REQUEST: 'payload',
   PROJECT_NEW: 'none',
   PROJECT_SAVE: 'payload',

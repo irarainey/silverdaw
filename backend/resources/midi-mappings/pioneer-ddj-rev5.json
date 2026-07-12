@@ -13,7 +13,7 @@
     { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 13, "channels": [0, 1], "decks": [1, 2] },
     { "action": "jogTouch", "encoding": "button", "message": "note", "data1": 29, "channels": [0, 1], "decks": [1, 2] },
     { "action": "wheelPitchBend", "encoding": "relative", "message": "cc", "data1": 33, "channels": [0, 1], "decks": [1, 2] },
-    { "action": "browseTracks", "encoding": "relative", "message": "cc", "data1": 64, "direction": -1, "channels": [6], "decks": [0] },
+    { "action": "browseTracks", "shiftedAction": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 64, "direction": -1, "channels": [6], "decks": [0] },
     { "action": "browsePress", "encoding": "button", "message": "note", "data1": 65, "channels": [6], "decks": [0] },
     { "action": "timelineZoom", "encoding": "relative", "message": "cc", "data1": 100, "channels": [6], "decks": [0] },
     { "action": "trackGain", "encoding": "absolute14", "message": "cc", "data1": 19, "lsbData1": 51, "channels": [0, 1], "decks": [1, 2] },

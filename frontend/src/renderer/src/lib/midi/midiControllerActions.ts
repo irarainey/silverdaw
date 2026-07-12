@@ -17,6 +17,11 @@ import {
   handleBrowseRotation,
   resetMidiBrowseActionsForTests
 } from '@/lib/midi/midiBrowseActions'
+import {
+  handleMidiJogTouch,
+  releaseAllMidiPlaybackHolds,
+  resetMidiPlaybackHoldForTests
+} from '@/lib/midi/midiPlaybackHold'
 import { useProjectStore } from '@/stores/projectStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -46,8 +51,8 @@ let lastSnappedSeekAt = Number.NEGATIVE_INFINITY
 let pendingSnapUnitsPerBeat: number = SNAPPED_JOG_PACING.jogScratch.unitsPerBeat
 let pendingSnapMinIntervalMs: number = SNAPPED_JOG_PACING.jogScratch.minIntervalMs
 let pendingJogMode: 'snapped' | 'free' | null = null
+let pendingJogDeviceIdentifier: string | null = null
 let seekFrame: number | null = null
-const MIDI_ZOOM_FACTOR_PER_STEP = 1.02
 const FOURTEEN_BIT_MIDPOINT = 8192 / 16383 // Normalized center of a 14-bit CC.
 const DIAL_CATCH_UP_MS = 150
 const DIAL_VALUE_EPSILON = 1e-4
@@ -96,28 +101,38 @@ function flushTimelineJog(timestamp: number): void {
   pendingSeekDeltaMs = 0
   pendingBeatSteps = 0
   pendingJogMode = null
+  const jogDeviceIdentifier = pendingJogDeviceIdentifier
+  pendingJogDeviceIdentifier = null
   const positionMs = Math.max(0, projectEnd > 0 ? Math.min(projectEnd, unclamped) : unclamped)
-  if (positionMs === transport.positionMs) return
+  const deltaMs = positionMs - transport.positionMs
+  if (deltaMs === 0) return
   transport.setPosition(positionMs)
-  sendBridge('TRANSPORT_SEEK', { positionMs })
+  if (
+    transport.midiPlaybackHoldActive &&
+    jogDeviceIdentifier !== null &&
+    useMidiDeviceStore().isScrubAudioEnabled(jogDeviceIdentifier)
+  ) {
+    sendBridge('TRANSPORT_SCRUB', { positionMs, deltaMs })
+  } else {
+    sendBridge('TRANSPORT_SEEK', { positionMs })
+  }
   ui.requestTimelineScrollToPosition(positionMs)
 }
 
 function queueTimelineJog(
   control: keyof typeof JOG_MS_PER_STEP,
   delta: number,
-  freeMovement: boolean
+  snapToGrid: boolean,
+  deviceIdentifier: string
 ): void {
-  const mode = freeMovement ? 'free' : 'snapped'
+  const mode = snapToGrid ? 'snapped' : 'free'
   if (pendingJogMode !== null && pendingJogMode !== mode) {
     pendingSeekDeltaMs = 0
     pendingBeatSteps = 0
   }
   pendingJogMode = mode
-  if (freeMovement) {
-    snappedJogUnits = 0
-    pendingSeekDeltaMs += delta * JOG_MS_PER_STEP[control]
-  } else {
+  pendingJogDeviceIdentifier = deviceIdentifier
+  if (snapToGrid) {
     const pacing = SNAPPED_JOG_PACING[control]
     pendingSnapUnitsPerBeat = pacing.unitsPerBeat
     pendingSnapMinIntervalMs = pacing.minIntervalMs
@@ -125,6 +140,9 @@ function queueTimelineJog(
       snappedJogUnits = 0
     }
     pendingBeatSteps += delta
+  } else {
+    snappedJogUnits = 0
+    pendingSeekDeltaMs += delta * JOG_MS_PER_STEP[control]
   }
   if (seekFrame !== null) return
   seekFrame = globalThis.requestAnimationFrame(flushTimelineJog)
@@ -295,20 +313,24 @@ export function handleMidiControl(payload: MidiControlPayload): void {
     } else if (payload.control === 'timelineZoom') {
       if (handleBrowseRotation(payload.deviceIdentifier, -payload.value, true)) return
       const ui = useUiStore()
-      ui.requestTimelineZoomTo(
-        ui.zoomPxPerSecond * Math.pow(MIDI_ZOOM_FACTOR_PER_STEP, Math.sign(payload.value))
-      )
+      const action = payload.value > 0 ? 'in' : 'out'
+      ui.requestTimelineZoom(action)
     } else if (payload.deck !== null) {
       queueTimelineJog(
         payload.control,
         payload.value,
-        useMidiDeviceStore().syncPressed[payload.deck]
+        useMidiDeviceStore().syncPressed[payload.deck],
+        payload.deviceIdentifier
       )
     }
     return
   }
   if (payload.kind === 'absolute') {
     applyAbsoluteControl(payload)
+    return
+  }
+  if (payload.kind === 'button' && payload.control === 'jogTouch') {
+    handleMidiJogTouch(payload.deviceIdentifier, payload.deck, payload.pressed)
     return
   }
   if (payload.kind !== 'button' || !payload.pressed) return
@@ -341,12 +363,11 @@ export function handleMidiControl(payload: MidiControlPayload): void {
     }
     case 'shift':
     case 'syncModifier':
-    case 'jogTouch':
       break
   }
 }
 
-export function resetMidiControllerActionsForTests(): void {
+function clearPendingMidiControllerActions(): void {
   if (seekFrame !== null) globalThis.cancelAnimationFrame(seekFrame)
   if (dialFrame !== null) globalThis.cancelAnimationFrame(dialFrame)
   seekFrame = null
@@ -358,7 +379,18 @@ export function resetMidiControllerActionsForTests(): void {
   pendingSnapUnitsPerBeat = SNAPPED_JOG_PACING.jogScratch.unitsPerBeat
   pendingSnapMinIntervalMs = SNAPPED_JOG_PACING.jogScratch.minIntervalMs
   pendingJogMode = null
+  pendingJogDeviceIdentifier = null
   lastMidiDialValues.clear()
   dialCatchUps.clear()
+}
+
+export function suspendMidiControllerActions(): void {
+  clearPendingMidiControllerActions()
+  releaseAllMidiPlaybackHolds()
+}
+
+export function resetMidiControllerActionsForTests(): void {
+  clearPendingMidiControllerActions()
   resetMidiBrowseActionsForTests()
+  resetMidiPlaybackHoldForTests()
 }

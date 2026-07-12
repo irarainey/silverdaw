@@ -45,4 +45,15 @@ void handleTransportSeek(const juce::var& payload, AudioEngine& engine, ProjectS
     }
 }
 
+void handleTransportScrub(const juce::var& payload, AudioEngine& engine, ProjectState& projectState)
+{
+    const auto positionMs = tryGetNumber(payload, "positionMs");
+    const auto deltaMs = tryGetNumber(payload, "deltaMs");
+    if (! positionMs.has_value() || ! deltaMs.has_value())
+        return;
+
+    if (engine.scrubPositionMs(*positionMs, *deltaMs))
+        projectState.setPlayheadMs(juce::jmax(0.0, *positionMs));
+}
+
 } // namespace silverdaw

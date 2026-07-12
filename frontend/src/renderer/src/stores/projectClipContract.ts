@@ -44,8 +44,7 @@ export type ProjectClipThis = ProjectState & {
       semitones?: number
       cents?: number
       derivedFrom?: LibraryItem['derivedFrom']
-    },
-    opts?: { suppressWarpSkipNotice?: boolean }
+    }
   ): void
 
   copySelectedClip(): boolean

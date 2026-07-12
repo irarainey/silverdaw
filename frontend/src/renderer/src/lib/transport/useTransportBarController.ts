@@ -100,6 +100,7 @@ export function useTransportBarController() {
     () => transport.positionMs,
     (ms) => {
       if (!transport.isPlaying) return
+      if (transport.midiPlaybackHoldActive) return
       const end = project.durationMs
       if (end <= 0) return
       if (ms < end) return
@@ -139,6 +140,7 @@ export function useTransportBarController() {
   })
 
   const playButtonTitle = computed(() => {
+    if (transport.isPlaybackHeld) return 'Playback held by MIDI jog wheel'
     if (transport.isPlaying) return 'Pause'
     if (!audioReady.value) return 'Starting audio engine…'
     if (playDisabled.value) return 'Playhead at end of project — skip back to play'

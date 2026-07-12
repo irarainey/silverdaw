@@ -80,9 +80,7 @@ describe('createTracksFromChannelSplit', () => {
     expect(addTrack).toHaveBeenCalledTimes(2)
     expect(setTrackName).toHaveBeenNthCalledWith(1, 'track-new', 'Left — Song')
     expect(setTrackName).toHaveBeenNthCalledWith(2, 'track-new', 'Right — Song')
-    expect(addClipFromLibrary).toHaveBeenCalledWith('track-new', { id: 'item-1' }, 4000, {
-      suppressWarpSkipNotice: true
-    })
+    expect(addClipFromLibrary).toHaveBeenCalledWith('track-new', { id: 'item-1' }, 4000)
     expect(pushInfo).toHaveBeenCalledWith('Added 2 channel tracks from Song')
   })
 

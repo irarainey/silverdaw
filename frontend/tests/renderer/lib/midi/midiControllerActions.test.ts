@@ -2,7 +2,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   handleMidiControl,
-  resetMidiControllerActionsForTests
+  resetMidiControllerActionsForTests,
+  suspendMidiControllerActions
 } from '@/lib/midi/midiControllerActions'
 import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectTypes'
@@ -87,6 +88,247 @@ describe('MIDI controller actions', () => {
     expect(useTransportStore().isPlaying).toBe(true)
   })
 
+  it('holds playing transport on jog touch and resumes on release', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 2,
+      pressed: true
+    })
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PAUSE')
+    expect(transport.isPlaying).toBe(true)
+    expect(transport.isPlaybackHeld).toBe(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 2,
+      pressed: false
+    })
+
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_PLAY')
+    expect(transport.isPlaybackHeld).toBe(false)
+  })
+
+  it('cancels queued movement and releases platter holds when MIDI is suspended', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 1,
+      pressed: true
+    })
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'relative',
+      control: 'jogScratch',
+      deck: 1,
+      value: 10
+    })
+
+    suspendMidiControllerActions()
+    animationFrame?.(0)
+
+    expect(transport.midiPlaybackHoldActive).toBe(false)
+    expect(sendMock).toHaveBeenNthCalledWith(1, 'TRANSPORT_PAUSE')
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'TRANSPORT_PLAY')
+    expect(sendMock).toHaveBeenCalledTimes(2)
+    expect(transport.positionMs).toBe(0)
+  })
+
+  it('cancels an in-progress physical dial catch-up when MIDI is suspended', () => {
+    seedProject()
+    const project = useProjectStore()
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'absolute',
+      control: 'masterVolume',
+      deck: null,
+      value: 0.2
+    })
+    expect(project.masterVolume).toBe(1)
+
+    suspendMidiControllerActions()
+    animationFrame?.(globalThis.performance.now() + 200)
+
+    expect(project.masterVolume).toBe(1)
+    expect(globalThis.cancelAnimationFrame).toHaveBeenCalled()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('does not resume when a held jog reaches the end of the project', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 2,
+      pressed: true
+    })
+    transport.setPosition(10_000)
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 2,
+      pressed: false
+    })
+
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PAUSE')
+    expect(transport.isPlaying).toBe(false)
+    expect(transport.midiPlaybackHoldActive).toBe(false)
+  })
+
+  it('waits for every touched deck before resuming playback', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    for (const deck of [1, 2] as const) {
+      handleMidiControl({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs: deck,
+        kind: 'button',
+        control: 'jogTouch',
+        deck,
+        pressed: true
+      })
+    }
+    expect(sendMock).toHaveBeenCalledTimes(1)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 3,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 1,
+      pressed: false
+    })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(transport.isPlaybackHeld).toBe(true)
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 4,
+      kind: 'button',
+      control: 'jogTouch',
+      deck: 2,
+      pressed: false
+    })
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_PLAY')
+    expect(sendMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not auto-start paused transport or resume after an explicit pause', () => {
+    seedProject()
+    const transport = useTransportStore()
+    const touch = (pressed: boolean, timestampMs: number): void => {
+      handleMidiControl({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs,
+        kind: 'button',
+        control: 'jogTouch',
+        deck: 2,
+        pressed
+      })
+    }
+
+    touch(true, 1)
+    touch(false, 2)
+    expect(sendMock).not.toHaveBeenCalled()
+
+    transport.setPlaybackState(true)
+    touch(true, 3)
+    sendMock.mockClear()
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 4,
+      kind: 'button',
+      control: 'playPause',
+      deck: 2,
+      pressed: true
+    })
+    touch(false, 5)
+
+    expect(transport.isPlaying).toBe(false)
+    expect(transport.isPlaybackHeld).toBe(false)
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('can re-arm playback while held and resume on release', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+    const control = (controlName: 'jogTouch' | 'playPause', pressed: boolean, timestampMs: number): void => {
+      handleMidiControl({
+        deviceIdentifier: 'ddj-rb',
+        timestampMs,
+        kind: 'button',
+        control: controlName,
+        deck: 2,
+        pressed
+      })
+    }
+
+    control('jogTouch', true, 1)
+    control('playPause', true, 2)
+    control('playPause', true, 3)
+    control('jogTouch', false, 4)
+
+    expect(transport.isPlaying).toBe(true)
+    expect(transport.midiPlaybackHoldActive).toBe(false)
+    expect(sendMock).toHaveBeenNthCalledWith(1, 'TRANSPORT_PAUSE')
+    expect(sendMock).toHaveBeenNthCalledWith(2, 'TRANSPORT_PLAY')
+  })
+
+  it('waits for held platters on other devices before resuming', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+    const touch = (deviceIdentifier: string, pressed: boolean, timestampMs: number): void => {
+      handleMidiControl({
+        deviceIdentifier,
+        timestampMs,
+        kind: 'button',
+        control: 'jogTouch',
+        deck: 1,
+        pressed
+      })
+    }
+
+    touch('ddj-rb', true, 1)
+    touch('second-controller', true, 2)
+    touch('ddj-rb', false, 3)
+    expect(sendMock).toHaveBeenCalledTimes(1)
+
+    touch('second-controller', false, 4)
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_PLAY')
+    expect(sendMock).toHaveBeenCalledTimes(2)
+  })
+
   it('uses playback Cue and Shift+Cue for marker navigation', () => {
     seedProject()
     const project = useProjectStore()
@@ -115,7 +357,7 @@ describe('MIDI controller actions', () => {
     expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 3000 })
   })
 
-  it('snaps normal jog movement to project ruler subdivisions', () => {
+  it('keeps normal jog movement free', () => {
     seedProject()
     const transport = useTransportStore()
     const ui = useUiStore()
@@ -141,11 +383,62 @@ describe('MIDI controller actions', () => {
 
     expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
-    expect(scrollTo).toHaveBeenCalledWith(2100)
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2112 })
+    expect(scrollTo).toHaveBeenCalledWith(2112)
   })
 
-  it('keeps jog movement free while its deck Sync button is held', () => {
+  it('auditions audio when held scrub audio is enabled for the device', () => {
+    seedProject()
+    const transport = useTransportStore()
+    const midiDevices = useMidiDeviceStore()
+    transport.positionMs = 2000
+    transport.beginMidiPlaybackHold('ddj-rb:1')
+    midiDevices.applyDevicePreferences({
+      'ddj-rb': {
+        scrubAudioEnabled: true,
+        crossfaderDirection: 'leftToRight'
+      }
+    })
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'relative',
+      control: 'jogScratch',
+      deck: 1,
+      value: -2
+    })
+    animationFrame?.(0)
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SCRUB', {
+      positionMs: 1972,
+      deltaMs: -28
+    })
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.positionMs).toBe(1972)
+  })
+
+  it('moves silently when held scrub audio has no device override', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.positionMs = 2000
+    transport.beginMidiPlaybackHold('ddj-rb:1')
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'relative',
+      control: 'jogScratch',
+      deck: 1,
+      value: 2
+    })
+    animationFrame?.(0)
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2028 })
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SCRUB', expect.anything())
+  })
+
+  it('snaps jog movement to project ruler subdivisions while Sync is held', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
@@ -157,17 +450,18 @@ describe('MIDI controller actions', () => {
       kind: 'relative',
       control: 'jogScratch',
       deck: 1,
-      value: 2
+      value: 1
     })
 
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2028 })
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
   })
 
   it('snaps backward to the preceding ruler line and stops at the timeline start', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
+    useMidiDeviceStore().syncPressed[1] = true
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -194,10 +488,11 @@ describe('MIDI controller actions', () => {
     expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
   })
 
-  it('limits accelerated jog input to one adjacent ruler line per update', () => {
+  it('limits accelerated jog input to one adjacent ruler line per update while Sync is held', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
+    useMidiDeviceStore().syncPressed[1] = true
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -212,7 +507,7 @@ describe('MIDI controller actions', () => {
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
   })
 
-  it('gives shifted jog search a faster snapped cadence than normal jog', () => {
+  it('gives shifted jog search faster free movement than normal jog', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
@@ -226,51 +521,19 @@ describe('MIDI controller actions', () => {
       value: 2
     })
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledTimes(1)
-
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 2,
-      kind: 'relative',
-      control: 'jogSearch',
-      deck: 1,
-      value: 2
-    })
-    animationFrame?.(5)
-    expect(sendMock).toHaveBeenCalledTimes(1)
-
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 3,
-      kind: 'relative',
-      control: 'jogSearch',
-      deck: 1,
-      value: 1
-    })
-    animationFrame?.(10)
-    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2250 })
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2256 })
 
     sendMock.mockClear()
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
-      timestampMs: 4,
+      timestampMs: 2,
       kind: 'relative',
       control: 'jogScratch',
       deck: 1,
-      value: 4
+      value: 2
     })
-    animationFrame?.(20)
-    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 5,
-      kind: 'relative',
-      control: 'jogScratch',
-      deck: 1,
-      value: 1
-    })
-    animationFrame?.(30)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2400 })
+    animationFrame?.(10)
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2284 })
   })
 
   it('leaves the reserved crossfader without an operational audio command', () => {
@@ -332,10 +595,9 @@ describe('MIDI controller actions', () => {
     expect(project.selectedTrackId).toBe('t1')
   })
 
-  it('uses Shift+Browse for proportional timeline zoom', () => {
+  it('uses the standard zoom step for Shift+Browse in both directions', () => {
     const ui = useUiStore()
-    ui.zoomPxPerSecond = 100
-    const zoomTo = vi.spyOn(ui, 'requestTimelineZoomTo')
+    const zoom = vi.spyOn(ui, 'requestTimelineZoom')
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -345,9 +607,17 @@ describe('MIDI controller actions', () => {
       deck: null,
       value: 2
     })
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'relative',
+      control: 'timelineZoom',
+      deck: null,
+      value: -1
+    })
 
-    expect(zoomTo).toHaveBeenCalledOnce()
-    expect(zoomTo.mock.calls[0]?.[0]).toBeCloseTo(102)
+    expect(zoom).toHaveBeenNthCalledWith(1, 'in')
+    expect(zoom).toHaveBeenNthCalledWith(2, 'out')
   })
 
   it('enters clip Browse mode, navigates chronologically, and returns to the track', () => {
@@ -396,7 +666,7 @@ describe('MIDI controller actions', () => {
     seedTrackClips()
     const project = useProjectStore()
     const ui = useUiStore()
-    const zoomTo = vi.spyOn(ui, 'requestTimelineZoomTo')
+    const zoom = vi.spyOn(ui, 'requestTimelineZoom')
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -425,7 +695,7 @@ describe('MIDI controller actions', () => {
 
     expect(project.selectedClipId).toBe('early')
     expect(project.selectedClipIds).toEqual(new Set(['early', 'middle', 'late']))
-    expect(zoomTo).not.toHaveBeenCalled()
+    expect(zoom).not.toHaveBeenCalled()
   })
 
   it('jumps to and deletes chronological marker slots from Hot Cue pads', () => {
