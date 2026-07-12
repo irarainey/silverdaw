@@ -27,8 +27,10 @@ std::vector<float> makeChunk()
     const int n = silverdaw::MelRoformerSpectral::kChunkSamples;
     for (int i = 0; i < n; ++i)
     {
-        chunk[static_cast<size_t>(i)] = 0.6f * std::sin(kTwoPi * 220.0 * i / 44100.0);
-        chunk[static_cast<size_t>(n + i)] = 0.4f * std::sin(kTwoPi * 660.0 * i / 44100.0);
+        chunk[static_cast<size_t>(i)] =
+            0.6f * static_cast<float>(std::sin(kTwoPi * 220.0 * i / 44100.0));
+        chunk[static_cast<size_t>(n + i)] =
+            0.4f * static_cast<float>(std::sin(kTwoPi * 660.0 * i / 44100.0));
     }
     return chunk;
 }
