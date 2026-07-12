@@ -101,8 +101,10 @@ Inbound (backend → renderer) payloads are defined as `zod` schemas with the
 TypeScript types derived via `z.infer<typeof XPayloadSchema>` so the schema is
 the single source of truth; each `isXxxPayload` guard is a one-line
 `safeParse(value).success` wrapper. Outbound (renderer → backend) payloads are
-plain TypeScript interfaces in the same file (producer-side, compile-checked at
-every `send<K>()` call site). Vitest round-trip coverage exercises every guard.
+plain TypeScript interfaces (producer-side, compile-checked at
+every `send<K>()` call site). The facade re-exports from
+`bridge/inbound.ts` (zod schemas) and `bridge/outbound.ts` (typed interfaces).
+Vitest round-trip coverage exercises every guard.
 The catalogue below illustrates the shape — see the TS file for the canonical,
 type-checked list of every currently-defined envelope.
 
@@ -679,27 +681,27 @@ explicit timeline-absolute draw-a-curve surface. The implementation names inside
 the codebase keep the matching technical terms (`reverb*`, `delay*`, and
 `leveler*` for the Compressor).
 
-#### 7.9.1 Engine architecture (Phase 5 foundation)
+#### 7.9.1 Engine architecture (shipped in Phase 5)
 
-The current engine stores `AudioEngine::tracks` keyed by **clip id**, with
-one `AudioTransportSource` per clip mixed straight into the top
-`MixerAudioSource`. That topology is fine for "tracks are buckets for
-clips" but cannot support per-track DSP — adjacent clips on the same UI
-track would each get their own Leveler/Tone state, which is wrong (a
-compressor's detector resetting mid-track would thump). The first
-Phase 5 deliverable is therefore an engine refactor; **no Phase 5 FX
-ship until this lands**.
+> **Historical context.** Before the Phase 5 engine refactor,
+> `AudioEngine::tracks` was keyed by **clip id** with one
+> `AudioTransportSource` per clip mixed straight into a
+> `MixerAudioSource`. That topology could not support per-track DSP —
+> adjacent clips on the same UI track would each get their own
+> Leveler/Tone state, causing detector resets mid-track. The refactor
+> below replaced it.
 
-The new topology introduces two runtime objects:
+The engine topology uses two runtime objects:
 
 - **`TrackRuntime`** — one per UI track, **independent of clip count**.
   Owns a stable per-track output buffer at the engine's nominal block
   size + channel count, the per-track **`TrackChain`** of DSP processors
   (Tone, Leveler, gain/mute/solo, pan), and the per-track send scalars
   (`reverbSend`, `delaySend`). Clips on this track feed their pre-FX
-  audio into this buffer.
-- **`BusGraph`** — one per engine. Replaces `MixerAudioSource` as the
-  root pull source. Owns block lifecycle deterministically and runs the
+  audio into this buffer. Defined as `BusGraph::TrackRuntime` in
+  `backend/src/engine/BusGraph.h`.
+- **`BusGraph`** — one per engine. The root pull source (replaced the
+  former `MixerAudioSource`). Owns block lifecycle deterministically and runs the
   signal flow in a strict order each block (see §7.9.2 below). Pulls
   each `TrackRuntime` exactly once per block; pulls the shared Reverb and
   Delay processors exactly once per block; sums into the master bus;
@@ -708,7 +710,8 @@ The new topology introduces two runtime objects:
 This deliberately avoids the full `juce::AudioProcessorGraph` migration
 (Phase 8) — `BusGraph` is a small purpose-built custom mixer, not a
 general routing engine. It handles every Phase 5 effect including
-shared sends, and the canonical `TrackChain` abstraction is consumed
+shared sends, and the canonical `TrackChain` abstraction (in
+`backend/src/dsp/TrackChain.h`) is consumed
 identically by `AudioEngine` and `MixdownEngine` so live and offline
 render share one DSP path.
 
@@ -741,11 +744,11 @@ render share one DSP path.
 - Channel handling: every track runs as stereo internally (mono clips
   pan-law spread). Multichannel ≥3 is deferred to Phase 8.
 
-**Preview routing preserved.** The current engine has a top mixer
-combining project playback with Clip Editor / Library **preview**
-audio before metering. The Phase 5 refactor **replaces the current
-`mixer` (the inner `MixerAudioSource` child of `MasterClockSource`)
-with `BusGraph`** but **keeps the existing `topMixer`** as the
+**Preview routing preserved.** The engine has a `topMixer`
+(`juce::MixerAudioSource`) combining project playback with Clip Editor /
+Library **preview** audio before metering. The Phase 5 refactor **replaced
+the former inner `MixerAudioSource` child of `MasterClockSource` with
+`BusGraph`** but **kept the existing `topMixer`** as the
 project+preview summing seam before `MeteringSource`. Preview audio
 does not flow through `BusGraph` — it remains a fully independent
 top-mixer input that bypasses track FX, project FX, and sends. This
@@ -931,11 +934,11 @@ diverges from mixdown in real conditions.
 - Master Limiter + LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
 
-**Status today:** per-track linear `gain` is shipped; master meter + fader
-is shipped; mixdown export is shipped (see Phase 5 checklist). The
-engine refactor (`TrackRuntime` + `BusGraph` + canonical `TrackChain`),
-Tone, Leveler, Reverb / Delay sends, shared Reverb / Delay, pan / mute /
-solo, and the per-clip Volume Shape are all Phase 5 work.
+**Status (shipped):** Per-track linear `gain`, master meter + fader,
+mixdown export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph`
++ canonical `TrackChain`), Tone + Filter, Leveler, shared Reverb / Delay with
+per-track sends, pan, mute / solo, per-clip Volume Shape, and track effect
+automation (§7.11.1) are all shipped.
 
 ### 7.10 Effects (Built-in)
 
@@ -1077,11 +1080,9 @@ silence.
   envelope is reflected in the waveform's height rather than as an overlay.
 - **Per-track Tone / Compressor / Reverb amount / Delay amount** — surfaced
   in a **Track FX** tab of the bottom panel (shares its space with
-  the Library; tabbed surface with optional split view — see §7.12).
-- **Project Reverb / Delay** — a small **Project FX** subtab within the
-  same bottom panel area, or pinned at the top of the Track FX tab so
-  it is always reachable. (Final placement decided during
-  `tabbed-library-panel` work.)
+  the Library; one-at-a-time tab switch — see §7.12).
+- **Project Reverb / Delay** — a **Project FX** subtab within the
+  same bottom panel area, clearly separated from the per-track controls.
 
 **Deferred to Phase 8** (and explicitly NOT in Phase 5):
 
@@ -1228,7 +1229,8 @@ scaling — see §7.9.3), and to mono and stereo sources alike. Unity gain
 renders identically to an unenveloped clip, and greater-than-unity boosts
 are clamped to the lane so the waveform never spills outside the clip
 block; the clamped excursion maths is the pure, unit-tested
-`waveformColumnExcursion` helper (`frontend/.../lib/timeline/waveformColumn.ts`).
+`waveformColumnExcursion` helper
+(`frontend/src/renderer/src/lib/timeline/waveformColumn.ts`).
 No extra Pixi children are mounted for this — the existing per-column
 min/max scan is scaled in place — so it stays cheap at zoomed-out views
 with many clips. The editable envelope line and breakpoint handles live
@@ -1572,22 +1574,22 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 
 ### Agreed near-term sequence
 
-Phases 1–7 are essentially complete: the Phase 5 mixing/effects/automation work
+Phases 1–7 are complete: the Phase 5 mixing/effects/automation work
 (engine refactor, Volume Shape, Tone + Filter, shared Reverb + Delay, Leveler,
 pan, master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
 packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer**
-(§7.6), the Phase 7 polish / performance / packaging pass, and Track FX automation
-(§7.11.1) have all shipped — closing out the core phases.
-
-The current focus order, ahead of the longer phase list below:
+(§7.6), the Phase 7 polish / performance / packaging pass, Track FX automation
+(§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
+input (§11.7) have all shipped.
 
 The next major focus is **under review** — the core remix workflow is complete and
 no single feature is committed as "next". Candidates, strongest first:
 
-1. **Transitions completion (§11.1)** — the crossfade engine ships; the remaining
-   FX-based recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus" ducking
-   need genuinely new per-clip FX automation tied to transition geometry.
-2. **Scratch authoring (§11.7)** — MIDI deck input now ships; recording and
+1. **Transitions — FX-based recipes (§11.1)** — the crossfade engine and two
+   gain-law recipes (equal-power Smooth blend + linear Fade out/in) are shipped;
+   the remaining recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus"
+   ducking need genuinely new per-clip FX automation tied to transition geometry.
+2. **Scratch authoring (§11.7)** — MIDI deck input shipped in 1.2.0; recording and
    replaying authored scratch movements remains a candidate.
 
 **Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
@@ -1603,7 +1605,7 @@ remain **deprioritised**. Final ordering is still under review.
 
 **JUCE backend:**
 - [x] Headless JUCE application skeleton (no UI components)
-- [x] `AudioEngine`: master transport clock + per-track latency-compensation plumbing (current implementation uses `MixerAudioSource`; `AudioProcessorGraph` migration deferred to Phase 5 alongside mixer/effects work)
+- [x] `AudioEngine`: master transport clock + per-track latency-compensation plumbing (Phase 1 used `MixerAudioSource`; replaced by `BusGraph` in Phase 5)
 - [x] File import pipeline: `AudioFormatManager`, basic clip player
 - [x] `ValueTree` project state and `UndoManager`
 - [x] WebSocket server: loopback bind, dynamic port, AUTH handshake, text-only JSON
@@ -1785,18 +1787,23 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 set of well-explained effects in a UI that matches Silverdaw's
 non-pro audience. See §7.9, §7.10, §7.11 for the user-facing design.
 
-**Foundational work first.** The current `AudioEngine::tracks` map is
-keyed by **clip id**, with one `AudioTransportSource` per clip mixed
-straight into the top `MixerAudioSource`. Per-track DSP, shared sends,
-and continuous Leveler state across clips on the same track are all
-impossible against that topology. **Steps 1a–1d and step 2** below are
-pure refactors (no user-visible features) that ship a new engine
-shape which is sample-equivalent to the old one. They are split into
-incremental commits so the engine remains playable after every commit.
-Every later step builds on them.
+> **Historical implementation note.** The following build-order steps
+> describe how the Phase 5 engine refactor was shipped incrementally.
+> They are retained as architectural context (why the layers exist and
+> the invariants that must hold) — the work itself is complete.
 
-**Build order** (each step ships independently and the engine remains
-playable at every point — no broken-build day):
+**Foundational work (completed).** The `AudioEngine::tracks` map remains
+keyed by **clip id** (one `AudioTransportSource` per clip), but clips no
+longer feed directly into a `MixerAudioSource`. They now feed through
+`BusGraph::TrackRuntime` → `BusGraph` (§7.9.1), which provides per-track
+DSP, shared sends, and continuous Leveler state across clips on the same
+track. **Steps 1a–1d and step 2** below were pure refactors (no
+user-visible features) that shipped a new engine shape
+sample-equivalent to the old one, split into incremental commits so the
+engine remained playable after every commit.
+
+**Build order** (each step shipped independently; the engine remained
+playable at every point):
 
 - [x] **1a. `TrackRuntime` passthrough adapter.** Introduce
   `TrackRuntime` (one per UI track, owns a stable per-track output
@@ -1839,7 +1846,7 @@ playable at every point — no broken-build day):
 - [x] **2. Bridge protocol no-op compatibility layer.** _(Landed
   incrementally alongside steps 3 / 6 rather than as one commit; the
   `TRACK_SET_PAN` envelope landed with step 9 and `TRACK_SET_MUTE_SOLO`
-  ships as the existing `TRACK_MUTE` / `TRACK_SOLO` envelopes.)_
+  uses the existing `TRACK_MUTE` / `TRACK_SOLO` envelopes.)_
   Extend
   `ProjectStateClipSchema` (`fadeInMs`, `fadeOutMs`, breakpoints)
   and `ProjectStateTrackSchema` (`toneBassDb`, `toneMidDb`,
@@ -1899,10 +1906,11 @@ playable at every point — no broken-build day):
   per-clip volume mechanism — the previously separate raised-cosine fade
   feature has been removed (a fade-in / fade-out is made by dragging the
   end breakpoints to silence). Shared
-  envelope math + edit helpers live in `frontend/.../lib/envelope.ts`
+  envelope math + edit helpers live in
+  `frontend/src/renderer/src/lib/envelope.ts`
   (single source of truth, mirroring the backend snapshot); the canvas
   gain/time/pixel mapping + hit-testing live in the unit-tested
-  `frontend/.../lib/clipEditor/volumeOverlay.ts`. The draft also auditions
+  `frontend/src/renderer/src/lib/clipEditor/volumeOverlay.ts`. The draft also auditions
   live in the Clip Editor preview voice via a throttled
   `PREVIEW_SET_ENVELOPE` bridge message (the preview `OffsetSource` reuses
   the same snapshot publication path), so edits are heard immediately
@@ -2021,9 +2029,9 @@ playable at every point — no broken-build day):
 - VST3 hosting (scope decided then — per-track or per-clip).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
-- Plugin-param envelopes (Pan / send / tone / filter / compressor / gain track
-  automation shipped later in §7.11.1; **plugin**-parameter envelopes still await
-  VST3 hosting).
+- Plugin-param envelopes (track-parameter automation — Pan / send / tone /
+  filter / compressor / gain — shipped in §7.11.1; **plugin**-parameter envelopes
+  still await VST3 hosting).
 
 ### Phase 6 — Stem Separation, Loop Slicing & Fine-Clip Editor
 
@@ -2042,7 +2050,7 @@ playable at every point — no broken-build day):
 - [x] Optional **Vocal Quality Pack** — MIT Mel-Band RoFormer vocal model (`MelRoformerVocals` + `MelRoformerSpectral`), downloaded on demand; hybrid path (RoFormer vocals + htdemucs drums/bass + residual other) with htdemucs fallback; validated end-to-end against a reference and unit-tested round-trip
 - [x] Optional **Rhythm Quality Pack** — MIT 4-stem BS-RoFormer drums/bass model (`BsRoformerRhythm` + `BsRoformerSpectral`), self-exported from ZFTurbo's MUSDB18-HQ checkpoint, downloaded on demand; one model run extracts both drums + bass, composing with the vocal pack into a full RoFormer hybrid (residual other) with per-stem htdemucs fallback; 8 s window with DirectML→CPU out-of-memory fallback; validated end-to-end (C++ runner vs numpy reference) and unit-tested round-trip
 - [x] **Cascaded vocal pre-removal** — when the vocal and rhythm packs both run, the rhythm pack is fed `mixture − vocal` (the dedicated vocal pack's estimate) instead of the raw mixture, so vocal energy can't bleed into drums/bass. Reuses the already-extracted vocal when vocals is selected, else runs one internal vocal pass for the cancellation; residual `other` stays mixture-consistent
-- [x] **Model-aware cleanup gentling** — the per-stem cleanup/enhancement was tuned for the dirtier htdemucs stems and over-processed the clean RoFormer stems (the vocal cross-stem de-bleed could gut a clean vocal on dense mixes). Each enhancer now carries a `cleanModel` flag the separator sets per stem — vocals when `haveVocalPack`, drums/bass when `useRhythmPack`, `other` only for the full both-pack mixture-consistency residual (`mixtureConsistency && haveVocalPack && haveRhythmPack`): vocals skip the de-bleed entirely and run a gentler denoise + expander; drum transient boost ×0.4, bass harmonic blend ×0.5, other widener/spectral ×0.5, drum/bass expander range halved. The htdemucs backup path keeps the original settings; covered by two new harness tests (155 total)
+- [x] **Model-aware cleanup gentling** — the per-stem cleanup/enhancement was tuned for the dirtier htdemucs stems and over-processed the clean RoFormer stems (the vocal cross-stem de-bleed could gut a clean vocal on dense mixes). Each enhancer now carries a `cleanModel` flag the separator sets per stem — vocals when `haveVocalPack`, drums/bass when `useRhythmPack`, `other` only for the full both-pack mixture-consistency residual (`mixtureConsistency && haveVocalPack && haveRhythmPack`): vocals skip the de-bleed entirely and run a gentler denoise + expander; drum transient boost ×0.4, bass harmonic blend ×0.5, other widener/spectral ×0.5, drum/bass expander range halved. The htdemucs backup path keeps the original settings; covered by custom-harness tests
 - [x] **Vocal de-reverb (1.1.0)** — an optional per-run **Remove Reverb & Echo** tick (Light / Medium / Strong) in the Separate Stems dialog, nested under Vocals, resolved from the `STEM_SEPARATE` payload independently of the saved cleanup prefs. `Dereverberator` is a conservative statistical STFT late-reverb soft-mask (Lebart/Habets-style), run before the denoise; because spectral subtraction dulls and quietens the vocal, a final `VocalRestorer` stage matches the loud-frame level back to a pre-de-reverb reference (so gaps/tails aren't re-inflated) and lifts presence/air. Fixed an OLA edge-normalisation blow-up in the process (super-unity outlier samples that corrupted the level match); unit-tested (Dereverberator + VocalRestorer invariants incl. no edge blow-up)
 - [x] **RoFormer-first engine pivot** — the two quality packs are the **primary** engine, used automatically once installed; htdemucs is the **backup** (per-stem fallback when a pack is absent, plus a single **Always use the backup model** override `stems.useBackupModel`). Backend validates only the htdemucs weights a run actually needs (a fully pack-covered run needs none); the Fast/Balanced/Best preset overlap now drives the RoFormer chunk stride too. Preferences ▸ Stems combines both packs into one **Download models (~1 GB)** action with combined progress; the htdemucs backup sits in the same Locate list as a fallback (no separate download button). `requiredModelKinds` decision logic unit-tested
 - [x] DirectML GPU acceleration (issue tracked) — DirectML-build ONNX Runtime bundled (`onnxruntime.dll` + `DirectML.dll`); `useGpu` threaded to session options, opt-in and adapter-gated (Preferences ▸ Stems), TDR/timeout-recovery hardened
@@ -2148,9 +2156,10 @@ playable at every point — no broken-build day):
   `PROJECT_STATE` (replaces tracks / clips / markers / library
   wholesale without rotating projectId, marking clean, or clearing
   clipboard / selection) plus an explicit `PROJECT_DIRTY` so the
-  title-bar indicator stays accurate. Compound operations (split /
-  duplicate) currently produce multiple undo steps; bundling them
-  via an `undoGroup` envelope field is a follow-up.
+  title-bar indicator stays accurate. Compound operations (split,
+  duplicate, paste, stem placement, etc.) are bundled into single undo
+  steps via `runInUndoGroup` (an `EDIT_GROUP_BEGIN` / `EDIT_GROUP_END`
+  bracket on the bridge).
 - [x] End-to-end performance telemetry in diagnostic logs: `perf.audio`
   callback budget heartbeat, `perf.bridge` WebSocket heartbeat/counters,
   and `perf.timeline` redraw duration + visible row/clip counts.
@@ -2341,7 +2350,7 @@ Three independent design critiques converged on the following constraints.
   volume shapes** on the affected clips (reusing the Phase 5 §7.11 breakpoint
   primitive), not as a master envelope or a realtime sidechain detector.
 
-### 11.1 Transitions & blending — *part of the Phase 5 core-effects work (see near-term sequence)*
+### 11.1 Transitions & blending — *crossfade engine shipped; FX-based recipes remain*
 
 **Transition Zones** let the user drag one clip's edge over its neighbour to
 create a bounded transition object that blends the two clips across their
@@ -2404,7 +2413,7 @@ Implementation increments (foundations first; each keeps build + tests green):
   marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
   Vitest coverage for the linear law, recipe→curve derivation, and the menu.
 
-### 11.2 Arrangement & editing workflow — *Phase 7/8*
+### 11.2 Arrangement & editing workflow — *selection shipped (1.1.0); loop playback remains*
 
 - [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
   same-track range or Ctrl-click across tracks selects several clips; the whole
@@ -2416,7 +2425,7 @@ Implementation increments (foundations first; each keeps build + tests green):
   audition loop). Decide FX-tail behaviour at loop wrap up front (flush vs let
   Reverb/Delay tails ring) — pick one intentionally.
 
-### 11.3 Tempo, beat-grid & harmonic — *Phase 4 polish / Phase 8*
+### 11.3 Tempo, beat-grid & harmonic — *manual beat-grid shipped; mode-aware model remains (Phase 8)*
 
 - [x] **Minimal beat-grid correction** — manual BPM override plus a slide-the-grid
   drag in the Clip Editor that re-anchors the first downbeat
@@ -2468,9 +2477,9 @@ sequencing into the phase plan is still to be decided.
   count-in and a record-enabled transport path; a finished take becomes a normal,
   non-destructive editable clip. Keep the surface deliberately minimal.
 
-### 11.7 MIDI & DJ control — *deck input shipped; scratch authoring remains*
+### 11.7 MIDI & DJ control — *deck input shipped (1.2.0); scratch authoring remains*
 
-- [x] **MIDI DJ deck input** (issue #29) — supported deck controllers can be
+- [x] **MIDI DJ deck input** (issue #29) — *shipped in 1.2.0.* Supported deck controllers can be
   enabled from Preferences and drive transport, timeline/marker navigation,
   clip browsing, jog movement, and selected-track mixer controls through
   validated JSON profiles. Unsupported MIDI devices remain visible but cannot
@@ -2497,18 +2506,17 @@ sequencing into the phase plan is still to be decided.
   a shared step grid — effectively a small multitrack within one track — for
   building beats inline on the timeline without leaving the arrangement.
 
-### 11.9 Distribution & web presence — *low priority, post-MVP*
+### 11.9 Distribution & web presence — *shipped*
 
-These are expected to land around MVP stage, not before — low priority relative
-to the application itself.
+All items in this section are delivered.
 
-- [x] **Windows Store distribution** (issue #30) — publish the app to the
-  Microsoft Store for one-click install, alongside the signed sideload package
-  and portable zip. (Store-identity packaging builds via `pnpm dist:store`, and
-  the app is **live on the Microsoft Store** at
-  <https://apps.microsoft.com/detail/9N8T25L0462F>.)
-- [x] **Product website** (issue #39) — a public marketing/landing site for the
+- [x] **Windows Store distribution** (issue #30) — *shipped.* The app is live on the
+  Microsoft Store at
+  <https://apps.microsoft.com/detail/9N8T25L0462F>, auto-updating, alongside the
+  signed sideload package and portable zip. (Store-identity packaging builds via
+  `pnpm dist:store`.)
+- [x] **Product website** (issue #39) — *shipped.* A public marketing/landing site for the
   application.
-- [x] **Documentation site** (issue #40) — a **GitHub Pages** site driven by the
+- [x] **Documentation site** (issue #40) — *shipped.* A **GitHub Pages** site driven by the
   Markdown files in `docs/`, presented as a simple, easy-to-follow user guide for
   the application.

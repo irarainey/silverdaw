@@ -142,9 +142,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   bar to start the render from.
 - **Autosave and crash recovery.** Work is snapshotted in the background and
   offered back to you after an unexpected exit.
-- **Stay in flow.** Choose any audio output device and hot-swap it without
-  leaving the timeline, relink moved source files in one step, and undo or redo
-  any edit.
+- **Stay in flow.** Import files from **File ▸ Import to Library…** (`Ctrl`+`I`),
+  toggle the bottom panel with `Ctrl`+`J`, jump to zoom presets with
+  `Ctrl`+`1`–`8`, and navigate with Home / End. Choose any audio output device
+  and hot-swap it without leaving the timeline, relink moved source files in one
+  step, and undo or redo any edit. **Help ▸ Keyboard Shortcuts** opens the full
+  shortcut reference.
 - **Supported MIDI deck control.** Use a recognised deck controller for
   transport, timeline and marker navigation, jog movement, clip browsing, and
   selected-track mixer controls. Other MIDI devices remain visible but cannot

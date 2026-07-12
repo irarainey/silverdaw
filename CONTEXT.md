@@ -65,7 +65,7 @@ and roadmap.
   licence-compatible. See ADR 0010.
 - `IMPORTANT` — **Beginner-first simplicity is the product tie-breaker;** the
   renderer follows a single dark, small-palette design system. See ADR 0011,
-  ADR 0012 (detailed tokens in `.github/instructions/ui-ux-styling…`).
+  ADR 0012 (detailed tokens in `.github/instructions/ui-ux-styling.instructions.md`).
 - `IMPORTANT` — **Audio playback performance is always first-class.** JUCE-level
   optimisation on the audio path is expected, balanced against maintainable code.
   See ADR 0017 (firm figures in `docs/developer-guide.md#rendering-performance`).

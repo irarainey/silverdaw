@@ -104,7 +104,7 @@ One line each; open the linked area only when the task touches it.
 | `frontend/src/main/` | Window, menu, IPC, prefs, backend spawn + supervisor | ADR 0008 |
 | `frontend/src/preload/` | `contextBridge` surface | — |
 | `frontend/src/renderer/src/` | Vue SPA, Pinia stores, PixiJS timeline | — |
-| `frontend/src/shared/` | `bridge-protocol.ts` facade over `bridge/inbound.ts` + `outbound.ts` zod schemas — wire SoT | ADR 0004 |
+| `frontend/src/shared/` | `bridge-protocol.ts` facade over `bridge/inbound.ts` (zod schemas) + `outbound.ts` (typed interfaces) — wire SoT | ADR 0004 |
 
 ## Why it is built this way
 

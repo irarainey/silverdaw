@@ -96,36 +96,57 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     core/                Entry point (Main.cpp), logging + always-on crash reporter
     bridge/              IXWebSocket loopback server, AUTH, message dispatch,
                          payload helpers, playhead emitter
-    commands/            Per-domain bridge command handlers (clips, tracks,
-                         mixdown, undo, transport, library, …)
-    midi/                JSON-profile loader, MIDI decoder, and output encoder
+    commands/            Per-domain bridge command handlers
+    midi/                JSON-profile loader (MidiControllerProfiles) and MIDI
+                         decoder + output encoder (MidiControllerMapping)
     engine/              Master transport clock, mixer / bus graph (incl.
-                         equal-power pan), per-track audio sources, keep-alive
-    dsp/                 Per-track DSP: Tone EQ, Leveler, pan / track chain,
-                         shared Reverb + Delay, BPM + loudness, waveform peaks,
-                         per-stem cleanup enhancers
+                         equal-power pan), per-track audio sources, preview and
+                         keep-alive. AudioEngine, BusGraph and OffsetSource each
+                         use focused implementation units for their hot paths.
+    dsp/                 Per-track DSP, shared Reverb / Delay, BPM + loudness,
+                         waveform peaks, automation snapshots and per-stem
+                         cleanup enhancers. Shared helpers centralise smoothing
+                         and BPM analysis.
     stems/               ONNX stem-separation orchestration (RoFormer + htdemucs
                          backup, GPU→CPU fallback); invokes the enhancers in dsp/
     mixdown/             Offline render + export / normalise / dither on the
                          same canonical chain as playback
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
-                         load, ValueTree↔JSON converter, peaks cache
+                         load, ValueTree↔JSON converter, peaks cache, library
+                         analysis and sample export
   resources/
-    midi-mappings/       Installed model aliases and MIDI input/output bindings
+    midi-mappings/       Controller model aliases and MIDI input/output bindings
   tests/                 SilverdawBackendTests custom harness (wired into CTest)
   CMakeLists.txt         FetchContent for JUCE + IXWebSocket
 frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
   resources/icons/       Multi-resolution .ico + PNG set (consumed by main + renderer)
   src/
-    main/                Electron main process (window, menu, IPC, prefs, backend spawn + supervisor)
+    main/                Electron main process (window, menu, IPC, prefs,
+                         backend spawn + supervisor, diagnostics, autosave,
+                         project paths and stem-model management)
     preload/             contextBridge surface exposed as window.silverdaw
-    renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4); lib/ holds composables + audio/timeline helpers
-    shared/              Bridge wire-protocol facade → bridge/inbound + bridge/outbound zod schemas (also TS-tested)
+    renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4);
+                         lib/ holds composables + audio/timeline/clip/midi/fx/
+                         automation/transport/export/stems helpers;
+                         stores/ holds Pinia stores; components/ holds .vue files
+    shared/              Bridge wire-protocol facade (bridge-protocol.ts re-exports)
+                         → bridge/inbound.ts (zod inbound schemas + guards)
+                         → bridge/outbound.ts (outbound typed payload contracts)
+                         inbound.ts also re-exports MIDI-specific schemas from
+                         bridge/midi-inbound.ts
+                         Plus ipc-channels.ts and types.ts (also TS-tested)
   electron-builder.yml   Windows packaging config (signed MSIX/AppX + portable zip)
   electron-builder.store.cjs  Store variant of the above (unsigned, Store identity)
 scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 .github/instructions/    Copilot/AI agent guidance per file type
 ```
+
+Notable hot-path splits include `AudioEngineDevice.cpp`,
+`AudioEngineTransport.cpp`, `AudioEngineMix.cpp`, `BusGraphRender.cpp`,
+`OffsetSourceWarpRender.cpp`, and `OffsetSourceTailRender.cpp` under `engine/`,
+plus `ToneEq.cpp`, `SharedFx.cpp`, `BpmAnalysisHelpers.cpp`, and `DspSmooth.h`
+under `dsp/`. These keep device, transport, rendering, effects, and analysis
+responsibilities out of monolithic implementation files.
 
 ## Current status and roadmap
 
@@ -198,7 +219,8 @@ Silverdaw currently supports the core arrangement workflow:
   [`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
   [`TrackChain`](../backend/src/dsp/TrackChain.h)
   / [`BusGraph`](../backend/src/engine/BusGraph.h) (which applies pan to the dry path
-  after the pre-pan send tap) and the shared-FX engine on the backend. The open
+  after the pre-pan send tap) / [`SharedFx`](../backend/src/dsp/SharedFx.h) (the
+  project-wide Reverb and Delay return buses). The open
   FX tab and the selected track are project **view state**, round-tripped through
   `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
   The whole panel can also be **minimised to its tab strip** and expanded again
@@ -466,7 +488,13 @@ it was designed for. `WAVEFORM_FAILED { clipId, error }` triggers renderer-side 
 recovery path when the backend cannot produce peaks.
 
 The full envelope catalogue lives in
-[`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts).
+[`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts),
+which is a **re-export facade** — it `export *`s from
+[`frontend/src/shared/bridge/inbound.ts`](../frontend/src/shared/bridge/inbound.ts)
+(the canonical owner of all inbound `zod` schemas and `isXxxPayload` guards) and
+[`frontend/src/shared/bridge/outbound.ts`](../frontend/src/shared/bridge/outbound.ts)
+(the canonical owner of all outbound typed payload interfaces and the
+`BridgeOutboundMap` index).
 Inbound (backend → renderer) payloads are defined as `zod` schemas; the
 TypeScript types are derived via `z.infer<typeof XPayloadSchema>` so the schema
 is the single source of truth — there is no separate hand-written interface to
@@ -700,7 +728,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
-        sendReverb?, sendDelay?, pan?]
+        sendReverb?, sendDelay?, pan?, levelerAmount?, automation?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
@@ -2254,9 +2282,8 @@ The timeline accepts the following inputs. Modifiers behave **live** during drag
 or releasing the modifier between frames switches mode without restarting the drag.
 
 The full, version-matched shortcut reference is published online and opened from **Help ▸
-Keyboard Shortcuts**, which navigates to `https://docs.silverdaw.com/<app-version>/guide/shortcuts`
-(the path always carries the running app's `app.getVersion()`, so a release must have the
-matching versioned page live).
+Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` before
+`/guide/shortcuts`, so a release must have the matching versioned page live.
 
 | Input | Effect |
 |---|---|
@@ -2537,8 +2564,9 @@ Silverdaw is Windows-only. Developed in Visual Studio Code.
   workload is sufficient (it ships `cl.exe`, `link.exe`, the Windows SDK, `vswhere.exe` and the
   Developer Shell module that `scripts/Invoke-DevShell.ps1` relies on).
 - **CMake** ≥ 3.22 and **Ninja**.
-- **Node.js** ≥ 20. **pnpm** is activated via `corepack` (which ships with Node) — the version
-  is pinned by `frontend/package.json`'s `packageManager` field; do not `npm i -g pnpm`.
+- **Node.js** ≥ 20 (LTS recommended). **pnpm** is activated via `corepack` (bundled with
+  Node) — the version is pinned by `frontend/package.json`'s `packageManager` field;
+  do not `npm i -g pnpm`.
 
 JUCE 8.0.12 and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
 install by hand.
@@ -2586,7 +2614,7 @@ winget install --id Kitware.CMake
 winget install --id Ninja-build.Ninja
 winget install --id OpenJS.NodeJS.LTS
 
-# Activate pnpm (corepack ships with Node >= 16.13)
+# Activate pnpm (corepack is bundled with Node)
 corepack enable
 corepack prepare pnpm@latest --activate
 ```
@@ -2794,8 +2822,8 @@ pnpm dist:dir    # win-unpacked only, no packaging
   viewable HTML reports into a single gitignored root folder —
   `coverage/frontend/`, `coverage/backend/`, and a `coverage/index.html` landing
   page linking both.
-- **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json`
-  for the renderer/shared sources and tests, then `tsc --noEmit -p tsconfig.node.json`
+- **TypeScript / Vue**: `pnpm typecheck` (`vue-tsc --noEmit -p tsconfig.web.json --composite false`
+  for the renderer/shared sources and tests, then `tsc --noEmit -p tsconfig.node.json --composite false`
   for the Electron main/preload sources and the main-process tests),
   `pnpm lint` (ESLint flat config with `eslint-plugin-vue` and `@typescript-eslint`).
 - **Tests**: `pnpm test` runs Vitest over the shared bridge-protocol guards,
