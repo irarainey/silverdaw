@@ -827,8 +827,8 @@ which is what users expect.
 #### 7.9.4 Project-level shared effects (Phase 5 scope)
 
 - **Reverb** — `juce::Reverb` (the Freeverb implementation in
-  `juce_audio_basics`, used directly so the backend keeps its single-module,
-  no-`juce_dsp` build). Project-level parameters: Size, Decay, Tone, Mix.
+  `juce_audio_basics`, used directly for the simple shared-room effect).
+  Project-level parameters: Size, Decay, Tone, Mix.
 - **Delay** — a hand-rolled integer-sample stereo delay
   (independent L/R lines, one-pole tone filter in the feedback path). Time set
   as a note value (1/4, 1/8, 1/8T,
@@ -962,8 +962,8 @@ DSP class in `code`.
   thread to avoid zipper noise.
 - **Compressor** — gentle dynamics control with one user-facing **Amount**
   knob (0..100 %) that drives a curated path through a hand-rolled
-  stereo-linked soft-knee compressor (the engine carries no `juce_dsp`,
-  so the compressor is written by hand; the internal DSP class is `Leveler`) plus
+  stereo-linked soft-knee compressor (the purpose-built internal DSP class is
+  `Leveler`) plus
   a **deterministic static makeup gain map** keyed off Amount only (no
   live loudness analysis, no perceived-loudness promise — the map is
   tuned by ear so the perceived level stays roughly comparable across
@@ -1954,9 +1954,8 @@ playable at every point):
   `SharedFx` unit so the rendered export matches the live mix at mix=0
   bit-for-bit (§7.9.6 parity).
 - [x] **8. Per-track Leveler** — _(shipped, Amount-only.)_ A hand-rolled
-  stereo-linked feed-forward soft-knee compressor per `TrackChain` (the
-  build carries no `juce_dsp`, so the compressor is hand-written like
-  `ToneEq` / `SharedFx`), driven by a single **Amount** knob (`0..1`) with
+  stereo-linked feed-forward soft-knee compressor per `TrackChain`, driven by
+  a single **Amount** knob (`0..1`) with
   a deterministic static makeup-gain map (no live loudness analysis).
   Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
   across the track's lifetime and resets on transport stop / seek,
