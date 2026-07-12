@@ -255,12 +255,9 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     }
     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-    // Late auto-warp preserves the user's drop-time intent once stable BPM is
-    // known. Low detection confidence no longer blocks this: a low-confidence
-    // grid is still treated as music (shown + warpable), matching the frontend
-    // classification. Only a genuinely variable tempo or an unanalysed BPM skip
-    // the auto-warp, since force-warping those to a single ratio is unsafe.
-    if (!variableTempo && bpm > 0.0)
+    // Late auto-warp uses the detected representative BPM even when tempo varies;
+    // users can split and refine the initial warp afterwards.
+    if (bpm > 0.0)
     {
         const double projectBpm = projectState.getBpm();
         projectState.forEachWarpClip(

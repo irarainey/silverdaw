@@ -6,10 +6,9 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
-import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { variableTempoWarpSkippedMessage } from '@/lib/warp'
+import { shouldAutoWarpOnDrop } from '@/lib/warp'
 import { fileStem } from './projectHelpers'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -114,7 +113,6 @@ export const clipLibraryActions = {
         derivedFrom?: LibraryItem['derivedFrom']
         /** Source BPM for auto-warp; variable-tempo files expose their median. */
         bpm?: number
-        /** Auto-warp skips unstable-tempo sources. */
         variableTempo?: boolean
         /** Saved-clip warp defaults copy on drop. */
         warpEnabled?: boolean
@@ -125,8 +123,7 @@ export const clipLibraryActions = {
         /** 'simple'-classified items never auto-warp on drop. */
         audioType?: 'simple' | 'music'
       },
-      startMs: number,
-      opts?: { suppressWarpSkipNotice?: boolean }
+      startMs: number
     ): string | null {
       const track = this.tracks.find((t) => t.id === trackId)
       if (!track) return null
@@ -141,18 +138,21 @@ export const clipLibraryActions = {
       const projectBpm = useTransportStore().bpm
       const autoWarpPref = useUiStore().matchProjectTempoOnDrop
       const projectHasOtherClips = Object.keys(this.clips).length > 0
+      const sourceIsSimple = libraryItemIsSimple(
+        { audioType: libraryItem.audioType, derivedFrom: libraryItem.derivedFrom },
+        useLibraryStore().byId
+      )
       const willAutoWarp =
         libraryItem.warpEnabled === true ||
-        (autoWarpPref &&
-          projectHasOtherClips &&
-          libraryItem.kind !== 'clip' &&
-          libraryItem.variableTempo !== true &&
-          !libraryItemIsSimple(
-            { audioType: libraryItem.audioType, derivedFrom: libraryItem.derivedFrom },
-            useLibraryStore().byId
-          ) &&
-          typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 &&
-          typeof projectBpm === 'number' && projectBpm > 0)
+        shouldAutoWarpOnDrop({
+          preferenceEnabled: autoWarpPref,
+          projectHasOtherClips,
+          sourceKind: libraryItem.kind,
+          sourceIsSimple,
+          sourceBpm: libraryItem.bpm,
+          projectBpm,
+          variableTempo: libraryItem.variableTempo
+        })
       let effectiveClipDurationMs = clipDurationMs
       if (willAutoWarp) {
         const pinned = libraryItem.tempoRatio
@@ -204,7 +204,7 @@ export const clipLibraryActions = {
         }
 
         // Drop-time warp copies saved defaults or marks eligible audio for auto-warp.
-        this.applyDropTimeWarp(clipId, libraryItem, opts)
+        this.applyDropTimeWarp(clipId, libraryItem)
 
         // Inherit the saved clip's shared volume envelope from an existing instance
         // so every linked placement carries the same shape.
@@ -242,8 +242,7 @@ export const clipLibraryActions = {
         semitones?: number
         cents?: number
         derivedFrom?: LibraryItem['derivedFrom']
-      },
-      opts?: { suppressWarpSkipNotice?: boolean }
+      }
     ): void {
       log.info(
         'warp',
@@ -299,30 +298,19 @@ export const clipLibraryActions = {
         log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (first clip on project)`)
         return
       }
-      // Need stable source BPM and project BPM to target.
+      // A variable-tempo source still has a representative BPM that is useful
+      // for an initial warp; users can split and refine it afterwards.
       const projectBpm = useTransportStore().bpm
-      if (src.variableTempo === true || typeof src.bpm !== 'number' || src.bpm <= 0) {
+      if (typeof src.bpm !== 'number' || src.bpm <= 0) {
         // Unknown source BPM: let later analysis opt in unless the user edits warp.
-        if (src.kind !== 'clip' && src.variableTempo !== true) {
+        if (src.kind !== 'clip') {
           log.info(
             'warp',
             `applyDropTimeWarp clip=${clipId} → pendingAutoWarp (source BPM not yet known)`
           )
           this.setClipWarp(clipId, { pendingAutoWarp: true })
         } else {
-          log.info(
-            'warp',
-            `applyDropTimeWarp clip=${clipId} → skip (variableTempo or no BPM, not pending)`
-          )
-          // Variable tempo is a deliberate auto-warp exclusion; tell the user why
-          // and how to warp it manually instead of silently doing nothing. Suppressed
-          // for auto-added stems (they inherit the source's variable tempo and are placed
-          // programmatically, not dropped) — the notice is only useful for a manual drop.
-          if (src.variableTempo === true && !opts?.suppressWarpSkipNotice) {
-            const clip = this.clips[clipId]
-            const name = clip?.name?.trim() || (clip ? fileStem(clip.fileName) : '')
-            useNotificationsStore().pushInfo(variableTempoWarpSkippedMessage(name))
-          }
+          log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (saved clip has no BPM)`)
         }
         return
       }

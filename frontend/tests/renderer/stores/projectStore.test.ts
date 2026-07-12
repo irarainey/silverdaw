@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { DEFAULT_PROJECT_NAME, DEFAULT_TRACK_LENGTH_MS, useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
 
@@ -228,6 +229,61 @@ describe('projectStore', () => {
     expect(clipId).toBeTruthy()
     expect(project.tracks[0]?.lengthMs).toBe(longClipMs)
     expect(project.durationMs).toBe(longClipMs)
+  })
+
+  it('auto-warps variable-tempo music by default and honours the disabled preference', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    const trackId = project.addTrack()
+    const makeClip = (libraryItemId: string, startMs: number): string =>
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId,
+          filePath: `C:\\audio\\${libraryItemId}.wav`,
+          fileName: `${libraryItemId}.wav`,
+          durationMs: 4_000,
+          sampleRate: 48_000,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        startMs
+      )!
+
+    makeClip('existing', 0)
+    const enabledClipId = makeClip('variable-enabled', 5_000)
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(enabledClipId, {
+      kind: 'source',
+      bpm: 100,
+      variableTempo: true,
+      audioType: 'music'
+    })
+
+    expect(project.clips[enabledClipId]?.warpEnabled).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({ clipId: enabledClipId, warpEnabled: true })
+    )
+
+    ui.matchProjectTempoOnDrop = false
+    const disabledClipId = makeClip('variable-disabled', 10_000)
+    sendMock.mockClear()
+    project.applyDropTimeWarp(disabledClipId, {
+      kind: 'source',
+      bpm: 100,
+      variableTempo: true,
+      audioType: 'music'
+    })
+
+    expect(project.clips[disabledClipId]?.warpEnabled).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({ clipId: disabledClipId, warpEnabled: true })
+    )
   })
 
   it('alignClipToBarGrid moves a matching-tempo clip the least distance so its beat grid lands on a beat line', () => {

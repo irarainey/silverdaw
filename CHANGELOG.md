@@ -16,6 +16,7 @@
 - Stem separation is now faster, more reliable, and clearer about progress and saved cleanup settings.
 - Tracks with neutral Tone controls now skip inactive filtering during playback.
 - Shared room and echo effects now stop processing once their tails are silent.
+- Music with a detected variable tempo now auto-warps on drop when tempo matching is enabled.
 
 ### Fixed
 

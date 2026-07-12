@@ -401,7 +401,7 @@ describe('libraryStore', () => {
     expect(library.imports).toHaveLength(0)
   })
 
-  it('warns and clears the pending auto-warp when late analysis finds a variable tempo', async () => {
+  it('keeps pending auto-warp active when late analysis finds a variable tempo', async () => {
     const { useNotificationsStore } = await import('@/stores/notificationsStore')
     const library = useLibraryStore()
     const project = useProjectStore()
@@ -438,17 +438,15 @@ describe('libraryStore', () => {
 
     library.setItemAnalysis(itemId!, 94.05, 0.7, [0.7, 1.34], true)
 
-    expect(project.clips[clipId!]?.pendingAutoWarp).toBeUndefined()
-    expect(sendMock).toHaveBeenCalledWith(
+    expect(project.clips[clipId!]?.pendingAutoWarp).toBe(true)
+    expect(sendMock).not.toHaveBeenCalledWith(
       'CLIP_SET_WARP',
       expect.objectContaining({ clipId, pendingAutoWarp: false })
     )
-    expect(notifications.items).toHaveLength(1)
-    expect(notifications.items[0]?.message).toContain('"California Soul"')
-    expect(notifications.items[0]?.message).toContain('variable tempo')
+    expect(notifications.items).toHaveLength(0)
 
-    vi.advanceTimersByTime(600)
-    expect(library.imports[0]?.stage).toBe('done')
+    vi.advanceTimersByTime(300)
+    expect(library.imports[0]?.stage).toBe('warping')
   })
 
   it('refuses to remove in-use items and removes unused items with cleanup', () => {

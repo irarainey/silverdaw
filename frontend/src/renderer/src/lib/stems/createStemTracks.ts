@@ -152,9 +152,7 @@ async function performStemImport(
       runInUndoGroup(`Add ${label} stem`, () => {
         const trackId = project.addTrack()
         project.setTrackName(trackId, `${label} ${STEM_NAME_SEPARATOR} ${target.sourceName}`)
-        project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0, {
-          suppressWarpSkipNotice: true
-        })
+        project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), target.startMs ?? 0)
       })
     }
     return true

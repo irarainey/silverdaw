@@ -178,9 +178,11 @@ Silverdaw currently supports the core arrangement workflow:
   Editor's **Slice** mode for grid plus hand-placed markers.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
 - Non-destructive per-clip warp and pitch settings via Rubber Band. Dropped
-  clips can auto-match the project tempo, late auto-warp engages after BPM
-  analysis if needed, and warped clips show a visible **WARP** badge or
-  pending spinner on the timeline.
+  music auto-matches the project tempo by default, including variable-tempo
+  sources using their detected representative BPM. Late auto-warp engages
+  after BPM analysis if needed, and warped clips show a visible **WARP** badge
+  or pending spinner on the timeline. The Timeline preference can disable
+  automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
   (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
@@ -1983,8 +1985,9 @@ sidebar:
   channels), library tile imagery, and toast notifications.
 - **Timeline** — timeline behaviour: follow-playback auto-scroll, **set project
   tempo from first clip** (seed a new project's BPM from the first clip dropped),
-  **match project tempo on drop** (auto-warp a dropped clip to the project BPM),
-  and the transport **previous / next button target**.
+  **auto-warp clips to project tempo** (default on, including variable-tempo
+  music), beat-grid alignment after analysis, and the transport **previous /
+  next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove** (with a *cannot be
   undone* warning; a file-deleting removal is non-undoable and doesn't dirty the

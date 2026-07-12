@@ -10,8 +10,32 @@ export interface ClipWarpInputs {
   projectBpm?: number
 }
 
+export interface DropAutoWarpInputs {
+  preferenceEnabled: boolean
+  projectHasOtherClips: boolean
+  sourceKind?: 'source' | 'clip' | 'stem' | 'sample'
+  sourceIsSimple: boolean
+  sourceBpm?: number
+  projectBpm?: number
+  variableTempo?: boolean
+}
+
 /** Epsilon for treating floating-point drag noise around 1.0 as bypass. */
 export const WARP_BYPASS_EPSILON = 1e-4
+
+/** Variable-tempo sources use their detected representative BPM and remain eligible. */
+export function shouldAutoWarpOnDrop(inputs: DropAutoWarpInputs): boolean {
+  return (
+    inputs.preferenceEnabled &&
+    inputs.projectHasOtherClips &&
+    inputs.sourceKind !== 'clip' &&
+    !inputs.sourceIsSimple &&
+    typeof inputs.sourceBpm === 'number' &&
+    inputs.sourceBpm > 0 &&
+    typeof inputs.projectBpm === 'number' &&
+    inputs.projectBpm > 0
+  )
+}
 
 /** True when enabled warp changes the effective tempo ratio. */
 export function isWarpActive(inputs: ClipWarpInputs): boolean {
@@ -48,18 +72,6 @@ export function effectiveDurationMs(nativeDurationMs: number, inputs: ClipWarpIn
   const ratio = effectiveTempoRatio(inputs)
   if (ratio <= 0) return nativeDurationMs
   return nativeDurationMs / ratio
-}
-
-/**
- * Advisory copy shown when auto-warp is intentionally skipped because the
- * source has a variable tempo — no single stretch ratio can match it, so the
- * user is pointed at the manual split-and-warp workflow. Shared by the drop
- * path and the late-analysis path so the wording stays identical.
- */
-export function variableTempoWarpSkippedMessage(sourceName?: string): string {
-  const name = sourceName?.trim()
-  const subject = name ? `"${name}"` : 'This clip'
-  return `${subject} wasn't auto-warped — a variable tempo was detected. Split it into sections and warp each part manually.`
 }
 
 /** Combined pitch scale: `2^((semitones + cents / 100) / 12)`. */
