@@ -63,11 +63,9 @@ set(LIBSAMPLERATE_GIT_TAG "0.2.2" CACHE STRING "libsamplerate version to fetch")
 set(LIBSAMPLERATE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LIBSAMPLERATE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-# Newer CMake (>= 4) refuses to build projects whose
-# `cmake_minimum_required` is below 3.5 — libsamplerate 0.2.2 still
-# uses an older floor. This policy override lets it configure with
-# modern CMake without forking the upstream source.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+# libsamplerate 0.2.2 declares an obsolete policy floor. Apply the
+# current CMake compatibility floor without patching upstream source.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "" FORCE)
 
 FetchContent_Declare(libsamplerate
     GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
@@ -120,12 +118,9 @@ FetchContent_Declare(rubberband
     GIT_TAG        ${RUBBERBAND_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
-# Populate-only: do NOT call FetchContent_MakeAvailable — Rubber Band has
-# no CMakeLists.txt and would fail the add_subdirectory pass.
-FetchContent_GetProperties(rubberband)
-if(NOT rubberband_POPULATED)
-    FetchContent_Populate(rubberband)
-endif()
+# With no upstream CMakeLists.txt, MakeAvailable populates the sources
+# without adding a dependency target; Silverdaw defines that target below.
+FetchContent_MakeAvailable(rubberband)
 
 set(RB_DIR ${rubberband_SOURCE_DIR})
 
@@ -224,10 +219,7 @@ FetchContent_Declare(rnnoise
     GIT_TAG        ${RNNOISE_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
-FetchContent_GetProperties(rnnoise)
-if(NOT rnnoise_POPULATED)
-    FetchContent_Populate(rnnoise)
-endif()
+FetchContent_MakeAvailable(rnnoise)
 
 set(RNN_DIR ${rnnoise_SOURCE_DIR})
 
@@ -341,19 +333,13 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
             URL https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/${ORT_DML_VERSION}/microsoft.ml.onnxruntime.directml.${ORT_DML_VERSION}.nupkg
             URL_HASH SHA256=${ORT_DML_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_GetProperties(onnxruntime_dml)
-        if(NOT onnxruntime_dml_POPULATED)
-            FetchContent_Populate(onnxruntime_dml)
-        endif()
+        FetchContent_MakeAvailable(onnxruntime_dml)
 
         FetchContent_Declare(directml
             URL https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/${DIRECTML_VERSION}/microsoft.ai.directml.${DIRECTML_VERSION}.nupkg
             URL_HASH SHA256=${DIRECTML_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_GetProperties(directml)
-        if(NOT directml_POPULATED)
-            FetchContent_Populate(directml)
-        endif()
+        FetchContent_MakeAvailable(directml)
 
         set(ORT_INCLUDE_DIR "${onnxruntime_dml_SOURCE_DIR}/build/native/include")
         set(ORT_LIB "${onnxruntime_dml_SOURCE_DIR}/runtimes/win-x64/native/onnxruntime.lib")
@@ -376,13 +362,8 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
             URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
             URL_HASH SHA256=${ONNXRUNTIME_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        # Prebuilt binary distribution — no CMakeLists, so populate only (mirrors
-        # the Rubber Band block above; FetchContent_MakeAvailable would try to
-        # add_subdirectory and fail).
-        FetchContent_GetProperties(onnxruntime)
-        if(NOT onnxruntime_POPULATED)
-            FetchContent_Populate(onnxruntime)
-        endif()
+        # With no CMakeLists.txt, MakeAvailable only extracts the binary archive.
+        FetchContent_MakeAvailable(onnxruntime)
 
         set(ORT_INCLUDE_DIR "${onnxruntime_SOURCE_DIR}/include")
         set(ORT_LIB "${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib")
