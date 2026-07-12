@@ -8,18 +8,23 @@ namespace silverdaw
 using RubberBand::RubberBandStretcher;
 
 WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
-                             RubberBandStretcher::Options modeOptions)
+                             RubberBandStretcher::Options modeOptions,
+                             double initialPitchScale)
     : numChannels(juce::jlimit(1, kMaxChannels, numChannelsArg)), sampleRate(sampleRateArg)
 {
-    // Real-time mode is mandatory for the audio callback; high-consistency pitch avoids live artefacts.
-    const auto options = modeOptions
-                       | RubberBandStretcher::OptionProcessRealTime
-                       | RubberBandStretcher::OptionPitchHighConsistency;
+    const double clampedPitchScale = juce::jlimit(0.25, 4.0, initialPitchScale);
+    const auto options = realtimeOptionsFor(modeOptions, clampedPitchScale);
+    canChangePitchOption =
+        (modeOptions & RubberBandStretcher::OptionEngineFiner) == 0;
+    highConsistencyPitch = !canChangePitchOption ||
+        (options & RubberBandStretcher::OptionPitchHighConsistency) != 0;
+    pendingPitchScale.store(clampedPitchScale, std::memory_order_relaxed);
+    appliedPitchScale = clampedPitchScale;
     stretcher = std::make_unique<RubberBandStretcher>(static_cast<size_t>(sampleRate),
                                                        static_cast<size_t>(numChannels),
                                                        options,
                                                        1.0, // initial time ratio (output / input)
-                                                       1.0  // initial pitch scale
+                                                       clampedPitchScale
     );
     stretcher->setMaxProcessSize(static_cast<size_t>(kProcessFeedSamples));
     outputScratchPtrs.resize(static_cast<size_t>(numChannels));
@@ -27,6 +32,17 @@ WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
 }
 
 WarpProcessor::~WarpProcessor() = default;
+
+RubberBandStretcher::Options WarpProcessor::realtimeOptionsFor(
+    RubberBandStretcher::Options modeOptions, double initialPitchScale) noexcept
+{
+    auto options = modeOptions | RubberBandStretcher::OptionProcessRealTime;
+    const bool finerEngine =
+        (modeOptions & RubberBandStretcher::OptionEngineFiner) != 0;
+    if (finerEngine || std::abs(initialPitchScale - 1.0) > 1.0e-4)
+        options |= RubberBandStretcher::OptionPitchHighConsistency;
+    return options;
+}
 
 void WarpProcessor::prepareToPlay(int maxBlockSamples)
 {
@@ -84,6 +100,11 @@ void WarpProcessor::applyPendingParams() noexcept
     const double ps = pendingPitchScale.load(std::memory_order_acquire);
     if (ps != appliedPitchScale)
     {
+        if (canChangePitchOption && !highConsistencyPitch)
+        {
+            stretcher->setPitchOption(RubberBandStretcher::OptionPitchHighConsistency);
+            highConsistencyPitch = true;
+        }
         stretcher->setPitchScale(ps);
         appliedPitchScale = ps;
     }
@@ -124,14 +145,19 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
     }
 
     int produced = 0;
-    int safety = 0;
     const int feedChunk = std::min(allocatedBlockSamples, kProcessFeedSamples);
-    const auto worstCaseInput =
-        static_cast<int64_t>(numOutputSamples) * 4;
-    const int maxFeedIterations =
-        static_cast<int>((worstCaseInput + feedChunk - 1) / feedChunk) + 8;
-    const int maxIterations = maxFeedIterations * 3 + 16;
-    while (produced < numOutputSamples && safety++ < maxIterations)
+    const auto expectedInput = static_cast<int64_t>(
+        std::ceil(static_cast<double>(numOutputSamples) * appliedTempoRatio));
+    const auto primingInput = static_cast<int64_t>(
+        std::ceil(static_cast<double>(outputDelayToDiscard) * appliedTempoRatio));
+    const auto maxInputToFeed =
+        expectedInput + primingInput + static_cast<int64_t>(feedChunk) * 2;
+    int64_t inputFed = 0;
+    int64_t iterations = 0;
+    const int64_t maxIterations =
+        static_cast<int64_t>(numOutputSamples) + maxInputToFeed
+        + outputDelayToDiscard + 8;
+    while (produced < numOutputSamples && iterations++ < maxIterations)
     {
         const int available = static_cast<int>(stretcher->available());
         if (available > 0 && outputDelayToDiscard > 0)
@@ -151,9 +177,16 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
             continue;
         }
 
-        readSource(sourceScratchPtrs.data(), nextSourceSample, feedChunk);
-        stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(feedChunk), false);
-        nextSourceSample += feedChunk;
+        const auto required = static_cast<int64_t>(stretcher->getSamplesRequired());
+        const auto remainingInput = maxInputToFeed - inputFed;
+        if (required <= 0 || remainingInput <= 0) break;
+        const int sourceSamples =
+            static_cast<int>(std::min({required, remainingInput,
+                                       static_cast<int64_t>(feedChunk)}));
+        readSource(sourceScratchPtrs.data(), nextSourceSample, sourceSamples);
+        stretcher->process(sourceScratchPtrs.data(), static_cast<size_t>(sourceSamples), false);
+        nextSourceSample += sourceSamples;
+        inputFed += sourceSamples;
     }
 
     logicalSourceSample += static_cast<double>(numOutputSamples) * appliedTempoRatio;

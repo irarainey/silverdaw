@@ -585,6 +585,64 @@ void testBusGraphPanAppliedThroughMix()
     bg.releaseResources();
 }
 
+void testBusGraphExcludesBypassedTrackProcessing()
+{
+    class CountingSource final : public juce::AudioSource
+    {
+      public:
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            ++calls;
+            if (info.buffer == nullptr) return;
+            for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel)
+                juce::FloatVectorOperations::fill(
+                    info.buffer->getWritePointer(channel, info.startSample),
+                    0.25F, info.numSamples);
+        }
+
+        int calls = 0;
+    };
+
+    constexpr int kBlock = 128;
+    silverdaw::BusGraph graph;
+    graph.prepareToPlay(kBlock, 48000.0);
+    CountingSource source;
+    graph.attachClip("track", "clip", &source);
+
+    require(!graph.finalizeTrackBypass("track"),
+            "track bypass must wait for the final rendered block");
+    graph.requestTrackBypass("track");
+
+    juce::AudioBuffer<float> output(2, kBlock);
+    juce::AudioSourceChannelInfo info(&output, 0, kBlock);
+    graph.getNextAudioBlock(info);
+    require(source.calls == 1,
+            "mute must allow one final block for the transport gain ramp");
+    require(graph.finalizeTrackBypass("track"),
+            "track bypass should complete after the final block");
+
+    output.clear();
+    graph.getNextAudioBlock(info);
+    require(source.calls == 1,
+            "bypassed track must not pull clip, warp, pitch, or track DSP");
+    require(output.getMagnitude(0, 0, kBlock) == 0.0F,
+            "bypassed track must contribute no output");
+
+    graph.setTrackTone("track", 3.0F, -2.0F, 1.0F, 0.25F, true);
+    graph.setTrackLeveler("track", 0.4F, true);
+    graph.setTrackSends("track", 0.2F, 0.3F);
+    graph.setTrackPan("track", -1.0F);
+    graph.setTrackRenderingEnabled("track", true);
+    graph.getNextAudioBlock(info);
+    require(source.calls == 2,
+            "reenabled track must return to the render snapshot");
+    require(output.getMagnitude(1, 0, kBlock) == 0.0F,
+            "effect and mixer edits made while bypassed must apply when reenabled");
+    graph.releaseResources();
+}
+
 void testBusGraphStructuralEditsDoNotDropAudio()
 {
     constexpr int kBlock = 128;
@@ -982,6 +1040,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
+    tests.push_back({"BusGraph excludes bypassed tracks from processing", testBusGraphExcludesBypassedTrackProcessing});
     tests.push_back({"BusGraph structural edits do not drop callback audio", testBusGraphStructuralEditsDoNotDropAudio});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});

@@ -142,11 +142,12 @@ scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
 ```
 
 Notable hot-path splits include `AudioEngineDevice.cpp`,
-`AudioEngineTransport.cpp`, `AudioEngineMix.cpp`, `BusGraphRender.cpp`,
-`OffsetSourceWarpRender.cpp`, and `OffsetSourceTailRender.cpp` under `engine/`,
-plus `ToneEq.cpp`, `SharedFx.cpp`, `BpmAnalysisHelpers.cpp`, and `DspSmooth.h`
-under `dsp/`. These keep device, transport, rendering, effects, and analysis
-responsibilities out of monolithic implementation files.
+`AudioEngineTransport.cpp`, `AudioEngineAudibility.cpp`,
+`AudioEngineMix.cpp`, `BusGraphRender.cpp`, `OffsetSourceWarpRender.cpp`, and
+`OffsetSourceTailRender.cpp` under `engine/`, plus `ToneEq.cpp`, `SharedFx.cpp`,
+`BpmAnalysisHelpers.cpp`, and `DspSmooth.h` under `dsp/`. These keep device,
+transport, track audibility, rendering, effects, and analysis responsibilities
+out of monolithic implementation files.
 
 ## Current status and roadmap
 
@@ -2542,6 +2543,19 @@ Auto-follow during playback uses a smooth catch-up:
 On the backend, `BridgeServer::broadcast` suppresses per-envelope log writes for both
 `PLAYHEAD_UPDATE` and `PREVIEW_POSITION` (the only 60 Hz envelopes), so a playing transport
 does not generate 60 log lines / second.
+
+**Warp and track rendering.** Faster/R2 warp processors use Rubber Band's
+lower-cost pitch path while a clip has no pitch shift; pitch-shifted R2 and all
+Finer/R3 processors retain the high-consistency path. Input is supplied according
+to `getSamplesRequired()` with latency-derived bounds instead of fixed 1,024-frame
+pushes. Live playback, preview, mixdown, and sample export share the same pitch
+conversion and processor setup.
+
+Muted and solo-excluded tracks are omitted from immutable `BusGraph` render
+snapshots after one final gain-ramp block. Their clips, warp and pitch processing,
+track effects, sends, and metering are therefore not pulled. Effect and clip
+settings remain editable while excluded. Before a track returns to the graph, its
+transports are reseeked to the master position and stale read-ahead is rebuilt.
 
 **Clip Editor uses the same renderer discipline.** The Clip Editor waveform
 (`lib/clipEditor/useClipEditorWaveform.ts`) is also PixiJS, mirroring the timeline rather

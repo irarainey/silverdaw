@@ -704,8 +704,9 @@ The engine topology uses two runtime objects:
 - **`BusGraph`** — one per engine. The root pull source (replaced the
   former `MixerAudioSource`). Owns block lifecycle deterministically and runs the
   signal flow in a strict order each block (see §7.9.2 below). Pulls
-  each `TrackRuntime` exactly once per block; pulls the shared Reverb and
-  Delay processors exactly once per block; sums into the master bus;
+  each audible `TrackRuntime` exactly once per block; muted and solo-excluded
+  runtimes are omitted from the immutable render snapshot. Pulls the shared
+  Reverb and Delay processors exactly once per block; sums into the master bus;
   hands off to `MeteringSource`.
 
 This deliberately avoids the full `juce::AudioProcessorGraph` migration
@@ -733,8 +734,9 @@ render share one DSP path.
 - Every scratch buffer is **cleared at the start of the block** before
   any pull, so a stale tail from the previous block can never sneak
   into a fresh dry sum.
-- Each `TrackRuntime` is pulled **exactly once** per block; each shared
-  FX is pulled **exactly once** per block; nothing is pulled twice.
+- Each included `TrackRuntime` is pulled **exactly once** per block; muted and
+  solo-excluded runtimes are not pulled. Each shared FX is pulled **exactly
+  once** per block; nothing is pulled twice.
 - Processor state on the shared FX **resets on transport stop and on
   `setNextReadPosition` seeks** (live or mixdown). A reverb tail is
   only valid relative to the dry input that fed it; seeking into the

@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- Warp playback performance is improved.
+- Muted and solo-excluded tracks now skip playback and effects processing.
 - Audio playback now remains uninterrupted while clips or automation are changed.
 - Repeated brake and backspin edits now release superseded audio state when playback stops.
 - Recent projects now show an opening indicator while the audio engine finishes starting.

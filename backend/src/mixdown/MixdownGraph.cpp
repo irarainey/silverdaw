@@ -98,14 +98,12 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
                      + " channels for clip " + clip.id;
             return nullptr;
         }
-        out->warp = std::make_unique<WarpProcessor>(out->sourceChannels,
-                                                    out->sourceRate,
-                                                    parseWarpMode(clip.warpMode));
+        const double pitchScale = warpPitchScale(clip.semitones, clip.cents);
+        out->warp = std::make_unique<WarpProcessor>(
+            out->sourceChannels, out->sourceRate,
+            parseWarpMode(clip.warpMode), pitchScale);
         out->warp->prepareToPlay(kBlockFrames);
         if (clip.tempoRatio > 0.0) out->warp->setTempoRatio(clip.tempoRatio);
-        const double pitchScale =
-            std::pow(2.0, (clip.semitones + (clip.cents / 100.0)) / 12.0);
-        out->warp->setPitchScale(pitchScale);
         out->offsetSource->setWarpProcessor(out->warp.get());
         out->offsetSource->requestWarpReseek();
     }

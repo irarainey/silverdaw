@@ -77,6 +77,9 @@ void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& 
     else if (numCh > 0)
         atomicMaxFloat(peakR,
                        info.buffer->getMagnitude(0, info.startSample, info.numSamples));
+
+    if (bypassRequested.exchange(false, std::memory_order_acq_rel))
+        bypassReady.store(true, std::memory_order_release);
 }
 
 // ── RenderReadGuard ─────────────────────────────────────────────────────
@@ -111,7 +114,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
     snapshot->tracks.reserve(runtimes.size());
     for (const auto& [trackId, runtime] : runtimes)
     {
-        if (runtime == nullptr || runtime->clips.empty()) continue;
+        if (runtime == nullptr || runtime->clips.empty() || !runtime->renderEnabled) continue;
         snapshot->tracks.push_back(
             {runtime.get(), runtime->clips, runtime->publishedAutomation});
         snapshot->hasAutomation =
@@ -127,7 +130,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding
     snapshot->tracks.reserve(runtimes.size());
     for (const auto& [trackId, runtime] : runtimes)
     {
-        if (runtime == nullptr) continue;
+        if (runtime == nullptr || !runtime->renderEnabled) continue;
 
         RenderTrack track;
         track.runtime = runtime.get();

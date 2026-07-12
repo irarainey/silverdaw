@@ -17,9 +17,9 @@ using silverdaw::bridge::tryGetRequiredString;
 namespace
 {
 // Centralised so gain, mute, and solo share one effective-gain fan-out.
-void pushEffectiveTrackGainToEngine(const juce::String& trackId,
-                                    silverdaw::AudioEngine& engine,
-                                    silverdaw::ProjectState& projectState)
+float applyEffectiveClipGains(const juce::String& trackId,
+                              silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState)
 {
     const float effective = projectState.getEffectiveTrackGain(trackId);
     const auto clipIds = projectState.getTrackClipIds(trackId);
@@ -27,6 +27,16 @@ void pushEffectiveTrackGainToEngine(const juce::String& trackId,
     {
         engine.setClipGain(clipId, effective);
     }
+    return effective;
+}
+
+void applyEffectiveTrackState(const juce::String& trackId,
+                              silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState)
+{
+    const float effective =
+        applyEffectiveClipGains(trackId, engine, projectState);
+    engine.setTrackAudible(trackId, effective > 0.0F);
 }
 
 // Solo state changes audibility of every track.
@@ -34,13 +44,19 @@ void pushAllEffectiveGainsToEngine(silverdaw::AudioEngine& engine,
                                    silverdaw::ProjectState& projectState)
 {
     const auto& tree = projectState.getTree();
+    std::vector<std::pair<juce::String, bool>> audibility;
+    audibility.reserve(static_cast<std::size_t>(tree.getNumChildren()));
     for (int i = 0; i < tree.getNumChildren(); ++i)
     {
         const auto track = tree.getChild(i);
         if (!track.hasType(juce::Identifier{"TRACK"})) continue;
-        pushEffectiveTrackGainToEngine(track.getProperty(juce::Identifier{"id"}).toString(),
-                                       engine, projectState);
+        const auto trackId =
+            track.getProperty(juce::Identifier{"id"}).toString();
+        const float effective =
+            applyEffectiveClipGains(trackId, engine, projectState);
+        audibility.emplace_back(trackId, effective > 0.0F);
     }
+    engine.setTracksAudible(audibility);
 }
 } // namespace
 
@@ -115,7 +131,7 @@ void handleTrackGain(const juce::var& payload, silverdaw::AudioEngine& engine, s
     const auto gainF = static_cast<float>(*gain);
     // Track gain stores user volume; backend derives mute/solo effective gain.
     const bool stored = projectState.setTrackGain(trackId, gainF);
-    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
+    applyEffectiveTrackState(trackId, engine, projectState);
     broadcastApplied(bridge, "TRACK_GAIN_APPLIED",
                      {{"trackId", trackId}, {"gain", gainF}}, stored);
 }
@@ -127,7 +143,7 @@ void handleTrackMute(const juce::var& payload, silverdaw::AudioEngine& engine,
     if (trackId.isEmpty()) return;
     const bool muted = static_cast<bool>(payload.getProperty("muted", false));
     const bool stored = projectState.setTrackMuted(trackId, muted);
-    pushEffectiveTrackGainToEngine(trackId, engine, projectState);
+    applyEffectiveTrackState(trackId, engine, projectState);
     broadcastApplied(bridge, "TRACK_MUTE_APPLIED",
                      {{"trackId", trackId}, {"muted", muted}}, stored);
 }

@@ -195,7 +195,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         {
             const double s = semitones.value_or(0.0);
             const double c = cents.value_or(0.0);
-            w->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
+            w->setPitchScale(warpPitchScale(s, c));
         }
     }
     updatePreviewMetronomeMapping();

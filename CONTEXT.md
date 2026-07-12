@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-09 · Owner: @irarainey_
+_Last reviewed: 2026-07-12 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -69,6 +69,9 @@ and roadmap.
 - `IMPORTANT` — **Audio playback performance is always first-class.** JUCE-level
   optimisation on the audio path is expected, balanced against maintainable code.
   See ADR 0017 (firm figures in `docs/developer-guide.md#rendering-performance`).
+- `IMPORTANT` — **Inaudible tracks perform no per-track audio work.** Muted,
+  solo-excluded, and fully attenuated tracks skip clip reads, warp, pitch,
+  effects, sends, and metering while remaining live-editable. See ADR 0020.
 - `REFERENCE` — No references or comparisons to any other DAW product in any
   document. Naming streaming/sharing services as feature targets is fine.
 

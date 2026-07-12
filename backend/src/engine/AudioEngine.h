@@ -16,6 +16,7 @@
 #include "OffsetSource.h"
 #include "PreviewMetronomeSource.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -29,6 +30,9 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace silverdaw
 {
@@ -82,8 +86,13 @@ class AudioEngine
     std::unique_ptr<juce::AudioFormatReader> createReaderForClip(const juce::File& filePath);
 
     bool removeClip(const juce::String& clipId);
-
+    bool moveClipToTrack(const juce::String& clipId, const juce::String& trackId);
     bool setClipGain(const juce::String& clipId, float gain);
+
+    /** Excludes inaudible tracks from clip, warp, pitch, DSP, send, and meter rendering. */
+    void setTrackAudible(const juce::String& trackId, bool audible);
+    void setTracksAudible(
+        const std::vector<std::pair<juce::String, bool>>& audibility);
 
     void play();
 
@@ -324,6 +333,7 @@ class AudioEngine
   private:
     struct Track
     {
+        juce::String trackId;
         std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
         std::unique_ptr<OffsetSource> offsetSource;
         std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
@@ -352,6 +362,8 @@ class AudioEngine
 
     double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
 
+    void recreateTrackPrefetch(Track& track, double positionSeconds);
+
     void rebuildTrackPrefetch(Track& track);
 
     // Schedules the post-edit prefetch rebuild: immediately if playing (must drain stale
@@ -373,6 +385,14 @@ class AudioEngine
 
     void flushDirtyRebuilds();
 
+    void flushPendingTrackBypasses();
+    void setTrackAudibleUntil(const juce::String& trackId, bool audible,
+                              double prefetchDeadlineMs,
+                              juce::AudioBuffer<float>& prefetchScratch);
+    bool isTrackAudible(const juce::String& trackId) const noexcept;
+    bool waitForTrackPrefetch(Track& track, double deadlineMs,
+                              juce::AudioBuffer<float>& scratch);
+
     class RebuildTimer : public juce::Timer
     {
       public:
@@ -388,6 +408,20 @@ class AudioEngine
     };
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
+
+    class TrackBypassTimer : public juce::Timer
+    {
+      public:
+        explicit TrackBypassTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.flushPendingTrackBypasses(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    TrackBypassTimer trackBypassTimer{*this};
+    std::unordered_set<juce::String> pendingTrackBypasses;
+    std::unordered_map<juce::String, bool> trackAudibility;
+    static constexpr int kTrackBypassPollMs = 5;
 
     double brakeDefaultSeconds = BrakeSnapshot::kPlatterStopSeconds;
     double brakeDefaultCurve = BrakeSnapshot::kDefaultCurvePower;

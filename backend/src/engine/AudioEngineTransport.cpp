@@ -59,6 +59,10 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
         {
             continue;
         }
+        if (!isTrackAudible(track->trackId))
+        {
+            continue;
+        }
         const double seekSeconds = trackSeekSecondsFor(*track, master.getPositionSamples());
         track->transportSource->setPosition(seekSeconds);
         // A track transport that previously played to the end of its source has
@@ -110,24 +114,7 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
                 break;
             }
 
-            int want = kPrimeReadyTargetSamples;
-            const juce::int64 total = track->bufferingSource->getTotalLength();
-            if (total > 0)
-            {
-                const juce::int64 left = total - track->bufferingSource->getNextReadPosition();
-                want = static_cast<int>(juce::jlimit<juce::int64>(0, kPrimeReadyTargetSamples, left));
-            }
-            if (want <= 0)
-            {
-                track->prefetchDirty = false;
-                it = notReady.erase(it);
-                continue;
-            }
-
-            const auto perTrack = static_cast<juce::uint32>(
-                juce::jmin(passRemaining, static_cast<double>(kPrimePerTrackTimeoutMs)));
-            juce::AudioSourceChannelInfo info(&scratch, 0, want);
-            if (track->bufferingSource->waitForNextAudioBlockReady(info, perTrack))
+            if (waitForTrackPrefetch(*track, deadline, scratch))
             {
                 track->prefetchDirty = false;
                 it = notReady.erase(it);
@@ -151,6 +138,32 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
         }
     }
     return notReady.empty();
+}
+
+bool AudioEngine::waitForTrackPrefetch(Track& track, double deadlineMs,
+                                       juce::AudioBuffer<float>& scratch)
+{
+    if (track.bufferingSource == nullptr) return true;
+
+    int want = kPrimeReadyTargetSamples;
+    const juce::int64 total = track.bufferingSource->getTotalLength();
+    if (total > 0)
+    {
+        const juce::int64 left =
+            total - track.bufferingSource->getNextReadPosition();
+        want = static_cast<int>(
+            juce::jlimit<juce::int64>(0, kPrimeReadyTargetSamples, left));
+    }
+    if (want <= 0) return true;
+
+    const double remaining =
+        deadlineMs - juce::Time::getMillisecondCounterHiRes();
+    if (remaining <= 0.0) return false;
+
+    juce::AudioSourceChannelInfo info(&scratch, 0, want);
+    const auto timeout = static_cast<juce::uint32>(
+        juce::jmin(remaining, static_cast<double>(kPrimePerTrackTimeoutMs)));
+    return track.bufferingSource->waitForNextAudioBlockReady(info, timeout);
 }
 
 void AudioEngine::pause()

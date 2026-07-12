@@ -26,3 +26,4 @@ decision and add its line here.
 | D-0017 | `IMPORTANT` | Performance priorities: audio playback is first-class | `docs/adr/0017-performance-priorities.md` |
 | D-0018 | `IMPORTANT` | Autosave-backed crash recovery | `docs/adr/0018-autosave-crash-recovery.md` |
 | D-0019 | `CRITICAL` | Backward compatibility for a released product (versioned, read-old/write-latest) | `docs/adr/0019-backward-compatibility-released-product.md` |
+| D-0020 | `IMPORTANT` | Exclude inaudible tracks from playback and effects processing | `docs/adr/0020-exclude-inaudible-tracks-from-rendering.md` |

@@ -463,6 +463,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/Waveform.cpp
     # engine
     src/engine/AudioEngine.cpp
+    src/engine/AudioEngineAudibility.cpp
     src/engine/AudioEngineDevice.cpp
     src/engine/AudioEngineTransport.cpp
     src/engine/AudioEngineMix.cpp

@@ -21,17 +21,14 @@ inline std::unique_ptr<WarpProcessor> makeWarpProcessor(
     std::optional<double> cents)
 {
     const auto options = parseWarpMode(mode);
+    const double s = semitones.value_or(0.0);
+    const double c = cents.value_or(0.0);
+    const double pitchScale = warpPitchScale(s, c);
     auto wp = std::make_unique<WarpProcessor>(juce::jmax(1, channels),
                                               sampleRate > 0 ? sampleRate : 44100.0,
-                                              options);
+                                              options, pitchScale);
     wp->prepareToPlay(juce::jmax(64, blockSize));
     if (tempoRatio.has_value() && *tempoRatio > 0.0) wp->setTempoRatio(*tempoRatio);
-    if (semitones.has_value() || cents.has_value())
-    {
-        const double s = semitones.value_or(0.0);
-        const double c = cents.value_or(0.0);
-        wp->setPitchScale(std::pow(2.0, (s + c / 100.0) / 12.0));
-    }
     return wp;
 }
 
