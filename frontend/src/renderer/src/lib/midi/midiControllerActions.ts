@@ -106,18 +106,15 @@ function flushTimelineJog(timestamp: number): void {
 function queueTimelineJog(
   control: keyof typeof JOG_MS_PER_STEP,
   delta: number,
-  freeMovement: boolean
+  snapToGrid: boolean
 ): void {
-  const mode = freeMovement ? 'free' : 'snapped'
+  const mode = snapToGrid ? 'snapped' : 'free'
   if (pendingJogMode !== null && pendingJogMode !== mode) {
     pendingSeekDeltaMs = 0
     pendingBeatSteps = 0
   }
   pendingJogMode = mode
-  if (freeMovement) {
-    snappedJogUnits = 0
-    pendingSeekDeltaMs += delta * JOG_MS_PER_STEP[control]
-  } else {
+  if (snapToGrid) {
     const pacing = SNAPPED_JOG_PACING[control]
     pendingSnapUnitsPerBeat = pacing.unitsPerBeat
     pendingSnapMinIntervalMs = pacing.minIntervalMs
@@ -125,6 +122,9 @@ function queueTimelineJog(
       snappedJogUnits = 0
     }
     pendingBeatSteps += delta
+  } else {
+    snappedJogUnits = 0
+    pendingSeekDeltaMs += delta * JOG_MS_PER_STEP[control]
   }
   if (seekFrame !== null) return
   seekFrame = globalThis.requestAnimationFrame(flushTimelineJog)

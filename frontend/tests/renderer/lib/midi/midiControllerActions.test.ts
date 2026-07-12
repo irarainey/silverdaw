@@ -115,7 +115,7 @@ describe('MIDI controller actions', () => {
     expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 3000 })
   })
 
-  it('snaps normal jog movement to project ruler subdivisions', () => {
+  it('keeps normal jog movement free', () => {
     seedProject()
     const transport = useTransportStore()
     const ui = useUiStore()
@@ -141,11 +141,11 @@ describe('MIDI controller actions', () => {
 
     expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
-    expect(scrollTo).toHaveBeenCalledWith(2100)
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2112 })
+    expect(scrollTo).toHaveBeenCalledWith(2112)
   })
 
-  it('keeps jog movement free while its deck Sync button is held', () => {
+  it('snaps jog movement to project ruler subdivisions while Sync is held', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
@@ -157,17 +157,18 @@ describe('MIDI controller actions', () => {
       kind: 'relative',
       control: 'jogScratch',
       deck: 1,
-      value: 2
+      value: 1
     })
 
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2028 })
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
   })
 
   it('snaps backward to the preceding ruler line and stops at the timeline start', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
+    useMidiDeviceStore().syncPressed[1] = true
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -194,10 +195,11 @@ describe('MIDI controller actions', () => {
     expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
   })
 
-  it('limits accelerated jog input to one adjacent ruler line per update', () => {
+  it('limits accelerated jog input to one adjacent ruler line per update while Sync is held', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
+    useMidiDeviceStore().syncPressed[1] = true
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -212,7 +214,7 @@ describe('MIDI controller actions', () => {
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2100 })
   })
 
-  it('gives shifted jog search a faster snapped cadence than normal jog', () => {
+  it('gives shifted jog search faster free movement than normal jog', () => {
     seedProject()
     const transport = useTransportStore()
     transport.positionMs = 2000
@@ -226,51 +228,19 @@ describe('MIDI controller actions', () => {
       value: 2
     })
     animationFrame?.(0)
-    expect(sendMock).toHaveBeenCalledTimes(1)
-
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 2,
-      kind: 'relative',
-      control: 'jogSearch',
-      deck: 1,
-      value: 2
-    })
-    animationFrame?.(5)
-    expect(sendMock).toHaveBeenCalledTimes(1)
-
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 3,
-      kind: 'relative',
-      control: 'jogSearch',
-      deck: 1,
-      value: 1
-    })
-    animationFrame?.(10)
-    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2250 })
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2256 })
 
     sendMock.mockClear()
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
-      timestampMs: 4,
+      timestampMs: 2,
       kind: 'relative',
       control: 'jogScratch',
       deck: 1,
-      value: 4
+      value: 2
     })
-    animationFrame?.(20)
-    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', expect.anything())
-    handleMidiControl({
-      deviceIdentifier: 'ddj-rb',
-      timestampMs: 5,
-      kind: 'relative',
-      control: 'jogScratch',
-      deck: 1,
-      value: 1
-    })
-    animationFrame?.(30)
-    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2400 })
+    animationFrame?.(10)
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2284 })
   })
 
   it('leaves the reserved crossfader without an operational audio command', () => {

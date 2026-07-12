@@ -41,8 +41,8 @@ corresponding binding, Silverdaw applies these actions:
 | Play | Starts or pauses the project transport. |
 | Cue | Moves to the previous timeline marker. |
 | Shift + Cue | Moves to the next timeline marker. Some controllers send a dedicated shifted Cue message. |
-| Sync | Acts as a jog modifier. It does not synchronise tempo. Normal jog movement snaps to timeline grid lines; holding Sync makes the movement free. |
-| Jog wheel or platter | Moves the playhead. Touch-sensitive profiles switch between pitch-bend and scratch movement; search or shifted wheel messages move faster. |
+| Sync | Acts as a jog modifier. It does not synchronise tempo. Holding Sync snaps jog movement to timeline grid lines. |
+| Jog wheel or platter | Moves the playhead freely. Touch-sensitive profiles switch between pitch-bend and scratch movement; Shift moves faster. |
 | Browse encoder | Selects tracks. Pressing it enters clip-browse mode on the selected track; rotation then selects clips, shifted rotation extends the clip range, and another press exits clip-browse mode. |
 | Shift + Browse | Zooms the timeline when clip-browse mode is not active and the profile supplies a timeline-zoom binding. |
 | Hot-cue pads | Jump to the corresponding numbered timeline marker. A shifted or dedicated clear pad removes that numbered marker, or adds a marker at the playhead when the slot is empty. Profiles expose four or eight marker pads according to the hardware. |

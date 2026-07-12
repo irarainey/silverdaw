@@ -576,8 +576,8 @@ Device matching is case-insensitive, uses token boundaries, honours
 
 The renderer converts semantic controls into operational actions in
 `midiControllerActions.ts` and `midiBrowseActions.ts`. Jog movement is
-animation-frame coalesced; normal movement snaps to timeline grid lines and a
-held Sync modifier selects free movement. Browse controls switch between track
+animation-frame coalesced; normal movement is free, Shift moves faster, and a
+held Sync modifier snaps movement to timeline grid lines. Browse controls switch between track
 selection, clip selection/range extension, and timeline zoom. Absolute channel
 faders, Tone EQ, and Filter target the currently selected track, with a short
 catch-up transition when hardware and software positions differ. Master volume
