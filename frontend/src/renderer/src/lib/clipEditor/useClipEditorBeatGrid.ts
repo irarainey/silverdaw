@@ -20,11 +20,10 @@ export interface ClipEditorBeatGrid {
   /** When true, dragging the waveform slides the beat grid instead of selecting. */
   alignActive: Ref<boolean>
   /**
-   * The beat-grid BPM shown in (and edited via) the tempo field, as a string always formatted
-   * to two decimals (e.g. "120.00"). Kept in sync with the source's current tempo unless the user
-   * is actively editing it; empty string when the source has no tempo.
+   * The beat-grid BPM shown in the tempo field. Browser edits may be numeric; synchronized and
+   * committed values are strings formatted to two decimals (e.g. "120.00").
    */
-  manualBpmInput: Ref<string>
+  manualBpmInput: Ref<string | number>
   /**
    * The source tempo captured when the editor opened, so the user can see what
    * they started from and revert to it. Null until a valid BPM is first observed.
@@ -92,7 +91,7 @@ function currentAnchorSec(item: LibraryItem): number {
 export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorBeatGrid {
   const library = useLibraryStore()
   const alignActive = ref(false)
-  const manualBpmInput = ref<string>('')
+  const manualBpmInput = ref<string | number>('')
   // The tempo the source had when the editor opened. Snapshotted once so the user
   // can always see the value they started from and restore it after an override.
   const originalBpm = ref<number | null>(null)
@@ -161,8 +160,9 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function commitTempoEdit(endEditing = false): void {
     const item = deps.sourceItem()
-    const bpm = Number(manualBpmInput.value)
-    if (item && manualBpmInput.value.trim() !== '' && Number.isFinite(bpm) && bpm >= MIN_BPM && bpm <= MAX_BPM) {
+    const rawBpm = String(manualBpmInput.value).trim()
+    const bpm = Number(rawBpm)
+    if (item && rawBpm !== '' && Number.isFinite(bpm) && bpm >= MIN_BPM && bpm <= MAX_BPM) {
       if (typeof item.bpm !== 'number' || Math.abs(item.bpm - bpm) > 1e-6) {
         library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec(item))
         gridEdited.value = true

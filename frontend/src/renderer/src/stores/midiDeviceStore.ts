@@ -24,6 +24,8 @@ interface MidiDeviceState {
   deckSelectionByIdentifier: Record<string, MidiDeckSelection>
   /** True after the first MIDI_DEVICES_LIST arrives. */
   hydrated: boolean
+  /** Apply saved deck assignments after the backend confirms which inputs opened. */
+  deckSelectionSyncPending: boolean
   /** True from a user-initiated rescan until the backend replies. */
   rescanning: boolean
   monitorMessages: MidiMessagePayload[]
@@ -40,6 +42,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
     enabledByIdentifier: {},
     deckSelectionByIdentifier: {},
     hydrated: false,
+    deckSelectionSyncPending: false,
     rescanning: false,
     monitorMessages: [],
     shiftPressed: { 1: false, 2: false },
@@ -54,6 +57,18 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.inputs = [...payload.inputs]
       this.hydrated = true
       this.finishRescan()
+      if (!this.deckSelectionSyncPending) return
+
+      this.deckSelectionSyncPending = false
+      for (const input of payload.inputs) {
+        if (!input.enabled) continue
+        const selection = this.deckSelectionByIdentifier[input.identifier]
+        if (!selection) continue
+        sendBridge('MIDI_DECK_SELECTION_SET', {
+          deviceIdentifier: input.identifier,
+          ...selection
+        })
+      }
     },
 
     recordMessage(payload: MidiMessagePayload): void {
@@ -144,17 +159,9 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
 
     pushEnabledInputs(): void {
       const identifiers = Object.keys(this.enabledByIdentifier)
-      sendBridge('MIDI_INPUTS_SET', {
+      this.deckSelectionSyncPending = sendBridge('MIDI_INPUTS_SET', {
         identifiers
       })
-      for (const deviceIdentifier of identifiers) {
-        const selection = this.deckSelectionByIdentifier[deviceIdentifier]
-        if (!selection) continue
-        sendBridge('MIDI_DECK_SELECTION_SET', {
-          deviceIdentifier,
-          ...selection
-        })
-      }
     },
 
     /** Show rescan progress until the refreshed device list arrives. */

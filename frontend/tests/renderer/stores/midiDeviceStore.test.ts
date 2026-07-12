@@ -26,6 +26,7 @@ describe('midiDeviceStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(sendBridge).mockReturnValue(true)
     vi.stubGlobal('window', {
       silverdaw: {
         setMidiDeckSelection
@@ -109,8 +110,47 @@ describe('midiDeviceStore', () => {
     expect(sendBridge).toHaveBeenCalledWith('MIDI_INPUTS_SET', {
       identifiers: ['ddj-rb']
     })
+    expect(sendBridge).not.toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', expect.anything())
+
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+
     expect(sendBridge).toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
       deviceIdentifier: 'ddj-rb',
+      deck1Enabled: false,
+      deck2Enabled: true
+    })
+  })
+
+  it('does not send saved deck selection to a disconnected historical identifier', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({
+          current: true,
+          historical: true
+        }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({
+          current: { deck1Enabled: true, deck2Enabled: false },
+          historical: { deck1Enabled: false, deck2Enabled: true }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({
+      inputs: [input('current', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'current',
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+    expect(sendBridge).not.toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'historical',
       deck1Enabled: false,
       deck2Enabled: true
     })

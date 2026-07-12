@@ -23,6 +23,7 @@
 - Audio playback now remains uninterrupted while clips or automation are changed.
 - Repeated brake and backspin edits now release superseded audio state when playback stops.
 - Recent projects now show an opening indicator while the audio engine finishes starting.
+- Manual BPM edits in the Clip Editor now commit reliably.
 
 ## 1.1.0
 

@@ -47,6 +47,13 @@ std::unique_ptr<juce::MidiOutput> openMatchingMidiOutput(const juce::String& inp
     return candidate.has_value() ? juce::MidiOutput::openDevice(candidate->identifier) : nullptr;
 }
 
+bool isMidiInputConnected(const juce::String& identifier)
+{
+    for (const auto& device : juce::MidiInput::getAvailableDevices())
+        if (device.identifier == identifier) return true;
+    return false;
+}
+
 template <std::size_t Size>
 void sendControllerMessages(
     juce::MidiOutput* output,
@@ -235,6 +242,7 @@ public:
             broadcastDeckSelection(*active);
             return;
         }
+        if (!isMidiInputConnected(identifier)) return;
         silverdaw::log::warn("midi", "deck selection target is not an enabled input: " +
                                           identifier);
     }

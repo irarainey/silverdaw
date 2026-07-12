@@ -85,6 +85,19 @@ describe('useClipEditorBeatGrid', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
+  it('commits the numeric value produced by an input[type=number]', () => {
+    const item = addSource(120, 0.25)
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+
+    grid.beginTempoEdit()
+    grid.manualBpmInput.value = 128
+    grid.commitTempoEdit(true)
+
+    expect(item.bpm).toBe(128)
+    expect(item.beatAnchorSec).toBe(0.25)
+    expect(grid.manualBpmInput.value).toBe('128.00')
+  })
+
   it('does not draft when the committed tempo is unchanged', () => {
     const item = addSource(120, 0)
     const grid = useClipEditorBeatGrid({ sourceItem: () => item })

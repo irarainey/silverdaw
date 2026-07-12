@@ -32,23 +32,24 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     // Authoritative snapshot after AUTH reconciles optimistic state.
     useProjectStore().applyProjectStateSnapshot(payload)
     useAppStore().finishRecentProjectOpen()
-    useTransportStore().setPlaybackState(false)
-    useTransportStore().setBridgeReady(true)
+    const transport = useTransportStore()
+    const isInitialBridgeSnapshot = !transport.bridgeReady
+    transport.setPlaybackState(false)
+    transport.setBridgeReady(true)
     // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
     if (payload.reset === true && payload.filePath) {
       window.silverdaw.setLastProjectPath(payload.filePath, useProjectStore().projectName)
       void useAppStore().refreshRecentProjects()
     }
-    // Seed audio devices as soon as the bridge is ready.
-    useAudioDeviceStore().requestInitialList()
-    void useMidiDeviceStore().applyEnabledInputsOnReady()
-    // The backend resets to its keep-awake default on each connect; re-apply the saved override.
-    void useAudioDeviceStore().applyKeepAwakeOnReady()
-    // The backend also resets to its built-in brake defaults on connect; re-apply the saved settings.
-    void useBrakeSettingsStore().applyBrakeSettingsOnReady()
-    void useBackspinSettingsStore().applyBackspinSettingsOnReady()
-    // The backend defaults the first-clip tempo-seed preference to on each connect; re-apply the saved value.
-    useUiStore().syncSeedTempoPrefToBackend()
+    if (isInitialBridgeSnapshot) {
+      useAudioDeviceStore().requestInitialList()
+      void useMidiDeviceStore().applyEnabledInputsOnReady()
+      // Backend-scoped preferences reset on each connection, not on project edits.
+      void useAudioDeviceStore().applyKeepAwakeOnReady()
+      void useBrakeSettingsStore().applyBrakeSettingsOnReady()
+      void useBackspinSettingsStore().applyBackspinSettingsOnReady()
+      useUiStore().syncSeedTempoPrefToBackend()
+    }
     // Recovery distinguishes empty reconnect snapshots from restored resets.
     engineRecovery.onProjectStateApplied(payload)
   },
