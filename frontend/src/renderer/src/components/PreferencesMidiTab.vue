@@ -5,8 +5,8 @@ const props = defineProps<{
     identifier: string
     connected: boolean
     enabled: boolean
+    manufacturer?: string | null
     controllerProfile: string | null
-    lastActivityMs: number | null
   }>
   /** True once the first device list has arrived from the backend. */
   hydrated: boolean
@@ -17,12 +17,6 @@ const props = defineProps<{
   enabledByIdentifier: Record<string, boolean>
   setInputEnabled: (identifier: string, enabled: boolean) => void
 }>()
-
-function formatLastActivity(lastActivityMs: number | null): string {
-  return lastActivityMs === null
-    ? 'No activity yet'
-    : `Last activity ${new Date(lastActivityMs).toLocaleTimeString()}`
-}
 
 function onEnabledChange(identifier: string, event: Event): void {
   props.setInputEnabled(identifier, (event.target as HTMLInputElement).checked)
@@ -100,6 +94,12 @@ function onEnabledChange(identifier: string, event: Event): void {
               <span class="block truncate font-medium text-zinc-200">
                 {{ input.name }}
                 <span
+                  v-if="input.manufacturer"
+                  class="ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-normal text-zinc-400"
+                >
+                  {{ input.manufacturer }}
+                </span>
+                <span
                   v-if="input.controllerProfile"
                   class="ml-1.5 text-[10px] font-normal text-sky-400"
                 >
@@ -122,7 +122,6 @@ function onEnabledChange(identifier: string, event: Event): void {
               />
               {{ input.connected ? 'Connected' : 'Disconnected' }}
             </span>
-            <span class="block">{{ formatLastActivity(input.lastActivityMs) }}</span>
           </span>
         </div>
       </div>

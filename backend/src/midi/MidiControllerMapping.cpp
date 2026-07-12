@@ -48,6 +48,15 @@ bool supportsMidiControllerOutput(const juce::String& deviceName)
     return profile != nullptr && !profile->outputs.empty();
 }
 
+std::optional<juce::String> midiControllerManufacturerName(const juce::String& deviceName)
+{
+    const auto* profile = findMidiControllerProfile(deviceName);
+    if (profile == nullptr) return std::nullopt;
+
+    const auto separator = profile->name.indexOfChar(' ');
+    return profile->name.substring(0, separator < 0 ? profile->name.length() : separator);
+}
+
 const char* midiControllerActionName(MidiControllerAction action) noexcept
 {
     switch (action)

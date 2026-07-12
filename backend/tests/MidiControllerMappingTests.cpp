@@ -25,6 +25,13 @@ void testMidiProfilesCoverInstalledDecks()
     for (const auto* model : models)
         require(supportsMidiControllerMapping(model),
                 "each installed deck should resolve to a JSON controller profile");
+    require(midiControllerManufacturerName("2- DDJ-FLX4") == juce::String("Pioneer"),
+            "manufacturer should come from the matched profile despite a Windows prefix");
+    require(midiControllerManufacturerName("DJCONTROL INPULSE 500") ==
+                juce::String("Hercules"),
+            "manufacturer should reflect the matched profile family");
+    require(!midiControllerManufacturerName("MPK mini").has_value(),
+            "unmapped devices should not report a manufacturer");
 }
 
 void testMidiProfilesRejectUnmappedDevices()

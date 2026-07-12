@@ -135,6 +135,7 @@ describe('isMidiDevicesListPayload', () => {
         identifier: 'launchkey',
         connected: true,
         enabled: true,
+        manufacturer: 'Novation',
         controllerProfile: null,
         lastActivityMs: 1234
       }]

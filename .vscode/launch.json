@@ -13,6 +13,9 @@
       "cwd": "${workspaceFolder}/frontend",
       "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/electron-vite",
       "runtimeArgs": ["dev"],
+      "env": {
+        "SILVERDAW_BACKEND_CONFIG": "Debug"
+      },
       "windows": {
         "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/electron-vite.cmd"
       },

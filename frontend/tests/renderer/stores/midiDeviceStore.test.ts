@@ -14,6 +14,7 @@ function input(identifier: string, overrides: Partial<MidiInputDevice> = {}): Mi
     identifier,
     connected: true,
     enabled: false,
+    manufacturer: null,
     controllerProfile: null,
     lastActivityMs: null,
     ...overrides

@@ -164,12 +164,17 @@ public:
         juce::Array<juce::var> inputs;
         for (const auto& device : juce::MidiInput::getAvailableDevices())
         {
+            const auto manufacturer = midiControllerManufacturerName(device.name);
             auto* inputObj = new juce::DynamicObject();
             inputObj->setProperty("name", device.name);
             inputObj->setProperty("identifier", device.identifier);
             inputObj->setProperty("connected", true);
+            inputObj->setProperty("manufacturer",
+                                  manufacturer.has_value()
+                                      ? juce::var(*manufacturer)
+                                      : juce::var());
             inputObj->setProperty("controllerProfile",
-                                  supportsMidiControllerMapping(device.name)
+                                  manufacturer.has_value()
                                       ? juce::var("MIDI deck")
                                       : juce::var());
 
