@@ -134,6 +134,36 @@ void testMidiMappingMapsBrowseAndPads()
     require(pad.has_value() && pad->action == MidiControllerAction::markerJump &&
                 pad->deck == 1 && pad->pad == 3,
             "a configured pad range should map to one-based marker slots");
+
+    mapper.mapMessage(0x90, 0x3f, 0x7f);
+    const auto zoomIn = mapper.mapMessage(0xb6, 0x40, 0x3e);
+    const auto zoomOut = mapper.mapMessage(0xb6, 0x40, 0x42);
+    require(zoomIn.has_value() && zoomIn->action == MidiControllerAction::timelineZoom &&
+                zoomIn->value == 2.0,
+            "Shift plus clockwise Browse should map to timeline zoom in");
+    require(zoomOut.has_value() && zoomOut->action == MidiControllerAction::timelineZoom &&
+                zoomOut->value == -2.0,
+            "Shift plus anticlockwise Browse should map to timeline zoom out");
+
+    mapper.mapMessage(0x80, 0x3f, 0);
+    const auto browseAfterShift = mapper.mapMessage(0xb6, 0x40, 0x3e);
+    require(browseAfterShift.has_value() &&
+                browseAfterShift->action == MidiControllerAction::browseTracks,
+            "Browse should return to track selection when Shift is released");
+
+    MidiControllerMapper ddjRb{"2 - DDJ-RB"};
+    ddjRb.mapMessage(0x90, 63, 127);
+    const auto ddjRbZoomIn = ddjRb.mapMessage(0xb6, 100, 1);
+    const auto ddjRbZoomOut = ddjRb.mapMessage(0xb6, 100, 127);
+    ddjRb.mapMessage(0x90, 63, 0);
+    require(ddjRbZoomIn.has_value() &&
+                ddjRbZoomIn->action == MidiControllerAction::timelineZoom &&
+                ddjRbZoomIn->value == 1.0,
+            "DDJ-RB Shift plus clockwise Browse should map CC 100 value 1 to zoom in");
+    require(ddjRbZoomOut.has_value() &&
+                ddjRbZoomOut->action == MidiControllerAction::timelineZoom &&
+                ddjRbZoomOut->value == -1.0,
+            "DDJ-RB Shift plus anticlockwise Browse should map CC 100 value 127 to zoom out");
 }
 
 void testMidiMappingMapsSevenBitMixerControls()

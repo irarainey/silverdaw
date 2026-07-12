@@ -302,10 +302,9 @@ describe('MIDI controller actions', () => {
     expect(project.selectedTrackId).toBe('t1')
   })
 
-  it('uses Shift+Browse for proportional timeline zoom', () => {
+  it('uses the standard zoom step for Shift+Browse in both directions', () => {
     const ui = useUiStore()
-    ui.zoomPxPerSecond = 100
-    const zoomTo = vi.spyOn(ui, 'requestTimelineZoomTo')
+    const zoom = vi.spyOn(ui, 'requestTimelineZoom')
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -315,9 +314,17 @@ describe('MIDI controller actions', () => {
       deck: null,
       value: 2
     })
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 2,
+      kind: 'relative',
+      control: 'timelineZoom',
+      deck: null,
+      value: -1
+    })
 
-    expect(zoomTo).toHaveBeenCalledOnce()
-    expect(zoomTo.mock.calls[0]?.[0]).toBeCloseTo(102)
+    expect(zoom).toHaveBeenNthCalledWith(1, 'in')
+    expect(zoom).toHaveBeenNthCalledWith(2, 'out')
   })
 
   it('enters clip Browse mode, navigates chronologically, and returns to the track', () => {
@@ -366,7 +373,7 @@ describe('MIDI controller actions', () => {
     seedTrackClips()
     const project = useProjectStore()
     const ui = useUiStore()
-    const zoomTo = vi.spyOn(ui, 'requestTimelineZoomTo')
+    const zoom = vi.spyOn(ui, 'requestTimelineZoom')
 
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
@@ -395,7 +402,7 @@ describe('MIDI controller actions', () => {
 
     expect(project.selectedClipId).toBe('early')
     expect(project.selectedClipIds).toEqual(new Set(['early', 'middle', 'late']))
-    expect(zoomTo).not.toHaveBeenCalled()
+    expect(zoom).not.toHaveBeenCalled()
   })
 
   it('jumps to and deletes chronological marker slots from Hot Cue pads', () => {

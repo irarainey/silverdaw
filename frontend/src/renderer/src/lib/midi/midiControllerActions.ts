@@ -47,7 +47,6 @@ let pendingSnapUnitsPerBeat: number = SNAPPED_JOG_PACING.jogScratch.unitsPerBeat
 let pendingSnapMinIntervalMs: number = SNAPPED_JOG_PACING.jogScratch.minIntervalMs
 let pendingJogMode: 'snapped' | 'free' | null = null
 let seekFrame: number | null = null
-const MIDI_ZOOM_FACTOR_PER_STEP = 1.02
 const FOURTEEN_BIT_MIDPOINT = 8192 / 16383 // Normalized center of a 14-bit CC.
 const DIAL_CATCH_UP_MS = 150
 const DIAL_VALUE_EPSILON = 1e-4
@@ -295,9 +294,8 @@ export function handleMidiControl(payload: MidiControlPayload): void {
     } else if (payload.control === 'timelineZoom') {
       if (handleBrowseRotation(payload.deviceIdentifier, -payload.value, true)) return
       const ui = useUiStore()
-      ui.requestTimelineZoomTo(
-        ui.zoomPxPerSecond * Math.pow(MIDI_ZOOM_FACTOR_PER_STEP, Math.sign(payload.value))
-      )
+      const action = payload.value > 0 ? 'in' : 'out'
+      ui.requestTimelineZoom(action)
     } else if (payload.deck !== null) {
       queueTimelineJog(
         payload.control,

@@ -578,7 +578,8 @@ The renderer converts semantic controls into operational actions in
 `midiControllerActions.ts` and `midiBrowseActions.ts`. Jog movement is
 animation-frame coalesced; normal movement is free, Shift moves faster, and a
 held Sync modifier snaps movement to timeline grid lines. Browse controls switch between track
-selection, clip selection/range extension, and timeline zoom. Absolute channel
+selection, clip selection/range extension, and Shift-modified timeline zoom; clockwise zooms in
+and anticlockwise zooms out. Absolute channel
 faders, Tone EQ, and Filter target the currently selected track, with a short
 catch-up transition when hardware and software positions differ. Master volume
 is applied to the project. Crossfader input is retained as controller telemetry

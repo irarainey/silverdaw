@@ -36,6 +36,10 @@ enable the controller again.
 The available physical controls vary by profile. When a profile contains the
 corresponding binding, Silverdaw applies these actions:
 
+> **Note:** Not every supported controller provides every mapping or function.
+> Check the supported-controller table below for the controls available on each
+> device.
+
 | Controller control | Silverdaw action |
 | --- | --- |
 | Play | Starts or pauses the project transport. |
@@ -44,7 +48,7 @@ corresponding binding, Silverdaw applies these actions:
 | Sync | Acts as a jog modifier. It does not synchronise tempo. Holding Sync snaps jog movement to timeline grid lines. |
 | Jog wheel or platter | Moves the playhead freely. Touch-sensitive profiles switch between pitch-bend and scratch movement; Shift moves faster. |
 | Browse encoder | Selects tracks. Pressing it enters clip-browse mode on the selected track; rotation then selects clips, shifted rotation extends the clip range, and another press exits clip-browse mode. |
-| Shift + Browse | Zooms the timeline when clip-browse mode is not active and the profile supplies a timeline-zoom binding. |
+| Shift + Browse | On profiles with a mapped Shift button, zooms the timeline when clip-browse mode is not active. Each clockwise or anticlockwise step uses the same increment as Zoom In or Zoom Out. |
 | Hot-cue pads | Jump to the corresponding numbered timeline marker. A shifted or dedicated clear pad removes that numbered marker, or adds a marker at the playhead when the slot is empty. Profiles expose four or eight marker pads according to the hardware. |
 | Headphone Cue / PFL | Enables or disables input from that physical deck. This is useful when a controller exposes more than one deck channel. |
 | Channel fader | Changes the currently selected Silverdaw track's volume. |
@@ -104,8 +108,8 @@ Controls not listed for a profile are not mapped.
 | Pioneer DJ DDJ-SX3 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ OMNIS-DUO; XDJ-RR; XDJ-RX2; XDJ-RX3; XDJ-XZ | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ OPUS-QUAD | Play, Cue, Sync, Shift, Browse/zoom, eight marker-jump pads, channel fader, crossfader | Play, Cue, marker pads |
-| Pioneer DJ XDJ-AERO; XDJ-R1 | Play, Cue/Shift+Cue, Sync, Browse/zoom, jog/touch/search, crossfader | Play, Cue |
-| Pioneer DJ XDJ-RX | Play, Cue, Sync, Browse/zoom, jog/touch/search, channel fader, crossfader | Selected-track meter, Play, Cue |
+| Pioneer DJ XDJ-AERO; XDJ-R1 | Play, Cue/Shift+Cue, Sync, Browse, jog/touch/search, crossfader | Play, Cue |
+| Pioneer DJ XDJ-RX | Play, Cue, Sync, Browse, jog/touch/search, channel fader, crossfader | Selected-track meter, Play, Cue |
 | Reloop Beatmix 2 MK2; Beatmix 4 MK2; shared device name Beatmix 2/4 MK2 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, three-band EQ, crossfader | Play, Cue, deck selection, marker pads |
 
 The Hercules DJControl Inpulse 200 MK2 and Hercules DJControl Inpulse 300 MK2

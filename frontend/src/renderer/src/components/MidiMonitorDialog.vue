@@ -22,7 +22,8 @@ const monitorText = computed(() => {
     .map((message) => {
       const time = new Date(message.timestampMs).toLocaleTimeString()
       const device = namesByIdentifier.value.get(message.deviceIdentifier) ?? 'MIDI input'
-      return `${time}  ${device}  ${messageKind(message.statusByte)}  Code ${message.data1 ?? '—'}  Value ${message.data2 ?? '—'}`
+      const channel = (message.statusByte & 0x0f) + 1
+      return `${time}  ${device}  ${messageKind(message.statusByte)}  Channel ${channel}  Code ${message.data1 ?? '—'}  Value ${message.data2 ?? '—'}`
     })
     .join('\n')
 })
@@ -86,7 +87,7 @@ watch(
         </div>
         <div class="px-6 py-5 text-xs">
           <p class="mb-3 text-zinc-500">
-            Shows the latest messages from enabled MIDI inputs. Control Change rows show controller code and value.
+            Shows the latest messages from enabled MIDI inputs. Control Change rows show channel, controller code, and value.
           </p>
           <textarea
             ref="logEl"

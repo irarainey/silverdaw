@@ -151,7 +151,9 @@ bool parseInputBinding(const juce::var& value, MidiInputBinding& binding)
         return false;
     if (binding.shiftedAction.has_value() &&
         binding.encoding != MidiInputEncoding::button &&
-        binding.encoding != MidiInputEncoding::padRange)
+        binding.encoding != MidiInputEncoding::padRange &&
+        binding.encoding != MidiInputEncoding::relative &&
+        binding.encoding != MidiInputEncoding::relativeTwosComplement)
         return false;
     if (binding.touchedAction.has_value() &&
         binding.encoding != MidiInputEncoding::relative &&
