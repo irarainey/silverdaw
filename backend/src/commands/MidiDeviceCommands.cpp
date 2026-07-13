@@ -251,8 +251,17 @@ public:
     {
         scratchRouter.setSetting(identifier, reverseCrossfader);
         for (const auto& active : activeInputs)
+        {
             if (active->identifier == identifier)
+            {
                 active->scratchState.reverseCrossfader = reverseCrossfader;
+                if (scratchRouter.engine() != nullptr)
+                {
+                    scratchRouter.engine()->setScratchMidiCrossfaderDirection(
+                        identifier, reverseCrossfader);
+                }
+            }
+        }
     }
 
     void setDeckSelection(const juce::String& identifier, bool deck1Enabled, bool deck2Enabled)
@@ -336,6 +345,8 @@ private:
         {
             std::array<std::array<double, relativeControlCount>, 2> relativeDeltas{};
             std::array<std::array<juce::int64, relativeControlCount>, 2> relativeTimestamps{};
+            std::optional<MidiControllerEvent> latestCrossfaderControl;
+            juce::int64 latestCrossfaderTimestamp = 0;
             const auto dropped = active->droppedMessageCount.exchange(0, std::memory_order_relaxed);
             if (dropped > 0)
             {
@@ -381,7 +392,9 @@ private:
                                 {
                                     active->deckActivation.selectExclusive(mapped->deck);
                                     scratchRouter.engine()->setScratchMidiSelectedDeck(
-                                        static_cast<scratch::DeckSide>(mapped->deck));
+                                        active->identifier,
+                                        static_cast<scratch::DeckSide>(mapped->deck),
+                                        active->scratchState.reverseCrossfader);
                                     scratchRouter.releaseDeckOwner(
                                         active->identifier,
                                         static_cast<scratch::DeckSide>(2 - deckIndex));
@@ -423,6 +436,12 @@ private:
                                 active->identifier, active->scratchState, raw.timestampMs,
                                 *mapped);
                         }
+                        else if (mapped->kind == MidiControllerValueKind::absolute
+                                 && mapped->action == MidiControllerAction::crossfader)
+                        {
+                            latestCrossfaderControl = *mapped;
+                            latestCrossfaderTimestamp = raw.timestampMs;
+                        }
                         else
                         {
                             broadcastMappedControl(
@@ -432,6 +451,11 @@ private:
                         }
                     }
                 }
+            }
+            if (latestCrossfaderControl)
+            {
+                broadcastMappedControl(
+                    *active, latestCrossfaderTimestamp, *latestCrossfaderControl);
             }
             broadcastRelativeControls(*active, relativeDeltas, relativeTimestamps);
             const auto nowMs = juce::Time::currentTimeMillis();

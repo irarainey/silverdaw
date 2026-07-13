@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import {
-  COL_BASELINE,
   COL_BEAT,
   COL_PLAYHEAD,
   COL_RULER_BG,
@@ -91,12 +90,6 @@ function draw(): void {
   const waveTop = RULER_HEIGHT
   const waveHeight = H - waveTop
   const mid = waveTop + waveHeight / 2
-  ctx.strokeStyle = cssHex(COL_BASELINE)
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, mid)
-  ctx.lineTo(W, mid)
-  ctx.stroke()
 
   const { peaks, peaksPerSecond, sourceDurationMs, preparedDurationMs, inMs, reversed } = props
   if (
@@ -106,6 +99,7 @@ function draw(): void {
     || sourceDurationMs <= 0
     || preparedDurationMs <= 0
   ) {
+    drawBaseline(ctx, W, mid)
     drawBeatMarkers(ctx, W, H, viewStartMs, viewDurationMs)
     drawPlayhead(ctx, W, H, viewStartMs, viewDurationMs)
     return
@@ -122,12 +116,13 @@ function draw(): void {
     : peaksPerSecond
   const laneHeight = waveHeight / lanes.length
   for (let channel = 0; channel < lanes.length; channel++) {
+    const laneMidY = waveTop + laneHeight * (channel + 0.5)
     drawScratchWaveformLane({
       ctx,
       peaks: lanes[channel]!,
       peaksPerSecond: lanePeaksPerSecond,
       width: W,
-      laneMidY: waveTop + laneHeight * (channel + 0.5),
+      laneMidY,
       laneHalfHeight: laneHeight / 2 - 1,
       visibleStartFraction,
       visibleFraction,
@@ -138,8 +133,22 @@ function draw(): void {
     })
   }
 
+  for (let channel = 0; channel < lanes.length; channel++) {
+    drawBaseline(ctx, W, waveTop + laneHeight * (channel + 0.5))
+  }
   drawBeatMarkers(ctx, W, H, viewStartMs, viewDurationMs)
   drawPlayhead(ctx, W, H, viewStartMs, viewDurationMs)
+}
+
+function drawBaseline(ctx: CanvasRenderingContext2D, width: number, midY: number): void {
+  const lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1))
+  const y = Math.round(midY) + (lineWidth % 2 === 1 ? 0.5 : 0)
+  ctx.strokeStyle = cssHex(COL_WAVE)
+  ctx.lineWidth = lineWidth
+  ctx.beginPath()
+  ctx.moveTo(0, y)
+  ctx.lineTo(width, y)
+  ctx.stroke()
 }
 
 function drawRuler(

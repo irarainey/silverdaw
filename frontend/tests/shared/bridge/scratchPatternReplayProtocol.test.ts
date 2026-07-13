@@ -1,11 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import {
+  SCRATCH_CROSSFADER_CURVE_VERSION,
+  SCRATCH_PATTERN_VERSION,
   SCRATCH_PROTOCOL_VERSION,
   ScratchPatternApplyPayloadSchema,
   ScratchPatternRemovePayloadSchema,
   ScratchPatternReplayStartPayloadSchema,
   ScratchPatternReplayStopPayloadSchema
 } from '@shared/bridge-protocol'
+
+const draftPattern = {
+  id: 'draft-1',
+  name: 'Draft',
+  version: SCRATCH_PATTERN_VERSION,
+  durationUs: 1000,
+  cropStartUs: 0,
+  cropEndUs: 1000,
+  sourceOffsetTurns: 0,
+  ownerDeck: 1 as const,
+  crossfaderCurve: SCRATCH_CROSSFADER_CURVE_VERSION,
+  platter: [
+    { timeUs: 0, turns: 0, touched: false },
+    { timeUs: 1000, turns: 0.001, touched: false }
+  ],
+  crossfader: [
+    { timeUs: 0, value: 0 },
+    { timeUs: 1000, value: 0 }
+  ]
+}
 
 describe('ScratchPatternApplyPayload schema', () => {
   it('accepts a valid apply payload', () => {
@@ -69,7 +91,15 @@ describe('ScratchPatternReplayStartPayload schema', () => {
     expect(result.success).toBe(true)
   })
 
-  it('rejects missing patternId', () => {
+  it('accepts the current draft pattern', () => {
+    const result = ScratchPatternReplayStartPayloadSchema.safeParse({
+      protocolVersion: SCRATCH_PROTOCOL_VERSION,
+      pattern: draftPattern
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a missing pattern reference', () => {
     const result = ScratchPatternReplayStartPayloadSchema.safeParse({
       protocolVersion: SCRATCH_PROTOCOL_VERSION
     })

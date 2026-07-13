@@ -62,8 +62,12 @@ class ScratchSessionController
     bool midiSetTouch(const juce::String& deviceIdentifier, DeckSide deck, bool touched);
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);
-    bool midiSetCrossfader(const juce::String& deviceIdentifier, double directedValue);
-    void setSelectedMidiDeck(DeckSide deck);
+    bool midiSetCrossfader(const juce::String& deviceIdentifier, double directedValue,
+                           double displayValue = -1.0);
+    bool setMidiCrossfaderDirection(const juce::String& deviceIdentifier,
+                                    bool reverseCrossfader);
+    void setSelectedMidiDeck(const juce::String& deviceIdentifier, DeckSide deck,
+                             bool reverseCrossfader);
     bool releaseMidiOwner(const juce::String& deviceIdentifier,
                           std::optional<DeckSide> deck = std::nullopt);
     bool reconcileSourceEnd();
@@ -90,12 +94,12 @@ class ScratchSessionController
         std::optional<DeckSide> crossfaderDeck;
         std::optional<juce::String> midiCrossfaderEligibleDeviceIdentifier;
         double crossfader = 0.0;
+        double crossfaderDisplay = 0.0;
         double lastPlatterMoveMs = 0.0;
-        // Pickup crossfader: effective value stays unchanged until the directed
-        // physical value crosses/catches the current effective value.
-        bool midiCrossfaderPickedUp = false;
-        bool midiCrossfaderSeenFirst = false;
-        double midiCrossfaderLastPhysical = 0.0;
+        bool midiCrossfaderReversed = false;
+        // Before the physical fader is seen, the selected deck's preferred edge
+        // is assumed open. Once adjusted, its directed position persists until close.
+        bool crossfaderHasBeenAdjusted = false;
     };
 
     ScratchAudioSource& scratchSource;

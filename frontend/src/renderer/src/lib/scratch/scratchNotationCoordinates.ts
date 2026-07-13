@@ -11,10 +11,10 @@ export interface NotationLayout {
 }
 
 export const DEFAULT_NOTATION_LAYOUT: NotationLayout = {
-  platterLaneHeight: 120,
-  cfLaneHeight: 60,
+  platterLaneHeight: 126,
+  cfLaneHeight: 54,
   paddingX: 24,
-  cfLaneTop: 132, // platterLaneHeight + 12
+  cfLaneTop: 138, // platterLaneHeight + 12
   turnsMargin: 8
 }
 

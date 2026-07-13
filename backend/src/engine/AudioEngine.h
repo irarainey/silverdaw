@@ -295,9 +295,13 @@ class AudioEngine
                                 double deltaTurns,
                                 double timestampMs);
     bool scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
-                                  double directedValue);
+                                  double directedValue, double displayValue = -1.0);
+    bool setScratchMidiCrossfaderDirection(const juce::String& deviceIdentifier,
+                                           bool reverseCrossfader);
     bool hasActiveScratchSession() const;
-    void setScratchMidiSelectedDeck(scratch::DeckSide deck);
+    void setScratchMidiSelectedDeck(const juce::String& deviceIdentifier,
+                                    scratch::DeckSide deck,
+                                    bool reverseCrossfader);
     bool releaseScratchMidiOwner(const juce::String& deviceIdentifier,
                                  std::optional<scratch::DeckSide> deck = std::nullopt);
     std::optional<ScratchSessionSnapshot> getScratchSessionSnapshot() const;

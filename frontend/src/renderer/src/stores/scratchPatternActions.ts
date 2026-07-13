@@ -59,13 +59,22 @@ export const scratchPatternActions = {
     log.info('project', `removeScratchPattern clip=${clipId}`)
   },
 
-  /** Start audition replay of a saved pattern (through active scratch session). */
-  startPatternReplay(this: ScratchActionsThis, patternId: string): void {
+  /** Start audition replay of a saved pattern or the current unsaved draft. */
+  startPatternReplay(this: ScratchActionsThis, pattern: string | ScratchPattern): void {
+    if (typeof pattern === 'string') {
+      sendBridge('SCRATCH_PATTERN_REPLAY_START', {
+        protocolVersion: SCRATCH_PROTOCOL_VERSION,
+        patternId: pattern
+      })
+      log.info('project', `startPatternReplay pattern=${pattern}`)
+      return
+    }
+
     sendBridge('SCRATCH_PATTERN_REPLAY_START', {
       protocolVersion: SCRATCH_PROTOCOL_VERSION,
-      patternId
+      pattern
     })
-    log.info('project', `startPatternReplay pattern=${patternId}`)
+    log.info('project', `startPatternReplay draft=${pattern.id}`)
   },
 
   /** Stop pattern audition replay. */

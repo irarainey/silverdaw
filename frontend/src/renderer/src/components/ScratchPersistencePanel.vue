@@ -12,6 +12,8 @@ const props = defineProps<{
   targetClipId?: string | null
   /** Callback when user requests pattern audition (play). */
   onAuditionStart?: (patternId: string) => void
+  /** Callback when user requests audition of the current draft. */
+  onDraftAuditionStart?: () => void
   /** Callback when user requests audition stop. */
   onAuditionStop?: () => void
   /** Callback when user requests applying pattern to the target clip. */
@@ -64,6 +66,14 @@ function cancelRename(): void {
         class="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 outline-none focus:border-zinc-500"
         aria-label="Pattern name"
       >
+      <button
+        v-if="props.onDraftAuditionStart"
+        type="button"
+        class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200 transition-colors hover:bg-zinc-700"
+        @click="props.isReplaying ? props.onAuditionStop?.() : props.onDraftAuditionStart()"
+      >
+        {{ props.isReplaying ? 'Stop Scratch' : 'Play Scratch' }}
+      </button>
       <button
         type="button"
         class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200 transition-colors hover:bg-zinc-700 disabled:opacity-40"

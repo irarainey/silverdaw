@@ -29,15 +29,21 @@ bool AudioEngine::startScratchPatternReplay(const scratch::Pattern& pattern)
         return false;
     }
 
-    // Store pattern for replay and start motor at nominal speed.
+    const auto session = scratchController.getSnapshot();
+    if (!session)
+        return false;
+
+    scratch::SessionControlPayload play;
+    play.sessionId = session->sessionId;
+    play.action = scratch::ControlAction::play;
+    if (!scratchController.controlSession(play))
+        return false;
+
+    scratchSource.endPatternReplay();
     patternReplaySnapshot = std::make_shared<const scratch::PatternReplaySnapshot>(std::move(snapshot));
+    scratchSource.beginPatternReplay(patternReplaySnapshot.get());
     patternReplayActive.store(true, std::memory_order_release);
     patternReplayPositionUs.store(0, std::memory_order_release);
-
-    // Set source to nominal play-through — the evaluator drives rate/gain.
-    scratchSource.setPlaying(true);
-    scratchSource.setTouched(false);
-    scratchSource.seekUs(0);
 
     silverdaw::log::info("scratch-replay", "pattern replay started");
     return true;
@@ -46,11 +52,17 @@ bool AudioEngine::startScratchPatternReplay(const scratch::Pattern& pattern)
 void AudioEngine::stopScratchPatternReplay()
 {
     patternReplayActive.store(false, std::memory_order_release);
+    scratchSource.endPatternReplay();
     patternReplaySnapshot = nullptr;
     patternReplayPositionUs.store(0, std::memory_order_release);
 
-    scratchSource.setPlaying(false);
-    scratchSource.setManualRate(0.0);
+    if (const auto session = scratchController.getSnapshot())
+    {
+        scratch::SessionControlPayload pause;
+        pause.sessionId = session->sessionId;
+        pause.action = scratch::ControlAction::pause;
+        scratchController.controlSession(pause);
+    }
     silverdaw::log::info("scratch-replay", "pattern replay stopped");
 }
 

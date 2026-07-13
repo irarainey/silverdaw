@@ -179,7 +179,12 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
 
         case ControlAction::crossfader:
         {
-            s.crossfader = juce::jlimit(0.0, 1.0, control.crossfader);
+            const auto displayValue = juce::jlimit(0.0, 1.0, control.crossfader);
+            s.crossfaderDisplay = displayValue;
+            s.crossfader = s.midiCrossfaderReversed
+                ? 1.0 - displayValue
+                : displayValue;
+            s.crossfaderHasBeenAdjusted = true;
             updateGain();
             if (recorder.state() == ScratchActionRecorder::State::recording)
                 recorder.recordCrossfader(s.crossfader);
@@ -300,7 +305,8 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
 }
 
 bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdentifier,
-                                                 double directedValue)
+                                                 double directedValue,
+                                                 double displayValue)
 {
     std::lock_guard<std::mutex> lock(sessionMutex);
     if (!session || !scratchSource.isActive()
@@ -314,34 +320,13 @@ bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdent
         session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
     if (*session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier)
         return false;
-    const auto physical = juce::jlimit(0.0, 1.0, directedValue);
-
-    // Pickup/catch-up: effective value stays unchanged until physical crosses it.
-    if (!session->midiCrossfaderPickedUp)
-    {
-        if (!session->midiCrossfaderSeenFirst)
-        {
-            // First physical value seen — record it but don't change effective yet.
-            session->midiCrossfaderSeenFirst = true;
-            session->midiCrossfaderLastPhysical = physical;
-            return false;
-        }
-        const auto lastPhysical = session->midiCrossfaderLastPhysical;
-        const auto effective = session->crossfader;
-        // Detect crossing: previous physical was on one side, now on the other (or equal).
-        const bool crossed =
-            (lastPhysical < effective && physical >= effective)
-            || (lastPhysical > effective && physical <= effective)
-            || (physical == effective);
-        session->midiCrossfaderLastPhysical = physical;
-        if (!crossed)
-            return false;
-        session->midiCrossfaderPickedUp = true;
-    }
-
-    session->midiCrossfaderLastPhysical = physical;
-    session->crossfader = physical;
-
+    session->crossfader = juce::jlimit(0.0, 1.0, directedValue);
+    session->crossfaderDisplay = displayValue >= 0.0
+        ? juce::jlimit(0.0, 1.0, displayValue)
+        : (session->midiCrossfaderReversed
+               ? 1.0 - session->crossfader
+               : session->crossfader);
+    session->crossfaderHasBeenAdjusted = true;
     updateGain();
 
     if (recorder.state() == ScratchActionRecorder::State::recording)
@@ -349,12 +334,41 @@ bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdent
     return true;
 }
 
-void ScratchSessionController::setSelectedMidiDeck(DeckSide deck)
+bool ScratchSessionController::setMidiCrossfaderDirection(
+    const juce::String& deviceIdentifier, bool reverseCrossfader)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || !scratchSource.isActive()
+        || !session->midiCrossfaderEligibleDeviceIdentifier
+        || *session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier
+        || session->midiCrossfaderReversed == reverseCrossfader)
+    {
+        return false;
+    }
+    session->midiCrossfaderReversed = reverseCrossfader;
+    session->crossfader = 1.0 - session->crossfader;
+    updateGain();
+    return true;
+}
+
+void ScratchSessionController::setSelectedMidiDeck(
+    const juce::String& deviceIdentifier, DeckSide deck, bool reverseCrossfader)
 {
     std::lock_guard<std::mutex> lock(sessionMutex);
     if (!session)
         return;
     session->selectedDeck = deck;
+    session->crossfaderDeck = deck;
+    session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
+    session->midiCrossfaderReversed = reverseCrossfader;
+    if (!session->crossfaderHasBeenAdjusted)
+    {
+        const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
+        session->crossfader = reverseCrossfader ? 1.0 - deckEdge : deckEdge;
+        session->crossfaderDisplay = deckEdge;
+    }
+    if (scratchSource.isActive())
+        updateGain();
 }
 
 bool ScratchSessionController::releaseMidiOwner(
@@ -377,9 +391,6 @@ bool ScratchSessionController::releaseMidiOwner(
     }
     session->ownerDeck.reset();
     session->ownerDeviceIdentifier.reset();
-    session->midiCrossfaderPickedUp = false;
-    session->midiCrossfaderSeenFirst = false;
-    session->midiCrossfaderLastPhysical = 0.0;
     resetOwnerTimestamp();
     updateGain();
     return true;
@@ -394,7 +405,13 @@ bool ScratchSessionController::claimDeck(DeckSide deck)
     {
         s.ownerDeck = deck;
         s.crossfaderDeck = deck;
-        s.crossfader = deck == DeckSide::deck1 ? 0.0 : 1.0;
+        if (!s.crossfaderHasBeenAdjusted)
+        {
+            const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
+            s.crossfader =
+                s.midiCrossfaderReversed ? 1.0 - deckEdge : deckEdge;
+            s.crossfaderDisplay = deckEdge;
+        }
         resetOwnerTimestamp();
     }
     scratchSource.setTouched(true);
@@ -420,10 +437,13 @@ bool ScratchSessionController::claimMidiDeck(
         s.ownerDeviceIdentifier = deviceIdentifier;
         s.crossfaderDeck = deck;
         s.midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
-        s.crossfader = deck == DeckSide::deck1 ? 0.0 : 1.0;
-        s.midiCrossfaderPickedUp = false;
-        s.midiCrossfaderSeenFirst = false;
-        s.midiCrossfaderLastPhysical = 0.0;
+        if (!s.crossfaderHasBeenAdjusted)
+        {
+            const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
+            s.crossfader =
+                s.midiCrossfaderReversed ? 1.0 - deckEdge : deckEdge;
+            s.crossfaderDisplay = deckEdge;
+        }
         resetOwnerTimestamp();
         updateGain();
     }
@@ -487,9 +507,13 @@ void ScratchSessionController::updateGain()
     double sideGain = 1.0;
     const auto deck = s.ownerDeck ? s.ownerDeck : s.crossfaderDeck;
     if (deck == DeckSide::deck1)
-        sideGain = 1.0 - s.crossfader;
+        sideGain = s.midiCrossfaderReversed
+            ? s.crossfader
+            : 1.0 - s.crossfader;
     else if (deck == DeckSide::deck2)
-        sideGain = s.crossfader;
+        sideGain = s.midiCrossfaderReversed
+            ? 1.0 - s.crossfader
+            : s.crossfader;
     scratchSource.setGain(static_cast<float>(sideGain));
 }
 
@@ -512,7 +536,7 @@ ScratchSessionController::getSnapshot() const
     result.status = session->status;
     result.error = session->error;
     result.preparationProgress = session->preparationProgress;
-    result.crossfader = session->crossfader;
+    result.crossfader = session->crossfaderDisplay;
     result.selectedDeck = session->selectedDeck;
     result.ownerDeck = session->ownerDeck;
     result.ownerDeviceIdentifier = session->ownerDeviceIdentifier;

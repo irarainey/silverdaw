@@ -239,10 +239,16 @@ export const ScratchPatternRemovePayloadSchema = z.object({
 })
 export type ScratchPatternRemovePayload = z.infer<typeof ScratchPatternRemovePayloadSchema>
 
-export const ScratchPatternReplayStartPayloadSchema = z.object({
-  protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
-  patternId: z.string().min(1)
-})
+export const ScratchPatternReplayStartPayloadSchema = z.union([
+  z.object({
+    protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+    patternId: z.string().min(1)
+  }),
+  z.object({
+    protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+    pattern: ScratchPatternSchema
+  })
+])
 export type ScratchPatternReplayStartPayload = z.infer<typeof ScratchPatternReplayStartPayloadSchema>
 
 export const ScratchPatternReplayStopPayloadSchema = z.object({

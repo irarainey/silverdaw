@@ -11,6 +11,8 @@
 namespace silverdaw::scratch
 {
 
+struct PatternReplaySnapshot;
+
 class ScratchAudioSource final : public juce::AudioSource
 {
   public:
@@ -50,6 +52,8 @@ class ScratchAudioSource final : public juce::AudioSource
     void setManualRate(double semanticRate, double holdSeconds = 0.05) noexcept;
     void setGain(float gain) noexcept;
     void seekUs(std::int64_t positionUs) noexcept;
+    void beginPatternReplay(const PatternReplaySnapshot* snapshot) noexcept;
+    void endPatternReplay() noexcept;
     bool consumeEndReached() noexcept;
     bool isAtForwardBoundary() const noexcept;
 
@@ -79,8 +83,10 @@ class ScratchAudioSource final : public juce::AudioSource
     std::atomic<std::int64_t> pendingSeekSourceSample{0};
     std::atomic<std::uint64_t> seekGeneration{0};
     std::atomic<bool> sourceEndReached{false};
+    std::atomic<const PatternReplaySnapshot*> replaySnapshot{nullptr};
 
     std::uint64_t appliedSeekGeneration = 0;
+    std::int64_t replayOutputSamples = 0;
     std::atomic<double> publishedSourcePosition{0.0};
     std::atomic<double> publishedSemanticRate{0.0};
 };

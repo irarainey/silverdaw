@@ -2,6 +2,8 @@
 
 #include "AudioEngine.h"
 #include "scratch/ScratchActionRecorder.h"
+#include "scratch/ScratchAudioSource.h"
+#include "scratch/ScratchPatternEvaluator.h"
 #include "scratch/ScratchProtocol.h"
 
 #include <cmath>
@@ -187,6 +189,34 @@ void testRecorderCrossfaderAfterSoftTakeover()
         require(pattern->crossfader[i].value >= 0.0 && pattern->crossfader[i].value <= 1.0,
                 "crossfader values should be bounded [0,1]");
     }
+}
+
+void testRecorderReducesDenseControlNoise()
+{
+    scratch::ScratchActionRecorder recorder;
+    scratch::ScratchActionRecorder::Config cfg;
+    cfg.draftId = "draft-reduced";
+    cfg.draftName = "Reduced controls";
+    cfg.sessionId = "session-reduced";
+    cfg.clipId = "clip-reduced";
+    cfg.initialCrossfader = 0.5;
+
+    require(recorder.start(cfg), "recorder should start");
+    for (int i = 1; i <= 24; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        recorder.recordPlatter(0.01 * i + (i % 2 == 0 ? 0.0005 : -0.0005), false);
+        recorder.recordCrossfader(0.5 + (i % 2 == 0 ? 0.004 : -0.004));
+    }
+
+    require(recorder.stop(defaultFinalSnapshot(0.24, false, 0.5)),
+            "dense recording should stop");
+    const auto pattern = recorder.takeCompletedPattern();
+    require(pattern.has_value(), "dense recording should produce a pattern");
+    require(pattern->platter.size() < 12,
+            "platter capture should reduce dense near-linear controls");
+    require(pattern->crossfader.size() < 8,
+            "crossfader capture should reduce dense low-level controls");
 }
 
 void testRecorderStrictOrderingAndBounds()
@@ -375,6 +405,47 @@ void testRecorderEngineIntegration()
             "round-trip should preserve platter count");
 }
 
+void testDraftPatternReplayUsesScratchSource()
+{
+    constexpr double sampleRate = 48000.0;
+    auto sourceAudio = makeRecorderTestBuffer(static_cast<int>(sampleRate), sampleRate);
+    scratch::ScratchAudioSource source(sourceAudio, sampleRate);
+    source.prepareToPlay(512, sampleRate);
+
+    scratch::Pattern pattern;
+    pattern.id = "draft-replay";
+    pattern.name = "Draft replay";
+    pattern.durationUs = 100000;
+    pattern.cropEndUs = pattern.durationUs;
+    pattern.platter = {
+        {0, 0.0, false},
+        {pattern.durationUs, 1.0 / 18.0, false}
+    };
+    pattern.crossfader = {
+        {0, 0.0},
+        {pattern.durationUs, 0.0}
+    };
+
+    const auto replay = scratch::ScratchPatternEvaluator::buildSnapshot(pattern);
+    source.beginPatternReplay(&replay);
+    source.setPlaying(true);
+
+    juce::AudioBuffer<float> output(2, 512);
+    bool producedSignal = false;
+    for (int block = 0; block < 12; ++block)
+    {
+        output.clear();
+        juce::AudioSourceChannelInfo info(&output, 0, output.getNumSamples());
+        source.getNextAudioBlock(info);
+        producedSignal = producedSignal
+            || output.getMagnitude(0, output.getNumSamples()) > 0.001F;
+    }
+
+    require(producedSignal, "draft replay should render prepared clip audio");
+    require(source.consumeEndReached(), "draft replay should stop at pattern end");
+    source.endPatternReplay();
+}
+
 void testRecorderAbortOnSessionClose()
 {
     AudioEngine engine;
@@ -556,10 +627,12 @@ void addScratchRecorderTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch recorder platter capture", testRecorderPlatterCapture});
     tests.push_back({"scratch recorder touch state and direction changes", testRecorderTouchStateAndDirectionChange});
     tests.push_back({"scratch recorder crossfader after soft takeover", testRecorderCrossfaderAfterSoftTakeover});
+    tests.push_back({"scratch recorder reduces dense control noise", testRecorderReducesDenseControlNoise});
     tests.push_back({"scratch recorder strict ordering and bounds", testRecorderStrictOrderingAndBounds});
     tests.push_back({"scratch recorder stop abort and stale controls", testRecorderStopAndAbortControls});
     tests.push_back({"scratch recorder stale session rejection", testRecorderStaleSessionReject});
     tests.push_back({"scratch recorder engine integration", testRecorderEngineIntegration});
+    tests.push_back({"scratch draft pattern replay uses scratch source", testDraftPatternReplayUsesScratchSource});
     tests.push_back({"scratch recorder abort on session close", testRecorderAbortOnSessionClose});
     tests.push_back({"scratch recorder saturated lane capacity", testRecorderSaturatedLaneCapacity});
     tests.push_back({"scratch recorder owner deck update", testRecorderOwnerDeckUpdate});

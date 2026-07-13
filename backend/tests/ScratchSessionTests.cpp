@@ -1,6 +1,7 @@
 #include "TestRegistry.h"
 
 #include "AudioEngine.h"
+#include "midi/MidiScratchRouting.h"
 #include "scratch/ScratchSessionController.h"
 #include "scratch/ScratchAudioSource.h"
 #include "scratch/ScratchSourcePreparation.h"
@@ -118,10 +119,19 @@ void testScratchSessionLifecycleAndOwnership()
             "current scratch preparation should attach");
     requireNear(engine.getScratchSessionSnapshot()->preparationProgress, 1.0, 1.0e-12,
                 "completed scratch preparation should publish full progress");
-    engine.setScratchMidiSelectedDeck(scratch::DeckSide::deck2);
+    engine.setScratchMidiSelectedDeck(
+        "device-1", scratch::DeckSide::deck2, false);
     require(engine.getScratchSessionSnapshot()->selectedDeck
                 == std::optional<scratch::DeckSide>{scratch::DeckSide::deck2},
             "cue-selected deck should publish before the platter is touched");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
+                "untouched crossfader should assume deck 2's open edge");
+    require(engine.setScratchMidiCrossfaderDirection("device-1", true),
+            "direction change should remap the selected deck edge");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
+                "reversed direction should mirror the visible crossfader");
+    require(engine.setScratchMidiCrossfaderDirection("device-1", false),
+            "restoring direction should remap the selected deck edge");
 
     scratch::SessionControlPayload touch;
     touch.sessionId = firstId;
@@ -161,26 +171,16 @@ void testScratchSessionLifecycleAndOwnership()
             "MIDI play should recover from a missed platter release");
     require(!engine.getScratchSessionSnapshot()->touched,
             "MIDI play should clear stale platter touch state");
-    require(engine.getScratchSessionSnapshot()->playing,
+    require(engine.getScratchSessionSnapshot()->status == "playing",
             "MIDI play should start playback after clearing stale touch state");
-    require(!engine.scratchMidiSetCrossfader("device-1", 0.6),
-            "first physical crossfader movement should be absorbed by pickup (no effective change)");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "first physical crossfader movement should preserve audible gain (pickup)");
-    require(!engine.scratchMidiSetCrossfader("device-1", 0.8),
-            "second physical crossfader movement before pickup should not change effective");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "physical crossfader should stay unchanged until crossing effective value");
-    // Move physical below effective to cross it — effective is 0.0, so move to 0.0 to catch up
-    require(engine.scratchMidiSetCrossfader("device-1", 0.0),
-            "physical crossfader crossing effective should succeed");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "physical crossfader should pick up at the crossing point");
-    // Now it follows
+    require(engine.scratchMidiSetCrossfader("device-1", 0.6),
+            "first physical crossfader movement should apply immediately");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.6, 1.0e-12,
+                "first physical crossfader movement should publish its position");
     require(engine.scratchMidiSetCrossfader("device-1", 0.3),
-            "subsequent physical crossfader movement after pickup should apply");
+            "subsequent physical crossfader movement should apply");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.3, 1.0e-12,
-                "physical crossfader should follow after pickup");
+                "physical crossfader should continue tracking");
     require(!engine.releaseScratchMidiOwner("device-2"),
             "non-owner device should not release scratch ownership");
     require(engine.releaseScratchMidiOwner("device-1"),
@@ -305,12 +305,12 @@ void testScratchFixedTopologySession()
             "second session close should succeed");
 }
 
-void testCrossfaderPickupDirections()
+void testCrossfaderInitialEdgeAndTracking()
 {
     AudioEngine engine;
     engine.initialiseGraph();
     constexpr double sampleRate = 48000.0;
-    const auto sessionId = engine.beginScratchSession("clip-pickup");
+    const auto sessionId = engine.beginScratchSession("clip-crossfader-tracking");
     engine.completeScratchSession(
         sessionId, makeScratchBuffer(static_cast<int>(sampleRate), sampleRate), sampleRate);
 
@@ -320,45 +320,38 @@ void testCrossfaderPickupDirections()
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
                 "deck 2 should start at crossfader 1.0");
 
-    // Physical starts at 0.5 — below effective (1.0)
-    require(!engine.scratchMidiSetCrossfader("dev-1", 0.5),
-            "first physical crossfader should be absorbed by pickup");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
-                "effective should remain 1.0 before pickup");
+    require(engine.scratchMidiSetCrossfader("dev-1", 0.6),
+            "first physical crossfader movement should apply");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.6, 1.0e-12,
+                "effective value should soft-slide toward the first physical position");
 
-    // Move physical to 0.3 — still below effective
-    require(!engine.scratchMidiSetCrossfader("dev-1", 0.3),
-            "second physical should be absorbed by pickup");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
-                "effective should remain 1.0 (no crossing yet)");
-
-    // Now move physical to 1.0 — crosses effective (1.0)
-    require(engine.scratchMidiSetCrossfader("dev-1", 1.0),
-            "crossing physical should pick up");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
-                "effective should match at crossing point");
-
-    // Now follows
     require(engine.scratchMidiSetCrossfader("dev-1", 0.4),
-            "post-pickup should follow");
+            "subsequent physical crossfader movement should follow");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.4, 1.0e-12,
-                "effective should follow after pickup");
+                "effective value should follow physical movement");
 
-    // Release resets pickup
     require(engine.releaseScratchMidiOwner("dev-1"),
             "release should succeed");
     require(engine.scratchMidiSetTouch("dev-1", scratch::DeckSide::deck1, true),
             "re-claim deck 1 should succeed");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "re-claimed deck 1 should start at crossfader 0.0");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.4, 1.0e-12,
+                "re-claiming another deck should preserve the physical position");
 
-    // Pickup should be reset
-    require(!engine.scratchMidiSetCrossfader("dev-1", 0.8),
-            "first physical after re-claim should be absorbed by pickup");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "effective should stay 0.0 (pickup reset on re-claim)");
+    require(engine.scratchMidiSetCrossfader("dev-1", 0.8),
+            "physical movement after re-claim should continue tracking");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.8, 1.0e-12,
+                "tracking should persist until the session closes");
 
-    engine.closeScratchSession(sessionId);
+    require(engine.closeScratchSession(sessionId),
+            "tracked crossfader session should close");
+    const auto reopenedId = engine.beginScratchSession("clip-crossfader-reopened");
+    engine.completeScratchSession(
+        reopenedId, makeScratchBuffer(static_cast<int>(sampleRate), sampleRate), sampleRate);
+    require(engine.scratchMidiSetTouch("dev-1", scratch::DeckSide::deck2, true),
+            "reopened session should accept a new deck claim");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
+                "reopened session should reset to the selected deck's open edge");
+    engine.closeScratchSession(reopenedId);
 }
 
 void testScratchSourceActivationRace()
@@ -476,16 +469,10 @@ void testScratchMidiCrossfaderWorksWithoutPlatterOwnership()
     require(!engine.getScratchSessionSnapshot()->ownerDeviceIdentifier.has_value(),
             "released MIDI platter ownership should clear the current owner");
 
-    require(!engine.scratchMidiSetCrossfader("device-1", 0.8),
-            "first post-release crossfader move should be absorbed by pickup");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "first post-release crossfader move should preserve pickup behaviour");
-    require(engine.scratchMidiSetCrossfader("device-1", 0.0),
-            "eligible MIDI device should still be able to pick up the crossfader");
     require(engine.scratchMidiSetCrossfader("device-1", 0.35),
-            "eligible MIDI device should follow once pickup is complete");
+            "eligible MIDI device should keep tracking after platter release");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.35, 1.0e-12,
-                "post-pickup MIDI crossfader movement should update state");
+                "post-release MIDI crossfader movement should update state");
     require(!engine.getScratchSessionSnapshot()->ownerDeviceIdentifier.has_value(),
             "crossfader-only movement should not steal platter ownership back");
     require(!engine.scratchMidiSetCrossfader("device-2", 0.5),
@@ -507,14 +494,8 @@ void testRapidMidiCrossfaderCoalescesToFinalValue()
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
                 "initial crossfader should be 0.0");
 
-    // First physical = 0.5 (absorbed by pickup)
-    require(!engine.scratchMidiSetCrossfader("dev-rapid", 0.5),
-            "first physical should be absorbed (pickup)");
-    // Cross effective (0.0) to pick up
-    require(engine.scratchMidiSetCrossfader("dev-rapid", 0.0),
-            "crossing at 0.0 should pick up");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "should be at 0.0 at pickup point");
+    require(engine.scratchMidiSetCrossfader("dev-rapid", 0.5),
+            "first physical value should apply immediately");
 
     // Simulate rapid sequential MIDI events — all should succeed and only the
     // final value matters for the snapshot.
@@ -526,7 +507,7 @@ void testRapidMidiCrossfaderCoalescesToFinalValue()
             ++appliedCount;
     }
     require(appliedCount == 50,
-            "all post-pickup crossfader moves should apply");
+            "all rapid crossfader moves should apply");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
                 "snapshot should reflect the final crossfader value after rapid sequence");
 
@@ -628,26 +609,34 @@ void testScratchRepeatPlayEndCycles()
     for (int cycle = 0; cycle < 5; ++cycle)
     {
         require(controller.controlSession(play),
-                juce::String("play should succeed on cycle ") + juce::String(cycle + 1));
+                (juce::String("play should succeed on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
         auto snap = controller.getSnapshot();
         require(snap && snap->status == "playing",
-                juce::String("status should be playing on cycle ") + juce::String(cycle + 1));
+                (juce::String("status should be playing on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
         require(source.isActive(),
-                juce::String("source should remain active on cycle ") + juce::String(cycle + 1));
+                (juce::String("source should remain active on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
 
         renderScratchBlocks(source, static_cast<int>(sampleRate * 0.2), 128);
         require(controller.reconcileSourceEnd(),
-                juce::String("end should be consumed on cycle ") + juce::String(cycle + 1));
+                (juce::String("end should be consumed on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
 
         snap = controller.getSnapshot();
         require(snap && snap->status == "ready",
-                juce::String("status should be ready after end on cycle ") + juce::String(cycle + 1));
+                (juce::String("status should be ready after end on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
         require(snap && snap->positionUs == 0,
-                juce::String("position should be 0 after end on cycle ") + juce::String(cycle + 1));
+                (juce::String("position should be 0 after end on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
         require(!source.snapshot().playing,
-                juce::String("motor should be off after end on cycle ") + juce::String(cycle + 1));
+                (juce::String("motor should be off after end on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
         require(source.isActive(),
-                juce::String("source should stay active after end on cycle ") + juce::String(cycle + 1));
+                (juce::String("source should stay active after end on cycle ")
+                 + juce::String(cycle + 1)).toRawUTF8());
     }
 }
 
@@ -716,7 +705,7 @@ void testScratchCrossfaderDirectionInversion()
     requireNear(invertedOne, 0.0, 1.0e-12,
                 "reversed direction should map physical 1.0 to directed 0.0");
 
-    // Verify the crossfader pickup works end-to-end with inverted values.
+    // Verify first-touch tracking works with values normalized by the router.
     AudioEngine engine;
     engine.initialiseGraph();
     constexpr double sampleRate = 48000.0;
@@ -730,18 +719,43 @@ void testScratchCrossfaderDirectionInversion()
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
                 "initial crossfader for deck 1 should be 0.0");
 
-    // Pickup test with normal (non-inverted) values sent directly.
-    // First physical 0.5 absorbed.
-    require(!engine.scratchMidiSetCrossfader("dev-dir", 0.5),
-            "first physical should be absorbed by pickup");
-    // Cross at 0.0.
-    require(engine.scratchMidiSetCrossfader("dev-dir", 0.0),
-            "crossing at 0.0 should pick up");
-    // Follow to 0.3.
+    require(engine.scratchMidiSetCrossfader("dev-dir", 0.5),
+            "first directed physical position should apply");
     require(engine.scratchMidiSetCrossfader("dev-dir", 0.3),
-            "post-pickup should follow");
+            "subsequent directed physical position should follow");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.3, 1.0e-12,
-                "crossfader should track after pickup");
+                "crossfader should track every directed position");
+
+    require(engine.setScratchMidiCrossfaderDirection("dev-dir", true),
+            "runtime direction change should apply");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.3, 1.0e-12,
+                "changing direction should preserve the displayed physical position");
+
+    require(engine.scratchMidiSetCrossfader("dev-dir", 0.7),
+            "reversed directed physical position should apply");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.3, 1.0e-12,
+                "reversed MIDI value should render at its physical position");
+
+    scratch::SessionControlPayload pointerFader;
+    pointerFader.sessionId = sessionId;
+    pointerFader.action = scratch::ControlAction::crossfader;
+    pointerFader.crossfader = 0.8;
+    require(engine.controlScratchSession(pointerFader),
+            "virtual crossfader should apply with reversed direction");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.8, 1.0e-12,
+                "virtual crossfader should remain under the pointer");
+
+    MidiScratchRouter router;
+    router.setEngine(engine);
+    MidiScratchDeviceState routedState;
+    routedState.reverseCrossfader = true;
+    MidiControllerEvent routedEvent;
+    routedEvent.action = MidiControllerAction::crossfader;
+    routedEvent.kind = MidiControllerValueKind::absolute;
+    routedEvent.value = 0.8;
+    router.routeImmediate("dev-dir", routedState, 0, routedEvent, nullptr);
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.8, 1.0e-12,
+                "routed MIDI should publish the raw physical display position");
 
     engine.closeScratchSession(sessionId);
 }
@@ -753,7 +767,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch session prepares and caches clip source", testScratchSourcePreparationCache});
     tests.push_back({"scratch source activate and deactivate cycle", testScratchSourceActivateDeactivate});
     tests.push_back({"scratch fixed topology session lifecycle", testScratchFixedTopologySession});
-    tests.push_back({"scratch crossfader pickup directions and reset", testCrossfaderPickupDirections});
+    tests.push_back({"scratch crossfader initial edge and tracking", testCrossfaderInitialEdgeAndTracking});
     tests.push_back({"scratch source activation race quiescence", testScratchSourceActivationRace});
     tests.push_back({"scratch session auto-stops at the forward end", testScratchSessionAutoStopsAtForwardEnd});
     tests.push_back({"scratch session play from end restarts from the beginning", testScratchSessionPlayFromEndRestartsFromBeginning});
@@ -763,7 +777,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch play from ready and paused starts and broadcasts state", testScratchPlayFromReadyAndPausedStartsAndBroadcastsState});
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});
-    tests.push_back({"scratch crossfader direction inversion with pickup", testScratchCrossfaderDirectionInversion});
+    tests.push_back({"scratch crossfader direction inversion with tracking", testScratchCrossfaderDirectionInversion});
 }
 
 } // namespace silverdaw::tests

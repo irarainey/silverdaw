@@ -11,8 +11,10 @@ namespace
 // Reserve one slot for the mandatory final keyframe appended at stop().
 constexpr std::int64_t kMaxLivePlatterPoints = kMaxPatternPoints - 1;
 constexpr std::int64_t kMaxLiveCrossfaderPoints = kMaxPatternPoints - 1;
-constexpr double kPlatterCoalesceEpsilon = 1.0e-6;
-constexpr double kCrossfaderCoalesceEpsilon = 1.0e-6;
+constexpr std::int64_t kPlatterCaptureIntervalUs = 8000;
+constexpr std::int64_t kCrossfaderCaptureIntervalUs = 16000;
+constexpr double kPlatterCoalesceToleranceTurns = 0.002;
+constexpr double kCrossfaderCoalesceTolerance = 0.01;
 } // namespace
 
 std::int64_t ScratchActionRecorder::monotonicUs()
@@ -137,6 +139,11 @@ void ScratchActionRecorder::recordPlatter(double absoluteTurns, bool touched)
     if (!platterLane.empty() && timeUs <= platterLane.back().timeUs)
         return;
 
+    if (!platterLane.empty()
+        && touched == platterLane.back().touched
+        && timeUs - platterLane.back().timeUs < kPlatterCaptureIntervalUs)
+        return;
+
     // Enforce bounds — reserve one slot for mandatory final keyframe.
     if (static_cast<std::int64_t>(platterLane.size()) >= kMaxLivePlatterPoints)
         return;
@@ -159,6 +166,10 @@ void ScratchActionRecorder::recordCrossfader(double value)
         return;
 
     if (!crossfaderLane.empty() && timeUs <= crossfaderLane.back().timeUs)
+        return;
+
+    if (!crossfaderLane.empty()
+        && timeUs - crossfaderLane.back().timeUs < kCrossfaderCaptureIntervalUs)
         return;
 
     if (static_cast<std::int64_t>(crossfaderLane.size()) >= kMaxLiveCrossfaderPoints)
@@ -227,8 +238,10 @@ void ScratchActionRecorder::coalescePlatter(std::vector<PlatterKeyframe>& lane)
         // Keep points where direction changes (sign of slope changes)
         const double slopePrev = curr.turns - prev.turns;
         const double slopeNext = next.turns - curr.turns;
-        if ((slopePrev > kPlatterCoalesceEpsilon && slopeNext < -kPlatterCoalesceEpsilon)
-            || (slopePrev < -kPlatterCoalesceEpsilon && slopeNext > kPlatterCoalesceEpsilon))
+        if ((slopePrev > kPlatterCoalesceToleranceTurns
+             && slopeNext < -kPlatterCoalesceToleranceTurns)
+            || (slopePrev < -kPlatterCoalesceToleranceTurns
+                && slopeNext > kPlatterCoalesceToleranceTurns))
         {
             reduced.push_back(curr);
             continue;
@@ -239,7 +252,7 @@ void ScratchActionRecorder::coalescePlatter(std::vector<PlatterKeyframe>& lane)
             static_cast<double>(curr.timeUs - prev.timeUs)
             / static_cast<double>(next.timeUs - prev.timeUs);
         const auto interpolated = prev.turns + (next.turns - prev.turns) * timeFraction;
-        if (std::abs(curr.turns - interpolated) > kPlatterCoalesceEpsilon)
+        if (std::abs(curr.turns - interpolated) > kPlatterCoalesceToleranceTurns)
         {
             reduced.push_back(curr);
         }
@@ -268,7 +281,7 @@ void ScratchActionRecorder::coalesceCrossfader(std::vector<CrossfaderKeyframe>& 
             static_cast<double>(curr.timeUs - prev.timeUs)
             / static_cast<double>(next.timeUs - prev.timeUs);
         const auto interpolated = prev.value + (next.value - prev.value) * timeFraction;
-        if (std::abs(curr.value - interpolated) > kCrossfaderCoalesceEpsilon)
+        if (std::abs(curr.value - interpolated) > kCrossfaderCoalesceTolerance)
         {
             reduced.push_back(curr);
         }

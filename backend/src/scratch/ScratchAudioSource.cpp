@@ -1,4 +1,5 @@
 #include "ScratchAudioSource.h"
+#include "ScratchPatternEvaluator.h"
 
 #include <cmath>
 #include <thread>
@@ -132,6 +133,41 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     }
 
     const auto blockStart = outputSampleCounter.load(std::memory_order_relaxed);
+    const auto* replay = replaySnapshot.load(std::memory_order_acquire);
+    if (replay != nullptr)
+    {
+        const auto timeUs = static_cast<std::int64_t>(
+            static_cast<double>(replayOutputSamples) * 1000000.0 / outputSampleRate);
+        const auto current = ScratchPatternEvaluator::evaluate(*replay, timeUs);
+        if (current.beyondEnd)
+        {
+            replaySnapshot.store(nullptr, std::memory_order_release);
+            info.clearActiveBufferRegion();
+            motorPlaying.store(false, std::memory_order_release);
+            publishedSemanticRate.store(0.0, std::memory_order_release);
+            sourceEndReached.store(true, std::memory_order_release);
+            callbackInFlight.fetch_sub(1, std::memory_order_release);
+            return;
+        }
+
+        const auto midpointUs = timeUs + static_cast<std::int64_t>(
+            static_cast<double>(info.numSamples) * 500000.0 / outputSampleRate);
+        const auto evaluation = ScratchPatternEvaluator::evaluate(
+            *replay, juce::jmin(replay->durationUs() - 1, midpointUs));
+
+        processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
+        processor.setTargetGain(static_cast<float>(evaluation.crossfaderGain));
+        processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
+        replayOutputSamples += info.numSamples;
+        outputSampleCounter.store(blockStart + info.numSamples, std::memory_order_release);
+        publishedSourcePosition.store(processor.getSourcePosition(), std::memory_order_release);
+        publishedSemanticRate.store(
+            juce::jlimit(-8.0, 8.0, evaluation.playbackRate),
+            std::memory_order_release);
+        callbackInFlight.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+
     double semanticRate = 0.0;
     const bool playing = motorPlaying.load(std::memory_order_acquire);
     const bool touched = platterTouched.load(std::memory_order_acquire);
@@ -218,6 +254,44 @@ void ScratchAudioSource::seekUs(std::int64_t positionUs) noexcept
         std::memory_order_release);
     sourceEndReached.store(false, std::memory_order_release);
     seekGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapshot) noexcept
+{
+    const bool wasActive = active.exchange(false, std::memory_order_acq_rel);
+    replaySnapshot.store(nullptr, std::memory_order_release);
+    waitForCallbackQuiescence();
+    replayOutputSamples = 0;
+    outputSampleCounter.store(0, std::memory_order_release);
+    sourceEndReached.store(false, std::memory_order_release);
+
+    if (snapshot == nullptr || snapshot->empty())
+    {
+        active.store(wasActive, std::memory_order_release);
+        return;
+    }
+
+    const auto initialTurns = snapshot->platter.front().turns;
+    const auto initialPosition = initialTurns * VinylScratchProcessor::kSecondsPerTurn
+                                 * sourceSampleRate;
+    const auto initial = ScratchPatternEvaluator::evaluate(
+        *snapshot, juce::jmin<std::int64_t>(snapshot->durationUs() - 1, 1));
+    processor.reset(
+        initialPosition,
+        initial.playbackRate * sourceSamplesPerOutputSample,
+        static_cast<float>(initial.crossfaderGain));
+    publishedSourcePosition.store(initialPosition, std::memory_order_release);
+    replaySnapshot.store(snapshot, std::memory_order_release);
+    active.store(wasActive, std::memory_order_release);
+}
+
+void ScratchAudioSource::endPatternReplay() noexcept
+{
+    const bool wasActive = active.exchange(false, std::memory_order_acq_rel);
+    replaySnapshot.store(nullptr, std::memory_order_release);
+    waitForCallbackQuiescence();
+    replayOutputSamples = 0;
+    active.store(wasActive, std::memory_order_release);
 }
 
 bool ScratchAudioSource::consumeEndReached() noexcept

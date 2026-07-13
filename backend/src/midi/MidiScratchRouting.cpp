@@ -46,6 +46,7 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
     if (scratchEngine == nullptr)
         return;
     bool applied = false;
+    bool broadcastImmediately = true;
     if (event.action == MidiControllerAction::playPause
         && event.kind == MidiControllerValueKind::button
         && event.value > 0.5 && event.deck >= 1 && event.deck <= 2)
@@ -68,9 +69,13 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
              && event.kind == MidiControllerValueKind::absolute)
     {
         const auto directedValue = state.reverseCrossfader ? 1.0 - event.value : event.value;
-        applied = scratchEngine->scratchMidiSetCrossfader(identifier, directedValue);
+        applied = scratchEngine->scratchMidiSetCrossfader(
+            identifier, directedValue, event.value);
+        // High-resolution faders can emit hundreds of values per second. The
+        // audio target follows each one; the 30 Hz state emitter updates the UI.
+        broadcastImmediately = false;
     }
-    if (applied && bridge != nullptr)
+    if (applied && broadcastImmediately && bridge != nullptr)
         broadcastScratchSessionState(*scratchEngine, *bridge);
     juce::ignoreUnused(timestampMs);
 }

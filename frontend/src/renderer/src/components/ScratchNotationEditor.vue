@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, onMounted, onBeforeUnmount } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import {
   useScratchNotationEditor
@@ -30,6 +30,8 @@ const editor = useScratchNotationEditor(sessionIdRef)
 
 const svgEl = ref<SVGSVGElement | null>(null)
 const containerEl = ref<HTMLDivElement | null>(null)
+const viewportEl = ref<HTMLDivElement | null>(null)
+const zoomPercent = ref(100)
 
 // Layout constants
 const {
@@ -40,14 +42,18 @@ const {
   turnsMargin: TURNS_MARGIN
 } = DEFAULT_NOTATION_LAYOUT
 const POINT_RADIUS = 5
+const LANE_LABEL_X = 10
+const MIN_ZOOM_PERCENT = 100
+const MAX_ZOOM_PERCENT = 800
+const ZOOM_STEP_PERCENT = 10
 
 const pattern = computed<ScratchPattern | null>(() => editor.pattern.value)
 const durationUs = computed(() => pattern.value?.durationUs ?? 0)
 
 const svgWidth = computed(() => {
   void resizeKey.value // depend on resize trigger
-  if (!containerEl.value) return 600
-  return Math.max(300, containerEl.value.clientWidth - 2)
+  if (!viewportEl.value) return 600
+  return Math.max(300, viewportEl.value.clientWidth * zoomPercent.value / 100)
 })
 const contentWidth = computed(() => Math.max(1, svgWidth.value - PADDING_X * 2))
 const svgHeight = computed(() => PLATTER_LANE_HEIGHT + CF_LANE_HEIGHT + 24)
@@ -141,6 +147,23 @@ function onKeydown(event: KeyboardEvent): void {
   })
 }
 
+async function setZoom(nextZoom: number): Promise<void> {
+  const viewport = viewportEl.value
+  const previousCentre = viewport && viewport.scrollWidth > 0
+    ? (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth
+    : 0.5
+  zoomPercent.value = Math.max(MIN_ZOOM_PERCENT, Math.min(MAX_ZOOM_PERCENT, nextZoom))
+  await nextTick()
+  if (viewport) {
+    viewport.scrollLeft = previousCentre * viewport.scrollWidth - viewport.clientWidth / 2
+  }
+}
+
+function onZoomWheel(event: WheelEvent): void {
+  const delta = event.deltaY < 0 ? ZOOM_STEP_PERCENT : -ZOOM_STEP_PERCENT
+  void setZoom(zoomPercent.value + delta)
+}
+
 // Resize observer for SVG width tracking
 let resizeObserver: ResizeObserver | null = null
 const resizeKey = ref(0)
@@ -181,6 +204,32 @@ function segmentColor(kind: string): string {
         <span class="flex-1" />
         <button
           type="button"
+          class="rounded px-1.5 py-0.5 text-[10px] text-zinc-300 outline-none hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="zoomPercent <= MIN_ZOOM_PERCENT"
+          aria-label="Zoom notation out"
+          @click="setZoom(zoomPercent - ZOOM_STEP_PERCENT)"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          class="min-w-10 rounded px-1 py-0.5 font-mono text-[10px] tabular-nums text-zinc-400 outline-none hover:bg-zinc-800"
+          title="Reset notation zoom"
+          @click="setZoom(100)"
+        >
+          {{ zoomPercent }}%
+        </button>
+        <button
+          type="button"
+          class="rounded px-1.5 py-0.5 text-[10px] text-zinc-300 outline-none hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+          :disabled="zoomPercent >= MAX_ZOOM_PERCENT"
+          aria-label="Zoom notation in"
+          @click="setZoom(zoomPercent + ZOOM_STEP_PERCENT)"
+        >
+          +
+        </button>
+        <button
+          type="button"
           class="rounded px-2 py-0.5 text-[10px] text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
           :disabled="!editor.canUndo.value"
           aria-label="Undo edit"
@@ -216,131 +265,164 @@ function segmentColor(kind: string): string {
       </div>
 
       <!-- SVG notation lanes -->
-      <svg
-        ref="svgEl"
-        class="block w-full select-none"
-        :height="svgHeight"
-        :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
-        preserveAspectRatio="none"
-        aria-label="Pattern lanes. Use arrow keys to move selected point, Insert to add, Delete to remove, T to toggle touch."
-        @pointermove="pointerInteraction.handlePointerMove"
-        @pointerup="pointerInteraction.handlePointerUp"
-        @pointercancel="pointerInteraction.handlePointerCancel"
-        @lostpointercapture="pointerInteraction.handleLostPointerCapture"
+      <div
+        ref="viewportEl"
+        class="w-full overflow-x-auto"
+        @wheel.ctrl.prevent="onZoomWheel"
       >
-        <!-- Platter lane background -->
-        <rect
-          x="0"
-          y="0"
-          :width="svgWidth"
-          :height="PLATTER_LANE_HEIGHT"
-          fill="transparent"
-          @dblclick="pointerInteraction.handleDoubleClick('platter', $event)"
-        />
+        <svg
+          ref="svgEl"
+          class="block max-w-none select-none"
+          :style="{ width: `${svgWidth}px` }"
+          :height="svgHeight"
+          :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
+          preserveAspectRatio="none"
+          aria-label="Pattern lanes. Use arrow keys to move selected point, Insert to add, Delete to remove, T to toggle touch."
+          @pointermove="pointerInteraction.handlePointerMove"
+          @pointerup="pointerInteraction.handlePointerUp"
+          @pointercancel="pointerInteraction.handlePointerCancel"
+          @lostpointercapture="pointerInteraction.handleLostPointerCapture"
+        >
+          <!-- Platter lane background -->
+          <rect
+            x="0"
+            y="0"
+            :width="svgWidth"
+            :height="PLATTER_LANE_HEIGHT"
+            fill="transparent"
+            @dblclick="pointerInteraction.handleDoubleClick('platter', $event)"
+          />
+          <text
+            :x="LANE_LABEL_X"
+            :y="PLATTER_LANE_HEIGHT / 2"
+            :transform="`rotate(-90 ${LANE_LABEL_X} ${PLATTER_LANE_HEIGHT / 2})`"
+            fill="rgb(113 113 122)"
+            font-size="9"
+            letter-spacing="0.8"
+            text-anchor="middle"
+            dominant-baseline="middle"
+            class="pointer-events-none select-none"
+          >
+            PLATTER
+          </text>
 
-        <!-- Platter segment coloured lines -->
-        <line
-          v-for="(seg, segIdx) in platterSegments"
-          :key="`seg-${segIdx}`"
-          :x1="toX(seg.startTimeUs)"
-          :y1="toPlatterY(pattern!.platter[seg.startIndex]!.turns)"
-          :x2="toX(seg.endTimeUs)"
-          :y2="toPlatterY(pattern!.platter[seg.endIndex]!.turns)"
-          :stroke="segmentColor(seg.kind)"
-          stroke-width="2"
-          stroke-linecap="round"
-        />
+          <!-- Platter segment coloured lines -->
+          <line
+            v-for="(seg, segIdx) in platterSegments"
+            :key="`seg-${segIdx}`"
+            :x1="toX(seg.startTimeUs)"
+            :y1="toPlatterY(pattern!.platter[seg.startIndex]!.turns)"
+            :x2="toX(seg.endTimeUs)"
+            :y2="toPlatterY(pattern!.platter[seg.endIndex]!.turns)"
+            :stroke="segmentColor(seg.kind)"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
 
-        <!-- Platter keyframe points -->
-        <circle
-          v-for="(kf, i) in pattern!.platter"
-          :key="`p-${i}`"
-          :cx="toX(kf.timeUs)"
-          :cy="toPlatterY(kf.turns)"
-          :r="POINT_RADIUS"
-          :fill="isPlatterSelected(i) ? 'rgb(56 189 248)' : 'rgb(228 228 231)'"
-          :stroke="isPlatterSelected(i) ? 'rgb(14 165 233)' : 'rgb(113 113 122)'"
-          stroke-width="1.5"
-          class="cursor-pointer"
-          role="button"
-          :aria-label="`Platter point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${kf.turns.toFixed(3)} turns${kf.touched ? ', touched' : ''}`"
-          :tabindex="0"
-          @pointerdown="pointerInteraction.handlePointDown('platter', i, $event)"
-          @keydown.enter.prevent="editor.selectKeyframe('platter', i)"
-          @focus="editor.selectKeyframe('platter', i)"
-        />
+          <!-- Platter keyframe points -->
+          <circle
+            v-for="(kf, i) in pattern!.platter"
+            :key="`p-${i}`"
+            :cx="toX(kf.timeUs)"
+            :cy="toPlatterY(kf.turns)"
+            :r="POINT_RADIUS"
+            :fill="isPlatterSelected(i) ? 'rgb(56 189 248)' : 'rgb(228 228 231)'"
+            :stroke="isPlatterSelected(i) ? 'rgb(14 165 233)' : 'rgb(113 113 122)'"
+            stroke-width="1.5"
+            class="cursor-pointer"
+            role="button"
+            :aria-label="`Platter point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${kf.turns.toFixed(3)} turns${kf.touched ? ', touched' : ''}`"
+            :tabindex="0"
+            @pointerdown="pointerInteraction.handlePointDown('platter', i, $event)"
+            @keydown.enter.prevent="editor.selectKeyframe('platter', i)"
+            @focus="editor.selectKeyframe('platter', i)"
+          />
 
-        <!-- Separator line -->
-        <line
-          :x1="0"
-          :y1="PLATTER_LANE_HEIGHT + 6"
-          :x2="svgWidth"
-          :y2="PLATTER_LANE_HEIGHT + 6"
-          stroke="rgb(63 63 70)"
-          stroke-width="1"
-        />
+          <!-- Separator line -->
+          <line
+            :x1="0"
+            :y1="PLATTER_LANE_HEIGHT + 6"
+            :x2="svgWidth"
+            :y2="PLATTER_LANE_HEIGHT + 6"
+            stroke="rgb(63 63 70)"
+            stroke-width="1"
+          />
 
-        <!-- Crossfader lane background -->
-        <rect
-          :x="0"
-          :y="cfLaneTop"
-          :width="svgWidth"
-          :height="CF_LANE_HEIGHT"
-          fill="transparent"
-          @dblclick="pointerInteraction.handleDoubleClick('crossfader', $event)"
-        />
+          <!-- Crossfader lane background -->
+          <rect
+            :x="0"
+            :y="cfLaneTop"
+            :width="svgWidth"
+            :height="CF_LANE_HEIGHT"
+            fill="transparent"
+            @dblclick="pointerInteraction.handleDoubleClick('crossfader', $event)"
+          />
+          <text
+            :x="LANE_LABEL_X"
+            :y="cfLaneTop + CF_LANE_HEIGHT / 2"
+            :transform="`rotate(-90 ${LANE_LABEL_X} ${cfLaneTop + CF_LANE_HEIGHT / 2})`"
+            fill="rgb(113 113 122)"
+            font-size="7"
+            letter-spacing="0.2"
+            text-anchor="middle"
+            dominant-baseline="middle"
+            class="pointer-events-none select-none"
+          >
+            CROSSFADER
+          </text>
 
-        <!-- Crossfader path -->
-        <path
-          v-if="crossfaderPath"
-          :d="crossfaderPath"
-          fill="none"
-          stroke="rgb(34 211 238)"
-          stroke-width="1.5"
-          stroke-linejoin="round"
-        />
+          <!-- Crossfader path -->
+          <path
+            v-if="crossfaderPath"
+            :d="crossfaderPath"
+            fill="none"
+            stroke="rgb(34 211 238)"
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          />
 
-        <!-- Crossfader keyframe points -->
-        <circle
-          v-for="(kf, i) in pattern!.crossfader"
-          :key="`cf-${i}`"
-          :cx="toX(kf.timeUs)"
-          :cy="toCfY(kf.value)"
-          :r="POINT_RADIUS - 1"
-          :fill="isCrossfaderSelected(i) ? 'rgb(34 211 238)' : 'rgb(228 228 231)'"
-          :stroke="isCrossfaderSelected(i) ? 'rgb(8 145 178)' : 'rgb(113 113 122)'"
-          stroke-width="1.5"
-          class="cursor-pointer"
-          role="button"
-          :aria-label="`Crossfader point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${(kf.value * 100).toFixed(0)}%`"
-          :tabindex="0"
-          @pointerdown="pointerInteraction.handlePointDown('crossfader', i, $event)"
-          @keydown.enter.prevent="editor.selectKeyframe('crossfader', i)"
-          @focus="editor.selectKeyframe('crossfader', i)"
-        />
+          <!-- Crossfader keyframe points -->
+          <circle
+            v-for="(kf, i) in pattern!.crossfader"
+            :key="`cf-${i}`"
+            :cx="toX(kf.timeUs)"
+            :cy="toCfY(kf.value)"
+            :r="POINT_RADIUS - 1"
+            :fill="isCrossfaderSelected(i) ? 'rgb(34 211 238)' : 'rgb(228 228 231)'"
+            :stroke="isCrossfaderSelected(i) ? 'rgb(8 145 178)' : 'rgb(113 113 122)'"
+            stroke-width="1.5"
+            class="cursor-pointer"
+            role="button"
+            :aria-label="`Crossfader point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${(kf.value * 100).toFixed(0)}%`"
+            :tabindex="0"
+            @pointerdown="pointerInteraction.handlePointDown('crossfader', i, $event)"
+            @keydown.enter.prevent="editor.selectKeyframe('crossfader', i)"
+            @focus="editor.selectKeyframe('crossfader', i)"
+          />
 
-        <!-- Crop markers -->
-        <line
-          :x1="cropStartX"
-          :y1="0"
-          :x2="cropStartX"
-          :y2="svgHeight"
-          stroke="rgb(245 158 11)"
-          stroke-width="1"
-          stroke-dasharray="3 2"
-          class="pointer-events-none"
-        />
-        <line
-          :x1="cropEndX"
-          :y1="0"
-          :x2="cropEndX"
-          :y2="svgHeight"
-          stroke="rgb(245 158 11)"
-          stroke-width="1"
-          stroke-dasharray="3 2"
-          class="pointer-events-none"
-        />
-      </svg>
+          <!-- Crop markers -->
+          <line
+            :x1="cropStartX"
+            :y1="0"
+            :x2="cropStartX"
+            :y2="svgHeight"
+            stroke="rgb(245 158 11)"
+            stroke-width="1"
+            stroke-dasharray="3 2"
+            class="pointer-events-none"
+          />
+          <line
+            :x1="cropEndX"
+            :y1="0"
+            :x2="cropEndX"
+            :y2="svgHeight"
+            stroke="rgb(245 158 11)"
+            stroke-width="1"
+            stroke-dasharray="3 2"
+            class="pointer-events-none"
+          />
+        </svg>
+      </div>
 
       <!-- Info bar -->
       <div class="flex items-center gap-3 px-1 pt-1 text-[10px] text-zinc-500">

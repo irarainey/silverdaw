@@ -92,29 +92,32 @@ void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engi
         return;
     }
 
-    const auto patternId = tryGetRequiredString(payload, "patternId").value_or(juce::String{});
-    if (patternId.isEmpty())
-    {
-        silverdaw::log::warn("scratch", "rejected SCRATCH_PATTERN_REPLAY_START: missing patternId");
-        return;
-    }
-
-    // Retrieve the pattern from project state.
-    const auto patternsJson = projectState.scratchPatternsAsJson();
-    const auto* arr = patternsJson.getArray();
-    if (arr == nullptr)
-    {
-        silverdaw::log::warn("scratch", "SCRATCH_PATTERN_REPLAY_START: no patterns in project");
-        return;
-    }
-
     std::optional<scratch::Pattern> foundPattern;
-    for (const auto& item : *arr)
+    const auto draftPattern = payload.getProperty("pattern", {});
+    if (!draftPattern.isVoid())
+        foundPattern = scratch::parsePattern(draftPattern);
+
+    const auto patternId = tryGetRequiredString(payload, "patternId").value_or(juce::String{});
+    if (!foundPattern && patternId.isEmpty())
     {
-        if (item.getProperty("id", {}).toString() == patternId)
+        silverdaw::log::warn("scratch", "rejected SCRATCH_PATTERN_REPLAY_START: missing valid pattern");
+        return;
+    }
+
+    if (!foundPattern)
+    {
+        const auto patternsJson = projectState.scratchPatternsAsJson();
+        const auto* arr = patternsJson.getArray();
+        if (arr != nullptr)
         {
-            foundPattern = scratch::parsePattern(item);
-            break;
+            for (const auto& item : *arr)
+            {
+                if (item.getProperty("id", {}).toString() == patternId)
+                {
+                    foundPattern = scratch::parsePattern(item);
+                    break;
+                }
+            }
         }
     }
 
@@ -131,7 +134,7 @@ void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engi
         return;
     }
 
-    silverdaw::log::info("scratch", "SCRATCH_PATTERN_REPLAY_START ok pattern=" + patternId);
+    silverdaw::log::info("scratch", "SCRATCH_PATTERN_REPLAY_START ok pattern=" + foundPattern->id);
 }
 
 void handleScratchPatternReplayStop(const juce::var& payload, AudioEngine& engine,

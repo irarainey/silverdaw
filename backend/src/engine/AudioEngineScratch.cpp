@@ -60,9 +60,18 @@ bool AudioEngine::scratchMidiMovePlatter(const juce::String& deviceIdentifier,
 }
 
 bool AudioEngine::scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
-                                           double directedValue)
+                                           double directedValue,
+                                           double displayValue)
 {
-    return scratchController.midiSetCrossfader(deviceIdentifier, directedValue);
+    return scratchController.midiSetCrossfader(
+        deviceIdentifier, directedValue, displayValue);
+}
+
+bool AudioEngine::setScratchMidiCrossfaderDirection(
+    const juce::String& deviceIdentifier, bool reverseCrossfader)
+{
+    return scratchController.setMidiCrossfaderDirection(
+        deviceIdentifier, reverseCrossfader);
 }
 
 bool AudioEngine::hasActiveScratchSession() const
@@ -70,9 +79,12 @@ bool AudioEngine::hasActiveScratchSession() const
     return scratchController.hasActiveSession();
 }
 
-void AudioEngine::setScratchMidiSelectedDeck(scratch::DeckSide deck)
+void AudioEngine::setScratchMidiSelectedDeck(
+    const juce::String& deviceIdentifier, scratch::DeckSide deck,
+    bool reverseCrossfader)
 {
-    scratchController.setSelectedMidiDeck(deck);
+    scratchController.setSelectedMidiDeck(
+        deviceIdentifier, deck, reverseCrossfader);
 }
 
 bool AudioEngine::releaseScratchMidiOwner(

@@ -91,8 +91,12 @@ void PlayheadEmitter::timerCallback()
             if (emittedScratchState)
             {
                 const bool statusChanged = emittedScratchState->status != lastScratchStatus;
+                const bool crossfaderChanged =
+                    emittedScratchState->crossfader != lastScratchCrossfader;
                 lastScratchStatus = emittedScratchState->status;
+                lastScratchCrossfader = emittedScratchState->crossfader;
                 if (statusChanged
+                    || crossfaderChanged
                     || emittedScratchState->status == "playing"
                     || emittedScratchState->status == "recording"
                     || emittedScratchState->touched)
@@ -103,6 +107,7 @@ void PlayheadEmitter::timerCallback()
             else
             {
                 lastScratchStatus = {};
+                lastScratchCrossfader = -1.0;
             }
         }
     }

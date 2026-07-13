@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
 import { useScratchEditorDerived } from '@/lib/scratch/useScratchEditorDerived'
 import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
@@ -50,6 +51,41 @@ const canUpdate = computed(
 const preparationPercent = computed(() =>
   Math.round((session.state.value?.preparationProgress ?? 0) * 100)
 )
+const isPatternReplaying = ref(false)
+let replayStopTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearReplayTimer(): void {
+  if (replayStopTimer !== null) {
+    clearTimeout(replayStopTimer)
+    replayStopTimer = null
+  }
+}
+
+function startReplay(pattern: string | ScratchPattern): void {
+  const replayPattern = typeof pattern === 'string'
+    ? project.savedScratchPatterns.find((saved) => saved.id === pattern)
+    : pattern
+  if (!replayPattern) return
+
+  clearReplayTimer()
+  project.startPatternReplay(pattern)
+  isPatternReplaying.value = true
+  const replayDurationMs = Math.max(
+    1,
+    Math.ceil((replayPattern.cropEndUs - replayPattern.cropStartUs) / 1000)
+  )
+  replayStopTimer = setTimeout(() => stopReplay(), replayDurationMs + 50)
+}
+
+function startDraftReplay(): void {
+  if (scratchStore.completedPattern) startReplay(scratchStore.completedPattern)
+}
+
+function stopReplay(): void {
+  clearReplayTimer()
+  if (isPatternReplaying.value) project.stopPatternReplay()
+  isPatternReplaying.value = false
+}
 
 // ── Dirty-close confirmation ─────────────────────────────────────────────────
 
@@ -65,6 +101,7 @@ function requestClose(): void {
 
 function doClose(): void {
   dirtyClosePromptOpen.value = false
+  stopReplay()
   persistence.reset()
   session.close()
   emit('close')
@@ -133,6 +170,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  stopReplay()
   ui.clipEditorOpen = false
 })
 
@@ -148,7 +186,8 @@ function onKeydown(event: KeyboardEvent): void {
   } else if ((event.key === ' ' || event.code === 'Space') && session.canControl.value && !dirtyClosePromptOpen.value) {
     event.preventDefault()
     event.stopPropagation()
-    session.togglePlayback()
+    if (isPatternReplaying.value) stopReplay()
+    else session.togglePlayback()
   }
 }
 
@@ -190,7 +229,7 @@ function onCrossfaderChange(value: number): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="dialog-card h-[min(900px,94vh)] w-[min(1400px,96vw)]"
+        class="dialog-card h-[min(960px,96vh)] !max-h-[96vh] w-[min(1400px,96vw)]"
         @keydown="onKeydown"
       >
         <header class="dialog-header flex items-baseline gap-3">
@@ -314,6 +353,10 @@ function onCrossfaderChange(value: number): void {
                 :persistence="persistence"
                 :can-save="canSave"
                 :can-update="canUpdate"
+                :is-replaying="isPatternReplaying"
+                :on-draft-audition-start="startDraftReplay"
+                :on-audition-start="startReplay"
+                :on-audition-stop="stopReplay"
                 @confirm-delete="confirmDelete"
               />
             </div>
