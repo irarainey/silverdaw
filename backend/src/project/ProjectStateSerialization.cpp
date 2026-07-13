@@ -1,7 +1,51 @@
 #include "ProjectState.h"
+#include "ScratchPatternState.h"
+
+#include "scratch/ScratchProtocol.h"
+
+#include <juce_core/juce_core.h>
 
 namespace silverdaw
 {
+
+using scratch_ids::kScratchPatterns;
+using scratch_ids::kScratchPattern;
+using scratch_ids::kScratchPatternData;
+
+juce::var ProjectState::scratchPatternsAsJson() const
+{
+    juce::Array<juce::var> result;
+
+    const auto patterns = root.getChildWithName(kScratchPatterns);
+    if (!patterns.isValid())
+        return juce::var(result);
+
+    for (int i = 0; i < patterns.getNumChildren(); ++i)
+    {
+        const auto child = patterns.getChild(i);
+        if (!child.hasType(kScratchPattern))
+            continue;
+
+        const auto data = child.getProperty(kScratchPatternData);
+
+        // Revalidate through canonical parsePattern before emitting: a corrupt
+        // or incompatible ValueTree child must not poison the whole snapshot.
+        const auto parsed = scratch::parsePattern(data);
+        if (!parsed)
+        {
+            const auto childId = child.getProperty(kId).toString();
+            DBG("scratchPatternsAsJson: omitting corrupt scratch pattern id="
+                + (childId.isEmpty() ? juce::String("<missing>") : childId));
+            continue;
+        }
+
+        // Re-serialize from the validated struct so the emitted JSON is always
+        // canonical, even if the stored var drifted.
+        result.add(scratch::serializePattern(*parsed));
+    }
+
+    return juce::var(result);
+}
 
 juce::var ProjectState::markersAsJson() const
 {
@@ -159,6 +203,13 @@ juce::var ProjectState::tracksAsJson() const
             if (static_cast<bool>(clip.getProperty(kBackspin, false)))
             {
                 clipObj->setProperty("backspin", true);
+            }
+            // Emit scratchPatternId only when set; absent = no pattern applied.
+            if (clip.hasProperty(kScratchPatternId))
+            {
+                const auto spId = clip.getProperty(kScratchPatternId).toString();
+                if (spId.isNotEmpty())
+                    clipObj->setProperty("scratchPatternId", spId);
             }
             if (clip.hasProperty(kClipName))
             {

@@ -147,6 +147,8 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
             clip.backspinSpeed = backspinSpeed;
             clip.backspinCurve = backspinCurve;
 
+            clip.scratchPatternId = project.getClipScratchPatternId(clip.id);
+
             const auto library = root.getChildWithName(kLibrary);
             if (library.isValid())
             {

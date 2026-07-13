@@ -15,6 +15,10 @@
 #include "Metronome.h"
 #include "OffsetSource.h"
 #include "PreviewMetronomeSource.h"
+#include "scratch/ScratchSessionController.h"
+#include "scratch/ScratchAudioSource.h"
+#include "scratch/ScratchProtocol.h"
+#include "scratch/ScratchPatternEvaluator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -36,6 +40,8 @@
 
 namespace silverdaw
 {
+
+class ProjectState;
 
 class AudioEngine
 {
@@ -268,6 +274,44 @@ class AudioEngine
 
     juce::int64 getPreviewGeneration() const;
 
+    using ScratchSessionSnapshot = scratch::ScratchSessionController::Snapshot;
+
+    juce::String beginScratchSession(const juce::String& clipId);
+    bool completeScratchSession(
+        const juce::String& sessionId,
+        std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+        double preparedSampleRate);
+    bool failScratchSession(const juce::String& sessionId, const juce::String& error);
+    bool closeScratchSession(const juce::String& sessionId);
+    bool controlScratchSession(const scratch::SessionControlPayload& control);
+    bool scratchMidiTogglePlay(const juce::String& deviceIdentifier,
+                               scratch::DeckSide deck);
+    bool scratchMidiSetTouch(const juce::String& deviceIdentifier,
+                             scratch::DeckSide deck,
+                             bool touched);
+    bool scratchMidiMovePlatter(const juce::String& deviceIdentifier,
+                                scratch::DeckSide deck,
+                                double deltaTurns,
+                                double timestampMs);
+    bool scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
+                                  double directedValue);
+    bool releaseScratchMidiOwner(const juce::String& deviceIdentifier,
+                                 std::optional<scratch::DeckSide> deck = std::nullopt);
+    std::optional<ScratchSessionSnapshot> getScratchSessionSnapshot() const;
+
+    // Retrieve completed recording pattern (moves ownership). Returns nullopt if none ready.
+    std::optional<scratch::Pattern> takeScratchRecordingPattern();
+
+    // Pattern replay audition (plays a saved pattern through the scratch audio source).
+    bool startScratchPatternReplay(const scratch::Pattern& pattern);
+    void stopScratchPatternReplay();
+    bool isScratchPatternReplaying() const noexcept;
+
+    // Clip-level pattern snapshot management for timeline playback.
+    void rebuildClipPatternSnapshot(const juce::String& clipId, const ProjectState& projectState);
+    void clearClipPatternSnapshot(const juce::String& clipId);
+    void rebuildAllClipPatternSnapshots(const ProjectState& projectState);
+
     // Windows under-reports Bluetooth endpoint latency, so known headset names get a
     // conservative visual offset.
     double getOutputLatencyMs() const;
@@ -353,6 +397,8 @@ class AudioEngine
         std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
         std::unique_ptr<BackspinSnapshot> backspinSnapshot;
         std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
+        // Immutable pattern replay snapshot published to OffsetSource for audio-thread reads.
+        std::shared_ptr<const scratch::PatternReplaySnapshot> patternSnapshot;
         double sampleRate = 44100.0;
         int numChannels = 2;
         juce::int64 latencySamples = 0;
@@ -527,6 +573,16 @@ class AudioEngine
     double previewMetronomeBpm = 0.0;
     double previewMetronomeAnchorSec = 0.0;
     std::atomic<juce::int64> previewGeneration{0};
+
+    // Persistent scratch audio source — always wired into topMixer (fixed topology).
+    // Session open/close activates/deactivates via atomics; no callback allocation.
+    scratch::ScratchAudioSource scratchSource;
+    scratch::ScratchSessionController scratchController{scratchSource};
+
+    // Pattern replay state (audition of a saved pattern through the scratch source).
+    std::shared_ptr<const scratch::PatternReplaySnapshot> patternReplaySnapshot;
+    std::atomic<bool> patternReplayActive{false};
+    std::atomic<std::int64_t> patternReplayPositionUs{0};
 };
 
 } // namespace silverdaw

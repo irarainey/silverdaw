@@ -8,6 +8,18 @@
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
 import type { LibraryItemKind, StemName, TransitionRecipe } from './inbound'
+import type {
+  ScratchSessionClosePayload,
+  ScratchSessionControlPayload,
+  ScratchSessionOpenPayload,
+  ScratchPatternSavePayload,
+  ScratchPatternDeletePayload,
+  ScratchPatternRenamePayload,
+  ScratchPatternApplyPayload,
+  ScratchPatternRemovePayload,
+  ScratchPatternReplayStartPayload,
+  ScratchPatternReplayStopPayload
+} from './scratch'
 
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
 
@@ -563,6 +575,17 @@ export interface BridgeOutboundMap {
   MIDI_DEVICES_REQUEST: undefined
   MIDI_INPUTS_SET: MidiInputsSetPayload
   MIDI_DECK_SELECTION_SET: MidiDeckSelectionSetPayload
+  MIDI_SCRATCH_SETTINGS_SET: MidiScratchSettingsSetPayload
+  SCRATCH_SESSION_OPEN: ScratchSessionOpenPayload
+  SCRATCH_SESSION_CLOSE: ScratchSessionClosePayload
+  SCRATCH_SESSION_CONTROL: ScratchSessionControlPayload
+  SCRATCH_PATTERN_SAVE: ScratchPatternSavePayload
+  SCRATCH_PATTERN_DELETE: ScratchPatternDeletePayload
+  SCRATCH_PATTERN_RENAME: ScratchPatternRenamePayload
+  SCRATCH_PATTERN_APPLY: ScratchPatternApplyPayload
+  SCRATCH_PATTERN_REMOVE: ScratchPatternRemovePayload
+  SCRATCH_PATTERN_REPLAY_START: ScratchPatternReplayStartPayload
+  SCRATCH_PATTERN_REPLAY_STOP: ScratchPatternReplayStopPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
@@ -996,6 +1019,11 @@ export interface MidiDeckSelectionSetPayload {
   deck2Enabled: boolean
 }
 
+export interface MidiScratchSettingsSetPayload {
+  deviceIdentifier: string
+  crossfaderDirection: 'leftToRight' | 'rightToLeft'
+}
+
 /**
  * Ask the backend to enumerate the connected MIDI input devices and reply with a
  * `MIDI_DEVICES_LIST` snapshot. No payload: enumeration is cheap and always fresh.
@@ -1153,6 +1181,17 @@ export const bridgeOutboundPayloadKinds: {
   MIDI_DEVICES_REQUEST: 'none',
   MIDI_INPUTS_SET: 'payload',
   MIDI_DECK_SELECTION_SET: 'payload',
+  MIDI_SCRATCH_SETTINGS_SET: 'payload',
+  SCRATCH_SESSION_OPEN: 'payload',
+  SCRATCH_SESSION_CLOSE: 'payload',
+  SCRATCH_SESSION_CONTROL: 'payload',
+  SCRATCH_PATTERN_SAVE: 'payload',
+  SCRATCH_PATTERN_DELETE: 'payload',
+  SCRATCH_PATTERN_RENAME: 'payload',
+  SCRATCH_PATTERN_APPLY: 'payload',
+  SCRATCH_PATTERN_REMOVE: 'payload',
+  SCRATCH_PATTERN_REPLAY_START: 'payload',
+  SCRATCH_PATTERN_REPLAY_STOP: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',

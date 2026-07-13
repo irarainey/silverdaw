@@ -413,6 +413,9 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ProjectCommands.cpp
     src/commands/ProjectFxCommands.cpp
     src/commands/ProjectSettingsCommands.cpp
+    src/commands/ScratchSessionCommands.cpp
+    src/commands/ScratchPatternCommands.cpp
+    src/commands/ScratchPatternReplayCommands.cpp
     src/commands/StemSeparationCommands.cpp
     src/commands/TrackCommands.cpp
     src/commands/TransitionCommands.cpp
@@ -425,6 +428,14 @@ add_library(silverdaw_backend_core STATIC
     # midi
     src/midi/MidiControllerMapping.cpp
     src/midi/MidiControllerProfiles.cpp
+    src/midi/MidiScratchRouting.cpp
+    # scratch
+    src/scratch/ScratchProtocol.cpp
+    src/scratch/ScratchAudioSource.cpp
+    src/scratch/ScratchSourcePreparation.cpp
+    src/scratch/ScratchActionRecorder.cpp
+    src/scratch/ScratchSessionController.cpp
+    src/scratch/ScratchPatternEvaluator.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/BpmAnalysisHelpers.cpp
@@ -432,6 +443,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/EnhancerDsp.cpp
     src/dsp/SharedFx.cpp
     src/dsp/ToneEq.cpp
+    src/dsp/VinylScratchProcessor.cpp
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
     src/dsp/VocalDebleeder.cpp
@@ -451,6 +463,8 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineClipEdit.cpp
     src/engine/AudioEngineClips.cpp
     src/engine/AudioEnginePreview.cpp
+    src/engine/AudioEngineScratch.cpp
+    src/engine/AudioEnginePatternReplay.cpp
     src/engine/BusGraph.cpp
     src/engine/BusGraphRender.cpp
     src/engine/DecodedCache.cpp
@@ -479,6 +493,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
     src/project/ProjectStateMarkers.cpp
+    src/project/ProjectStateScratchPatterns.cpp
     src/project/ProjectStateProjectFx.cpp
     src/project/ProjectStateSerialization.cpp
     src/project/ProjectStateSettings.cpp
@@ -701,6 +716,13 @@ if(SILVERDAW_BUILD_TESTS)
         tests/BridgeTests.cpp
         tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp
+        tests/ScratchDspTests.cpp
+        tests/ScratchProtocolTests.cpp
+        tests/ScratchSessionTests.cpp
+        tests/ScratchRecorderTests.cpp
+        tests/ScratchPatternPersistenceTests.cpp
+        tests/ScratchPatternEvaluatorTests.cpp
+        tests/ScratchPatternReplayProjectStateTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
@@ -726,6 +748,12 @@ tests/MixdownRenderTests.cpp
     # Run: SilverdawBpmEval <manifest>  (manifest lines: <path>|<referenceBpm>)
     add_executable(SilverdawBpmEval tools/bpm_eval/BpmEval.cpp)
     target_link_libraries(SilverdawBpmEval PRIVATE silverdaw_backend_core)
+
+    # Offline scratch-DSP quality/performance harness (dev tool, not shipped).
+    add_executable(SilverdawScratchDspEval
+        tools/scratch_dsp_eval/ScratchDspEval.cpp)
+    target_link_libraries(SilverdawScratchDspEval PRIVATE
+        silverdaw_backend_core)
 
     # Offline stem-separation quality harness (dev tool, not shipped, not a CTest
     # test). Run: SilverdawStemEval <manifest>

@@ -6,6 +6,20 @@ const props = defineProps<{
   persistence: ScratchPatternPersistence
   canSave: boolean
   canUpdate: boolean
+  /** Whether a pattern is currently being replayed (auditioned). */
+  isReplaying?: boolean
+  /** The clip ID that a pattern can be applied to (from the scratch editor context). */
+  targetClipId?: string | null
+  /** Callback when user requests pattern audition (play). */
+  onAuditionStart?: (patternId: string) => void
+  /** Callback when user requests audition stop. */
+  onAuditionStop?: () => void
+  /** Callback when user requests applying pattern to the target clip. */
+  onApplyToClip?: (patternId: string) => void
+  /** Callback when user requests removing pattern from the target clip. */
+  onRemoveFromClip?: () => void
+  /** The pattern ID currently applied to the target clip (for display). */
+  appliedPatternId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -119,7 +133,51 @@ function cancelRename(): void {
         >
           ✕
         </button>
+        <button
+          v-if="renamingPatternId !== saved.id && props.onAuditionStart"
+          type="button"
+          class="shrink-0 rounded px-1 text-[10px] transition-opacity"
+          :class="props.isReplaying && persistence.selectedSavedId.value === saved.id
+            ? 'bg-amber-800 text-amber-200'
+            : 'text-zinc-500 opacity-0 hover:text-amber-300 group-hover:opacity-100'"
+          :title="props.isReplaying && persistence.selectedSavedId.value === saved.id ? 'Stop' : 'Audition'"
+          @click.stop="props.isReplaying && persistence.selectedSavedId.value === saved.id
+            ? props.onAuditionStop?.()
+            : props.onAuditionStart?.(saved.id)"
+        >
+          {{ props.isReplaying && persistence.selectedSavedId.value === saved.id ? '■' : '▶' }}
+        </button>
+        <button
+          v-if="renamingPatternId !== saved.id && props.onApplyToClip && props.targetClipId"
+          type="button"
+          class="shrink-0 rounded px-1 text-[10px] transition-opacity"
+          :class="props.appliedPatternId === saved.id
+            ? 'bg-emerald-800 text-emerald-200'
+            : 'text-zinc-500 opacity-0 hover:text-emerald-300 group-hover:opacity-100'"
+          :title="props.appliedPatternId === saved.id ? 'Applied' : 'Apply to Clip'"
+          :disabled="props.appliedPatternId === saved.id"
+          @click.stop="props.onApplyToClip?.(saved.id)"
+        >
+          {{ props.appliedPatternId === saved.id ? '✓' : '⏎' }}
+        </button>
       </div>
+    </div>
+
+    <div
+      v-if="props.appliedPatternId && props.onRemoveFromClip"
+      class="flex items-center gap-2 border-t border-zinc-800 pt-1.5"
+    >
+      <span class="flex-1 truncate text-[10px] text-zinc-500">
+        Pattern applied to clip
+      </span>
+      <button
+        type="button"
+        class="rounded bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 transition-colors hover:bg-red-900 hover:text-red-200"
+        title="Remove pattern from clip"
+        @click="props.onRemoveFromClip?.()"
+      >
+        Remove
+      </button>
     </div>
   </div>
 </template>

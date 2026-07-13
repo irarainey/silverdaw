@@ -11,6 +11,11 @@
 #include <limits>
 #include <juce_audio_basics/juce_audio_basics.h>
 
+namespace silverdaw::scratch
+{
+struct PatternReplaySnapshot;
+} // namespace silverdaw::scratch
+
 namespace silverdaw
 {
 
@@ -112,6 +117,18 @@ class OffsetSource : public juce::PositionableAudioSource
         return backspinSnap.load(std::memory_order_acquire);
     }
 
+    // Non-owning audio-thread pointer to an immutable pattern replay snapshot.
+    // When set, the clip applies the scratch trajectory after warp/static-pitch
+    // and before gain/fades/effects. Null = no pattern applied.
+    void setPatternSnapshot(const scratch::PatternReplaySnapshot* snapshot) noexcept
+    {
+        patternSnap.store(snapshot, std::memory_order_release);
+    }
+    const scratch::PatternReplaySnapshot* getPatternSnapshot() const noexcept
+    {
+        return patternSnap.load(std::memory_order_acquire);
+    }
+
     static juce::int64 timelineSamplesForSourceSamples(juce::int64 sourceSamples, WarpProcessor* w) noexcept
     {
         if (sourceSamples <= 0) return sourceSamples;
@@ -177,6 +194,7 @@ class OffsetSource : public juce::PositionableAudioSource
     std::atomic<const EdgeFadeSnapshot*> edgeFade{nullptr};
     std::atomic<const BrakeSnapshot*> brakeSnap{nullptr};
     std::atomic<const BackspinSnapshot*> backspinSnap{nullptr};
+    std::atomic<const scratch::PatternReplaySnapshot*> patternSnap{nullptr};
     std::atomic<WarpProcessor*> warp{nullptr};
     std::atomic<bool> warpReseekRequested{false};
     std::atomic<bool> reversed{false};

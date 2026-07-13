@@ -6,6 +6,10 @@
 // splitting is deferred to preserve the schema/guard boundary.
 
 import { z } from 'zod'
+import type { ScratchPatternRecordedPayload, ScratchSessionStatePayload } from './scratch'
+import { ScratchPatternSchema } from './scratch'
+
+export * from './scratch'
 import type {
   MidiControlPayload,
   MidiDeckSelectionPayload,
@@ -227,6 +231,8 @@ export const ProjectStateClipSchema = z.object({
   brake: z.boolean().optional(),
   /** Turntable backspin (reverse rewind) applied at the clip end; absent = off. */
   backspin: z.boolean().optional(),
+  /** Scratch pattern applied non-destructively; absent = no pattern. */
+  scratchPatternId: z.string().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
   unresolved: z.boolean().optional(),
@@ -416,6 +422,8 @@ export const ProjectStatePayloadSchema = z.object({
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /** Persisted library catalogue; cover art/ID3 metadata is re-fetched on load. */
   library: z.array(ProjectStateLibraryItemSchema).optional(),
+  /** Saved scratch patterns; backend-authoritative. Absent in older projects = empty. */
+  scratchPatterns: z.array(ScratchPatternSchema).optional(),
   tracks: z.array(ProjectStateTrackSchema)
 })
 export type ProjectStatePayload = z.infer<typeof ProjectStatePayloadSchema>
@@ -833,6 +841,8 @@ export interface BridgeInboundMap {
   MIDI_MESSAGE: MidiMessagePayload
   MIDI_CONTROL: MidiControlPayload
   MIDI_DECK_SELECTION: MidiDeckSelectionPayload
+  SCRATCH_SESSION_STATE: ScratchSessionStatePayload
+  SCRATCH_PATTERN_RECORDED: ScratchPatternRecordedPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -902,6 +912,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIDI_MESSAGE',
   'MIDI_CONTROL',
   'MIDI_DECK_SELECTION',
+  'SCRATCH_SESSION_STATE',
+  'SCRATCH_PATTERN_RECORDED',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',

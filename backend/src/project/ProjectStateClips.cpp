@@ -237,6 +237,29 @@ bool ProjectState::isClipBackspin(const juce::String& clipId) const
     return static_cast<bool>(clip.getProperty(kBackspin, false));
 }
 
+bool ProjectState::setClipScratchPatternId(const juce::String& clipId, const juce::String& patternId)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid()) return false;
+
+    if (patternId.isEmpty())
+    {
+        clip.removeProperty(kScratchPatternId, &undoManager);
+    }
+    else
+    {
+        clip.setProperty(kScratchPatternId, patternId, &undoManager);
+    }
+    return true;
+}
+
+juce::String ProjectState::getClipScratchPatternId(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return {};
+    return clip.getProperty(kScratchPatternId, {}).toString();
+}
+
 bool ProjectState::setClipFilePath(const juce::String& clipId, const juce::String& filePath)
 {
     auto clip = findClip(clipId);
@@ -347,6 +370,50 @@ ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juc
         out.durationMs = out.durationMs / out.tempoRatio;
     }
     return out;
+}
+
+std::optional<ProjectState::ClipPreparationInfo>
+ProjectState::getClipPreparationInfo(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return std::nullopt;
+    }
+
+    ClipPreparationInfo result;
+    result.clipId = clipId;
+    result.libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
+    result.sourcePath = getLibraryItemPlaybackPath(result.libraryItemId);
+    if (result.sourcePath.isEmpty())
+    {
+        result.sourcePath = clip.getProperty(kFilePath, {}).toString();
+    }
+    result.inMs = static_cast<double>(clip.getProperty(kInMs, 0.0));
+    result.durationMs = static_cast<double>(clip.getProperty(kDurationMs, 0.0));
+    result.reversed = static_cast<bool>(clip.getProperty(kReversed, false));
+    result.warpEnabled = static_cast<bool>(clip.getProperty(kWarpEnabled, false));
+    result.warpMode = clip.getProperty(kWarpMode, "rhythmic").toString();
+    result.semitones = static_cast<double>(clip.getProperty(kSemitones, 0.0));
+    result.cents = static_cast<double>(clip.getProperty(kCents, 0.0));
+    if (clip.hasProperty(kTempoRatio))
+    {
+        result.tempoRatio = static_cast<double>(clip.getProperty(kTempoRatio, 1.0));
+    }
+    else if (result.warpEnabled)
+    {
+        const auto sourceBpm = getLibraryItemBpm(result.libraryItemId);
+        const auto projectBpm = getBpm();
+        if (sourceBpm > 0.0 && projectBpm > 0.0)
+        {
+            result.tempoRatio = projectBpm / sourceBpm;
+        }
+    }
+    if (result.sourcePath.isEmpty() || result.durationMs <= 0.0)
+    {
+        return std::nullopt;
+    }
+    return result;
 }
 
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
