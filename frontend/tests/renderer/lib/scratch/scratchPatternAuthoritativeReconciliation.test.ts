@@ -4,16 +4,13 @@
 
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
-import { useScratchSessionStore } from '@/stores/scratchSessionStore'
-import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
 import { canonicalizeScratchPattern } from '@/lib/scratch/scratchPatternCanonical'
-import type { ScratchPattern } from '@shared/bridge-protocol'
 import {
-  SCRATCH_PATTERN_VERSION,
-  SCRATCH_CROSSFADER_CURVE_VERSION
-} from '@shared/bridge-protocol'
+  createPersistence,
+  makePattern,
+  setupSessionStore
+} from './scratchPersistenceTestSupport'
 
 const sendMock = vi.hoisted(() => vi.fn(() => true))
 
@@ -34,61 +31,6 @@ vi.mock('@/lib/audio/db', () => ({
   MAX_TRACK_GAIN_LINEAR: 2,
   dbToLinear: vi.fn((db: number) => Math.pow(10, db / 20))
 }))
-
-vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'uuid-test') })
-vi.stubGlobal('window', {
-  silverdaw: {
-    readAudioMetadata: vi.fn().mockResolvedValue(null),
-    readAudioFile: vi.fn().mockResolvedValue(null)
-  }
-})
-
-function makePattern(overrides: Partial<ScratchPattern> = {}): ScratchPattern {
-  return {
-    id: 'sp-1',
-    name: 'Test',
-    version: SCRATCH_PATTERN_VERSION,
-    durationUs: 1_000_000,
-    cropStartUs: 0,
-    cropEndUs: 1_000_000,
-    sourceOffsetTurns: 0,
-    ownerDeck: 1,
-    crossfaderCurve: SCRATCH_CROSSFADER_CURVE_VERSION,
-    platter: [
-      { timeUs: 0, turns: 0, touched: true },
-      { timeUs: 1_000_000, turns: 1, touched: false }
-    ],
-    crossfader: [
-      { timeUs: 0, value: 0 },
-      { timeUs: 1_000_000, value: 1 }
-    ],
-    ...overrides
-  }
-}
-
-function setupSessionStore(sessionId: string = 'session-1') {
-  const scratch = useScratchSessionStore()
-  scratch.applyState({
-    protocolVersion: 1,
-    sessionId,
-    clipId: 'clip-1',
-    status: 'ready',
-    positionUs: 0,
-    durationUs: 1_000_000,
-    platterTurns: 0,
-    playbackRate: 1,
-    crossfader: 0.5,
-    ownerDeviceIdentifier: null,
-    ownerDeck: null,
-    touched: false
-  })
-  return scratch
-}
-
-function createPersistence(sessionId: string = 'session-1') {
-  const sessionRef = ref<string | null>(sessionId)
-  return { persistence: useScratchPatternPersistence(sessionRef), sessionRef }
-}
 
 describe('stale same-ID snapshot does not acknowledge', () => {
   beforeEach(() => {

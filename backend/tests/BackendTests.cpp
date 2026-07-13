@@ -25,6 +25,10 @@ std::vector<TestCase> buildRegistry()
     addBridgeTests(tests);
     addMidiControllerMappingTests(tests);
     addWarpTests(tests);
+    addScratchDspTests(tests);
+    addScratchProtocolTests(tests);
+    addScratchSessionTests(tests);
+    addScratchRecorderTests(tests);
     addAudioEngineTests(tests);
     addFxDspTests(tests);
     addLoudnessTests(tests);
@@ -43,6 +47,7 @@ std::vector<TestCase> buildRegistry()
     addMelRoformerSpectralTests(tests);
     addBsRoformerSpectralTests(tests);
     addLibraryCleanupTests(tests);
+    addScratchPatternPersistenceTests(tests);
     return tests;
 }
 } // namespace
@@ -57,9 +62,9 @@ int main(int argc, char** argv)
 
     const auto tests = buildRegistry();
 #if defined(SILVERDAW_STEM_SEPARATION)
-    require(tests.size() == 239, "backend test registry should contain 239 tests");
+    require(tests.size() == 288, "backend test registry should contain 288 tests");
 #else
-    require(tests.size() == 237, "backend test registry should contain 237 tests");
+    require(tests.size() == 286, "backend test registry should contain 286 tests");
 #endif
 
     bool listOnly = false;
