@@ -1,14 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildBackingClearPayload,
+  buildBackingGainPayload,
+  buildBackingPreparePayload,
   buildCrossfaderPayload,
   buildPlatterMovePayload,
   buildPlatterTouchPayload,
+  buildScratchGainPayload,
   crossfaderValueFromHorizontalDelta,
   formatUsTime,
   platterAngleDeg,
   pointerAngleDeltaTurns,
   VIRTUAL_DECK
 } from '@/lib/scratch/scratchControlHelpers'
+import {
+  ScratchBackingClearPayloadSchema,
+  ScratchBackingPreparePayloadSchema,
+  ScratchSessionControlPayloadSchema
+} from '@shared/bridge-protocol'
 
 // ── platterAngleDeg ──────────────────────────────────────────────────────────
 
@@ -181,9 +190,55 @@ describe('buildCrossfaderPayload', () => {
   })
 })
 
+describe('buildBackingGainPayload / buildScratchGainPayload', () => {
+  it('produce schema-valid monitor gain payloads', () => {
+    const backing = buildBackingGainPayload('sid-g', 0.5)
+    expect(backing).toMatchObject({ action: 'backingGain', value: 0.5 })
+    expect(ScratchSessionControlPayloadSchema.safeParse(backing).success).toBe(true)
+
+    const scratch = buildScratchGainPayload('sid-g', 0.25)
+    expect(scratch).toMatchObject({ action: 'scratchGain', value: 0.25 })
+    expect(ScratchSessionControlPayloadSchema.safeParse(scratch).success).toBe(true)
+  })
+
+  it('clamps gain to [0, 1]', () => {
+    expect(buildBackingGainPayload('s', 3)).toMatchObject({ value: 1 })
+    expect(buildScratchGainPayload('s', -2)).toMatchObject({ value: 0 })
+  })
+})
+
 describe('VIRTUAL_DECK', () => {
   it('is deck 1 (left side) for pointer-only sessions', () => {
     expect(VIRTUAL_DECK).toBe(1)
+  })
+})
+
+describe('buildBackingPreparePayload', () => {
+  it('produces a schema-valid backing prepare payload', () => {
+    const payload = buildBackingPreparePayload('sid-b', ['t1', 't2'], 'playhead', 60)
+    expect(payload).toMatchObject({
+      protocolVersion: 1,
+      sessionId: 'sid-b',
+      trackIds: ['t1', 't2'],
+      startAnchor: 'playhead',
+      durationSec: 60
+    })
+    expect(ScratchBackingPreparePayloadSchema.safeParse(payload).success).toBe(true)
+  })
+
+  it('copies the track id list so later mutation does not leak in', () => {
+    const source = ['t1']
+    const payload = buildBackingPreparePayload('sid-b', source, 'arrangement', 120)
+    source.push('t2')
+    expect(payload.trackIds).toEqual(['t1'])
+  })
+})
+
+describe('buildBackingClearPayload', () => {
+  it('produces a schema-valid backing clear payload', () => {
+    const payload = buildBackingClearPayload('sid-b')
+    expect(payload).toMatchObject({ protocolVersion: 1, sessionId: 'sid-b' })
+    expect(ScratchBackingClearPayloadSchema.safeParse(payload).success).toBe(true)
   })
 })
 

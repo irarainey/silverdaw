@@ -12,6 +12,8 @@ import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
   ScratchSessionOpenPayload,
+  ScratchBackingPreparePayload,
+  ScratchBackingClearPayload,
   ScratchPatternSavePayload,
   ScratchPatternDeletePayload,
   ScratchPatternRenamePayload,
@@ -579,6 +581,8 @@ export interface BridgeOutboundMap {
   SCRATCH_SESSION_OPEN: ScratchSessionOpenPayload
   SCRATCH_SESSION_CLOSE: ScratchSessionClosePayload
   SCRATCH_SESSION_CONTROL: ScratchSessionControlPayload
+  SCRATCH_BACKING_PREPARE: ScratchBackingPreparePayload
+  SCRATCH_BACKING_CLEAR: ScratchBackingClearPayload
   SCRATCH_PATTERN_SAVE: ScratchPatternSavePayload
   SCRATCH_PATTERN_DELETE: ScratchPatternDeletePayload
   SCRATCH_PATTERN_RENAME: ScratchPatternRenamePayload
@@ -1185,6 +1189,8 @@ export const bridgeOutboundPayloadKinds: {
   SCRATCH_SESSION_OPEN: 'payload',
   SCRATCH_SESSION_CLOSE: 'payload',
   SCRATCH_SESSION_CONTROL: 'payload',
+  SCRATCH_BACKING_PREPARE: 'payload',
+  SCRATCH_BACKING_CLEAR: 'payload',
   SCRATCH_PATTERN_SAVE: 'payload',
   SCRATCH_PATTERN_DELETE: 'payload',
   SCRATCH_PATTERN_RENAME: 'payload',

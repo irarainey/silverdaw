@@ -416,6 +416,56 @@ ProjectState::getClipPreparationInfo(const juce::String& clipId) const
     return result;
 }
 
+std::optional<ProjectState::ClipPreparationInfo>
+ProjectState::getLibraryItemPreparationInfo(const juce::String& libraryItemId) const
+{
+    if (libraryItemId.isEmpty())
+    {
+        return std::nullopt;
+    }
+    ClipPreparationInfo result;
+    result.clipId = libraryItemId;
+    result.libraryItemId = libraryItemId;
+    result.sourcePath = getLibraryItemPlaybackPath(libraryItemId);
+    if (result.sourcePath.isEmpty())
+    {
+        result.sourcePath = getLibraryItemFilePath(libraryItemId);
+    }
+    result.inMs = 0.0;
+    result.durationMs = getLibraryItemDurationMs(libraryItemId);
+    // Saved clips carry no audio of their own: their playback path is the source
+    // file, windowed by sourceInMs/sourceDurationMs. Scratch that same window so
+    // the prepared audio matches the clip rather than the head of the source.
+    const auto library = root.getChildWithName(kLibrary);
+    if (library.isValid())
+    {
+        for (int i = 0; i < library.getNumChildren(); ++i)
+        {
+            const auto item = library.getChild(i);
+            if (item.getProperty(kId).toString() != libraryItemId) continue;
+            if (item.getProperty(kKind).toString() == "clip")
+            {
+                result.inMs = static_cast<double>(item.getProperty(kSourceInMs, 0.0));
+                const auto windowMs =
+                    static_cast<double>(item.getProperty(kSourceDurationMs, 0.0));
+                if (windowMs > 0.0) result.durationMs = windowMs;
+            }
+            break;
+        }
+    }
+    result.reversed = false;
+    result.warpEnabled = false;
+    result.warpMode = "rhythmic";
+    result.tempoRatio = 1.0;
+    result.semitones = 0.0;
+    result.cents = 0.0;
+    if (result.sourcePath.isEmpty() || result.durationMs <= 0.0)
+    {
+        return std::nullopt;
+    }
+    return result;
+}
+
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);

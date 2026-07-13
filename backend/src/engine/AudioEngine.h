@@ -17,6 +17,7 @@
 #include "PreviewMetronomeSource.h"
 #include "scratch/ScratchSessionController.h"
 #include "scratch/ScratchAudioSource.h"
+#include "scratch/BackingMonitorSource.h"
 #include "scratch/ScratchProtocol.h"
 #include "scratch/ScratchPatternEvaluator.h"
 
@@ -284,6 +285,14 @@ class AudioEngine
     bool failScratchSession(const juce::String& sessionId, const juce::String& error);
     bool setScratchPreparationProgress(const juce::String& sessionId, double progress);
     bool closeScratchSession(const juce::String& sessionId);
+    // Backing accompaniment monitor (ADR 0021, Amendment 1).
+    bool beginScratchBackingPreparation(const juce::String& sessionId);
+    bool completeScratchBacking(
+        const juce::String& sessionId,
+        std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+        double preparedSampleRate);
+    bool failScratchBacking(const juce::String& sessionId, const juce::String& error);
+    bool clearScratchBacking(const juce::String& sessionId);
     bool controlScratchSession(const scratch::SessionControlPayload& control);
     bool scratchMidiTogglePlay(const juce::String& deviceIdentifier,
                                scratch::DeckSide deck);
@@ -588,7 +597,10 @@ class AudioEngine
     // Persistent scratch audio source — always wired into topMixer (fixed topology).
     // Session open/close activates/deactivates via atomics; no callback allocation.
     scratch::ScratchAudioSource scratchSource;
-    scratch::ScratchSessionController scratchController{scratchSource};
+    // Backing accompaniment bed (ADR 0021, Amendment 1) — also fixed topology in
+    // topMixer; activated only when a backing window is prepared.
+    scratch::BackingMonitorSource backingSource;
+    scratch::ScratchSessionController scratchController{scratchSource, backingSource};
 
     // Pattern replay state (audition of a saved pattern through the scratch source).
     std::shared_ptr<const scratch::PatternReplaySnapshot> patternReplaySnapshot;

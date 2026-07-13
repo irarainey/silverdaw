@@ -6,6 +6,7 @@
 // is delegated to the caller because it owns the inline-edit lifecycle.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { reanalyseLibraryItem } from '@/lib/importAudio'
 import { requestStemSeparationForLibraryItem } from '@/lib/stems/stemSeparationFlow'
 import { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
@@ -27,6 +28,7 @@ export interface LibraryItemActions {
   closeItemInfo: () => void
   openItemEditor: (item: LibraryItem) => void
   closeItemEditor: () => void
+  openItemScratchEditor: (item: LibraryItem) => void
   openItemContextMenu: (e: MouseEvent, item: LibraryItem) => void
   closeItemContextMenu: () => void
   onContextMenuCommand: (command: string) => void
@@ -62,6 +64,7 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     const inUse = library.isItemInUse(item.id)
     const items: ClipContextMenuItem[] = [
       { command: 'library.edit', label: item.kind === 'clip' ? 'Open in Editor' : 'Preview' },
+      { command: 'library.openScratchEditor', label: 'Open in Scratch Editor' },
       { command: 'library.info', label: 'Show Information' },
       { command: 'library.rename', label: 'Rename', separatorAbove: true }
     ]
@@ -180,6 +183,11 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     editorItemId.value = null
   }
 
+  function openItemScratchEditor(item: LibraryItem): void {
+    closeItemContextMenu()
+    useScratchEditorStore().openLibraryItem(item.id)
+  }
+
   function openItemContextMenu(e: MouseEvent, item: LibraryItem): void {
     contextMenu.value = {
       itemId: item.id,
@@ -197,6 +205,10 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (!item) return
     if (command === 'library.edit') {
       openItemEditor(item)
+      return
+    }
+    if (command === 'library.openScratchEditor') {
+      openItemScratchEditor(item)
       return
     }
     if (command === 'library.info') {
@@ -276,6 +288,7 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     closeItemInfo,
     openItemEditor,
     closeItemEditor,
+    openItemScratchEditor,
     openItemContextMenu,
     closeItemContextMenu,
     onContextMenuCommand

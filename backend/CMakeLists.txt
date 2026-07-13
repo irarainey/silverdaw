@@ -432,6 +432,8 @@ add_library(silverdaw_backend_core STATIC
     # scratch
     src/scratch/ScratchProtocol.cpp
     src/scratch/ScratchAudioSource.cpp
+    src/scratch/BackingMonitorSource.cpp
+    src/scratch/ScratchBackingPreparation.cpp
     src/scratch/ScratchSourcePreparation.cpp
     src/scratch/ScratchActionRecorder.cpp
     src/scratch/ScratchSessionController.cpp
@@ -717,6 +719,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp
         tests/ScratchDspTests.cpp
+        tests/BackingMonitorSourceTests.cpp
         tests/ScratchProtocolTests.cpp
         tests/ScratchSessionTests.cpp
         tests/ScratchRecorderTests.cpp

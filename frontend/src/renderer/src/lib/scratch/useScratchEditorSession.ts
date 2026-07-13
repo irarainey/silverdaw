@@ -4,9 +4,15 @@ import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { createScratchSessionLifecycle } from './scratchSessionLifecycle'
 
+/** Source a scratch session edits: a timeline clip or a whole library item. */
+export interface ScratchEditorSource {
+  id: string
+  isLibrary: boolean
+}
+
 export function useScratchEditorSession(
   open: Ref<boolean>,
-  clipId: Ref<string | null>
+  source: Ref<ScratchEditorSource | null>
 ) {
   const store = useScratchSessionStore()
   const transport = useTransportStore()
@@ -24,10 +30,10 @@ export function useScratchEditorSession(
   })
 
   watch(
-    [open, clipId],
-    ([isOpen, targetClipId], [wasOpen, previousClipId]) => {
-      if (isOpen && targetClipId && (!wasOpen || targetClipId !== previousClipId)) {
-        lifecycle.open(targetClipId)
+    [open, () => source.value?.id ?? null],
+    ([isOpen, targetId], [wasOpen, previousId]) => {
+      if (isOpen && targetId && (!wasOpen || targetId !== previousId)) {
+        lifecycle.open(targetId, source.value?.isLibrary ?? false)
       } else if (!isOpen && wasOpen) {
         lifecycle.close()
       }
@@ -56,9 +62,9 @@ export function useScratchEditorSession(
       }
       if (phase === 'ok' && wasRecovering) {
         wasRecovering = false
-        const target = clipId.value
+        const target = source.value
         if (open.value && target) {
-          lifecycle.open(target)
+          lifecycle.open(target.id, target.isLibrary)
         }
       }
     }

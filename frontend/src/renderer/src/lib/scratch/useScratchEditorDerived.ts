@@ -23,6 +23,7 @@ export interface ScratchEditorDerivedState {
   statusMessage: ComputedRef<string | null>
   isError: ComputedRef<boolean>
   isRecording: ComputedRef<boolean>
+  isArmed: ComputedRef<boolean>
   recordingStatus: ComputedRef<string>
   canRecord: ComputedRef<boolean>
   hasPattern: ComputedRef<boolean>
@@ -39,40 +40,61 @@ export function useScratchEditorDerived(
   const scratchStore = useScratchSessionStore()
 
   const clip = computed(() => (clipId.value ? project.clips[clipId.value] ?? null : null))
-  const peaks = computed(() => {
-    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
-    return item?.peaks ?? clip.value?.peaks ?? new Float32Array()
+  // The item the session identity points at: a timeline clip's library item, or
+  // a library item opened directly from the Library panel (id === item id).
+  const metaItem = computed(() => {
+    const c = clip.value
+    if (c) return library.byId[c.libraryItemId] ?? null
+    return clipId.value ? library.byId[clipId.value] ?? null : null
   })
-  const peaksPerSecond = computed(() => {
-    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
-    return item?.peaksPerSecond ?? clip.value?.peaksPerSecond ?? 0
+  // Saved clips carry no audio of their own — they window a source item. Resolve
+  // the underlying source (mirroring the Clip Editor) so the waveform always has
+  // peaks to draw, applying the clip's window via `clipInMs`/`waveformDurationMs`.
+  const sourceItem = computed(() => {
+    const meta = metaItem.value
+    if (meta?.kind === 'clip' && meta.derivedFrom?.sourceItemId) {
+      return library.byId[meta.derivedFrom.sourceItemId] ?? meta
+    }
+    return meta
   })
+  const peaks = computed(
+    () => sourceItem.value?.peaks ?? clip.value?.peaks ?? new Float32Array()
+  )
+  const peaksPerSecond = computed(
+    () => sourceItem.value?.peaksPerSecond ?? clip.value?.peaksPerSecond ?? 0
+  )
   const channelPeakEntry = computed(() => {
-    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
-    const sourceId = item?.kind === 'clip' ? item.derivedFrom?.sourceItemId : item?.id
-    return sourceId ? library.channelPeaksByItemId[sourceId] : undefined
+    const id = sourceItem.value?.id
+    return id ? library.channelPeaksByItemId[id] : undefined
   })
   const channelPeaks = computed<readonly Float32Array[]>(() =>
     channelPeakEntry.value?.channels.length === 2
       ? channelPeakEntry.value.channels
       : []
   )
-  const channelPeaksPerSecond = computed(() =>
-    channelPeakEntry.value?.peaksPerSecond ?? 0
+  const channelPeaksPerSecond = computed(
+    () => channelPeakEntry.value?.peaksPerSecond ?? 0
   )
-  const clipInMs = computed(() => clip.value?.inMs ?? 0)
+  // Window into the source: a timeline clip supplies its own in/duration; a
+  // directly-opened saved clip its `derivedFrom` window; a raw source the whole file.
+  const clipInMs = computed(() => {
+    if (clip.value) return clip.value.inMs
+    const meta = metaItem.value
+    return meta?.kind === 'clip' ? meta.derivedFrom?.inMs ?? 0 : 0
+  })
   const clipReversed = computed(() => clip.value?.reversed ?? false)
-  const sourceBpm = computed(() => {
-    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
-    return item?.bpm
-  })
-  const beatAnchorSec = computed(() => {
-    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
-    return item?.beatAnchorSec ?? item?.beats?.[0]
-  })
+  const sourceBpm = computed(() => sourceItem.value?.bpm)
+  const beatAnchorSec = computed(
+    () => sourceItem.value?.beatAnchorSec ?? sourceItem.value?.beats?.[0]
+  )
   // Peak coordinates remain in source time; the session supplies the separate
   // prepared duration used for playback and playhead positioning.
-  const waveformDurationMs = computed(() => clip.value?.durationMs ?? 0)
+  const waveformDurationMs = computed(() => {
+    if (clip.value) return clip.value.durationMs
+    const meta = metaItem.value
+    if (meta?.kind === 'clip') return meta.derivedFrom?.durationMs ?? meta.durationMs ?? 0
+    return meta?.durationMs ?? 0
+  })
   const positionMs = computed(() => (session.state.value?.positionUs ?? 0) / 1000)
   const platterTurns = computed(() => session.state.value?.platterTurns ?? 0)
   const crossfaderValue = computed(() => session.state.value?.crossfader ?? 0.5)
@@ -80,8 +102,7 @@ export function useScratchEditorDerived(
   const clipName = computed(() => {
     const c = clip.value
     if (c?.name?.trim()) return c.name.trim()
-    const item = c ? (library.byId[c.libraryItemId] ?? null) : null
-    return item?.name ?? item?.fileName ?? ''
+    return metaItem.value?.name ?? metaItem.value?.fileName ?? ''
   })
   const statusMessage = computed(() => {
     const s = session.state.value
@@ -91,6 +112,7 @@ export function useScratchEditorDerived(
   })
   const isError = computed(() => session.state.value?.status === 'error')
   const isRecording = computed(() => session.state.value?.status === 'recording')
+  const isArmed = computed(() => session.state.value?.armed === true)
   const recordingStatus = computed(() => scratchStore.recordingStatus)
   const canRecord = computed(() => {
     const status = session.state.value?.status
@@ -108,7 +130,7 @@ export function useScratchEditorDerived(
     clip, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
     clipInMs, clipReversed, sourceBpm, beatAnchorSec, waveformDurationMs,
     positionMs, platterTurns, crossfaderValue, isTouched, clipName,
-    statusMessage, isError, isRecording, recordingStatus, canRecord, hasPattern,
+    statusMessage, isError, isRecording, isArmed, recordingStatus, canRecord, hasPattern,
     deckLabel
   }
 }

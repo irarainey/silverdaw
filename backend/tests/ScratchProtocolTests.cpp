@@ -45,6 +45,22 @@ void testScratchSessionPayloads()
         R"json({"protocolVersion":1,"clipId":"clip-1"})json"));
     require(open.has_value() && open->clipId == "clip-1", "valid scratch open payload should parse");
 
+    const auto openLibrary = scratch::parseSessionOpenPayload(parseJson(
+        R"json({"protocolVersion":1,"libraryItemId":"lib-1"})json"));
+    require(openLibrary.has_value() && openLibrary->libraryItemId == "lib-1"
+                && openLibrary->clipId.isEmpty(),
+            "library-sourced scratch open payload should parse");
+
+    require(!scratch::parseSessionOpenPayload(parseJson(
+                 R"json({"protocolVersion":1})json"))
+                 .has_value(),
+            "scratch open without an identity should reject");
+
+    require(!scratch::parseSessionOpenPayload(parseJson(
+                 R"json({"protocolVersion":1,"clipId":"clip-1","libraryItemId":"lib-1"})json"))
+                 .has_value(),
+            "scratch open with both identities should reject");
+
     require(!scratch::parseSessionOpenPayload(parseJson(
                  R"json({"protocolVersion":2,"clipId":"clip-1"})json"))
                  .has_value(),
@@ -61,6 +77,25 @@ void testScratchSessionPayloads()
                  R"json({"protocolVersion":1,"sessionId":"session-1","action":"crossfader","value":1.1})json"))
                  .has_value(),
             "out-of-range crossfader should reject");
+
+    const auto backingGain = scratch::parseSessionControlPayload(parseJson(
+        R"json({"protocolVersion":1,"sessionId":"session-1","action":"backingGain","value":0.5})json"));
+    require(backingGain.has_value(), "valid backing gain should parse");
+    require(backingGain->action == scratch::ControlAction::backingGain,
+            "backing gain action should be retained");
+    requireNear(backingGain->gain, 0.5, 1.0e-12, "backing gain value should be retained");
+
+    const auto scratchGain = scratch::parseSessionControlPayload(parseJson(
+        R"json({"protocolVersion":1,"sessionId":"session-1","action":"scratchGain","value":0.25})json"));
+    require(scratchGain.has_value(), "valid scratch gain should parse");
+    require(scratchGain->action == scratch::ControlAction::scratchGain,
+            "scratch gain action should be retained");
+    requireNear(scratchGain->gain, 0.25, 1.0e-12, "scratch gain value should be retained");
+
+    require(!scratch::parseSessionControlPayload(parseJson(
+                 R"json({"protocolVersion":1,"sessionId":"session-1","action":"scratchGain","value":1.5})json"))
+                 .has_value(),
+            "out-of-range scratch gain should reject");
     require(!scratch::parseSessionControlPayload(parseJson(
                  R"json({"protocolVersion":1,"sessionId":"session-1","action":"platterTouch","deck":3,"touched":true})json"))
                  .has_value(),
@@ -223,6 +258,65 @@ void testScratchPatternOrderingAndBounds()
     require(!scratch::parsePattern(badLast).has_value(), "platter lane not ending at durationUs should reject");
 }
 
+void testScratchBackingPayloads()
+{
+    // Valid prepare payload.
+    const auto ok = scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,
+        "sessionId":"sess-1",
+        "trackIds":["t1","t2"],
+        "startAnchor":"playhead",
+        "durationSec":60
+    })json"));
+    require(ok.has_value(), "well-formed backing prepare payload should parse");
+    require(ok->sessionId == "sess-1", "backing prepare should carry the session id");
+    require(ok->trackIds.size() == 2, "backing prepare should carry both track ids");
+    require(ok->startAnchor == "playhead", "backing prepare should carry the start anchor");
+    require(ok->durationSec == 60, "backing prepare should carry the duration");
+
+    // Newly supported maximum duration.
+    require(scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":120
+    })json")).has_value(), "backing prepare with a 120s duration should parse");
+
+    // Wrong protocol version.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":2,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":60
+    })json")).has_value(), "backing prepare with wrong protocol version should reject");
+
+    // Invalid start anchor.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"middle","durationSec":60
+    })json")).has_value(), "backing prepare with unknown start anchor should reject");
+
+    // Invalid duration.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":45
+    })json")).has_value(), "backing prepare with unsupported duration should reject");
+
+    // Empty track id in the array.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":[""],"startAnchor":"arrangement","durationSec":60
+    })json")).has_value(), "backing prepare with an empty track id should reject");
+
+    // Missing session id.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"trackIds":["t1"],"startAnchor":"arrangement","durationSec":60
+    })json")).has_value(), "backing prepare without a session id should reject");
+
+    // Valid clear payload.
+    const auto clear = scratch::parseBackingClearPayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"sess-1"
+    })json"));
+    require(clear.has_value(), "well-formed backing clear payload should parse");
+    require(clear->sessionId == "sess-1", "backing clear should carry the session id");
+
+    // Clear with wrong protocol version.
+    require(!scratch::parseBackingClearPayload(parseJson(R"json({
+        "protocolVersion":9,"sessionId":"s"
+    })json")).has_value(), "backing clear with wrong protocol version should reject");
+}
+
 } // namespace
 
 void addScratchProtocolTests(std::vector<TestCase>& tests)
@@ -231,6 +325,7 @@ void addScratchProtocolTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch protocol parses session payloads", testScratchSessionPayloads});
     tests.push_back({"scratch protocol parses pattern payloads", testScratchPatternPayload});
     tests.push_back({"scratch protocol rejects invalid pattern bounds", testScratchPatternOrderingAndBounds});
+    tests.push_back({"scratch protocol parses backing payloads", testScratchBackingPayloads});
 }
 
 } // namespace silverdaw::tests

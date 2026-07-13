@@ -6,7 +6,6 @@ import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import SampleTypeDialog from '@/components/SampleTypeDialog.vue'
-import ScratchEditorDialog from '@/components/ScratchEditorDialog.vue'
 import { useTimelineViewController } from '@/lib/timeline/useTimelineViewController'
 import { useUiStore } from '@/stores/uiStore'
 
@@ -59,8 +58,7 @@ const {
   infoClipId,
   infoItem,
   editorClipId,
-  editorItem,
-  scratchEditorClipId
+  editorItem
 } = useTimelineViewController(host, scrollbarTrack, vScrollbarTrack)
 </script>
 
@@ -206,11 +204,6 @@ const {
       :open="sampleTypeOpen"
       :clip-id="sampleTypeClipId"
       @close="dialogs.closeSampleType()"
-    />
-    <ScratchEditorDialog
-      :open="scratchEditorClipId !== null"
-      :clip-id="scratchEditorClipId"
-      @close="dialogs.closeScratchEditor"
     />
 
     <!-- Hover readout for an automation breakpoint (offset off the cursor). -->

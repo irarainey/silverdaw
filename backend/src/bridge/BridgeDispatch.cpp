@@ -366,6 +366,15 @@ bool dispatchScratch(const DispatchContext& ctx)
     {
         handleScratchSessionControl(ctx.payload, ctx.engine, ctx.bridge);
     }
+    else if (ctx.type == "SCRATCH_BACKING_PREPARE")
+    {
+        handleScratchBackingPrepare(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                    ctx.peakPool);
+    }
+    else if (ctx.type == "SCRATCH_BACKING_CLEAR")
+    {
+        handleScratchBackingClear(ctx.payload, ctx.engine, ctx.bridge);
+    }
     else if (ctx.type == "SCRATCH_PATTERN_SAVE")
     {
         handleScratchPatternSave(ctx.payload, ctx.projectState, ctx.bridge, ctx.session);

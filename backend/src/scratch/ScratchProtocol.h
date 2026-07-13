@@ -27,20 +27,44 @@ enum class ControlAction
 {
     play,
     pause,
+    recordArm,
+    recordDisarm,
     recordStart,
     recordStop,
     seek,
     platterMove,
     platterTouch,
-    crossfader
+    crossfader,
+    backingGain,
+    scratchGain
 };
 
 struct SessionOpenPayload
 {
     juce::String clipId;
+    // When set, the scratch source is prepared from a library item's full audio
+    // instead of a timeline clip. Exactly one of clipId / libraryItemId is set;
+    // the non-empty one is the session identity echoed in state.
+    juce::String libraryItemId;
 };
 
 struct SessionClosePayload
+{
+    juce::String sessionId;
+};
+
+// Backing accompaniment bed (ADR 0021, Amendment 1). Track-filtered window the
+// backend renders offline; startAnchor is "arrangement" (project origin) or
+// "playhead" (current transport position).
+struct BackingPreparePayload
+{
+    juce::String sessionId;
+    std::vector<juce::String> trackIds;
+    juce::String startAnchor;
+    int durationSec = 60;
+};
+
+struct BackingClearPayload
 {
     juce::String sessionId;
 };
@@ -53,6 +77,8 @@ struct SessionControlPayload
     std::int64_t positionUs = 0;
     double deltaTurns = 0.0;
     double crossfader = 0.0;
+    // Monitor-only trim (0..1) for backingGain / scratchGain actions; never recorded.
+    double gain = 1.0;
     bool touched = false;
 };
 
@@ -96,6 +122,8 @@ bool hasValidProtocolVersion(const juce::var& payload);
 
 std::optional<SessionOpenPayload> parseSessionOpenPayload(const juce::var& payload);
 std::optional<SessionClosePayload> parseSessionClosePayload(const juce::var& payload);
+std::optional<BackingPreparePayload> parseBackingPreparePayload(const juce::var& payload);
+std::optional<BackingClearPayload> parseBackingClearPayload(const juce::var& payload);
 std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var& payload);
 std::optional<Pattern> parsePattern(const juce::var& value);
 juce::var serializePattern(const Pattern& pattern);

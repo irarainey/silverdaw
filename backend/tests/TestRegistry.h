@@ -18,6 +18,7 @@ void addBridgeTests(std::vector<TestCase>& tests);
 void addMidiControllerMappingTests(std::vector<TestCase>& tests);
 void addWarpTests(std::vector<TestCase>& tests);
 void addScratchDspTests(std::vector<TestCase>& tests);
+void addBackingMonitorSourceTests(std::vector<TestCase>& tests);
 void addScratchProtocolTests(std::vector<TestCase>& tests);
 void addScratchSessionTests(std::vector<TestCase>& tests);
 void addScratchRecorderTests(std::vector<TestCase>& tests);

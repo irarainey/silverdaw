@@ -5,8 +5,9 @@
 namespace silverdaw::scratch
 {
 
-ScratchSessionController::ScratchSessionController(ScratchAudioSource& source)
-    : scratchSource(source)
+ScratchSessionController::ScratchSessionController(ScratchAudioSource& source,
+                                                  BackingMonitorSource& backing)
+    : scratchSource(source), backingSource(backing)
 {
 }
 
@@ -64,6 +65,7 @@ bool ScratchSessionController::failSession(const juce::String& sessionId,
         return false;
     // deactivate is safe: it quiesces the callback internally.
     scratchSource.deactivate();
+    backingSource.deactivate();
     session->status = "error";
     session->error = error.isNotEmpty() ? error : juce::String("Scratch preparation failed");
     return true;
@@ -77,6 +79,7 @@ bool ScratchSessionController::closeSession(const juce::String& sessionId)
     // Abort any in-progress recording.
     recorder.abort();
     scratchSource.deactivate();
+    backingSource.deactivate();
     session.reset();
     return true;
 }
@@ -88,6 +91,7 @@ void ScratchSessionController::clearSession()
         return;
     recorder.abort();
     scratchSource.deactivate();
+    backingSource.deactivate();
     session.reset();
 }
 
@@ -95,6 +99,84 @@ bool ScratchSessionController::hasActiveSession() const
 {
     std::lock_guard<std::mutex> lock(sessionMutex);
     return session.has_value();
+}
+
+// ── Backing bed (ADR 0021, Amendment 1) ───────────────────────────────────────
+
+bool ScratchSessionController::beginBackingPreparation(const juce::String& sessionId)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || session->sessionId != sessionId || session->status == "recording")
+        return false;
+    backingSource.deactivate();
+    session->backingStatus = "preparing";
+    session->backingError.clear();
+    session->backingDurationUs = 0;
+    return true;
+}
+
+bool ScratchSessionController::completeBacking(
+    const juce::String& sessionId,
+    std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+    double preparedSampleRate)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || session->sessionId != sessionId
+        || session->backingStatus != "preparing"
+        || preparedAudio == nullptr || preparedAudio->getNumSamples() <= 0
+        || preparedAudio->getNumChannels() <= 0 || preparedSampleRate <= 0.0)
+    {
+        return false;
+    }
+    backingSource.activate(std::move(preparedAudio), preparedSampleRate);
+    backingSource.setGain(static_cast<float>(session->backingGain));
+    session->backingStatus = "ready";
+    session->backingError.clear();
+    session->backingDurationUs = backingSource.durationUs();
+    return true;
+}
+
+bool ScratchSessionController::failBacking(const juce::String& sessionId,
+                                           const juce::String& error)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || session->sessionId != sessionId
+        || session->backingStatus != "preparing")
+        return false;
+    backingSource.deactivate();
+    session->backingStatus = "error";
+    session->backingError =
+        error.isNotEmpty() ? error : juce::String("Backing preparation failed");
+    session->backingDurationUs = 0;
+    return true;
+}
+
+bool ScratchSessionController::clearBacking(const juce::String& sessionId)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || session->sessionId != sessionId || session->status == "recording")
+        return false;
+    backingSource.deactivate();
+    session->backingStatus = "none";
+    session->backingError.clear();
+    session->backingDurationUs = 0;
+    return true;
+}
+
+bool ScratchSessionController::backingReadyLocked() const
+{
+    return session && session->backingStatus == "ready" && backingSource.isActive();
+}
+
+void ScratchSessionController::startBackingLocked()
+{
+    if (backingReadyLocked())
+        backingSource.setPlaying(true);
+}
+
+void ScratchSessionController::stopBackingLocked()
+{
+    backingSource.setPlaying(false);
 }
 
 // ── Unified control ───────────────────────────────────────────────────────────
@@ -114,8 +196,12 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
     {
         case ControlAction::play:
             if (scratchSource.isAtForwardBoundary())
+            {
                 scratchSource.seekUs(0);
+                backingSource.seekUs(0);
+            }
             scratchSource.setPlaying(true);
+            startBackingLocked();
             s.status = (s.status == "recording") ? "recording" : "playing";
             return true;
 
@@ -123,11 +209,14 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
             if (s.status == "recording")
                 return false;
             scratchSource.setPlaying(false);
+            stopBackingLocked();
             s.status = "paused";
             return true;
 
         case ControlAction::seek:
             scratchSource.seekUs(control.positionUs);
+            if (backingReadyLocked())
+                backingSource.seekUs(control.positionUs);
             return true;
 
         case ControlAction::platterTouch:
@@ -141,6 +230,8 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
                 if (!claimDeck(*control.deck))
                     return false;
                 s.lastPlatterMoveMs = juce::Time::getMillisecondCounterHiRes();
+                if (s.armed)
+                    beginArmedRecordingLocked();
             }
             else
             {
@@ -167,6 +258,8 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
         {
             if (!control.deck || !claimDeck(*control.deck))
                 return false;
+            if (s.armed)
+                beginArmedRecordingLocked();
             applyPlatterMove(
                 control.deltaTurns, juce::Time::getMillisecondCounterHiRes());
             if (recorder.state() == ScratchActionRecorder::State::recording)
@@ -191,32 +284,36 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
             return true;
         }
 
-        case ControlAction::recordStart:
+        case ControlAction::backingGain:
         {
-            if (s.status == "recording")
-                return false;
-
-            // Seek to crop start first, then capture authoritative position.
-            scratchSource.seekUs(0);
-
-            ScratchActionRecorder::Config cfg;
-            cfg.draftId = juce::Uuid().toString();
-            cfg.draftName = "Scratch " + juce::Time::getCurrentTime().toString(true, true, false);
-            cfg.sessionId = s.sessionId;
-            cfg.clipId = s.clipId;
-            // Use existing owner if claimed; otherwise provisional deck 1 for pointer.
-            cfg.ownerDeck = s.ownerDeck.value_or(DeckSide::deck1);
-            cfg.initialCrossfader = s.crossfader;
-            cfg.cropStartUs = 0;
-            const auto snap = scratchSource.snapshot();
-            cfg.initialPlatterTurns = snap.platterTurns;
-            cfg.initialTouched = snap.touched;
-            if (!recorder.start(cfg))
-                return false;
-            scratchSource.setPlaying(true);
-            s.status = "recording";
+            s.backingGain = juce::jlimit(0.0, 1.0, control.gain);
+            backingSource.setGain(static_cast<float>(s.backingGain));
             return true;
         }
+
+        case ControlAction::scratchGain:
+        {
+            s.scratchMonitorGain = juce::jlimit(0.0, 1.0, control.gain);
+            updateGain();
+            return true;
+        }
+
+        case ControlAction::recordArm:
+            if (s.status == "recording")
+                return false;
+            s.armed = true;
+            return true;
+
+        case ControlAction::recordDisarm:
+            if (!s.armed)
+                return false;
+            s.armed = false;
+            return true;
+
+        case ControlAction::recordStart:
+            if (s.status == "recording")
+                return false;
+            return beginArmedRecordingLocked();
 
         case ControlAction::recordStop:
         {
@@ -235,11 +332,44 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
             finalState.crossfader = s.crossfader;
             recorder.stop(finalState);
             scratchSource.setPlaying(false);
+            stopBackingLocked();
             s.status = "ready";
+            s.armed = false;
             return true;
         }
     }
     return false;
+}
+
+bool ScratchSessionController::beginArmedRecordingLocked()
+{
+    auto& s = *session;
+    if (s.status == "recording")
+        return false;
+
+    // Seek to crop start first, then capture authoritative position.
+    scratchSource.seekUs(0);
+    backingSource.seekUs(0);
+
+    ScratchActionRecorder::Config cfg;
+    cfg.draftId = juce::Uuid().toString();
+    cfg.draftName = "Scratch " + juce::Time::getCurrentTime().toString(true, true, false);
+    cfg.sessionId = s.sessionId;
+    cfg.clipId = s.clipId;
+    // Use existing owner if claimed; otherwise provisional deck 1 for pointer.
+    cfg.ownerDeck = s.ownerDeck.value_or(DeckSide::deck1);
+    cfg.initialCrossfader = s.crossfader;
+    cfg.cropStartUs = 0;
+    const auto snap = scratchSource.snapshot();
+    cfg.initialPlatterTurns = snap.platterTurns;
+    cfg.initialTouched = snap.touched;
+    if (!recorder.start(cfg))
+        return false;
+    scratchSource.setPlaying(true);
+    startBackingLocked();
+    s.status = "recording";
+    s.armed = false;
+    return true;
 }
 
 // ── MIDI entry points ─────────────────────────────────────────────────────────
@@ -256,9 +386,16 @@ bool ScratchSessionController::midiTogglePlay(const juce::String& deviceIdentifi
     // release, which would otherwise leave motor playback silently suspended.
     scratchSource.setTouched(false);
     if (!scratchSource.snapshot().playing && scratchSource.isAtForwardBoundary())
+    {
         scratchSource.seekUs(0);
+        backingSource.seekUs(0);
+    }
     const auto shouldPlay = !scratchSource.snapshot().playing;
     scratchSource.setPlaying(shouldPlay);
+    if (shouldPlay)
+        startBackingLocked();
+    else
+        stopBackingLocked();
     if (session->status != "recording")
         session->status = shouldPlay ? "playing" : "paused";
     return true;
@@ -274,6 +411,8 @@ bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier
             || !claimMidiDeck(deviceIdentifier, deck, true))
             return false;
         session->lastPlatterMoveMs = juce::Time::getMillisecondCounterHiRes();
+        if (session->armed)
+            beginArmedRecordingLocked();
         if (recorder.state() == ScratchActionRecorder::State::recording)
         {
             const auto snap = scratchSource.snapshot();
@@ -294,6 +433,8 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
     if (!session || !scratchSource.isActive()
         || !claimMidiDeck(deviceIdentifier, deck, true))
         return false;
+    if (session->armed)
+        beginArmedRecordingLocked();
     applyPlatterMove(deltaTurns, timestampMs);
 
     if (recorder.state() == ScratchActionRecorder::State::recording)
@@ -481,10 +622,25 @@ bool ScratchSessionController::reconcileSourceEnd()
 
 bool ScratchSessionController::reconcileSourceEndLocked()
 {
-    if (!session || !scratchSource.isActive() || !scratchSource.consumeEndReached())
+    if (!session || !scratchSource.isActive())
         return false;
 
+    if (backingReadyLocked())
+    {
+        // The backing window bounds the session. The short scratch source uses
+        // boundary silence within its own bounds, so its end is ignored here;
+        // only the elapsed backing window stops the session.
+        scratchSource.consumeEndReached();
+        if (!backingSource.consumeEndReached())
+            return false;
+    }
+    else if (!scratchSource.consumeEndReached())
+    {
+        return false;
+    }
+
     scratchSource.setPlaying(false);
+    stopBackingLocked();
     const auto sourceState = scratchSource.snapshot();
     if (session->status == "recording")
     {
@@ -494,8 +650,9 @@ bool ScratchSessionController::reconcileSourceEndLocked()
         finalState.crossfader = session->crossfader;
         recorder.stop(finalState);
     }
-    // Reset source to start so the next Play begins fresh. Status becomes ready.
+    // Reset both sources to start so the next Play begins fresh. Status ready.
     scratchSource.seekUs(0);
+    backingSource.seekUs(0);
     if (session->status == "playing" || session->status == "recording")
         session->status = "ready";
     return true;
@@ -514,7 +671,7 @@ void ScratchSessionController::updateGain()
         sideGain = s.midiCrossfaderReversed
             ? 1.0 - s.crossfader
             : s.crossfader;
-    scratchSource.setGain(static_cast<float>(sideGain));
+    scratchSource.setGain(static_cast<float>(sideGain * s.scratchMonitorGain));
 }
 
 void ScratchSessionController::resetOwnerTimestamp()
@@ -540,6 +697,12 @@ ScratchSessionController::getSnapshot() const
     result.selectedDeck = session->selectedDeck;
     result.ownerDeck = session->ownerDeck;
     result.ownerDeviceIdentifier = session->ownerDeviceIdentifier;
+    result.armed = session->armed;
+    result.backingStatus = session->backingStatus;
+    result.backingError = session->backingError;
+    result.backingDurationUs = session->backingDurationUs;
+    result.backingGain = session->backingGain;
+    result.scratchMonitorGain = session->scratchMonitorGain;
     if (scratchSource.isActive())
     {
         const auto sourceState = scratchSource.snapshot();

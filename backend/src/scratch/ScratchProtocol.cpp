@@ -111,6 +111,14 @@ std::optional<ControlAction> controlAction(const juce::String& value)
     {
         return ControlAction::pause;
     }
+    if (value == "recordArm")
+    {
+        return ControlAction::recordArm;
+    }
+    if (value == "recordDisarm")
+    {
+        return ControlAction::recordDisarm;
+    }
     if (value == "recordStart")
     {
         return ControlAction::recordStart;
@@ -134,6 +142,14 @@ std::optional<ControlAction> controlAction(const juce::String& value)
     if (value == "crossfader")
     {
         return ControlAction::crossfader;
+    }
+    if (value == "backingGain")
+    {
+        return ControlAction::backingGain;
+    }
+    if (value == "scratchGain")
+    {
+        return ControlAction::scratchGain;
     }
     return std::nullopt;
 }
@@ -183,12 +199,25 @@ bool hasValidProtocolVersion(const juce::var& payload)
 
 std::optional<SessionOpenPayload> parseSessionOpenPayload(const juce::var& payload)
 {
-    const auto clipId = requiredString(payload, "clipId");
-    if (!hasValidProtocolVersion(payload) || !clipId)
+    if (!hasValidProtocolVersion(payload))
     {
         return std::nullopt;
     }
-    return SessionOpenPayload{*clipId};
+    SessionOpenPayload result;
+    if (const auto clipId = requiredString(payload, "clipId"))
+    {
+        result.clipId = *clipId;
+    }
+    if (const auto libraryItemId = requiredString(payload, "libraryItemId"))
+    {
+        result.libraryItemId = *libraryItemId;
+    }
+    // Exactly one identity is required; both-set is ambiguous.
+    if (result.clipId.isEmpty() == result.libraryItemId.isEmpty())
+    {
+        return std::nullopt;
+    }
+    return result;
 }
 
 std::optional<SessionClosePayload> parseSessionClosePayload(const juce::var& payload)
@@ -199,6 +228,56 @@ std::optional<SessionClosePayload> parseSessionClosePayload(const juce::var& pay
         return std::nullopt;
     }
     return SessionClosePayload{*sessionId};
+}
+
+std::optional<BackingPreparePayload> parseBackingPreparePayload(const juce::var& payload)
+{
+    const auto sessionId = requiredString(payload, "sessionId");
+    const auto startAnchor = requiredString(payload, "startAnchor");
+    const auto durationValue = finiteNumber(payload, "durationSec");
+    if (!hasValidProtocolVersion(payload) || !sessionId || !startAnchor || !durationValue)
+    {
+        return std::nullopt;
+    }
+    if (*startAnchor != "arrangement" && *startAnchor != "playhead")
+    {
+        return std::nullopt;
+    }
+    const auto durationSec = static_cast<int>(*durationValue);
+    if (durationSec != 60 && durationSec != 90 && durationSec != 120)
+    {
+        return std::nullopt;
+    }
+    const auto trackIdsVar = property(payload, "trackIds");
+    const auto* array = trackIdsVar ? trackIdsVar->getArray() : nullptr;
+    if (array == nullptr)
+    {
+        return std::nullopt;
+    }
+    BackingPreparePayload result;
+    result.sessionId = *sessionId;
+    result.startAnchor = *startAnchor;
+    result.durationSec = durationSec;
+    result.trackIds.reserve(static_cast<std::size_t>(array->size()));
+    for (const auto& item : *array)
+    {
+        if (!item.isString() || item.toString().isEmpty())
+        {
+            return std::nullopt;
+        }
+        result.trackIds.push_back(item.toString());
+    }
+    return result;
+}
+
+std::optional<BackingClearPayload> parseBackingClearPayload(const juce::var& payload)
+{
+    const auto sessionId = requiredString(payload, "sessionId");
+    if (!hasValidProtocolVersion(payload) || !sessionId)
+    {
+        return std::nullopt;
+    }
+    return BackingClearPayload{*sessionId};
 }
 
 std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var& payload)
@@ -218,6 +297,8 @@ std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var&
     {
         case ControlAction::play:
         case ControlAction::pause:
+        case ControlAction::recordArm:
+        case ControlAction::recordDisarm:
         case ControlAction::recordStart:
         case ControlAction::recordStop:
             break;
@@ -263,6 +344,17 @@ std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var&
                 return std::nullopt;
             }
             result.crossfader = *value;
+            break;
+        }
+        case ControlAction::backingGain:
+        case ControlAction::scratchGain:
+        {
+            const auto value = finiteNumber(payload, "value");
+            if (!value || *value < 0.0 || *value > 1.0)
+            {
+                return std::nullopt;
+            }
+            result.gain = *value;
             break;
         }
     }

@@ -29,6 +29,7 @@ void AudioEngine::initialiseGraph()
     // volume-independent. Wiring the source graph needs no open device.
     topMixer.addInputSource(&master, false);
     topMixer.addInputSource(&scratchSource, false);
+    topMixer.addInputSource(&backingSource, false);
     sourcePlayer.setSource(&masterMeter);
 }
 

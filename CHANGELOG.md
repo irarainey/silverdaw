@@ -4,29 +4,28 @@
 
 ### Added
 
-- Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, controller feedback, and vinyl-style platter holding.
+- Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, controller feedback, and vinyl-style platter holding and scratching.
 
 ### Changed
 
 - Splitting, duplicating, and pasting clips now reuse loaded waveform data for faster editing.
-- Startup now defers timeline graphics until they are needed.
-- Startup now connects to the audio engine sooner when it becomes available.
+- Startup now defers timeline graphics until they are needed and connects to the audio engine sooner.
 - Fast launches no longer pause on startup steps that have already completed.
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
 - Stem separation is now faster, more reliable, and clearer about progress and saved cleanup settings.
-- Tracks with neutral Tone controls now skip inactive filtering during playback.
-- Shared room and echo effects now stop processing once their tails are silent.
 - Music with a detected variable tempo now auto-warps on drop when tempo matching is enabled.
 
 ### Fixed
 
-- Keyboard shortcuts no longer affect the project while a dialog is open.
 - Warp playback performance is improved.
+- Tracks with neutral Tone controls now skip inactive filtering during playback.
+- Shared room and echo effects now stop processing once their tails are silent.
 - Muted and solo-excluded tracks now skip playback and effects processing.
 - Audio playback now remains uninterrupted while clips or automation are changed.
 - Repeated brake and backspin edits now release superseded audio state when playback stops.
 - Recent projects now show an opening indicator while the audio engine finishes starting.
 - Manual BPM edits in the Clip Editor now commit reliably.
+- Keyboard shortcuts no longer affect the project while a dialog is open.
 
 ## 1.1.0
 

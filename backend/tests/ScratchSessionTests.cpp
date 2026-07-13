@@ -395,7 +395,8 @@ void testScratchSessionAutoStopsAtForwardEnd()
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
-    scratch::ScratchSessionController controller(source);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-end-stop");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
@@ -428,7 +429,8 @@ void testScratchSessionPlayFromEndRestartsFromBeginning()
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
-    scratch::ScratchSessionController controller(source);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-restart");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
@@ -560,7 +562,8 @@ void testScratchPlayFromReadyAndPausedStartsAndBroadcastsState()
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
-    scratch::ScratchSessionController controller(source);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-play-state");
     controller.completeSession(
         sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate), sampleRate);
@@ -595,7 +598,8 @@ void testScratchRepeatPlayEndCycles()
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
-    scratch::ScratchSessionController controller(source);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-repeat");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
@@ -760,6 +764,107 @@ void testScratchCrossfaderDirectionInversion()
     engine.closeScratchSession(sessionId);
 }
 
+void testScratchArmingStartsRecordingOnPointerTouch()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-arm-touch");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for arming");
+
+    scratch::SessionControlPayload arm;
+    arm.sessionId = sessionId;
+    arm.action = scratch::ControlAction::recordArm;
+    require(controller.controlSession(arm), "arming should be accepted from ready");
+    {
+        const auto snap = controller.getSnapshot();
+        require(snap && snap->armed, "snapshot should report armed state");
+        require(snap->status == "ready",
+                "arming alone should not start recording");
+    }
+
+    scratch::SessionControlPayload touch;
+    touch.sessionId = sessionId;
+    touch.action = scratch::ControlAction::platterTouch;
+    touch.deck = scratch::DeckSide::deck1;
+    touch.touched = true;
+    require(controller.controlSession(touch),
+            "first armed platter touch should claim the deck");
+    const auto snap = controller.getSnapshot();
+    require(snap && snap->status == "recording",
+            "armed platter touch should begin recording");
+    require(!snap->armed, "starting recording should clear the armed flag");
+
+    scratch::SessionControlPayload stop;
+    stop.sessionId = sessionId;
+    stop.action = scratch::ControlAction::recordStop;
+    require(controller.controlSession(stop), "recording should stop");
+    require(controller.takeCompletedPattern().has_value(),
+            "armed recording should yield a completed pattern");
+}
+
+void testScratchArmingStartsRecordingOnMidiMovement()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-arm-move");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for movement arming");
+
+    scratch::SessionControlPayload arm;
+    arm.sessionId = sessionId;
+    arm.action = scratch::ControlAction::recordArm;
+    require(controller.controlSession(arm), "arming should be accepted");
+
+    require(controller.midiMovePlatter("device-1", scratch::DeckSide::deck1, 0.1, 1000.0),
+            "armed movement-only jog should claim and record");
+    const auto snap = controller.getSnapshot();
+    require(snap && snap->status == "recording",
+            "armed movement should begin recording");
+    require(!snap->armed, "movement start should clear the armed flag");
+
+    scratch::SessionControlPayload disarm;
+    disarm.sessionId = sessionId;
+    disarm.action = scratch::ControlAction::recordDisarm;
+    require(!controller.controlSession(disarm),
+            "disarm should be rejected once recording has started");
+}
+
+void testScratchDisarmClearsArmedState()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-disarm");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for disarm");
+
+    scratch::SessionControlPayload arm;
+    arm.sessionId = sessionId;
+    arm.action = scratch::ControlAction::recordArm;
+    require(controller.controlSession(arm), "arming should be accepted");
+    require(controller.getSnapshot()->armed, "session should be armed");
+
+    scratch::SessionControlPayload disarm = arm;
+    disarm.action = scratch::ControlAction::recordDisarm;
+    require(controller.controlSession(disarm), "disarm should be accepted while armed");
+    require(!controller.getSnapshot()->armed, "disarm should clear the armed flag");
+}
+
 void addScratchSessionTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"scratch session audio transport and hold", testScratchAudioSourceTransport});
@@ -778,6 +883,9 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});
     tests.push_back({"scratch crossfader direction inversion with tracking", testScratchCrossfaderDirectionInversion});
+    tests.push_back({"scratch arming starts recording on pointer touch", testScratchArmingStartsRecordingOnPointerTouch});
+    tests.push_back({"scratch arming starts recording on MIDI movement", testScratchArmingStartsRecordingOnMidiMovement});
+    tests.push_back({"scratch disarm clears armed state", testScratchDisarmClearsArmedState});
 }
 
 } // namespace silverdaw::tests

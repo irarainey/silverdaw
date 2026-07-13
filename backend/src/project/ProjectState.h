@@ -284,6 +284,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Immutable message-thread snapshot for preparing clip audio off-thread. */
     std::optional<ClipPreparationInfo> getClipPreparationInfo(const juce::String& clipId) const;
 
+    /**
+     * Preparation snapshot for scratching a whole library item directly (no
+     * timeline clip). Uses the item's full playable audio with no crop, warp, or
+     * pitch shift; the returned `clipId` is the library item id (session identity).
+     */
+    std::optional<ClipPreparationInfo>
+    getLibraryItemPreparationInfo(const juce::String& libraryItemId) const;
+
     // View state persists but is mirrored into cleanSnapshot so it never marks dirty.
 
     /** Horizontal zoom (pixels per second). Defaults to 60. */

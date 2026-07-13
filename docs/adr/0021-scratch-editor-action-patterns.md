@@ -283,3 +283,125 @@ extreme rate.
   and makes patterns depend unpredictably on source length.
 - **Guess Record-button messages for every supported device.** Incorrect
   mappings are worse than leaving the physical shortcut unavailable.
+
+## Amendment 1 — Backing accompaniment monitor (Phase 3)
+
+- **Date:** 2026-07-13 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+The original decision scopes the editor to a single virtual deck auditioned in
+isolation: `The opposite side contains silence`. In real practice a DJ scratches
+*over* a second record that keeps playing. Without an accompaniment the user
+cannot hear their scratch in musical context, so timing and phrasing are hard to
+judge while recording. This amendment adds an optional, fixed-length backing
+bed the user can scratch over while recording a pattern destined for a new
+sample. It is explicitly not a mixing surface: it exists only to provide musical
+context, and it keeps every existing real-time, non-destructive, and crossfader
+guarantee intact.
+
+### Decision
+
+While the editor is open the user may select a set of timeline tracks to play as
+a **backing accompaniment monitor** underneath the scratch deck.
+
+- **The backing is a fixed-length scratch-over bed, not a mix.** Its sole
+  purpose is to give the performer musical context to scratch against while
+  recording a pattern for a new sample. It is never a mixing surface and never
+  reaches committed output.
+- **The user chooses a backing window before playback: a start anchor and a
+  fixed duration.** The start anchor is either the **arrangement start**
+  (project origin) or the **current playhead position**. The duration is a
+  fixed choice — **30, 60, or 90 seconds** (default 30). The backing is the
+  selected-track mixdown over `[anchor, anchor + duration)`.
+- **The chosen window bounds the session, not the edited clip.** When a backing
+  window is active, nominal playback and recording run the linear session clock
+  from zero to the window duration and then stop; the window length, not the
+  clip's span, is the forward time bound. The short scratch source is
+  manipulated over that time and still follows the no-wrap boundary-silence
+  rule within its own bounds. With no backing window, the session behaves as
+  originally specified and is bounded by the scratch source.
+- **Source is pre-rendered, not a live second engine.** The backing is a linear
+  mixdown of the selected tracks over the chosen window, prepared off the audio
+  thread and written to the existing disk/cache boundary exactly like the
+  prepared scratch source. The scratch stage reads it as a plain linear buffer.
+  A live second arrangement renderer inside the editor is rejected as too large
+  and too costly for the audio callback.
+- **The backing follows the linear session clock, never the scratch
+  trajectory.** When the audition transport plays, the backing advances forward
+  at nominal speed and stays phase-aligned to the session start. Platter
+  varispeed, reverse, and holds move only the scratch deck; they never move the
+  backing. Stop and skip-to-start reset both together. The editor still does not
+  seek, start, or stop the arrangement transport — the backing is a separate
+  prepared monitor source, not the arrangement.
+- **The backing track set is the user's choice, made before playback.** The
+  user selects any subset of timeline tracks — or all of them — to form the
+  backing. To avoid hearing the scratched source twice, the track that owns the
+  clip under edit is **excluded by default**, but the user may include or
+  exclude any track, including the owning track. The selection is fixed before
+  audition or recording starts for that pass.
+- **The crossfader still controls only the scratch deck.** The backing is a
+  fixed-gain accompaniment bus, not the crossfader's opposite side. This refines
+  the original `The opposite side contains silence` statement: the audible
+  opposite of the scratch deck may now be the backing monitor, but the
+  `linear-v1` crossfader gain law is applied only to the scratch deck's gain and
+  the backing is summed at a constant monitor level independent of the fader.
+  Recorded crossfader keyframes are unchanged and still capture only the scratch
+  deck's effective fader value.
+- **The backing is monitor-only.** It is not captured into the recorded pattern,
+  is not part of the canonical clip render, mixdown, or sample-export chain, and
+  carries no provenance in the pattern. Patterns remain controller-independent
+  and audio output remains non-destructive with no dry-signal doubling. Backing
+  track selection is transient editor state, not persisted project state.
+- **Preparation and invalidation.** Preparation runs off the audio thread. A
+  fingerprint over the selected track set, their audible mixdown, and the span
+  invalidates the prepared backing. A missing, stale, or failed backing degrades
+  to silence; audition and recording still function without it.
+- **Bridge and protocol.** The renderer sets the backing track selection and
+  requests preparation through typed `SCRATCH_SESSION_CONTROL` fields; the
+  backend prepares the buffer and reports display-only readiness in throttled
+  `SCRATCH_SESSION_STATE`. Bulk backing audio travels through disk, never the
+  text bridge, and the renderer never drives backing audio timing.
+- **Real-time gates.** The backing is read as a bounded linear source and summed
+  into the existing scratch output at a fixed monitor gain. No allocation,
+  locking, logging, file access, bridge send, or wait occurs in the callback,
+  and mixing cost is bounded independently of MIDI or UI event rate.
+
+### Why
+
+Hearing the scratch against its musical bed is essential to judging timing while
+recording, and it matches the two-deck mental model the feature targets.
+Pre-rendering the accompaniment keeps the high-rate audio path a single linear
+read and honours the real-time and text-bridge contracts. Treating the backing
+as a fixed monitor rather than the crossfader's other side preserves the
+existing deterministic crossfader and replay model. Keeping it out of the
+pattern and the render chain preserves non-destructive editing and avoids
+doubling the dry source into exported audio.
+
+### Consequences
+
+- The scratch session gains transient backing state — track selection plus the
+  chosen window (start anchor and fixed duration) — and a prepared backing
+  buffer alongside the prepared scratch source.
+- When a backing window is active it becomes the session's forward time bound,
+  so nominal playback and recording stop at the window duration rather than at
+  the scratch source's end.
+- The bridge protocol gains backing track selection, window (anchor + duration),
+  and backing-readiness fields; all remain display-only and non-authoritative
+  for audio timing.
+- The canonical clip render, mixdown, and sample-export chain are unchanged; the
+  backing never contributes to committed output.
+
+### Rejected alternatives
+
+- **Run a second live arrangement renderer in the editor.** Too large, and it
+  puts unbounded mixing and streaming work on the audio callback.
+- **Route the backing through the crossfader's opposite side.** This would make
+  the fader blend two decks and break the deterministic single-deck crossfader
+  and replay model the original decision relies on.
+- **Bake the backing into the recorded pattern or exported sample.** This loses
+  the editable, controller-independent performance and doubles dry audio into
+  non-destructive output.
+- **Send backing audio over the text bridge.** Violates the text-only bridge;
+  bulk audio belongs on the disk/cache boundary.

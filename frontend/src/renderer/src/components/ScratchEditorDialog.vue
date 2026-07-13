@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
 import { useScratchEditorDerived } from '@/lib/scratch/useScratchEditorDerived'
+import { useScratchBacking } from '@/lib/scratch/useScratchBacking'
 import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
@@ -14,18 +15,21 @@ import ScratchDirtyCloseDialog from '@/components/ScratchDirtyCloseDialog.vue'
 import ScratchNotationEditor from '@/components/ScratchNotationEditor.vue'
 import ScratchPersistencePanel from '@/components/ScratchPersistencePanel.vue'
 import ScratchTransportBar from '@/components/ScratchTransportBar.vue'
+import ScratchBackingPanel from '@/components/ScratchBackingPanel.vue'
 import ScratchVinylDeck from '@/components/ScratchVinylDeck.vue'
 import ScratchWaveformBar from '@/components/ScratchWaveformBar.vue'
 import {
   buildCrossfaderPayload,
   buildPlatterMovePayload,
   buildPlatterTouchPayload,
+  buildSeekPayload,
   VIRTUAL_DECK
 } from '@/lib/scratch/scratchControlHelpers'
 
 const props = defineProps<{
   open: boolean
   clipId: string | null
+  libraryItemId?: string | null
 }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
 
@@ -33,15 +37,28 @@ const ui = useUiStore()
 const project = useProjectStore()
 const scratchStore = useScratchSessionStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
-const isDialogOpen = computed(() => props.open && props.clipId !== null)
+// A session edits either a timeline clip or a whole library item. The library
+// item id doubles as the session identity, so both paths key on a single id.
+const sourceId = computed(() => props.clipId ?? props.libraryItemId ?? null)
+const source = computed(() =>
+  sourceId.value === null
+    ? null
+    : { id: sourceId.value, isLibrary: props.clipId === null }
+)
+const isDialogOpen = computed(() => props.open && sourceId.value !== null)
 useFocusTrap(dialogEl, isDialogOpen)
 
 const session = useScratchEditorSession(
   computed(() => props.open),
-  computed(() => props.clipId)
+  source
 )
 
-const derived = useScratchEditorDerived(computed(() => props.clipId), session)
+const derived = useScratchEditorDerived(sourceId, session)
+const backing = useScratchBacking(
+  session.activeSessionId,
+  session.state,
+  sourceId
+)
 const persistence = useScratchPatternPersistence(session.activeSessionId)
 
 const canSave = computed(() => derived.hasPattern.value && persistence.isDirty.value)
@@ -188,6 +205,17 @@ function onKeydown(event: KeyboardEvent): void {
     event.stopPropagation()
     if (isPatternReplaying.value) stopReplay()
     else session.togglePlayback()
+  } else if (
+    (event.key === 'r' || event.key === 'R') &&
+    !event.repeat &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !dirtyClosePromptOpen.value
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+    onRecordButton()
   }
 }
 
@@ -208,6 +236,58 @@ function onCrossfaderChange(value: number): void {
   if (!sid || !session.canControl.value) return
   session.sendControl(buildCrossfaderPayload(sid, value))
 }
+
+// ── Top audition transport (local scratch source only) ───────────────────────
+
+function onSkipToStart(): void {
+  const sid = session.activeSessionId.value
+  if (!sid || !session.canControl.value) return
+  session.sendControl(buildSeekPayload(sid, 0))
+}
+
+function onSkipToEnd(): void {
+  const sid = session.activeSessionId.value
+  if (!sid || !session.canControl.value) return
+  session.sendControl(buildSeekPayload(sid, session.state.value?.durationUs ?? 0))
+}
+
+function onTogglePlay(): void {
+  if (isPatternReplaying.value) stopReplay()
+  else session.togglePlayback()
+}
+
+// ── Single record control (arm → first-touch start → stop) ───────────────────
+
+const recordPhase = computed<'idle' | 'armed' | 'recording'>(() => {
+  if (derived.isRecording.value) return 'recording'
+  if (derived.isArmed.value) return 'armed'
+  return 'idle'
+})
+
+function onRecordButton(): void {
+  if (!derived.canRecord.value && recordPhase.value === 'idle') return
+  if (recordPhase.value === 'recording') session.stopRecording()
+  else if (recordPhase.value === 'armed') session.disarmRecording()
+  else session.armRecording()
+}
+
+const recordButtonLabel = computed(() => {
+  if (recordPhase.value === 'recording') return 'Stop'
+  if (recordPhase.value === 'armed') return 'Cancel'
+  return 'Record'
+})
+
+const recordButtonClass = computed(() => {
+  if (recordPhase.value === 'recording') return 'bg-red-600 text-white hover:bg-red-700'
+  if (recordPhase.value === 'armed') return 'bg-amber-600 text-white hover:bg-amber-700'
+  return 'bg-red-700 text-white hover:bg-red-600'
+})
+
+const recordButtonAriaLabel = computed(() => {
+  if (recordPhase.value === 'recording') return 'Stop recording'
+  if (recordPhase.value === 'armed') return 'Cancel record arming'
+  return 'Arm scratch recording'
+})
 </script>
 
 <template>
@@ -220,7 +300,7 @@ function onCrossfaderChange(value: number): void {
     leave-to-class="opacity-0"
   >
     <div
-      v-if="open && clipId"
+      v-if="open && sourceId"
       class="dialog-backdrop"
       role="dialog"
       aria-modal="true"
@@ -262,6 +342,18 @@ function onCrossfaderChange(value: number): void {
         </header>
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+          <ScratchTransportBar
+            class="-mt-2"
+            :position-us="session.state.value?.positionUs ?? 0"
+            :duration-us="session.state.value?.durationUs ?? 0"
+            :playback-rate="session.state.value?.playbackRate ?? 1"
+            :is-touched="derived.isTouched.value"
+            :is-playing="session.isPlaying.value || isPatternReplaying"
+            :can-control="session.canControl.value"
+            @skip-to-start="onSkipToStart"
+            @toggle-play="onTogglePlay"
+            @skip-to-end="onSkipToEnd"
+          />
           <div class="w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950">
             <ScratchWaveformBar
               :peaks="derived.peaks.value"
@@ -281,6 +373,12 @@ function onCrossfaderChange(value: number): void {
               :playback-rate="session.state.value?.playbackRate ?? 0"
             />
           </div>
+
+          <ScratchBackingPanel
+            v-if="session.state.value && !derived.statusMessage.value"
+            :backing="backing"
+            :disabled="derived.isRecording.value"
+          />
 
           <div class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_14rem] gap-4">
             <div class="flex min-w-0 min-h-0 flex-col gap-2 overflow-hidden">
@@ -318,47 +416,77 @@ function onCrossfaderChange(value: number): void {
                   </div>
                 </div>
               </template>
-              <template v-else-if="derived.isRecording.value">
-                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
-                  <span
-                    class="inline-flex items-center gap-1.5 text-xs text-red-400"
-                    role="status"
+              <template v-else>
+                <!-- Record control, located with the notation section -->
+                <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    :class="recordButtonClass"
+                    :disabled="!derived.canRecord.value && recordPhase === 'idle'"
+                    :aria-label="recordButtonAriaLabel"
+                    title="Toggle record (R)"
+                    @click="onRecordButton"
                   >
                     <span
-                      class="h-2 w-2 animate-pulse rounded-full bg-red-500"
+                      class="h-2 w-2 rounded-full"
+                      :class="recordPhase === 'idle' ? 'bg-red-400' : 'animate-pulse bg-white'"
                       aria-hidden="true"
                     />
-                    Recording…
+                    {{ recordButtonLabel }}
+                  </button>
+                  <span
+                    v-if="recordPhase === 'armed'"
+                    class="text-[11px] text-amber-400"
+                    role="status"
+                  >
+                    Armed — touch the platter to start recording
                   </span>
                 </div>
-              </template>
-              <template v-else-if="derived.recordingStatus.value === 'completed'">
-                <ScratchNotationEditor :session-id="session.activeSessionId.value" />
-              </template>
-              <template v-else>
-                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
-                  <div class="text-center">
-                    <p class="text-xs text-zinc-500">
-                      No notation recorded
-                    </p>
-                    <p class="text-[10px] text-zinc-600">
-                      Record a scratch performance to see it here.
-                    </p>
-                  </div>
-                </div>
-              </template>
 
-              <ScratchPersistencePanel
-                v-if="derived.hasPattern.value"
-                :persistence="persistence"
-                :can-save="canSave"
-                :can-update="canUpdate"
-                :is-replaying="isPatternReplaying"
-                :on-draft-audition-start="startDraftReplay"
-                :on-audition-start="startReplay"
-                :on-audition-stop="stopReplay"
-                @confirm-delete="confirmDelete"
-              />
+                <!-- Notation content by phase -->
+                <template v-if="derived.isRecording.value">
+                  <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
+                    <span
+                      class="inline-flex items-center gap-1.5 text-xs text-red-400"
+                      role="status"
+                    >
+                      <span
+                        class="h-2 w-2 animate-pulse rounded-full bg-red-500"
+                        aria-hidden="true"
+                      />
+                      Recording…
+                    </span>
+                  </div>
+                </template>
+                <template v-else-if="derived.recordingStatus.value === 'completed'">
+                  <ScratchNotationEditor :session-id="session.activeSessionId.value" />
+                </template>
+                <template v-else>
+                  <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
+                    <div class="text-center">
+                      <p class="text-xs text-zinc-500">
+                        No notation recorded
+                      </p>
+                      <p class="text-[10px] text-zinc-600">
+                        Press Record, then touch the platter to begin your scratch.
+                      </p>
+                    </div>
+                  </div>
+                </template>
+
+                <ScratchPersistencePanel
+                  v-if="derived.hasPattern.value"
+                  :persistence="persistence"
+                  :can-save="canSave"
+                  :can-update="canUpdate"
+                  :is-replaying="isPatternReplaying"
+                  :on-draft-audition-start="startDraftReplay"
+                  :on-audition-start="startReplay"
+                  :on-audition-stop="stopReplay"
+                  @confirm-delete="confirmDelete"
+                />
+              </template>
             </div>
 
             <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 py-2">
@@ -378,13 +506,6 @@ function onCrossfaderChange(value: number): void {
               />
             </div>
           </div>
-
-          <ScratchTransportBar
-            :position-us="session.state.value?.positionUs ?? 0"
-            :duration-us="session.state.value?.durationUs ?? 0"
-            :playback-rate="session.state.value?.playbackRate ?? 1"
-            :is-touched="derived.isTouched.value"
-          />
         </div>
 
         <footer class="dialog-footer justify-end gap-2">
@@ -394,27 +515,6 @@ function onCrossfaderChange(value: number): void {
             @click="requestClose"
           >
             Close
-          </button>
-          <button
-            type="button"
-            class="rounded px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-            :class="derived.isRecording.value
-              ? 'bg-red-600 text-white hover:bg-red-700'
-              : 'bg-red-700 text-white hover:bg-red-600'"
-            :disabled="!derived.canRecord.value"
-            :aria-label="derived.isRecording.value ? 'Stop recording' : 'Record scratch'"
-            @click="session.toggleRecording"
-          >
-            {{ derived.isRecording.value ? 'Stop Recording' : 'Record' }}
-          </button>
-          <button
-            type="button"
-            class="dialog-btn-primary min-w-16"
-            :disabled="!session.canControl.value"
-            :aria-label="session.isPlaying.value ? 'Pause scratch preview' : 'Play scratch preview'"
-            @click="session.togglePlayback"
-          >
-            {{ session.isPlaying.value ? 'Pause' : 'Play' }}
           </button>
         </footer>
       </div>

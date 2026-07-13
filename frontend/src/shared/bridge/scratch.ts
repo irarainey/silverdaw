@@ -119,10 +119,17 @@ export const ScratchPatternSchema = z
   })
 export type ScratchPattern = z.infer<typeof ScratchPatternSchema>
 
-export const ScratchSessionOpenPayloadSchema = z.object({
-  protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
-  clipId: z.string().min(1)
-})
+export const ScratchSessionOpenPayloadSchema = z
+  .object({
+    protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+    clipId: z.string().min(1).optional(),
+    libraryItemId: z.string().min(1).optional()
+  })
+  // Exactly one identity: a timeline clip or a whole library item.
+  .refine(
+    (payload) => (payload.clipId != null) !== (payload.libraryItemId != null),
+    { message: 'exactly one of clipId or libraryItemId is required' }
+  )
 export type ScratchSessionOpenPayload = z.infer<typeof ScratchSessionOpenPayloadSchema>
 
 export const ScratchSessionClosePayloadSchema = z.object({
@@ -130,6 +137,40 @@ export const ScratchSessionClosePayloadSchema = z.object({
   sessionId: z.string().min(1)
 })
 export type ScratchSessionClosePayload = z.infer<typeof ScratchSessionClosePayloadSchema>
+
+/**
+ * Backing accompaniment monitor (ADR 0021, Amendment 1). A fixed-length
+ * scratch-over bed the backend renders offline from the selected tracks over a
+ * window anchored at the arrangement start or the current playhead.
+ */
+export const ScratchBackingStartAnchorSchema = z.enum(['arrangement', 'playhead'])
+export type ScratchBackingStartAnchor = z.infer<typeof ScratchBackingStartAnchorSchema>
+
+export const SCRATCH_BACKING_DURATIONS_SEC = [60, 90, 120] as const
+export const ScratchBackingDurationSecSchema = z.union([
+  z.literal(60),
+  z.literal(90),
+  z.literal(120)
+])
+export type ScratchBackingDurationSec = z.infer<typeof ScratchBackingDurationSecSchema>
+
+export const ScratchBackingStatusSchema = z.enum(['none', 'preparing', 'ready', 'error'])
+export type ScratchBackingStatus = z.infer<typeof ScratchBackingStatusSchema>
+
+export const ScratchBackingPreparePayloadSchema = z.object({
+  protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+  sessionId: z.string().min(1),
+  trackIds: z.array(z.string().min(1)).min(1),
+  startAnchor: ScratchBackingStartAnchorSchema,
+  durationSec: ScratchBackingDurationSecSchema
+})
+export type ScratchBackingPreparePayload = z.infer<typeof ScratchBackingPreparePayloadSchema>
+
+export const ScratchBackingClearPayloadSchema = z.object({
+  protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+  sessionId: z.string().min(1)
+})
+export type ScratchBackingClearPayload = z.infer<typeof ScratchBackingClearPayloadSchema>
 
 const ScratchSessionControlBase = {
   protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
@@ -139,6 +180,8 @@ const ScratchSessionControlBase = {
 export const ScratchSessionControlPayloadSchema = z.discriminatedUnion('action', [
   z.object({ ...ScratchSessionControlBase, action: z.literal('play') }),
   z.object({ ...ScratchSessionControlBase, action: z.literal('pause') }),
+  z.object({ ...ScratchSessionControlBase, action: z.literal('recordArm') }),
+  z.object({ ...ScratchSessionControlBase, action: z.literal('recordDisarm') }),
   z.object({ ...ScratchSessionControlBase, action: z.literal('recordStart') }),
   z.object({ ...ScratchSessionControlBase, action: z.literal('recordStop') }),
   z.object({
@@ -166,6 +209,16 @@ export const ScratchSessionControlPayloadSchema = z.discriminatedUnion('action',
     ...ScratchSessionControlBase,
     action: z.literal('crossfader'),
     value: z.number().finite().min(0).max(1)
+  }),
+  z.object({
+    ...ScratchSessionControlBase,
+    action: z.literal('backingGain'),
+    value: z.number().finite().min(0).max(1)
+  }),
+  z.object({
+    ...ScratchSessionControlBase,
+    action: z.literal('scratchGain'),
+    value: z.number().finite().min(0).max(1)
   })
 ])
 export type ScratchSessionControlPayload = z.infer<typeof ScratchSessionControlPayloadSchema>
@@ -185,6 +238,12 @@ export const ScratchSessionStatePayloadSchema = z.object({
   ownerDeviceIdentifier: z.string().min(1).nullable(),
   ownerDeck: ScratchDeckSideSchema.nullable(),
   touched: z.boolean(),
+  armed: z.boolean().optional(),
+  backingStatus: ScratchBackingStatusSchema.optional(),
+  backingDurationUs: TimeUsSchema.optional(),
+  backingGain: z.number().finite().min(0).max(1).optional(),
+  scratchMonitorGain: z.number().finite().min(0).max(1).optional(),
+  backingError: z.string().min(1).optional(),
   error: z.string().min(1).optional()
 })
 export type ScratchSessionStatePayload = z.infer<typeof ScratchSessionStatePayloadSchema>

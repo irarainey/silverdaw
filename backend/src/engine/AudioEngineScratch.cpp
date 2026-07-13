@@ -33,6 +33,30 @@ bool AudioEngine::closeScratchSession(const juce::String& sessionId)
     return scratchController.closeSession(sessionId);
 }
 
+bool AudioEngine::beginScratchBackingPreparation(const juce::String& sessionId)
+{
+    return scratchController.beginBackingPreparation(sessionId);
+}
+
+bool AudioEngine::completeScratchBacking(
+    const juce::String& sessionId,
+    std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+    double preparedSampleRate)
+{
+    return scratchController.completeBacking(sessionId, std::move(preparedAudio), preparedSampleRate);
+}
+
+bool AudioEngine::failScratchBacking(const juce::String& sessionId,
+                                     const juce::String& error)
+{
+    return scratchController.failBacking(sessionId, error);
+}
+
+bool AudioEngine::clearScratchBacking(const juce::String& sessionId)
+{
+    return scratchController.clearBacking(sessionId);
+}
+
 bool AudioEngine::controlScratchSession(const scratch::SessionControlPayload& control)
 {
     return scratchController.controlSession(control);

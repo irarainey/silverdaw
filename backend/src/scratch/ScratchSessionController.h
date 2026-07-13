@@ -2,6 +2,7 @@
 
 #include "ScratchActionRecorder.h"
 #include "ScratchAudioSource.h"
+#include "BackingMonitorSource.h"
 #include "ScratchProtocol.h"
 
 #include <juce_core/juce_core.h>
@@ -40,9 +41,18 @@ class ScratchSessionController
         std::optional<DeckSide> ownerDeck;
         std::optional<juce::String> ownerDeviceIdentifier;
         bool touched = false;
+        bool armed = false;
+        // Backing bed status: "none" | "preparing" | "ready" | "error".
+        juce::String backingStatus{"none"};
+        juce::String backingError;
+        std::int64_t backingDurationUs = 0;
+        // Monitor-only trims (0..1); never baked into recorded patterns.
+        double backingGain = 1.0;
+        double scratchMonitorGain = 1.0;
     };
 
-    explicit ScratchSessionController(ScratchAudioSource& source);
+    explicit ScratchSessionController(ScratchAudioSource& source,
+                                      BackingMonitorSource& backing);
 
     // Session lifecycle — message-thread only.
     juce::String beginSession(const juce::String& clipId);
@@ -53,6 +63,14 @@ class ScratchSessionController
     bool setPreparationProgress(const juce::String& sessionId, double progress);
     bool closeSession(const juce::String& sessionId);
     void clearSession();
+
+    // Backing bed lifecycle (ADR 0021, Amendment 1) — message-thread only.
+    bool beginBackingPreparation(const juce::String& sessionId);
+    bool completeBacking(const juce::String& sessionId,
+                         std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+                         double preparedSampleRate);
+    bool failBacking(const juce::String& sessionId, const juce::String& error);
+    bool clearBacking(const juce::String& sessionId);
 
     // Unified control entry point — message-thread only.
     bool controlSession(const SessionControlPayload& control);
@@ -97,12 +115,25 @@ class ScratchSessionController
         double crossfaderDisplay = 0.0;
         double lastPlatterMoveMs = 0.0;
         bool midiCrossfaderReversed = false;
+        // When armed, the first eligible platter gesture atomically claims the
+        // deck and begins recording, so a performer never presses a button with
+        // both hands on the gear.
+        bool armed = false;
         // Before the physical fader is seen, the selected deck's preferred edge
         // is assumed open. Once adjusted, its directed position persists until close.
         bool crossfaderHasBeenAdjusted = false;
+        // Backing bed (ADR 0021, Amendment 1). Status mirrors backingSource
+        // readiness; when a bed is ready its window bounds forward play/record.
+        juce::String backingStatus{"none"};
+        juce::String backingError;
+        std::int64_t backingDurationUs = 0;
+        // Monitor-only trims (0..1); never baked into recorded patterns.
+        double backingGain = 1.0;
+        double scratchMonitorGain = 1.0;
     };
 
     ScratchAudioSource& scratchSource;
+    BackingMonitorSource& backingSource;
     ScratchActionRecorder recorder;
     mutable std::mutex sessionMutex;
     std::optional<Session> session;
@@ -110,8 +141,15 @@ class ScratchSessionController
     // Private helpers; callers hold sessionMutex and have validated an active source.
     bool claimDeck(DeckSide deck);
     bool claimMidiDeck(const juce::String& deviceIdentifier, DeckSide deck, bool touchesPlatter);
+    // Called with the lock held on an active source when a gesture arrives while
+    // armed; performs the same start sequence as recordStart and clears arming.
+    bool beginArmedRecordingLocked();
     void applyPlatterMove(double deltaTurns, double timestampMs);
     bool reconcileSourceEndLocked();
+    // Backing bed helpers; callers hold sessionMutex.
+    bool backingReadyLocked() const;
+    void startBackingLocked();
+    void stopBackingLocked();
     void updateGain();
     void resetOwnerTimestamp();
 };

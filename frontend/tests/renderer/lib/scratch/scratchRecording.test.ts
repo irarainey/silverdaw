@@ -208,6 +208,41 @@ describe('scratch session lifecycle recording', () => {
     lifecycle.toggleRecording()
     expect(control).not.toHaveBeenCalled()
   })
+
+  it('dispatches recordArm, recordDisarm and recordStop via arming primitives', () => {
+    const { lifecycle, control } = setup()
+    lifecycle.open('clip-1')
+    lifecycle.consume(makeState({ status: 'ready' }))
+
+    lifecycle.armRecording()
+    expect(control).toHaveBeenLastCalledWith({
+      protocolVersion: 1,
+      sessionId: 'session-1',
+      action: 'recordArm'
+    })
+
+    lifecycle.disarmRecording()
+    expect(control).toHaveBeenLastCalledWith({
+      protocolVersion: 1,
+      sessionId: 'session-1',
+      action: 'recordDisarm'
+    })
+
+    lifecycle.stopRecording()
+    expect(control).toHaveBeenLastCalledWith({
+      protocolVersion: 1,
+      sessionId: 'session-1',
+      action: 'recordStop'
+    })
+  })
+
+  it('does not dispatch arming without an active session', () => {
+    const { lifecycle, control } = setup()
+    lifecycle.armRecording()
+    lifecycle.disarmRecording()
+    lifecycle.stopRecording()
+    expect(control).not.toHaveBeenCalled()
+  })
 })
 
 describe('scratch pattern validation', () => {

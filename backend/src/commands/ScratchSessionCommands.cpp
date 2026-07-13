@@ -7,8 +7,12 @@
 #include "ProjectState.h"
 #include "scratch/ScratchProtocol.h"
 #include "scratch/ScratchSourcePreparation.h"
+#include "scratch/ScratchBackingPreparation.h"
+#include "mixdown/MixdownEngine.h"
 
 #include <juce_events/juce_events.h>
+
+#include <algorithm>
 
 namespace silverdaw
 {
@@ -65,6 +69,16 @@ void broadcastScratchSessionState(AudioEngine& engine, BridgeServer& bridge)
             ? juce::var(static_cast<int>(*state->ownerDeck))
             : juce::var());
     object->setProperty("touched", state->touched);
+    object->setProperty("armed", state->armed);
+    object->setProperty("backingStatus", state->backingStatus);
+    object->setProperty("backingDurationUs",
+                        static_cast<juce::int64>(state->backingDurationUs));
+    object->setProperty("backingGain", state->backingGain);
+    object->setProperty("scratchMonitorGain", state->scratchMonitorGain);
+    if (state->backingError.isNotEmpty())
+    {
+        object->setProperty("backingError", state->backingError);
+    }
     if (state->error.isNotEmpty())
     {
         object->setProperty("error", state->error);
@@ -86,8 +100,12 @@ void handleScratchSessionOpen(const juce::var& payload,
         return;
     }
 
-    const auto sessionId = engine.beginScratchSession(request->clipId);
-    const auto clip = projectState.getClipPreparationInfo(request->clipId);
+    const auto fromLibrary = request->libraryItemId.isNotEmpty();
+    const auto identity = fromLibrary ? request->libraryItemId : request->clipId;
+    const auto sessionId = engine.beginScratchSession(identity);
+    const auto clip = fromLibrary
+        ? projectState.getLibraryItemPreparationInfo(request->libraryItemId)
+        : projectState.getClipPreparationInfo(request->clipId);
     if (!clip)
     {
         engine.failScratchSession(sessionId, "The selected clip is unavailable");
@@ -192,6 +210,88 @@ void handleScratchSessionControl(const juce::var& payload,
         }
     }
 
+    broadcastScratchSessionState(engine, bridge);
+}
+
+void handleScratchBackingPrepare(const juce::var& payload,
+                                 AudioEngine& engine,
+                                 ProjectState& projectState,
+                                 BridgeServer& bridge,
+                                 juce::ThreadPool& workerPool)
+{
+    const auto request = scratch::parseBackingPreparePayload(payload);
+    if (!request)
+    {
+        silverdaw::log::warn("scratch", "rejected malformed SCRATCH_BACKING_PREPARE");
+        return;
+    }
+
+    if (!engine.beginScratchBackingPreparation(request->sessionId))
+    {
+        silverdaw::log::debug("scratch", "ignored inapplicable SCRATCH_BACKING_PREPARE");
+        return;
+    }
+
+    // Snapshot and track-filter on the message thread; the offline render then
+    // runs on a worker. Filter to the requested tracks (empty = none selected).
+    auto snapshot = snapshotProjectForMixdown(projectState);
+    std::vector<MixdownSnapshot::TrackSnapshot> kept;
+    for (auto& track : snapshot.tracks)
+    {
+        const bool selected =
+            std::find(request->trackIds.begin(), request->trackIds.end(), track.id)
+            != request->trackIds.end();
+        if (selected)
+            kept.push_back(track);
+    }
+    snapshot.tracks = std::move(kept);
+
+    const double anchorMs =
+        request->startAnchor == "playhead" ? engine.getPositionMs() : 0.0;
+    const double durationMs = static_cast<double>(request->durationSec) * 1000.0;
+    const auto sessionId = request->sessionId;
+
+    broadcastScratchSessionState(engine, bridge);
+
+    workerPool.addJob(
+        [sessionId, snapshot = std::move(snapshot), anchorMs, durationMs,
+         &engine, &bridge]() mutable
+        {
+            scratch::PreparedBacking prepared;
+            juce::String error;
+            const bool ok = scratch::prepareBackingToBuffer(
+                snapshot, anchorMs, durationMs, prepared, error,
+                [&engine, &sessionId]
+                {
+                    const auto current = engine.getScratchSessionSnapshot();
+                    return !current || current->sessionId != sessionId;
+                });
+            const bool applied =
+                ok
+                    ? engine.completeScratchBacking(
+                        sessionId, prepared.audio, prepared.sampleRate)
+                    : engine.failScratchBacking(sessionId, error);
+            juce::MessageManager::callAsync(
+                [applied, &engine, &bridge]
+                {
+                    if (!applied)
+                        silverdaw::log::debug(
+                            "scratch", "ignored stale scratch backing completion");
+                    broadcastScratchSessionState(engine, bridge);
+                });
+        });
+}
+
+void handleScratchBackingClear(const juce::var& payload,
+                               AudioEngine& engine,
+                               BridgeServer& bridge)
+{
+    const auto request = scratch::parseBackingClearPayload(payload);
+    if (!request || !engine.clearScratchBacking(request->sessionId))
+    {
+        silverdaw::log::debug("scratch", "ignored stale or malformed SCRATCH_BACKING_CLEAR");
+        return;
+    }
     broadcastScratchSessionState(engine, bridge);
 }
 

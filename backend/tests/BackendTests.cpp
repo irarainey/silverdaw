@@ -26,6 +26,7 @@ std::vector<TestCase> buildRegistry()
     addMidiControllerMappingTests(tests);
     addWarpTests(tests);
     addScratchDspTests(tests);
+    addBackingMonitorSourceTests(tests);
     addScratchProtocolTests(tests);
     addScratchSessionTests(tests);
     addScratchRecorderTests(tests);
@@ -64,9 +65,9 @@ int main(int argc, char** argv)
 
     const auto tests = buildRegistry();
 #if defined(SILVERDAW_STEM_SEPARATION)
-    require(tests.size() == 322, "backend test registry should contain 322 tests");
+    require(tests.size() == 333, "backend test registry should contain 333 tests");
 #else
-    require(tests.size() == 320, "backend test registry should contain 320 tests");
+    require(tests.size() == 331, "backend test registry should contain 331 tests");
 #endif
 
     bool listOnly = false;

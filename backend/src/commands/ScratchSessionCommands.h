@@ -26,6 +26,14 @@ void handleScratchSessionClose(const juce::var& payload,
 void handleScratchSessionControl(const juce::var& payload,
                                  AudioEngine& engine,
                                  BridgeServer& bridge);
+void handleScratchBackingPrepare(const juce::var& payload,
+                                 AudioEngine& engine,
+                                 ProjectState& projectState,
+                                 BridgeServer& bridge,
+                                 juce::ThreadPool& workerPool);
+void handleScratchBackingClear(const juce::var& payload,
+                               AudioEngine& engine,
+                               BridgeServer& bridge);
 void broadcastScratchSessionState(AudioEngine& engine, BridgeServer& bridge);
 
 } // namespace silverdaw

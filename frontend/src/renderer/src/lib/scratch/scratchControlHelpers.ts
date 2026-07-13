@@ -6,7 +6,11 @@ import {
   SCRATCH_PROTOCOL_VERSION,
   MAX_SCRATCH_EVENT_DELTA_TURNS,
   type ScratchDeckSide,
-  type ScratchSessionControlPayload
+  type ScratchSessionControlPayload,
+  type ScratchBackingPreparePayload,
+  type ScratchBackingClearPayload,
+  type ScratchBackingStartAnchor,
+  type ScratchBackingDurationSec
 } from '@shared/bridge-protocol'
 
 /** Virtual deck used by pointer-operated controls when no physical deck owns the session. */
@@ -98,10 +102,73 @@ export function buildCrossfaderPayload(
   }
 }
 
+export function buildBackingGainPayload(
+  sessionId: string,
+  value: number
+): ScratchSessionControlPayload {
+  return {
+    protocolVersion: SCRATCH_PROTOCOL_VERSION,
+    sessionId,
+    action: 'backingGain',
+    value: Math.max(0, Math.min(1, value))
+  }
+}
+
+export function buildScratchGainPayload(
+  sessionId: string,
+  value: number
+): ScratchSessionControlPayload {
+  return {
+    protocolVersion: SCRATCH_PROTOCOL_VERSION,
+    sessionId,
+    action: 'scratchGain',
+    value: Math.max(0, Math.min(1, value))
+  }
+}
+
+export function buildSeekPayload(
+  sessionId: string,
+  positionUs: number
+): ScratchSessionControlPayload {
+  return {
+    protocolVersion: SCRATCH_PROTOCOL_VERSION,
+    sessionId,
+    action: 'seek',
+    positionUs: Math.max(0, Math.round(positionUs))
+  }
+}
+
+export function buildRecordArmPayload(sessionId: string): ScratchSessionControlPayload {
+  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordArm' }
+}
+
+export function buildRecordDisarmPayload(sessionId: string): ScratchSessionControlPayload {
+  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordDisarm' }
+}
+
 export function buildRecordStartPayload(sessionId: string): ScratchSessionControlPayload {
   return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordStart' }
 }
 
 export function buildRecordStopPayload(sessionId: string): ScratchSessionControlPayload {
   return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordStop' }
+}
+
+export function buildBackingPreparePayload(
+  sessionId: string,
+  trackIds: readonly string[],
+  startAnchor: ScratchBackingStartAnchor,
+  durationSec: ScratchBackingDurationSec
+): ScratchBackingPreparePayload {
+  return {
+    protocolVersion: SCRATCH_PROTOCOL_VERSION,
+    sessionId,
+    trackIds: [...trackIds],
+    startAnchor,
+    durationSec
+  }
+}
+
+export function buildBackingClearPayload(sessionId: string): ScratchBackingClearPayload {
+  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId }
 }

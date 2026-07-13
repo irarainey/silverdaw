@@ -17,12 +17,15 @@ interface ScratchSessionLifecycleDependencies {
 export interface ScratchSessionLifecycle {
   activeSessionId: Ref<string | null>
   state: Ref<ScratchSessionStatePayload | null>
-  open(clipId: string): void
+  open(identity: string, isLibrary?: boolean): void
   consume(payload: ScratchSessionStatePayload): void
   close(): void
   clearStaleOnRecovery(): void
   togglePlayback(): void
   toggleRecording(): void
+  armRecording(): void
+  disarmRecording(): void
+  stopRecording(): void
   sendControl(payload: ScratchSessionControlPayload): void
 }
 
@@ -46,11 +49,15 @@ export function createScratchSessionLifecycle(
     dependencies.clearState()
   }
 
-  function open(clipId: string): void {
+  function open(identity: string, isLibrary = false): void {
     if (activeSessionId.value) closeSession(activeSessionId.value)
     clear()
-    targetClipId = clipId
-    dependencies.open({ protocolVersion: SCRATCH_PROTOCOL_VERSION, clipId })
+    targetClipId = identity
+    dependencies.open(
+      isLibrary
+        ? { protocolVersion: SCRATCH_PROTOCOL_VERSION, libraryItemId: identity }
+        : { protocolVersion: SCRATCH_PROTOCOL_VERSION, clipId: identity }
+    )
   }
 
   function consume(payload: ScratchSessionStatePayload): void {
@@ -109,5 +116,23 @@ export function createScratchSessionLifecycle(
     })
   }
 
-  return { activeSessionId, state, open, consume, close, clearStaleOnRecovery, togglePlayback, toggleRecording, sendControl }
+  function armRecording(): void {
+    const sessionId = activeSessionId.value
+    if (!sessionId) return
+    dependencies.control({ protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordArm' })
+  }
+
+  function disarmRecording(): void {
+    const sessionId = activeSessionId.value
+    if (!sessionId) return
+    dependencies.control({ protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordDisarm' })
+  }
+
+  function stopRecording(): void {
+    const sessionId = activeSessionId.value
+    if (!sessionId) return
+    dependencies.control({ protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordStop' })
+  }
+
+  return { activeSessionId, state, open, consume, close, clearStaleOnRecovery, togglePlayback, toggleRecording, armRecording, disarmRecording, stopRecording, sendControl }
 }
