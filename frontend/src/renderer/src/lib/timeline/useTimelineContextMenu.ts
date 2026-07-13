@@ -167,8 +167,14 @@ export function useTimelineContextMenu(
     const hasLibraryItem = !!clipParent
     items.push({
       command: 'clip.openEditor',
-      label: 'Open in Editor',
+      label: 'Open in Clip Editor',
       disabled: !clip || clip.unresolved || !hasLibraryItem
+    })
+    items.push({
+      command: 'clip.openScratchEditor',
+      label: 'Open in Scratch Editor',
+      disabled: !clip || clip.unresolved || !hasLibraryItem,
+      title: 'Open this clip in the Scratch Editor'
     })
     items.push({
       command: 'clip.info',
@@ -491,6 +497,8 @@ export function useTimelineContextMenu(
     }
     if (command === 'clip.openEditor') {
       inputs.dialogs.openEditor(clipId)
+    } else if (command === 'clip.openScratchEditor') {
+      inputs.dialogs.openScratchEditor(clipId)
     } else if (command === 'clip.info') {
       inputs.dialogs.openInfo(clipId)
     } else if (command === 'clip.delete') {

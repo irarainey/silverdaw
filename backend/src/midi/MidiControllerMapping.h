@@ -65,6 +65,7 @@ class MidiDeckActivationState
 {
 public:
     bool toggle(int deck) noexcept;
+    void selectExclusive(int deck) noexcept;
     void setEnabled(int deck, bool active) noexcept;
     bool isEnabled(int deck) const noexcept;
     bool allows(const MidiControllerEvent& event) const noexcept;
@@ -92,6 +93,7 @@ public:
     std::array<MidiControllerOutputMessage, 2> deckSelectionLightMessages(
         bool deck1Active, bool deck2Active) const noexcept;
     std::array<MidiControllerOutputMessage, 16> hotCueLightMessages(int markerCount) const noexcept;
+    int scratchTicksPerTurn() const noexcept;
 
 private:
     const MidiControllerProfile* profile = nullptr;

@@ -44,7 +44,8 @@ class WarpProcessor
 
     WarpProcessor(int numChannels, double sampleRate,
                   RubberBand::RubberBandStretcher::Options modeOptions,
-                  double initialPitchScale = 1.0);
+                  double initialPitchScale = 1.0,
+                  int maxProcessSamples = 1024);
     ~WarpProcessor();
 
     WarpProcessor(const WarpProcessor&) = delete;
@@ -109,13 +110,12 @@ class WarpProcessor
     }
 
   private:
-    static constexpr int kProcessFeedSamples = 1024;
-
     void applyPendingParams() noexcept;
     void doReset();
 
     const int numChannels;
     const double sampleRate;
+    const int processFeedSamples;
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher;
 
     // Message-thread → audio-thread params.

@@ -282,6 +282,7 @@ class AudioEngine
         std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
         double preparedSampleRate);
     bool failScratchSession(const juce::String& sessionId, const juce::String& error);
+    bool setScratchPreparationProgress(const juce::String& sessionId, double progress);
     bool closeScratchSession(const juce::String& sessionId);
     bool controlScratchSession(const scratch::SessionControlPayload& control);
     bool scratchMidiTogglePlay(const juce::String& deviceIdentifier,
@@ -295,9 +296,12 @@ class AudioEngine
                                 double timestampMs);
     bool scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
                                   double directedValue);
+    bool hasActiveScratchSession() const;
+    void setScratchMidiSelectedDeck(scratch::DeckSide deck);
     bool releaseScratchMidiOwner(const juce::String& deviceIdentifier,
                                  std::optional<scratch::DeckSide> deck = std::nullopt);
     std::optional<ScratchSessionSnapshot> getScratchSessionSnapshot() const;
+    bool reconcileScratchSessionSourceEnd();
 
     // Retrieve completed recording pattern (moves ownership). Returns nullopt if none ready.
     std::optional<scratch::Pattern> takeScratchRecordingPattern();
@@ -311,6 +315,9 @@ class AudioEngine
     void rebuildClipPatternSnapshot(const juce::String& clipId, const ProjectState& projectState);
     void clearClipPatternSnapshot(const juce::String& clipId);
     void rebuildAllClipPatternSnapshots(const ProjectState& projectState);
+
+    // Test-only: direct access to the scratch audio source for render verification.
+    scratch::ScratchAudioSource& scratchSourceForTest() { return scratchSource; }
 
     // Windows under-reports Bluetooth endpoint latency, so known headset names get a
     // conservative visual offset.

@@ -11,6 +11,7 @@ export type WarpDialogPanel = 'tempo' | 'pitch'
 
 export interface ClipDialogActions {
   openEditor(clipId: string): void
+  openScratchEditor(clipId: string): void
   openInfo(clipId: string): void
   openWarp(clipId: string, panel: WarpDialogPanel): void
   openSampleType(clipId: string): void
@@ -18,6 +19,7 @@ export interface ClipDialogActions {
 
 export interface ClipDialogs extends ClipDialogActions {
   editorClipId: Ref<string | null>
+  scratchEditorClipId: Ref<string | null>
   infoClipId: Ref<string | null>
   warpDialogOpen: Ref<boolean>
   warpDialogClipId: Ref<string | null>
@@ -27,6 +29,7 @@ export interface ClipDialogs extends ClipDialogActions {
   editorItem: ComputedRef<LibraryItem | null>
   infoItem: ComputedRef<LibraryItem | null>
   closeEditor(): void
+  closeScratchEditor(): void
   closeInfo(): void
   closeWarp(): void
   closeSampleType(): void
@@ -37,6 +40,7 @@ export function useClipDialogs(): ClipDialogs {
   const library = useLibraryStore()
 
   const editorClipId = ref<string | null>(null)
+  const scratchEditorClipId = ref<string | null>(null)
   const infoClipId = ref<string | null>(null)
   const warpDialogOpen = ref(false)
   const warpDialogClipId = ref<string | null>(null)
@@ -59,6 +63,12 @@ export function useClipDialogs(): ClipDialogs {
   }
   function closeEditor(): void {
     editorClipId.value = null
+  }
+  function openScratchEditor(clipId: string): void {
+    scratchEditorClipId.value = clipId
+  }
+  function closeScratchEditor(): void {
+    scratchEditorClipId.value = null
   }
 
   function openInfo(clipId: string): void {
@@ -87,6 +97,7 @@ export function useClipDialogs(): ClipDialogs {
 
   return {
     editorClipId,
+    scratchEditorClipId,
     infoClipId,
     warpDialogOpen,
     warpDialogClipId,
@@ -97,6 +108,8 @@ export function useClipDialogs(): ClipDialogs {
     infoItem,
     openEditor,
     closeEditor,
+    openScratchEditor,
+    closeScratchEditor,
     openInfo,
     closeInfo,
     openWarp,

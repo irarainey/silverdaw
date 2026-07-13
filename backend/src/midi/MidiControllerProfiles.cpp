@@ -273,6 +273,28 @@ bool parseProfile(const juce::File& file, MidiControllerProfile& profile)
         if (!parseOutputBinding(output, binding)) return false;
         profile.outputs.push_back(std::move(binding));
     }
+    // Parse optional scratchTicksPerTurn; 0 = auto-detect from jog encoding.
+    if (!parseOptionalInt(*object, "scratchTicksPerTurn", 0, profile.scratchTicksPerTurn)
+        || profile.scratchTicksPerTurn < 0)
+        return false;
+    if (profile.scratchTicksPerTurn == 0)
+    {
+        // Auto-detect from jog binding encodings.
+        bool hasAbsolute14Relative = false;
+        for (const auto& binding : profile.inputs)
+        {
+            if (binding.action == MidiControllerAction::jogScratch
+                || binding.action == MidiControllerAction::jogPitchBend
+                || binding.action == MidiControllerAction::jogSearch
+                || binding.action == MidiControllerAction::wheelPitchBend
+                || binding.action == MidiControllerAction::wheelSearch)
+            {
+                if (binding.encoding == MidiInputEncoding::absolute14Relative)
+                    hasAbsolute14Relative = true;
+            }
+        }
+        profile.scratchTicksPerTurn = hasAbsolute14Relative ? 16384 : 512;
+    }
     return true;
 }
 

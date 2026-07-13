@@ -50,6 +50,7 @@ import { trackActions } from './projectTrackActions'
 import { clipActions } from './projectClipActions'
 import { clipLibraryActions } from './projectClipLibraryActions'
 import { transitionActions } from './projectTransitionActions'
+import { scratchPatternActions } from './scratchPatternActions'
 
 // Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
 export type {
@@ -106,7 +107,8 @@ export const useProjectStore = defineStore('project', {
     metronomeEnabled: false,
     clipEditorMetronomeEnabled: false,
     projectReverb: { size: 0, decay: 0, tone: 0, mix: 0 },
-    projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 }
+    projectDelay: { noteValue: '1/8', feedback: 0, tone: 0, mix: 0 },
+    savedScratchPatterns: []
   }),
 
   getters: {
@@ -157,6 +159,7 @@ export const useProjectStore = defineStore('project', {
     ...clipActions,
     ...clipLibraryActions,
     ...transitionActions,
+    ...scratchPatternActions,
 
     selectClip(clipId: string | null): void {
       if (this.selectedClipId === clipId && this.selectedClipIds.size === (clipId ? 1 : 0)) return

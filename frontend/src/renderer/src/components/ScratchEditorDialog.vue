@@ -47,6 +47,9 @@ const canSave = computed(() => derived.hasPattern.value && persistence.isDirty.v
 const canUpdate = computed(
   () => derived.hasPattern.value && persistence.isDirty.value && scratchStore.savedPatternId !== null
 )
+const preparationPercent = computed(() =>
+  Math.round((session.state.value?.preparationProgress ?? 0) * 100)
+)
 
 // ── Dirty-close confirmation ─────────────────────────────────────────────────
 
@@ -202,6 +205,10 @@ function onCrossfaderChange(value: number): void {
             class="text-xs text-zinc-400"
           >{{ derived.clipName.value }}</span>
           <span
+            v-if="derived.deckLabel.value"
+            class="ml-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-sky-400"
+          >{{ derived.deckLabel.value }}</span>
+          <span
             v-if="persistence.isSaved.value && !persistence.isDirty.value"
             class="ml-1 text-[10px] text-emerald-400"
           >Saved</span>
@@ -216,30 +223,64 @@ function onCrossfaderChange(value: number): void {
         </header>
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-          <ScratchWaveformBar
-            :peaks="derived.peaks.value"
-            :peaks-per-second="derived.peaksPerSecond.value"
-            :duration-ms="derived.waveformDurationMs.value"
-            :in-ms="derived.clipInMs.value"
-            :reversed="derived.clipReversed.value"
-            :position-ms="derived.positionMs.value"
-          />
+          <div class="w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950">
+            <ScratchWaveformBar
+              :peaks="derived.peaks.value"
+              :peaks-per-second="derived.peaksPerSecond.value"
+              :channel-peaks="derived.channelPeaks.value"
+              :channel-peaks-per-second="derived.channelPeaksPerSecond.value"
+              :source-duration-ms="derived.waveformDurationMs.value"
+              :prepared-duration-ms="session.state.value?.durationUs
+                ? session.state.value.durationUs / 1000
+                : derived.waveformDurationMs.value"
+              :in-ms="derived.clipInMs.value"
+              :reversed="derived.clipReversed.value"
+              :source-bpm="derived.sourceBpm.value"
+              :beat-anchor-sec="derived.beatAnchorSec.value"
+              :position-ms="derived.positionMs.value"
+              :is-playing="session.isPlaying.value"
+              :playback-rate="session.state.value?.playbackRate ?? 0"
+            />
+          </div>
 
-          <div class="flex min-h-0 flex-1 gap-4">
-            <div class="flex min-h-0 flex-1 flex-col gap-2">
+          <div class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_14rem] gap-4">
+            <div class="flex min-w-0 min-h-0 flex-col gap-2 overflow-hidden">
               <template v-if="derived.statusMessage.value">
-                <div class="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800">
-                  <p
-                    class="text-xs"
-                    :class="derived.isError.value ? 'text-red-400' : 'text-zinc-400'"
-                    :role="derived.isError.value ? 'alert' : 'status'"
-                  >
-                    {{ derived.statusMessage.value }}
-                  </p>
+                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
+                  <div class="w-full max-w-sm px-6 text-center">
+                    <p
+                      class="text-xs"
+                      :class="derived.isError.value ? 'text-red-400' : 'text-zinc-400'"
+                      :role="derived.isError.value ? 'alert' : 'status'"
+                    >
+                      {{ derived.statusMessage.value }}
+                    </p>
+                    <div
+                      v-if="session.state.value?.status === 'preparing'"
+                      class="mt-3"
+                    >
+                      <div
+                        class="h-1.5 overflow-hidden rounded-full bg-zinc-800"
+                        role="progressbar"
+                        aria-label="Preparing audio for scratching"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        :aria-valuenow="preparationPercent"
+                      >
+                        <div
+                          class="h-full rounded-full bg-sky-500 transition-[width] duration-150"
+                          :style="{ width: `${preparationPercent}%` }"
+                        />
+                      </div>
+                      <p class="mt-1 font-mono text-[10px] tabular-nums text-zinc-500">
+                        {{ preparationPercent }}%
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </template>
               <template v-else-if="derived.isRecording.value">
-                <div class="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800">
+                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
                   <span
                     class="inline-flex items-center gap-1.5 text-xs text-red-400"
                     role="status"
@@ -256,7 +297,7 @@ function onCrossfaderChange(value: number): void {
                 <ScratchNotationEditor :session-id="session.activeSessionId.value" />
               </template>
               <template v-else>
-                <div class="flex flex-1 items-center justify-center rounded-lg border border-dashed border-zinc-800">
+                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
                   <div class="text-center">
                     <p class="text-xs text-zinc-500">
                       No notation recorded
@@ -277,13 +318,8 @@ function onCrossfaderChange(value: number): void {
               />
             </div>
 
-            <div class="flex h-full shrink-0 flex-row items-stretch gap-3 py-2">
-              <ScratchCrossfader
-                :value="derived.crossfaderValue.value"
-                :disabled="!session.canControl.value"
-                @change="onCrossfaderChange"
-              />
-              <div class="flex w-56 items-center justify-center">
+            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 py-2">
+              <div class="flex min-h-0 flex-1 items-center justify-center">
                 <ScratchVinylDeck
                   :platter-turns="derived.platterTurns.value"
                   :touched="derived.isTouched.value"
@@ -292,6 +328,11 @@ function onCrossfaderChange(value: number): void {
                   @platter-move="onPlatterMove"
                 />
               </div>
+              <ScratchCrossfader
+                :value="derived.crossfaderValue.value"
+                :disabled="!session.canControl.value"
+                @change="onCrossfaderChange"
+              />
             </div>
           </div>
 
@@ -313,10 +354,10 @@ function onCrossfaderChange(value: number): void {
           </button>
           <button
             type="button"
-            class="rounded px-3 py-1 text-xs font-medium transition-colors"
+            class="rounded px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             :class="derived.isRecording.value
               ? 'bg-red-600 text-white hover:bg-red-700'
-              : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'"
+              : 'bg-red-700 text-white hover:bg-red-600'"
             :disabled="!derived.canRecord.value"
             :aria-label="derived.isRecording.value ? 'Stop recording' : 'Record scratch'"
             @click="session.toggleRecording"
@@ -325,7 +366,7 @@ function onCrossfaderChange(value: number): void {
           </button>
           <button
             type="button"
-            class="dialog-btn-primary"
+            class="dialog-btn-primary min-w-16"
             :disabled="!session.canControl.value"
             :aria-label="session.isPlaying.value ? 'Pause scratch preview' : 'Play scratch preview'"
             @click="session.togglePlayback"

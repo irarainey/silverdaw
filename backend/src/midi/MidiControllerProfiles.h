@@ -66,6 +66,9 @@ struct MidiControllerProfile
     std::vector<juce::String> excludedModels;
     std::vector<MidiInputBinding> inputs;
     std::vector<MidiOutputBinding> outputs;
+    // Relative ticks per physical platter revolution for scratch.
+    // 0 = auto-detect from jog binding encoding (512 for relative, 16384 for absolute14Relative).
+    int scratchTicksPerTurn = 0;
 };
 
 const MidiControllerProfile* findMidiControllerProfile(const juce::String& deviceName);

@@ -8,8 +8,12 @@ export interface ScratchEditorDerivedState {
   clip: ComputedRef<ReturnType<typeof useProjectStore>['clips'][string] | null>
   peaks: ComputedRef<Float32Array>
   peaksPerSecond: ComputedRef<number>
+  channelPeaks: ComputedRef<readonly Float32Array[]>
+  channelPeaksPerSecond: ComputedRef<number>
   clipInMs: ComputedRef<number>
   clipReversed: ComputedRef<boolean>
+  sourceBpm: ComputedRef<number | undefined>
+  beatAnchorSec: ComputedRef<number | undefined>
   waveformDurationMs: ComputedRef<number>
   positionMs: ComputedRef<number>
   platterTurns: ComputedRef<number>
@@ -22,6 +26,8 @@ export interface ScratchEditorDerivedState {
   recordingStatus: ComputedRef<string>
   canRecord: ComputedRef<boolean>
   hasPattern: ComputedRef<boolean>
+  /** Cue-selected deck label from the authoritative scratch session. */
+  deckLabel: ComputedRef<string | null>
 }
 
 export function useScratchEditorDerived(
@@ -41,13 +47,32 @@ export function useScratchEditorDerived(
     const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
     return item?.peaksPerSecond ?? clip.value?.peaksPerSecond ?? 0
   })
+  const channelPeakEntry = computed(() => {
+    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
+    const sourceId = item?.kind === 'clip' ? item.derivedFrom?.sourceItemId : item?.id
+    return sourceId ? library.channelPeaksByItemId[sourceId] : undefined
+  })
+  const channelPeaks = computed<readonly Float32Array[]>(() =>
+    channelPeakEntry.value?.channels.length === 2
+      ? channelPeakEntry.value.channels
+      : []
+  )
+  const channelPeaksPerSecond = computed(() =>
+    channelPeakEntry.value?.peaksPerSecond ?? 0
+  )
   const clipInMs = computed(() => clip.value?.inMs ?? 0)
   const clipReversed = computed(() => clip.value?.reversed ?? false)
-  const waveformDurationMs = computed(() => {
-    const s = session.state.value
-    if (s && s.durationUs > 0) return s.durationUs / 1000
-    return clip.value?.durationMs ?? 0
+  const sourceBpm = computed(() => {
+    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
+    return item?.bpm
   })
+  const beatAnchorSec = computed(() => {
+    const item = clip.value ? (library.byId[clip.value.libraryItemId] ?? null) : null
+    return item?.beatAnchorSec ?? item?.beats?.[0]
+  })
+  // Peak coordinates remain in source time; the session supplies the separate
+  // prepared duration used for playback and playhead positioning.
+  const waveformDurationMs = computed(() => clip.value?.durationMs ?? 0)
   const positionMs = computed(() => (session.state.value?.positionUs ?? 0) / 1000)
   const platterTurns = computed(() => session.state.value?.platterTurns ?? 0)
   const crossfaderValue = computed(() => session.state.value?.crossfader ?? 0.5)
@@ -72,10 +97,18 @@ export function useScratchEditorDerived(
     return status === 'ready' || status === 'paused' || status === 'playing' || status === 'recording'
   })
   const hasPattern = computed(() => recordingStatus.value === 'completed')
+  const deckLabel = computed<string | null>(() => {
+    const deck = session.state.value?.selectedDeck ?? null
+    if (deck === 1) return 'Deck 1 (Left)'
+    if (deck === 2) return 'Deck 2 (Right)'
+    return null
+  })
 
   return {
-    clip, peaks, peaksPerSecond, clipInMs, clipReversed, waveformDurationMs,
+    clip, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
+    clipInMs, clipReversed, sourceBpm, beatAnchorSec, waveformDurationMs,
     positionMs, platterTurns, crossfaderValue, isTouched, clipName,
-    statusMessage, isError, isRecording, recordingStatus, canRecord, hasPattern
+    statusMessage, isError, isRecording, recordingStatus, canRecord, hasPattern,
+    deckLabel
   }
 }

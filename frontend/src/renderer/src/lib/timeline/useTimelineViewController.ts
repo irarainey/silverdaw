@@ -153,6 +153,7 @@ export function useTimelineViewController(
   const dialogs = useClipDialogs()
   const {
     editorClipId,
+    scratchEditorClipId,
     infoClipId,
     warpDialogOpen,
     warpDialogClipId,
@@ -482,6 +483,7 @@ export function useTimelineViewController(
     infoClipId,
     infoItem,
     editorClipId,
+    scratchEditorClipId,
     editorItem,
   }
 }

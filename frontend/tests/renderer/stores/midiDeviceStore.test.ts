@@ -289,4 +289,57 @@ describe('midiDeviceStore', () => {
     expect(store.jogTouched[1]).toBe(true)
     expect(store.crossfaderPosition).toBe(0.75)
   })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET on hydrate for devices with direction preferences', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({}),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'rightToLeft'
+          }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+    await store.applyEnabledInputsOnReady()
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'ddj-rb',
+      crossfaderDirection: 'rightToLeft'
+    })
+  })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET when device preferences are applied', () => {
+    const store = useMidiDeviceStore()
+    store.applyDevicePreferences({
+      'ddj-rb': {
+        scrubAudioEnabled: true,
+        crossfaderDirection: 'rightToLeft'
+      }
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'ddj-rb',
+      crossfaderDirection: 'rightToLeft'
+    })
+  })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET with leftToRight for default direction', () => {
+    const store = useMidiDeviceStore()
+    store.applyDevicePreferences({
+      controller: {
+        scrubAudioEnabled: false,
+        crossfaderDirection: 'leftToRight'
+      }
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'controller',
+      crossfaderDirection: 'leftToRight'
+    })
+  })
 })

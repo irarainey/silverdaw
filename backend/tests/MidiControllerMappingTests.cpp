@@ -351,6 +351,10 @@ void testMidiDeckActivation()
     const MidiControllerEvent toggle{
         MidiControllerAction::deckToggle, MidiControllerValueKind::button, 1, 1.0};
     require(activation.allows(toggle), "deck toggles should remain available");
+
+    activation.selectExclusive(2);
+    require(!activation.isEnabled(1) && activation.isEnabled(2),
+            "exclusive selection should enable only the selected deck");
 }
 } // namespace
 

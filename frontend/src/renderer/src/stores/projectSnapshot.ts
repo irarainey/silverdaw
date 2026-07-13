@@ -11,6 +11,7 @@
 
 import { log } from '@/lib/log'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
+import { ScratchPatternSchema } from '@shared/bridge-protocol'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 import {
   applyProjectFx,
@@ -43,6 +44,12 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
   const pendingProjectLengthMs = applyProjectTransport(target, snapshot)
   applyProjectSettings(target, snapshot)
   applyProjectFx(target, snapshot)
+  // Keep a malformed persisted pattern from contaminating renderer state when
+  // a snapshot is injected outside normal bridge validation (tests/recovery).
+  target.savedScratchPatterns = (snapshot.scratchPatterns ?? []).flatMap((pattern) => {
+    const parsed = ScratchPatternSchema.safeParse(pattern)
+    return parsed.success ? [parsed.data] : []
+  })
   applyProjectStructureReset(target, snapshot, isSoftReplace)
 
   // Hydrate library first so clip rebuild can resolve library items.

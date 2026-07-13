@@ -151,6 +151,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
           }
         ])
       )
+      this.pushScratchSettings()
     },
 
     /** Ask the backend to enumerate MIDI inputs; the reply lands in `applyList`. */
@@ -180,6 +181,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
         this.devicePreferencesByIdentifier = {}
       }
       this.pushEnabledInputs()
+      this.pushScratchSettings()
       this.requestList()
     },
 
@@ -205,6 +207,17 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.deckSelectionSyncPending = sendBridge('MIDI_INPUTS_SET', {
         identifiers
       })
+    },
+
+    /** Send MIDI_SCRATCH_SETTINGS_SET for each device with crossfader direction
+     *  preferences so the backend scratch router honours the configured direction. */
+    pushScratchSettings(): void {
+      for (const [identifier, prefs] of Object.entries(this.devicePreferencesByIdentifier)) {
+        sendBridge('MIDI_SCRATCH_SETTINGS_SET', {
+          deviceIdentifier: identifier,
+          crossfaderDirection: prefs.crossfaderDirection
+        })
+      }
     },
 
     /** Show rescan progress until the refreshed device list arrives. */

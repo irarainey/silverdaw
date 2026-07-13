@@ -108,6 +108,14 @@ bool MidiDeckActivationState::toggle(int deck) noexcept
     return active;
 }
 
+void MidiDeckActivationState::selectExclusive(int deck) noexcept
+{
+    if (deck < 1 || deck > 2) return;
+    const auto index = static_cast<std::size_t>(deck - 1);
+    enabled[index] = true;
+    enabled[1 - index] = false;
+}
+
 void MidiDeckActivationState::setEnabled(int deck, bool active) noexcept
 {
     if (deck >= 1 && deck <= 2) enabled[deck - 1] = active;
@@ -313,6 +321,13 @@ std::array<MidiControllerOutputMessage, 16> MidiControllerMapper::hotCueLightMes
                               pad < activeCount ? binding->onValue : binding->offValue);
         }
     return messages;
+}
+
+int MidiControllerMapper::scratchTicksPerTurn() const noexcept
+{
+    if (profile == nullptr)
+        return 512;
+    return profile->scratchTicksPerTurn > 0 ? profile->scratchTicksPerTurn : 512;
 }
 
 } // namespace silverdaw

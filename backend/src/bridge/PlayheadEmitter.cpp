@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "MidiDeviceCommands.h"
 #include "ProjectState.h"
+#include "ScratchSessionCommands.h"
 
 namespace silverdaw
 {
@@ -21,7 +22,11 @@ PlayheadEmitter::PlayheadEmitter(AudioEngine& e, BridgeServer& b, ProjectState& 
 void PlayheadEmitter::timerCallback()
 {
     const bool playing = engine.isPlaying();
-    sendMidiTransportPlaying(playing);
+    engine.reconcileScratchSessionSourceEnd();
+    const auto scratchState = engine.getScratchSessionSnapshot();
+    const bool scratchPlaying = scratchState
+        && (scratchState->status == "playing" || scratchState->status == "recording");
+    sendMidiTransportPlaying(scratchState ? scratchPlaying : playing);
     const double rawPosMs = engine.getPositionMs();
 
     // Compensate only during playback so the playhead matches heard audio without moving seek anchors.
@@ -74,6 +79,32 @@ void PlayheadEmitter::timerCallback()
             "generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
         bridge.broadcast("PREVIEW_POSITION", previewPayload);
         lastPreviewPosMs = previewPos;
+    }
+
+    // ── Scratch session state emission (~15 Hz + end-stop reconciliation) ────
+    {
+        const bool reconciled = engine.reconcileScratchSessionSourceEnd();
+        if (reconciled || ++scratchStateTick >= 2)
+        {
+            scratchStateTick = 0;
+            const auto emittedScratchState = engine.getScratchSessionSnapshot();
+            if (emittedScratchState)
+            {
+                const bool statusChanged = emittedScratchState->status != lastScratchStatus;
+                lastScratchStatus = emittedScratchState->status;
+                if (statusChanged
+                    || emittedScratchState->status == "playing"
+                    || emittedScratchState->status == "recording"
+                    || emittedScratchState->touched)
+                {
+                    broadcastScratchSessionState(engine, bridge);
+                }
+            }
+            else
+            {
+                lastScratchStatus = {};
+            }
+        }
     }
 
     // Gate meter broadcasts, but emit one trailing zero so renderer decay can finish.

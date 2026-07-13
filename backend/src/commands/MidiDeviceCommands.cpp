@@ -1,8 +1,11 @@
 #include "MidiDeviceCommands.h"
 
 #include "BridgeServer.h"
+#include "AudioEngine.h"
 #include "Log.h"
+#include "ScratchSessionCommands.h"
 #include "midi/MidiControllerMapping.h"
+#include "midi/MidiScratchRouting.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -141,6 +144,7 @@ public:
     bool hasControllerMapping = false;
     MidiControllerMapper controllerMapper;
     MidiDeckActivationState deckActivation;
+    MidiScratchDeviceState scratchState;
     bool cuePressed[2]{false, false};
     std::atomic<juce::int64> lastActivityMs{0};
     std::atomic<int> droppedMessageCount{0};
@@ -210,6 +214,10 @@ public:
             }
 
             auto active = std::make_unique<ActiveMidiInput>(device.name, device.identifier);
+            active->scratchState.reverseCrossfader =
+                scratchRouter.lookupReverseCrossfader(device.identifier);
+            active->scratchState.scratchTicksPerTurn =
+                active->controllerMapper.scratchTicksPerTurn();
             active->input = juce::MidiInput::openDevice(device.identifier, active.get());
             if (active->input != nullptr)
             {
@@ -232,6 +240,19 @@ public:
     void setBridge(BridgeServer& targetBridge)
     {
         bridge = &targetBridge;
+    }
+
+    void setScratchEngine(AudioEngine& engine)
+    {
+        scratchRouter.setEngine(engine);
+    }
+
+    void setScratchSettings(const juce::String& identifier, bool reverseCrossfader)
+    {
+        scratchRouter.setSetting(identifier, reverseCrossfader);
+        for (const auto& active : activeInputs)
+            if (active->identifier == identifier)
+                active->scratchState.reverseCrossfader = reverseCrossfader;
     }
 
     void setDeckSelection(const juce::String& identifier, bool deck1Enabled, bool deck2Enabled)
@@ -353,7 +374,27 @@ private:
                             else if (!active->cuePressed[deckIndex])
                             {
                                 active->cuePressed[deckIndex] = true;
-                                active->deckActivation.toggle(mapped->deck);
+                                const auto scratchSessionOpen =
+                                    scratchRouter.engine() != nullptr
+                                    && scratchRouter.engine()->hasActiveScratchSession();
+                                if (scratchSessionOpen)
+                                {
+                                    active->deckActivation.selectExclusive(mapped->deck);
+                                    scratchRouter.engine()->setScratchMidiSelectedDeck(
+                                        static_cast<scratch::DeckSide>(mapped->deck));
+                                    scratchRouter.releaseDeckOwner(
+                                        active->identifier,
+                                        static_cast<scratch::DeckSide>(2 - deckIndex));
+                                    if (bridge != nullptr)
+                                    {
+                                        broadcastScratchSessionState(
+                                            *scratchRouter.engine(), *bridge);
+                                    }
+                                }
+                                else
+                                {
+                                    active->deckActivation.toggle(mapped->deck);
+                                }
                                 active->sendDeckSelectionLights();
                                 broadcastDeckSelection(*active);
                                 silverdaw::log::info(
@@ -366,6 +407,9 @@ private:
                             continue;
                         }
                         if (!active->deckActivation.allows(*mapped)) continue;
+                        scratchRouter.routeImmediate(
+                            active->identifier, active->scratchState, raw.timestampMs,
+                            *mapped, bridge);
 
                         const auto relativeIndex = relativeControlIndex(mapped->action);
                         if (mapped->kind == MidiControllerValueKind::relative &&
@@ -375,15 +419,25 @@ private:
                             const auto controlIndex = static_cast<size_t>(*relativeIndex);
                             relativeDeltas[deckIndex][controlIndex] += mapped->value;
                             relativeTimestamps[deckIndex][controlIndex] = raw.timestampMs;
+                            scratchRouter.routeRelative(
+                                active->identifier, active->scratchState, raw.timestampMs,
+                                *mapped);
                         }
                         else
                         {
-                            broadcastMappedControl(*active, raw.timestampMs, *mapped);
+                            broadcastMappedControl(
+                                *active,
+                                static_cast<juce::int64>(raw.timestampMs),
+                                *mapped);
                         }
                     }
                 }
             }
             broadcastRelativeControls(*active, relativeDeltas, relativeTimestamps);
+            const auto nowMs = juce::Time::currentTimeMillis();
+            scratchRouter.checkExpiredOwners(
+                active->identifier, active->scratchState,
+                nowMs, bridge);
             if (!received) continue;
 
             activityChanged = true;
@@ -492,6 +546,7 @@ private:
     BridgeServer* bridge = nullptr;
     std::vector<std::unique_ptr<ActiveMidiInput>> activeInputs;
     juce::int64 lastDeviceListBroadcastMs = 0;
+    MidiScratchRouter scratchRouter;
 };
 
 MidiInputMonitor& midiInputMonitor()
@@ -550,6 +605,27 @@ void handleMidiDeckSelectionSet(const juce::var& payload, silverdaw::BridgeServe
     midiInputMonitor().setBridge(bridge);
     midiInputMonitor().setDeckSelection(
         identifier.toString(), static_cast<bool>(deck1Enabled), static_cast<bool>(deck2Enabled));
+}
+
+void handleMidiScratchSettingsSet(const juce::var& payload)
+{
+    const auto identifier = payload.getProperty("deviceIdentifier", juce::var());
+    const auto direction = payload.getProperty("crossfaderDirection", juce::var());
+    if (!identifier.isString() || identifier.toString().isEmpty()
+        || !direction.isString()
+        || (direction.toString() != "leftToRight"
+            && direction.toString() != "rightToLeft"))
+    {
+        silverdaw::log::warn("midi", "MIDI_SCRATCH_SETTINGS_SET has invalid payload");
+        return;
+    }
+    midiInputMonitor().setScratchSettings(
+        identifier.toString(), direction.toString() == "rightToLeft");
+}
+
+void setMidiScratchEngine(AudioEngine& engine)
+{
+    midiInputMonitor().setScratchEngine(engine);
 }
 
 void sendMidiSelectedTrackMeter(float peakL, float peakR, bool playing)

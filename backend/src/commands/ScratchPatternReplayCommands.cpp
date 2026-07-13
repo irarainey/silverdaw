@@ -84,7 +84,7 @@ void handleScratchPatternRemove(const juce::var& payload, ProjectState& projectS
 }
 
 void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engine,
-                                     ProjectState& projectState, BridgeServer& bridge)
+                                     ProjectState& projectState, BridgeServer&)
 {
     if (!scratch::hasValidProtocolVersion(payload))
     {
@@ -135,7 +135,7 @@ void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engi
 }
 
 void handleScratchPatternReplayStop(const juce::var& payload, AudioEngine& engine,
-                                    BridgeServer& bridge)
+                                    BridgeServer&)
 {
     if (!scratch::hasValidProtocolVersion(payload))
     {

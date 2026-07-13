@@ -94,7 +94,9 @@ const INBOUND_TYPES = {
   PROJECT_DELAY_APPLIED: true,
   PONG: true,
   ENGINE_ERROR: true,
-  ENGINE_AUDIO_STATUS: true
+  ENGINE_AUDIO_STATUS: true,
+  SCRATCH_SESSION_STATE: true,
+  SCRATCH_PATTERN_RECORDED: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
