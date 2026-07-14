@@ -92,6 +92,26 @@ public:
         sendControllerMessages(output.get(), controllerMapper.hotCueLightMessages(0));
     }
 
+    // Blanks every controller LED the moment the device connects. Sending host
+    // output also wakes controllers out of their idle demo/standby light show.
+    // Cue and hot-cue lights are left dark here; the playhead emitter re-lights
+    // them from project marker state once a project is loaded.
+    void resetControllerFeedback()
+    {
+        if (output == nullptr) return;
+        sendControllerMessages(output.get(), controllerMapper.selectedTrackMeterMessages(0, 0));
+        sendControllerMessages(output.get(), controllerMapper.transportPlayMessages(false));
+        sendControllerMessages(output.get(), controllerMapper.cueLightMessages(false));
+        sendControllerMessages(output.get(), controllerMapper.hotCueLightMessages(0));
+        sendControllerMessages(
+            output.get(), controllerMapper.deckSelectionLightMessages(
+                              deckActivation.isEnabled(1), deckActivation.isEnabled(2)));
+        lastMeterValue = 0;
+        lastPlayingValue = 0;
+        lastCueValue = 0;
+        lastHotCueCount = 0;
+    }
+
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override
     {
         const auto* raw = message.getRawData();
@@ -223,7 +243,7 @@ public:
             {
                 if (supportsMidiControllerOutput(active->name))
                     active->output = openMatchingMidiOutput(active->name);
-                active->sendDeckSelectionLights();
+                active->resetControllerFeedback();
                 active->input->start();
                 activeInputs.push_back(std::move(active));
             }

@@ -641,6 +641,15 @@ output whose name matches the input. It can then send selected-track meters,
 Play/Cue state, active-deck state, and marker-pad lights. Missing output
 feedback does not prevent controller input.
 
+The instant a controller is enabled the backend blanks every LED (meter, Play,
+Cue, hot-cue pads and the deck-selection lights) with a single reset burst.
+Sending host output at connect time also wakes controllers out of the idle
+demo/standby light show some hardware falls into after a period of inactivity.
+Cue and hot-cue pads are deliberately left dark by this reset — they are only
+lit once a project is loaded, when the playhead emitter reasserts them from the
+project's marker state (so a controller connected at the project picker shows no
+stale cue lights).
+
 ## Engine resilience and recovery
 
 The audio engine runs as a separate process, so Silverdaw treats "the engine
