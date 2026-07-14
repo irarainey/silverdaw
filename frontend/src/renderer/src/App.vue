@@ -42,6 +42,7 @@ import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
 import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useRenderedDialogPresence } from '@/lib/app/useRenderedDialogPresence'
+import { useDialogInputCapture } from '@/lib/app/useDialogInputCapture'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useMidiControllerActions } from '@/lib/midi/useMidiControllerActions'
@@ -72,6 +73,7 @@ const notifications = useNotificationsStore()
 const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
 const renderedDialogOpen = useRenderedDialogPresence()
+useDialogInputCapture(renderedDialogOpen)
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)

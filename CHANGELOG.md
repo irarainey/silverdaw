@@ -26,6 +26,7 @@
 - Recent projects now show an opening indicator while the audio engine finishes starting.
 - Manual BPM edits in the Clip Editor now commit reliably.
 - Keyboard shortcuts no longer affect the project while a dialog is open.
+- Mouse-wheel scrolling no longer reaches the library or other background panels while a dialog is open.
 
 ## 1.1.0
 
