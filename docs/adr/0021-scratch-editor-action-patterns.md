@@ -958,3 +958,42 @@ dispatch. Excluding recording keeps takes bounded and deterministic.
   `setLoop`/`toggleLoop`, and the backing panel gains an On/Off toggle.
 - A looping bed never ends the session on its own, so a performer must Pause (or
   toggle loop off and let it run out) to stop it.
+
+## Amendment 13 — Physical Cue button unbound from the backing bed
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 10 wired the physical deck **Cue** button (`previousMarker`) to seek the
+backing bed to its start via `scratchMidiCueToStart()`. In use, only the **Play**
+button is wanted for backing transport in the scratch editor; the Cue-to-start
+binding added a second backing control that was not needed and muddied the deck's
+role while the editor is open.
+
+### Decision
+
+- **The physical Cue button no longer controls the backing bed.** The
+  `previousMarker` branch is removed from `MidiScratchRouter::routeImmediate`, and
+  the now-orphaned `scratchMidiCueToStart()` / `ScratchSessionController::midiCueToStart()`
+  methods are deleted. Only the physical **Play** button drives the backing bed
+  (toggle, ready-gated), exactly as Amendment 10 specified for Play.
+- **No behaviour changes outside the scratch editor.** With the editor open the
+  Cue press is simply not routed to the backing bed and, as before, the
+  also-broadcast event is suppressed by the frontend interaction block. With the
+  editor **closed** nothing changes: the frontend's timeline `previousMarker`
+  handling is untouched, so the Cue button still seeks the timeline as it always
+  has.
+
+### Why
+
+Reducing the deck's editor-open transport to Play alone matches how the hardware
+is actually used here and removes a redundant control path. Deleting the unused
+engine/controller methods keeps the MIDI router free of dead dispatch branches.
+
+### Consequences
+
+- Supersedes the Cue-to-start portion of Amendment 10; the Play toggle, ready
+  gating, and backing timing readout from Amendment 10 are unchanged.
+- The timeline Cue (`previousMarker`) behaviour is unaffected in every context.

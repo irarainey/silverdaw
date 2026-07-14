@@ -295,7 +295,6 @@ class AudioEngine
     bool clearScratchBacking(const juce::String& sessionId);
     bool controlScratchSession(const scratch::SessionControlPayload& control);
     bool scratchMidiTogglePlay();
-    bool scratchMidiCueToStart();
     bool scratchMidiSetTouch(const juce::String& deviceIdentifier,
                              scratch::DeckSide deck,
                              bool touched);

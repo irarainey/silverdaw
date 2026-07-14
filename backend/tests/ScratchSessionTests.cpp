@@ -1010,12 +1010,10 @@ void testScratchMidiTransportControlsBackingOnly()
                 sampleRate),
             "scratch session should prepare");
 
-    // Without a prepared backing the deck's Play and Cue buttons are inert and
-    // never spin the scratch clip.
+    // Without a prepared backing the deck's Play button is inert and never spins
+    // the scratch clip.
     require(!controller.midiTogglePlay(),
             "MIDI play should be rejected when no backing is prepared");
-    require(!controller.midiCueToStart(),
-            "MIDI cue should be rejected when no backing is prepared");
     require(!source.snapshot().playing, "inert MIDI transport must not spin the scratch clip");
     require(controller.getSnapshot()->status == "ready",
             "rejected MIDI transport should leave the session ready");
@@ -1030,13 +1028,11 @@ void testScratchMidiTransportControlsBackingOnly()
     require(backing.isPlaying(), "backing bed should run after MIDI play");
     require(!source.snapshot().playing, "MIDI play must not spin the scratch clip");
 
-    // Advance the bed, then Cue returns it to the start without stopping playback.
+    // Advance the bed; the published snapshot tracks the live backing position.
     renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.1), 128);
     require(backing.positionUs() > 0, "backing position should advance while playing");
-    require(controller.midiCueToStart(), "MIDI cue should return the backing to the start");
-    require(backing.positionUs() == 0, "MIDI cue should seek the backing to position zero");
     snap = controller.getSnapshot();
-    require(snap && snap->backingPositionUs == 0, "snapshot should publish the cued position");
+    require(snap && snap->backingPositionUs > 0, "snapshot should publish the live position");
 
     // Play again toggles to paused.
     require(controller.midiTogglePlay(), "MIDI play should toggle to paused");

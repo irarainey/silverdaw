@@ -67,11 +67,6 @@ bool AudioEngine::scratchMidiTogglePlay()
     return scratchController.midiTogglePlay();
 }
 
-bool AudioEngine::scratchMidiCueToStart()
-{
-    return scratchController.midiCueToStart();
-}
-
 bool AudioEngine::scratchMidiSetTouch(const juce::String& deviceIdentifier,
                                       scratch::DeckSide deck,
                                       bool touched)

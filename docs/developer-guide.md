@@ -2107,17 +2107,16 @@ m:ss`, position / prepared length) sits under the transport and is **always
 shown** (dimmed until a bed is ready) so it never reflows the panel; it is driven
 by the `backingPositionUs` snapshot field on the scratch session state.
 
-**MIDI deck Play/Cue while the editor is open** (ADR 0021, Amendment 10). The
+**MIDI deck Play while the editor is open** (ADR 0021, Amendment 10). The
 physical deck **Play** button toggles the prepared backing bed only and is
 ready-gated — it never spins the scratch clip, and a press is rejected when no bed
-is prepared or a take is recording. The physical **Cue** button returns the
-backing bed to its start, seeking to position 0 **without changing play state** (a
-running bed keeps playing from the start). Both are handled in the backend router
-(`MidiScratchRouter::routeImmediate` → `scratchMidiTogglePlay()` /
-`scratchMidiCueToStart()`), gated on scratch-session existence: with the editor
-**closed** the engine methods return `false` and the event falls through to the
-frontend's timeline handling; with the editor **open** the frontend is
-interaction-blocked, so the also-broadcast event is ignored (no double action).
+is prepared or a take is recording. It is handled in the backend router
+(`MidiScratchRouter::routeImmediate` → `scratchMidiTogglePlay()`), gated on
+scratch-session existence: with the editor **closed** the engine method returns
+`false` and the event falls through to the frontend's timeline handling; with the
+editor **open** the frontend is interaction-blocked, so the also-broadcast event
+is ignored (no double action). The physical **Cue** button is not bound to the
+backing bed.
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The

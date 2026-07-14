@@ -414,20 +414,6 @@ bool ScratchSessionController::midiTogglePlay()
     return true;
 }
 
-bool ScratchSessionController::midiCueToStart()
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive())
-        return false;
-    if (session->status == "recording")
-        return false;
-    reconcileSourceEndLocked();
-    if (!backingReadyLocked())
-        return false;
-    backingSource.seekUs(0);
-    return true;
-}
-
 bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier,
                                             DeckSide deck, bool touched)
 {

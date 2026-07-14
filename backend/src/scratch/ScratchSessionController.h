@@ -83,11 +83,10 @@ class ScratchSessionController
     bool controlSession(const SessionControlPayload& control);
 
     // MIDI entry points — may be called from MIDI thread.
-    // Backing-only transport driven by the deck's physical Play and Cue buttons.
-    // The scratch clip is never MIDI-driven; both no-op unless a backing bed is
-    // prepared (ready). Return true only when they act (so the caller broadcasts).
+    // Backing-only transport driven by the deck's physical Play button. The
+    // scratch clip is never MIDI-driven; this no-ops unless a backing bed is
+    // prepared (ready). Returns true only when it acts (so the caller broadcasts).
     bool midiTogglePlay();
-    bool midiCueToStart();
     bool midiSetTouch(const juce::String& deviceIdentifier, DeckSide deck, bool touched);
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);
