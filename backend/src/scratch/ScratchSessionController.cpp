@@ -200,12 +200,13 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
     switch (control.action)
     {
         case ControlAction::play:
-            if (scratchSource.isAtForwardBoundary())
-            {
-                scratchSource.seekUs(0);
+            // The on-screen/keyboard transport drives the backing bed only; the
+            // scratch clip is heard solely when the platter is jogged. Without a
+            // prepared backing there is nothing for the transport to run.
+            if (!backingReadyLocked())
+                return false;
+            if (backingSource.isAtForwardBoundary())
                 backingSource.seekUs(0);
-            }
-            scratchSource.setPlaying(true);
             startBackingLocked();
             s.status = (s.status == "recording") ? "recording" : "playing";
             return true;
@@ -213,15 +214,14 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
         case ControlAction::pause:
             if (s.status == "recording")
                 return false;
-            scratchSource.setPlaying(false);
             stopBackingLocked();
             s.status = "paused";
             return true;
 
         case ControlAction::seek:
-            scratchSource.seekUs(control.positionUs);
-            if (backingReadyLocked())
-                backingSource.seekUs(control.positionUs);
+            if (!backingReadyLocked())
+                return false;
+            backingSource.seekUs(control.positionUs);
             return true;
 
         case ControlAction::platterTouch:

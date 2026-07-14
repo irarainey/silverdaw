@@ -48,6 +48,10 @@ class BackingMonitorSource final : public juce::AudioSource
     std::int64_t durationUs() const noexcept;
     bool isPlaying() const noexcept { return playing.load(std::memory_order_acquire); }
 
+    // True once forward playback has reached (or been seeked to) the end of the
+    // prepared window. Message/control thread only.
+    bool isAtForwardBoundary() const noexcept;
+
   private:
     void waitForCallbackQuiescence() const noexcept;
     std::int64_t sourceSampleForUs(std::int64_t us) const noexcept;

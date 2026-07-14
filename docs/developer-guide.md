@@ -554,7 +554,8 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   `platterTouch { deck, touched }`, `crossfader { value 0..1 }`, and the
   monitor-only `backingGain { value 0..1 }` / `scratchGain { value 0..1 }` trims.
 - `SCRATCH_BACKING_PREPARE { sessionId, trackIds, startAnchor, durationSec }`
-  (anchor `arrangement` | `playhead`; duration `60` | `90` | `120`) and
+  (anchor `arrangement` | `playhead`; duration `60` | `120` | `0` where `0` means
+  the full arrangement from the anchor to the last clip end) and
   `SCRATCH_BACKING_CLEAR { sessionId }` manage the backing monitor.
 - `SCRATCH_PATTERN_SAVE` / `_DELETE` / `_RENAME` / `_APPLY` (to a clip) /
   `_REMOVE` (from a clip) manage saved patterns, and
@@ -2046,14 +2047,19 @@ sent as `SCRATCH_SESSION_CONTROL` and the renderer never drives audio timing.
 Preparation status and progress surface on the dialog until the source is
 `ready`.
 
-**Transport and platter.** The transport bar has skip-to-start, play/pause, and
-skip-to-end; `Space` toggles play/pause and `R` toggles record. The on-screen
-platter uses a 33⅓ RPM timebase (one revolution = 1.8 s at nominal speed);
-dragging or wheel-jogging it scrubs the source bidirectionally (the wheel gesture
-direction is inverted so it matches the expected scratch direction). Movement
-beyond the prepared source produces de-clicked silence — the source never wraps.
-Recording captures compact **platter** and **crossfader** keyframes (not audio),
-starting from the session start against a local clock.
+**Transport and platter.** The backing panel sits at the top of the dialog and
+hosts the transport (skip-to-start, play/pause, skip-to-end); `Space` toggles
+play/pause and `R` toggles record. **The transport drives the backing channel
+only** (ADR 0021, Amendment 4): play runs/stops the prepared backing bed and skip
+seeks it — it never spins the scratch clip, which is heard **only when the platter
+is jogged**. The transport is disabled until a backing is prepared, and while
+recording. The on-screen platter uses a 33⅓ RPM timebase (one revolution = 1.8 s
+at nominal speed); dragging or wheel-jogging it scrubs the source bidirectionally
+(the wheel gesture direction is inverted so it matches the expected scratch
+direction). Movement beyond the prepared source produces de-clicked silence — the
+source never wraps. Recording captures compact **platter** and **crossfader**
+keyframes (not audio), starting from the session start against a local clock, and
+still spins the scratch over the backing.
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). When the
@@ -2068,16 +2074,24 @@ recording, the cut is captured like any other fader move.
 **Backing accompaniment monitor.** Optionally, the user picks a set of timeline
 tracks to play underneath the scratch as a fixed-length **backing bed** to
 scratch against (ADR 0021 Amendment 1). The window is a start **anchor**
-(*arrangement start* or *current playhead*) plus a fixed **duration** of **60, 90,
-or 120 seconds** (default 60); when active it bounds the session's forward time.
+(*arrangement start* or *current playhead*) plus a **duration** of **60 or 120
+seconds**, or **Full** (the whole arrangement from the anchor to the last clip
+end) — default 60; when active it bounds the session's forward time.
 The default track selection is *every track except the clip's owning track* (to
-avoid hearing the source twice), fully user-editable. The bed is a pre-rendered
-linear mixdown prepared off the audio thread; the **Prepare** button shows a
-spinner while working. Two **monitor-only** gain trims (`0..1`, default 100%) — a
-**Monitor** (backing) gain and a **Scratch** gain — let the performer balance what
-they hear; **neither is baked into the recorded pattern, mixdown, or exported
-sample** (ADR 0021 Amendment 2). The backing is monitor-only and never reaches
-committed output.
+avoid hearing the source twice), chosen from a **checkbox dropdown** (so it scales
+to many tracks) and editable while the bed is stopped. Because the
+bed is a fixed pre-render, the track selection, anchor, and length (and the
+**Prepare** button) are **locked while the backing is playing** — changing them
+would only take effect after a fresh Prepare, so they cannot be swapped in live.
+The bed is a pre-rendered linear mixdown prepared off the audio thread; the
+**Prepare** button shows a spinner while working and re-preparing simply replaces
+the existing bed (there is no separate Clear action). Two **monitor-only** gain
+trims (`0..1`) balance what the performer hears — a **Monitor** (backing) gain
+(default 100%) in the backing panel, and a **Scratch** gain (default 75%, so the
+source sits under the backing while auditioning) sited **beside the deck** it
+trims rather than in the backing panel; **neither is baked into the recorded
+pattern, mixdown, or exported sample** (ADR 0021 Amendment 2). The backing is
+monitor-only and never reaches committed output.
 
 **Notation, cropping, and editing.** The recorded pattern is shown as an editable
 notation view (forward/reverse platter segments, hold spans, and a crossfader
@@ -2549,7 +2563,7 @@ crossfader are described in the [Scratch Editor](#scratch-editor) section.
 
 | Input | Effect |
 |---|---|
-| `Space` | Toggle audition play / pause for the scratch session. |
+| `Space` | Toggle play / pause of the backing channel (disabled until a backing is prepared, and while recording). |
 | `R` | Toggle record — arms and starts capturing platter and crossfader keyframes, or stops the take. |
 | `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to close the crossfader (scratch deck silent), release to reopen. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back open. |
 | `←` / `→` (crossfader focused) | Nudge the crossfader by 0.02 (or 0.1 with `Shift`). |

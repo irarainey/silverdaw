@@ -43,6 +43,33 @@ void renderScratchBlocks(scratch::ScratchAudioSource& source,
     }
 }
 
+void renderBackingBlocks(scratch::BackingMonitorSource& backing,
+                         int totalSamples, int blockSize)
+{
+    juce::AudioBuffer<float> output(2, blockSize);
+    int rendered = 0;
+    while (rendered < totalSamples)
+    {
+        const auto count = juce::jmin(blockSize, totalSamples - rendered);
+        output.clear();
+        backing.getNextAudioBlock({&output, 0, count});
+        rendered += count;
+    }
+}
+
+// Prepare and activate a backing bed on a controller so the transport (which now
+// drives the backing channel only) has something to run.
+void prepareControllerBacking(scratch::ScratchSessionController& controller,
+                              const juce::String& sessionId,
+                              int samples, double sampleRate)
+{
+    require(controller.beginBackingPreparation(sessionId),
+            "backing preparation should begin");
+    require(controller.completeBacking(
+                sessionId, makeScratchBuffer(samples, sampleRate), sampleRate),
+            "backing preparation should complete and activate");
+}
+
 juce::File writeRampWav(const juce::File& directory, double sampleRate)
 {
     const auto file = directory.getChildFile("source.wav");
@@ -396,32 +423,39 @@ void testScratchSessionAutoStopsAtForwardEnd()
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
     scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
     scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-end-stop");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
                 sampleRate),
             "scratch session should prepare for end-stop testing");
+    // The transport now runs the backing window, which bounds the session.
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.05), sampleRate);
 
     scratch::SessionControlPayload play;
     play.sessionId = sessionId;
     play.action = scratch::ControlAction::play;
-    require(controller.controlSession(play), "scratch session should start playback");
+    require(controller.controlSession(play), "backing transport should start playback");
+    require(backing.isPlaying(), "play should run the backing bed");
+    require(!source.snapshot().playing,
+            "transport play must not spin the scratch clip");
 
-    renderScratchBlocks(source, static_cast<int>(sampleRate * 0.2), 128);
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
     require(controller.reconcileSourceEnd(),
-            "scratch session should report a consumed forward-end transition");
+            "backing window end should report a consumed transition");
 
     const auto snapshot = controller.getSnapshot();
     require(snapshot && snapshot->status == "ready",
-            "forward end should transition the scratch session back to ready");
-    require(!source.snapshot().playing,
-            "forward end reconciliation should stop motor playback");
-    // After end reconciliation, source should be back at start (not stuck at end).
-    require(source.snapshot().positionUs == 0,
-            "forward end reconciliation should reset source position to start");
-    require(!source.isAtForwardBoundary(),
-            "forward end reconciliation should leave source away from the end boundary");
+            "backing window end should transition the session back to ready");
+    require(!backing.isPlaying(),
+            "backing window end reconciliation should stop backing playback");
+    // After end reconciliation, the backing should be back at start.
+    require(backing.positionUs() == 0,
+            "backing window end reconciliation should reset backing position to start");
+    require(!backing.isAtForwardBoundary(),
+            "backing window end reconciliation should leave backing away from the end boundary");
 }
 
 void testScratchSessionPlayFromEndRestartsFromBeginning()
@@ -430,29 +464,33 @@ void testScratchSessionPlayFromEndRestartsFromBeginning()
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
     scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
     scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-restart");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
                 sampleRate),
             "scratch session should prepare for replay testing");
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.05), sampleRate);
 
     scratch::SessionControlPayload play;
     play.sessionId = sessionId;
     play.action = scratch::ControlAction::play;
-    require(controller.controlSession(play), "scratch session should start playback");
-    renderScratchBlocks(source, static_cast<int>(sampleRate * 0.2), 128);
+    require(controller.controlSession(play), "backing transport should start playback");
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
     controller.reconcileSourceEnd();
-    require(!source.isAtForwardBoundary(),
-            "scratch session should be at start after end reconciliation");
+    require(!backing.isAtForwardBoundary(),
+            "backing should be at start after end reconciliation");
 
     require(controller.controlSession(play),
-            "play after forward end should start from the beginning");
+            "play after backing end should start from the beginning");
     const auto restarted = controller.getSnapshot();
     require(restarted && restarted->status == "playing",
-            "restarted scratch session should return to playing");
-    require(restarted->positionUs == 0,
-            "restarted scratch playback should begin at position zero");
+            "restarted session should return to playing");
+    require(backing.isPlaying(), "restarted session should run the backing bed");
+    require(backing.positionUs() == 0,
+            "restarted backing playback should begin at position zero");
 }
 
 void testScratchMidiCrossfaderWorksWithoutPlatterOwnership()
@@ -539,20 +577,19 @@ void testScratchPlayProducesAudioThroughMixer()
                 sampleRate),
             "scratch session should prepare for audio output testing");
 
-    scratch::SessionControlPayload play;
-    play.sessionId = sessionId;
-    play.action = scratch::ControlAction::play;
-    require(engine.controlScratchSession(play), "scratch play should succeed");
-    require(engine.getScratchSessionSnapshot()->status == "playing",
-            "scratch session should be playing after play command");
+    // The scratch clip is heard when it spins (its recording-time state); the
+    // transport no longer auditions it. Drive the motor directly to exercise
+    // the mixer audio path.
+    auto& source = engine.scratchSourceForTest();
+    source.setPlaying(true);
 
     // Render blocks and verify the scratch source produces non-zero audio.
     juce::AudioBuffer<float> output(2, blockSize);
     output.clear();
-    engine.scratchSourceForTest().getNextAudioBlock({&output, 0, blockSize});
+    source.getNextAudioBlock({&output, 0, blockSize});
     const auto magnitude = output.getMagnitude(0, blockSize);
     require(magnitude > 1.0e-4F,
-            "scratch source should produce audible output when playing");
+            "spinning scratch source should produce audible output through the mixer");
 
     engine.closeScratchSession(sessionId);
 }
@@ -569,12 +606,15 @@ void testScratchPointerCrossfaderCutSilencesWithoutTouch()
                 sampleRate),
             "scratch session should prepare for crossfader-cut testing");
 
-    scratch::SessionControlPayload play;
-    play.sessionId = sessionId;
-    play.action = scratch::ControlAction::play;
-    require(engine.controlScratchSession(play), "scratch play should succeed");
+    scratch::SessionControlPayload cut;
+    cut.sessionId = sessionId;
+    cut.action = scratch::ControlAction::crossfader;
+    cut.crossfader = 1.0;
 
     auto& source = engine.scratchSourceForTest();
+    // Spin the clip directly (its recording-time state) to exercise the
+    // crossfader gain path without a platter touch.
+    source.setPlaying(true);
     juce::AudioBuffer<float> output(2, blockSize);
 
     output.clear();
@@ -582,10 +622,6 @@ void testScratchPointerCrossfaderCutSilencesWithoutTouch()
     require(output.getMagnitude(0, blockSize) > 1.0e-4F,
             "virtual scratch deck should be audible by default before any platter touch");
 
-    scratch::SessionControlPayload cut;
-    cut.sessionId = sessionId;
-    cut.action = scratch::ControlAction::crossfader;
-    cut.crossfader = 1.0;
     require(engine.controlScratchSession(cut),
             "crossfader cut should apply without a prior platter touch");
 
@@ -611,25 +647,61 @@ void testScratchPointerCrossfaderCutSilencesWithoutTouch()
     engine.closeScratchSession(sessionId);
 }
 
+void testScratchTransportRequiresBacking()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-no-backing");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare without a backing");
+
+    scratch::SessionControlPayload play;
+    play.sessionId = sessionId;
+    play.action = scratch::ControlAction::play;
+    require(!controller.controlSession(play),
+            "transport play should be rejected when no backing is prepared");
+    require(!source.snapshot().playing,
+            "rejected play must not spin the scratch clip");
+    require(controller.getSnapshot()->status == "ready",
+            "rejected play should leave the session ready");
+
+    scratch::SessionControlPayload seek;
+    seek.sessionId = sessionId;
+    seek.action = scratch::ControlAction::seek;
+    seek.positionUs = 10000;
+    require(!controller.controlSession(seek),
+            "transport seek should be rejected when no backing is prepared");
+}
+
 void testScratchPlayFromReadyAndPausedStartsAndBroadcastsState()
 {
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
     scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
     scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-play-state");
     controller.completeSession(
         sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate), sampleRate);
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.5), sampleRate);
 
-    // Play from ready
+    // Play from ready drives the backing bed, not the scratch clip.
     scratch::SessionControlPayload play;
     play.sessionId = sessionId;
     play.action = scratch::ControlAction::play;
     require(controller.controlSession(play), "play from ready should succeed");
     auto snap = controller.getSnapshot();
     require(snap && snap->status == "playing", "status should be playing after play from ready");
-    require(source.snapshot().playing, "source motor should be on after play");
+    require(backing.isPlaying(), "backing bed should be running after play");
+    require(!source.snapshot().playing, "transport play must not spin the scratch clip");
 
     // Pause
     scratch::SessionControlPayload pause;
@@ -638,13 +710,13 @@ void testScratchPlayFromReadyAndPausedStartsAndBroadcastsState()
     require(controller.controlSession(pause), "pause should succeed");
     snap = controller.getSnapshot();
     require(snap && snap->status == "paused", "status should be paused after pause");
-    require(!source.snapshot().playing, "source motor should be off after pause");
+    require(!backing.isPlaying(), "backing bed should be stopped after pause");
 
     // Play from paused
     require(controller.controlSession(play), "play from paused should succeed");
     snap = controller.getSnapshot();
     require(snap && snap->status == "playing", "status should be playing after play from paused");
-    require(source.snapshot().playing, "source motor should be on after play from paused");
+    require(backing.isPlaying(), "backing bed should be running after play from paused");
 }
 
 void testScratchRepeatPlayEndCycles()
@@ -653,12 +725,15 @@ void testScratchRepeatPlayEndCycles()
     scratch::ScratchAudioSource source;
     source.prepareToPlay(512, sampleRate);
     scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
     scratch::ScratchSessionController controller(source, backing);
     const auto sessionId = controller.beginSession("clip-repeat");
     require(controller.completeSession(
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
                 sampleRate),
             "scratch session should prepare for repeat cycle testing");
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.05), sampleRate);
 
     scratch::SessionControlPayload play;
     play.sessionId = sessionId;
@@ -673,11 +748,11 @@ void testScratchRepeatPlayEndCycles()
         require(snap && snap->status == "playing",
                 (juce::String("status should be playing on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
-        require(source.isActive(),
-                (juce::String("source should remain active on cycle ")
+        require(backing.isActive(),
+                (juce::String("backing should remain active on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
 
-        renderScratchBlocks(source, static_cast<int>(sampleRate * 0.2), 128);
+        renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
         require(controller.reconcileSourceEnd(),
                 (juce::String("end should be consumed on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
@@ -686,14 +761,14 @@ void testScratchRepeatPlayEndCycles()
         require(snap && snap->status == "ready",
                 (juce::String("status should be ready after end on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
-        require(snap && snap->positionUs == 0,
-                (juce::String("position should be 0 after end on cycle ")
+        require(backing.positionUs() == 0,
+                (juce::String("backing position should be 0 after end on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
-        require(!source.snapshot().playing,
-                (juce::String("motor should be off after end on cycle ")
+        require(!backing.isPlaying(),
+                (juce::String("backing should be stopped after end on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
-        require(source.isActive(),
-                (juce::String("source should stay active after end on cycle ")
+        require(backing.isActive(),
+                (juce::String("backing should stay active after end on cycle ")
                  + juce::String(cycle + 1)).toRawUTF8());
     }
 }
@@ -935,6 +1010,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch play produces audio through the mixer", testScratchPlayProducesAudioThroughMixer});
     tests.push_back({"scratch pointer crossfader cut silences without platter touch", testScratchPointerCrossfaderCutSilencesWithoutTouch});
     tests.push_back({"scratch play from ready and paused starts and broadcasts state", testScratchPlayFromReadyAndPausedStartsAndBroadcastsState});
+    tests.push_back({"scratch transport requires a prepared backing", testScratchTransportRequiresBacking});
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});
     tests.push_back({"scratch crossfader direction inversion with tracking", testScratchCrossfaderDirectionInversion});

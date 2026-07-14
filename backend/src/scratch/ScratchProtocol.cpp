@@ -244,7 +244,8 @@ std::optional<BackingPreparePayload> parseBackingPreparePayload(const juce::var&
         return std::nullopt;
     }
     const auto durationSec = static_cast<int>(*durationValue);
-    if (durationSec != 60 && durationSec != 90 && durationSec != 120)
+    // 0 is the full-arrangement sentinel; 60 and 120 are the fixed windows.
+    if (durationSec != 0 && durationSec != 60 && durationSec != 120)
     {
         return std::nullopt;
     }

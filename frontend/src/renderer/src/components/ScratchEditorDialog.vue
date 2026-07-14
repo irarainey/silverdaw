@@ -15,7 +15,6 @@ import ScratchDeleteConfirmDialog from '@/components/ScratchDeleteConfirmDialog.
 import ScratchDirtyCloseDialog from '@/components/ScratchDirtyCloseDialog.vue'
 import ScratchNotationEditor from '@/components/ScratchNotationEditor.vue'
 import ScratchPersistencePanel from '@/components/ScratchPersistencePanel.vue'
-import ScratchTransportBar from '@/components/ScratchTransportBar.vue'
 import ScratchBackingPanel from '@/components/ScratchBackingPanel.vue'
 import ScratchVinylDeck from '@/components/ScratchVinylDeck.vue'
 import ScratchWaveformBar from '@/components/ScratchWaveformBar.vue'
@@ -211,7 +210,7 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     event.stopPropagation()
     if (isPatternReplaying.value) stopReplay()
-    else session.togglePlayback()
+    else if (transportEnabled.value) session.togglePlayback()
   } else if (
     (event.key === 'r' || event.key === 'R') &&
     !event.repeat &&
@@ -244,23 +243,30 @@ function onCrossfaderChange(value: number): void {
   session.sendControl(buildCrossfaderPayload(sid, value))
 }
 
-// ── Top audition transport (local scratch source only) ───────────────────────
+// ── Backing transport (drives the backing channel only) ──────────────────────
+
+// The play/pause and skip controls (and Space) run the prepared backing bed;
+// they never spin the scratch clip, which is heard only when jogged. Disabled
+// until a backing is prepared, and during recording (which owns playback).
+const transportEnabled = computed(
+  () => session.canControl.value && backing.isReady.value && !derived.isRecording.value
+)
 
 function onSkipToStart(): void {
   const sid = session.activeSessionId.value
-  if (!sid || !session.canControl.value) return
+  if (!sid || !transportEnabled.value) return
   session.sendControl(buildSeekPayload(sid, 0))
 }
 
 function onSkipToEnd(): void {
   const sid = session.activeSessionId.value
-  if (!sid || !session.canControl.value) return
-  session.sendControl(buildSeekPayload(sid, session.state.value?.durationUs ?? 0))
+  if (!sid || !transportEnabled.value) return
+  session.sendControl(buildSeekPayload(sid, session.state.value?.backingDurationUs ?? 0))
 }
 
 function onTogglePlay(): void {
   if (isPatternReplaying.value) stopReplay()
-  else session.togglePlayback()
+  else if (transportEnabled.value) session.togglePlayback()
 }
 
 // ── Single record control (arm → first-touch start → stop) ───────────────────
@@ -295,6 +301,14 @@ const recordButtonAriaLabel = computed(() => {
   if (recordPhase.value === 'armed') return 'Cancel record arming'
   return 'Arm scratch recording'
 })
+
+// Scratch monitor level lives with the deck it trims (not the backing panel).
+// Monitor-only; never baked into the recorded pattern, mixdown, or export.
+const scratchPct = computed(() => `${Math.round(backing.scratchGain.value * 100)}%`)
+
+function onScratchGain(event: Event): void {
+  backing.setScratchGain((event.target as HTMLInputElement).valueAsNumber)
+}
 </script>
 
 <template>
@@ -349,14 +363,12 @@ const recordButtonAriaLabel = computed(() => {
         </header>
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-          <ScratchTransportBar
-            class="-mt-2"
-            :position-us="session.state.value?.positionUs ?? 0"
-            :duration-us="session.state.value?.durationUs ?? 0"
-            :playback-rate="session.state.value?.playbackRate ?? 1"
-            :is-touched="derived.isTouched.value"
+          <ScratchBackingPanel
+            v-if="session.state.value && !derived.statusMessage.value"
+            :backing="backing"
+            :disabled="derived.isRecording.value"
             :is-playing="session.isPlaying.value || isPatternReplaying"
-            :can-control="session.canControl.value"
+            :transport-enabled="transportEnabled"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
             @skip-to-end="onSkipToEnd"
@@ -380,12 +392,6 @@ const recordButtonAriaLabel = computed(() => {
               :playback-rate="session.state.value?.playbackRate ?? 0"
             />
           </div>
-
-          <ScratchBackingPanel
-            v-if="session.state.value && !derived.statusMessage.value"
-            :backing="backing"
-            :disabled="derived.isRecording.value"
-          />
 
           <div class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_14rem] gap-4">
             <div class="flex min-w-0 min-h-0 flex-col gap-2 overflow-hidden">
@@ -497,6 +503,21 @@ const recordButtonAriaLabel = computed(() => {
             </div>
 
             <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 py-2">
+              <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5">
+                <span class="text-[11px] text-zinc-500">Scratch</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  class="h-1 flex-1 cursor-pointer accent-sky-500 outline-none focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                  :value="backing.scratchGain.value"
+                  :disabled="!session.canControl.value"
+                  aria-label="Scratch monitor level"
+                  @input="onScratchGain"
+                >
+                <span class="w-8 text-right font-mono text-[10px] tabular-nums text-zinc-400">{{ scratchPct }}</span>
+              </div>
               <div class="flex min-h-0 flex-1 items-center justify-center">
                 <ScratchVinylDeck
                   :platter-turns="derived.platterTurns.value"

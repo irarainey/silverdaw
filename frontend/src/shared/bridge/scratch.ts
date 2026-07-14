@@ -146,11 +146,11 @@ export type ScratchSessionClosePayload = z.infer<typeof ScratchSessionClosePaylo
 export const ScratchBackingStartAnchorSchema = z.enum(['arrangement', 'playhead'])
 export type ScratchBackingStartAnchor = z.infer<typeof ScratchBackingStartAnchorSchema>
 
-export const SCRATCH_BACKING_DURATIONS_SEC = [60, 90, 120] as const
+export const SCRATCH_BACKING_DURATIONS_SEC = [60, 120, 0] as const
 export const ScratchBackingDurationSecSchema = z.union([
   z.literal(60),
-  z.literal(90),
-  z.literal(120)
+  z.literal(120),
+  z.literal(0)
 ])
 export type ScratchBackingDurationSec = z.infer<typeof ScratchBackingDurationSecSchema>
 

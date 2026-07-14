@@ -524,3 +524,147 @@ exactly one live scratch session.
 - The open contract accepts either a `clipId` or a `libraryItemId` (exactly one);
   saved-clip targets resolve their source window for preparation and waveform
   display.
+
+## Amendment 4 — Transport drives the backing channel only
+
+- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+The original decision (and Amendment 1) gave the editor's local **Play** control
+two jobs at once: it ran the scratch platter at its nominal speed *and* started
+the backing bed. In use this conflated two different intents — auditioning the
+clip versus running the accompaniment the scratch is performed against — and made
+"play" audition a flat, un-scratched clip, which is not how the deck is meant to
+be heard. The backing panel was also buried below the waveform, away from the
+controls that now drive it.
+
+### Decision
+
+- **The on-screen transport (skip-to-start, play/pause, skip-to-end) and its
+  `Space` shortcut drive the backing channel only.** Play starts/stops the
+  prepared backing bed; skip seeks the backing bed; they no longer set the scratch
+  source playing. The scratch clip is heard **only when the platter is jogged**
+  (the touched/manual-rate path), so "play" never auditions the clip at nominal
+  speed. `backingDurationUs` bounds skip-to-end.
+- **The transport is disabled until a backing is prepared, and during
+  recording.** With no backing there is nothing for the transport to run, so the
+  backend rejects `play`/`seek` control actions when no backing is ready and the
+  UI disables the controls. Recording still owns playback (it spins the scratch
+  over the backing), so the transport is inert while a take is in progress.
+- **The backing panel moves to the top of the dialog and hosts the transport.**
+  The play/skip cluster lives in the backing-panel header next to the *Backing
+  deck* label and status. The former position / length / rate / touch readout is
+  removed.
+- **The physical MIDI deck's transport button is unchanged.** The hardware deck
+  play button remains a separate control surface and still spins the scratch
+  source (used when auditioning through a connected controller); only the
+  on-screen/keyboard transport is re-scoped to the backing.
+
+### Why
+
+Separating the two intents matches how the tool is used: the accompaniment runs
+as a bed while the performer scratches over it by hand. Auditioning a flat clip
+through "play" added no value once jogging exists, and gating the transport on a
+prepared backing removes a control that previously did nothing useful without
+one. Keeping the MIDI deck button as-is avoids changing a physical-controller
+contract that a follow-up change can revisit deliberately.
+
+### Consequences
+
+- The scratch source's nominal-speed playback is now reached only through
+  **recording** (which spins the clip under the backing) and the unchanged MIDI
+  deck button — never the on-screen transport. Backend tests that previously drove
+  the scratch source via `play` now prepare a backing and assert the
+  backing-window state machine, and the audio/crossfader-gain tests spin the
+  source's motor directly (its recording-time state).
+- No new bridge field is required: skip-to-end reuses `backingDurationUs`, and the
+  removed readout drops the per-frame position/rate display from the transport.
+- The backing window continues to bound the session (Amendment 1); the scratch
+  source's own forward-end now matters only while recording without a backing.
+
+## Amendment 5 — Backing length options and scratch monitor default
+
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 2 fixed the backing window at **60, 90, or 120 seconds**. In practice
+90 s was rarely chosen, while performers wanted to scratch over a *whole
+arrangement* rather than a capped window. Separately, the scratch monitor gain
+defaulted to 100%, which put the raw source at the same level as the backing bed
+and made it hard to hear the clip *against* the accompaniment while auditioning.
+
+### Decision
+
+- **Backing length options are now `60`, `120`, and `Full`** (default `60`). The
+  90 s window is retired. **`Full`** spans from the anchor to the **last clip end**
+  of the selected tracks (the arrangement's content extent), computed on the
+  message thread when preparing. On the bridge, `Full` is the sentinel
+  `durationSec: 0`; the accepted set is `{0, 60, 120}` and `90` now rejects.
+- **The scratch monitor gain now defaults to `0.75` (75%)** so the source sits
+  under the backing while auditioning. The Monitor (backing) gain default is
+  unchanged at 100%. Both remain **monitor-only, per-session, non-persisted**
+  trims that are never baked into the recorded pattern, mixdown, or export.
+
+### Why
+
+`Full` matches the real intent — scratching over the whole piece — without a
+per-arrangement length guess, and dropping the unused 90 s keeps the control
+compact. Defaulting the scratch monitor to 75% gives an immediately usable
+balance instead of two coincident full-level sources. Both are session-scoped
+monitor trims, so there is no persisted-preference or backward-compatibility
+concern.
+
+### Consequences
+
+- The bridge duration union becomes `60 | 120 | 0`; backend validation accepts
+  `{0, 60, 120}` and `handleScratchBackingPrepare` derives the `Full` window from
+  `computeLastClipEndMs(snapshot) - anchorMs` (clamped ≥ 0; an empty selection or
+  a past-end anchor yields a zero window and the usual preparation error).
+- An empty backing selection with `Full` still produces no window, surfacing the
+  existing "duration is zero" preparation error rather than a special case.
+- Protocol tests assert `0`/`60`/`120` parse and `90` rejects; the default
+  scratch monitor gain change is covered by the existing per-session gain state.
+
+## Amendment 6 — Backing config locks while playing; Clear removed
+
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+The backing bed is a fixed pre-render (Amendment 1). While it was playing, the
+track selection, anchor, and length controls stayed enabled, which implied a
+track could be *switched in* live — but a change only takes effect after a fresh
+**Prepare**, so the edit was silently ineffective until re-prepared. The panel
+also carried a separate **Clear** button whose only role was to drop a prepared
+bed.
+
+### Decision
+
+- **The preparation config is locked while the backing is playing.** The track
+  toggles, start-anchor buttons, length buttons, and the **Prepare** button are
+  disabled whenever the backing transport is playing. They re-enable once
+  playback stops, at which point a changed config can be re-prepared.
+- **The Clear button is removed.** Re-preparing replaces the existing bed, so a
+  distinct clear action is redundant. The `SCRATCH_BACKING_CLEAR` bridge message
+  and composable method remain part of the protocol/API for session teardown;
+  only the UI affordance is gone.
+
+### Why
+
+Locking the config while playing removes the false affordance that tracks can be
+swapped into a running bed, matching the pre-render contract. Dropping Clear
+keeps the panel to a single, unambiguous action (Prepare/replace) now that the
+transport, not this panel, owns playback (Amendment 4).
+
+### Consequences
+
+- Reconfiguring the bed requires pausing first; the monitor-only gain trims stay
+  live while playing (they are not part of the pre-render).
+- No way remains to return a session to *no backing* from the UI; this is
+  acceptable because the session itself is transient and re-preparing covers the
+  swap case. The bridge clear path is retained for programmatic teardown.

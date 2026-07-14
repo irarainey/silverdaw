@@ -129,7 +129,7 @@ class ScratchSessionController
         std::int64_t backingDurationUs = 0;
         // Monitor-only trims (0..1); never baked into recorded patterns.
         double backingGain = 1.0;
-        double scratchMonitorGain = 1.0;
+        double scratchMonitorGain = 0.75;
     };
 
     ScratchAudioSource& scratchSource;

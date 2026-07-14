@@ -2503,11 +2503,11 @@ sequencing into the phase plan is still to be decided.
   compact, editable action pattern (or lets the user draw/edit them by hand),
   replays them non-destructively over the clip, and saves the result as a
   reusable **scratch pattern** that can be applied to a clip or rendered to a new
-  library sample. An optional **backing accompaniment monitor** (a fixed
-  60/90/120 s bed of selected tracks, with monitor-only gain trims) lets the
+  library sample. An optional **backing accompaniment monitor** (a 60/120 s or
+  full-arrangement bed of selected tracks, with monitor-only gain trims) lets the
   performer scratch in musical context while recording. Everything is authored,
   re-editable, and non-destructive. Design contract and decisions:
-  [ADR 0021](adr/0021-scratch-editor-action-patterns.md) (Amendments 1–3);
+  [ADR 0021](adr/0021-scratch-editor-action-patterns.md) (Amendments 1–6);
   feature detail in the
   [developer guide](developer-guide.md#scratch-editor). Remaining before release:
   the reference-hardware listening/timing validation and speed-cap sign-off

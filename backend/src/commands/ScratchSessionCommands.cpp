@@ -248,7 +248,12 @@ void handleScratchBackingPrepare(const juce::var& payload,
 
     const double anchorMs =
         request->startAnchor == "playhead" ? engine.getPositionMs() : 0.0;
-    const double durationMs = static_cast<double>(request->durationSec) * 1000.0;
+    // durationSec == 0 is the full-arrangement sentinel: span from the anchor to
+    // the last clip end of the selected tracks. Fixed windows use their seconds.
+    const double durationMs =
+        request->durationSec <= 0
+            ? juce::jmax(0.0, silverdaw::computeLastClipEndMs(snapshot) - anchorMs)
+            : static_cast<double>(request->durationSec) * 1000.0;
     const auto sessionId = request->sessionId;
 
     broadcastScratchSessionState(engine, bridge);

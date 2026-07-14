@@ -279,6 +279,16 @@ void testScratchBackingPayloads()
         "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":120
     })json")).has_value(), "backing prepare with a 120s duration should parse");
 
+    // Full-arrangement sentinel (durationSec 0).
+    require(scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":0
+    })json")).has_value(), "backing prepare with the full-length sentinel should parse");
+
+    // 90s is no longer an offered window.
+    require(!scratch::parseBackingPreparePayload(parseJson(R"json({
+        "protocolVersion":1,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":90
+    })json")).has_value(), "backing prepare with a retired 90s duration should reject");
+
     // Wrong protocol version.
     require(!scratch::parseBackingPreparePayload(parseJson(R"json({
         "protocolVersion":2,"sessionId":"s","trackIds":["t1"],"startAnchor":"arrangement","durationSec":60

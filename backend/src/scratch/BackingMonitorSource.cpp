@@ -177,4 +177,13 @@ std::int64_t BackingMonitorSource::durationUs() const noexcept
         static_cast<double>(sourceSamples) * 1000000.0 / sourceSampleRate);
 }
 
+bool BackingMonitorSource::isAtForwardBoundary() const noexcept
+{
+    const auto sourceSamples = audio != nullptr ? audio->getNumSamples() : 0;
+    if (sourceSamples <= 0)
+        return false;
+    return publishedPosition.load(std::memory_order_acquire)
+           >= static_cast<double>(sourceSamples - 1);
+}
+
 } // namespace silverdaw::scratch
