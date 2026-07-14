@@ -107,7 +107,7 @@ function draw(): void {
 
   const visibleStartFraction = viewStartMs / preparedDurationMs
   const visibleFraction = viewDurationMs / preparedDurationMs
-  const stereoPeaks = props.channelPeaks.length === 2
+  const stereoPeaks = ui.waveformDisplayMode === 'stereo' && props.channelPeaks.length === 2
     ? props.channelPeaks
     : null
   const lanes = stereoPeaks ?? [peaks]
@@ -391,6 +391,7 @@ watch(
     props.sourceBpm,
     props.beatAnchorSec,
     props.positionMs,
+    ui.waveformDisplayMode,
     visibleStartMs.value,
     visibleDurationMs.value
   ] as const,
