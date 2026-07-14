@@ -557,6 +557,60 @@ void testScratchPlayProducesAudioThroughMixer()
     engine.closeScratchSession(sessionId);
 }
 
+void testScratchPointerCrossfaderCutSilencesWithoutTouch()
+{
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    const auto sessionId = engine.beginScratchSession("clip-cut-default-deck");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 2.0), sampleRate),
+                sampleRate),
+            "scratch session should prepare for crossfader-cut testing");
+
+    scratch::SessionControlPayload play;
+    play.sessionId = sessionId;
+    play.action = scratch::ControlAction::play;
+    require(engine.controlScratchSession(play), "scratch play should succeed");
+
+    auto& source = engine.scratchSourceForTest();
+    juce::AudioBuffer<float> output(2, blockSize);
+
+    output.clear();
+    source.getNextAudioBlock({&output, 0, blockSize});
+    require(output.getMagnitude(0, blockSize) > 1.0e-4F,
+            "virtual scratch deck should be audible by default before any platter touch");
+
+    scratch::SessionControlPayload cut;
+    cut.sessionId = sessionId;
+    cut.action = scratch::ControlAction::crossfader;
+    cut.crossfader = 1.0;
+    require(engine.controlScratchSession(cut),
+            "crossfader cut should apply without a prior platter touch");
+
+    // Settle the short gain ramp, then confirm the deck is silenced.
+    for (int i = 0; i < 12; ++i)
+    {
+        output.clear();
+        source.getNextAudioBlock({&output, 0, blockSize});
+    }
+    require(output.getMagnitude(0, blockSize) < 1.0e-3F,
+            "closed crossfader should silence the virtual deck with no deck claimed");
+
+    cut.crossfader = 0.0;
+    require(engine.controlScratchSession(cut), "crossfader open should apply");
+    for (int i = 0; i < 12; ++i)
+    {
+        output.clear();
+        source.getNextAudioBlock({&output, 0, blockSize});
+    }
+    require(output.getMagnitude(0, blockSize) > 1.0e-4F,
+            "reopened crossfader should restore audible output");
+
+    engine.closeScratchSession(sessionId);
+}
+
 void testScratchPlayFromReadyAndPausedStartsAndBroadcastsState()
 {
     constexpr double sampleRate = 48000.0;
@@ -879,6 +933,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch MIDI crossfader works without platter ownership", testScratchMidiCrossfaderWorksWithoutPlatterOwnership});
     tests.push_back({"rapid MIDI crossfader coalesces to final value", testRapidMidiCrossfaderCoalescesToFinalValue});
     tests.push_back({"scratch play produces audio through the mixer", testScratchPlayProducesAudioThroughMixer});
+    tests.push_back({"scratch pointer crossfader cut silences without platter touch", testScratchPointerCrossfaderCutSilencesWithoutTouch});
     tests.push_back({"scratch play from ready and paused starts and broadcasts state", testScratchPlayFromReadyAndPausedStartsAndBroadcastsState});
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});

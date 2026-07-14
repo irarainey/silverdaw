@@ -128,6 +128,32 @@ The Hercules DJControl Inpulse 200 MK2 and Hercules DJControl Inpulse 300 MK2
 are explicitly excluded because their byte-level mappings have not been
 verified. A similar name does not make an unlisted controller compatible.
 
+## Scratch Editor without a controller
+
+The Scratch Editor can be driven by a physical deck, but it does not require
+one. When no controller is connected you can perform the same platter and
+crossfader-cut moves with a trackpad and the keyboard, using the on-screen
+virtual deck.
+
+- **Platter (trackpad).** Two-finger pan across the on-screen platter jogs it,
+  exactly like touching a physical platter. Rightward or downward movement
+  scratches forward; leftward or upward scratches back. The gesture only
+  registers while your fingers are moving — Windows precision touchpads report
+  nothing while fingers rest — so the platter releases automatically a moment
+  after you stop.
+- **Platter (mouse and keyboard).** Click and drag around the platter to
+  scratch, or focus it and use the arrow keys; hold Shift for larger steps.
+- **Dead stop.** Press **Space** to toggle playback, which also acts as the
+  stop when the platter is spinning.
+- **Crossfader cut (keyboard).** Hold a single key to close the crossfader
+  and silence the deck; release it to open the fader again. The resting default
+  is open. Choose **Z** (right-handed) or **M** (left-handed) to suit your
+  scratching hand in **Preferences ▸ Effects ▸ Scratch crossfader cut** (the
+  default is Z).
+
+These on-screen controls share the same session model as a physical deck, so a
+controller and the trackpad or keyboard can be used interchangeably.
+
 ## Diagnose a controller
 
 Open **Preferences ▸ Developer ▸ Open MIDI Monitor…**. The monitor shows the

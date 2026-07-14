@@ -7,6 +7,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useScratchInputSettingsStore } from '@/stores/scratchInputSettingsStore'
 import { log } from '@/lib/log'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
 import type {
@@ -15,7 +16,8 @@ import type {
   BrakeCurveDto,
   BrakeDurationDto,
   MidiCrossfaderDirection,
-  MidiDevicePreferences
+  MidiDevicePreferences,
+  ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 import {
   BACKEND_PREFERENCE,
@@ -50,6 +52,7 @@ export interface PreferencesForm {
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
   backspinIntensity: Ref<BackspinIntensityDto>
+  scratchCrossfaderCutKey: Ref<ScratchCrossfaderCutKeyDto>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
   logDirectory: Ref<string>
@@ -95,6 +98,7 @@ export function usePreferencesForm(): PreferencesForm {
   const midiDevices = useMidiDeviceStore()
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
+  const scratchInputSettings = useScratchInputSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
 
   // Pending audio output; `null/null` means system default.
@@ -245,6 +249,9 @@ export function usePreferencesForm(): PreferencesForm {
   const initialBackspinDuration = ref<BackspinDurationDto>('long')
   const initialBackspinIntensity = ref<BackspinIntensityDto>('medium')
 
+  const scratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
+  const initialScratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
+
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
   const logDirectory = ref('')
@@ -339,7 +346,8 @@ export function usePreferencesForm(): PreferencesForm {
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
-      backspinIntensity.value !== initialBackspinIntensity.value
+      backspinIntensity.value !== initialBackspinIntensity.value ||
+      scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value
   )
 
   async function loadCurrent(): Promise<void> {
@@ -419,6 +427,8 @@ export function usePreferencesForm(): PreferencesForm {
       const backspinPrefs = await window.silverdaw.getBackspinSettings()
       backspinDuration.value = backspinPrefs.duration
       backspinIntensity.value = backspinPrefs.intensity
+      const scratchPrefs = await window.silverdaw.getScratchSettings()
+      scratchCrossfaderCutKey.value = scratchPrefs.crossfaderCutKey
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -486,6 +496,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
     initialBackspinIntensity.value = backspinIntensity.value
+    initialScratchCrossfaderCutKey.value = scratchCrossfaderCutKey.value
   }
 
   async function chooseProjectDir(): Promise<void> {
@@ -643,6 +654,9 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       backspinSettings.setBackspinSettings(backspinDuration.value, backspinIntensity.value)
     }
+    if (scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value) {
+      scratchInputSettings.setCrossfaderCutKey(scratchCrossfaderCutKey.value)
+    }
     const stemPatch: Parameters<typeof window.silverdaw.setStemPrefs>[0] = {}
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
       stemPatch.useGpu = useGpuForStems.value
@@ -702,6 +716,7 @@ export function usePreferencesForm(): PreferencesForm {
     brakeCurve,
     backspinDuration,
     backspinIntensity,
+    scratchCrossfaderCutKey,
     loggingEnabled,
     devToolsEnabled,
     logDirectory,

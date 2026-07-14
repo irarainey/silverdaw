@@ -16,6 +16,12 @@ import {
 /** Virtual deck used by pointer-operated controls when no physical deck owns the session. */
 export const VIRTUAL_DECK: ScratchDeckSide = 1
 
+/**
+ * Horizontal/vertical trackpad travel, in CSS pixels, that maps to one full
+ * platter revolution. Tunable: lower = more sensitive scratching.
+ */
+export const WHEEL_PIXELS_PER_TURN = 600
+
 /** Angle in degrees [0, 360) derived from absolute platter turns modulo one revolution. */
 export function platterAngleDeg(turns: number): number {
   return (((turns % 1) + 1) % 1) * 360
@@ -50,6 +56,25 @@ export function crossfaderValueFromHorizontalDelta(
 ): number {
   if (trackWidth <= 0) return current
   return Math.max(0, Math.min(1, current + deltaX / trackWidth))
+}
+
+/**
+ * Turns delta from a trackpad wheel gesture. Uses the dominant axis so both
+ * two-finger horizontal and vertical pans scratch; rightward/downward is forward.
+ */
+export function wheelDeltaToTurns(deltaX: number, deltaY: number, pixelsPerTurn: number): number {
+  if (pixelsPerTurn <= 0) return 0
+  const dominant = Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : deltaY
+  return dominant / pixelsPerTurn
+}
+
+/**
+ * Crossfader display value for the momentary cut key: open = the deck's audible
+ * edge, closed = its silent edge (deck 1 audible at 0, deck 2 audible at 1).
+ */
+export function crossfaderCutValue(open: boolean, deck: ScratchDeckSide = VIRTUAL_DECK): number {
+  const audibleEdge = deck === 1 ? 0 : 1
+  return open ? audibleEdge : 1 - audibleEdge
 }
 
 /** Formats a microsecond position as `M:SS.mmm` or `S.mmms` for transport display. */

@@ -21,6 +21,11 @@ juce::String ScratchSessionController::beginSession(const juce::String& clipId)
     s.sessionId = juce::Uuid().toString();
     s.clipId = clipId;
     s.status = "preparing";
+    // The pointer/virtual deck is always deck 1, so resolve its crossfader side
+    // up front: the on-screen fader and keyboard cut are authoritative from open
+    // rather than inert until the platter is first touched. A physical MIDI
+    // claim overwrites crossfaderDeck later.
+    s.crossfaderDeck = DeckSide::deck1;
     const auto id = s.sessionId;
     session = std::move(s);
     return id;

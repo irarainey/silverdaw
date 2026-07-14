@@ -140,6 +140,13 @@ export interface BackspinPrefs {
   intensity: BackspinIntensity
 }
 
+// Scratch Editor input preferences. The crossfader cut key is a momentary
+// keyboard "kill" for the virtual deck; the Z/M choice suits handedness.
+export type ScratchCrossfaderCutKey = 'KeyZ' | 'KeyM'
+export interface ScratchPrefs {
+  crossfaderCutKey: ScratchCrossfaderCutKey
+}
+
 export interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
@@ -158,6 +165,7 @@ export interface Preferences {
   midiDevicePreferences: Record<string, MidiDevicePreferences>
   brake: BrakePrefs
   backspin: BackspinPrefs
+  scratch: ScratchPrefs
   stems: StemPrefs
   /** MRU entries (path + display name), newest first, capped and case-insensitive by path. */
   recentProjects: RecentProject[]
@@ -240,6 +248,7 @@ export function buildDefaultPrefs(): Preferences {
     midiDevicePreferences: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
+    scratch: { crossfaderCutKey: 'KeyZ' },
     stems: {
       useGpu: false,
       quality: 'balanced',
@@ -377,6 +386,18 @@ export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): Ba
   return {
     duration: BACKSPIN_DURATIONS.has(p.duration as BackspinDuration) ? (p.duration as BackspinDuration) : base.duration,
     intensity: BACKSPIN_INTENSITIES.has(p.intensity as BackspinIntensity) ? (p.intensity as BackspinIntensity) : base.intensity
+  }
+}
+
+const SCRATCH_CUT_KEYS: ReadonlySet<ScratchCrossfaderCutKey> = new Set(['KeyZ', 'KeyM'])
+
+// Single source of truth for scratch-input-prefs validation.
+export function sanitiseScratchPrefs(partial: unknown, base: ScratchPrefs): ScratchPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof ScratchPrefs, unknown>>
+  return {
+    crossfaderCutKey: SCRATCH_CUT_KEYS.has(p.crossfaderCutKey as ScratchCrossfaderCutKey)
+      ? (p.crossfaderCutKey as ScratchCrossfaderCutKey)
+      : base.crossfaderCutKey
   }
 }
 

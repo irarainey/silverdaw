@@ -171,6 +171,12 @@ export interface BackspinPrefsDto {
   intensity: BackspinIntensityDto
 }
 
+/** Persisted Scratch Editor input preferences surfaced to the renderer. */
+export type ScratchCrossfaderCutKeyDto = 'KeyZ' | 'KeyM'
+export interface ScratchPrefsDto {
+  crossfaderCutKey: ScratchCrossfaderCutKeyDto
+}
+
 /** Where the stem model lives and whether it is a user-located copy. */
 export interface StemModelInfo {
   /** Directory the backend loads the ONNX sessions from. */

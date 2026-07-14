@@ -51,6 +51,7 @@ function stubSilverdaw(): void {
       getMidiDevicePreferences: vi.fn(async () => ({})),
       getBrakeSettings: vi.fn(async () => ({ duration: 'medium', curve: 'curved' })),
       getBackspinSettings: vi.fn(async () => ({ duration: 'long', intensity: 'medium' })),
+      getScratchSettings: vi.fn(async () => ({ crossfaderCutKey: 'KeyZ' })),
       getStemPrefs: vi.fn(async () => ({ ...DEFAULTS.stems })),
       setQolPrefs: vi.fn(),
       setDebugPreferences: vi.fn(),
@@ -59,6 +60,7 @@ function stubSilverdaw(): void {
         structuredClone(preferences)
       }),
       setStemPrefs: vi.fn(async () => {}),
+      setScratchSettings: vi.fn(),
       chooseDirectory: vi.fn()
     }
   }

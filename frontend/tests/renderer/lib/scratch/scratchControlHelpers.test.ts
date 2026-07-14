@@ -7,17 +7,69 @@ import {
   buildPlatterMovePayload,
   buildPlatterTouchPayload,
   buildScratchGainPayload,
+  crossfaderCutValue,
   crossfaderValueFromHorizontalDelta,
   formatUsTime,
   platterAngleDeg,
   pointerAngleDeltaTurns,
-  VIRTUAL_DECK
+  VIRTUAL_DECK,
+  wheelDeltaToTurns,
+  WHEEL_PIXELS_PER_TURN
 } from '@/lib/scratch/scratchControlHelpers'
 import {
   ScratchBackingClearPayloadSchema,
   ScratchBackingPreparePayloadSchema,
   ScratchSessionControlPayloadSchema
 } from '@shared/bridge-protocol'
+
+// ── wheelDeltaToTurns ────────────────────────────────────────────────────────
+
+describe('wheelDeltaToTurns', () => {
+  it('returns 0 when pixelsPerTurn is not positive', () => {
+    expect(wheelDeltaToTurns(100, 0, 0)).toBe(0)
+    expect(wheelDeltaToTurns(100, 0, -10)).toBe(0)
+  })
+
+  it('maps one full pixelsPerTurn of horizontal travel to one turn', () => {
+    expect(wheelDeltaToTurns(WHEEL_PIXELS_PER_TURN, 0, WHEEL_PIXELS_PER_TURN)).toBeCloseTo(1, 10)
+  })
+
+  it('uses the dominant axis (vertical when it is larger)', () => {
+    expect(wheelDeltaToTurns(10, 300, 600)).toBeCloseTo(0.5, 10)
+  })
+
+  it('uses the dominant axis (horizontal when it is larger)', () => {
+    expect(wheelDeltaToTurns(300, 10, 600)).toBeCloseTo(0.5, 10)
+  })
+
+  it('prefers horizontal on an exact tie', () => {
+    expect(wheelDeltaToTurns(120, -120, 600)).toBeCloseTo(0.2, 10)
+  })
+
+  it('treats rightward/downward as forward and leftward/upward as reverse', () => {
+    expect(wheelDeltaToTurns(-600, 0, 600)).toBeCloseTo(-1, 10)
+    expect(wheelDeltaToTurns(0, -600, 600)).toBeCloseTo(-1, 10)
+  })
+})
+
+// ── crossfaderCutValue ───────────────────────────────────────────────────────
+
+describe('crossfaderCutValue', () => {
+  it('opens deck 1 to its audible edge (0) and closes it to silence (1)', () => {
+    expect(crossfaderCutValue(true, 1)).toBe(0)
+    expect(crossfaderCutValue(false, 1)).toBe(1)
+  })
+
+  it('opens deck 2 to its audible edge (1) and closes it to silence (0)', () => {
+    expect(crossfaderCutValue(true, 2)).toBe(1)
+    expect(crossfaderCutValue(false, 2)).toBe(0)
+  })
+
+  it('defaults to the virtual (deck 1) side', () => {
+    expect(crossfaderCutValue(true)).toBe(crossfaderCutValue(true, VIRTUAL_DECK))
+    expect(crossfaderCutValue(false)).toBe(crossfaderCutValue(false, VIRTUAL_DECK))
+  })
+})
 
 // ── platterAngleDeg ──────────────────────────────────────────────────────────
 

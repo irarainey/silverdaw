@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
+import { useScratchKeyboardControls } from '@/lib/scratch/useScratchKeyboardControls'
 import { useScratchEditorDerived } from '@/lib/scratch/useScratchEditorDerived'
 import { useScratchBacking } from '@/lib/scratch/useScratchBacking'
 import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
@@ -60,6 +61,12 @@ const backing = useScratchBacking(
   sourceId
 )
 const persistence = useScratchPatternPersistence(session.activeSessionId)
+
+useScratchKeyboardControls({
+  activeSessionId: session.activeSessionId,
+  canControl: session.canControl,
+  sendControl: session.sendControl
+})
 
 const canSave = computed(() => derived.hasPattern.value && persistence.isDirty.value)
 const canUpdate = computed(

@@ -14,7 +14,7 @@ import type {
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -316,6 +316,17 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     const next = sanitiseBackspinPrefs(partial, store.backspin)
     if (next.duration === store.backspin.duration && next.intensity === store.backspin.intensity) return
     store.backspin = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Scratch Editor input (crossfader cut key) ───────────────────────────
+  ipcMain.handle(IPC.prefs.getScratch, () => ({ ...prefs.get().scratch }))
+
+  ipcMain.on(IPC.prefs.setScratch, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseScratchPrefs(partial, store.scratch)
+    if (next.crossfaderCutKey === store.scratch.crossfaderCutKey) return
+    store.scratch = next
     prefs.flushSaveSync()
   })
 }

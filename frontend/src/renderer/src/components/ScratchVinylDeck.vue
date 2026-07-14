@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { platterAngleDeg, pointerAngleDeltaTurns } from '@/lib/scratch/scratchControlHelpers'
+import {
+  platterAngleDeg,
+  pointerAngleDeltaTurns,
+  wheelDeltaToTurns,
+  WHEEL_PIXELS_PER_TURN
+} from '@/lib/scratch/scratchControlHelpers'
 
 const props = defineProps<{
   platterTurns: number
@@ -19,6 +24,12 @@ const SWEEP_RADIUS = 88
 const KEYBOARD_STEP_TURNS = 0.02
 const KEYBOARD_LARGE_STEP_TURNS = 0.1
 
+// Trackpad two-finger pan (delivered as wheel events) jogs the platter. Windows
+// precision touchpads only emit events while fingers move, so touch is inferred:
+// the first delta claims the platter and an idle timeout releases it.
+const WHEEL_IDLE_RELEASE_MS = 120
+const MAX_WHEEL_DELTA_TURNS = 8
+
 const svgEl = ref<SVGSVGElement | null>(null)
 const isDown = ref(false)
 const isFocused = ref(false)
@@ -26,6 +37,50 @@ let prevClientX = 0
 let prevClientY = 0
 let prevAngleValid = true
 let capturedId: number | null = null
+
+let wheelTouched = false
+let wheelPendingTurns = 0
+let wheelRafId: number | null = null
+let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushWheelMove(): void {
+  wheelRafId = null
+  if (wheelPendingTurns === 0) return
+  const delta = Math.max(-MAX_WHEEL_DELTA_TURNS, Math.min(MAX_WHEEL_DELTA_TURNS, wheelPendingTurns))
+  wheelPendingTurns = 0
+  emit('platterMove', delta)
+}
+
+function releaseWheelTouch(): void {
+  if (wheelIdleTimer !== null) {
+    clearTimeout(wheelIdleTimer)
+    wheelIdleTimer = null
+  }
+  if (wheelRafId !== null) {
+    cancelAnimationFrame(wheelRafId)
+    flushWheelMove()
+  }
+  if (wheelTouched) {
+    wheelTouched = false
+    emit('platterTouch', false)
+  }
+}
+
+function onWheel(event: WheelEvent): void {
+  if (props.disabled) return
+  event.preventDefault()
+  if (!wheelTouched) {
+    wheelTouched = true
+    emit('platterTouch', true)
+  }
+  // Inverted so the wheel gesture matches the expected scratch direction.
+  wheelPendingTurns -= wheelDeltaToTurns(event.deltaX, event.deltaY, WHEEL_PIXELS_PER_TURN)
+  if (wheelRafId === null) {
+    wheelRafId = requestAnimationFrame(flushWheelMove)
+  }
+  if (wheelIdleTimer !== null) clearTimeout(wheelIdleTimer)
+  wheelIdleTimer = setTimeout(releaseWheelTouch, WHEEL_IDLE_RELEASE_MS)
+}
 
 const angleDeg = computed(() => platterAngleDeg(props.platterTurns))
 const sweepAngleRad = computed(() => (angleDeg.value - 90) * (Math.PI / 180))
@@ -108,6 +163,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 onBeforeUnmount(() => {
+  releaseWheelTouch()
   if (capturedId !== null) {
     svgEl.value?.releasePointerCapture(capturedId)
     capturedId = null
@@ -145,6 +201,7 @@ onBeforeUnmount(() => {
       @pointerup="releasePointer"
       @pointercancel="releasePointer"
       @lostpointercapture="releasePointer"
+      @wheel="onWheel"
       @keydown="onKeydown"
       @focus="isFocused = true"
       @blur="isFocused = false"
