@@ -234,6 +234,7 @@ export const ScratchSessionStatePayloadSchema = z.object({
   platterTurns: AbsoluteTurnsSchema,
   playbackRate: z.number().finite().min(-8).max(8),
   crossfader: z.number().finite().min(0).max(1),
+  crossfaderReversed: z.boolean().optional(),
   selectedDeck: ScratchDeckSideSchema.nullable().optional(),
   ownerDeviceIdentifier: z.string().min(1).nullable(),
   ownerDeck: ScratchDeckSideSchema.nullable(),

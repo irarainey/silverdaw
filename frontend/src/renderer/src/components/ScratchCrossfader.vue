@@ -5,6 +5,7 @@ import { crossfaderValueFromHorizontalDelta } from '@/lib/scratch/scratchControl
 const props = defineProps<{
   value: number
   disabled: boolean
+  reversed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +28,21 @@ let ro: ResizeObserver | null = null
 const knobLeft = computed(() =>
   Math.max(0, Math.min(trackW.value - KNOB_W, props.value * (trackW.value - KNOB_W)))
 )
+
+// The fill colours the bar by fader position and the MIDI crossfader direction
+// preference only — deck ownership never affects it. Left-to-right (default):
+// blue grows from the left as the knob moves right (blue at the right extreme).
+// Right-to-left (reversed): mirrored, so blue grows from the right as the knob
+// moves left (blue at the left extreme).
+const reversed = computed(() => props.reversed === true)
+
+const openFillStyle = computed(() => {
+  if (reversed.value) {
+    const width = Math.max(0, trackW.value - (knobLeft.value + KNOB_W))
+    return { right: '0px', width: `${width}px` }
+  }
+  return { left: '0px', width: `${knobLeft.value}px` }
+})
 
 function onPointerDown(event: PointerEvent): void {
   if (props.disabled) return
@@ -106,7 +122,10 @@ onBeforeUnmount(() => {
     role="presentation"
   >
     <div class="flex items-center gap-2">
-      <span class="font-mono text-[10px] uppercase tracking-wider text-zinc-400">L</span>
+      <span
+        class="font-mono text-[10px] uppercase tracking-wider"
+        :class="reversed ? 'text-sky-400' : 'text-zinc-500'"
+      >L</span>
       <div
         ref="trackEl"
         class="relative h-5 flex-1 rounded-full border border-zinc-700 bg-zinc-800 outline-none"
@@ -132,8 +151,8 @@ onBeforeUnmount(() => {
         @blur="isFocused = false"
       >
         <div
-          class="absolute inset-y-0 left-0 rounded-full bg-sky-600/30"
-          :style="{ width: `${knobLeft}px` }"
+          class="absolute inset-y-0 rounded-full bg-sky-600/30"
+          :style="openFillStyle"
         />
         <div
           class="absolute inset-y-0 flex items-center justify-center"
@@ -145,7 +164,10 @@ onBeforeUnmount(() => {
           />
         </div>
       </div>
-      <span class="font-mono text-[10px] uppercase tracking-wider text-zinc-400">R</span>
+      <span
+        class="font-mono text-[10px] uppercase tracking-wider"
+        :class="reversed ? 'text-zinc-500' : 'text-sky-400'"
+      >R</span>
     </div>
   </div>
 </template>

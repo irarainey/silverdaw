@@ -452,7 +452,8 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
 
 bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdentifier,
                                                  double directedValue,
-                                                 double displayValue)
+                                                 double displayValue,
+                                                 bool reverseCrossfader)
 {
     std::lock_guard<std::mutex> lock(sessionMutex);
     if (!session || !scratchSource.isActive()
@@ -466,6 +467,10 @@ bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdent
         session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
     if (*session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier)
         return false;
+    // Keep the display-only direction mirror in step with the applied routing so
+    // the UI colours the bar by the active direction, not the (gain-entangled)
+    // midiCrossfaderReversed flag.
+    session->crossfaderDisplayReversed = reverseCrossfader;
     session->crossfader = juce::jlimit(0.0, 1.0, directedValue);
     session->crossfaderDisplay = displayValue >= 0.0
         ? juce::jlimit(0.0, 1.0, displayValue)
@@ -492,6 +497,7 @@ bool ScratchSessionController::setMidiCrossfaderDirection(
         return false;
     }
     session->midiCrossfaderReversed = reverseCrossfader;
+    session->crossfaderDisplayReversed = reverseCrossfader;
     session->crossfader = 1.0 - session->crossfader;
     updateGain();
     return true;
@@ -507,6 +513,7 @@ void ScratchSessionController::setSelectedMidiDeck(
     session->crossfaderDeck = deck;
     session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
     session->midiCrossfaderReversed = reverseCrossfader;
+    session->crossfaderDisplayReversed = reverseCrossfader;
     if (!session->crossfaderHasBeenAdjusted)
     {
         const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
@@ -699,6 +706,7 @@ ScratchSessionController::getSnapshot() const
     result.error = session->error;
     result.preparationProgress = session->preparationProgress;
     result.crossfader = session->crossfaderDisplay;
+    result.crossfaderReversed = session->crossfaderDisplayReversed;
     result.selectedDeck = session->selectedDeck;
     result.ownerDeck = session->ownerDeck;
     result.ownerDeviceIdentifier = session->ownerDeviceIdentifier;

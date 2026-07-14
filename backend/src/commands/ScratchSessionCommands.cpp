@@ -53,6 +53,7 @@ void broadcastScratchSessionState(AudioEngine& engine, BridgeServer& bridge)
     object->setProperty("platterTurns", state->platterTurns);
     object->setProperty("playbackRate", state->playbackRate);
     object->setProperty("crossfader", state->crossfader);
+    object->setProperty("crossfaderReversed", state->crossfaderReversed);
     object->setProperty(
         "ownerDeviceIdentifier",
         state->ownerDeviceIdentifier

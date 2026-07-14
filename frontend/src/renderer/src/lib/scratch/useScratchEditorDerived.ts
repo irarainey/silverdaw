@@ -18,6 +18,7 @@ export interface ScratchEditorDerivedState {
   positionMs: ComputedRef<number>
   platterTurns: ComputedRef<number>
   crossfaderValue: ComputedRef<number>
+  crossfaderReversed: ComputedRef<boolean>
   isTouched: ComputedRef<boolean>
   clipName: ComputedRef<string>
   statusMessage: ComputedRef<string | null>
@@ -98,6 +99,9 @@ export function useScratchEditorDerived(
   const positionMs = computed(() => (session.state.value?.positionUs ?? 0) / 1000)
   const platterTurns = computed(() => session.state.value?.platterTurns ?? 0)
   const crossfaderValue = computed(() => session.state.value?.crossfader ?? 0.5)
+  const crossfaderReversed = computed(
+    () => session.state.value?.crossfaderReversed ?? false
+  )
   const isTouched = computed(() => session.state.value?.touched ?? false)
   const clipName = computed(() => {
     const c = clip.value
@@ -129,7 +133,7 @@ export function useScratchEditorDerived(
   return {
     clip, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
     clipInMs, clipReversed, sourceBpm, beatAnchorSec, waveformDurationMs,
-    positionMs, platterTurns, crossfaderValue, isTouched, clipName,
+    positionMs, platterTurns, crossfaderValue, crossfaderReversed, isTouched, clipName,
     statusMessage, isError, isRecording, isArmed, recordingStatus, canRecord, hasPattern,
     deckLabel
   }

@@ -304,7 +304,8 @@ class AudioEngine
                                 double deltaTurns,
                                 double timestampMs);
     bool scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
-                                  double directedValue, double displayValue = -1.0);
+                                  double directedValue, double displayValue = -1.0,
+                                  bool reverseCrossfader = false);
     bool setScratchMidiCrossfaderDirection(const juce::String& deviceIdentifier,
                                            bool reverseCrossfader);
     bool hasActiveScratchSession() const;

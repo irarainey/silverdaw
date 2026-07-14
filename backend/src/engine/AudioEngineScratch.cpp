@@ -85,10 +85,11 @@ bool AudioEngine::scratchMidiMovePlatter(const juce::String& deviceIdentifier,
 
 bool AudioEngine::scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
                                            double directedValue,
-                                           double displayValue)
+                                           double displayValue,
+                                           bool reverseCrossfader)
 {
     return scratchController.midiSetCrossfader(
-        deviceIdentifier, directedValue, displayValue);
+        deviceIdentifier, directedValue, displayValue, reverseCrossfader);
 }
 
 bool AudioEngine::setScratchMidiCrossfaderDirection(

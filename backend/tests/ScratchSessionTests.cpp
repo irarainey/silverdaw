@@ -153,12 +153,18 @@ void testScratchSessionLifecycleAndOwnership()
             "cue-selected deck should publish before the platter is touched");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
                 "untouched crossfader should assume deck 2's open edge");
+    require(!engine.getScratchSessionSnapshot()->crossfaderReversed,
+            "left-to-right direction should report an un-reversed fader");
     require(engine.setScratchMidiCrossfaderDirection("device-1", true),
             "direction change should remap the selected deck edge");
-    requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.0, 1.0e-12,
-                "reversed direction should mirror the visible crossfader");
+    requireNear(engine.getScratchSessionSnapshot()->crossfader, 1.0, 1.0e-12,
+                "reversed direction should recolour without moving the knob");
+    require(engine.getScratchSessionSnapshot()->crossfaderReversed,
+            "right-to-left direction should report a reversed fader");
     require(engine.setScratchMidiCrossfaderDirection("device-1", false),
             "restoring direction should remap the selected deck edge");
+    require(!engine.getScratchSessionSnapshot()->crossfaderReversed,
+            "restored direction should report an un-reversed fader again");
 
     scratch::SessionControlPayload touch;
     touch.sessionId = firstId;
@@ -889,6 +895,8 @@ void testScratchCrossfaderDirectionInversion()
     router.routeImmediate("dev-dir", routedState, 0, routedEvent, nullptr);
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.8, 1.0e-12,
                 "routed MIDI should publish the raw physical display position");
+    require(engine.getScratchSessionSnapshot()->crossfaderReversed,
+            "routed reversed crossfader move should report a reversed display");
 
     engine.closeScratchSession(sessionId);
 }

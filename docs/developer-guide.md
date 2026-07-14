@@ -565,7 +565,8 @@ Backend → renderer:
 
 - `SCRATCH_SESSION_STATE` is the throttled (~15 Hz), display-only session
   snapshot — `status`, `preparationProgress`, `positionUs` / `durationUs`,
-  `platterTurns`, `playbackRate`, `crossfader`, deck ownership, `armed`, and the
+  `platterTurns`, `playbackRate`, `crossfader`, `crossfaderReversed`, deck
+  ownership, `armed`, and the
   backing/monitor fields (`backingStatus`, `backingDurationUs`, `backingGain`,
   `scratchMonitorGain`). It never drives audio timing.
 - `SCRATCH_PATTERN_RECORDED { sessionId, pattern }` delivers the completed,
@@ -2062,7 +2063,14 @@ keyframes (not audio), starting from the session start against a local clock, an
 still spins the scratch over the backing.
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
-deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). When the
+deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The
+on-screen fader **bar** is coloured by position and the per-device MIDI crossfader
+**direction** preference only — deck ownership and platter touch never change it.
+The backend publishes a display-only `crossfaderReversed` flag (`true` =
+`rightToLeft`); `leftToRight` fills blue from the left as the knob moves right
+(blue at the right extreme, black at the left), and `rightToLeft` mirrors it (blue
+at the left extreme, black at the right). The `L`/`R` label on the blue extreme is
+accented, and changing direction recolours only — the knob never moves. When the
 fader is focused, `←`/`→` step it (0.02, or 0.1 with `Shift`) and `Home`/`End`
 jump to the extremes. A momentary **keyboard cut** works globally within the
 editor: holding the configured key closes the fader (deck silent) and releasing

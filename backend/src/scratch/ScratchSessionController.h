@@ -37,6 +37,10 @@ class ScratchSessionController
         double platterTurns = 0.0;
         double playbackRate = 0.0;
         double crossfader = 0.0;
+        // Display-only: mirrors the MIDI crossfader direction preference for the
+        // session (true = right-to-left). Lets the UI colour the fader bar by
+        // position and direction alone — deck ownership never affects it.
+        bool crossfaderReversed = false;
         std::optional<DeckSide> selectedDeck;
         std::optional<DeckSide> ownerDeck;
         std::optional<juce::String> ownerDeviceIdentifier;
@@ -81,7 +85,7 @@ class ScratchSessionController
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);
     bool midiSetCrossfader(const juce::String& deviceIdentifier, double directedValue,
-                           double displayValue = -1.0);
+                           double displayValue = -1.0, bool reverseCrossfader = false);
     bool setMidiCrossfaderDirection(const juce::String& deviceIdentifier,
                                     bool reverseCrossfader);
     void setSelectedMidiDeck(const juce::String& deviceIdentifier, DeckSide deck,
@@ -115,6 +119,11 @@ class ScratchSessionController
         double crossfaderDisplay = 0.0;
         double lastPlatterMoveMs = 0.0;
         bool midiCrossfaderReversed = false;
+        // Display-only mirror of the crossfader direction preference (true =
+        // right-to-left). Kept separate from midiCrossfaderReversed, which is
+        // entangled with gain, so the UI can colour the bar by direction without
+        // affecting audio.
+        bool crossfaderDisplayReversed = false;
         // When armed, the first eligible platter gesture atomically claims the
         // deck and begins recording, so a performer never presses a button with
         // both hands on the gear.

@@ -668,3 +668,44 @@ transport, not this panel, owns playback (Amendment 4).
 - No way remains to return a session to *no backing* from the UI; this is
   acceptable because the session itself is transient and re-preparing covers the
   swap case. The bridge clear path is retained for programmatic teardown.
+
+## Amendment 7 — Crossfader bar colour follows position and direction
+
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+The on-screen crossfader accented a fixed left→knob fill, so it always read the
+same way regardless of the per-device MIDI **crossfader direction** preference
+(`leftToRight` / `rightToLeft`). It also briefly tied the colour to the active
+deck, which made the bar change when the platter was touched — an unwanted side
+effect, since touching a platter must never alter the fader's appearance.
+
+### Decision
+
+- **The bar colour is a function of fader position and direction only.** The
+  snapshot carries a display-only `crossfaderReversed` boolean that mirrors the
+  session's MIDI crossfader direction (`true` = `rightToLeft`). Deck ownership
+  never affects it.
+  - **`leftToRight`:** blue fills from the left as the knob moves right — blue at
+    the fully-right extreme, black at the fully-left extreme.
+  - **`rightToLeft`:** mirrored — blue fills from the right as the knob moves
+    left, so blue at the fully-left extreme, black at the fully-right extreme.
+  - The `L`/`R` label on the blue extreme is accented.
+- **Recolour only — the knob never moves.** Changing direction never rewrites
+  `crossfaderDisplay`; only the colouring follows the preference.
+
+### Why
+
+Matching a physical crossfader's LED bar (position × wiring direction) keeps the
+on-screen fader a faithful mirror of the controller. Deriving the colour purely
+from position and direction — never from deck ownership or platter touch —
+guarantees the appearance is stable while performing.
+
+### Consequences
+
+- Touching a platter, claiming a deck, or recording never changes the bar colour
+  or the knob position.
+- Older payloads without `crossfaderReversed` default to `leftToRight`, preserving
+  the prior appearance.

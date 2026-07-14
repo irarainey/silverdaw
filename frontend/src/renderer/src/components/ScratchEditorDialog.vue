@@ -529,6 +529,7 @@ function onScratchGain(event: Event): void {
               </div>
               <ScratchCrossfader
                 :value="derived.crossfaderValue.value"
+                :reversed="derived.crossfaderReversed.value"
                 :disabled="!session.canControl.value"
                 @change="onCrossfaderChange"
               />

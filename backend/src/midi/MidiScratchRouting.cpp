@@ -70,7 +70,7 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
     {
         const auto directedValue = state.reverseCrossfader ? 1.0 - event.value : event.value;
         applied = scratchEngine->scratchMidiSetCrossfader(
-            identifier, directedValue, event.value);
+            identifier, directedValue, event.value, state.reverseCrossfader);
         // High-resolution faders can emit hundreds of values per second. The
         // audio target follows each one; the 30 Hz state emitter updates the UI.
         broadcastImmediately = false;
