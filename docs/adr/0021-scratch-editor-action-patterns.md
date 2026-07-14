@@ -405,3 +405,122 @@ doubling the dry source into exported audio.
   non-destructive output.
 - **Send backing audio over the text bridge.** Violates the text-only bridge;
   bulk audio belongs on the disk/cache boundary.
+
+## Amendment 2 — Backing window durations and monitor trims
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Two things changed as the backing monitor (Amendment 1) was used in practice.
+First, a 30-second window proved too short to phrase a scratch against a musical
+bed, and the three fixed lengths did not reach far enough for a longer take.
+Second, a single fixed monitor level for the backing bed made it hard to balance
+the scratch deck against the accompaniment while auditioning — the performer
+could not make the bed quieter to hear the scratch, or lower a hot scratch source
+under the bed. This amendment revises the fixed durations and adds two
+**monitor-only** trims. It changes no real-time, non-destructive, persistence, or
+crossfader guarantee.
+
+### Decision
+
+- **Backing window durations are now 60, 90, or 120 seconds (default 60),**
+  superseding the *30, 60, or 90 seconds (default 30)* set in Amendment 1.
+  Everything else about the window — the start anchor (arrangement start or
+  current playhead), the window bounding the session's forward time, and the
+  no-wrap boundary-silence rule — is unchanged. Persisted patterns carry no
+  window, so this default change cannot affect any saved pattern.
+- **Two monitor-only gain trims are added, each normalised `0..1` with a neutral
+  default of `1.0` (100%):**
+  - a **backing monitor gain** applied to the pre-rendered backing bed, and
+  - a **scratch monitor gain** applied to the scratch deck's audition output
+    *after* the `linear-v1` crossfader gain (the effective audition gain is
+    `crossfaderSideGain × scratchMonitorGain`).
+- **Both trims are audition-only and are never captured or baked.** They are not
+  written into the recorded pattern, carry no provenance, and do not affect the
+  canonical clip render, mixdown, or sample-export chain. They exist solely so
+  the performer can balance what they *hear* while recording. This preserves the
+  non-destructive and controller-independent guarantees: the same stored pattern
+  and prepared source still replay identically offline regardless of the trims
+  used while recording. The recorded crossfader keyframes remain the scratch
+  deck's effective post-catch-up fader value only.
+- **Bridge and state.** The trims are set through the existing
+  `SCRATCH_SESSION_CONTROL` command (`backingGain` / `scratchGain` actions, each
+  a `0..1` value) and echoed back display-only in `SCRATCH_SESSION_STATE`
+  (`backingGain` / `scratchMonitorGain`). Both remain non-authoritative for audio
+  timing, consistent with the rest of the session state.
+
+### Why
+
+Longer windows give room to phrase a take; adjustable monitor levels let the
+performer judge the balance between the scratch and its bed while recording.
+Keeping the trims out of the pattern and the render chain preserves the
+deterministic, non-destructive replay model the original decision and Amendment 1
+depend on — a monitor mix must never leak into committed output.
+
+### Consequences
+
+- The backing duration choice is 60/90/120 (default 60); UI, protocol validation,
+  and the prepared-window fingerprint all use this set.
+- The scratch session gains two transient monitor-gain values alongside the
+  existing transient backing state; neither is persisted or rendered.
+
+### Rejected alternatives
+
+- **Record the monitor trims into the pattern.** This would make replay depend on
+  the audition mix and could double or attenuate the source in exported audio,
+  breaking non-destructive output.
+- **Route the trims through the crossfader curve.** The crossfader stays a
+  single deterministic `linear-v1` law on the scratch deck; a monitor balance is
+  a separate concern and must not perturb recorded fader keyframes.
+
+## Amendment 3 — Keyboard crossfader cut and library-item authoring
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Two capabilities were added while integrating the editor. First, scratching by
+hand needs a fast momentary "cut" without reaching for a mouse or a physical
+mixer, so a keyboard-driven crossfader cut was added. Second, the original
+decision framed the editor around a selected **timeline clip**; in use, authoring
+a scratch directly from a **library item** (including a previously saved scratch
+clip) is just as useful, so the open path was widened.
+
+### Decision
+
+- **A momentary keyboard crossfader cut is available inside the editor.** Holding
+  a single configurable key closes the crossfader (scratch deck silent);
+  releasing it reopens it. The resting state is open, so nothing is sent until the
+  key is first pressed, and blur/close force the fader open so a held key can
+  never leave the deck stuck silent. The key is chosen in **Preferences ▸
+  Effects ▸ Scratch crossfader cut** — **Z** (right-handed, default) or **M**
+  (left-handed). (Shift was rejected because holding it triggers Windows Sticky
+  Keys.) The cut writes the same `0..1` crossfader value as any other fader input,
+  so while recording it is captured into the pattern exactly like a pointer or
+  MIDI fader move — it is an *input method*, not a new recorded field.
+- **The editor opens from a timeline clip or from a library item.** A single
+  reused editor dialog is opened either from a timeline clip's context menu or
+  from a library item's context menu (including a saved scratch **clip** item).
+  When opened from a saved clip, the waveform and prepared window resolve through
+  the clip's source library item and its `derivedFrom` window, so a saved clip
+  scratches over its own cropped region rather than the head of the source.
+
+### Why
+
+A one-hand keyboard cut matches how a DJ chops the fader while the other hand
+works the platter, and choosing the side suits handedness. Widening the open path
+lets a user author or re-author a scratch straight from the library without first
+placing the source on the timeline, while the single shared dialog instance keeps
+exactly one live scratch session.
+
+### Consequences
+
+- Scratch input preferences gain one persisted field, `crossfaderCutKey`
+  (`KeyZ` default / `KeyM`); an unrecognised persisted value falls back to the
+  default, so older or corrupt prefs always open.
+- The open contract accepts either a `clipId` or a `libraryItemId` (exactly one);
+  saved-clip targets resolve their source window for preparation and waveform
+  display.

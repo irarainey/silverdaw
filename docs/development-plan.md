@@ -1593,8 +1593,9 @@ no single feature is committed as "next". Candidates, strongest first:
    gain-law recipes (equal-power Smooth blend + linear Fade out/in) are shipped;
    the remaining recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus"
    ducking need genuinely new per-clip FX automation tied to transition geometry.
-2. **Scratch authoring (§11.7)** — MIDI deck input shipped in 1.2.0; recording and
-   replaying authored scratch movements remains a candidate.
+2. **Scratch authoring (§11.7)** — MIDI deck input shipped in 1.2.0; the Scratch
+   Editor for recording, editing, and replaying authored scratch movements is now
+   **implemented and in validation** (see §11.7), not yet cut into a release.
 
 **Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
 useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
@@ -2484,7 +2485,7 @@ sequencing into the phase plan is still to be decided.
   count-in and a record-enabled transport path; a finished take becomes a normal,
   non-destructive editable clip. Keep the surface deliberately minimal.
 
-### 11.7 MIDI & DJ control — *deck input shipped (1.2.0); scratch authoring remains*
+### 11.7 MIDI & DJ control — *deck input shipped (1.2.0); Scratch Editor implemented, in validation*
 
 - [x] **MIDI DJ deck input** (issue #29) — *shipped in 1.2.0.* Supported deck controllers can be
   enabled from Preferences and drive transport, timeline/marker navigation,
@@ -2492,13 +2493,25 @@ sequencing into the phase plan is still to be decided.
   validated JSON profiles. Unsupported MIDI devices remain visible but cannot
   be enabled. See the
   [supported controller reference](midi-controllers.md).
-- [ ] **Scratch authoring with on-screen decks** (issue #37) — a studio feature
-  for **creating scratches of an audio clip to use in a mix**, not for live
-  performance. Show an on-screen deck per track when a MIDI DJ deck is connected;
-  a dedicated scratch editor **records the scratch movements performed on the
-  deck** (or lets the user draw them by hand), replays them over the clip, and
-  saves the result as a reusable **scratch clip** that drops onto the timeline
-  like any other clip. Everything is authored, re-editable and non-destructive.
+- [ ] **Scratch authoring with on-screen decks** (issue #37) — *implemented and
+  in validation; not yet cut into a release.* A studio feature for **creating
+  scratches of an audio clip to use in a mix**, not for live performance. The
+  **Scratch Editor** (a single reused modal, opened from a timeline clip or a
+  library item) prepares a linear scratch source and drives an on-screen platter
+  (33⅓ RPM / 1.8 s revolution) plus a `linear-v1` crossfader with a momentary
+  keyboard cut (Z/M). It **records the platter and crossfader movements** as a
+  compact, editable action pattern (or lets the user draw/edit them by hand),
+  replays them non-destructively over the clip, and saves the result as a
+  reusable **scratch pattern** that can be applied to a clip or rendered to a new
+  library sample. An optional **backing accompaniment monitor** (a fixed
+  60/90/120 s bed of selected tracks, with monitor-only gain trims) lets the
+  performer scratch in musical context while recording. Everything is authored,
+  re-editable, and non-destructive. Design contract and decisions:
+  [ADR 0021](adr/0021-scratch-editor-action-patterns.md) (Amendments 1–3);
+  feature detail in the
+  [developer guide](developer-guide.md#scratch-editor). Remaining before release:
+  the reference-hardware listening/timing validation and speed-cap sign-off
+  called for by ADR 0021.
 
 ### 11.8 Sequence tracks & sequencing — *secondary focus, fills a gap*
 
