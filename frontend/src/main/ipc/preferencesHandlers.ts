@@ -259,14 +259,18 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
         key.length === 0 ||
         typeof candidate.scrubAudioEnabled !== 'boolean' ||
         (candidate.crossfaderDirection !== 'leftToRight' &&
-          candidate.crossfaderDirection !== 'rightToLeft')
+          candidate.crossfaderDirection !== 'rightToLeft') ||
+        (candidate.defaultDeck !== 'none' &&
+          candidate.defaultDeck !== 'deck1' &&
+          candidate.defaultDeck !== 'deck2')
       ) {
         return
       }
       const current = prefs.get().midiDevicePreferences[key]
       if (
         current?.scrubAudioEnabled === candidate.scrubAudioEnabled &&
-        current.crossfaderDirection === candidate.crossfaderDirection
+        current.crossfaderDirection === candidate.crossfaderDirection &&
+        current.defaultDeck === candidate.defaultDeck
       ) {
         return
       }
@@ -274,7 +278,8 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
         ...prefs.get().midiDevicePreferences,
         [key]: {
           scrubAudioEnabled: candidate.scrubAudioEnabled,
-          crossfaderDirection: candidate.crossfaderDirection
+          crossfaderDirection: candidate.crossfaderDirection,
+          defaultDeck: candidate.defaultDeck
         }
       }
       prefs.schedulePrefsSave()

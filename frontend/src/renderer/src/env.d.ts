@@ -120,6 +120,7 @@ declare global {
           {
             scrubAudioEnabled: boolean
             crossfaderDirection: 'leftToRight' | 'rightToLeft'
+            defaultDeck: 'none' | 'deck1' | 'deck2'
           }
         >
       >
@@ -128,6 +129,7 @@ declare global {
         preferences: {
           scrubAudioEnabled: boolean
           crossfaderDirection: 'leftToRight' | 'rightToLeft'
+          defaultDeck: 'none' | 'deck1' | 'deck2'
         }
       ): void
       // ── Autosave folder + manifest IPCs ───────────────────────────────

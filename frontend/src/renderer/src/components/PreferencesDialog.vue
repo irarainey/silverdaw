@@ -39,6 +39,7 @@ const {
   midiDevicePreferencesDraft,
   setMidiScrubAudio,
   setMidiCrossfaderDirection,
+  setMidiDefaultDeck,
   discardMidiInputChanges,
   loggingEnabled,
   devToolsEnabled,
@@ -274,6 +275,7 @@ function onMidiInputEnabled(identifier: string, enabled: boolean): void {
               :device-preferences-by-identifier="midiDevicePreferencesDraft"
               :set-scrub-audio="setMidiScrubAudio"
               :set-crossfader-direction="setMidiCrossfaderDirection"
+              :set-default-deck="setMidiDefaultDeck"
             />
             <PreferencesStemsTab
               v-else-if="activeTab === 'stems'"

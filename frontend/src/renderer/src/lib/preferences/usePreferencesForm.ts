@@ -16,6 +16,7 @@ import type {
   BrakeCurveDto,
   BrakeDurationDto,
   MidiCrossfaderDirection,
+  MidiDefaultDeck,
   MidiDevicePreferences,
   ScratchCrossfaderCutKeyDto
 } from '@shared/types'
@@ -47,6 +48,7 @@ export interface PreferencesForm {
     identifier: string,
     direction: MidiCrossfaderDirection
   ) => void
+  setMidiDefaultDeck: (identifier: string, defaultDeck: MidiDefaultDeck) => void
   discardMidiInputChanges: () => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
@@ -206,7 +208,8 @@ export function usePreferencesForm(): PreferencesForm {
       const previous = effectiveMidiDevicePreferences(initial, identifier)
       if (
         next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
-        next.crossfaderDirection !== previous.crossfaderDirection
+        next.crossfaderDirection !== previous.crossfaderDirection ||
+        next.defaultDeck !== previous.defaultDeck
       ) {
         return true
       }
@@ -230,6 +233,14 @@ export function usePreferencesForm(): PreferencesForm {
     midiDevicePreferencesDraft.value = {
       ...midiDevicePreferencesDraft.value,
       [identifier]: { ...current, crossfaderDirection: direction }
+    }
+  }
+
+  function setMidiDefaultDeck(identifier: string, defaultDeck: MidiDefaultDeck): void {
+    const current = effectiveMidiDevicePreferences(midiDevicePreferencesDraft.value, identifier)
+    midiDevicePreferencesDraft.value = {
+      ...midiDevicePreferencesDraft.value,
+      [identifier]: { ...current, defaultDeck }
     }
   }
 
@@ -632,11 +643,13 @@ export function usePreferencesForm(): PreferencesForm {
         const previous = effectiveMidiDevicePreferences(initial, identifier)
         if (
           next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
-          next.crossfaderDirection !== previous.crossfaderDirection
+          next.crossfaderDirection !== previous.crossfaderDirection ||
+          next.defaultDeck !== previous.defaultDeck
         ) {
           window.silverdaw.setMidiDevicePreferences(identifier, {
             scrubAudioEnabled: next.scrubAudioEnabled,
-            crossfaderDirection: next.crossfaderDirection
+            crossfaderDirection: next.crossfaderDirection,
+            defaultDeck: next.defaultDeck
           })
         }
       }
@@ -711,6 +724,7 @@ export function usePreferencesForm(): PreferencesForm {
     midiDevicePreferencesDraft,
     setMidiScrubAudio,
     setMidiCrossfaderDirection,
+    setMidiDefaultDeck,
     discardMidiInputChanges,
     brakeDuration,
     brakeCurve,

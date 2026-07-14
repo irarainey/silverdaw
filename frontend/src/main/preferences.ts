@@ -436,7 +436,11 @@ export function sanitiseMidiDevicePreferences(
       crossfaderDirection:
         candidate.crossfaderDirection === 'rightToLeft'
           ? 'rightToLeft'
-          : DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection,
+      defaultDeck:
+        candidate.defaultDeck === 'deck1' || candidate.defaultDeck === 'deck2'
+          ? candidate.defaultDeck
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.defaultDeck
     }
   }
   return out

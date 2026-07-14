@@ -396,7 +396,8 @@ describe('MIDI controller actions', () => {
     midiDevices.applyDevicePreferences({
       'ddj-rb': {
         scrubAudioEnabled: true,
-        crossfaderDirection: 'leftToRight'
+        crossfaderDirection: 'leftToRight',
+        defaultDeck: 'none'
       }
     })
 

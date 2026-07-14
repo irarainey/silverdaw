@@ -108,24 +108,26 @@ describe('preferences IPC: setStems', () => {
     const setPreferences = handlers.get('prefs:setMidiDevicePreferences')
     setPreferences?.({}, 'ddj-rb', {
       scrubAudioEnabled: false,
-      crossfaderDirection: 'rightToLeft'
+      crossfaderDirection: 'rightToLeft',
+      defaultDeck: 'deck1'
     })
 
     expect(store.midiDevicePreferences['ddj-rb']).toEqual({
       scrubAudioEnabled: false,
-      crossfaderDirection: 'rightToLeft'
+      crossfaderDirection: 'rightToLeft',
+      defaultDeck: 'deck1'
     })
     expect(flush).toHaveBeenCalledTimes(1)
   })
 
   it('defaults corrupt MIDI device preference fields safely', () => {
     expect(sanitiseMidiDevicePreferences({
-      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft', defaultDeck: 'deck2' },
       partial: { scrubAudioEnabled: 'no' },
       wrong: 'enabled'
     })).toEqual({
-      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
-      partial: { scrubAudioEnabled: false, crossfaderDirection: 'leftToRight' }
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft', defaultDeck: 'deck2' },
+      partial: { scrubAudioEnabled: false, crossfaderDirection: 'leftToRight', defaultDeck: 'none' }
     })
   })
 })

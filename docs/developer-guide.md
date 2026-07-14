@@ -532,7 +532,9 @@ The MIDI control path uses seven domain envelopes:
   backend ignores identifiers whose device names do not match a supported
   profile.
 - `MIDI_DECK_SELECTION_SET` restores the enabled state of physical decks 1 and
-  2 for one input.
+  2 for one input. On startup a device with a saved (cue-set) selection restores
+  it; a device with none instead auto-selects per its **Default deck**
+  preference (see below).
 - `MIDI_DEVICES_LIST` reports every detected input with its identifier,
   connection/enabled state, recognised profile label, and latest activity.
 - `MIDI_MESSAGE` carries a rate-limited raw-message sample for the MIDI Monitor.
@@ -619,7 +621,12 @@ jog platter while playing pauses the backend without clearing renderer play
 intent. Movement while held sends short directional scrub grains through the
 audio output without advancing normal transport playback unless that device's
 saved scrub-audio preference is off. Per-device MIDI preferences are keyed by
-the Windows/JUCE identifier and also retain the selected crossfader direction.
+the Windows/JUCE identifier and retain the selected crossfader direction and a
+**Default deck** (`none` / `deck1` / `deck2`, default `none`). The Default deck
+sets which deck is auto-selected when the application starts, but only for a
+device that has no saved cue selection; once running, the headphone-Cue button
+changes the live selection without altering the preference, and that cue change
+persists and takes precedence on the next startup.
 The final platter release resumes playback, while an explicit pause cancels
 that resume. Browse controls switch between track selection, clip
 selection/range extension, and Shift-modified timeline zoom; clockwise zooms
