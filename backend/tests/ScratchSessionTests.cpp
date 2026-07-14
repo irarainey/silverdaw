@@ -200,12 +200,6 @@ void testScratchSessionLifecycleAndOwnership()
     require(engine.getScratchSessionSnapshot()->ownerDeviceIdentifier
                 == std::optional<juce::String>{"device-1"},
             "scratch state should publish the owning MIDI device");
-    require(engine.scratchMidiTogglePlay("device-1", scratch::DeckSide::deck1),
-            "MIDI play should recover from a missed platter release");
-    require(!engine.getScratchSessionSnapshot()->touched,
-            "MIDI play should clear stale platter touch state");
-    require(engine.getScratchSessionSnapshot()->status == "playing",
-            "MIDI play should start playback after clearing stale touch state");
     require(engine.scratchMidiSetCrossfader("device-1", 0.6),
             "first physical crossfader movement should apply immediately");
     requireNear(engine.getScratchSessionSnapshot()->crossfader, 0.6, 1.0e-12,

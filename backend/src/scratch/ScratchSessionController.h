@@ -80,7 +80,6 @@ class ScratchSessionController
     bool controlSession(const SessionControlPayload& control);
 
     // MIDI entry points — may be called from MIDI thread.
-    bool midiTogglePlay(const juce::String& deviceIdentifier, DeckSide deck);
     bool midiSetTouch(const juce::String& deviceIdentifier, DeckSide deck, bool touched);
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);

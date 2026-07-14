@@ -47,14 +47,10 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
         return;
     bool applied = false;
     bool broadcastImmediately = true;
-    if (event.action == MidiControllerAction::playPause
-        && event.kind == MidiControllerValueKind::button
-        && event.value > 0.5 && event.deck >= 1 && event.deck <= 2)
-    {
-        applied = scratchEngine->scratchMidiTogglePlay(
-            identifier, static_cast<scratch::DeckSide>(event.deck));
-    }
-    else if (event.action == MidiControllerAction::jogTouch
+    // The MIDI play/pause button is intentionally inert in the Scratch Editor.
+    // Backing/audition playback must only be driven by the on-screen transport,
+    // because a controller cannot know whether the backing bed is prepared.
+    if (event.action == MidiControllerAction::jogTouch
              && event.kind == MidiControllerValueKind::button
              && event.deck >= 1 && event.deck <= 2)
     {

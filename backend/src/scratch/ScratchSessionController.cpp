@@ -379,33 +379,6 @@ bool ScratchSessionController::beginArmedRecordingLocked()
 
 // ── MIDI entry points ─────────────────────────────────────────────────────────
 
-bool ScratchSessionController::midiTogglePlay(const juce::String& deviceIdentifier,
-                                              DeckSide deck)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive()
-        || !claimMidiDeck(deviceIdentifier, deck, false))
-        return false;
-    reconcileSourceEndLocked();
-    // A transport press is an explicit recovery point for a missed jog-touch
-    // release, which would otherwise leave motor playback silently suspended.
-    scratchSource.setTouched(false);
-    if (!scratchSource.snapshot().playing && scratchSource.isAtForwardBoundary())
-    {
-        scratchSource.seekUs(0);
-        backingSource.seekUs(0);
-    }
-    const auto shouldPlay = !scratchSource.snapshot().playing;
-    scratchSource.setPlaying(shouldPlay);
-    if (shouldPlay)
-        startBackingLocked();
-    else
-        stopBackingLocked();
-    if (session->status != "recording")
-        session->status = shouldPlay ? "playing" : "paused";
-    return true;
-}
-
 bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier,
                                             DeckSide deck, bool touched)
 {
