@@ -219,6 +219,11 @@ export const ScratchSessionControlPayloadSchema = z.discriminatedUnion('action',
     ...ScratchSessionControlBase,
     action: z.literal('scratchGain'),
     value: z.number().finite().min(0).max(1)
+  }),
+  z.object({
+    ...ScratchSessionControlBase,
+    action: z.literal('backingLoop'),
+    enabled: z.boolean()
   })
 ])
 export type ScratchSessionControlPayload = z.infer<typeof ScratchSessionControlPayloadSchema>
@@ -242,6 +247,8 @@ export const ScratchSessionStatePayloadSchema = z.object({
   armed: z.boolean().optional(),
   backingStatus: ScratchBackingStatusSchema.optional(),
   backingDurationUs: TimeUsSchema.optional(),
+  backingPositionUs: TimeUsSchema.optional(),
+  backingLoop: z.boolean().optional(),
   backingGain: z.number().finite().min(0).max(1).optional(),
   scratchMonitorGain: z.number().finite().min(0).max(1).optional(),
   backingError: z.string().min(1).optional(),

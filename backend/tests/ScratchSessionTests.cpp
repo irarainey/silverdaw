@@ -996,6 +996,112 @@ void testScratchDisarmClearsArmedState()
     require(!controller.getSnapshot()->armed, "disarm should clear the armed flag");
 }
 
+void testScratchMidiTransportControlsBackingOnly()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-midi-transport");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare");
+
+    // Without a prepared backing the deck's Play and Cue buttons are inert and
+    // never spin the scratch clip.
+    require(!controller.midiTogglePlay(),
+            "MIDI play should be rejected when no backing is prepared");
+    require(!controller.midiCueToStart(),
+            "MIDI cue should be rejected when no backing is prepared");
+    require(!source.snapshot().playing, "inert MIDI transport must not spin the scratch clip");
+    require(controller.getSnapshot()->status == "ready",
+            "rejected MIDI transport should leave the session ready");
+
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.5), sampleRate);
+
+    // Play toggles the backing bed only.
+    require(controller.midiTogglePlay(), "MIDI play should start the backing bed once ready");
+    auto snap = controller.getSnapshot();
+    require(snap && snap->status == "playing", "status should be playing after MIDI play");
+    require(backing.isPlaying(), "backing bed should run after MIDI play");
+    require(!source.snapshot().playing, "MIDI play must not spin the scratch clip");
+
+    // Advance the bed, then Cue returns it to the start without stopping playback.
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.1), 128);
+    require(backing.positionUs() > 0, "backing position should advance while playing");
+    require(controller.midiCueToStart(), "MIDI cue should return the backing to the start");
+    require(backing.positionUs() == 0, "MIDI cue should seek the backing to position zero");
+    snap = controller.getSnapshot();
+    require(snap && snap->backingPositionUs == 0, "snapshot should publish the cued position");
+
+    // Play again toggles to paused.
+    require(controller.midiTogglePlay(), "MIDI play should toggle to paused");
+    snap = controller.getSnapshot();
+    require(snap && snap->status == "paused", "status should be paused after second MIDI play");
+    require(!backing.isPlaying(), "backing bed should stop after toggling to paused");
+}
+
+void testScratchBackingLoopRestartsAtEnd()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-backing-loop");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare for loop testing");
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.05), sampleRate);
+
+    // Loop is off by default; the snapshot must reflect that.
+    require(controller.getSnapshot()->backingLoop == false,
+            "backing loop should default to off");
+
+    scratch::SessionControlPayload loop;
+    loop.sessionId = sessionId;
+    loop.action = scratch::ControlAction::backingLoop;
+    loop.loop = true;
+    require(controller.controlSession(loop), "enabling backing loop should be accepted");
+    require(controller.getSnapshot()->backingLoop == true,
+            "snapshot should publish the enabled loop flag");
+
+    scratch::SessionControlPayload play;
+    play.sessionId = sessionId;
+    play.action = scratch::ControlAction::play;
+    require(controller.controlSession(play), "backing transport should start playback");
+
+    // Drive the bed past its end; with loop on the session must keep playing and
+    // the bed must restart from the head rather than stopping.
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
+    require(!controller.reconcileSourceEnd(),
+            "loop reconciliation should not report a terminating transition");
+    const auto looped = controller.getSnapshot();
+    require(looped && looped->status == "playing",
+            "looped backing end should keep the session playing");
+    require(backing.isPlaying(), "looped backing should keep running after the end");
+    require(!backing.isAtForwardBoundary(),
+            "looped backing should restart away from the end boundary");
+
+    // Disabling loop restores the terminating behaviour at the next end.
+    loop.loop = false;
+    require(controller.controlSession(loop), "disabling backing loop should be accepted");
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
+    require(controller.reconcileSourceEnd(),
+            "with loop off the backing end should terminate the session");
+    const auto stopped = controller.getSnapshot();
+    require(stopped && stopped->status == "ready",
+            "with loop off the backing end should return the session to ready");
+    require(!backing.isPlaying(), "with loop off the backing end should stop playback");
+}
+
 void addScratchSessionTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"scratch session audio transport and hold", testScratchAudioSourceTransport});
@@ -1019,6 +1125,8 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch arming starts recording on pointer touch", testScratchArmingStartsRecordingOnPointerTouch});
     tests.push_back({"scratch arming starts recording on MIDI movement", testScratchArmingStartsRecordingOnMidiMovement});
     tests.push_back({"scratch disarm clears armed state", testScratchDisarmClearsArmedState});
+    tests.push_back({"scratch MIDI transport controls backing only", testScratchMidiTransportControlsBackingOnly});
+    tests.push_back({"scratch backing loop restarts the bed at its end", testScratchBackingLoopRestartsAtEnd});
 }
 
 } // namespace silverdaw::tests

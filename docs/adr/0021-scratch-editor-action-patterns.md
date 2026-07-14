@@ -795,3 +795,166 @@ ownership rather than dropping the direction behaviour outright.
   device owns the session; keyboard/pointer operation colours by open/closed.
 - The backend still publishes `crossfaderReversed`; the frontend derives the
   effective bar `reversed` flag from ownership plus that preference.
+
+## Amendment 10 — MIDI Play/Cue drive the backing bed; backing timing readout
+
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 4 re-scoped the **on-screen** transport to the backing bed but left the
+physical MIDI deck's Play button spinning the scratch source. A later change
+unwired that button entirely (inert) because the deck can never know whether a
+backing bed has been prepared, so an unguarded Play risked spinning the flat clip
+with no accompaniment. That left the hardware deck with no transport role while
+the editor is open, and the backing panel had no live position/duration display
+after Amendment 4 removed the old readout.
+
+### Decision
+
+- **The MIDI deck Play button toggles the prepared backing bed only, and is
+  ready-gated.** While a scratch session is active it starts/stops the backing
+  bed; it never spins the scratch source. If no backing is prepared (or a take is
+  recording) the press is rejected — the button does nothing until a bed exists.
+  This mirrors the on-screen transport's backing-only, ready-gated contract from
+  Amendment 4, now extended to the hardware Play button.
+- **The physical Cue button returns the backing bed to its start.** It seeks the
+  backing to position 0 **without changing the play state** — a running bed keeps
+  playing from the start; a paused bed holds at the start. (Standard pause-on-cue
+  was considered and rejected for this tool; see below.)
+- **Play/Cue are handled in the backend MIDI router, gated on session
+  existence.** `MidiScratchRouter::routeImmediate` routes `playPause` →
+  `scratchMidiTogglePlay()` and the physical Cue (`previousMarker`) →
+  `scratchMidiCueToStart()`. Both engine methods return `false` when no scratch
+  session is active, so with the editor **closed** the event falls through to the
+  frontend's timeline handling unchanged; with the editor **open** the frontend is
+  interaction-blocked, so the also-broadcast event is ignored (no double action).
+- **A backing timing readout returns.** The session state publishes a new
+  `backingPositionUs` snapshot field alongside `backingDurationUs`; the backing
+  panel shows a `m:ss / m:ss` position/duration readout under the transport,
+  **always rendered** (dimmed until a bed is ready) so it never reflows the panel.
+  The `PlayheadEmitter`'s existing `SCRATCH_SESSION_STATE` broadcast drives it
+  live.
+
+### Why
+
+The hardware deck's most natural control while performing a scratch is
+start/stop of the accompaniment, so wiring Play to the backing bed restores a
+useful transport without reintroducing the "spin a flat clip" hazard that made it
+inert. Ready-gating keeps the earlier safety property: the deck can act blindly
+because the backend refuses to play an unprepared bed. Handling Play/Cue in the
+router (keyed on session existence) reuses the same open ⟺ frontend-blocked
+invariant the rest of the scratch MIDI path relies on, avoiding a second
+dispatch path. Cue seeks without pausing because the backing is a bed the
+performer plays over, not a track being beat-matched, so a running bed should
+loop back and keep going rather than stop.
+
+### Consequences
+
+- The scratch source's nominal-speed playback remains reachable only through
+  **recording**; neither the on-screen transport nor the MIDI Play button ever
+  spins the flat clip.
+- New bridge field `backingPositionUs` (optional) on the scratch session state;
+  older payloads without it degrade to a `0:00` position.
+- The frontend timeline MIDI handlers for `playPause`/`previousMarker` are
+  unchanged — they still drive the timeline when no scratch session is active and
+  are suppressed by the interaction block when the editor is open.
+
+### Rejected alternatives
+
+- **Pause-on-cue (standard DJ behaviour).** Rejected for this tool: the backing
+  is an accompaniment bed, not a cue-juggled track, so returning to the start and
+  continuing to play matches how the bed is auditioned. Can be revisited if the
+  workflow gains true cue-point juggling.
+
+## Amendment 11 — Default backing length 120 s; muted tracks excluded from the bed
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 5 set the default backing length to `60` s. In practice most beds want a
+longer run before looping back, so the first Prepare usually meant manually
+bumping to `120`. Separately, the track picker (Amendment 1) let any track join
+the bed, including tracks **muted on the timeline** (explicitly muted, or silenced
+by a solo elsewhere) — so the audition could contain audio the arrangement is not
+actually playing, misrepresenting the mix.
+
+### Decision
+
+- **The default backing length is now `120` s** (still one of `60` / `120` /
+  `Full`), superseding the `60` s default from Amendment 5. Only the renderer-side
+  default selection changes; the protocol's accepted values are unchanged.
+- **Tracks muted on the timeline cannot join the bed.** A track counts as muted
+  when it is explicitly muted **or** suppressed by a solo on another track
+  (`track.muted || (anySoloed && !track.soloed)` — the same effective-audibility
+  test the mixer uses). Such tracks are always shown **unchecked and disabled** in
+  the picker and are filtered out of the prepared selection, so the bed mirrors
+  what is audible on the timeline. Muting is non-destructive to the stored
+  selection: unmuting restores a track's prior checked state.
+
+### Why
+
+Excluding muted tracks makes the bed a faithful preview of the arrangement's
+audible mix, which is the whole point of scratching *against* it — a muted stem
+should not reappear under the platter. Deriving "muted" from the shared
+effective-audibility test keeps the picker consistent with the timeline and the
+track headers rather than inventing a second notion of silence. The longer default
+length reflects the common case and avoids a routine extra click.
+
+### Consequences
+
+- `useScratchBacking` exposes a per-track `muted` flag and filters the selection
+  to audible tracks for both `selectedCount`/`canPrepare` and the `Prepare`
+  payload; the panel disables and dims muted rows.
+- Existing prepared beds are unaffected; the change only governs which tracks a
+  *new* Prepare includes.
+
+## Amendment 12 — Backing loop option
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+The backing bed stopped when it reached the end of its window, so a performer
+practising or recording a longer scratch had to re-trigger Play each time the
+accompaniment ran out. For a bed the whole point is to keep a groove running
+underneath the platter, so a one-shot end is often the wrong default for
+auditioning.
+
+### Decision
+
+- **A per-session `Loop` toggle (off by default) makes the backing bed
+  auto-restart at its end during plain playback.** When on, the end-of-window
+  reconciliation seeks the bed back to its head and keeps it playing instead of
+  returning the session to *ready*; when off, the prior one-shot behaviour stands.
+- **Loop applies to plain playback only, never to recording.** A take is still
+  bounded by the backing window, so the window end terminates a recording exactly
+  as before regardless of the loop flag — looping would otherwise make a take
+  unbounded.
+- **The flag is authoritative on the backend** (`backingLoop` on the session,
+  published in `SCRATCH_SESSION_STATE`; set via the `backingLoop { enabled }`
+  control action). Because it lives in the end-of-window reconciliation it governs
+  both the on-screen/keyboard transport and the physical MIDI Play button
+  uniformly. It is transport-scoped session state, not a persisted preference, so
+  it resets to off with each session.
+
+### Why
+
+Restarting the bed at its end matches how an accompaniment is used while
+scratching — a continuous groove — and keeping it off by default preserves the
+existing one-shot behaviour for anyone who wants a single pass. Handling it in the
+reconciliation (rather than per input path) reuses the single place the bed's end
+is already detected, so every transport surface behaves the same with no extra
+dispatch. Excluding recording keeps takes bounded and deterministic.
+
+### Consequences
+
+- New `backingLoop` control action and `backingLoop` state field (optional; older
+  payloads default to off). `useScratchBacking` exposes `loop` plus
+  `setLoop`/`toggleLoop`, and the backing panel gains an On/Off toggle.
+- A looping bed never ends the session on its own, so a performer must Pause (or
+  toggle loop off and let it run out) to stop it.

@@ -50,6 +50,9 @@ class ScratchSessionController
         juce::String backingStatus{"none"};
         juce::String backingError;
         std::int64_t backingDurationUs = 0;
+        std::int64_t backingPositionUs = 0;
+        // Whether the backing bed auto-restarts on reaching its end.
+        bool backingLoop = false;
         // Monitor-only trims (0..1); never baked into recorded patterns.
         double backingGain = 1.0;
         double scratchMonitorGain = 1.0;
@@ -80,6 +83,11 @@ class ScratchSessionController
     bool controlSession(const SessionControlPayload& control);
 
     // MIDI entry points — may be called from MIDI thread.
+    // Backing-only transport driven by the deck's physical Play and Cue buttons.
+    // The scratch clip is never MIDI-driven; both no-op unless a backing bed is
+    // prepared (ready). Return true only when they act (so the caller broadcasts).
+    bool midiTogglePlay();
+    bool midiCueToStart();
     bool midiSetTouch(const juce::String& deviceIdentifier, DeckSide deck, bool touched);
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);
@@ -135,6 +143,9 @@ class ScratchSessionController
         juce::String backingStatus{"none"};
         juce::String backingError;
         std::int64_t backingDurationUs = 0;
+        // When true, plain backing playback restarts at the bed's end instead of
+        // stopping. Off by default; ignored while recording (the window bounds the take).
+        bool backingLoop = false;
         // Monitor-only trims (0..1); never baked into recorded patterns.
         double backingGain = 1.0;
         double scratchMonitorGain = 0.75;

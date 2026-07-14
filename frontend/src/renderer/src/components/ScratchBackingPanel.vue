@@ -48,6 +48,18 @@ const configDisabled = computed(() => props.disabled || props.isPlaying)
 
 const monitorPct = computed(() => `${Math.round(props.backing.monitorGain.value * 100)}%`)
 
+function formatClock(totalSeconds: number): string {
+  const safe = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0
+  const minutes = Math.floor(safe / 60)
+  const seconds = Math.floor(safe % 60)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+// Live backing position / prepared length, shown only once a bed is ready.
+const timingLabel = computed(
+  () => `${formatClock(props.backing.positionSec.value)} / ${formatClock(props.backing.readyDurationSec.value)}`
+)
+
 function onMonitorGain(event: Event): void {
   props.backing.setMonitorGain((event.target as HTMLInputElement).valueAsNumber)
 }
@@ -105,14 +117,20 @@ onBeforeUnmount(() => {
       <span class="justify-self-start text-[10px] font-medium uppercase tracking-wider text-zinc-400">
         Backing deck
       </span>
-      <ScratchTransportBar
-        class="justify-self-center"
-        :is-playing="isPlaying"
-        :can-control="transportEnabled"
-        @skip-to-start="$emit('skip-to-start')"
-        @toggle-play="$emit('toggle-play')"
-        @skip-to-end="$emit('skip-to-end')"
-      />
+      <div class="flex flex-col items-center gap-0.5 justify-self-center">
+        <ScratchTransportBar
+          :is-playing="isPlaying"
+          :can-control="transportEnabled"
+          @skip-to-start="$emit('skip-to-start')"
+          @toggle-play="$emit('toggle-play')"
+          @skip-to-end="$emit('skip-to-end')"
+        />
+        <span
+          class="font-mono text-[10px] tabular-nums"
+          :class="backing.isReady.value ? 'text-zinc-400' : 'text-zinc-600'"
+          aria-label="Backing playback position"
+        >{{ timingLabel }}</span>
+      </div>
       <span
         class="justify-self-end font-mono text-[10px] tabular-nums"
         :class="statusClass"
@@ -156,12 +174,18 @@ onBeforeUnmount(() => {
           <label
             v-for="track in backing.tracks.value"
             :key="track.id"
-            class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-800"
+            class="flex items-center gap-2 rounded px-2 py-1 text-[11px]"
+            :class="track.muted
+              ? 'cursor-not-allowed text-zinc-600'
+              : 'cursor-pointer text-zinc-200 hover:bg-zinc-800'"
+            :title="track.muted ? 'Muted on the timeline' : undefined"
           >
             <input
               type="checkbox"
-              class="h-3.5 w-3.5 shrink-0 cursor-pointer accent-sky-500"
+              class="h-3.5 w-3.5 shrink-0 accent-sky-500 disabled:cursor-not-allowed"
+              :class="track.muted ? 'cursor-not-allowed' : 'cursor-pointer'"
               :checked="backing.isSelected(track.id)"
+              :disabled="track.muted"
               @change="backing.toggleTrack(track.id)"
             >
             <span class="min-w-0 flex-1 truncate">{{ track.name }}</span>
@@ -209,6 +233,23 @@ onBeforeUnmount(() => {
             {{ seconds === 0 ? 'Full' : `${seconds}s` }}
           </button>
         </div>
+      </div>
+
+      <!-- Loop: auto-restart the bed at its end (off by default) -->
+      <div class="flex items-center gap-1.5">
+        <span class="text-[11px] text-zinc-500">Loop</span>
+        <button
+          type="button"
+          class="inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          :class="backing.loop.value
+            ? 'border-sky-500 bg-sky-600/30 text-sky-200'
+            : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:bg-zinc-800'"
+          :aria-pressed="backing.loop.value"
+          :disabled="disabled"
+          @click="backing.toggleLoop()"
+        >
+          {{ backing.loop.value ? 'On' : 'Off' }}
+        </button>
       </div>
 
       <!-- Monitor level (audition-only trim; never baked into the pattern) -->

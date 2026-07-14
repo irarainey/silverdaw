@@ -4,6 +4,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import {
   buildBackingClearPayload,
   buildBackingGainPayload,
+  buildBackingLoopPayload,
   buildBackingPreparePayload,
   buildScratchGainPayload
 } from '@/lib/scratch/scratchControlHelpers'
@@ -14,7 +15,7 @@ import type {
   ScratchSessionStatePayload
 } from '@shared/bridge-protocol'
 
-const DEFAULT_DURATION_SEC: ScratchBackingDurationSec = 60
+const DEFAULT_DURATION_SEC: ScratchBackingDurationSec = 120
 
 /**
  * Backing accompaniment monitor controller (ADR 0021, Amendment 1). Owns the
@@ -41,7 +42,23 @@ export function useScratchBacking(
   })
 
   const tracks = computed(() =>
-    project.tracks.map((track) => ({ id: track.id, name: track.name }))
+    project.tracks.map((track) => ({
+      id: track.id,
+      name: track.name,
+      muted: track.muted || (project.anySoloed && !track.soloed)
+    }))
+  )
+
+  // Tracks silenced on the timeline (explicit mute, or suppressed by a solo
+  // elsewhere) can never join the bed — the picker disables them, and they are
+  // filtered out of the selection so the bed mirrors what is actually audible.
+  const mutedTrackIds = computed(
+    () => new Set(tracks.value.filter((track) => track.muted).map((track) => track.id))
+  )
+
+  /** Selection with muted tracks removed — the set the bed is actually built from. */
+  const audibleSelectedTrackIds = computed(
+    () => new Set([...selectedTrackIds.value].filter((id) => !mutedTrackIds.value.has(id)))
   )
 
   // Seed the default selection (every track except the one being scratched)
@@ -68,16 +85,26 @@ export function useScratchBacking(
     return us > 0 ? Math.round(us / 1_000_000) : 0
   })
 
-  const selectedCount = computed(() => selectedTrackIds.value.size)
+  // Live audition position within the prepared bed (seconds, fractional). Clamped
+  // to the prepared duration so a trailing emitter frame never overshoots.
+  const positionSec = computed(() => {
+    const us = state.value?.backingPositionUs ?? 0
+    const durationUs = state.value?.backingDurationUs ?? 0
+    const clamped = durationUs > 0 ? Math.min(us, durationUs) : us
+    return clamped > 0 ? clamped / 1_000_000 : 0
+  })
+
+  const selectedCount = computed(() => audibleSelectedTrackIds.value.size)
   const canPrepare = computed(
     () => sessionId.value !== null && selectedCount.value > 0 && !isPreparing.value
   )
 
   function isSelected(trackId: string): boolean {
-    return selectedTrackIds.value.has(trackId)
+    return audibleSelectedTrackIds.value.has(trackId)
   }
 
   function toggleTrack(trackId: string): void {
+    if (mutedTrackIds.value.has(trackId)) return
     const next = new Set(selectedTrackIds.value)
     if (next.has(trackId)) next.delete(trackId)
     else next.add(trackId)
@@ -109,6 +136,20 @@ export function useScratchBacking(
     sendBridge('SCRATCH_SESSION_CONTROL', buildScratchGainPayload(sid, value))
   }
 
+  // Auto-restart the bed at its end. Off by default; mirrors the authoritative
+  // session state so an external change (or reconnect) reconciles.
+  const loop = computed(() => state.value?.backingLoop ?? false)
+
+  function setLoop(enabled: boolean): void {
+    const sid = sessionId.value
+    if (!sid) return
+    sendBridge('SCRATCH_SESSION_CONTROL', buildBackingLoopPayload(sid, enabled))
+  }
+
+  function toggleLoop(): void {
+    setLoop(!loop.value)
+  }
+
   function prepare(): void {
     const sid = sessionId.value
     if (!sid || selectedCount.value === 0) return
@@ -116,7 +157,7 @@ export function useScratchBacking(
       'SCRATCH_BACKING_PREPARE',
       buildBackingPreparePayload(
         sid,
-        [...selectedTrackIds.value],
+        [...audibleSelectedTrackIds.value],
         startAnchor.value,
         durationSec.value
       )
@@ -142,15 +183,19 @@ export function useScratchBacking(
     hasError,
     errorMessage,
     readyDurationSec,
+    positionSec,
     canPrepare,
     monitorGain,
     scratchGain,
+    loop,
     isSelected,
     toggleTrack,
     setStartAnchor,
     setDuration,
     setMonitorGain,
     setScratchGain,
+    setLoop,
+    toggleLoop,
     prepare,
     clear
   }

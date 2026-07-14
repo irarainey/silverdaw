@@ -74,6 +74,9 @@ void broadcastScratchSessionState(AudioEngine& engine, BridgeServer& bridge)
     object->setProperty("backingStatus", state->backingStatus);
     object->setProperty("backingDurationUs",
                         static_cast<juce::int64>(state->backingDurationUs));
+    object->setProperty("backingPositionUs",
+                        static_cast<juce::int64>(state->backingPositionUs));
+    object->setProperty("backingLoop", state->backingLoop);
     object->setProperty("backingGain", state->backingGain);
     object->setProperty("scratchMonitorGain", state->scratchMonitorGain);
     if (state->backingError.isNotEmpty())

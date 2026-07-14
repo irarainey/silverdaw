@@ -47,10 +47,23 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
         return;
     bool applied = false;
     bool broadcastImmediately = true;
-    // The MIDI play/pause button is intentionally inert in the Scratch Editor.
-    // Backing/audition playback must only be driven by the on-screen transport,
-    // because a controller cannot know whether the backing bed is prepared.
-    if (event.action == MidiControllerAction::jogTouch
+    // The deck's physical Play and Cue buttons drive the backing bed only — never
+    // the scratch clip. Both engine calls no-op unless a scratch session is active
+    // with a prepared backing, so when the editor is closed (no session) the event
+    // falls through to the timeline's own play/marker handling on the frontend.
+    if (event.action == MidiControllerAction::playPause
+        && event.kind == MidiControllerValueKind::button
+        && event.value > 0.5)
+    {
+        applied = scratchEngine->scratchMidiTogglePlay();
+    }
+    else if (event.action == MidiControllerAction::previousMarker
+             && event.kind == MidiControllerValueKind::button
+             && event.value > 0.5)
+    {
+        applied = scratchEngine->scratchMidiCueToStart();
+    }
+    else if (event.action == MidiControllerAction::jogTouch
              && event.kind == MidiControllerValueKind::button
              && event.deck >= 1 && event.deck <= 2)
     {

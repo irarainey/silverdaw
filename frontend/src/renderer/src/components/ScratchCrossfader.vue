@@ -125,10 +125,6 @@ onBeforeUnmount(() => {
     role="presentation"
   >
     <div class="flex items-center gap-2">
-      <span
-        class="font-mono text-[10px] uppercase tracking-wider"
-        :class="reversed ? 'text-sky-400' : 'text-zinc-500'"
-      >L</span>
       <div
         ref="trackEl"
         class="relative h-5 flex-1 rounded-full border border-zinc-700 bg-zinc-800 outline-none"
@@ -167,10 +163,6 @@ onBeforeUnmount(() => {
           />
         </div>
       </div>
-      <span
-        class="font-mono text-[10px] uppercase tracking-wider"
-        :class="reversed ? 'text-zinc-500' : 'text-sky-400'"
-      >R</span>
     </div>
   </div>
 </template>

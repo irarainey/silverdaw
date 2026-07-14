@@ -184,6 +184,41 @@ bool bindingsOverlap(const MidiInputBinding& left, const MidiInputBinding& right
            (left.lsbData1 >= 0 && left.lsbData1 == right.lsbData1);
 }
 
+bool parseInitMessages(const juce::var& value, std::vector<std::vector<juce::uint8>>& result)
+{
+    // Optional field: absent is valid (no init frames).
+    if (value.isVoid()) return true;
+    const auto* array = value.getArray();
+    if (array == nullptr) return false;
+    for (const auto& item : *array)
+    {
+        const auto* bytes = item.getArray();
+        if (bytes == nullptr || bytes->isEmpty()) return false;
+        std::vector<juce::uint8> frame;
+        frame.reserve(static_cast<std::size_t>(bytes->size()));
+        for (const auto& byteValue : *bytes)
+        {
+            if (!byteValue.isInt() && !byteValue.isInt64()) return false;
+            const auto parsed = static_cast<int>(byteValue);
+            if (parsed < 0 || parsed > 255) return false;
+            frame.push_back(static_cast<juce::uint8>(parsed));
+        }
+        // A frame must start with a status byte and be either a well-formed SysEx
+        // (0xF0 ... 0xF7) or a 1-3 byte channel-voice/system message.
+        if (frame.front() < 0x80) return false;
+        if (frame.front() == 0xF0)
+        {
+            if (frame.size() < 2 || frame.back() != 0xF7) return false;
+        }
+        else if (frame.size() > 3)
+        {
+            return false;
+        }
+        result.push_back(std::move(frame));
+    }
+    return true;
+}
+
 bool parseOutputBinding(const juce::var& value, MidiOutputBinding& binding)
 {
     const auto* object = value.getDynamicObject();
@@ -273,6 +308,7 @@ bool parseProfile(const juce::File& file, MidiControllerProfile& profile)
         if (!parseOutputBinding(output, binding)) return false;
         profile.outputs.push_back(std::move(binding));
     }
+    if (!parseInitMessages(object->getProperty("init"), profile.initMessages)) return false;
     // Parse optional scratchTicksPerTurn; 0 = auto-detect from jog encoding.
     if (!parseOptionalInt(*object, "scratchTicksPerTurn", 0, profile.scratchTicksPerTurn)
         || profile.scratchTicksPerTurn < 0)

@@ -356,6 +356,24 @@ void testMidiDeckActivation()
     require(!activation.isEnabled(1) && activation.isEnabled(2),
             "exclusive selection should enable only the selected deck");
 }
+
+void testMidiProfileInitMessages()
+{
+    MidiControllerMapper ddjRb{"DDJ-RB"};
+    const auto& init = ddjRb.initMessages();
+    require(init.size() == 3,
+            "DDJ-RB should expose its three JSON-defined init frames");
+    require(init[0] == std::vector<juce::uint8>{0xF0, 0x00, 0x20, 0x7F, 0x03, 0x01, 0xF7},
+            "DDJ-RB init frame 0 should be the SB3-family software-connected handshake");
+    require(init[1] == std::vector<juce::uint8>{0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x06, 0x00, 0x03, 0x01, 0xF7},
+            "DDJ-RB init frame 1 should be the rekordbox position-request SysEx");
+    require(init[2] == std::vector<juce::uint8>{0x9B, 0x09, 0x7F},
+            "DDJ-RB init frame 2 should be the Mixxx short position-request/wake message");
+
+    MidiControllerMapper unmapped{"MPK mini"};
+    require(unmapped.initMessages().empty(),
+            "an unmapped device should expose no init frames");
+}
 } // namespace
 
 void addMidiControllerMappingTests(std::vector<TestCase>& tests)
@@ -381,6 +399,7 @@ void addMidiControllerMappingTests(std::vector<TestCase>& tests)
     tests.push_back({"MIDI mapping builds non-contiguous pad outputs",
                      testMidiMappingBuildsNonContiguousPadOutputs});
     tests.push_back({"MIDI mapping applies deck activation", testMidiDeckActivation});
+    tests.push_back({"MIDI profile exposes init frames", testMidiProfileInitMessages});
 }
 
 } // namespace silverdaw::tests

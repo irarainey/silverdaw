@@ -151,6 +151,10 @@ std::optional<ControlAction> controlAction(const juce::String& value)
     {
         return ControlAction::scratchGain;
     }
+    if (value == "backingLoop")
+    {
+        return ControlAction::backingLoop;
+    }
     return std::nullopt;
 }
 
@@ -356,6 +360,16 @@ std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var&
                 return std::nullopt;
             }
             result.gain = *value;
+            break;
+        }
+        case ControlAction::backingLoop:
+        {
+            const auto enabled = requiredBool(payload, "enabled");
+            if (!enabled)
+            {
+                return std::nullopt;
+            }
+            result.loop = *enabled;
             break;
         }
     }

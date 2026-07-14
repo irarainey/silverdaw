@@ -323,6 +323,12 @@ std::array<MidiControllerOutputMessage, 16> MidiControllerMapper::hotCueLightMes
     return messages;
 }
 
+const std::vector<std::vector<juce::uint8>>& MidiControllerMapper::initMessages() const noexcept
+{
+    static const std::vector<std::vector<juce::uint8>> empty;
+    return profile != nullptr ? profile->initMessages : empty;
+}
+
 int MidiControllerMapper::scratchTicksPerTurn() const noexcept
 {
     if (profile == nullptr)

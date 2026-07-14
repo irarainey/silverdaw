@@ -151,6 +151,13 @@ export function buildScratchGainPayload(
   }
 }
 
+export function buildBackingLoopPayload(
+  sessionId: string,
+  enabled: boolean
+): ScratchSessionControlPayload {
+  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'backingLoop', enabled }
+}
+
 export function buildSeekPayload(
   sessionId: string,
   positionUs: number

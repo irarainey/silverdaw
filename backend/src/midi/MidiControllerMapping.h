@@ -2,6 +2,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 #include <juce_core/juce_core.h>
 
@@ -93,6 +94,7 @@ public:
     std::array<MidiControllerOutputMessage, 2> deckSelectionLightMessages(
         bool deck1Active, bool deck2Active) const noexcept;
     std::array<MidiControllerOutputMessage, 16> hotCueLightMessages(int markerCount) const noexcept;
+    const std::vector<std::vector<juce::uint8>>& initMessages() const noexcept;
     int scratchTicksPerTurn() const noexcept;
 
 private:

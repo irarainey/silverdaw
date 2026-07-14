@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildBackingClearPayload,
   buildBackingGainPayload,
+  buildBackingLoopPayload,
   buildBackingPreparePayload,
   buildCrossfaderPayload,
   buildPlatterMovePayload,
@@ -256,6 +257,18 @@ describe('buildBackingGainPayload / buildScratchGainPayload', () => {
   it('clamps gain to [0, 1]', () => {
     expect(buildBackingGainPayload('s', 3)).toMatchObject({ value: 1 })
     expect(buildScratchGainPayload('s', -2)).toMatchObject({ value: 0 })
+  })
+})
+
+describe('buildBackingLoopPayload', () => {
+  it('produces schema-valid loop toggle payloads', () => {
+    const on = buildBackingLoopPayload('sid-l', true)
+    expect(on).toMatchObject({ action: 'backingLoop', enabled: true })
+    expect(ScratchSessionControlPayloadSchema.safeParse(on).success).toBe(true)
+
+    const off = buildBackingLoopPayload('sid-l', false)
+    expect(off).toMatchObject({ action: 'backingLoop', enabled: false })
+    expect(ScratchSessionControlPayloadSchema.safeParse(off).success).toBe(true)
   })
 })
 

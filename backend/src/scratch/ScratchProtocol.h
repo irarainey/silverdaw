@@ -36,7 +36,8 @@ enum class ControlAction
     platterTouch,
     crossfader,
     backingGain,
-    scratchGain
+    scratchGain,
+    backingLoop
 };
 
 struct SessionOpenPayload
@@ -80,6 +81,8 @@ struct SessionControlPayload
     // Monitor-only trim (0..1) for backingGain / scratchGain actions; never recorded.
     double gain = 1.0;
     bool touched = false;
+    // Whether the backing bed auto-restarts at its end (backingLoop action).
+    bool loop = false;
 };
 
 struct PlatterKeyframe

@@ -303,6 +303,12 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
             return true;
         }
 
+        case ControlAction::backingLoop:
+        {
+            s.backingLoop = control.loop;
+            return true;
+        }
+
         case ControlAction::recordArm:
             if (s.status == "recording")
                 return false;
@@ -378,6 +384,49 @@ bool ScratchSessionController::beginArmedRecordingLocked()
 }
 
 // ── MIDI entry points ─────────────────────────────────────────────────────────
+
+bool ScratchSessionController::midiTogglePlay()
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || !scratchSource.isActive())
+        return false;
+    auto& s = *session;
+    // Recording owns transport; a physical Play press must not disturb it.
+    if (s.status == "recording")
+        return false;
+    reconcileSourceEndLocked();
+    // Honour backing readiness: with no prepared bed there is nothing to run and
+    // the deck cannot know whether it was prepared, so the button stays inert.
+    if (!backingReadyLocked())
+        return false;
+    if (s.status == "playing")
+    {
+        stopBackingLocked();
+        s.status = "paused";
+    }
+    else
+    {
+        if (backingSource.isAtForwardBoundary())
+            backingSource.seekUs(0);
+        startBackingLocked();
+        s.status = "playing";
+    }
+    return true;
+}
+
+bool ScratchSessionController::midiCueToStart()
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!session || !scratchSource.isActive())
+        return false;
+    if (session->status == "recording")
+        return false;
+    reconcileSourceEndLocked();
+    if (!backingReadyLocked())
+        return false;
+    backingSource.seekUs(0);
+    return true;
+}
 
 bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier,
                                             DeckSide deck, bool touched)
@@ -618,6 +667,15 @@ bool ScratchSessionController::reconcileSourceEndLocked()
         scratchSource.consumeEndReached();
         if (!backingSource.consumeEndReached())
             return false;
+        // Loop: on plain playback, restart the bed at its head instead of ending
+        // the session. Recording still terminates at the window end (the take is
+        // bounded by the window), so looping never applies while recording.
+        if (session->backingLoop && session->status == "playing")
+        {
+            backingSource.seekUs(0);
+            startBackingLocked();
+            return false;
+        }
     }
     else if (!scratchSource.consumeEndReached())
     {
@@ -687,6 +745,8 @@ ScratchSessionController::getSnapshot() const
     result.backingStatus = session->backingStatus;
     result.backingError = session->backingError;
     result.backingDurationUs = session->backingDurationUs;
+    result.backingPositionUs = backingReadyLocked() ? backingSource.positionUs() : 0;
+    result.backingLoop = session->backingLoop;
     result.backingGain = session->backingGain;
     result.scratchMonitorGain = session->scratchMonitorGain;
     if (scratchSource.isActive())

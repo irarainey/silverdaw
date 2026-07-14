@@ -553,8 +553,9 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
 - `SCRATCH_SESSION_CONTROL { sessionId, action, … }` carries one control action:
   `play` / `pause`, `recordArm` / `recordDisarm` / `recordStart` / `recordStop`,
   `seek { positionUs }`, `platterMove { deck, deltaTurns }`,
-  `platterTouch { deck, touched }`, `crossfader { value 0..1 }`, and the
-  monitor-only `backingGain { value 0..1 }` / `scratchGain { value 0..1 }` trims.
+  `platterTouch { deck, touched }`, `crossfader { value 0..1 }`, the
+  monitor-only `backingGain { value 0..1 }` / `scratchGain { value 0..1 }` trims,
+  and `backingLoop { enabled }` (auto-restart the bed at its end; off by default).
 - `SCRATCH_BACKING_PREPARE { sessionId, trackIds, startAnchor, durationSec }`
   (anchor `arrangement` | `playhead`; duration `60` | `120` | `0` where `0` means
   the full arrangement from the anchor to the last clip end) and
@@ -569,8 +570,8 @@ Backend → renderer:
   snapshot — `status`, `preparationProgress`, `positionUs` / `durationUs`,
   `platterTurns`, `playbackRate`, `crossfader`, `crossfaderReversed`, deck
   ownership, `armed`, and the
-  backing/monitor fields (`backingStatus`, `backingDurationUs`, `backingGain`,
-  `scratchMonitorGain`). It never drives audio timing.
+  backing/monitor fields (`backingStatus`, `backingDurationUs`, `backingPositionUs`,
+  `backingLoop`, `backingGain`, `scratchMonitorGain`). It never drives audio timing.
 - `SCRATCH_PATTERN_RECORDED { sessionId, pattern }` delivers the completed,
   possibly simplified action pattern after a recording stops.
 
@@ -641,14 +642,39 @@ output whose name matches the input. It can then send selected-track meters,
 Play/Cue state, active-deck state, and marker-pad lights. Missing output
 feedback does not prevent controller input.
 
-The instant a controller is enabled the backend blanks every LED (meter, Play,
-Cue, hot-cue pads and the deck-selection lights) with a single reset burst.
-Sending host output at connect time also wakes controllers out of the idle
-demo/standby light show some hardware falls into after a period of inactivity.
+The instant a controller is enabled the backend sends the profile's
+connect-time **init frames** (see below), blanks every LED (meter, Play,
+Cue, hot-cue pads and the deck-selection lights) with a reset burst, then holds
+a short **warm-up window** (`kFeedbackWarmupMs`, 2 s) during which the 60 Hz
+playhead emitter re-asserts authoritative LED state every tick — bypassing its
+per-value dedupe guard — and the input monitor re-sends the deck-selection
+lights. A single connect-time burst is unreliable on its own: a controller can
+be mid power-on animation or in its idle demo/standby light show, and a
+freshly opened Windows MIDI OUT port may drop the first messages. The sustained
+host-output stream lands the blank (or authoritative) state once the port is
+ready. The dedupe caches are left invalidated (`-1`) after reset rather than
+seeded to `0`, so a dropped burst is still corrected on the emitter's next tick
+even outside the warm-up window.
 Cue and hot-cue pads are deliberately left dark by this reset — they are only
 lit once a project is loaded, when the playhead emitter reasserts them from the
 project's marker state (so a controller connected at the project picker shows no
 stale cue lights).
+
+Some controllers (notably Pioneer decks) ignore ordinary Note/CC LED writes
+while in their power-on demo/standby state and only leave it when they receive a
+specific "software connected" handshake — so re-sending LED messages cannot wake
+them. A profile may therefore declare an optional **`init`** array of raw MIDI
+frames sent once, immediately after the input starts, straight to the output
+port. Each frame is a complete MIDI message given as decimal byte values — a
+short message (e.g. `[155, 9, 127]`, the Pioneer DDJ-RB/SB2 "request the knob and
+fader positions" message that also ends demo mode) or a full SysEx frame
+(`[240, …, 247]`). Init frames serve two purposes: waking the controller out of
+demo/standby, and requesting the current positions of its physical controls so
+the mapped inputs adopt the hardware state on connect. The frames are sourced
+verbatim from each controller's Mixxx mapping (`res/controllers/` in
+`mixxxdj/mixxx`), the authoritative reference for deck protocols. They are sent
+after `input->start()` so the controller's position-report replies are captured
+rather than dropped.
 
 ## Engine resilience and recovery
 
@@ -2076,7 +2102,22 @@ at nominal speed); dragging or wheel-jogging it scrubs the source bidirectionall
 direction). Movement beyond the prepared source produces de-clicked silence — the
 source never wraps. Recording captures compact **platter** and **crossfader**
 keyframes (not audio), starting from the session start against a local clock, and
-still spins the scratch over the backing.
+still spins the scratch over the backing. A live **timing readout** (`m:ss /
+m:ss`, position / prepared length) sits under the transport and is **always
+shown** (dimmed until a bed is ready) so it never reflows the panel; it is driven
+by the `backingPositionUs` snapshot field on the scratch session state.
+
+**MIDI deck Play/Cue while the editor is open** (ADR 0021, Amendment 10). The
+physical deck **Play** button toggles the prepared backing bed only and is
+ready-gated — it never spins the scratch clip, and a press is rejected when no bed
+is prepared or a take is recording. The physical **Cue** button returns the
+backing bed to its start, seeking to position 0 **without changing play state** (a
+running bed keeps playing from the start). Both are handled in the backend router
+(`MidiScratchRouter::routeImmediate` → `scratchMidiTogglePlay()` /
+`scratchMidiCueToStart()`), gated on scratch-session existence: with the editor
+**closed** the engine methods return `false` and the event falls through to the
+frontend's timeline handling; with the editor **open** the frontend is
+interaction-blocked, so the also-broadcast event is ignored (no double action).
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The
@@ -2106,13 +2147,23 @@ tracks to play underneath the scratch as a fixed-length **backing bed** to
 scratch against (ADR 0021 Amendment 1). The window is a start **anchor**
 (*arrangement start* or *current playhead*) plus a **duration** of **60 or 120
 seconds**, or **Full** (the whole arrangement from the anchor to the last clip
-end) — default 60; when active it bounds the session's forward time.
+end) — default 120; when active it bounds the session's forward time.
 The default track selection is *every track except the clip's owning track* (to
 avoid hearing the source twice), chosen from a **checkbox dropdown** (so it scales
-to many tracks) and editable while the bed is stopped. Because the
+to many tracks) and editable while the bed is stopped. **Tracks muted on the
+timeline** (explicitly muted, or silenced by a solo elsewhere) are always shown
+**unchecked and disabled** and are filtered out of the bed, so the selection
+mirrors what is actually audible. Because the
 bed is a fixed pre-render, the track selection, anchor, and length (and the
 **Prepare** button) are **locked while the backing is playing** — changing them
 would only take effect after a fresh Prepare, so they cannot be swapped in live.
+A **Loop** toggle (off by default) controls what happens at the bed's end during
+plain playback: when on, the bed restarts from its head instead of stopping, so
+the accompaniment runs continuously while the performer scratches over it; loop is
+ignored while **recording** (the take is still bounded by the window). The flag is
+authoritative on the backend (`backingLoop`) and honoured in the end-of-window
+reconciliation, so it applies to both the on-screen transport and the MIDI Play
+button.
 The bed is a pre-rendered linear mixdown prepared off the audio thread; the
 **Prepare** button shows a spinner while working and re-preparing simply replaces
 the existing bed (there is no separate Clear action). Two **monitor-only** gain

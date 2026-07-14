@@ -21,6 +21,15 @@ namespace
 {
 constexpr int relativeControlCount = 5;
 
+// Controllers can be mid power-on animation or demo/standby light show when we
+// open the output port, and a freshly opened Windows MIDI OUT port may drop the
+// first messages. A single connect-time blank burst is therefore unreliable. For
+// this window after connect the playhead emitter re-asserts authoritative LED
+// state every tick (bypassing the per-value dedupe guard), so the controller
+// receives a sustained host-output stream that wakes it out of demo mode and
+// lands the blank/authoritative state once its port is ready.
+constexpr int kFeedbackWarmupMs = 2000;
+
 struct QueuedMidiMessage
 {
     juce::int64 timestampMs = 0;
@@ -71,6 +80,20 @@ void sendControllerMessages(
     }
 }
 
+// Sends the profile's raw connect-time init frames (short messages and/or
+// SysEx) verbatim. Each frame is already a complete, validated MIDI message.
+void sendInitMessages(juce::MidiOutput* output,
+                      const std::vector<std::vector<juce::uint8>>& frames)
+{
+    if (output == nullptr) return;
+    for (const auto& frame : frames)
+    {
+        if (frame.empty()) continue;
+        output->sendMessageNow(
+            juce::MidiMessage(frame.data(), static_cast<int>(frame.size())));
+    }
+}
+
 class ActiveMidiInput final : public juce::MidiInputCallback
 {
 public:
@@ -92,10 +115,13 @@ public:
         sendControllerMessages(output.get(), controllerMapper.hotCueLightMessages(0));
     }
 
-    // Blanks every controller LED the moment the device connects. Sending host
-    // output also wakes controllers out of their idle demo/standby light show.
-    // Cue and hot-cue lights are left dark here; the playhead emitter re-lights
-    // them from project marker state once a project is loaded.
+    // Blanks every controller LED the moment the device connects and opens a
+    // warm-up window (see kFeedbackWarmupMs). Sending host output also wakes
+    // controllers out of their idle demo/standby light show. Cue and hot-cue
+    // lights are left dark here; the playhead emitter re-lights them from project
+    // marker state once a project is loaded. The per-value dedupe caches are left
+    // invalidated (-1) rather than seeded to 0 so that a dropped connect-time
+    // burst is still re-sent by the emitter on its next tick.
     void resetControllerFeedback()
     {
         if (output == nullptr) return;
@@ -106,10 +132,31 @@ public:
         sendControllerMessages(
             output.get(), controllerMapper.deckSelectionLightMessages(
                               deckActivation.isEnabled(1), deckActivation.isEnabled(2)));
-        lastMeterValue = 0;
-        lastPlayingValue = 0;
-        lastCueValue = 0;
-        lastHotCueCount = 0;
+        feedbackForceUntilMs = juce::Time::currentTimeMillis() + kFeedbackWarmupMs;
+    }
+
+    // True while the post-connect warm-up window is open, during which LED sends
+    // must bypass their per-value dedupe guard and re-assert state every tick.
+    bool shouldForceFeedback(juce::int64 nowMs) const
+    {
+        return nowMs < feedbackForceUntilMs;
+    }
+
+    // Sends the controller's connect-time init frames (from its Mixxx-sourced
+    // profile) to wake it out of demo/standby and request the current positions
+    // of physical controls. A no-op when the profile defines none.
+    void sendControllerInit()
+    {
+        const auto& frames = controllerMapper.initMessages();
+        for (const auto& frame : frames)
+        {
+            juce::String hex;
+            for (const auto byte : frame)
+                hex << juce::String::toHexString(&byte, 1) << " ";
+            silverdaw::log::info("midi", "init frame -> '" + name + "': " + hex.trim() +
+                                             (output == nullptr ? " (NO OUTPUT)" : ""));
+        }
+        sendInitMessages(output.get(), frames);
     }
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override
@@ -177,6 +224,7 @@ public:
     int lastPlayingValue = -1;
     int lastCueValue = -1;
     int lastHotCueCount = -1;
+    juce::int64 feedbackForceUntilMs = 0;
 };
 
 class MidiInputMonitor final : private juce::Timer
@@ -243,8 +291,18 @@ public:
             {
                 if (supportsMidiControllerOutput(active->name))
                     active->output = openMatchingMidiOutput(active->name);
+                silverdaw::log::info(
+                    "midi", "enabled '" + active->name + "' output=" +
+                                (active->output != nullptr ? juce::String("open")
+                                                           : juce::String("none")) +
+                                " initFrames=" +
+                                juce::String(static_cast<int>(
+                                    active->controllerMapper.initMessages().size())));
                 active->resetControllerFeedback();
                 active->input->start();
+                // Sent after the input starts so the controller's position-report
+                // replies to the init request are captured rather than dropped.
+                active->sendControllerInit();
                 activeInputs.push_back(std::move(active));
             }
             else
@@ -304,12 +362,14 @@ public:
 
     void sendSelectedTrackMeter(float peakL, float peakR, bool playing)
     {
+        const auto nowMs = juce::Time::currentTimeMillis();
         for (const auto& active : activeInputs)
         {
             const auto messages = active->controllerMapper.selectedTrackMeterMessages(
                 playing ? peakL : 0.0F, playing ? peakR : 0.0F);
             const auto value = messages[0].data2;
-            if (active->output == nullptr || active->lastMeterValue == value) continue;
+            if (active->output == nullptr) continue;
+            if (active->lastMeterValue == value && !active->shouldForceFeedback(nowMs)) continue;
             active->lastMeterValue = value;
             sendControllerMessages(active->output.get(), messages);
         }
@@ -318,9 +378,11 @@ public:
     void sendTransportPlaying(bool playing)
     {
         const auto value = playing ? 1 : 0;
+        const auto nowMs = juce::Time::currentTimeMillis();
         for (const auto& active : activeInputs)
         {
-            if (active->output == nullptr || active->lastPlayingValue == value) continue;
+            if (active->output == nullptr) continue;
+            if (active->lastPlayingValue == value && !active->shouldForceFeedback(nowMs)) continue;
             active->lastPlayingValue = value;
             sendControllerMessages(
                 active->output.get(), active->controllerMapper.transportPlayMessages(playing));
@@ -331,16 +393,18 @@ public:
     {
         const auto cueValue = cueActive ? 1 : 0;
         const auto clampedMarkerCount = juce::jlimit(0, 8, markerCount);
+        const auto nowMs = juce::Time::currentTimeMillis();
         for (const auto& active : activeInputs)
         {
             if (active->output == nullptr) continue;
-            if (active->lastCueValue != cueValue)
+            const bool force = active->shouldForceFeedback(nowMs);
+            if (active->lastCueValue != cueValue || force)
             {
                 active->lastCueValue = cueValue;
                 sendControllerMessages(
                     active->output.get(), active->controllerMapper.cueLightMessages(cueActive));
             }
-            if (active->lastHotCueCount != clampedMarkerCount)
+            if (active->lastHotCueCount != clampedMarkerCount || force)
             {
                 active->lastHotCueCount = clampedMarkerCount;
                 sendControllerMessages(
@@ -363,6 +427,11 @@ private:
         bool activityChanged = false;
         for (const auto& active : activeInputs)
         {
+            // Deck-selection LEDs are reset-only (not emitter-driven), so
+            // re-assert them each tick during the warm-up window too.
+            if (active->shouldForceFeedback(juce::Time::currentTimeMillis()))
+                active->sendDeckSelectionLights();
+
             std::array<std::array<double, relativeControlCount>, 2> relativeDeltas{};
             std::array<std::array<juce::int64, relativeControlCount>, 2> relativeTimestamps{};
             std::optional<MidiControllerEvent> latestCrossfaderControl;
