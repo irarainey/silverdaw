@@ -709,3 +709,89 @@ guarantees the appearance is stable while performing.
   or the knob position.
 - Older payloads without `crossfaderReversed` default to `leftToRight`, preserving
   the prior appearance.
+
+## Amendment 8 — Keyboard crossfader cut is push-to-open from a closed default
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 3 defined the keyboard crossfader cut as resting **open** with the key
+**closing** the fader while held. In practice, with keyboard and trackpad, this
+read backwards: pressing a key to *silence* the deck felt inverted, and the
+button state was out of sync with the fader — the default was open, yet a press
+is naturally understood as swinging the fader *in*.
+
+### Decision
+
+- **The keyboard cut is push-to-open from a closed resting default.** Holding the
+  configured key now **opens** the crossfader (scratch deck audible); releasing it
+  **closes** it again. The resting default is **closed**, and it is asserted once
+  the session becomes controllable so the visible fader and the audio agree before
+  any key is pressed. Blur/close force the fader back **closed** so a held key can
+  never leave the deck stuck open. The key choice (**Z** / **M**) is unchanged.
+- **MIDI crossfader controls are untouched.** This narrows only the
+  keyboard/trackpad path; the MIDI fader's direction, gain, and value handling
+  keep their existing behaviour.
+
+### Why
+
+A press that opens the fader matches the physical intuition of moving the fader
+in, and a closed default means silence until the performer deliberately cuts the
+deck in — the reverse of Amendment 3, which read backwards in hand testing. The
+cut still writes the same `0..1` crossfader value, so it remains an input method
+captured into a recording like any other fader move.
+
+### Consequences
+
+- Amendment 3's "resting state is open … blur/close force the fader open" is
+  superseded: the resting state is now closed and safety settles the fader closed.
+- The editor emits one crossfader `value` when the session becomes controllable to
+  establish the closed default; this affects the pointer fader's starting position
+  too, but never the MIDI control paths.
+
+## Amendment 9 — Scratch fader bar colour depends on the control source
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 7 coloured the on-screen crossfader bar by position × the per-device
+MIDI crossfader **direction** preference (`crossfaderReversed`). Combined with the
+Amendment 8 keyboard cut — which writes a fixed value (deck-1 audible at 0),
+independent of that preference — the bar read **backwards** under `leftToRight`
+when driven from the keyboard: releasing the key (fader closed, deck silent) lit
+the bar blue, while pressing it (fader open) went black. The direction preference
+belongs to physical MIDI crossfaders; it has no bearing on keyboard/trackpad
+operation, yet a MIDI-owned session must still mirror its controller's wiring.
+
+### Decision
+
+- **The bar colouring depends on the control source.** A session is
+  MIDI-controlled when a physical device owns it (`ownerDeviceIdentifier` is set);
+  otherwise it is keyboard/pointer operated.
+  - **MIDI-owned:** unchanged from Amendment 7 — the bar mirrors the device's
+    crossfader direction preference (`crossfaderReversed`).
+  - **Keyboard/pointer:** the direction preference is ignored; the bar colours by
+    **open/closed**. The scratch deck is audible at value 0, so blue stays on the
+    open (value → 0) edge and the bar is black when closed (value → 1). This is the
+    same fill geometry as a reversed bar, so the shared `ScratchCrossfader`
+    `reversed` prop expresses both modes; the parent computes its value per source.
+- **Recolour only — the knob never moves,** regardless of source.
+
+### Why
+
+The scratch editor is primarily a keyboard/trackpad tool, so under those inputs the
+fader must read the same way every time: open looks open, closed looks closed,
+independent of a hardware-wiring preference the keyboard ignores. A MIDI-owned
+session still needs to mirror its physical crossfader, so the decision keys off
+ownership rather than dropping the direction behaviour outright.
+
+### Consequences
+
+- Amendment 7's direction-driven colouring now applies **only** while a MIDI
+  device owns the session; keyboard/pointer operation colours by open/closed.
+- The backend still publishes `crossfaderReversed`; the frontend derives the
+  effective bar `reversed` flag from ownership plus that preference.

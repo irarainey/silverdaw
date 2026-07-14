@@ -2064,20 +2064,26 @@ still spins the scratch over the backing.
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The
-on-screen fader **bar** is coloured by position and the per-device MIDI crossfader
-**direction** preference only — deck ownership and platter touch never change it.
-The backend publishes a display-only `crossfaderReversed` flag (`true` =
-`rightToLeft`); `leftToRight` fills blue from the left as the knob moves right
-(blue at the right extreme, black at the left), and `rightToLeft` mirrors it (blue
-at the left extreme, black at the right). The `L`/`R` label on the blue extreme is
-accented, and changing direction recolours only — the knob never moves. When the
-fader is focused, `←`/`→` step it (0.02, or 0.1 with `Shift`) and `Home`/`End`
-jump to the extremes. A momentary **keyboard cut** works globally within the
-editor: holding the configured key closes the fader (deck silent) and releasing
-it reopens — the resting state is open, and blur/close force it open so a held key
-can never leave the deck stuck silent. The key is **Z** (right-handed, default) or
-**M** (left-handed), chosen in **Preferences ▸ Effects** (see below). While
-recording, the cut is captured like any other fader move.
+on-screen fader **bar** is coloured by fader position and a display `reversed`
+flag whose meaning depends on the control source; deck ownership and platter touch
+never change it. When a **MIDI** device owns the session
+(`ownerDeviceIdentifier` set), the bar mirrors that device's crossfader
+**direction** preference (the display-only `crossfaderReversed` flag, `true` =
+`rightToLeft`): `leftToRight` fills blue from the left as the knob moves right
+(blue at the right extreme), and `rightToLeft` mirrors it (blue at the left
+extreme). Under **keyboard/pointer** operation the MIDI direction preference has no
+effect; the bar instead colours by **open/closed** — the scratch deck is audible
+at value 0, so blue stays on the open (value → 0) edge and the bar is black when
+closed (value → 1), reading the same whether nudged by pointer, arrow keys or the
+keyboard cut. The `L`/`R` label on the blue extreme is accented, and changing
+colouring never moves the knob. When the fader is focused, `←`/`→` step it (0.02,
+or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A momentary **keyboard
+cut** works globally within the editor: holding the configured key opens the fader
+(deck audible) and releasing it closes — the resting state is closed (asserted once
+the session is controllable so the fader and audio agree), and blur/close force it
+closed so a held key can never leave the deck stuck open. The key is **Z**
+(right-handed, default) or **M** (left-handed), chosen in **Preferences ▸ Effects**
+(see below). While recording, the cut is captured like any other fader move.
 
 **Backing accompaniment monitor.** Optionally, the user picks a set of timeline
 tracks to play underneath the scratch as a fixed-length **backing bed** to
@@ -2156,7 +2162,7 @@ sidebar:
   / `BACKSPIN_SETTINGS_SET`) and re-applied live to every clip already carrying
   that effect; they are also re-sent on each backend reconnect. This tab also
   hosts the **Scratch crossfader cut** key used inside the Scratch Editor — a
-  momentary cut that closes the crossfader while held — choosable as **Z**
+  momentary cut that opens the crossfader while held (closed at rest) — choosable as **Z**
   (right-handed, default) or **M** (left-handed). It is a renderer-only
   preference (`scratch.crossfaderCutKey`, values `KeyZ` / `KeyM`) that is never
   sent to the backend; an unrecognised persisted value falls back to `KeyZ`.
@@ -2573,7 +2579,7 @@ crossfader are described in the [Scratch Editor](#scratch-editor) section.
 |---|---|
 | `Space` | Toggle play / pause of the backing channel (disabled until a backing is prepared, and while recording). |
 | `R` | Toggle record — arms and starts capturing platter and crossfader keyframes, or stops the take. |
-| `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to close the crossfader (scratch deck silent), release to reopen. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back open. |
+| `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to open the crossfader (scratch deck audible), release to close. The fader rests closed. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back closed. |
 | `←` / `→` (crossfader focused) | Nudge the crossfader by 0.02 (or 0.1 with `Shift`). |
 | `Home` / `End` (crossfader focused) | Jump the crossfader fully open / fully closed. |
 | `←` `→` `↑` `↓` (platter focused) | Jog the platter by 0.02 turns (0.1 with `Shift`); `Home` / `End` jog by half a turn. |

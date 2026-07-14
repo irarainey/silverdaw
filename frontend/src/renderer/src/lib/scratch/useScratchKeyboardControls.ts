@@ -1,13 +1,18 @@
 // Momentary crossfader "cut" driven by a single configurable key (Z or M).
-// Holding the key closes the fader (deck silent); releasing it reopens.
-// The resting default is open, matching the deck's neutral state, so nothing is
-// sent until the key is first pressed. Blur/unmount force the fader open so a
-// held key can never leave the deck stuck silent.
+// The resting default is closed (deck silent); holding the key opens the fader
+// (deck audible) and releasing it closes again — the press is akin to swinging
+// the fader in. The closed default is asserted when the session becomes
+// controllable so the visible fader and audio agree before any key is pressed.
+// Blur/unmount force the fader back closed so a held key can never leave the
+// deck stuck open.
+//
+// This is the keyboard/trackpad path only; it never touches the MIDI crossfader
+// controls, which own their own direction and gain handling.
 //
 // The stateful key→crossfader mapping lives in a pure controller so it is unit
 // testable without a DOM; the composable is only the Vue lifecycle + window glue.
 
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { ScratchSessionControlPayload } from '@shared/bridge-protocol'
 import type { ScratchCrossfaderCutKeyDto } from '@shared/types'
@@ -24,19 +29,20 @@ interface ScratchKeyboardCutOptions {
 export interface ScratchKeyboardCutController {
   handleKeyDown(event: { code: string; repeat: boolean }): void
   handleKeyUp(event: { code: string }): void
-  forceOpen(): void
+  applyRestingClosed(): void
+  forceClosed(): void
 }
 
 /**
- * Stateful key→crossfader mapper. Tracks whether the cut is currently closed so
- * auto-repeat is ignored, key-up only reopens a fader it actually closed, and
- * blur/unmount can force the fader back open exactly once.
+ * Stateful key→crossfader mapper. Tracks whether the cut is currently open so
+ * auto-repeat is ignored, key-up only closes a fader it actually opened, and
+ * activation/blur/unmount can settle the fader back to its closed resting state.
  */
 export function createScratchKeyboardCutController(
   options: ScratchKeyboardCutOptions
 ): ScratchKeyboardCutController {
   const { getCutKey, getSessionId, canControl, sendControl } = options
-  let closed = false
+  let opened = false
 
   function sendCut(open: boolean): void {
     const sid = getSessionId()
@@ -46,19 +52,23 @@ export function createScratchKeyboardCutController(
 
   return {
     handleKeyDown(event): void {
-      if (event.repeat || event.code !== getCutKey() || closed) return
-      closed = true
-      sendCut(false)
+      if (event.repeat || event.code !== getCutKey() || opened) return
+      opened = true
+      sendCut(true)
     },
     handleKeyUp(event): void {
-      if (event.code !== getCutKey() || !closed) return
-      closed = false
-      sendCut(true)
+      if (event.code !== getCutKey() || !opened) return
+      opened = false
+      sendCut(false)
     },
-    forceOpen(): void {
-      if (!closed) return
-      closed = false
-      sendCut(true)
+    applyRestingClosed(): void {
+      opened = false
+      sendCut(false)
+    },
+    forceClosed(): void {
+      if (!opened) return
+      opened = false
+      sendCut(false)
     }
   }
 }
@@ -82,7 +92,17 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
 
   const onKeyDown = (event: KeyboardEvent): void => controller.handleKeyDown(event)
   const onKeyUp = (event: KeyboardEvent): void => controller.handleKeyUp(event)
-  const onBlur = (): void => controller.forceOpen()
+  const onBlur = (): void => controller.forceClosed()
+
+  // Settle the fader to its closed resting default once the session is
+  // controllable, so the visible fader and audio start in agreement.
+  watch(
+    () => canControl.value && activeSessionId.value !== null,
+    (ready) => {
+      if (ready) controller.applyRestingClosed()
+    },
+    { immediate: true }
+  )
 
   onMounted(() => {
     void inputSettings.hydrate()
@@ -95,6 +115,6 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('keyup', onKeyUp)
     window.removeEventListener('blur', onBlur)
-    controller.forceOpen()
+    controller.forceClosed()
   })
 }

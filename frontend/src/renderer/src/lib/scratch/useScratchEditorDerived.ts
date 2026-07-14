@@ -99,9 +99,17 @@ export function useScratchEditorDerived(
   const positionMs = computed(() => (session.state.value?.positionUs ?? 0) / 1000)
   const platterTurns = computed(() => session.state.value?.platterTurns ?? 0)
   const crossfaderValue = computed(() => session.state.value?.crossfader ?? 0.5)
-  const crossfaderReversed = computed(
-    () => session.state.value?.crossfaderReversed ?? false
-  )
+  // How the fader bar is coloured. MIDI-controlled sessions (a physical device
+  // owns the session) mirror that device's crossfader direction preference.
+  // Keyboard/pointer operation ignores the MIDI preference and instead colours by
+  // open/closed: the scratch deck is audible at value 0, so a reversed bar keeps
+  // blue on the open (value-0) edge and black when closed.
+  const crossfaderReversed = computed(() => {
+    const s = session.state.value
+    if (!s) return false
+    if (s.ownerDeviceIdentifier != null) return s.crossfaderReversed ?? false
+    return true
+  })
   const isTouched = computed(() => session.state.value?.touched ?? false)
   const clipName = computed(() => {
     const c = clip.value

@@ -29,11 +29,14 @@ const knobLeft = computed(() =>
   Math.max(0, Math.min(trackW.value - KNOB_W, props.value * (trackW.value - KNOB_W)))
 )
 
-// The fill colours the bar by fader position and the MIDI crossfader direction
-// preference only — deck ownership never affects it. Left-to-right (default):
-// blue grows from the left as the knob moves right (blue at the right extreme).
-// Right-to-left (reversed): mirrored, so blue grows from the right as the knob
-// moves left (blue at the left extreme).
+// The fill colours the bar by fader position and the `reversed` flag the parent
+// supplies — deck ownership and platter touch never affect it. The parent decides
+// the flag's meaning: for MIDI-controlled sessions it mirrors the per-device
+// crossfader direction preference; for keyboard/pointer operation it reflects the
+// open/closed state (the scratch deck is audible at value 0, so `reversed` keeps
+// blue on the open, value-0 edge). Not reversed: blue grows from the left as the
+// knob moves right (blue at the right extreme). Reversed: mirrored, so blue grows
+// from the right as the knob moves left (blue at the left extreme).
 const reversed = computed(() => props.reversed === true)
 
 const openFillStyle = computed(() => {
