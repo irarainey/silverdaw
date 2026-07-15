@@ -276,7 +276,7 @@ onBeforeUnmount(() => {
       <div class="ml-auto flex items-center gap-2">
         <button
           type="button"
-          class="inline-flex min-w-[6rem] items-center justify-center gap-1.5 rounded px-3 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          class="inline-flex min-w-24 items-center justify-center gap-1.5 rounded px-3 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           :class="prepareClass"
           :title="prepareTitle"
           :disabled="configDisabled || !backing.canPrepare.value"
