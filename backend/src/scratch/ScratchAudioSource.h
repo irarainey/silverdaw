@@ -57,6 +57,18 @@ class ScratchAudioSource final : public juce::AudioSource
     bool consumeEndReached() noexcept;
     bool isAtForwardBoundary() const noexcept;
 
+    // Draft/pattern replay progress for UI playheads.  True while a replay
+    // snapshot is driving the source; the normalized position runs 0→1 across
+    // the replayed (cropped) pattern window.
+    bool isPatternReplaying() const noexcept
+    {
+        return replaySnapshot.load(std::memory_order_acquire) != nullptr;
+    }
+    double replayPositionNormalized() const noexcept
+    {
+        return replayNormalized.load(std::memory_order_acquire);
+    }
+
     Snapshot snapshot() const noexcept;
 
   private:
@@ -84,6 +96,7 @@ class ScratchAudioSource final : public juce::AudioSource
     std::atomic<std::uint64_t> seekGeneration{0};
     std::atomic<bool> sourceEndReached{false};
     std::atomic<const PatternReplaySnapshot*> replaySnapshot{nullptr};
+    std::atomic<double> replayNormalized{0.0};
 
     std::uint64_t appliedSeekGeneration = 0;
     std::int64_t replayOutputSamples = 0;

@@ -79,6 +79,8 @@ void broadcastScratchSessionState(AudioEngine& engine, BridgeServer& bridge)
     object->setProperty("backingLoop", state->backingLoop);
     object->setProperty("backingGain", state->backingGain);
     object->setProperty("scratchMonitorGain", state->scratchMonitorGain);
+    object->setProperty("replaying", state->replaying);
+    object->setProperty("replayPositionNormalized", state->replayPositionNormalized);
     if (state->backingError.isNotEmpty())
     {
         object->setProperty("backingError", state->backingError);

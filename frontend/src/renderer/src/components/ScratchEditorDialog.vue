@@ -118,6 +118,15 @@ function stopReplay(): void {
   isPatternReplaying.value = false
 }
 
+// Notation playhead position (0..1 across the replayed crop window) while the
+// draft/pattern is auditioning. Null hides the playhead the moment replay stops,
+// independent of any trailing backend state.
+const notationReplayPositionNormalized = computed<number | null>(() =>
+  isPatternReplaying.value
+    ? session.state.value?.replayPositionNormalized ?? null
+    : null
+)
+
 // ── Dirty-close confirmation ─────────────────────────────────────────────────
 
 const dirtyClosePromptOpen = ref(false)
@@ -257,7 +266,10 @@ function onCrossfaderChange(value: number): void {
 // they never spin the scratch clip, which is heard only when jogged. Disabled
 // until a backing is prepared, and during recording (which owns playback).
 const transportEnabled = computed(
-  () => session.canControl.value && backing.isReady.value && !derived.isRecording.value
+  () => session.canControl.value
+    && backing.isReady.value
+    && !derived.isRecording.value
+    && !isPatternReplaying.value
 )
 
 function onSkipToStart(): void {
@@ -374,8 +386,8 @@ function onScratchGain(event: Event): void {
           <ScratchBackingPanel
             v-if="session.state.value && !derived.statusMessage.value"
             :backing="backing"
-            :disabled="derived.isRecording.value"
-            :is-playing="session.isPlaying.value || isPatternReplaying"
+            :disabled="derived.isRecording.value || isPatternReplaying"
+            :is-playing="session.isPlaying.value"
             :transport-enabled="transportEnabled"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
@@ -482,7 +494,10 @@ function onScratchGain(event: Event): void {
                 </template>
                 <template v-else-if="derived.recordingStatus.value === 'completed'">
                   <div class="flex min-h-0 flex-1 flex-col overflow-auto">
-                    <ScratchNotationEditor :session-id="session.activeSessionId.value" />
+                    <ScratchNotationEditor
+                      :session-id="session.activeSessionId.value"
+                      :replay-position-normalized="notationReplayPositionNormalized"
+                    />
                   </div>
                 </template>
                 <template v-else>

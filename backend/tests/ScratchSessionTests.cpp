@@ -745,7 +745,24 @@ void testScratchPatternReplayPlaysWithoutBacking()
     require(peak > 1.0e-4F,
             "pattern replay should produce audible output from the scratch clip");
 
+    // The replay position feeds the UI playheads: it advances 0→1 and is surfaced
+    // on the broadcast session snapshot while replaying.
+    require(source.replayPositionNormalized() > 0.0,
+            "replay position should advance past the start after playback");
+    {
+        const auto replayState = engine.getScratchSessionSnapshot();
+        require(replayState && replayState->replaying,
+                "session snapshot should report an active replay");
+        require(replayState->replayPositionNormalized > 0.0,
+                "session snapshot should surface the advancing replay position");
+    }
+
     engine.stopScratchPatternReplay();
+    {
+        const auto stoppedState = engine.getScratchSessionSnapshot();
+        require(stoppedState && !stoppedState->replaying,
+                "session snapshot should clear the replay flag after stop");
+    }
     engine.closeScratchSession(sessionId);
 }
 

@@ -23,6 +23,8 @@ import {
 
 const props = defineProps<{
   sessionId: string | null
+  /** Live replay position (0..1 across the cropped window), or null when idle. */
+  replayPositionNormalized?: number | null
 }>()
 
 const sessionIdRef = computed(() => props.sessionId)
@@ -127,6 +129,16 @@ const crossfaderPath = computed(() => {
 // Crop markers
 const cropStartX = computed(() => toX(editor.cropStartUs.value))
 const cropEndX = computed(() => toX(editor.cropEndUs.value))
+
+// Replay playhead: the normalized position runs 0..1 across the cropped window,
+// so map it back onto absolute pattern time before converting to an x coordinate.
+const replayPlayheadX = computed<number | null>(() => {
+  const n = props.replayPositionNormalized
+  if (n == null) return null
+  const start = editor.cropStartUs.value
+  const end = editor.cropEndUs.value
+  return toX(start + n * (end - start))
+})
 
 // Selection styling
 function isPlatterSelected(index: number): boolean {
@@ -421,6 +433,25 @@ function segmentColor(kind: string): string {
             stroke-dasharray="3 2"
             class="pointer-events-none"
           />
+
+          <!-- Replay playhead -->
+          <g
+            v-if="replayPlayheadX !== null"
+            class="pointer-events-none"
+          >
+            <line
+              :x1="replayPlayheadX"
+              :y1="0"
+              :x2="replayPlayheadX"
+              :y2="svgHeight"
+              stroke="rgb(74 222 128)"
+              stroke-width="2"
+            />
+            <polygon
+              :points="`${replayPlayheadX - 4},0 ${replayPlayheadX + 4},0 ${replayPlayheadX},7`"
+              fill="rgb(74 222 128)"
+            />
+          </g>
         </svg>
       </div>
 

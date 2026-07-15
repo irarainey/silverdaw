@@ -99,6 +99,7 @@ void PlayheadEmitter::timerCallback()
                     || crossfaderChanged
                     || emittedScratchState->status == "playing"
                     || emittedScratchState->status == "recording"
+                    || emittedScratchState->replaying
                     || emittedScratchState->touched)
                 {
                     broadcastScratchSessionState(engine, bridge);

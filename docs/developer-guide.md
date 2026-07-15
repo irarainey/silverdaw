@@ -2193,7 +2193,15 @@ deletes, auditions, and applies patterns to a clip (a clip references a saved
 pattern non-destructively); it also replays the current unsaved draft ("Play
 Scratch") and discards it ("Clear", which resets the notation panel to its empty
 state without touching saved patterns). Dirty state is tracked against a canonical
-baseline.
+baseline. While a draft or pattern is auditioning, the backend publishes a live
+replay position on the session state (`replaying` + `replayPositionNormalized`,
+0→1 across the cropped window) at the ~30 Hz emit rate; the waveform playhead
+tracks the scratch clip's source position (`positionUs`, which scrubs with the
+platter) and a green playhead sweeps the notation lanes so the performer can see
+where replay is. Replay is independent of the backing bed, so the backing panel
+(transport and configuration) is **disabled** for the duration of an audition and
+its controls keep their current visual state — the backing Play button never
+switches to a playing look because of a scratch replay.
 Live audition, timeline playback, mixdown, and rendering a new library sample all
 use the same closed-form trajectory evaluator, so live and offline replay of a
 stored pattern are identical regardless of block size or seek history. An

@@ -56,6 +56,11 @@ class ScratchSessionController
         // Monitor-only trims (0..1); never baked into recorded patterns.
         double backingGain = 1.0;
         double scratchMonitorGain = 1.0;
+        // Draft/pattern replay progress for UI playheads. `replaying` is true
+        // while a replay drives the scratch source; the normalized position runs
+        // 0→1 across the replayed (cropped) pattern window.
+        bool replaying = false;
+        double replayPositionNormalized = 0.0;
     };
 
     explicit ScratchSessionController(ScratchAudioSource& source,

@@ -741,6 +741,8 @@ ScratchSessionController::getSnapshot() const
         result.platterTurns = sourceState.platterTurns;
         result.playbackRate = sourceState.playbackRate;
         result.touched = sourceState.touched;
+        result.replaying = scratchSource.isPatternReplaying();
+        result.replayPositionNormalized = scratchSource.replayPositionNormalized();
     }
     return result;
 }

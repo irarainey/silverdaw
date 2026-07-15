@@ -251,6 +251,8 @@ export const ScratchSessionStatePayloadSchema = z.object({
   backingLoop: z.boolean().optional(),
   backingGain: z.number().finite().min(0).max(1).optional(),
   scratchMonitorGain: z.number().finite().min(0).max(1).optional(),
+  replaying: z.boolean().optional(),
+  replayPositionNormalized: z.number().finite().min(0).max(1).optional(),
   backingError: z.string().min(1).optional(),
   error: z.string().min(1).optional()
 })

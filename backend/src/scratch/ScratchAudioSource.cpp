@@ -138,6 +138,13 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     {
         const auto timeUs = static_cast<std::int64_t>(
             static_cast<double>(replayOutputSamples) * 1000000.0 / outputSampleRate);
+        const auto replayDurationUs = replay->durationUs();
+        replayNormalized.store(
+            replayDurationUs > 0
+                ? juce::jlimit(0.0, 1.0, static_cast<double>(timeUs)
+                                             / static_cast<double>(replayDurationUs))
+                : 0.0,
+            std::memory_order_release);
         const auto current = ScratchPatternEvaluator::evaluate(*replay, timeUs);
         if (current.beyondEnd)
         {
@@ -262,6 +269,7 @@ void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapsho
     replaySnapshot.store(nullptr, std::memory_order_release);
     waitForCallbackQuiescence();
     replayOutputSamples = 0;
+    replayNormalized.store(0.0, std::memory_order_release);
     outputSampleCounter.store(0, std::memory_order_release);
     sourceEndReached.store(false, std::memory_order_release);
 
@@ -291,6 +299,7 @@ void ScratchAudioSource::endPatternReplay() noexcept
     replaySnapshot.store(nullptr, std::memory_order_release);
     waitForCallbackQuiescence();
     replayOutputSamples = 0;
+    replayNormalized.store(0.0, std::memory_order_release);
     active.store(wasActive, std::memory_order_release);
 }
 

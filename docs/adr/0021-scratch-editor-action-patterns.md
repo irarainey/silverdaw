@@ -1122,3 +1122,46 @@ feature without a hardware binding.
 - Backend regression test `scratch MIDI router maps play to record` guards the new
   mapping (Play arms recording; Cue is inert). The removed `midiTogglePlay` path
   drops its `scratch MIDI transport controls backing only` test.
+
+## Amendment 17 — Replay position feedback (waveform + notation playheads)
+
+- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 15 made draft/pattern replay ("Play Scratch") transport-independent, but
+replay gave no visual feedback — the operator could hear the audition without
+seeing where it was. Both the scratch **waveform** and the **notation** panel
+should show a live playhead during replay.
+
+### Decision
+
+- **The scratch source publishes a normalized replay position.**
+  `ScratchAudioSource` tracks `replayPositionNormalized` (0→1 across the replayed,
+  cropped window) and exposes `isPatternReplaying()`; the controller surfaces both
+  on its session `Snapshot` as `replaying` + `replayPositionNormalized`, and
+  `broadcastScratchSessionState` emits them on `SCRATCH_SESSION_STATE`.
+- **The playhead emitter broadcasts while replaying.** `PlayheadEmitter` adds
+  `replaying` to its scratch-state emit gate so the position streams at the ~30 Hz
+  rate even though the session status stays `ready` (replay is transport-independent).
+- **Waveform playhead** follows the existing `positionUs` (the scratch clip's
+  source position), which scrubs back and forth with the platter during replay.
+- **Notation playhead** maps `replayPositionNormalized` back onto absolute pattern
+  time via the panel's crop range and draws a green sweep line. The frontend gates
+  its visibility on the local replay-active flag so it clears the instant replay
+  stops, independent of any trailing backend state.
+
+### Why
+
+Reusing the existing session-state channel and the already-published
+`positionUs`/crop math keeps a single source of truth for both playheads; no new
+message type is needed. Gating the notation playhead on the frontend replay flag
+avoids a dependency on a trailing "replay ended" broadcast.
+
+### Consequences
+
+- New optional `replaying` / `replayPositionNormalized` fields on
+  `SCRATCH_SESSION_STATE` (backward-compatible; both optional).
+- Backend regression `scratch pattern replay plays without a backing bed` now also
+  asserts the position advances and is surfaced on (then cleared from) the snapshot.
