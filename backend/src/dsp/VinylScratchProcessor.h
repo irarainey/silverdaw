@@ -14,6 +14,12 @@ class VinylScratchProcessor
     {
         double maxAbsRate = 8.0;
         double rateSmoothingSeconds = 0.004;
+        // Heavier rate smoothing applied only while the platter is actively held,
+        // emulating vinyl rotational inertia so light/high-resolution jog wheels feel
+        // less twitchy on fast moves. The release path keeps `rateSmoothingSeconds`
+        // (fast snap back to motor speed / slipmat behaviour), so this never
+        // re-introduces release lag.
+        double manualRateSmoothingSeconds = 0.013;
         double gainSmoothingSeconds = 0.002;
         double boundaryFadeSeconds = 0.003;
     };
@@ -24,6 +30,11 @@ class VinylScratchProcessor
 
     void setTargetRate(double rate) noexcept;
     void setTargetGain(float gain) noexcept;
+
+    // Select the active rate-smoothing weight: `true` engages the heavier
+    // manual-scratch inertia (platter touched), `false` the fast release/motor
+    // response. Audio-thread callable; cheap (a single assignment).
+    void setManualWeightEngaged(bool engaged) noexcept;
 
     void process(const juce::AudioBuffer<float>& source,
                  juce::AudioBuffer<float>& destination, int destinationStartSample,
@@ -56,6 +67,8 @@ class VinylScratchProcessor
     double currentRate = 0.0;
     double targetRate = 0.0;
     double rateSmoothing = 1.0;
+    double rateSmoothingFast = 1.0;
+    double rateSmoothingHeavy = 1.0;
     float currentGain = 1.0F;
     float targetGain = 1.0F;
     double gainSmoothing = 1.0;

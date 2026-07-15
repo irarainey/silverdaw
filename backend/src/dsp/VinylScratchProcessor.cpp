@@ -27,11 +27,15 @@ void VinylScratchProcessor::prepare(double newSampleRate, Settings newSettings) 
     settings.maxAbsRate = juce::jlimit(1.0, 32.0, newSettings.maxAbsRate);
     settings.rateSmoothingSeconds =
         juce::jlimit(0.0, 0.25, newSettings.rateSmoothingSeconds);
+    settings.manualRateSmoothingSeconds =
+        juce::jlimit(0.0, 0.25, newSettings.manualRateSmoothingSeconds);
     settings.gainSmoothingSeconds =
         juce::jlimit(0.0, 0.25, newSettings.gainSmoothingSeconds);
     settings.boundaryFadeSeconds =
         juce::jlimit(0.0, 0.1, newSettings.boundaryFadeSeconds);
-    rateSmoothing = smoothingCoefficient(settings.rateSmoothingSeconds, sampleRate);
+    rateSmoothingFast = smoothingCoefficient(settings.rateSmoothingSeconds, sampleRate);
+    rateSmoothingHeavy = smoothingCoefficient(settings.manualRateSmoothingSeconds, sampleRate);
+    rateSmoothing = rateSmoothingFast;
     gainSmoothing = smoothingCoefficient(settings.gainSmoothingSeconds, sampleRate);
     boundaryFadeSamples = settings.boundaryFadeSeconds * sampleRate;
     setTargetRate(targetRate);
@@ -57,6 +61,11 @@ void VinylScratchProcessor::setTargetRate(double rate) noexcept
 void VinylScratchProcessor::setTargetGain(float gain) noexcept
 {
     targetGain = juce::jlimit(0.0F, 1.0F, gain);
+}
+
+void VinylScratchProcessor::setManualWeightEngaged(bool engaged) noexcept
+{
+    rateSmoothing = engaged ? rateSmoothingHeavy : rateSmoothingFast;
 }
 
 void VinylScratchProcessor::process(const juce::AudioBuffer<float>& source,

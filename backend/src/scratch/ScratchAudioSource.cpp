@@ -162,6 +162,7 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         const auto evaluation = ScratchPatternEvaluator::evaluate(
             *replay, juce::jmin(replay->durationUs() - 1, midpointUs));
 
+        processor.setManualWeightEngaged(false);
         processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
         processor.setTargetGain(static_cast<float>(evaluation.crossfaderGain));
         processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
@@ -187,6 +188,10 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         semanticRate = 1.0;
     }
 
+    // Platter inertia: heavier rate smoothing while the platter is held smooths
+    // twitchy fast jog moves on light controllers; the untouched (release/motor)
+    // path keeps the fast snap so letting go still resumes speed instantly.
+    processor.setManualWeightEngaged(touched);
     processor.setTargetRate(semanticRate * sourceSamplesPerOutputSample);
     processor.setTargetGain(targetGain.load(std::memory_order_acquire));
     processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
