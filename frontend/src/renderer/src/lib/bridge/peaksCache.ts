@@ -189,6 +189,15 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     existingItem.durationMs = payload.durationMs
     if (payload.scratchOrigin === true) existingItem.scratchOrigin = true
     if (payload.scratchPatternId) existingItem.scratchPatternId = payload.scratchPatternId
+    // Refresh the source window so a re-opened scratch keeps displaying its original
+    // source aligned to the playhead (the baked duration differs from the window).
+    if (payload.sourceItemId) {
+      existingItem.derivedFrom = {
+        sourceItemId: payload.sourceItemId,
+        inMs: payload.sourceInMs ?? existingItem.derivedFrom?.inMs ?? 0,
+        durationMs: payload.sourceDurationMs ?? existingItem.derivedFrom?.durationMs ?? payload.durationMs
+      }
+    }
     library.setItemAudioDetails(
       existingItem.id,
       payload.durationMs,
@@ -227,7 +236,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       ? {
           sourceItemId: payload.sourceItemId,
           inMs: payload.sourceInMs ?? 0,
-          durationMs: payload.durationMs
+          durationMs: payload.sourceDurationMs ?? payload.durationMs
         }
       : undefined,
     scratchOrigin: payload.scratchOrigin === true ? true : undefined,

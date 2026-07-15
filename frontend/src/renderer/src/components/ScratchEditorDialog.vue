@@ -100,14 +100,23 @@ function bakeScratchToLibrary(): void {
   const name = persistence.patternName.value.trim() || pattern.name || 'Scratch'
   const saved: ScratchPattern = { ...pattern, id: targetId, name }
   const itemId = `scratch-${targetId}`
-  // Inherit cover art from the library item the scratch was recorded over: for a
-  // clip session that's the clip's source item, for a library session the item
-  // itself (e.g. re-editing an existing scratch keeps its inherited art).
+  // Inherit cover art from — and window/display on re-open — the resolved source
+  // item the scratch was actually performed over (the peaks-bearing source, not an
+  // intermediate clip item). Falls back to the opened item when unresolved.
   const sourceItemId =
+    derived.sourceItemId.value ??
     (props.clipId !== null ? project.clips[props.clipId]?.libraryItemId : props.libraryItemId) ??
     null
   scratchStore.beginScratchBake(itemId)
-  project.saveScratchAsSample(sid, itemId, name, saved, sourceItemId)
+  project.saveScratchAsSample(
+    sid,
+    itemId,
+    name,
+    saved,
+    sourceItemId,
+    derived.clipInMs.value,
+    derived.waveformDurationMs.value
+  )
 }
 
 // Resolve the in-flight bake: close the editor on success, or surface the error
@@ -375,7 +384,15 @@ function onRecordButton(): void {
   if (!derived.canRecord.value && recordPhase.value === 'idle') return
   if (recordPhase.value === 'recording') session.stopRecording()
   else if (recordPhase.value === 'armed') session.disarmRecording()
-  else session.armRecording()
+  else {
+    // Starting a fresh take: discard any existing scratch first so the new
+    // recording replaces it cleanly instead of leaving the old notation on screen.
+    if (derived.hasPattern.value || scratchStore.completedPattern) {
+      stopReplay()
+      scratchStore.clearRecording()
+    }
+    session.armRecording()
+  }
 }
 
 const recordButtonLabel = computed(() => {

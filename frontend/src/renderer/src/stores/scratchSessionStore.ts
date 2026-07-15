@@ -69,6 +69,21 @@ export const useScratchSessionStore = defineStore('scratchSession', {
       }
       // Accept preparing-state when lifecycle is awaiting the first
       // backend-generated ID (current is null).
+      // Re-arming after a take must discard the existing scratch so the new
+      // recording starts from a clean slate — matching a fresh session. Both the
+      // on-screen Record button and a physical MIDI Cue arm funnel through this
+      // state update, so clearing on the rising edge of `armed` covers every input
+      // source and clears the notation the moment recording is armed (not only once
+      // capture starts).
+      const wasArmed = this.current?.armed === true
+      if (
+        payload.armed === true &&
+        !wasArmed &&
+        payload.status !== 'recording' &&
+        this.completedPattern !== null
+      ) {
+        this.clearRecording()
+      }
       this.current = payload
       if (payload.status === 'recording') {
         this.recordingStatus = 'recording'

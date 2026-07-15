@@ -33,7 +33,9 @@ export const scratchPatternActions = {
     itemId: string,
     sampleName: string,
     pattern: ScratchPattern,
-    sourceItemId?: string | null
+    sourceItemId?: string | null,
+    sourceInMs?: number | null,
+    sourceDurationMs?: number | null
   ): void {
     sendBridge('SCRATCH_SAVE_AS_SAMPLE', {
       protocolVersion: SCRATCH_PROTOCOL_VERSION,
@@ -41,6 +43,8 @@ export const scratchPatternActions = {
       itemId,
       sampleName,
       ...(sourceItemId ? { sourceItemId } : {}),
+      ...(typeof sourceInMs === 'number' && sourceInMs >= 0 ? { sourceInMs } : {}),
+      ...(typeof sourceDurationMs === 'number' && sourceDurationMs > 0 ? { sourceDurationMs } : {}),
       pattern
     })
     log.info('project', `saveScratchAsSample item=${itemId} name=${sampleName}`)

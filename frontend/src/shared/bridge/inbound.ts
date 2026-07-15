@@ -517,6 +517,8 @@ const SampleSavedSuccessSchema = z.object({
   sourceItemId: z.string().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
+  /** Source window length in ms; persisted so a re-opened scratch windows its source. */
+  sourceDurationMs: z.number().optional(),
   /** Set for a baked scratch: drives the vinyl tile icon and re-open metadata. */
   scratchOrigin: z.boolean().optional(),
   scratchPatternId: z.string().optional(),

@@ -21,6 +21,7 @@
 namespace silverdaw
 {
 
+using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 using silverdaw::bridge::tryGetString;
 
@@ -130,6 +131,11 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
     // The library item the scratch was recorded over; the baked sample inherits
     // its media GUID so cover art resolves from the shared project media entry.
     const juce::String sourceItemId = tryGetString(payload, "sourceItemId").value_or(juce::String{});
+    // The exact source window the scratch was performed over, persisted so re-opening
+    // the saved scratch can display the original source aligned to the playhead rather
+    // than the baked (already-scratched) waveform. Absent (-1) for legacy callers.
+    const double scratchSourceInMs = tryGetNumber(payload, "sourceInMs").value_or(-1.0);
+    const double scratchSourceDurationMs = tryGetNumber(payload, "sourceDurationMs").value_or(-1.0);
     const juce::String sampleMediaId =
         sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
 
@@ -167,7 +173,8 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
 
     peakPool.addJob(
         [pattern, notationVar, preparedSource, sourceSampleRate, scratchDir, itemId, sampleName,
-         sourceItemId, sampleMediaId, &engine, &projectState, &cache, &bridge, &session]
+         sourceItemId, sampleMediaId, scratchSourceInMs, scratchSourceDurationMs, &engine,
+         &projectState, &cache, &bridge, &session]
         {
             const auto safeName = sanitiseScratchFileName(sampleName);
             juce::String error;
@@ -219,7 +226,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
             juce::MessageManager::callAsync(
                 [pattern, itemId, safeName, bakedFile, durationMs, sourceSampleRate, channels,
                  bakeOk, error, peaks, peaksFile, sourcePath, sourceItemId, sampleMediaId,
-                 &projectState, &bridge, &session]
+                 scratchSourceInMs, scratchSourceDurationMs, &projectState, &bridge, &session]
                 {
                     auto* obj = new juce::DynamicObject();
                     obj->setProperty("itemId", itemId);
@@ -243,7 +250,8 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
                     projectState.addLibraryItem(itemId, bakedFile.getFullPathName(), bakedFile.getFileName(),
                                                 durationMs, static_cast<int>(sourceSampleRate), channels,
                                                 bakedFile.getFullPathName(), {}, "sample", safeName,
-                                                sourceItemId, {}, -1.0, -1.0, -1, sampleMediaId);
+                                                sourceItemId, {}, scratchSourceInMs, scratchSourceDurationMs,
+                                                -1, sampleMediaId);
                     projectState.setLibraryItemAudioType(itemId, "simple");
                     projectState.setLibraryItemScratchMeta(itemId, pattern.id, sourcePath);
 
@@ -263,6 +271,10 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
                     obj->setProperty("scratchSourcePath", sourcePath);
                     if (sourceItemId.isNotEmpty())
                         obj->setProperty("sourceItemId", sourceItemId);
+                    if (scratchSourceInMs >= 0.0)
+                        obj->setProperty("sourceInMs", scratchSourceInMs);
+                    if (scratchSourceDurationMs > 0.0)
+                        obj->setProperty("sourceDurationMs", scratchSourceDurationMs);
                     bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
 
                     // Full resync carries the notation + additive library metadata so the

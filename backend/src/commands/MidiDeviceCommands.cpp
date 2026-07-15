@@ -21,6 +21,12 @@ namespace
 {
 constexpr int relativeControlCount = 5;
 
+// Jog/relative UI-feedback broadcasts (MIDI_CONTROL) are throttled to ~30 Hz.
+// The scratch audio path runs per message and is unaffected; this only coalesces
+// the visual echo so heavy scratching can't flood the bridge at the 60 Hz timer
+// rate.
+constexpr juce::int64 relativeBroadcastIntervalMs = 33;
+
 // Controllers can be mid power-on animation or demo/standby light show when we
 // open the output port, and a freshly opened Windows MIDI OUT port may drop the
 // first messages. A single connect-time blank burst is therefore unreliable. For
@@ -218,6 +224,10 @@ public:
     std::array<QueuedMidiMessage, queueCapacity> queue{};
     juce::AbstractFifo fifo{queueCapacity};
     juce::int64 lastMonitorBroadcastMs = 0;
+    // Persistent accumulator for throttled jog/relative UI broadcasts (~30 Hz).
+    std::array<std::array<double, relativeControlCount>, 2> pendingRelativeDeltas{};
+    std::array<std::array<juce::int64, relativeControlCount>, 2> pendingRelativeTimestamps{};
+    juce::int64 lastRelativeBroadcastMs = 0;
     std::unique_ptr<juce::MidiInput> input;
     std::unique_ptr<juce::MidiOutput> output;
     int lastMeterValue = -1;
@@ -548,8 +558,33 @@ private:
                 broadcastMappedControl(
                     *active, latestCrossfaderTimestamp, *latestCrossfaderControl);
             }
-            broadcastRelativeControls(*active, relativeDeltas, relativeTimestamps);
             const auto nowMs = juce::Time::currentTimeMillis();
+            // Coalesce this tick's jog deltas into the persistent accumulator and
+            // flush the UI-feedback broadcast at ~30 Hz. routeRelative already
+            // applied the audio motion per message, so this throttle only affects
+            // the visual echo, not scratch responsiveness.
+            for (int deckIndex = 0; deckIndex < 2; ++deckIndex)
+            {
+                for (int controlIndex = 0; controlIndex < relativeControlCount; ++controlIndex)
+                {
+                    const auto delta = relativeDeltas[static_cast<size_t>(deckIndex)]
+                                                     [static_cast<size_t>(controlIndex)];
+                    if (delta == 0.0) continue;
+                    active->pendingRelativeDeltas[static_cast<size_t>(deckIndex)]
+                                                 [static_cast<size_t>(controlIndex)] += delta;
+                    active->pendingRelativeTimestamps[static_cast<size_t>(deckIndex)]
+                                                     [static_cast<size_t>(controlIndex)] =
+                        relativeTimestamps[static_cast<size_t>(deckIndex)]
+                                          [static_cast<size_t>(controlIndex)];
+                }
+            }
+            if (nowMs - active->lastRelativeBroadcastMs >= relativeBroadcastIntervalMs)
+            {
+                broadcastRelativeControls(*active, active->pendingRelativeDeltas,
+                                          active->pendingRelativeTimestamps);
+                active->pendingRelativeDeltas = {};
+                active->lastRelativeBroadcastMs = nowMs;
+            }
             scratchRouter.checkExpiredOwners(
                 active->identifier, active->scratchState,
                 nowMs, bridge);

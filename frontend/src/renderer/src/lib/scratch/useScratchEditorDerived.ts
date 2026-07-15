@@ -6,6 +6,8 @@ import type { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSess
 
 export interface ScratchEditorDerivedState {
   clip: ComputedRef<ReturnType<typeof useProjectStore>['clips'][string] | null>
+  /** Resolved id of the source item that actually carries the displayed peaks. */
+  sourceItemId: ComputedRef<string | null>
   peaks: ComputedRef<Float32Array>
   peaksPerSecond: ComputedRef<number>
   channelPeaks: ComputedRef<readonly Float32Array[]>
@@ -51,13 +53,17 @@ export function useScratchEditorDerived(
   // Saved clips carry no audio of their own — they window a source item. Resolve
   // the underlying source (mirroring the Clip Editor) so the waveform always has
   // peaks to draw, applying the clip's window via `clipInMs`/`waveformDurationMs`.
+  // A baked-scratch sample is likewise a derived item: display its original source
+  // (not the already-scratched baked waveform) so the playhead lines up with what
+  // the backend re-prepares from the source snapshot.
   const sourceItem = computed(() => {
     const meta = metaItem.value
-    if (meta?.kind === 'clip' && meta.derivedFrom?.sourceItemId) {
+    if ((meta?.kind === 'clip' || meta?.scratchOrigin === true) && meta?.derivedFrom?.sourceItemId) {
       return library.byId[meta.derivedFrom.sourceItemId] ?? meta
     }
     return meta
   })
+  const sourceItemId = computed<string | null>(() => sourceItem.value?.id ?? null)
   const peaks = computed(
     () => sourceItem.value?.peaks ?? clip.value?.peaks ?? new Float32Array()
   )
@@ -81,7 +87,9 @@ export function useScratchEditorDerived(
   const clipInMs = computed(() => {
     if (clip.value) return clip.value.inMs
     const meta = metaItem.value
-    return meta?.kind === 'clip' ? meta.derivedFrom?.inMs ?? 0 : 0
+    return meta?.kind === 'clip' || meta?.scratchOrigin === true
+      ? meta?.derivedFrom?.inMs ?? 0
+      : 0
   })
   const clipReversed = computed(() => clip.value?.reversed ?? false)
   const sourceBpm = computed(() => sourceItem.value?.bpm)
@@ -93,7 +101,9 @@ export function useScratchEditorDerived(
   const waveformDurationMs = computed(() => {
     if (clip.value) return clip.value.durationMs
     const meta = metaItem.value
-    if (meta?.kind === 'clip') return meta.derivedFrom?.durationMs ?? meta.durationMs ?? 0
+    if (meta?.kind === 'clip' || meta?.scratchOrigin === true) {
+      return meta?.derivedFrom?.durationMs ?? meta?.durationMs ?? 0
+    }
     return meta?.durationMs ?? 0
   })
   const positionMs = computed(() => (session.state.value?.positionUs ?? 0) / 1000)
@@ -139,7 +149,7 @@ export function useScratchEditorDerived(
   })
 
   return {
-    clip, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
+    clip, sourceItemId, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
     clipInMs, clipReversed, sourceBpm, beatAnchorSec, waveformDurationMs,
     positionMs, platterTurns, crossfaderValue, crossfaderReversed, isTouched, clipName,
     statusMessage, isError, isRecording, isArmed, recordingStatus, canRecord, hasPattern,

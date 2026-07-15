@@ -302,6 +302,11 @@ export const ScratchSaveAsSamplePayloadSchema = z.object({
   // Library item the scratch was recorded over, so the baked sample inherits its
   // cover art. Optional: a scratch may be recorded without a resolvable source.
   sourceItemId: z.string().min(1).optional(),
+  // The source window (in the source item's timeline) the scratch was performed
+  // over, persisted so re-opening the saved scratch can display the original
+  // source aligned to the playhead instead of the baked waveform.
+  sourceInMs: z.number().nonnegative().optional(),
+  sourceDurationMs: z.number().nonnegative().optional(),
   pattern: ScratchPatternSchema
 })
 export type ScratchSaveAsSamplePayload = z.infer<typeof ScratchSaveAsSamplePayloadSchema>
