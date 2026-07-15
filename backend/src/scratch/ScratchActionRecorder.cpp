@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <utility>
 
 namespace silverdaw::scratch
 {
@@ -13,8 +14,68 @@ constexpr std::int64_t kMaxLivePlatterPoints = kMaxPatternPoints - 1;
 constexpr std::int64_t kMaxLiveCrossfaderPoints = kMaxPatternPoints - 1;
 constexpr std::int64_t kPlatterCaptureIntervalUs = 8000;
 constexpr std::int64_t kCrossfaderCaptureIntervalUs = 16000;
+// Simplification tolerances (the RDP epsilon): the largest value error, in the
+// lane's own units, that a dropped keyframe may introduce against the retained
+// piecewise-linear curve. Platter is in turns (0.002 turns ≈ 0.72° of platter
+// rotation); crossfader is the normalised 0..1 fader position.
 constexpr double kPlatterCoalesceToleranceTurns = 0.002;
 constexpr double kCrossfaderCoalesceTolerance = 0.01;
+
+// Ramer–Douglas–Peucker simplification over the inclusive index range [lo, hi],
+// whose endpoints are already retained. Deviation is measured *vertically* — the
+// value error at each point's own timestamp against the chord — so the guarantee
+// is a direct bound on the retained curve's positional error and is independent
+// of the time-axis scale. Local extrema (a scratch's direction reversals) survive
+// because a reversal sits far from any chord spanning it. Iterative (explicit
+// stack) to avoid unbounded recursion on long takes.
+template <typename Keyframe, typename ValueFn>
+void rdpMarkKeep(const std::vector<Keyframe>& pts,
+                 std::size_t lo,
+                 std::size_t hi,
+                 double epsilon,
+                 ValueFn valueOf,
+                 std::vector<char>& keep)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> stack;
+    stack.emplace_back(lo, hi);
+    while (!stack.empty())
+    {
+        const auto [a, b] = stack.back();
+        stack.pop_back();
+        if (b <= a + 1)
+            continue; // no interior points to test
+
+        const double va = valueOf(pts[a]);
+        const double vb = valueOf(pts[b]);
+        const double ta = static_cast<double>(pts[a].timeUs);
+        const double tb = static_cast<double>(pts[b].timeUs);
+        const double dt = tb - ta;
+
+        double maxDeviation = -1.0;
+        std::size_t maxIndex = a;
+        for (std::size_t i = a + 1; i < b; ++i)
+        {
+            const double t = static_cast<double>(pts[i].timeUs);
+            const double interpolated =
+                dt > 0.0 ? va + (vb - va) * ((t - ta) / dt) : va;
+            const double deviation = std::abs(valueOf(pts[i]) - interpolated);
+            if (deviation > maxDeviation)
+            {
+                maxDeviation = deviation;
+                maxIndex = i;
+            }
+        }
+
+        // Keep the worst offender and recurse into both halves; otherwise every
+        // interior point is within tolerance of the chord and can be dropped.
+        if (maxDeviation > epsilon)
+        {
+            keep[maxIndex] = 1;
+            stack.emplace_back(a, maxIndex);
+            stack.emplace_back(maxIndex, b);
+        }
+    }
+}
 } // namespace
 
 std::int64_t ScratchActionRecorder::monotonicUs()
@@ -218,47 +279,35 @@ void ScratchActionRecorder::coalescePlatter(std::vector<PlatterKeyframe>& lane)
     if (lane.size() <= 2)
         return;
 
-    std::vector<PlatterKeyframe> reduced;
-    reduced.reserve(lane.size());
-    reduced.push_back(lane.front());
+    const std::size_t last = lane.size() - 1;
+    std::vector<char> keep(lane.size(), 0);
+    keep[0] = 1;
+    keep[last] = 1;
 
-    for (std::size_t i = 1; i + 1 < lane.size(); ++i)
+    // Touch state is semantically load-bearing (it gates replay and rendering),
+    // so a touch transition is force-kept on both sides and RDP runs *within*
+    // each constant-touch run. This keeps every touch change while still
+    // simplifying the movement inside a run.
+    std::size_t runStart = 0;
+    for (std::size_t i = 1; i < lane.size(); ++i)
     {
-        const auto& prev = reduced.back();
-        const auto& curr = lane[i];
-        const auto& next = lane[i + 1];
-
-        // Keep points where touch state changes
-        if (curr.touched != prev.touched || curr.touched != next.touched)
+        if (lane[i].touched != lane[i - 1].touched)
         {
-            reduced.push_back(curr);
-            continue;
-        }
-
-        // Keep points where direction changes (sign of slope changes)
-        const double slopePrev = curr.turns - prev.turns;
-        const double slopeNext = next.turns - curr.turns;
-        if ((slopePrev > kPlatterCoalesceToleranceTurns
-             && slopeNext < -kPlatterCoalesceToleranceTurns)
-            || (slopePrev < -kPlatterCoalesceToleranceTurns
-                && slopeNext > kPlatterCoalesceToleranceTurns))
-        {
-            reduced.push_back(curr);
-            continue;
-        }
-
-        // Keep points where the interpolated value differs significantly
-        const auto timeFraction =
-            static_cast<double>(curr.timeUs - prev.timeUs)
-            / static_cast<double>(next.timeUs - prev.timeUs);
-        const auto interpolated = prev.turns + (next.turns - prev.turns) * timeFraction;
-        if (std::abs(curr.turns - interpolated) > kPlatterCoalesceToleranceTurns)
-        {
-            reduced.push_back(curr);
+            keep[i - 1] = 1;
+            keep[i] = 1;
+            rdpMarkKeep(lane, runStart, i - 1, kPlatterCoalesceToleranceTurns,
+                        [](const PlatterKeyframe& k) { return k.turns; }, keep);
+            runStart = i;
         }
     }
+    rdpMarkKeep(lane, runStart, last, kPlatterCoalesceToleranceTurns,
+                [](const PlatterKeyframe& k) { return k.turns; }, keep);
 
-    reduced.push_back(lane.back());
+    std::vector<PlatterKeyframe> reduced;
+    reduced.reserve(lane.size());
+    for (std::size_t i = 0; i < lane.size(); ++i)
+        if (keep[i] != 0)
+            reduced.push_back(lane[i]);
     lane = std::move(reduced);
 }
 
@@ -267,27 +316,18 @@ void ScratchActionRecorder::coalesceCrossfader(std::vector<CrossfaderKeyframe>& 
     if (lane.size() <= 2)
         return;
 
+    const std::size_t last = lane.size() - 1;
+    std::vector<char> keep(lane.size(), 0);
+    keep[0] = 1;
+    keep[last] = 1;
+    rdpMarkKeep(lane, 0, last, kCrossfaderCoalesceTolerance,
+                [](const CrossfaderKeyframe& k) { return k.value; }, keep);
+
     std::vector<CrossfaderKeyframe> reduced;
     reduced.reserve(lane.size());
-    reduced.push_back(lane.front());
-
-    for (std::size_t i = 1; i + 1 < lane.size(); ++i)
-    {
-        const auto& prev = reduced.back();
-        const auto& curr = lane[i];
-        const auto& next = lane[i + 1];
-
-        const auto timeFraction =
-            static_cast<double>(curr.timeUs - prev.timeUs)
-            / static_cast<double>(next.timeUs - prev.timeUs);
-        const auto interpolated = prev.value + (next.value - prev.value) * timeFraction;
-        if (std::abs(curr.value - interpolated) > kCrossfaderCoalesceTolerance)
-        {
-            reduced.push_back(curr);
-        }
-    }
-
-    reduced.push_back(lane.back());
+    for (std::size_t i = 0; i < lane.size(); ++i)
+        if (keep[i] != 0)
+            reduced.push_back(lane[i]);
     lane = std::move(reduced);
 }
 

@@ -87,6 +87,15 @@ class ScratchSessionController
     // Unified control entry point — message-thread only.
     bool controlSession(const SessionControlPayload& control);
 
+    // Draft/pattern replay accompaniment (ADR 0021, Amendment 17) — message-thread
+    // only. A recorded take is captured with the backing bed running from its
+    // origin, so pattern replay should hear that bed in time. `beginReplayBacking`
+    // rewinds a prepared bed to its head and starts it alongside the replay;
+    // `endReplayBacking` stops and rewinds it. Both are no-ops when no bed is
+    // ready, preserving transport-independent replay (Amendment 15).
+    bool beginReplayBacking();
+    void endReplayBacking();
+
     // MIDI entry points — may be called from MIDI thread.
     // Record control driven by the deck's physical Play button — mirrors the
     // on-screen Record button: idle → arm, armed → cancel, recording → stop. The
@@ -153,7 +162,7 @@ class ScratchSessionController
         bool backingLoop = false;
         // Monitor-only trims (0..1); never baked into recorded patterns.
         double backingGain = 1.0;
-        double scratchMonitorGain = 0.75;
+        double scratchMonitorGain = 0.85;
     };
 
     ScratchAudioSource& scratchSource;

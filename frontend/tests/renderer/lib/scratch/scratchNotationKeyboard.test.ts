@@ -56,18 +56,12 @@ function makeMockEditor(pattern: ScratchPattern | null, selection: NotationSelec
   const added: Array<{ lane: string; time: number }> = []
   const deleted: boolean[] = []
   const toggled: number[] = []
-  const undone: boolean[] = []
-  const redone: boolean[] = []
 
   const sel = ref(selection)
 
   return {
     pattern: computed(() => pattern),
     selection: sel,
-    canUndo: computed(() => true),
-    canRedo: computed(() => true),
-    cropStartUs: ref(0),
-    cropEndUs: ref(pattern?.durationUs ?? 0),
     selectKeyframe: (lane: NotationLane, index: number) => { sel.value = { lane, index } },
     clearSelection: () => { sel.value = null },
     movePlatter: (index: number, timeUs: number, turns: number) => { moved.push({ lane: 'platter', index, time: timeUs, value: turns }); return true },
@@ -76,23 +70,15 @@ function makeMockEditor(pattern: ScratchPattern | null, selection: NotationSelec
     addCrossfaderPoint: (timeUs: number) => { added.push({ lane: 'crossfader', time: timeUs }); return true },
     deleteSelected: () => { deleted.push(true); return true },
     togglePlatterTouch: (index: number) => { toggled.push(index); return true },
-    applyCrop: () => true,
-    resetCrop: () => {},
-    undo: () => { undone.push(true) },
-    redo: () => { redone.push(true) },
     _moved: moved,
     _added: added,
     _deleted: deleted,
-    _toggled: toggled,
-    _undone: undone,
-    _redone: redone
+    _toggled: toggled
   } as unknown as ScratchNotationEditor & {
     _moved: typeof moved
     _added: typeof added
     _deleted: typeof deleted
     _toggled: typeof toggled
-    _undone: typeof undone
-    _redone: typeof redone
   }
 }
 
@@ -142,24 +128,6 @@ describe('handleNotationKeydown', () => {
       ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
       const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
       expect(consumed).toBe(false)
-    })
-  })
-
-  describe('undo/redo', () => {
-    it('Ctrl+Z triggers undo', () => {
-      const editor = makeMockEditor(makePattern()) as ReturnType<typeof makeMockEditor>
-      const event = makeKeyEvent('z', { ctrlKey: true })
-      ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
-      handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
-      expect((editor as unknown as { _undone: boolean[] })._undone).toHaveLength(1)
-    })
-
-    it('Ctrl+Shift+Z triggers redo', () => {
-      const editor = makeMockEditor(makePattern()) as ReturnType<typeof makeMockEditor>
-      const event = makeKeyEvent('z', { ctrlKey: true, shiftKey: true })
-      ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
-      handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
-      expect((editor as unknown as { _redone: boolean[] })._redone).toHaveLength(1)
     })
   })
 

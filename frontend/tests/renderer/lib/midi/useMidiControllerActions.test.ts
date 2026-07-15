@@ -8,7 +8,9 @@ const handleMidiControlMock = vi.hoisted(() => vi.fn())
 const suspendMidiControllerActionsMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/midi/midiControllerActions', () => ({
   handleMidiControl: handleMidiControlMock,
-  suspendMidiControllerActions: suspendMidiControllerActionsMock
+  suspendMidiControllerActions: suspendMidiControllerActionsMock,
+  isMasterVolumeControl: (payload: { kind: string; control: string }) =>
+    payload.kind === 'absolute' && payload.control === 'masterVolume'
 }))
 vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
 
@@ -37,7 +39,7 @@ describe('useMidiControllerActions', () => {
     expect(handleMidiControlMock).toHaveBeenCalledWith(control)
   })
 
-  it('blocks every mapped control and suspends pending actions while a dialog is open', () => {
+  it('blocks other controls but passes the master volume through while a dialog is open', () => {
     const store = useMidiDeviceStore()
     const blocked = ref(false)
     useMidiControllerActions(() => blocked.value)
@@ -61,17 +63,21 @@ describe('useMidiControllerActions', () => {
       deck: 1,
       value: 1
     })
-    store.applyControl({
+    expect(handleMidiControlMock).not.toHaveBeenCalled()
+    expect(store.shiftPressed[1]).toBe(true)
+
+    // The master volume is the one control that stays live behind a dialog.
+    const masterControl = {
       deviceIdentifier: 'ddj-rb',
       timestampMs: 3,
       kind: 'absolute',
       control: 'masterVolume',
       deck: null,
       value: 0.5
-    })
-
-    expect(handleMidiControlMock).not.toHaveBeenCalled()
-    expect(store.shiftPressed[1]).toBe(true)
+    } as const
+    store.applyControl(masterControl)
+    expect(handleMidiControlMock).toHaveBeenCalledOnce()
+    expect(handleMidiControlMock).toHaveBeenCalledWith(masterControl)
 
     blocked.value = false
     store.applyControl({
@@ -82,6 +88,6 @@ describe('useMidiControllerActions', () => {
       deck: 1,
       pressed: true
     })
-    expect(handleMidiControlMock).toHaveBeenCalledOnce()
+    expect(handleMidiControlMock).toHaveBeenCalledTimes(2)
   })
 })

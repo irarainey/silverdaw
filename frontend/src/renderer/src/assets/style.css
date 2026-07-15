@@ -62,11 +62,13 @@
   .dialog-footer {
     @apply flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-3;
   }
-  /* Primary action (Save / Export / Confirm). Disabled state is
+  /* Primary action (Save / Export / Confirm). Filled with the single
+   * `sky` accent; hierarchy against the neutral Cancel button is carried
+   * by filled-vs-ghost, not by a second blue hue. Disabled state is
    * carried through so a transactional dialog can gate Save on
    * validation. */
   .dialog-btn-primary {
-    @apply rounded border border-cyan-700 bg-cyan-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-600 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500;
+    @apply rounded border border-sky-600 bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500;
   }
   /* Secondary action (Cancel / Close). Neutral zinc — never accent. */
   .dialog-btn-cancel {

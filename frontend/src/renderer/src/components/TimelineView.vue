@@ -89,7 +89,7 @@ const {
       type="text"
       spellcheck="false"
       data-borderless-button="true"
-      class="z-30 rounded-sm border border-cyan-500 bg-zinc-950 px-1 text-[10px] font-medium text-zinc-100 outline-none"
+      class="z-30 rounded-sm border border-sky-500 bg-zinc-950 px-1 text-[10px] font-medium text-zinc-100 outline-none"
       :style="renameOverlayStyle"
       @pointerdown.stop
       @dblclick.stop

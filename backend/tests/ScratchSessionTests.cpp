@@ -1226,6 +1226,76 @@ void testScratchBackingLoopRestartsAtEnd()
     require(!backing.isPlaying(), "with loop off the backing end should stop playback");
 }
 
+void testScratchReplayBackingPlaysInSync()
+{
+    // A take is recorded over the backing bed running from its head, so replaying
+    // the pattern must run that bed in time (ADR 0021, Amendment 18). The
+    // controller's replay-backing hooks rewind a prepared bed and start/stop it
+    // alongside the audition; they no-op when no bed is ready (Amendment 15).
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-replay-backing");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare for replay-backing testing");
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 1.0), sampleRate);
+
+    // Move the bed off its origin so we can prove replay rewinds it before play.
+    scratch::SessionControlPayload play;
+    play.sessionId = sessionId;
+    play.action = scratch::ControlAction::play;
+    require(controller.controlSession(play), "backing transport should start playback");
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.1), 128);
+    require(backing.positionUs() > 0, "bed should have advanced off its origin");
+    scratch::SessionControlPayload pause;
+    pause.sessionId = sessionId;
+    pause.action = scratch::ControlAction::pause;
+    require(controller.controlSession(pause), "backing transport should pause");
+
+    // Replay start rewinds the bed to its head and runs it in time.
+    require(controller.beginReplayBacking(),
+            "replay should start a prepared backing bed");
+    require(backing.isPlaying(), "replay backing should be playing");
+    require(backing.positionUs() == 0,
+            "replay should rewind the bed to its head before playback");
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.1), 128);
+    require(backing.positionUs() > 0, "replay backing should advance in time");
+
+    // Replay stop halts and rewinds the bed.
+    controller.endReplayBacking();
+    require(!backing.isPlaying(), "ending replay should stop the backing bed");
+    require(backing.positionUs() == 0, "ending replay should rewind the bed");
+}
+
+void testScratchReplayBackingNoOpWithoutBed()
+{
+    // With no backing prepared, the replay-backing hooks must no-op so replay
+    // stays scratch-only and transport-independent (ADR 0021, Amendment 15/18).
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-replay-no-bed");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare without a backing bed");
+
+    require(!controller.beginReplayBacking(),
+            "replay should not start a backing bed when none is prepared");
+    require(!backing.isPlaying(), "no bed should be running without preparation");
+    controller.endReplayBacking(); // must be safe to call with no bed
+    require(!backing.isPlaying(), "ending replay stays a no-op with no bed");
+}
+
 void addScratchSessionTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"scratch session audio transport and hold", testScratchAudioSourceTransport});
@@ -1253,6 +1323,8 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch MIDI play button toggles recording", testScratchMidiRecordButtonTogglesRecording});
     tests.push_back({"scratch MIDI router maps play to record", testScratchMidiRouterMapsPlayToRecord});
     tests.push_back({"scratch backing loop restarts the bed at its end", testScratchBackingLoopRestartsAtEnd});
+    tests.push_back({"scratch replay plays the backing bed in sync", testScratchReplayBackingPlaysInSync});
+    tests.push_back({"scratch replay backing no-op without a prepared bed", testScratchReplayBackingNoOpWithoutBed});
 }
 
 } // namespace silverdaw::tests

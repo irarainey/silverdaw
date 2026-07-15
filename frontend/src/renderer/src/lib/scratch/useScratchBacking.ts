@@ -122,7 +122,7 @@ export function useScratchBacking(
   // Monitor-only balance while auditioning; never baked into recorded patterns.
   // Values mirror the authoritative session state so external changes reconcile.
   const monitorGain = computed(() => state.value?.backingGain ?? 1)
-  const scratchGain = computed(() => state.value?.scratchMonitorGain ?? 0.75)
+  const scratchGain = computed(() => state.value?.scratchMonitorGain ?? 0.85)
 
   function setMonitorGain(value: number): void {
     const sid = sessionId.value

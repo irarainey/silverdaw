@@ -1,17 +1,14 @@
 // Composable for the Scratch Notation Editor. Manages selection, editing
-// (move/add/delete/crop), undo/redo, touch toggle, and schema-validated
-// commits to the store.
+// (move/add/delete/touch toggle), and schema-validated commits to the store.
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
-import { createScratchEditHistory, type ScratchEditHistory } from './scratchEditHistory'
 import {
   addCrossfaderKeyframe,
   addPlatterKeyframe,
   applyCrossfaderEdit,
   applyPlatterEdit,
-  cropPattern,
   deleteCrossfaderKeyframe,
   deletePlatterKeyframe,
   interpolateCrossfaderAt,
@@ -30,10 +27,6 @@ export interface NotationSelection {
 export interface ScratchNotationEditor {
   pattern: ComputedRef<ScratchPattern | null>
   selection: Ref<NotationSelection | null>
-  canUndo: ComputedRef<boolean>
-  canRedo: ComputedRef<boolean>
-  cropStartUs: Ref<number>
-  cropEndUs: Ref<number>
 
   selectKeyframe(lane: NotationLane, index: number): void
   clearSelection(): void
@@ -44,27 +37,15 @@ export interface ScratchNotationEditor {
   addCrossfaderPoint(timeUs: number): boolean
   deleteSelected(): boolean
   togglePlatterTouch(index: number): boolean
-
-  applyCrop(): boolean
-  resetCrop(): void
-
-  undo(): void
-  redo(): void
 }
 
 export function useScratchNotationEditor(
   sessionId: Ref<string | null>
 ): ScratchNotationEditor {
   const store = useScratchSessionStore()
-  const history: ScratchEditHistory = createScratchEditHistory()
   const selection = ref<NotationSelection | null>(null)
-  const cropStartUs = ref(0)
-  const cropEndUs = ref(0)
 
   const pattern = computed<ScratchPattern | null>(() => store.completedPattern)
-
-  const canUndo = computed(() => history.canUndo())
-  const canRedo = computed(() => history.canRedo())
 
   // Track whether the next draftRevision change is from our own commit.
   // We use a Set to handle rapid sequential edits whose watchers may batch.
@@ -75,45 +56,26 @@ export function useScratchNotationEditor(
     () => store.draftRevision,
     (rev) => {
       if (expectedRevisions.has(rev)) {
-        // This revision was caused by our own commit — keep history intact.
+        // This revision was caused by our own commit — keep selection intact.
         expectedRevisions.delete(rev)
       } else {
         // External replacement (session state, recording, or other source).
-        history.clear()
         selection.value = null
       }
-      syncCrop()
     }
   )
 
   watch(sessionId, () => {
-    history.clear()
     selection.value = null
     expectedRevisions.clear()
-    syncCrop()
   })
-
-  // Initialize crop bounds immediately from an already-loaded pattern.
-  syncCrop()
-
-  function syncCrop(): void {
-    const p = store.completedPattern
-    if (p) {
-      cropStartUs.value = p.cropStartUs
-      cropEndUs.value = p.cropEndUs
-    } else {
-      cropStartUs.value = 0
-      cropEndUs.value = 0
-    }
-  }
 
   function commitEdit(newPattern: ScratchPattern): boolean {
     const sid = sessionId.value
     if (!sid || !store.isActiveSession(sid)) return false
     const current = store.completedPattern
     if (!current) return false
-    history.push(current)
-    // Mark the upcoming revision as ours so the watcher doesn't clear history.
+    // Mark the upcoming revision as ours so the watcher doesn't clear selection.
     expectedRevisions.add(store.draftRevision + 1)
     return store.editPattern(sid, newPattern)
   }
@@ -205,64 +167,9 @@ export function useScratchNotationEditor(
     return commitEdit(result)
   }
 
-  function applyCrop(): boolean {
-    const p = pattern.value
-    if (!p) return false
-    const start = Math.max(0, cropStartUs.value)
-    const end = Math.min(p.durationUs, cropEndUs.value)
-    if (start === 0 && end === p.durationUs) return false
-    const cropped = cropPattern(p, start, end)
-    if (!cropped) return false
-    const ok = commitEdit(cropped)
-    if (ok) {
-      selection.value = null
-      cropStartUs.value = 0
-      cropEndUs.value = cropped.durationUs
-    }
-    return ok
-  }
-
-  function resetCrop(): void {
-    const p = pattern.value
-    if (p) {
-      cropStartUs.value = 0
-      cropEndUs.value = p.durationUs
-    }
-  }
-
-  function undo(): void {
-    const sid = sessionId.value
-    if (!sid || !store.isActiveSession(sid)) return
-    const current = store.completedPattern
-    if (!current) return
-    const prev = history.undo(current)
-    if (!prev) return
-    expectedRevisions.add(store.draftRevision + 1)
-    store.replacePattern(prev)
-    selection.value = null
-    syncCrop()
-  }
-
-  function redo(): void {
-    const sid = sessionId.value
-    if (!sid || !store.isActiveSession(sid)) return
-    const current = store.completedPattern
-    if (!current) return
-    const next = history.redo(current)
-    if (!next) return
-    expectedRevisions.add(store.draftRevision + 1)
-    store.replacePattern(next)
-    selection.value = null
-    syncCrop()
-  }
-
   return {
     pattern,
     selection,
-    canUndo,
-    canRedo,
-    cropStartUs,
-    cropEndUs,
     selectKeyframe,
     clearSelection,
     movePlatter,
@@ -270,10 +177,6 @@ export function useScratchNotationEditor(
     addPlatter,
     addCrossfaderPoint,
     deleteSelected,
-    togglePlatterTouch,
-    applyCrop,
-    resetCrop,
-    undo,
-    redo
+    togglePlatterTouch
   }
 }

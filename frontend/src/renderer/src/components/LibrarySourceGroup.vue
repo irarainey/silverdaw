@@ -150,7 +150,7 @@ const childSummary = computed(() => {
           spellcheck="false"
           draggable="false"
           data-borderless-button="true"
-          class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-cyan-500"
+          class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-sky-500"
           @click.stop
           @dblclick.stop
           @mousedown.stop
@@ -241,7 +241,7 @@ const childSummary = computed(() => {
           :item="item"
           :editing-item-id="props.editingItemId"
           row-class="library-clip group relative flex h-10 cursor-grab select-none items-center gap-2 border-t border-zinc-800/60 px-2 pr-1 text-left transition-colors hover:bg-zinc-800/70 active:cursor-grabbing"
-          marker-class="h-6 w-1 shrink-0 rounded-sm bg-cyan-500/60"
+          marker-class="h-6 w-1 shrink-0 rounded-sm bg-sky-500/60"
           :library-clip-bpm="props.libraryClipEffectiveBpm(item)"
           :library-clip-pill-class="props.libraryClipPillClass"
           :library-clip-bpm-pill-class="props.libraryClipBpmPillClass"

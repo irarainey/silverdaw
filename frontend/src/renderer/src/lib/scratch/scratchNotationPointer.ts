@@ -24,12 +24,12 @@ export interface PointerInteractionContext {
   durationUs: Ref<number>
   contentWidth: Ref<number>
   paddingX: number
-  platterLaneHeight: number
+  platterLaneHeight: Ref<number>
   platterMinTurns: Ref<number>
   platterMaxTurns: Ref<number>
   turnsMargin: number
-  cfLaneTop: number
-  cfLaneHeight: number
+  cfLaneTop: Ref<number>
+  cfLaneHeight: Ref<number>
 }
 
 export interface PointerCallbacks {
@@ -115,12 +115,12 @@ export function createNotationPointerInteraction(
         coords.y,
         context.platterMinTurns.value,
         context.platterMaxTurns.value,
-        context.platterLaneHeight,
+        context.platterLaneHeight.value,
         context.turnsMargin
       )
       callbacks.onMovePlatter(dragState.value.index, timeUs, turns)
     } else if (dragState.value.lane === 'crossfader') {
-      const value = yToCfValue(coords.y, context.cfLaneTop, context.cfLaneHeight)
+      const value = yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value)
       callbacks.onMoveCrossfader(dragState.value.index, timeUs, value)
     }
   }

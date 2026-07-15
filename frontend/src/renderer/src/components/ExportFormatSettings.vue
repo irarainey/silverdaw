@@ -26,7 +26,7 @@ defineProps<Readonly<{
       </label>
       <select
         v-model="format"
-        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500"
       >
         <option value="wav">
           WAV (PCM / float)
@@ -48,7 +48,7 @@ defineProps<Readonly<{
       </label>
       <select
         v-model.number="sampleRate"
-        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500"
       >
         <option :value="44100">
           44.1 kHz
@@ -67,7 +67,7 @@ defineProps<Readonly<{
       </label>
       <select
         v-model.number="bitrate"
-        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500"
       >
         <option
           v-for="kbps in [128, 192, 320] as const"
@@ -84,7 +84,7 @@ defineProps<Readonly<{
       </label>
       <select
         v-model.number="bitDepth"
-        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500"
+        class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500"
       >
         <option
           v-for="bd in availableBitDepths"
@@ -102,7 +102,7 @@ defineProps<Readonly<{
         <input
           v-model="dither"
           type="checkbox"
-          class="accent-cyan-500"
+          class="accent-sky-500"
         >
         <span class="text-[10px] text-zinc-400">Dither</span>
       </label>

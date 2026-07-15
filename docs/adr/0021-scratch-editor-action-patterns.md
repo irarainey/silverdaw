@@ -1165,3 +1165,46 @@ avoids a dependency on a trailing "replay ended" broadcast.
   `SCRATCH_SESSION_STATE` (backward-compatible; both optional).
 - Backend regression `scratch pattern replay plays without a backing bed` now also
   asserts the position advances and is surfaced on (then cleared from) the snapshot.
+
+## Amendment 18 — Replay plays the backing bed in sync
+
+- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 15 made pattern replay ("Play Scratch") transport-independent to fix
+two defects: replay was rejected when no backing was prepared, and pressing Play
+Scratch clamped the backing playback. A consequence was that replay never played
+the backing bed at all. But a take is *recorded over* a backing bed — the scratch
+is performed against it — so auditioning the pattern with no accompaniment loses
+the musical context the performance was built around.
+
+Because a take always begins with `beginArmedRecordingLocked()` seeking *both* the
+scratch source and the backing bed to `0`, the pattern's `t=0` is aligned to the
+bed's origin. Replaying the bed from its head therefore reproduces the same
+alignment the performer heard while recording, with no stored offset needed.
+
+### Decision
+
+- `AudioEngine::startScratchPatternReplay` now calls
+  `ScratchSessionController::beginReplayBacking()` after `beginPatternReplay`;
+  `stopScratchPatternReplay` calls `endReplayBacking()`. These rewind a prepared
+  bed to its head and start/stop it alongside the replay.
+- Both controller methods are **no-ops when no backing bed is ready**, so
+  Amendment 15's key property is preserved: replay still starts and plays
+  scratch-only when no bed is prepared, and never depends on the transport.
+- Replay still does not issue transport `play`/`pause` control actions, so it
+  cannot be rejected by the transport's backing-ready guard.
+
+### Consequences
+
+- Supersedes Amendment 15's "leaves the backing untouched" outcome: replay now
+  runs the bed in time when one is prepared, while retaining scratch-only replay
+  without a bed.
+- New controller methods `beginReplayBacking()` / `endReplayBacking()`
+  (message-thread only).
+- Backend regression `scratch replay plays the backing bed in sync` guards that a
+  prepared bed rewinds to its head, plays during replay, and stops on replay end;
+  `scratch pattern replay plays without a backing bed` continues to guard the
+  no-bed path.

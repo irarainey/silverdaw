@@ -306,6 +306,15 @@ function applyAbsoluteControl(payload: Extract<MidiControlPayload, { kind: 'abso
   )
 }
 
+/**
+ * The master volume is the one MIDI control that stays live while a modal or
+ * editor dialog owns input, so the performer can keep riding the main output
+ * level from the deck while working in the clip or scratch editor.
+ */
+export function isMasterVolumeControl(payload: MidiControlPayload): boolean {
+  return payload.kind === 'absolute' && payload.control === 'masterVolume'
+}
+
 export function handleMidiControl(payload: MidiControlPayload): void {
   if (payload.kind === 'relative') {
     if (payload.control === 'browseTracks') {

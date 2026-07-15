@@ -24,7 +24,7 @@ defineProps<Readonly<{
     <select
       v-model="loudnessPreset"
       :disabled="!loudnessAvailable"
-      class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+      class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
     >
       <option value="off">
         None &ndash; export as-is

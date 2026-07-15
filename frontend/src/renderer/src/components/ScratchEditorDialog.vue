@@ -361,6 +361,7 @@ function onScratchGain(event: Event): void {
             v-if="session.state.value && !derived.statusMessage.value"
             :backing="backing"
             :disabled="derived.isRecording.value || isPatternReplaying"
+            :monitor-disabled="isPatternReplaying"
             :is-playing="session.isPlaying.value"
             :transport-enabled="transportEnabled"
             @skip-to-start="onSkipToStart"
@@ -439,7 +440,7 @@ function onScratchGain(event: Event): void {
                   </div>
                 </template>
                 <template v-else-if="derived.recordingStatus.value === 'completed'">
-                  <div class="flex min-h-0 flex-1 flex-col overflow-auto">
+                  <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
                     <ScratchNotationEditor
                       class="min-h-0 flex-1"
                       :session-id="session.activeSessionId.value"
@@ -530,7 +531,7 @@ function onScratchGain(event: Event): void {
                 </button>
                 <button
                   type="button"
-                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-blue-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-sky-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                   :disabled="!derived.hasPattern.value"
                   :aria-label="isPatternReplaying ? 'Stop scratch playback' : 'Play scratch'"
                   @click="isPatternReplaying ? stopReplay() : startDraftReplay()"
@@ -539,7 +540,7 @@ function onScratchGain(event: Event): void {
                 </button>
                 <button
                   type="button"
-                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-blue-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-sky-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
                   :disabled="!derived.hasPattern.value"
                   aria-label="Clear recorded scratch"
                   title="Discard the recorded scratch"

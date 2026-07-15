@@ -1,7 +1,7 @@
 // Keyboard interaction commands for the Scratch Notation Editor.
-// Handles selection, deletion, undo/redo, point addition, and movement via
-// keyboard shortcuts. Designed to coexist with input fields, buttons, and
-// dialog behavior (Escape, Backspace, Delete, Ctrl+Z).
+// Handles selection, deletion, point addition, and movement via keyboard
+// shortcuts. Designed to coexist with input fields, buttons, and dialog
+// behavior (Escape, Backspace, Delete).
 
 import type { NotationLane, ScratchNotationEditor } from './useScratchNotationEditor'
 
@@ -43,7 +43,7 @@ export function handleNotationKeydown(
 
   // Let native targets (inputs, buttons) handle their own keys.
   if (isNativeTarget(event)) {
-    // Exception: if the user presses Escape in a crop input, let it blur the
+    // Exception: if the user presses Escape in a text input, let it blur the
     // input rather than bubble to dialog close.
     if (event.key === 'Escape') {
       const target = event.target as HTMLElement
@@ -66,26 +66,6 @@ export function handleNotationKeydown(
       return true
     }
     return false
-  }
-
-  // Ctrl+Z / Ctrl+Shift+Z — undo/redo
-  if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
-    event.preventDefault()
-    event.stopPropagation()
-    if (event.shiftKey) {
-      editor.redo()
-    } else {
-      editor.undo()
-    }
-    return true
-  }
-
-  // Ctrl+Y — redo
-  if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
-    event.preventDefault()
-    event.stopPropagation()
-    editor.redo()
-    return true
   }
 
   // Escape — clear selection (not close dialog)

@@ -184,6 +184,26 @@ void ScratchSessionController::stopBackingLocked()
     backingSource.setPlaying(false);
 }
 
+bool ScratchSessionController::beginReplayBacking()
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    if (!backingReadyLocked())
+        return false;
+    // A take is recorded with the bed running from its head (beginArmedRecordingLocked
+    // seeks the bed to 0), so the pattern's t=0 aligns with the bed's origin.
+    // Rewind and start the bed so replay hears it in time.
+    backingSource.seekUs(0);
+    startBackingLocked();
+    return true;
+}
+
+void ScratchSessionController::endReplayBacking()
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    stopBackingLocked();
+    backingSource.seekUs(0);
+}
+
 // ── Unified control ───────────────────────────────────────────────────────────
 
 bool ScratchSessionController::controlSession(const SessionControlPayload& control)

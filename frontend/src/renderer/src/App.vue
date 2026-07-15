@@ -689,4 +689,14 @@ button[data-borderless-button="true"]:focus-visible {
 .silverdaw-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(161 161 170);
 }
+
+/* Scrolls programmatically but hides its native scrollbars — used where a
+   custom overlay scrollbar (matching the waveform window) is drawn instead. */
+.no-native-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-native-scrollbar::-webkit-scrollbar {
+  display: none;
+}
 </style>

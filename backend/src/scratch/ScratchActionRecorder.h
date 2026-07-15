@@ -93,9 +93,10 @@ class ScratchActionRecorder
     std::int64_t elapsedUs() const;
     static std::int64_t monotonicUs();
 
-    // Coalesce redundant platter points keeping touch transitions and direction changes.
+    // Simplify the platter lane with Ramer–Douglas–Peucker within each
+    // constant-touch run, preserving touch transitions and direction reversals.
     static void coalescePlatter(std::vector<PlatterKeyframe>& lane);
-    // Coalesce redundant crossfader points.
+    // Simplify the crossfader lane with Ramer–Douglas–Peucker.
     static void coalesceCrossfader(std::vector<CrossfaderKeyframe>& lane);
 };
 

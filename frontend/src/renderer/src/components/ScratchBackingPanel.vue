@@ -10,6 +10,7 @@ import {
 const props = defineProps<{
   backing: ReturnType<typeof useScratchBacking>
   disabled?: boolean
+  monitorDisabled?: boolean
   isPlaying: boolean
   transportEnabled: boolean
 }>()
@@ -146,7 +147,7 @@ onBeforeUnmount(() => {
           step="0.01"
           class="h-1 w-20 cursor-pointer accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
           :value="backing.monitorGain.value"
-          :disabled="disabled || !backing.isReady.value"
+          :disabled="monitorDisabled || !backing.isReady.value"
           aria-label="Backing monitor level"
           @input="onMonitorGain"
         >

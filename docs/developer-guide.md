@@ -637,6 +637,12 @@ track, with a short catch-up transition when hardware and software positions
 differ. Master volume is applied to the project. Crossfader input is retained
 as controller telemetry but does not currently alter the audible mix.
 
+While a modal or editor dialog owns input (clip editor, scratch editor, or any
+other blocking dialog) the mapped MIDI controls are otherwise inert, but the
+**master volume passes through** so the main output level can still be ridden
+from the deck while working in an editor. Every other control stays blocked and
+pending jog/dial actions are suspended for the duration.
+
 If a profile defines output bindings, the backend opens one unambiguous MIDI
 output whose name matches the input. It can then send selected-track meters,
 Play/Cue state, active-deck state, and marker-pad lights. Missing output

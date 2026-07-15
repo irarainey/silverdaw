@@ -30,11 +30,14 @@ bool AudioEngine::startScratchPatternReplay(const scratch::Pattern& pattern)
     }
 
     // Pattern replay is driven directly by the scratch source over the loaded
-    // scratch clip; it must NOT touch the backing/transport (that would clamp
-    // the backing playback). See ADR 0021.
+    // scratch clip. A take is recorded with the backing bed running from its
+    // head, so when a bed is prepared, replay starts it in time with the
+    // notation (ADR 0021, Amendment 17, superseding Amendment 15). With no bed
+    // prepared, replay still plays scratch-only and never touches the transport.
     scratchSource.endPatternReplay();
     patternReplaySnapshot = std::make_shared<const scratch::PatternReplaySnapshot>(std::move(snapshot));
     scratchSource.beginPatternReplay(patternReplaySnapshot.get());
+    scratchController.beginReplayBacking();
     patternReplayActive.store(true, std::memory_order_release);
     patternReplayPositionUs.store(0, std::memory_order_release);
 
@@ -46,9 +49,10 @@ void AudioEngine::stopScratchPatternReplay()
 {
     patternReplayActive.store(false, std::memory_order_release);
     scratchSource.endPatternReplay();
+    scratchController.endReplayBacking();
     patternReplaySnapshot = nullptr;
     patternReplayPositionUs.store(0, std::memory_order_release);
-    // Replay never started the backing/transport, so nothing to pause here.
+    // Replay only ran the backing bed for the audition; stop and rewind it.
     silverdaw::log::info("scratch-replay", "pattern replay stopped");
 }
 
