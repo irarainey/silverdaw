@@ -48,17 +48,13 @@ const configDisabled = computed(() => props.disabled || props.isPlaying)
 
 const monitorPct = computed(() => `${Math.round(props.backing.monitorGain.value * 100)}%`)
 
-function formatClock(totalSeconds: number): string {
-  const safe = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0
-  const minutes = Math.floor(safe / 60)
-  const seconds = Math.floor(safe % 60)
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
-}
-
-// Live backing position / prepared length, shown only once a bed is ready.
-const timingLabel = computed(
-  () => `${formatClock(props.backing.positionSec.value)} / ${formatClock(props.backing.readyDurationSec.value)}`
-)
+// Fraction (0..1) of the prepared bed elapsed, for the slim progress line.
+const backingProgress = computed(() => {
+  const durationSec = props.backing.readyDurationSec.value
+  if (durationSec <= 0) return 0
+  return Math.max(0, Math.min(1, props.backing.positionSec.value / durationSec))
+})
+const backingProgressPercent = computed(() => `${backingProgress.value * 100}%`)
 
 function onMonitorGain(event: Event): void {
   props.backing.setMonitorGain((event.target as HTMLInputElement).valueAsNumber)
@@ -125,17 +121,31 @@ onBeforeUnmount(() => {
           @toggle-play="$emit('toggle-play')"
           @skip-to-end="$emit('skip-to-end')"
         />
-        <span
-          class="font-mono text-[10px] tabular-nums"
-          :class="backing.isReady.value ? 'text-zinc-400' : 'text-zinc-600'"
-          aria-label="Backing playback position"
-        >{{ timingLabel }}</span>
       </div>
       <span
         class="justify-self-end font-mono text-[10px] tabular-nums"
         :class="statusClass"
         role="status"
       >{{ statusText }}</span>
+    </div>
+
+    <!-- Slim playback progress line: grey track, sky elapsed fill, playhead dot. -->
+    <div
+      class="relative h-1.5 w-full rounded-full bg-zinc-700"
+      role="progressbar"
+      aria-label="Backing playback progress"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="Math.round(backingProgress * 100)"
+    >
+      <div
+        class="absolute left-0 top-0 h-full rounded-full bg-sky-500"
+        :style="{ width: backingProgressPercent }"
+      />
+      <div
+        class="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-sky-300 bg-sky-400 shadow"
+        :style="{ left: backingProgressPercent }"
+      />
     </div>
 
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
