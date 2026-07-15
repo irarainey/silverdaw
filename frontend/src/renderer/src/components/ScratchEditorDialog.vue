@@ -386,7 +386,7 @@ function onScratchGain(event: Event): void {
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
           />
-          <div class="w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950">
+          <div class="w-full">
             <ScratchWaveformBar
               :peaks="derived.peaks.value"
               :peaks-per-second="derived.peaksPerSecond.value"

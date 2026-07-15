@@ -9,6 +9,7 @@ import ClipEditorViewControls from '@/components/ClipEditorViewControls.vue'
 import ClipEditorSlicePanel from '@/components/ClipEditorSlicePanel.vue'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import { useClipEditorController, type ClipEditorProps } from '@/lib/clipEditor/useClipEditorController'
+import { MAX_ZOOM } from '@/lib/clipEditor/useClipEditorViewport'
 
 const props = defineProps<ClipEditorProps>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -159,28 +160,62 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
 
         <div class="flex min-h-0 flex-1 flex-col gap-4 px-5 py-4">
           <div class="flex min-w-0 flex-col gap-3">
-            <div
-              ref="waveformHost"
-              class="relative h-[min(260px,26vh)] w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950"
-              :class="gridAligning ? 'cursor-grab' : volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
-              @mousedown="onCanvasMouseDown"
-              @contextmenu="onCanvasContextMenu"
-              @wheel="onCanvasWheel"
-            />
-            <div
-              class="relative h-2 w-full cursor-pointer rounded bg-zinc-900"
-              :title="`Scroll (zoom ${zoomPercent}%)`"
-              @mousedown="onScrollbarMouseDown"
-            >
+            <div class="relative w-full">
               <div
-                class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
-                :style="{
-                  left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
-                  width: viewDurationMs > 0
-                    ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
-                    : '100%'
-                }"
+                ref="waveformHost"
+                class="relative h-[min(260px,26vh)] w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950"
+                :class="gridAligning ? 'cursor-grab' : volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
+                @mousedown="onCanvasMouseDown"
+                @contextmenu="onCanvasContextMenu"
+                @wheel="onCanvasWheel"
               />
+              <!-- Horizontal scrollbar, flush to the bottom edge of the waveform
+                   window and full width, matching how the main timeline renders it. -->
+              <div
+                class="absolute inset-x-0 bottom-0 h-2 cursor-pointer bg-zinc-900/80"
+                :title="`Scroll (zoom ${zoomPercent}%)`"
+                @mousedown="onScrollbarMouseDown"
+              >
+                <div
+                  class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
+                  :style="{
+                    left: viewDurationMs > 0 ? `${(scrollMs / viewDurationMs) * 100}%` : '0%',
+                    width: viewDurationMs > 0
+                      ? `${Math.max(2, (visibleDurationMs / viewDurationMs) * 100)}%`
+                      : '100%'
+                  }"
+                />
+              </div>
+              <!-- Zoom controls overlaid in the bottom-right corner as a single
+                   grouped box, matching the scratch editor's preview panel. -->
+              <div class="absolute bottom-3 right-1.5 inline-flex items-center overflow-hidden rounded border border-zinc-700 bg-zinc-900/90">
+                <button
+                  type="button"
+                  class="flex h-5 w-5 items-center justify-center text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Zoom out (-)"
+                  :disabled="zoom <= 1.0001"
+                  @click="zoomOut"
+                >
+                  <span class="text-sm leading-none">−</span>
+                </button>
+                <button
+                  type="button"
+                  class="min-w-10 border-x border-zinc-700 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-200 hover:bg-zinc-800"
+                  title="Reset zoom (0)"
+                  @click="resetZoom"
+                >
+                  {{ zoomPercent }}%
+                </button>
+                <button
+                  type="button"
+                  class="flex h-5 w-5 items-center justify-center text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="Zoom in (+)"
+                  :disabled="zoom >= MAX_ZOOM - 0.01"
+                  @click="zoomIn"
+                >
+                  <span class="text-sm leading-none">+</span>
+                </button>
+              </div>
             </div>
             <div class="flex items-center justify-between gap-4 text-xs text-zinc-400">
               <ClipEditorSelectionInfo
@@ -204,8 +239,6 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 :dj-effect-available="djEffectAvailable"
                 :brake-active="brakeActive"
                 :backspin-active="backspinActive"
-                :zoom="zoom"
-                :zoom-percent="zoomPercent"
                 @apply-crop="onApplyCrop"
                 @reset-volume="onResetVolumeShape"
                 @silence-selection="onSilenceSelection"
@@ -213,9 +246,6 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 @toggle-reverse="onToggleReverse"
                 @toggle-brake="onToggleBrake"
                 @toggle-backspin="onToggleBackspin"
-                @zoom-out="zoomOut"
-                @reset-zoom="resetZoom"
-                @zoom-in="zoomIn"
               />
             </div>
           </div>

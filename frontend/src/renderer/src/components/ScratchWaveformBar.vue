@@ -428,44 +428,29 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex w-full flex-col gap-1">
+  <div class="relative w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950">
     <canvas
       ref="canvasEl"
-      class="block h-[min(260px,26vh)] w-full rounded"
+      class="block h-[min(195px,20vh)] w-full"
       aria-label="Scratch waveform"
       role="img"
       @wheel="onWheel"
     />
-    <div class="flex items-center gap-1">
-      <div
-        class="relative h-2 min-w-0 flex-1 cursor-pointer rounded bg-zinc-900"
-        :title="`Scroll (zoom ${Math.round(zoom * 100)}%)`"
-        @mousedown="onScrollbarMouseDown"
-      >
-        <div
-          class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
-          :style="{
-            left: preparedDurationMs > 0
-              ? `${(visibleStartMs / preparedDurationMs) * 100}%`
-              : '0%',
-            width: preparedDurationMs > 0
-              ? `${Math.max(2, (visibleDurationMs / preparedDurationMs) * 100)}%`
-              : '100%'
-          }"
-        />
-      </div>
+    <!-- Zoom controls overlaid in the bottom-right corner as a single grouped box
+         to reclaim the vertical space a separate control row would otherwise take. -->
+    <div class="absolute bottom-3 right-1.5 inline-flex items-center overflow-hidden rounded border border-zinc-700 bg-zinc-900/90">
       <button
         type="button"
-        class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+        class="flex h-5 w-5 items-center justify-center text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
         title="Zoom out"
         :disabled="zoom <= MIN_ZOOM + 0.0001"
         @click="zoomOut"
       >
-        <span class="text-base leading-none">-</span>
+        <span class="text-sm leading-none">-</span>
       </button>
       <button
         type="button"
-        class="min-w-12 rounded bg-zinc-800 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200 hover:bg-zinc-700"
+        class="min-w-10 border-x border-zinc-700 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-200 hover:bg-zinc-800"
         title="Reset zoom"
         @click="resetZoom"
       >
@@ -473,13 +458,32 @@ onUnmounted(() => {
       </button>
       <button
         type="button"
-        class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+        class="flex h-5 w-5 items-center justify-center text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
         title="Zoom in"
         :disabled="zoom >= MAX_ZOOM - 0.01"
         @click="zoomIn"
       >
-        <span class="text-base leading-none">+</span>
+        <span class="text-sm leading-none">+</span>
       </button>
+    </div>
+    <!-- Horizontal scrollbar, flush to the bottom edge of the waveform window
+         and full width, matching how the main timeline renders it. -->
+    <div
+      class="absolute inset-x-0 bottom-0 h-2 cursor-pointer bg-zinc-900/80"
+      :title="`Scroll (zoom ${Math.round(zoom * 100)}%)`"
+      @mousedown="onScrollbarMouseDown"
+    >
+      <div
+        class="absolute top-0 h-full rounded bg-zinc-600 hover:bg-zinc-500"
+        :style="{
+          left: preparedDurationMs > 0
+            ? `${(visibleStartMs / preparedDurationMs) * 100}%`
+            : '0%',
+          width: preparedDurationMs > 0
+            ? `${Math.max(2, (visibleDurationMs / preparedDurationMs) * 100)}%`
+            : '100%'
+        }"
+      />
     </div>
   </div>
 </template>
