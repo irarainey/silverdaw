@@ -1,6 +1,6 @@
 # ADR 0021 — Scratch Editor action patterns
 
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
+- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
 
 ## Context
 
@@ -12,8 +12,7 @@ built and tested, not yet in a public build.
 The feature crosses the MIDI input, real-time audio, project-state, preview,
 export, and dialog boundaries at once, so it needs one authoritative contract
 for its current behaviour. This ADR describes what exists now. It supersedes
-all prior drafts of this decision; none of the amendment-by-amendment history
-that produced the current design is retained here.
+all prior drafts of this decision.
 
 ## Decision
 
@@ -70,10 +69,11 @@ stopped** (a press while recording finalizes the take and publishes the
 pattern). Arming does not itself start capture — the **first eligible platter
 touch** while armed begins the take, seeking both the scratch source and any
 prepared backing bed to zero and starting the recorder with a fresh draft
-identity. Because the recorder always resets its lanes and discards any prior
-completed-but-unconsumed draft the instant a newly armed take starts, an
-operator can arm, touch, and start a new take without an explicit "clear"
-step — the prior draft is dropped immediately, not merely superseded on save.
+identity; at that point the recorder resets its lanes and discards any prior
+completed draft. Separately, the renderer clears its held draft on the rising
+edge of the armed state, so an operator can arm, touch, and start a new take
+without an explicit "clear" step — the prior notation disappears on arm, not
+only when capture starts or the next take is saved.
 
 The controller guards the auto-stop/toggle race: if the source or backing
 window reaches its end and auto-finalizes an in-progress take inside the same
@@ -187,7 +187,7 @@ mixdown, or sample-export chain, and it carries no provenance.
   bed), though the underlying clear command remains available for teardown.
 - **Monitor trims.** Two non-persisted, non-recorded gain trims exist purely
   for audition balance: a backing monitor gain (default 100%) and a scratch
-  monitor gain, applied after the crossfader gain (default **75%**, so the
+  monitor gain, applied after the crossfader gain (default **85%**, so the
   scratch source sits under the bed by default). Neither is baked, recorded,
   or replayed.
 - **Transport.** The on-screen transport (skip-to-start / play-pause /

@@ -116,6 +116,9 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
                          load, ValueTree↔JSON converter, peaks cache, library
                          analysis and sample export
+    scratch/             Scratch Editor domain: source/backing preparation,
+                         session control, MIDI routing, recording, pattern
+                         evaluator, save-as-sample bake
   resources/
     midi-mappings/       Controller model aliases and MIDI input/output bindings
   tests/                 SilverdawBackendTests custom harness (wired into CTest)
@@ -129,8 +132,14 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
     preload/             contextBridge surface exposed as window.silverdaw
     renderer/src/        Vue 3 SPA (Composition API, Pinia, PixiJS, Tailwind v4);
                          lib/ holds composables + audio/timeline/clip/midi/fx/
-                         automation/transport/export/stems helpers;
-                         stores/ holds Pinia stores; components/ holds .vue files
+                         automation/transport/export/stems helpers, plus
+                         lib/scratch/ (one composable per Scratch Editor
+                         concern: session, pointer dispatch, record control,
+                         transport, backing, notation, replay, save/reopen);
+                         stores/ holds Pinia stores, including the scratch
+                         session and pattern-persistence stores; components/
+                         holds .vue files, including the Scratch* dialog,
+                         platter, notation, and transport components
     shared/              Bridge wire-protocol facade (bridge-protocol.ts re-exports)
                          → bridge/inbound.ts (zod inbound schemas + guards)
                          → bridge/outbound.ts (outbound typed payload contracts)
@@ -563,11 +572,21 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
 - `SCRATCH_PATTERN_SAVE` / `_DELETE` / `_RENAME` / `_APPLY` (to a clip) /
   `_REMOVE` (from a clip) manage saved patterns, and
   `SCRATCH_PATTERN_REPLAY_START` / `_STOP` audition a stored pattern.
+- `SCRATCH_SAVE_AS_SAMPLE { sessionId, itemId, sampleName, sourceItemId?,
+  sourceInMs?, sourceDurationMs?, pattern }` bakes the pattern over the
+  prepared source into a library sample. `itemId` is a fresh id for a new
+  scratch or an existing scratch-origin item's id to re-save in place;
+  `sourceItemId` carries the source library item's cover art forward, and
+  `sourceInMs` / `sourceDurationMs` are the exact source window the scratch was
+  performed over, persisted so re-opening shows the original context. The
+  backend answers with the existing `SAMPLE_SAVED` and `PROJECT_STATE`
+  envelopes rather than a scratch-specific reply.
 
 Backend → renderer:
 
-- `SCRATCH_SESSION_STATE` is the throttled (~15 Hz), display-only session
-  snapshot — `status`, `preparationProgress`, `positionUs` / `durationUs`,
+- `SCRATCH_SESSION_STATE` is the throttled (up to half the 60 Hz
+  playhead-timer rate, ~30 Hz), display-only session snapshot — `status`,
+  `preparationProgress`, `positionUs` / `durationUs`,
   `platterTurns`, `playbackRate`, `crossfader`, `crossfaderReversed`, deck
   ownership, `armed`, and the
   backing/monitor fields (`backingStatus`, `backingDurationUs`, `backingPositionUs`,
@@ -601,10 +620,17 @@ Device matching is case-insensitive, uses token boundaries, honours
   `supportsMidiControllerMapping`; the same allowlist is enforced in the UI and
   backend.
 - JUCE's MIDI callback writes raw short messages into a preallocated
-  512-message `AbstractFifo`. A 60 Hz JUCE message-thread timer drains it,
-  decodes profile bindings, combines relative movement received in one tick,
-  and broadcasts semantic `MIDI_CONTROL` messages. JSON parsing and allocation
-  never occur in the MIDI callback.
+  512-message `AbstractFifo` per input. A 60 Hz JUCE message-thread timer drains
+  it and decodes profile bindings. Button and absolute messages broadcast
+  semantic `MIDI_CONTROL` messages immediately; jog/relative movement instead
+  accumulates per deck and flushes its `MIDI_CONTROL` UI-feedback broadcast on
+  its own ~30 Hz throttle (33 ms) so heavy scratching cannot flood the bridge —
+  when a scratch session is active, the underlying scratch audio target still
+  follows every message immediately and is unaffected by this visual-echo
+  throttle. JSON parsing and allocation never occur in the MIDI callback.
+  Overflow (the callback outrunning the drain) increments an atomic per-input
+  dropped-message counter that the same timer reads and logs each tick, giving
+  observable back-pressure instead of silent loss or blocking the callback.
 - The mapper supports buttons, centred and two's-complement relative values,
   7-bit and 14-bit absolute values, relative/absolute 14-bit platters, and
   contiguous pad ranges. Shift and jog-touch state can select alternate
@@ -638,10 +664,14 @@ differ. Master volume is applied to the project. Crossfader input is retained
 as controller telemetry but does not currently alter the audible mix.
 
 While a modal or editor dialog owns input (clip editor, scratch editor, or any
-other blocking dialog) the mapped MIDI controls are otherwise inert, but the
-**master volume passes through** so the main output level can still be ridden
-from the deck while working in an editor. Every other control stays blocked and
-pending jog/dial actions are suspended for the duration.
+other blocking dialog) the renderer's translation of `MIDI_CONTROL` into
+ordinary timeline actions is otherwise inert, but the **master volume passes
+through** so the main output level can still be ridden from the deck while
+working in an editor. Every other control stays blocked and pending jog/dial
+actions are suspended for the duration. This gate does not apply to the
+[Scratch Editor](#scratch-editor)'s own eligible controls (platter, crossfader,
+Play): the backend routes their raw MIDI directly into the scratch session
+instead, independently of this renderer-side dispatch.
 
 If a profile defines output bindings, the backend opens one unambiguous MIDI
 output whose name matches the input. It can then send selected-track meters,
@@ -2073,48 +2103,62 @@ non-destructively, and saving it as a reusable scratch pattern. It is a **studio
 authoring** surface, not a live-performance instrument. The full design contract
 — session ownership, the real-time/platter/crossfader model, the action-pattern
 format, and the backing monitor — lives in
-[ADR 0021](adr/0021-scratch-editor-action-patterns.md) (with Amendments 1–3);
-this section describes what ships today.
+[ADR 0021](adr/0021-scratch-editor-action-patterns.md); this section covers the
+protocol, module layout, and UI detail that ADR does not.
 
 **Opening.** A single reused dialog instance is hosted in `App.vue` and driven by
 `useScratchEditorStore`. It opens either from a **timeline clip** (right-click ▸
 *Open in Scratch Editor*, enabled only for a resolved clip that has a library
 item) or from a **library item** (the library-tile context menu, any kind —
-including a previously saved scratch **clip**, which scratches over its own
-cropped `derivedFrom` window rather than the head of the source). The editor
-never seeks, starts, or stops the arrangement transport; it runs its own
-audition session and blocks the global keyboard/MIDI gate while open.
+including a previously saved scratch-origin item, which prepares its session
+from the self-contained `scratchSourcePath` snapshot written at save time — the
+exact source window the scratch was performed over — rather than the baked WAV
+or a fresh crop of the current source). The editor never seeks, starts, or
+stops the arrangement transport; it runs its own audition session and blocks
+the global keyboard/MIDI gate while open.
 
 **Session model.** The renderer opens and closes a backend session with
 `SCRATCH_SESSION_OPEN` / `SCRATCH_SESSION_CLOSE`; the open payload carries exactly
 one of `clipId` or `libraryItemId`. Preparation renders a linear, seekable
 scratch source from the target's source window, reverse, warp, and static pitch,
 off the audio thread, through the disk/cache boundary (never the text bridge).
-The backend claims a single **virtual deck** (deck 1) and emits throttled,
-display-only `SCRATCH_SESSION_STATE` at ~15 Hz; pointer/keyboard controls are
-sent as `SCRATCH_SESSION_CONTROL` and the renderer never drives audio timing.
-Preparation status and progress surface on the dialog until the source is
-`ready`.
+The backend claims a single **virtual/session deck** — pointer and keyboard
+control always target deck 1; a MIDI device claims whichever of its two decks
+(1 or 2) touches or moves first, and only one device or pointer/keyboard source
+can own the session at a time — and emits throttled, display-only
+`SCRATCH_SESSION_STATE` at up to half the 60 Hz playhead-timer rate (~30 Hz),
+skipping a tick unless status, crossfader, or replay position changed or the
+session is playing, recording, replaying, or touched; pointer/keyboard controls
+are sent as `SCRATCH_SESSION_CONTROL` and the renderer never drives audio
+timing. Preparation status and progress surface on the dialog until the source
+is `ready`.
 
 **Transport and platter.** The backing panel sits at the top of the dialog and
 hosts the transport (skip-to-start, play/pause, skip-to-end); `Space` toggles
 play/pause and `R` toggles record. **The transport drives the backing channel
-only** (ADR 0021, Amendment 4): play runs/stops the prepared backing bed and skip
-seeks it — it never spins the scratch clip, which is heard **only when the platter
-is jogged**. The transport is disabled until a backing is prepared, and while
-recording. The on-screen platter uses a 33⅓ RPM timebase (one revolution = 1.8 s
-at nominal speed); dragging or wheel-jogging it scrubs the source bidirectionally
-(the wheel gesture direction is inverted so it matches the expected scratch
-direction). Movement beyond the prepared source produces de-clicked silence — the
-source never wraps. Recording captures compact **platter** and **crossfader**
-keyframes (not audio), starting from the session start against a local clock, and
-still spins the scratch over the backing. A live **timing readout** (`m:ss /
-m:ss`, position / prepared length) sits under the transport and is **always
-shown** (dimmed until a bed is ready) so it never reflows the panel; it is driven
-by the `backingPositionUs` snapshot field on the scratch session state.
+only**: play runs/stops the prepared backing bed and skip seeks it — it never
+spins the scratch clip, which is heard **only when the platter is jogged**. The
+transport is disabled until a backing is prepared, and while recording. The
+on-screen platter uses a 33⅓ RPM timebase (`VinylScratchProcessor::kSecondsPerTurn`
+= 1.8 s per revolution at nominal speed); dragging or wheel-jogging it scrubs
+the source bidirectionally (the wheel gesture direction is inverted so it
+matches the expected scratch direction). Rate response uses two smoothing
+weights selected by touch state: a heavier ~13 ms weight while the platter is
+actively held (`manualRateSmoothingSeconds`) gives light/high-resolution jog
+wheels a modest rotational-inertia feel, and a fast ~4 ms weight
+(`rateSmoothingSeconds`) applies on release/at motor speed; touch-off always
+engages the fast weight immediately, so it never delays how quickly releasing
+the platter is heard. Movement beyond the prepared source produces de-clicked
+silence — the source never wraps. Recording captures compact **platter** and
+**crossfader** keyframes (not audio), starting from the session start against a
+local clock, and still spins the scratch over the backing. A live **timing
+readout** (`m:ss / m:ss`, position / prepared length) sits under the transport
+and is **always shown** (dimmed until a bed is ready) so it never reflows the
+panel; it is driven by the `backingPositionUs` snapshot field on the scratch
+session state.
 
-**MIDI deck Play while the editor is open** (ADR 0021, Amendment 16). The
-physical deck **Play** button drives scratch recording, mirroring the on-screen
+**MIDI deck Play while the editor is open.** The physical deck **Play** button
+drives scratch recording, mirroring the on-screen
 **Record** button: idle → arm, armed → cancel, recording → stop. An armed take
 still starts on the first platter touch, and the completed pattern is published to
 the notation panel on stop. The backing bed is **not** MIDI-driven — it is
@@ -2151,7 +2195,8 @@ closed so a held key can never leave the deck stuck open. The key is **Z**
 
 **Backing accompaniment monitor.** Optionally, the user picks a set of timeline
 tracks to play underneath the scratch as a fixed-length **backing bed** to
-scratch against (ADR 0021 Amendment 1). The window is a start **anchor**
+scratch against (see [ADR 0021](adr/0021-scratch-editor-action-patterns.md)).
+The window is a start **anchor**
 (*arrangement start* or *current playhead*) plus a **duration** of **60 or 120
 seconds**, or **Full** (the whole arrangement from the anchor to the last clip
 end) — default 120; when active it bounds the session's forward time.
@@ -2169,16 +2214,17 @@ plain playback: when on, the bed restarts from its head instead of stopping, so
 the accompaniment runs continuously while the performer scratches over it; loop is
 ignored while **recording** (the take is still bounded by the window). The flag is
 authoritative on the backend (`backingLoop`) and honoured in the end-of-window
-reconciliation, so it applies to both the on-screen transport and the MIDI Play
-button.
+reconciliation for the on-screen backing transport. The physical MIDI Play
+button controls recording while the editor is open and never starts the bed.
 The bed is a pre-rendered linear mixdown prepared off the audio thread; the
 **Prepare** button shows a spinner while working and re-preparing simply replaces
 the existing bed (there is no separate Clear action). Two **monitor-only** gain
 trims (`0..1`) balance what the performer hears — a **Monitor** (backing) gain
-(default 100%) in the backing panel, and a **Scratch** gain (default 75%, so the
+(default 100%) in the backing panel, and a **Scratch** gain (default 85%, so the
 source sits under the backing while auditioning) sited **beside the deck** it
 trims rather than in the backing panel; **neither is baked into the recorded
-pattern, mixdown, or exported sample** (ADR 0021 Amendment 2). The backing is
+pattern, mixdown, or exported sample** (see
+[ADR 0021](adr/0021-scratch-editor-action-patterns.md)). The backing is
 monitor-only and never reaches committed output.
 
 **Notation, cropping, and editing.** The recorded pattern is shown as an editable
@@ -2204,17 +2250,35 @@ replay position on the session state (`replaying` + `replayPositionNormalized`,
 0→1 across the cropped window) at the ~30 Hz emit rate; the waveform playhead
 tracks the scratch clip's source position (`positionUs`, which scrubs with the
 platter) and a green playhead sweeps the notation lanes so the performer can see
-where replay is. Replay is independent of the backing bed, so the backing panel
-(transport and configuration) is **disabled** for the duration of an audition and
-its controls keep their current visual state — the backing Play button never
-switches to a playing look because of a scratch replay.
+where replay is. The backing panel's transport and configuration are
+**disabled** for the duration of an audition. Replay is independent of the
+arrangement and backing transport controls, but when a prepared bed exists the
+backend rewinds and plays it from its head in sync with the scratch; without
+one, replay is scratch-only. The backing Play button does not switch to a
+playing look because replay does not change the session's ordinary transport
+status.
 Live audition, timeline playback, mixdown, and rendering a new library sample all
 use the same closed-form trajectory evaluator, so live and offline replay of a
 stored pattern are identical regardless of block size or seek history. An
 in-progress recording is transient (engine loss aborts it); a committed pattern
 is covered by normal save, autosave, undo, and recovery.
 
+**Save to the library.** Saving sends `SCRATCH_SAVE_AS_SAMPLE` (see
+[Bridge protocol](#bridge-protocol)), which bakes the pattern over the prepared
+source into a frozen stereo WAV library item. A first save mints a fresh
+`scratch-<id>` item id; re-saving a scratch-origin item reuses its existing id
+so the library tile, badge, and any placed clips keep referencing the same
+item while the underlying revision file is replaced atomically. The saved item
+carries `scratchOrigin: true` and `scratchPatternId` (driving a dedicated vinyl
+tile icon and "Scratch" badge in the library panel instead of the generic
+sample tile) plus the `sourceItemId` / `sourceInMs` / `sourceDurationMs` fields
+sent in the save payload, so "Open in Scratch Editor" on that tile (see
+**Opening**, above) can show the original source context rather than the baked
+audio.
 
+## Preferences
+
+User preferences are persisted as JSON at `%APPDATA%/Silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
 **transactional**: every field is held in a local working copy until you click
 **Save**; **Cancel** (and `Esc`) discard pending edits without touching the

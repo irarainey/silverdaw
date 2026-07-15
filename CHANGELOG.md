@@ -14,7 +14,7 @@
 - Recovery checks now run alongside audio-engine startup for a faster project picker.
 - Stem separation is now faster, more reliable, and clearer about progress and saved cleanup settings.
 - Music with a detected variable tempo now auto-warps on drop when tempo matching is enabled.
-- The Clip Editor and the scratch editor's clip preview now overlay their zoom controls in the bottom-right corner of the waveform, freeing the space they previously occupied.
+- The Clip Editor and the Clip Preview now overlay their zoom controls in the bottom-right corner of the waveform, freeing the space they previously occupied.
 
 ### Fixed
 

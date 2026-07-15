@@ -71,7 +71,7 @@ export const useScratchSessionStore = defineStore('scratchSession', {
       // backend-generated ID (current is null).
       // Re-arming after a take must discard the existing scratch so the new
       // recording starts from a clean slate — matching a fresh session. Both the
-      // on-screen Record button and a physical MIDI Cue arm funnel through this
+      // on-screen Record button and physical MIDI Play arm funnel through this
       // state update, so clearing on the rising edge of `armed` covers every input
       // source and clears the notation the moment recording is armed (not only once
       // capture starts).
