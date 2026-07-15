@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import {
   COL_BEAT,
+  COL_EDITOR_BG,
   COL_PLAYHEAD,
   COL_RULER_BG,
   COL_RULER_BORDER,
@@ -81,8 +82,10 @@ function draw(): void {
   const H = canvas.height
   if (W <= 0 || H <= 0) return
 
-  ctx.fillStyle = cssHex(COL_RULER_BG)
+  ctx.fillStyle = cssHex(COL_EDITOR_BG)
   ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = cssHex(COL_RULER_BG)
+  ctx.fillRect(0, 0, W, RULER_HEIGHT)
   const viewStartMs = visibleStartMs.value
   const viewDurationMs = visibleDurationMs.value
   drawRuler(ctx, W, viewStartMs, viewDurationMs)

@@ -11,10 +11,8 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
 import ScratchCrossfader from '@/components/ScratchCrossfader.vue'
-import ScratchDeleteConfirmDialog from '@/components/ScratchDeleteConfirmDialog.vue'
 import ScratchDirtyCloseDialog from '@/components/ScratchDirtyCloseDialog.vue'
 import ScratchNotationEditor from '@/components/ScratchNotationEditor.vue'
-import ScratchPersistencePanel from '@/components/ScratchPersistencePanel.vue'
 import ScratchBackingPanel from '@/components/ScratchBackingPanel.vue'
 import ScratchVinylDeck from '@/components/ScratchVinylDeck.vue'
 import ScratchWaveformBar from '@/components/ScratchWaveformBar.vue'
@@ -66,10 +64,6 @@ useScratchKeyboardControls({
   canControl: session.canControl,
   sendControl: session.sendControl
 })
-
-const canUpdate = computed(
-  () => derived.hasPattern.value && persistence.isDirty.value && scratchStore.savedPatternId !== null
-)
 
 // Footer Save persists the recorded scratch notation: it updates the existing
 // saved pattern when one is loaded, otherwise saves a new one. Only meaningful
@@ -176,24 +170,6 @@ function onDirtyCloseCancel(): void {
   persistence.dismissCloseSaveError()
 }
 
-// ── Delete confirmation ──────────────────────────────────────────────────────
-
-const deleteConfirmId = ref<string | null>(null)
-
-function confirmDelete(patternId: string): void {
-  deleteConfirmId.value = patternId
-}
-
-function executeDelete(): void {
-  if (deleteConfirmId.value) {
-    persistence.deletePattern(deleteConfirmId.value)
-  }
-  deleteConfirmId.value = null
-}
-
-function cancelDelete(): void {
-  deleteConfirmId.value = null
-}
 
 // ── Reconcile authoritative ack from PROJECT_STATE ───────────────────────────
 
@@ -375,10 +351,6 @@ function onScratchGain(event: Event): void {
             class="ml-1 text-[10px] text-emerald-400"
           >Saved</span>
           <span
-            v-else-if="persistence.isDirty.value"
-            class="ml-1 text-[10px] text-amber-400"
-          >Unsaved changes</span>
-          <span
             v-if="persistence.isSavePending.value"
             class="ml-1 text-[10px] text-zinc-500"
           >Saving…</span>
@@ -469,6 +441,7 @@ function onScratchGain(event: Event): void {
                 <template v-else-if="derived.recordingStatus.value === 'completed'">
                   <div class="flex min-h-0 flex-1 flex-col overflow-auto">
                     <ScratchNotationEditor
+                      class="min-h-0 flex-1"
                       :session-id="session.activeSessionId.value"
                       :replay-position-normalized="notationReplayPositionNormalized"
                     />
@@ -477,31 +450,29 @@ function onScratchGain(event: Event): void {
                 <template v-else>
                   <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
                     <div class="text-center">
-                      <p class="text-xs text-zinc-500">
-                        No notation recorded
-                      </p>
-                      <p class="text-[10px] text-zinc-600">
-                        Press Record, then touch the platter to begin your scratch.
-                      </p>
+                      <template v-if="recordPhase === 'armed'">
+                        <p
+                          class="text-xs text-amber-400"
+                          role="status"
+                        >
+                          Armed — touch the platter to start recording
+                        </p>
+                      </template>
+                      <template v-else>
+                        <p class="text-xs text-zinc-500">
+                          No scratch recorded
+                        </p>
+                        <p class="text-[10px] text-zinc-600">
+                          Press Record, then touch the platter to begin
+                        </p>
+                      </template>
                     </div>
                   </div>
                 </template>
-
-                <ScratchPersistencePanel
-                  v-if="derived.hasPattern.value"
-                  :persistence="persistence"
-                  :can-update="canUpdate"
-                  :is-replaying="isPatternReplaying"
-                  :on-draft-audition-start="startDraftReplay"
-                  :on-audition-start="startReplay"
-                  :on-audition-stop="stopReplay"
-                  :on-clear-draft="clearDraft"
-                  @confirm-delete="confirmDelete"
-                />
               </template>
             </div>
 
-            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 pb-2">
+            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3">
               <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5">
                 <span class="text-[11px] text-zinc-500">Scratch</span>
                 <input
@@ -526,7 +497,7 @@ function onScratchGain(event: Event): void {
                   @platter-move="onPlatterMove"
                 />
               </div>
-              <div class="mt-2 flex justify-center">
+              <div class="flex justify-center">
                 <div class="w-1/2">
                   <ScratchCrossfader
                     :value="derived.crossfaderValue.value"
@@ -537,12 +508,13 @@ function onScratchGain(event: Event): void {
                 </div>
               </div>
 
-              <!-- Record control (arm → first-touch start → stop), pinned to the
-                   bottom so it aligns with the foot of the notation panel. -->
-              <div class="mt-auto flex flex-col items-stretch gap-1">
+              <!-- Record + draft controls, pinned to the bottom so the row aligns
+                   with the foot of the notation panel. Play and Clear act on the
+                   recorded scratch draft and stay disabled until one exists. -->
+              <div class="mt-auto mb-[3px] flex items-stretch gap-1">
                 <button
                   type="button"
-                  class="inline-flex w-full items-center justify-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                   :class="recordButtonClass"
                   :disabled="!derived.canRecord.value && recordPhase === 'idle'"
                   :aria-label="recordButtonAriaLabel"
@@ -556,13 +528,25 @@ function onScratchGain(event: Event): void {
                   />
                   {{ recordButtonLabel }}
                 </button>
-                <span
-                  v-if="recordPhase === 'armed'"
-                  class="text-center text-[11px] text-amber-400"
-                  role="status"
+                <button
+                  type="button"
+                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-blue-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  :disabled="!derived.hasPattern.value"
+                  :aria-label="isPatternReplaying ? 'Stop scratch playback' : 'Play scratch'"
+                  @click="isPatternReplaying ? stopReplay() : startDraftReplay()"
                 >
-                  Armed — touch the platter to start recording
-                </span>
+                  {{ isPatternReplaying ? 'Stop' : 'Play' }}
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-blue-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  :disabled="!derived.hasPattern.value"
+                  aria-label="Clear recorded scratch"
+                  title="Discard the recorded scratch"
+                  @click="clearDraft"
+                >
+                  Clear
+                </button>
               </div>
             </div>
           </div>
@@ -593,12 +577,6 @@ function onScratchGain(event: Event): void {
         @save="onDirtyCloseSave"
         @discard="onDirtyCloseDiscard"
         @cancel="onDirtyCloseCancel"
-      />
-
-      <ScratchDeleteConfirmDialog
-        :open="deleteConfirmId !== null"
-        @confirm="executeDelete"
-        @cancel="cancelDelete"
       />
     </div>
   </Transition>
