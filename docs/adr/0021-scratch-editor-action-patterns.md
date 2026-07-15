@@ -1,1273 +1,403 @@
 # ADR 0021 — Scratch Editor action patterns
 
-- **Date:** 2026-07-12 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
 
 ## Context
 
-The Scratch Editor will let a user perform a vinyl-style scratch over one
-selected timeline clip, edit the recorded performance, replay it
-non-destructively, and render it as a new library sample.
+The Scratch Editor lets a user perform a vinyl-style scratch over one timeline
+clip or library item, edit the recorded performance as notation, replay it
+non-destructively, and bake it into a new library sample. It is unreleased —
+built and tested, not yet in a public build.
 
-This crosses the MIDI input, real-time audio, project-state, preview, export,
-and dialog boundaries. The feature needs one contract before its DSP and user
-interface are implemented.
+The feature crosses the MIDI input, real-time audio, project-state, preview,
+export, and dialog boundaries at once, so it needs one authoritative contract
+for its current behaviour. This ADR describes what exists now. It supersedes
+all prior drafts of this decision; none of the amendment-by-amendment history
+that produced the current design is retained here.
 
-## Proposed decision
+## Decision
 
-### Session and input ownership
+### Session and editor ownership
 
-The Scratch Editor is a large modal dialog with its own audition transport. It
-does not seek, start, or stop the arrangement transport.
+The Scratch Editor is a single, modal, one-session dialog with its own
+audition transport. It never seeks, starts, or stops the arrangement
+transport. While it is open, global keyboard and MIDI actions are blocked;
+input is routed to the active scratch session instead.
 
-While the editor is open:
+The renderer opens and closes the backend session through
+`SCRATCH_SESSION_OPEN` / `SCRATCH_SESSION_CLOSE`. Opening accepts exactly one
+of a `clipId` or a `libraryItemId` — the editor opens equally from a timeline
+clip's context menu or a library item's context menu, including a previously
+saved scratch sample. Only one backend session and one shared dialog instance
+can be active at a time.
 
-- Timeline and global keyboard and MIDI actions remain blocked.
-- Scratch controls are routed to the active scratch session rather than
-  weakening the application-wide dialog gate.
-- Only enabled, supported MIDI inputs and their enabled physical decks are
-  eligible.
-- The first eligible deck used claims the single virtual deck. It retains
-  ownership until its platter is released.
-- A deck without touch messages releases ownership after a short bounded idle
-  interval.
-- Device disconnect, deck disable, dialog close, or engine recovery releases
-  ownership and clears held input safely.
-- Pointer-operated virtual controls remain available so the editor can be
-  developed and opened without connected hardware.
+Eligibility to control the session from hardware is scoped to enabled,
+supported MIDI inputs and their enabled physical decks. The first eligible
+platter touch (or, for movement-only jog profiles, the first movement) claims
+the single virtual deck; a capacitive platform's touch sensor is authoritative
+over ownership and release. Device disconnect, deck disable, dialog close, or
+engine recovery releases ownership and clears held input. Pointer-operated
+virtual controls remain available without connected hardware.
 
-The availability predicate for a supported enabled deck will exist from the
-first version, but it will not initially hide or disable the context-menu
-action.
+### Source preparation and clip semantics
 
-The renderer opens and closes the backend session through typed
-`SCRATCH_SESSION_OPEN` and `SCRATCH_SESSION_CLOSE` bridge commands. The backend
-already owns enabled-input and deck-selection state; it uses that state to
-determine eligibility and claim an owner from the semantic MIDI stream.
+Opening the editor prepares a linear, immutable scratch source snapshot from
+the target's source window, reverse, warp, and static pitch settings. This
+runs off the audio thread and writes to the existing disk/cache boundary, not
+the bridge; a transform fingerprint invalidates the cached snapshot when the
+window, reverse, warp, or pitch changes. The scratch stage reads this
+snapshot bidirectionally without random-seeking a streaming warp processor.
+Clip gain, fades, volume shape, brake, backspin, track/project effects,
+automation, mute/solo, and the crossfader all sit downstream of it and are
+excluded from the prepared source itself. Mixdown, sample export, and offline
+bake share the same preparation path.
 
-While a session is active, backend MIDI decoding feeds eligible scratch
-controls to it directly rather than making a
-backend-to-renderer-to-backend round trip. Existing `MIDI_CONTROL` telemetry may
-still update renderer device state, but the dialog gate prevents it from
-reaching global actions. The backend emits throttled, display-only
-`SCRATCH_SESSION_STATE` updates. Pointer controls use a typed
-`SCRATCH_SESSION_CONTROL` command. The renderer never drives audio timing.
+The source is linear and bounded: it does not wrap. Movement past either
+boundary produces de-clicked silence; reversing back into the valid window
+resumes audio. There is no hidden looping.
 
-Touch-capable profiles claim on touch or a deck-specific session action and
-release on touch-up. Movement-only jog profiles claim on movement and infer
-release after a bounded idle interval; they cannot represent an indefinite
-stationary hold. The 1.8-second revolution is an internal source-time model,
-not a claim that every physical jog wheel is record-sized or motorized.
+### Physical MIDI control model
 
-### Clip and transport semantics
+Only the physical **Play** button and the platter/crossfader controls are
+mapped inside the editor; the physical **Cue** button is unbound and has no
+scratch-editor role (with the editor closed, Cue keeps its ordinary timeline
+behaviour unchanged).
 
-Opening the editor prepares a seekable scratch source from the selected clip's
-current source window, reverse, warp, and static pitch settings. Preparation
-runs off the audio thread and writes bulk audio to the existing disk/cache
-boundary rather than the bridge. The scratch stage can then read this linear
-prepared source bidirectionally without random-seeking a streaming warp
-processor.
+Play drives scratch recording, mirroring the on-screen Record button's three
+phases: **idle → armed** (press arms; nothing records yet), **armed →
+cancelled** (a second press before any touch discards the arm), **recording →
+stopped** (a press while recording finalizes the take and publishes the
+pattern). Arming does not itself start capture — the **first eligible platter
+touch** while armed begins the take, seeking both the scratch source and any
+prepared backing bed to zero and starting the recorder with a fresh draft
+identity. Because the recorder always resets its lanes and discards any prior
+completed-but-unconsumed draft the instant a newly armed take starts, an
+operator can arm, touch, and start a new take without an explicit "clear"
+step — the prior draft is dropped immediately, not merely superseded on save.
 
-The canonical order for a clip carrying a pattern is:
+The controller guards the auto-stop/toggle race: if the source or backing
+window reaches its end and auto-finalizes an in-progress take inside the same
+call that is deciding what a Play press means, the press is consumed as that
+take's stop rather than immediately re-arming a new one, and a `recordStop`
+control that arrives after that auto-finalize is still broadcast as valid
+rather than silently dropped, guarded by session id so it can never drain a
+different session's pattern.
 
-1. Source window, reverse, warp, and static pitch prepare a linear source.
-2. The scratch trajectory performs bidirectional varispeed reads.
-3. Clip gain, fades, volume shape, brake, and backspin process the resulting
-   forward timeline stream.
-4. Track and project processing continue through the existing graph.
+Engine methods backing this model return `false` when no scratch session is
+active, so with the editor closed the same physical events fall through
+unchanged to the frontend's ordinary timeline handling; with the editor open
+the frontend's interaction block prevents the also-broadcast event from being
+applied a second time.
 
-The prepared source excludes track effects, project effects, automation,
-mute/solo state, and the crossfader. A transform fingerprint invalidates it
-when the source window, reverse, warp, or pitch changes. Mixdown and sample
-rendering prepare the same source before rendering.
+### Direct MIDI-to-audio path; bounded renderer feedback
 
-The local Play control runs the platter at its nominal speed. Touching the
-owning platter holds the motor; hand movement then controls source direction
-and speed. Releasing it returns smoothly to nominal playback. Scratch audition
-always produces scrub audio and does not read the main-timeline scrub-audio
-preference.
+Backend MIDI decoding feeds eligible scratch controls (platter touch, platter
+movement, crossfader, Play) directly into the audio path per raw message,
+without a renderer round trip; the renderer never drives scratch audio
+timing. Movement arriving while a capacitive platter is not touched is
+dropped rather than applied or used to extend ownership, so releasing the
+platter returns to motor speed immediately and cannot be delayed by
+after-release jog input on touch-equipped decks. A touch-less, movement-only
+deck instead infers release after a bounded idle interval and auto-releases
+ownership.
 
-The scratch session starts stopped. Recording starts from the current crop
-start and captures actions against the local session clock. Auditioning or
-recording never changes the selected clip until the user explicitly applies or
-saves the result.
+Two feedback paths are bounded and coalesced rather than driving audio: the
+jog/relative `MIDI_CONTROL` UI echo is throttled to ~30 Hz (per-deck deltas
+accumulate and flush on that interval; the underlying scratch motion is
+applied per message, unaffected by the throttle), and `SCRATCH_SESSION_STATE`
+is emitted at up to half the 60 Hz playhead-timer rate (~30 Hz), only when
+status, crossfader, or replay position actually changed, or while playing,
+recording, replaying, or touched — otherwise a tick is skipped rather than
+re-sent. Raw MIDI input itself is buffered in a fixed-capacity (512-message)
+lock-free queue per input; overflow increments an atomic dropped-message
+counter that is drained and logged on the message thread each tick, giving
+observable back-pressure rather than silent loss or blocking.
 
-The source does not wrap at its boundaries. Movement beyond the prepared source
-produces de-clicked silence. Reversing back into the valid window resumes audio.
+### Platter and DSP model
 
-### Platter and audio model
+The platter uses a 33⅓ RPM internal timebase: one revolution is exactly 1.8
+seconds at nominal speed, and position is continuous, signed, and may move in
+either direction; a touched flat position is a hold. Playback is pitch-
+changing varispeed (band-limited interpolation), not tempo-preserving warp,
+so speed and direction always change pitch together.
 
-The platter uses a 33⅓ RPM internal timebase:
-
-- One revolution is exactly 1.8 seconds at nominal speed.
-- Platter position is continuous and may move forward or backward.
-- Position slope determines playback direction and varispeed ratio.
-- A touched flat position is a hold.
-- The visual sweep line is derived from authoritative platter position modulo
-  one revolution.
-
-Scratch playback is pitch-changing varispeed, not tempo-preserving warp. The
-DSP must use band-limited interpolation or resampling, smooth acceleration and
-direction changes, suppress clicks near zero speed and at source boundaries,
-and cap speeds that cannot be reproduced cleanly.
-
-The DSP prototype will select the interpolation method and maximum supported
-speed from measured quality and callback cost. These values are not fixed by
-this ADR.
+Rate response uses two smoothing weights selected by touch state: a heavier,
+touched-only ~13 ms manual weight gives light/high-resolution jog wheels a
+modest rotational-inertia feel on fast moves, while the release/motor path
+uses a fast ~4 ms weight so releasing the platter snaps back to nominal speed
+without lag. Touch-off always engages the fast release weight and cancels the
+manual hold; gain smoothing and source-boundary fades run on their own
+independent, much faster time constants so a touch/release/boundary event
+never has to wait on the manual weight to be heard.
 
 ### Crossfader
 
-The virtual crossfader starts with the claimed deck fully audible. The first
-physical movement uses the existing catch-up behavior so an unknown hardware
-position cannot cause an abrupt gain jump.
+The virtual crossfader controls only the scratch deck's audible gain (the
+backing bed, where prepared, sums at its own fixed monitor gain rather than
+occupying the fader's opposite side). A stored `linear-v1` gain-curve
+identifier keeps replay deterministic. The owning physical deck determines
+which side is nominally audible (deck 1 = left, deck 2 = right), and each
+device's saved crossfader-direction preference is applied before the gain
+calculation; the first physical movement uses catch-up behaviour so an
+unknown hardware position cannot jump the gain.
 
-The owning physical deck determines the audible side:
+The on-screen bar's colour is a pure function of position and control
+source, never of deck ownership or platter touch: while a MIDI device owns
+the session it mirrors that device's direction preference; under
+keyboard/pointer control it colours by open/closed instead, since the
+direction preference is a physical-controller concept the keyboard path does
+not have.
 
-- Deck 1 is the left side.
-- Deck 2 is the right side.
-- The device's saved crossfader-direction preference is applied before the
-  deck-side gain calculation.
+A momentary keyboard crossfader cut is available inside the editor: holding a
+single configurable key (`KeyZ` default, `KeyM` alternate, chosen in
+Preferences) opens the crossfader (scratch deck audible) from a closed
+resting default; releasing the key closes it again. The session asserts the
+closed default once it becomes controllable, and losing focus or closing the
+dialog always forces the fader closed, so a held key can never strand the
+deck audible. The cut writes the same `0..1` crossfader value as any other
+fader input — it is an input method, not a new recorded field — so while
+recording it is captured into the pattern identically to a pointer or MIDI
+fader move. MIDI crossfader handling is untouched by this keyboard path.
 
-The opposite side contains silence, so the crossfader controls only the
-virtual deck's gain. Version 1 uses a stored `linear-v1` gain curve. Persisting
-the curve identifier keeps replay deterministic if more mixer curves are added
-later. Recordings capture the effective post-catch-up fader value. This audible
-behavior is scoped to the Scratch Editor; it does not change the crossfader's
-arrangement behavior.
+### Backing accompaniment bed
 
-### Action pattern
+While the editor is open, the user may prepare a **backing accompaniment
+bed** — a fixed-length, pre-rendered mixdown of a chosen set of timeline
+tracks — to scratch over for musical context. It is monitor-only: it is never
+part of the crossfader, the recorded pattern, or the canonical clip render,
+mixdown, or sample-export chain, and it carries no provenance.
 
-A recording stores compact action data, not rendered audio and not every audio
-sample. The versioned pattern contains:
+- **Selection.** Any subset of tracks may be included; the clip's own owning
+  track is excluded by default but may be added back. A track that is muted,
+  or silenced by another track's solo, cannot join — it is shown unchecked
+  and disabled, using the same effective-audibility test as the mixer, so the
+  bed always mirrors what is actually audible on the timeline.
+- **Window.** The user picks a start anchor (arrangement start or current
+  playhead) and a length of **60, 120, or Full** seconds (default **120**).
+  `Full` spans from the anchor to the last clip end of the selected tracks.
+  When a backing window is prepared, it becomes the session's forward time
+  bound for plain playback and for recording; without one, the scratch
+  source's own bounds apply.
+- **Preparation and locking.** Preparation is an explicit action, runs off
+  the audio thread onto the disk/cache boundary, and is invalidated by a
+  fingerprint over the track set, mixdown, and span. The track, anchor, and
+  length controls (and Prepare itself) are locked while the bed is playing,
+  since a change only takes effect after a fresh prepare; there is no
+  separate "clear" affordance in the UI (re-preparing replaces the existing
+  bed), though the underlying clear command remains available for teardown.
+- **Monitor trims.** Two non-persisted, non-recorded gain trims exist purely
+  for audition balance: a backing monitor gain (default 100%) and a scratch
+  monitor gain, applied after the crossfader gain (default **75%**, so the
+  scratch source sits under the bed by default). Neither is baked, recorded,
+  or replayed.
+- **Transport.** The on-screen transport (skip-to-start / play-pause /
+  skip-to-end) and its `Space` shortcut drive the backing bed only — never
+  the scratch source at nominal speed, which is heard only when the platter
+  is jogged or during recording. The transport is disabled until a bed is
+  ready and while a take is recording. An optional per-session **Loop**
+  toggle (off by default) makes plain playback auto-restart the bed at its
+  end; loop never applies to recording, which always stops exactly at the
+  window's end regardless of the flag. A live position/duration readout is
+  always shown, dimmed until a bed is ready.
 
-- A stable identifier, name, format version, and optional source provenance.
-- Duration and crop range on an integer monotonic timebase.
-- The source offset and platter position at the cropped start.
-- Platter keyframes containing time, relative turns, and touch state.
-- Crossfader keyframes containing time and normalized effective position.
-- The owner deck side and crossfader curve version.
+### Recording and pattern model
 
-Forward and reverse motion are represented by the slope between platter
-keyframes. A touched flat span represents a hold and its duration. Redundant
-points may be simplified only within a tested audible tolerance.
+A completed recording is compact action data, not rendered audio: a stable
+id, name, format version, optional source provenance, an integer-microsecond
+duration and crop range, the source offset and platter position at the
+cropped start, platter keyframes (time, absolute turns, touch state),
+crossfader keyframes (time, normalized value), the owner deck, and the
+`linear-v1` curve identifier. Forward/reverse motion is the slope between
+platter keyframes; a touched flat span is a hold. Device-specific jog
+calibration converts raw controller units to the internal turn timebase
+before recording, so a pattern is controller-independent and replays
+identically without its original hardware. Redundant points may be simplified
+within a tested audible tolerance; the resulting pattern, not the unsaved
+live gesture, is the source of truth thereafter.
 
-Device-specific jog calibration converts incoming units to the internal turn
-timebase before recording. Device calibration is not stored in a pattern, so a
-pattern replays identically without its original controller. The completed,
-possibly simplified pattern becomes the source of truth; it is not required to
-be sample-identical to the unsaved live gesture that produced it.
+The notation panel is a direct, editable view of the same lanes (platter
+motion segments, holds, and a crossfader automation lane); editing it mutates
+the action data and is undoable, and cropping rebases time to zero while
+preserving source offset.
 
-The notation shown in the editor is a view of this same data:
+A recording is **transient draft state** in the audio engine until the take
+is stopped; only a completed pattern becomes additive, backend-authoritative
+project state, held in the `SCRATCH_PATTERNS` `ValueTree` and written through
+the versioned project-JSON path (validated on write and revalidated on
+serialization, with corrupt entries dropped rather than propagated). A
+timeline clip may non-destructively reference a saved pattern; a shorter
+source at apply time uses the same boundary-silence rule rather than
+wrapping or stretching. Engine loss during recording aborts the in-progress
+take rather than presenting it as complete; a saved pattern is covered by
+normal project save, autosave, undo, and recovery.
 
-- Forward and reverse platter-motion segments.
-- Hold spans.
-- A crossfader automation lane.
+### Replay
 
-Editing notation changes the action data directly and is undoable. Cropping
-clips the event lanes, evaluates their values at the new boundaries, rebases
-time to zero, and preserves the corresponding source offset.
+Auditioning a completed pattern ("Play Scratch",
+`SCRATCH_PATTERN_REPLAY_START`/`_STOP`) is independent of the arrangement and
+backing transports: it neither issues nor depends on a transport `play`/
+`pause` action, so it works with or without a prepared backing bed and never
+disturbs backing playback that is already running. When a backing bed is
+ready, replay additionally rewinds it to its head and plays it in lock-step,
+because a take always begins with both the scratch source and the bed seeked
+to zero, so replaying the bed from its head reproduces the alignment heard
+while recording; with no bed ready, replay is scratch-only.
 
-### Persistence, replay, and sample output
+Replay publishes a normalized replay position that drives two live playheads
+— the waveform playhead (via the ordinary scratch-source position) and a
+green sweep line on the notation panel (position mapped back through the
+pattern's crop range) — at the same throttled session-state rate. Platter
+touch/move and crossfader input are rejected outright while a pattern is
+replaying, so a live gesture can never collide with the deterministic
+playback it is auditioning. Ending replay (naturally or by request) stops and
+rewinds any synced backing, clears the replay position, and resets touch/
+manual scratch state so the session returns to its ordinary interactive
+state.
 
-Completed patterns are additive backend-authoritative project state held in the
-`ValueTree` and written through the versioned project JSON path. Missing scratch
-state in an older project means no pattern and does not change existing clip
-behavior.
+### Save to the library
 
-A timeline clip may reference a saved pattern non-destructively. Applying a
-pattern to another clip starts from that clip's source window. A shorter source
-uses the same boundary-silence rule rather than wrapping or stretching the
-pattern.
+Saving bakes the recorded pattern over its prepared source into a frozen
+stereo WAV (`SCRATCH_SAVE_AS_SAMPLE`), driving the same DSP evaluator used
+for live replay so the bake matches what was heard. The canonical
+performance stays the notation already persisted in the project `ValueTree`;
+the bake is a derived, replaceable artifact.
 
-Saved-pattern audition, timeline playback, mixdown, and rendering to a new
-library sample use the same closed-form scratch trajectory evaluator and DSP.
-Given the same prepared source and stored pattern, live and offline replay must
-be independent of callback block size and seek history. Rendered samples are
-written to disk through the existing sample pipeline and retain source and
-pattern provenance.
+The result is an ordinary `kind="sample"`, unanalysed `audioType="simple"`
+library item — draggable to the timeline, still warp/pitch-able — plus
+additive scratch metadata: `scratchPatternId` (link to the canonical
+notation) and `scratchSourcePath` (a self-contained copy of the exact source
+window the scratch was performed over, written once beside the bake). A
+generated `notation.json` mirrors the ValueTree notation for external
+inspection only and is never read back as a source of truth. Each save
+writes a new immutable revision file and atomically repoints the library
+item, so a re-save can never overwrite bytes a placed clip is still reading.
+When the scratch was recorded over another library item, the baked item
+inherits that source's shared media entry so cover art resolves normally,
+and the exact source window (offset/duration) is stored so re-opening can
+show the original context rather than the already-scratched audio.
 
-Live gesture capture may differ slightly from its simplified stored pattern.
-The user auditions the completed pattern before applying or saving it.
+A baked scratch sample carries **no** live pattern reference on any placed
+clip — dropping one onto the timeline always plays the frozen audio, never
+re-scratches on playback. The pattern link exists only as re-open metadata on
+the library item: "Open in Scratch Editor" on a scratch-origin item prepares
+the session from `scratchSourcePath` (not the baked WAV) and loads the linked
+notation for further editing and re-saving in place. Scratch-origin items are
+visually distinct in the library — a dedicated vinyl-record icon and a
+"Scratch" type badge — rather than reusing the generic sample tile. No new
+library-item kind was introduced, so older builds that predate this feature
+still open the item as a plain sample.
 
-An in-progress recording is transient. Engine loss aborts it explicitly rather
-than presenting an incomplete recording as successful. A committed pattern is
-covered by normal project save, autosave, undo, and recovery behavior.
+### Project lifecycle
 
-### Real-time and acceptance gates
+A new project, a successful project load, and a successful crash-recovery
+load all clear any active scratch session, its backing bed, and any running
+replay in the engine before rebuilding tracks, and the renderer mirrors this
+by closing the scratch editor dialog and clearing its session store whenever
+it receives a `PROJECT_STATE` reset snapshot. A **failed** load leaves the
+current scratch session untouched in both processes — the clear only runs
+after the new project has been accepted, so a load failure can never strand
+a project reference to a session that no longer matches what is on screen.
 
-The implementation must satisfy the existing audio-thread contract:
+### Real-time, threading, and error handling
 
-- No allocation, locking, logging, file access, bridge send, or wait in the
-  audio callback.
-- Input and edited pattern data reach the callback through bounded lock-free
-  snapshots.
-- Rendering work is bounded independently of MIDI event rate.
-- UI animation and notation updates are throttled and cannot control audio
-  timing.
+The audio callback never allocates, locks a session mutex, logs, touches
+disk, or sends over the bridge; scratch and backing audio reach it only
+through lock-free snapshots and atomics. Session control, MIDI entry points,
+recording, and backing/source preparation orchestration run on the message
+thread (or, for MIDI, the MIDI thread with the same lock-free contract);
+source preparation, backing mixdown, and the sample bake run on background
+worker-pool jobs, each guarded by a session-id check so a stale job's
+completion is silently ignored rather than applied to a session it no longer
+belongs to. Malformed or out-of-range bridge payloads are rejected by parse
+functions before reaching engine state; preparation or bake failures set an
+error status and degrade to silence rather than partial or corrupt audio.
 
-The feature cannot leave the prototype phase until automated tests and a
-reference hardware run demonstrate:
+### Test invariants and maintainability
 
-- Correct 1.8-second nominal revolution timing.
-- Click-free holds, releases, reversals, linear crossfader transitions, and
-  source boundaries.
-- Stable output at the accepted maximum forward and reverse speeds.
-- Equivalent live and offline replay of the same stored pattern.
-- No callback overruns or regression of the configured audio budget.
-- Deterministic crop, edit, persistence, undo, reload, and recovery behavior.
+Backend coverage exercises session lifecycle and deck ownership, source
+preparation/caching and reuse, activation/deactivation quiescence, forward-
+end auto-stop and race-guarded record toggling, MIDI crossfader and platter
+claim/release semantics (including jog calibration and direction inversion),
+pointer and MIDI arm-on-touch recording, backing prepare/loop/replay-sync
+behaviour, replay input isolation, and `clearScratchSession` teardown of
+replay and backing together. Separate suites cover pattern persistence
+(CRUD, malformed-input rejection, JSON round-trip, undo) and clip-pattern
+apply/remove/replay project-state behaviour. Frontend coverage mirrors the
+same invariants for record-control state, transport gating, pointer
+dispatch, replay position/gating, project-reset clearing, and pattern
+protocol/persistence reconciliation.
 
-Controller Record mappings require verified byte-level messages. The editor's
-Record button remains available when a supported profile has no verified
-physical mapping.
-
-## Prototype result
-
-The initial isolated DSP prototype uses a 64-tap windowed-sinc interpolator,
-continuous speed-dependent low-pass cutoff, 4 ms rate smoothing, 2 ms gain
-smoothing, 3 ms source-boundary fades, and a candidate maximum rate of ±8×.
-
-On the reference Windows x64 Release build, 4,000 stereo 512-sample blocks at
-48 kHz measured 0.583 ms median, 0.735 ms p95, and 6.530 ms maximum against a
-10.667 ms block budget, with no overruns. Automated coverage exercises nominal
-33⅓ RPM timing, forward and reverse reads, holds, direction changes, gain
-changes, source boundaries, invalid output ranges, and alias rejection at
-±2×, ±4×, and ±8×.
-
-This result is sufficient to begin protocol and session integration. The speed
-cap remains subject to the later reference-controller and listening validation
-required by this ADR.
+The backend and frontend scratch code are both split by domain — separate
+units for protocol, session control, MIDI routing, recording, backing,
+persistence, save-as-sample, and, on the frontend, one composable/component
+per concern (dialog shell, waveform, notation lanes, platter/crossfader
+controls, transport, backing, save flow, reopen lifecycle, replay) — so that
+adding a capability extends one focused unit rather than growing a single
+large file past ADR 0016's ceilings.
 
 ## Why
 
-Recording control actions preserves the user's performance without committing
-it immediately to audio. It supports editing, replay, reuse, and deterministic
-sample rendering while keeping the source file unchanged.
-
-A dedicated session prevents a modal editor from moving the arrangement
-playhead or bypassing the global dialog gate. Direct backend consumption of
-semantic platter controls keeps the high-rate path short while retaining the
-existing profile-driven MIDI architecture.
-
-An internal platter timebase gives controller calibration and visual rotation
-a shared meaning across different jog-wheel sizes. Selecting the DSP and speed
-cap through measurement protects audio quality without promising an arbitrary
-extreme rate.
+A dedicated, modal session keeps a large, high-rate control surface from
+moving the arrangement playhead or leaking past the application's dialog
+gate. Feeding eligible MIDI directly into the audio path, with only display
+feedback throttled, keeps the highest-rate control loop short while still
+giving the renderer everything it needs to mirror state. Recording compact,
+controller-independent action data — rather than raw audio or raw events —
+is what makes the performance editable, replayable, and renderable through
+the same deterministic evaluator live and offline. Treating the backing bed
+as a monitor-only, pre-rendered bus, and baking a saved scratch to a plain
+WAV rather than a live-evaluated clip, both keep the canonical render chain
+and non-destructive editing model exactly as simple as they are everywhere
+else in the project — no second live mixing surface, and no per-clip scratch
+DSP on ordinary playback.
 
 ## Consequences
 
-- Scratch playback needs a dedicated bidirectional varispeed source rather than
-  reusing short arrangement scrub grains.
-- MIDI routing gains an explicit input owner for the active scratch session.
-- Supported profiles may need measured jog-units-per-revolution metadata.
-- Project state and the bridge gain a versioned scratch-pattern domain.
-- Pattern playback becomes part of the canonical clip render chain.
-- Sample export can render a performance without recording live audio into
-  memory or sending audio over the text bridge.
+- Scratch playback needs its own bidirectional varispeed source and a
+  dedicated recorder/evaluator, independent of the arrangement's warp/scrub
+  paths.
+- MIDI routing carries an explicit scratch-session owner and a direct,
+  bounded feedback throttle alongside the existing profile-driven
+  architecture.
+- Project state and the bridge carry a versioned scratch-pattern domain plus
+  additive library-item scratch metadata; both are backward-compatible with
+  older projects and builds.
+- The canonical clip render, mixdown, and sample-export chain gained one more
+  input path (pattern-driven scratch playback) without changing for clips
+  that carry no pattern.
+- Saving a scratch produces a first-class, draggable library asset with no
+  live per-clip evaluation cost, at the price of a bake step and one
+  self-contained source-snapshot file per scratch.
 
 ## Rejected alternatives
 
-- **Let modal MIDI fall through to existing global actions.** This would allow
-  the arrangement to move behind the editor and contradict the dialog gate.
-- **Seek the arrangement transport for scratch audition.** This couples draft
-  work to the open project and makes isolated replay and rendering harder.
-- **Record only the live audio output.** This produces a sample but loses the
-  editable performance and cannot be reapplied non-destructively.
-- **Send every MIDI movement through the renderer before audio processing.**
-  The extra scheduling and bridge round trip add avoidable jitter to the
-  highest-rate control path.
-- **Use tempo-preserving warp for platter movement.** Vinyl-style varispeed must
-  change pitch with speed and direction.
-- **Allow unlimited jog speed.** Rates beyond the resampler and source-read
-  budget create digital artefacts and unbounded callback work.
-- **Wrap at source boundaries.** Hidden looping changes the recorded gesture
-  and makes patterns depend unpredictably on source length.
-- **Guess Record-button messages for every supported device.** Incorrect
-  mappings are worse than leaving the physical shortcut unavailable.
-
-## Amendment 1 — Backing accompaniment monitor (Phase 3)
-
-- **Date:** 2026-07-13 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-The original decision scopes the editor to a single virtual deck auditioned in
-isolation: `The opposite side contains silence`. In real practice a DJ scratches
-*over* a second record that keeps playing. Without an accompaniment the user
-cannot hear their scratch in musical context, so timing and phrasing are hard to
-judge while recording. This amendment adds an optional, fixed-length backing
-bed the user can scratch over while recording a pattern destined for a new
-sample. It is explicitly not a mixing surface: it exists only to provide musical
-context, and it keeps every existing real-time, non-destructive, and crossfader
-guarantee intact.
-
-### Decision
-
-While the editor is open the user may select a set of timeline tracks to play as
-a **backing accompaniment monitor** underneath the scratch deck.
-
-- **The backing is a fixed-length scratch-over bed, not a mix.** Its sole
-  purpose is to give the performer musical context to scratch against while
-  recording a pattern for a new sample. It is never a mixing surface and never
-  reaches committed output.
-- **The user chooses a backing window before playback: a start anchor and a
-  fixed duration.** The start anchor is either the **arrangement start**
-  (project origin) or the **current playhead position**. The duration is a
-  fixed choice — **30, 60, or 90 seconds** (default 30). The backing is the
-  selected-track mixdown over `[anchor, anchor + duration)`.
-- **The chosen window bounds the session, not the edited clip.** When a backing
-  window is active, nominal playback and recording run the linear session clock
-  from zero to the window duration and then stop; the window length, not the
-  clip's span, is the forward time bound. The short scratch source is
-  manipulated over that time and still follows the no-wrap boundary-silence
-  rule within its own bounds. With no backing window, the session behaves as
-  originally specified and is bounded by the scratch source.
-- **Source is pre-rendered, not a live second engine.** The backing is a linear
-  mixdown of the selected tracks over the chosen window, prepared off the audio
-  thread and written to the existing disk/cache boundary exactly like the
-  prepared scratch source. The scratch stage reads it as a plain linear buffer.
-  A live second arrangement renderer inside the editor is rejected as too large
-  and too costly for the audio callback.
-- **The backing follows the linear session clock, never the scratch
-  trajectory.** When the audition transport plays, the backing advances forward
-  at nominal speed and stays phase-aligned to the session start. Platter
-  varispeed, reverse, and holds move only the scratch deck; they never move the
-  backing. Stop and skip-to-start reset both together. The editor still does not
-  seek, start, or stop the arrangement transport — the backing is a separate
-  prepared monitor source, not the arrangement.
-- **The backing track set is the user's choice, made before playback.** The
-  user selects any subset of timeline tracks — or all of them — to form the
-  backing. To avoid hearing the scratched source twice, the track that owns the
-  clip under edit is **excluded by default**, but the user may include or
-  exclude any track, including the owning track. The selection is fixed before
-  audition or recording starts for that pass.
-- **The crossfader still controls only the scratch deck.** The backing is a
-  fixed-gain accompaniment bus, not the crossfader's opposite side. This refines
-  the original `The opposite side contains silence` statement: the audible
-  opposite of the scratch deck may now be the backing monitor, but the
-  `linear-v1` crossfader gain law is applied only to the scratch deck's gain and
-  the backing is summed at a constant monitor level independent of the fader.
-  Recorded crossfader keyframes are unchanged and still capture only the scratch
-  deck's effective fader value.
-- **The backing is monitor-only.** It is not captured into the recorded pattern,
-  is not part of the canonical clip render, mixdown, or sample-export chain, and
-  carries no provenance in the pattern. Patterns remain controller-independent
-  and audio output remains non-destructive with no dry-signal doubling. Backing
-  track selection is transient editor state, not persisted project state.
-- **Preparation and invalidation.** Preparation runs off the audio thread. A
-  fingerprint over the selected track set, their audible mixdown, and the span
-  invalidates the prepared backing. A missing, stale, or failed backing degrades
-  to silence; audition and recording still function without it.
-- **Bridge and protocol.** The renderer sets the backing track selection and
-  requests preparation through typed `SCRATCH_SESSION_CONTROL` fields; the
-  backend prepares the buffer and reports display-only readiness in throttled
-  `SCRATCH_SESSION_STATE`. Bulk backing audio travels through disk, never the
-  text bridge, and the renderer never drives backing audio timing.
-- **Real-time gates.** The backing is read as a bounded linear source and summed
-  into the existing scratch output at a fixed monitor gain. No allocation,
-  locking, logging, file access, bridge send, or wait occurs in the callback,
-  and mixing cost is bounded independently of MIDI or UI event rate.
-
-### Why
-
-Hearing the scratch against its musical bed is essential to judging timing while
-recording, and it matches the two-deck mental model the feature targets.
-Pre-rendering the accompaniment keeps the high-rate audio path a single linear
-read and honours the real-time and text-bridge contracts. Treating the backing
-as a fixed monitor rather than the crossfader's other side preserves the
-existing deterministic crossfader and replay model. Keeping it out of the
-pattern and the render chain preserves non-destructive editing and avoids
-doubling the dry source into exported audio.
-
-### Consequences
-
-- The scratch session gains transient backing state — track selection plus the
-  chosen window (start anchor and fixed duration) — and a prepared backing
-  buffer alongside the prepared scratch source.
-- When a backing window is active it becomes the session's forward time bound,
-  so nominal playback and recording stop at the window duration rather than at
-  the scratch source's end.
-- The bridge protocol gains backing track selection, window (anchor + duration),
-  and backing-readiness fields; all remain display-only and non-authoritative
-  for audio timing.
-- The canonical clip render, mixdown, and sample-export chain are unchanged; the
-  backing never contributes to committed output.
-
-### Rejected alternatives
-
-- **Run a second live arrangement renderer in the editor.** Too large, and it
-  puts unbounded mixing and streaming work on the audio callback.
-- **Route the backing through the crossfader's opposite side.** This would make
-  the fader blend two decks and break the deterministic single-deck crossfader
-  and replay model the original decision relies on.
-- **Bake the backing into the recorded pattern or exported sample.** This loses
-  the editable, controller-independent performance and doubles dry audio into
-  non-destructive output.
-- **Send backing audio over the text bridge.** Violates the text-only bridge;
-  bulk audio belongs on the disk/cache boundary.
-
-## Amendment 2 — Backing window durations and monitor trims
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Two things changed as the backing monitor (Amendment 1) was used in practice.
-First, a 30-second window proved too short to phrase a scratch against a musical
-bed, and the three fixed lengths did not reach far enough for a longer take.
-Second, a single fixed monitor level for the backing bed made it hard to balance
-the scratch deck against the accompaniment while auditioning — the performer
-could not make the bed quieter to hear the scratch, or lower a hot scratch source
-under the bed. This amendment revises the fixed durations and adds two
-**monitor-only** trims. It changes no real-time, non-destructive, persistence, or
-crossfader guarantee.
-
-### Decision
-
-- **Backing window durations are now 60, 90, or 120 seconds (default 60),**
-  superseding the *30, 60, or 90 seconds (default 30)* set in Amendment 1.
-  Everything else about the window — the start anchor (arrangement start or
-  current playhead), the window bounding the session's forward time, and the
-  no-wrap boundary-silence rule — is unchanged. Persisted patterns carry no
-  window, so this default change cannot affect any saved pattern.
-- **Two monitor-only gain trims are added, each normalised `0..1` with a neutral
-  default of `1.0` (100%):**
-  - a **backing monitor gain** applied to the pre-rendered backing bed, and
-  - a **scratch monitor gain** applied to the scratch deck's audition output
-    *after* the `linear-v1` crossfader gain (the effective audition gain is
-    `crossfaderSideGain × scratchMonitorGain`).
-- **Both trims are audition-only and are never captured or baked.** They are not
-  written into the recorded pattern, carry no provenance, and do not affect the
-  canonical clip render, mixdown, or sample-export chain. They exist solely so
-  the performer can balance what they *hear* while recording. This preserves the
-  non-destructive and controller-independent guarantees: the same stored pattern
-  and prepared source still replay identically offline regardless of the trims
-  used while recording. The recorded crossfader keyframes remain the scratch
-  deck's effective post-catch-up fader value only.
-- **Bridge and state.** The trims are set through the existing
-  `SCRATCH_SESSION_CONTROL` command (`backingGain` / `scratchGain` actions, each
-  a `0..1` value) and echoed back display-only in `SCRATCH_SESSION_STATE`
-  (`backingGain` / `scratchMonitorGain`). Both remain non-authoritative for audio
-  timing, consistent with the rest of the session state.
-
-### Why
-
-Longer windows give room to phrase a take; adjustable monitor levels let the
-performer judge the balance between the scratch and its bed while recording.
-Keeping the trims out of the pattern and the render chain preserves the
-deterministic, non-destructive replay model the original decision and Amendment 1
-depend on — a monitor mix must never leak into committed output.
-
-### Consequences
-
-- The backing duration choice is 60/90/120 (default 60); UI, protocol validation,
-  and the prepared-window fingerprint all use this set.
-- The scratch session gains two transient monitor-gain values alongside the
-  existing transient backing state; neither is persisted or rendered.
-
-### Rejected alternatives
-
-- **Record the monitor trims into the pattern.** This would make replay depend on
-  the audition mix and could double or attenuate the source in exported audio,
-  breaking non-destructive output.
-- **Route the trims through the crossfader curve.** The crossfader stays a
-  single deterministic `linear-v1` law on the scratch deck; a monitor balance is
-  a separate concern and must not perturb recorded fader keyframes.
-
-## Amendment 3 — Keyboard crossfader cut and library-item authoring
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Two capabilities were added while integrating the editor. First, scratching by
-hand needs a fast momentary "cut" without reaching for a mouse or a physical
-mixer, so a keyboard-driven crossfader cut was added. Second, the original
-decision framed the editor around a selected **timeline clip**; in use, authoring
-a scratch directly from a **library item** (including a previously saved scratch
-clip) is just as useful, so the open path was widened.
-
-### Decision
-
-- **A momentary keyboard crossfader cut is available inside the editor.** Holding
-  a single configurable key closes the crossfader (scratch deck silent);
-  releasing it reopens it. The resting state is open, so nothing is sent until the
-  key is first pressed, and blur/close force the fader open so a held key can
-  never leave the deck stuck silent. The key is chosen in **Preferences ▸
-  Effects ▸ Scratch crossfader cut** — **Z** (right-handed, default) or **M**
-  (left-handed). (Shift was rejected because holding it triggers Windows Sticky
-  Keys.) The cut writes the same `0..1` crossfader value as any other fader input,
-  so while recording it is captured into the pattern exactly like a pointer or
-  MIDI fader move — it is an *input method*, not a new recorded field.
-- **The editor opens from a timeline clip or from a library item.** A single
-  reused editor dialog is opened either from a timeline clip's context menu or
-  from a library item's context menu (including a saved scratch **clip** item).
-  When opened from a saved clip, the waveform and prepared window resolve through
-  the clip's source library item and its `derivedFrom` window, so a saved clip
-  scratches over its own cropped region rather than the head of the source.
-
-### Why
-
-A one-hand keyboard cut matches how a DJ chops the fader while the other hand
-works the platter, and choosing the side suits handedness. Widening the open path
-lets a user author or re-author a scratch straight from the library without first
-placing the source on the timeline, while the single shared dialog instance keeps
-exactly one live scratch session.
-
-### Consequences
-
-- Scratch input preferences gain one persisted field, `crossfaderCutKey`
-  (`KeyZ` default / `KeyM`); an unrecognised persisted value falls back to the
-  default, so older or corrupt prefs always open.
-- The open contract accepts either a `clipId` or a `libraryItemId` (exactly one);
-  saved-clip targets resolve their source window for preparation and waveform
-  display.
-
-## Amendment 4 — Transport drives the backing channel only
-
-- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-The original decision (and Amendment 1) gave the editor's local **Play** control
-two jobs at once: it ran the scratch platter at its nominal speed *and* started
-the backing bed. In use this conflated two different intents — auditioning the
-clip versus running the accompaniment the scratch is performed against — and made
-"play" audition a flat, un-scratched clip, which is not how the deck is meant to
-be heard. The backing panel was also buried below the waveform, away from the
-controls that now drive it.
-
-### Decision
-
-- **The on-screen transport (skip-to-start, play/pause, skip-to-end) and its
-  `Space` shortcut drive the backing channel only.** Play starts/stops the
-  prepared backing bed; skip seeks the backing bed; they no longer set the scratch
-  source playing. The scratch clip is heard **only when the platter is jogged**
-  (the touched/manual-rate path), so "play" never auditions the clip at nominal
-  speed. `backingDurationUs` bounds skip-to-end.
-- **The transport is disabled until a backing is prepared, and during
-  recording.** With no backing there is nothing for the transport to run, so the
-  backend rejects `play`/`seek` control actions when no backing is ready and the
-  UI disables the controls. Recording still owns playback (it spins the scratch
-  over the backing), so the transport is inert while a take is in progress.
-- **The backing panel moves to the top of the dialog and hosts the transport.**
-  The play/skip cluster lives in the backing-panel header next to the *Backing
-  deck* label and status. The former position / length / rate / touch readout is
-  removed.
-- **The physical MIDI deck's transport button is unchanged.** The hardware deck
-  play button remains a separate control surface and still spins the scratch
-  source (used when auditioning through a connected controller); only the
-  on-screen/keyboard transport is re-scoped to the backing.
-
-### Why
-
-Separating the two intents matches how the tool is used: the accompaniment runs
-as a bed while the performer scratches over it by hand. Auditioning a flat clip
-through "play" added no value once jogging exists, and gating the transport on a
-prepared backing removes a control that previously did nothing useful without
-one. Keeping the MIDI deck button as-is avoids changing a physical-controller
-contract that a follow-up change can revisit deliberately.
-
-### Consequences
-
-- The scratch source's nominal-speed playback is now reached only through
-  **recording** (which spins the clip under the backing) and the unchanged MIDI
-  deck button — never the on-screen transport. Backend tests that previously drove
-  the scratch source via `play` now prepare a backing and assert the
-  backing-window state machine, and the audio/crossfader-gain tests spin the
-  source's motor directly (its recording-time state).
-- No new bridge field is required: skip-to-end reuses `backingDurationUs`, and the
-  removed readout drops the per-frame position/rate display from the transport.
-- The backing window continues to bound the session (Amendment 1); the scratch
-  source's own forward-end now matters only while recording without a backing.
-
-## Amendment 5 — Backing length options and scratch monitor default
-
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 2 fixed the backing window at **60, 90, or 120 seconds**. In practice
-90 s was rarely chosen, while performers wanted to scratch over a *whole
-arrangement* rather than a capped window. Separately, the scratch monitor gain
-defaulted to 100%, which put the raw source at the same level as the backing bed
-and made it hard to hear the clip *against* the accompaniment while auditioning.
-
-### Decision
-
-- **Backing length options are now `60`, `120`, and `Full`** (default `60`). The
-  90 s window is retired. **`Full`** spans from the anchor to the **last clip end**
-  of the selected tracks (the arrangement's content extent), computed on the
-  message thread when preparing. On the bridge, `Full` is the sentinel
-  `durationSec: 0`; the accepted set is `{0, 60, 120}` and `90` now rejects.
-- **The scratch monitor gain now defaults to `0.75` (75%)** so the source sits
-  under the backing while auditioning. The Monitor (backing) gain default is
-  unchanged at 100%. Both remain **monitor-only, per-session, non-persisted**
-  trims that are never baked into the recorded pattern, mixdown, or export.
-
-### Why
-
-`Full` matches the real intent — scratching over the whole piece — without a
-per-arrangement length guess, and dropping the unused 90 s keeps the control
-compact. Defaulting the scratch monitor to 75% gives an immediately usable
-balance instead of two coincident full-level sources. Both are session-scoped
-monitor trims, so there is no persisted-preference or backward-compatibility
-concern.
-
-### Consequences
-
-- The bridge duration union becomes `60 | 120 | 0`; backend validation accepts
-  `{0, 60, 120}` and `handleScratchBackingPrepare` derives the `Full` window from
-  `computeLastClipEndMs(snapshot) - anchorMs` (clamped ≥ 0; an empty selection or
-  a past-end anchor yields a zero window and the usual preparation error).
-- An empty backing selection with `Full` still produces no window, surfacing the
-  existing "duration is zero" preparation error rather than a special case.
-- Protocol tests assert `0`/`60`/`120` parse and `90` rejects; the default
-  scratch monitor gain change is covered by the existing per-session gain state.
-
-## Amendment 6 — Backing config locks while playing; Clear removed
-
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-The backing bed is a fixed pre-render (Amendment 1). While it was playing, the
-track selection, anchor, and length controls stayed enabled, which implied a
-track could be *switched in* live — but a change only takes effect after a fresh
-**Prepare**, so the edit was silently ineffective until re-prepared. The panel
-also carried a separate **Clear** button whose only role was to drop a prepared
-bed.
-
-### Decision
-
-- **The preparation config is locked while the backing is playing.** The track
-  toggles, start-anchor buttons, length buttons, and the **Prepare** button are
-  disabled whenever the backing transport is playing. They re-enable once
-  playback stops, at which point a changed config can be re-prepared.
-- **The Clear button is removed.** Re-preparing replaces the existing bed, so a
-  distinct clear action is redundant. The `SCRATCH_BACKING_CLEAR` bridge message
-  and composable method remain part of the protocol/API for session teardown;
-  only the UI affordance is gone.
-
-### Why
-
-Locking the config while playing removes the false affordance that tracks can be
-swapped into a running bed, matching the pre-render contract. Dropping Clear
-keeps the panel to a single, unambiguous action (Prepare/replace) now that the
-transport, not this panel, owns playback (Amendment 4).
-
-### Consequences
-
-- Reconfiguring the bed requires pausing first; the monitor-only gain trims stay
-  live while playing (they are not part of the pre-render).
-- No way remains to return a session to *no backing* from the UI; this is
-  acceptable because the session itself is transient and re-preparing covers the
-  swap case. The bridge clear path is retained for programmatic teardown.
-
-## Amendment 7 — Crossfader bar colour follows position and direction
-
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-The on-screen crossfader accented a fixed left→knob fill, so it always read the
-same way regardless of the per-device MIDI **crossfader direction** preference
-(`leftToRight` / `rightToLeft`). It also briefly tied the colour to the active
-deck, which made the bar change when the platter was touched — an unwanted side
-effect, since touching a platter must never alter the fader's appearance.
-
-### Decision
-
-- **The bar colour is a function of fader position and direction only.** The
-  snapshot carries a display-only `crossfaderReversed` boolean that mirrors the
-  session's MIDI crossfader direction (`true` = `rightToLeft`). Deck ownership
-  never affects it.
-  - **`leftToRight`:** blue fills from the left as the knob moves right — blue at
-    the fully-right extreme, black at the fully-left extreme.
-  - **`rightToLeft`:** mirrored — blue fills from the right as the knob moves
-    left, so blue at the fully-left extreme, black at the fully-right extreme.
-  - The `L`/`R` label on the blue extreme is accented.
-- **Recolour only — the knob never moves.** Changing direction never rewrites
-  `crossfaderDisplay`; only the colouring follows the preference.
-
-### Why
-
-Matching a physical crossfader's LED bar (position × wiring direction) keeps the
-on-screen fader a faithful mirror of the controller. Deriving the colour purely
-from position and direction — never from deck ownership or platter touch —
-guarantees the appearance is stable while performing.
-
-### Consequences
-
-- Touching a platter, claiming a deck, or recording never changes the bar colour
-  or the knob position.
-- Older payloads without `crossfaderReversed` default to `leftToRight`, preserving
-  the prior appearance.
-
-## Amendment 8 — Keyboard crossfader cut is push-to-open from a closed default
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 3 defined the keyboard crossfader cut as resting **open** with the key
-**closing** the fader while held. In practice, with keyboard and trackpad, this
-read backwards: pressing a key to *silence* the deck felt inverted, and the
-button state was out of sync with the fader — the default was open, yet a press
-is naturally understood as swinging the fader *in*.
-
-### Decision
-
-- **The keyboard cut is push-to-open from a closed resting default.** Holding the
-  configured key now **opens** the crossfader (scratch deck audible); releasing it
-  **closes** it again. The resting default is **closed**, and it is asserted once
-  the session becomes controllable so the visible fader and the audio agree before
-  any key is pressed. Blur/close force the fader back **closed** so a held key can
-  never leave the deck stuck open. The key choice (**Z** / **M**) is unchanged.
-- **MIDI crossfader controls are untouched.** This narrows only the
-  keyboard/trackpad path; the MIDI fader's direction, gain, and value handling
-  keep their existing behaviour.
-
-### Why
-
-A press that opens the fader matches the physical intuition of moving the fader
-in, and a closed default means silence until the performer deliberately cuts the
-deck in — the reverse of Amendment 3, which read backwards in hand testing. The
-cut still writes the same `0..1` crossfader value, so it remains an input method
-captured into a recording like any other fader move.
-
-### Consequences
-
-- Amendment 3's "resting state is open … blur/close force the fader open" is
-  superseded: the resting state is now closed and safety settles the fader closed.
-- The editor emits one crossfader `value` when the session becomes controllable to
-  establish the closed default; this affects the pointer fader's starting position
-  too, but never the MIDI control paths.
-
-## Amendment 9 — Scratch fader bar colour depends on the control source
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 7 coloured the on-screen crossfader bar by position × the per-device
-MIDI crossfader **direction** preference (`crossfaderReversed`). Combined with the
-Amendment 8 keyboard cut — which writes a fixed value (deck-1 audible at 0),
-independent of that preference — the bar read **backwards** under `leftToRight`
-when driven from the keyboard: releasing the key (fader closed, deck silent) lit
-the bar blue, while pressing it (fader open) went black. The direction preference
-belongs to physical MIDI crossfaders; it has no bearing on keyboard/trackpad
-operation, yet a MIDI-owned session must still mirror its controller's wiring.
-
-### Decision
-
-- **The bar colouring depends on the control source.** A session is
-  MIDI-controlled when a physical device owns it (`ownerDeviceIdentifier` is set);
-  otherwise it is keyboard/pointer operated.
-  - **MIDI-owned:** unchanged from Amendment 7 — the bar mirrors the device's
-    crossfader direction preference (`crossfaderReversed`).
-  - **Keyboard/pointer:** the direction preference is ignored; the bar colours by
-    **open/closed**. The scratch deck is audible at value 0, so blue stays on the
-    open (value → 0) edge and the bar is black when closed (value → 1). This is the
-    same fill geometry as a reversed bar, so the shared `ScratchCrossfader`
-    `reversed` prop expresses both modes; the parent computes its value per source.
-- **Recolour only — the knob never moves,** regardless of source.
-
-### Why
-
-The scratch editor is primarily a keyboard/trackpad tool, so under those inputs the
-fader must read the same way every time: open looks open, closed looks closed,
-independent of a hardware-wiring preference the keyboard ignores. A MIDI-owned
-session still needs to mirror its physical crossfader, so the decision keys off
-ownership rather than dropping the direction behaviour outright.
-
-### Consequences
-
-- Amendment 7's direction-driven colouring now applies **only** while a MIDI
-  device owns the session; keyboard/pointer operation colours by open/closed.
-- The backend still publishes `crossfaderReversed`; the frontend derives the
-  effective bar `reversed` flag from ownership plus that preference.
-
-## Amendment 10 — MIDI Play/Cue drive the backing bed; backing timing readout
-
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 4 re-scoped the **on-screen** transport to the backing bed but left the
-physical MIDI deck's Play button spinning the scratch source. A later change
-unwired that button entirely (inert) because the deck can never know whether a
-backing bed has been prepared, so an unguarded Play risked spinning the flat clip
-with no accompaniment. That left the hardware deck with no transport role while
-the editor is open, and the backing panel had no live position/duration display
-after Amendment 4 removed the old readout.
-
-### Decision
-
-- **The MIDI deck Play button toggles the prepared backing bed only, and is
-  ready-gated.** While a scratch session is active it starts/stops the backing
-  bed; it never spins the scratch source. If no backing is prepared (or a take is
-  recording) the press is rejected — the button does nothing until a bed exists.
-  This mirrors the on-screen transport's backing-only, ready-gated contract from
-  Amendment 4, now extended to the hardware Play button.
-- **The physical Cue button returns the backing bed to its start.** It seeks the
-  backing to position 0 **without changing the play state** — a running bed keeps
-  playing from the start; a paused bed holds at the start. (Standard pause-on-cue
-  was considered and rejected for this tool; see below.)
-- **Play/Cue are handled in the backend MIDI router, gated on session
-  existence.** `MidiScratchRouter::routeImmediate` routes `playPause` →
-  `scratchMidiTogglePlay()` and the physical Cue (`previousMarker`) →
-  `scratchMidiCueToStart()`. Both engine methods return `false` when no scratch
-  session is active, so with the editor **closed** the event falls through to the
-  frontend's timeline handling unchanged; with the editor **open** the frontend is
-  interaction-blocked, so the also-broadcast event is ignored (no double action).
-- **A backing timing readout returns.** The session state publishes a new
-  `backingPositionUs` snapshot field alongside `backingDurationUs`; the backing
-  panel shows a `m:ss / m:ss` position/duration readout under the transport,
-  **always rendered** (dimmed until a bed is ready) so it never reflows the panel.
-  The `PlayheadEmitter`'s existing `SCRATCH_SESSION_STATE` broadcast drives it
-  live.
-
-### Why
-
-The hardware deck's most natural control while performing a scratch is
-start/stop of the accompaniment, so wiring Play to the backing bed restores a
-useful transport without reintroducing the "spin a flat clip" hazard that made it
-inert. Ready-gating keeps the earlier safety property: the deck can act blindly
-because the backend refuses to play an unprepared bed. Handling Play/Cue in the
-router (keyed on session existence) reuses the same open ⟺ frontend-blocked
-invariant the rest of the scratch MIDI path relies on, avoiding a second
-dispatch path. Cue seeks without pausing because the backing is a bed the
-performer plays over, not a track being beat-matched, so a running bed should
-loop back and keep going rather than stop.
-
-### Consequences
-
-- The scratch source's nominal-speed playback remains reachable only through
-  **recording**; neither the on-screen transport nor the MIDI Play button ever
-  spins the flat clip.
-- New bridge field `backingPositionUs` (optional) on the scratch session state;
-  older payloads without it degrade to a `0:00` position.
-- The frontend timeline MIDI handlers for `playPause`/`previousMarker` are
-  unchanged — they still drive the timeline when no scratch session is active and
-  are suppressed by the interaction block when the editor is open.
-
-### Rejected alternatives
-
-- **Pause-on-cue (standard DJ behaviour).** Rejected for this tool: the backing
-  is an accompaniment bed, not a cue-juggled track, so returning to the start and
-  continuing to play matches how the bed is auditioned. Can be revisited if the
-  workflow gains true cue-point juggling.
-
-## Amendment 11 — Default backing length 120 s; muted tracks excluded from the bed
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 5 set the default backing length to `60` s. In practice most beds want a
-longer run before looping back, so the first Prepare usually meant manually
-bumping to `120`. Separately, the track picker (Amendment 1) let any track join
-the bed, including tracks **muted on the timeline** (explicitly muted, or silenced
-by a solo elsewhere) — so the audition could contain audio the arrangement is not
-actually playing, misrepresenting the mix.
-
-### Decision
-
-- **The default backing length is now `120` s** (still one of `60` / `120` /
-  `Full`), superseding the `60` s default from Amendment 5. Only the renderer-side
-  default selection changes; the protocol's accepted values are unchanged.
-- **Tracks muted on the timeline cannot join the bed.** A track counts as muted
-  when it is explicitly muted **or** suppressed by a solo on another track
-  (`track.muted || (anySoloed && !track.soloed)` — the same effective-audibility
-  test the mixer uses). Such tracks are always shown **unchecked and disabled** in
-  the picker and are filtered out of the prepared selection, so the bed mirrors
-  what is audible on the timeline. Muting is non-destructive to the stored
-  selection: unmuting restores a track's prior checked state.
-
-### Why
-
-Excluding muted tracks makes the bed a faithful preview of the arrangement's
-audible mix, which is the whole point of scratching *against* it — a muted stem
-should not reappear under the platter. Deriving "muted" from the shared
-effective-audibility test keeps the picker consistent with the timeline and the
-track headers rather than inventing a second notion of silence. The longer default
-length reflects the common case and avoids a routine extra click.
-
-### Consequences
-
-- `useScratchBacking` exposes a per-track `muted` flag and filters the selection
-  to audible tracks for both `selectedCount`/`canPrepare` and the `Prepare`
-  payload; the panel disables and dims muted rows.
-- Existing prepared beds are unaffected; the change only governs which tracks a
-  *new* Prepare includes.
-
-## Amendment 12 — Backing loop option
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-The backing bed stopped when it reached the end of its window, so a performer
-practising or recording a longer scratch had to re-trigger Play each time the
-accompaniment ran out. For a bed the whole point is to keep a groove running
-underneath the platter, so a one-shot end is often the wrong default for
-auditioning.
-
-### Decision
-
-- **A per-session `Loop` toggle (off by default) makes the backing bed
-  auto-restart at its end during plain playback.** When on, the end-of-window
-  reconciliation seeks the bed back to its head and keeps it playing instead of
-  returning the session to *ready*; when off, the prior one-shot behaviour stands.
-- **Loop applies to plain playback only, never to recording.** A take is still
-  bounded by the backing window, so the window end terminates a recording exactly
-  as before regardless of the loop flag — looping would otherwise make a take
-  unbounded.
-- **The flag is authoritative on the backend** (`backingLoop` on the session,
-  published in `SCRATCH_SESSION_STATE`; set via the `backingLoop { enabled }`
-  control action). Because it lives in the end-of-window reconciliation it governs
-  both the on-screen/keyboard transport and the physical MIDI Play button
-  uniformly. It is transport-scoped session state, not a persisted preference, so
-  it resets to off with each session.
-
-### Why
-
-Restarting the bed at its end matches how an accompaniment is used while
-scratching — a continuous groove — and keeping it off by default preserves the
-existing one-shot behaviour for anyone who wants a single pass. Handling it in the
-reconciliation (rather than per input path) reuses the single place the bed's end
-is already detected, so every transport surface behaves the same with no extra
-dispatch. Excluding recording keeps takes bounded and deterministic.
-
-### Consequences
-
-- New `backingLoop` control action and `backingLoop` state field (optional; older
-  payloads default to off). `useScratchBacking` exposes `loop` plus
-  `setLoop`/`toggleLoop`, and the backing panel gains an On/Off toggle.
-- A looping bed never ends the session on its own, so a performer must Pause (or
-  toggle loop off and let it run out) to stop it.
-
-## Amendment 13 — Physical Cue button unbound from the backing bed
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 10 wired the physical deck **Cue** button (`previousMarker`) to seek the
-backing bed to its start via `scratchMidiCueToStart()`. In use, only the **Play**
-button is wanted for backing transport in the scratch editor; the Cue-to-start
-binding added a second backing control that was not needed and muddied the deck's
-role while the editor is open.
-
-### Decision
-
-- **The physical Cue button no longer controls the backing bed.** The
-  `previousMarker` branch is removed from `MidiScratchRouter::routeImmediate`, and
-  the now-orphaned `scratchMidiCueToStart()` / `ScratchSessionController::midiCueToStart()`
-  methods are deleted. Only the physical **Play** button drives the backing bed
-  (toggle, ready-gated), exactly as Amendment 10 specified for Play.
-- **No behaviour changes outside the scratch editor.** With the editor open the
-  Cue press is simply not routed to the backing bed and, as before, the
-  also-broadcast event is suppressed by the frontend interaction block. With the
-  editor **closed** nothing changes: the frontend's timeline `previousMarker`
-  handling is untouched, so the Cue button still seeks the timeline as it always
-  has.
-
-### Why
-
-Reducing the deck's editor-open transport to Play alone matches how the hardware
-is actually used here and removes a redundant control path. Deleting the unused
-engine/controller methods keeps the MIDI router free of dead dispatch branches.
-
-### Consequences
-
-- Supersedes the Cue-to-start portion of Amendment 10; the Play toggle, ready
-  gating, and backing timing readout from Amendment 10 are unchanged.
-- The timeline Cue (`previousMarker`) behaviour is unaffected in every context.
-
-## Amendment 14 — Physical Cue button drives scratch recording
-
-- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 13 unbound the physical **Cue** button from the backing bed, leaving it
-with no role in the scratch editor. The natural hardware gesture for capturing a
-scratch is to arm from the deck, perform the scratch on the platter, then end the
-take — all without reaching for the mouse. The on-screen **Record** button already
-implements that arm → record → stop state machine, so the Cue button should
-mirror it.
-
-### Decision
-
-- **The physical Cue button drives scratch recording, mirroring the on-screen
-  Record button.** Pressing Cue cycles the same phases: **idle → arm**, **armed →
-  cancel**, **recording → stop**. Arming does not itself start a take; the armed
-  take begins on the **first platter touch** (the existing arm-on-touch path), so
-  the performer controls exactly when capture starts by touching the platter, and
-  releasing the platter plays the scratch as normal. A second Cue press **stops**
-  the take and publishes the completed pattern to the notation panel for editing
-  and replay.
-- **Handled in the backend MIDI router, gated on session existence.**
-  `MidiScratchRouter::routeImmediate` routes the physical Cue (`previousMarker`) →
-  `scratchMidiRecordToggle()`, which mirrors the Record button's three phases on
-  the controller. As with the Play button, the engine method returns `false` when
-  no scratch session is active, so with the editor **closed** the event falls
-  through to the frontend's timeline `previousMarker` handling unchanged; with the
-  editor **open** the frontend is interaction-blocked, so the also-broadcast event
-  is ignored (no double action).
-- **The recorded pattern reaches the notation panel via the existing broadcast.**
-  `broadcastScratchSessionState` (already invoked by the router after an applied
-  action) flushes any ready pattern through `broadcastScratchPatternIfReady`, so a
-  MIDI-triggered stop delivers the take identically to the on-screen Record
-  button.
-
-### Why
-
-Mapping Cue to the Record toggle gives the hardware deck a complete
-arm-perform-stop capture loop that matches how a scratch is physically performed,
-without a second dispatch path: the router reuses the same open ⟺ frontend-blocked
-invariant as the Play button, and the controller's record state machine is factored
-into a shared `stopRecordingLocked()` used by both the on-screen `recordStop` and
-the MIDI toggle, so both paths finalise a take identically.
-
-### Consequences
-
-- Supersedes Amendment 13's "Cue is unbound" decision: the Cue button now has an
-  editor-open role again (recording), while the timeline Cue (`previousMarker`)
-  behaviour with the editor closed remains unaffected.
-- New engine method `scratchMidiRecordToggle()` and controller method
-  `midiRecordToggle()`; the `recordStop` logic is shared via `stopRecordingLocked()`.
-- The on-screen Record button and the physical Cue button stay in lock-step because
-  they drive the same backend state machine.
-
-## Amendment 15 — Draft/pattern replay is transport-independent
-
-Auditioning a recorded scratch (the "Play Scratch" button, `SCRATCH_PATTERN_REPLAY_START`)
-must reproduce the notation over the loaded scratch clip only — it must not touch
-the backing bed or the session transport.
-
-### Decision
-
-- `AudioEngine::startScratchPatternReplay` no longer issues a `play` control
-  action, and `stopScratchPatternReplay` no longer issues a `pause`. Replay is
-  driven entirely by `ScratchAudioSource::beginPatternReplay`/`endPatternReplay`.
-  This fixes two defects: (a) replay was silently rejected whenever no backing
-  bed was prepared (the transport `play` requires a ready backing), and (b)
-  pressing Play Scratch disturbed ("clamped") the backing playback.
-
-### Consequences
-
-- Replay works with or without a backing bed and leaves the backing/transport
-  untouched.
-- Backend regression test `scratch pattern replay plays without a backing bed`
-  guards the transport-independence.
-
-## Amendment 16 — Physical Play button drives scratch recording; Cue unbound
-
-- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 14 mapped the physical **Cue** button to the scratch record toggle while
-the physical **Play** button toggled the backing bed (Amendment 13/14). In use,
-pressing **Play** as the take begins reads more naturally than reaching for Cue —
-the gesture "play the scratch" matches the Play button. The backing bed is
-auxiliary and optional, and does not warrant a dedicated hardware control for now.
-
-### Decision
-
-- **The physical Play button drives scratch recording, mirroring the on-screen
-  Record button** (idle → arm, armed → cancel, recording → stop). The armed take
-  still begins on the **first platter touch**, and a second Play press stops the
-  take and publishes the pattern to the notation panel. `MidiScratchRouter::
-  routeImmediate` routes the physical Play (`playPause`) →
-  `scratchMidiRecordToggle()`.
-- **The physical Cue button (`previousMarker`) is no longer mapped in the scratch
-  editor.** With the editor open it does nothing; with the editor closed its
-  timeline behaviour is unchanged.
-- **The backing bed is no longer MIDI-driven.** It is controlled by the on-screen
-  **Play** button only. The now-unused `AudioEngine::scratchMidiTogglePlay()` /
-  `ScratchSessionController::midiTogglePlay()` methods (and their test) are
-  removed.
-
-### Why
-
-Play-as-record gives the deck a single, natural capture control that matches the
-performer's mental model, and removes an under-used MIDI transport path. The
-backing bed stays available via the on-screen Play button, keeping the auxiliary
-feature without a hardware binding.
-
-### Consequences
-
-- Supersedes Amendment 14's "Cue drives recording" and Amendment 13/14's "Play
-  toggles the backing bed" decisions for the editor-open case.
-- Router change only; the on-screen Play (backing) and Record (recording) buttons
-  are unchanged, as is the timeline mapping with the editor closed.
-- Backend regression test `scratch MIDI router maps play to record` guards the new
-  mapping (Play arms recording; Cue is inert). The removed `midiTogglePlay` path
-  drops its `scratch MIDI transport controls backing only` test.
-
-## Amendment 17 — Replay position feedback (waveform + notation playheads)
-
-- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 15 made draft/pattern replay ("Play Scratch") transport-independent, but
-replay gave no visual feedback — the operator could hear the audition without
-seeing where it was. Both the scratch **waveform** and the **notation** panel
-should show a live playhead during replay.
-
-### Decision
-
-- **The scratch source publishes a normalized replay position.**
-  `ScratchAudioSource` tracks `replayPositionNormalized` (0→1 across the replayed,
-  cropped window) and exposes `isPatternReplaying()`; the controller surfaces both
-  on its session `Snapshot` as `replaying` + `replayPositionNormalized`, and
-  `broadcastScratchSessionState` emits them on `SCRATCH_SESSION_STATE`.
-- **The playhead emitter broadcasts while replaying.** `PlayheadEmitter` adds
-  `replaying` to its scratch-state emit gate so the position streams at the ~30 Hz
-  rate even though the session status stays `ready` (replay is transport-independent).
-- **Waveform playhead** follows the existing `positionUs` (the scratch clip's
-  source position), which scrubs back and forth with the platter during replay.
-- **Notation playhead** maps `replayPositionNormalized` back onto absolute pattern
-  time via the panel's crop range and draws a green sweep line. The frontend gates
-  its visibility on the local replay-active flag so it clears the instant replay
-  stops, independent of any trailing backend state.
-
-### Why
-
-Reusing the existing session-state channel and the already-published
-`positionUs`/crop math keeps a single source of truth for both playheads; no new
-message type is needed. Gating the notation playhead on the frontend replay flag
-avoids a dependency on a trailing "replay ended" broadcast.
-
-### Consequences
-
-- New optional `replaying` / `replayPositionNormalized` fields on
-  `SCRATCH_SESSION_STATE` (backward-compatible; both optional).
-- Backend regression `scratch pattern replay plays without a backing bed` now also
-  asserts the position advances and is surfaced on (then cleared from) the snapshot.
-
-## Amendment 18 — Replay plays the backing bed in sync
-
-- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Amendment 15 made pattern replay ("Play Scratch") transport-independent to fix
-two defects: replay was rejected when no backing was prepared, and pressing Play
-Scratch clamped the backing playback. A consequence was that replay never played
-the backing bed at all. But a take is *recorded over* a backing bed — the scratch
-is performed against it — so auditioning the pattern with no accompaniment loses
-the musical context the performance was built around.
-
-Because a take always begins with `beginArmedRecordingLocked()` seeking *both* the
-scratch source and the backing bed to `0`, the pattern's `t=0` is aligned to the
-bed's origin. Replaying the bed from its head therefore reproduces the same
-alignment the performer heard while recording, with no stored offset needed.
-
-### Decision
-
-- `AudioEngine::startScratchPatternReplay` now calls
-  `ScratchSessionController::beginReplayBacking()` after `beginPatternReplay`;
-  `stopScratchPatternReplay` calls `endReplayBacking()`. These rewind a prepared
-  bed to its head and start/stop it alongside the replay.
-- Both controller methods are **no-ops when no backing bed is ready**, so
-  Amendment 15's key property is preserved: replay still starts and plays
-  scratch-only when no bed is prepared, and never depends on the transport.
-- Replay still does not issue transport `play`/`pause` control actions, so it
-  cannot be rejected by the transport's backing-ready guard.
-
-### Consequences
-
-- Supersedes Amendment 15's "leaves the backing untouched" outcome: replay now
-  runs the bed in time when one is prepared, while retaining scratch-only replay
-  without a bed.
-- New controller methods `beginReplayBacking()` / `endReplayBacking()`
-  (message-thread only).
-- Backend regression `scratch replay plays the backing bed in sync` guards that a
-  prepared bed rewinds to its head, plays during replay, and stops on replay end;
-  `scratch pattern replay plays without a backing bed` continues to guard the
-  no-bed path.
-
-## Amendment 19 — Save a scratch to the library as a baked WAV sample
-
-- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
-  **Importance:** `IMPORTANT`
-
-### Context
-
-Until now a recorded scratch lived only as notation inside the project ValueTree
-(`SCRATCH_PATTERN_SAVE`), auditionable in the editor and applicable live to a
-timeline clip via `OffsetSource`, but never a first-class library asset the user
-could drag onto the arrangement. The goal is two-fold: (1) persist the notation
-so a scratch can be re-opened and edited, and (2) let the scratch behave like any
-other sample clip on the timeline.
-
-Two rubber-duck critiques (Gemini 3.1 Pro, GPT-5.6 Terra) both favoured baking to
-a frozen WAV over a live-scratched clip: it is deterministic, needs no per-clip
-scratch DSP on the timeline, and reuses the entire sample pipeline (drag, warp,
-pitch, mixdown). The alternative — a timeline clip that carries a live
-`scratchPatternId` and re-scratches on playback — was rejected as fragile
-(double-apply risk, replay cost, and no self-contained portability).
-
-### Decision
-
-- **New command `SCRATCH_SAVE_AS_SAMPLE`** bakes the recorded pattern over its
-  prepared source into a stereo WAV (`scratch::bakePatternToBuffer`, which drives
-  a private `ScratchAudioSource` through the same DSP as live replay for fidelity).
-  The bake runs off the audio thread on the peak pool; library registration and
-  broadcasts happen back on the message thread.
-- The result is an ordinary `kind="sample"`, `audioType="simple"` library item
-  (unanalysed — no BPM — but still warp/pitch-able), plus **additive** scratch
-  metadata: `scratchPatternId` (link to the canonical notation) and
-  `scratchSourcePath` (a self-contained copy of the source window, `source.wav`,
-  written beside the baked take). A generated read-only `notation.json` mirrors
-  the ValueTree notation for external inspection only.
-- Files live under `scratches/<patternId>/`; each save writes a **new immutable
-  revision** (`<name>-take-NNN.wav`) and atomically repoints the library item, so
-  a re-save never overwrites bytes a placed clip may still be reading.
-- **Invariant:** a baked scratch sample is a plain audio clip — placed clips carry
-  **no** live `scratchPatternId`, so dropping one plays the frozen audio and never
-  re-scratches. The pattern link is re-open metadata on the *library item* only.
-- **Re-open:** "Open in Scratch Editor" on a scratch-origin item prepares the
-  session from `scratchSourcePath` (not the baked WAV) and loads the linked
-  notation, so editing operates on the original performance window. Re-saving
-  updates the same library item in place.
-- **Kind reuse (backward-compat, ADR 0019):** no new `LibraryItemKind` enum value
-  is introduced; older builds that predate this feature simply ignore the extra
-  optional properties and treat the item as a normal sample.
-
-### Consequences
-
-- New backend module `commands/ScratchSaveCommands.{h,cpp}`; `ScratchAudioSource`
-  and `ScratchSessionController`/`AudioEngine` gain message-thread getters for the
-  immutable prepared source buffer.
-- New `ProjectState` library metadata (`scratchPatternId`, `scratchSourcePath`)
-  with `setLibraryItemScratchMeta` + getters, serialised in `libraryAsJson`
-  (adds `scratchOrigin`).
-- Frontend: outbound `SCRATCH_SAVE_AS_SAMPLE`; additive library + `SAMPLE_SAVED`
-  fields; the footer **Save** persists notation *and* bakes the sample; scratch
-  library tiles show a distinct vinyl-record icon.
-- Regressions: `scratch bake pattern to buffer renders audio` /
-  `... handles missing inputs`, and `ProjectState scratch library metadata
-  round-trips`.
+- **Send scratch MIDI through the renderer before it reaches audio.** The
+  extra scheduling and bridge round trip would add avoidable jitter to the
+  highest-rate control path; direct backend consumption keeps it short.
+- **Persist raw MIDI/pointer events instead of simplified action keyframes.**
+  Raw events are not controller-independent, cannot be simplified or edited
+  meaningfully, and would make deterministic offline replay much harder.
+- **Let the scratch source wrap at its boundaries.** Hidden looping would
+  change the recorded gesture and make a pattern's meaning depend
+  unpredictably on source length; boundary silence with no wrap keeps replay
+  a faithful record of what was performed.
+- **Give a placed clip a live `scratchPatternId` that re-scratches on
+  playback**, instead of baking a frozen sample. Live evaluation on ordinary
+  timeline playback would add per-clip scratch DSP cost project-wide, risk
+  double-applying a pattern, and produce a less portable, self-contained
+  asset than a plain WAV with re-open metadata.
+- **Route the backing bed through the crossfader's opposite side, or bake it
+  into the recorded pattern or exported sample.** Either would turn the
+  bed into part of committed output or the deterministic fader model,
+  breaking the monitor-only, non-destructive guarantee the bed exists to
+  provide.
+- **Leave a scratch session alive across a project reset, new project, or
+  load.** A stale session could reference a clip or library item from a
+  project that no longer exists in the engine or the renderer; clearing it
+  on every reset (and only on a *successful* load) keeps both processes
+  pointed at the same project.
+- **Accept platter, crossfader, or MIDI touch input while a pattern is
+  replaying.** Replay is a deterministic audition of already-recorded data;
+  allowing live input to reach the same source during it would make replay
+  timing depend on unrelated real-time interaction instead of the stored
+  pattern.

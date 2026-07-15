@@ -432,12 +432,16 @@ add_library(silverdaw_backend_core STATIC
     src/midi/MidiScratchRouting.cpp
     # scratch
     src/scratch/ScratchProtocol.cpp
+    src/scratch/ScratchProtocolPattern.cpp
     src/scratch/ScratchAudioSource.cpp
     src/scratch/BackingMonitorSource.cpp
     src/scratch/ScratchBackingPreparation.cpp
     src/scratch/ScratchSourcePreparation.cpp
     src/scratch/ScratchActionRecorder.cpp
     src/scratch/ScratchSessionController.cpp
+    src/scratch/ScratchSessionBacking.cpp
+    src/scratch/ScratchSessionRecording.cpp
+    src/scratch/ScratchSessionMidi.cpp
     src/scratch/ScratchPatternEvaluator.cpp
     src/scratch/ScratchPatternBake.cpp
     # dsp

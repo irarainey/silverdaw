@@ -9,6 +9,8 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useScratchEditorStore } from '@/stores/scratchEditorStore'
+import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import * as engineRecovery from '@/lib/engineRecovery'
@@ -29,6 +31,10 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   | 'PROJECT_DELAY_APPLIED'
 > = {
   PROJECT_STATE: (payload) => {
+    if (payload.reset === true) {
+      useScratchEditorStore().close()
+      useScratchSessionStore().clear()
+    }
     // Authoritative snapshot after AUTH reconciles optimistic state.
     useProjectStore().applyProjectStateSnapshot(payload)
     useAppStore().finishRecentProjectOpen()

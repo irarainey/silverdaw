@@ -184,7 +184,7 @@ class ScratchSessionController
     // armed; performs the same start sequence as recordStart and clears arming.
     bool beginArmedRecordingLocked();
     // Finalises the in-progress take (mandatory final keyframes, stop playback,
-    // return to ready) — shared by the on-screen recordStop and the MIDI Cue
+    // return to ready) — shared by the on-screen recordStop and the MIDI Play
     // toggle. Caller holds sessionMutex and has verified status == "recording".
     bool stopRecordingLocked();
     void applyPlatterMove(double deltaTurns, double timestampMs);

@@ -1,29 +1,30 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
 import { useScratchKeyboardControls } from '@/lib/scratch/useScratchKeyboardControls'
 import { useScratchEditorDerived } from '@/lib/scratch/useScratchEditorDerived'
 import { useScratchBacking } from '@/lib/scratch/useScratchBacking'
 import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
+import { useScratchReplay } from '@/lib/scratch/useScratchReplay'
+import { useScratchRecordControl } from '@/lib/scratch/useScratchRecordControl'
+import { useScratchSaveFlow } from '@/lib/scratch/useScratchSaveFlow'
+import { useScratchDialogClose } from '@/lib/scratch/useScratchDialogClose'
+import { useScratchReopenLifecycle } from '@/lib/scratch/useScratchReopenLifecycle'
+import { useScratchPointerDispatch } from '@/lib/scratch/useScratchPointerDispatch'
+import { useScratchTransportControls } from '@/lib/scratch/useScratchTransportControls'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
-import ScratchCrossfader from '@/components/ScratchCrossfader.vue'
 import ScratchDirtyCloseDialog from '@/components/ScratchDirtyCloseDialog.vue'
-import ScratchNotationEditor from '@/components/ScratchNotationEditor.vue'
+import ScratchEditorHeader from '@/components/ScratchEditorHeader.vue'
 import ScratchBackingPanel from '@/components/ScratchBackingPanel.vue'
-import ScratchVinylDeck from '@/components/ScratchVinylDeck.vue'
 import ScratchWaveformBar from '@/components/ScratchWaveformBar.vue'
-import {
-  buildCrossfaderPayload,
-  buildPlatterMovePayload,
-  buildPlatterTouchPayload,
-  buildSeekPayload,
-  VIRTUAL_DECK
-} from '@/lib/scratch/scratchControlHelpers'
+import ScratchStagePanel from '@/components/ScratchStagePanel.vue'
+import ScratchControlRail from '@/components/ScratchControlRail.vue'
+import ScratchEditorFooter from '@/components/ScratchEditorFooter.vue'
+import ScratchSaveProgressOverlay from '@/components/ScratchSaveProgressOverlay.vue'
 
 const props = defineProps<{
   open: boolean
@@ -41,262 +42,156 @@ const dialogEl = ref<HTMLDivElement | null>(null)
 // item id doubles as the session identity, so both paths key on a single id.
 const sourceId = computed(() => props.clipId ?? props.libraryItemId ?? null)
 const source = computed(() =>
-  sourceId.value === null
-    ? null
-    : { id: sourceId.value, isLibrary: props.clipId === null }
+  sourceId.value === null ? null : { id: sourceId.value, isLibrary: props.clipId === null }
 )
 const isDialogOpen = computed(() => props.open && sourceId.value !== null)
 useFocusTrap(dialogEl, isDialogOpen)
 
-const session = useScratchEditorSession(
-  computed(() => props.open),
-  source
-)
-
+const session = useScratchEditorSession(computed(() => props.open), source)
 const derived = useScratchEditorDerived(sourceId, session)
-const backing = useScratchBacking(
-  session.activeSessionId,
-  session.state,
-  sourceId
-)
+const backing = useScratchBacking(session.activeSessionId, session.state, sourceId)
 const persistence = useScratchPatternPersistence(session.activeSessionId)
+
+const replay = useScratchReplay({
+  canControl: session.canControl,
+  sessionState: session.state,
+  savedPatterns: computed(() => project.savedScratchPatterns),
+  startPatternReplay: (pattern) => project.startPatternReplay(pattern),
+  stopPatternReplay: () => project.stopPatternReplay()
+})
 
 useScratchKeyboardControls({
   activeSessionId: session.activeSessionId,
-  canControl: session.canControl,
+  canControl: replay.controlsEnabled,
   sendControl: session.sendControl
 })
 
-// Footer Save persists the recorded scratch notation AND bakes it into a frozen
-// library sample (a draggable timeline clip). It updates the existing saved
-// pattern/library item when one is loaded, otherwise creates new ones. Only
-// meaningful once a scratch has actually been recorded. While a save is in flight
-// a progress popover is shown and the editor closes automatically on success.
-type SavePhase = 'idle' | 'saving' | 'error'
-const savePhase = ref<SavePhase>('idle')
-const saveErrorMsg = ref<string | null>(null)
+const saveFlow = useScratchSaveFlow({
+  sessionId: session.activeSessionId,
+  hasPattern: derived.hasPattern,
+  clipId: computed(() => props.clipId),
+  libraryItemId: computed(() => props.libraryItemId),
+  sourceItemId: derived.sourceItemId,
+  clipInMs: derived.clipInMs,
+  waveformDurationMs: derived.waveformDurationMs,
+  project,
+  scratch: scratchStore,
+  persistence,
+  // Bypasses the dirty-close prompt — a successful bake always closes immediately.
+  onSaved: () => performClose()
+})
 
-function onSave(): void {
-  if (!derived.hasPattern.value || savePhase.value === 'saving') return
-  savePhase.value = 'saving'
-  saveErrorMsg.value = null
-  if (scratchStore.savedPatternId !== null) persistence.updatePattern()
-  else persistence.savePattern()
-  bakeScratchToLibrary()
-}
-
-// The baked sample's library id is derived from the notation pattern id so a
-// re-save of an edited scratch updates the same library item in place, and the
-// item stays linked to its notation for re-opening in the editor.
-function bakeScratchToLibrary(): void {
-  const sid = session.activeSessionId.value
-  const pattern = scratchStore.completedPattern
-  if (sid === null || !pattern) {
-    savePhase.value = 'idle'
-    return
-  }
-  const targetId =
-    persistence.selectedSavedId.value ?? scratchStore.savedPatternId ?? pattern.id
-  const name = persistence.patternName.value.trim() || pattern.name || 'Scratch'
-  const saved: ScratchPattern = { ...pattern, id: targetId, name }
-  const itemId = `scratch-${targetId}`
-  // Inherit cover art from — and window/display on re-open — the resolved source
-  // item the scratch was actually performed over (the peaks-bearing source, not an
-  // intermediate clip item). Falls back to the opened item when unresolved.
-  const sourceItemId =
-    derived.sourceItemId.value ??
-    (props.clipId !== null ? project.clips[props.clipId]?.libraryItemId : props.libraryItemId) ??
-    null
-  scratchStore.beginScratchBake(itemId)
-  project.saveScratchAsSample(
-    sid,
-    itemId,
-    name,
-    saved,
-    sourceItemId,
-    derived.clipInMs.value,
-    derived.waveformDurationMs.value
-  )
-}
-
-// Resolve the in-flight bake: close the editor on success, or surface the error
-// in the progress popover so the user can retry without losing their recording.
-watch(
-  () => scratchStore.bakeResultSeq,
-  () => {
-    if (savePhase.value !== 'saving') return
-    const result = scratchStore.bakeResult
-    if (!result) return
-    if (result.ok) {
-      savePhase.value = 'idle'
-      doClose()
-    } else {
-      savePhase.value = 'error'
-      saveErrorMsg.value = result.error ?? 'Could not save the scratch to your library.'
-    }
-  }
-)
-
-function dismissSaveError(): void {
-  savePhase.value = 'idle'
-  saveErrorMsg.value = null
-}
 const preparationPercent = computed(() =>
   Math.round((session.state.value?.preparationProgress ?? 0) * 100)
 )
-const isPatternReplaying = ref(false)
-let replayStopTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearReplayTimer(): void {
-  if (replayStopTimer !== null) {
-    clearTimeout(replayStopTimer)
-    replayStopTimer = null
-  }
-}
-
-function startReplay(pattern: string | ScratchPattern): void {
-  const replayPattern = typeof pattern === 'string'
-    ? project.savedScratchPatterns.find((saved) => saved.id === pattern)
-    : pattern
-  if (!replayPattern) return
-
-  clearReplayTimer()
-  project.startPatternReplay(pattern)
-  isPatternReplaying.value = true
-  const replayDurationMs = Math.max(
-    1,
-    Math.ceil((replayPattern.cropEndUs - replayPattern.cropStartUs) / 1000)
-  )
-  replayStopTimer = setTimeout(() => stopReplay(), replayDurationMs + 50)
-}
 
 function startDraftReplay(): void {
-  if (scratchStore.completedPattern) startReplay(scratchStore.completedPattern)
+  if (scratchStore.completedPattern) replay.startReplay(scratchStore.completedPattern)
+}
+
+// Stop any audition and drop the in-memory recording, without touching the
+// notation-persistence state (used both to arm a fresh take and by Clear).
+function discardRecordingAudio(): void {
+  replay.stopReplay()
+  scratchStore.clearRecording()
 }
 
 // Discard the freshly recorded (unsaved) draft so the notation panel returns to
 // its empty state, ready for a new take. Saved patterns are untouched.
 function clearDraft(): void {
-  stopReplay()
+  discardRecordingAudio()
   persistence.reset()
-  scratchStore.clearRecording()
 }
 
-function stopReplay(): void {
-  clearReplayTimer()
-  if (isPatternReplaying.value) project.stopPatternReplay()
-  isPatternReplaying.value = false
-}
+const recordControl = useScratchRecordControl({
+  isRecording: derived.isRecording,
+  isArmed: derived.isArmed,
+  canRecord: derived.canRecord,
+  hasDraft: computed(() => derived.hasPattern.value || Boolean(scratchStore.completedPattern)),
+  armRecording: () => session.armRecording(),
+  disarmRecording: () => session.disarmRecording(),
+  stopRecording: () => session.stopRecording(),
+  discardDraft: discardRecordingAudio
+})
 
-// Notation playhead position (0..1 across the replayed crop window) while the
-// draft/pattern is auditioning. Null hides the playhead the moment replay stops,
-// independent of any trailing backend state.
-const notationReplayPositionNormalized = computed<number | null>(() =>
-  isPatternReplaying.value
-    ? session.state.value?.replayPositionNormalized ?? null
-    : null
+const pointerDispatch = useScratchPointerDispatch({
+  activeSessionId: session.activeSessionId,
+  controlsEnabled: replay.controlsEnabled,
+  sendControl: session.sendControl
+})
+
+const transport = useScratchTransportControls({
+  activeSessionId: session.activeSessionId,
+  canControl: session.canControl,
+  backingReady: backing.isReady,
+  isRecording: derived.isRecording,
+  isPatternReplaying: replay.isPatternReplaying,
+  stopReplay: replay.stopReplay,
+  togglePlayback: session.togglePlayback,
+  sendControl: session.sendControl
+})
+
+// ── Reconcile authoritative ack from PROJECT_STATE ───────────────────────────
+watch(
+  () => project.savedScratchPatterns,
+  () => persistence.reconcileSnapshot()
 )
 
-// ── Dirty-close confirmation ─────────────────────────────────────────────────
+// ── Saved-scratch re-open (loads once the backend session is ready) ─────────
+const reopen = useScratchReopenLifecycle({
+  open: computed(() => props.open),
+  libraryItemId: computed(() => props.libraryItemId),
+  activeSessionId: session.activeSessionId,
+  savedPatterns: computed(() => project.savedScratchPatterns),
+  getSavedScratchPatternId: (itemId) => library.byId[itemId]?.scratchPatternId ?? null,
+  selectAndLoad: (patternId) => persistence.selectAndLoad(patternId)
+})
 
-const dirtyClosePromptOpen = ref(false)
-
-function requestClose(): void {
-  if (persistence.isDirty.value) {
-    dirtyClosePromptOpen.value = true
-    return
-  }
-  doClose()
+// ── Dialog close orchestration ───────────────────────────────────────────────
+function resetLocalDialogState(): void {
+  saveFlow.reset()
+  reopen.clearPending()
+  replay.stopReplay()
+  persistence.reset()
 }
 
-function doClose(): void {
-  dirtyClosePromptOpen.value = false
-  savePhase.value = 'idle'
-  saveErrorMsg.value = null
-  pendingReopenPatternId.value = null
-  stopReplay()
-  persistence.reset()
+function performClose(): void {
+  resetLocalDialogState()
   session.close()
   emit('close')
 }
 
-function onDirtyCloseSave(): void {
-  dirtyClosePromptOpen.value = false
-  persistence.saveAndClose()
-}
+const close = useScratchDialogClose({
+  isDirty: persistence.isDirty,
+  isCloseSavePending: persistence.isCloseSavePending,
+  saveError: persistence.saveError,
+  closeSaveAcknowledged: persistence.closeSaveAcknowledged,
+  saveAndClose: () => persistence.saveAndClose(),
+  dismissCloseSaveError: () => persistence.dismissCloseSaveError(),
+  performClose
+})
 
-watch(
-  () => persistence.closeSaveAcknowledged.value,
-  (acked) => {
-    if (acked) doClose()
-  }
-)
-
-function onDirtyCloseDiscard(): void {
-  doClose()
-}
-
-function onDirtyCloseCancel(): void {
-  dirtyClosePromptOpen.value = false
-  persistence.dismissCloseSaveError()
-}
-
-
-// ── Reconcile authoritative ack from PROJECT_STATE ───────────────────────────
-
-watch(
-  () => project.savedScratchPatterns,
-  () => {
-    persistence.reconcileSnapshot()
-    tryLoadPendingReopen()
-  }
-)
-
-// ── Lifecycle ────────────────────────────────────────────────────────────────
-
-// A saved-scratch re-open must load its notation only AFTER the backend session
-// exists (the store rejects a pattern load while `current` is null), so the open
-// watcher records the target pattern id and a session-ready watcher applies it.
-const pendingReopenPatternId = ref<string | null>(null)
-
+// ── Focus/open lifecycle ─────────────────────────────────────────────────────
 watch(
   () => props.open,
   async (open) => {
     ui.clipEditorOpen = open
     if (open) {
       persistence.reset()
-      savePhase.value = 'idle'
-      saveErrorMsg.value = null
-      // Re-opening a saved scratch: remember its notation id so the editor shows
-      // the recorded pattern once the session is ready (a re-save updates it).
-      const openedItemId = props.libraryItemId
-      const scratchPatternId =
-        openedItemId != null ? library.byId[openedItemId]?.scratchPatternId ?? null : null
-      pendingReopenPatternId.value = scratchPatternId
+      saveFlow.reset()
       await nextTick()
       dialogEl.value?.focus()
     } else {
-      pendingReopenPatternId.value = null
+      // Project replacement can close the store externally rather than through
+      // performClose(); keep replay/save/reopen state clean for the next session.
+      resetLocalDialogState()
     }
   },
   { immediate: true }
 )
 
-// Once the backend session is live, load any pending saved notation. Guarded so
-// it only clears the pending id after the pattern is actually found (the notation
-// may arrive via PROJECT_STATE a beat after the session becomes ready).
-function tryLoadPendingReopen(): void {
-  const patternId = pendingReopenPatternId.value
-  if (!patternId || !session.activeSessionId.value) return
-  if (!project.savedScratchPatterns.some((p) => p.id === patternId)) return
-  persistence.selectAndLoad(patternId)
-  pendingReopenPatternId.value = null
-}
-
-watch(() => session.activeSessionId.value, tryLoadPendingReopen)
-
 onBeforeUnmount(() => {
-  stopReplay()
+  replay.stopReplay()
   ui.clipEditorOpen = false
 })
 
@@ -304,121 +199,30 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
-    if (savePhase.value === 'saving') return
-    if (savePhase.value === 'error') {
-      dismissSaveError()
-    } else if (dirtyClosePromptOpen.value) {
-      onDirtyCloseCancel()
+    if (saveFlow.savePhase.value === 'saving') return
+    if (saveFlow.savePhase.value === 'error') {
+      saveFlow.dismissSaveError()
+    } else if (close.dirtyClosePromptOpen.value) {
+      close.onDirtyCloseCancel()
     } else {
-      requestClose()
+      close.requestClose()
     }
-  } else if ((event.key === ' ' || event.code === 'Space') && session.canControl.value && !dirtyClosePromptOpen.value) {
+  } else if ((event.key === ' ' || event.code === 'Space') && session.canControl.value && !close.dirtyClosePromptOpen.value) {
     event.preventDefault()
     event.stopPropagation()
-    if (isPatternReplaying.value) stopReplay()
-    else if (transportEnabled.value) session.togglePlayback()
+    transport.onTogglePlay()
   } else if (
     (event.key === 'r' || event.key === 'R') &&
     !event.repeat &&
     !event.ctrlKey &&
     !event.metaKey &&
     !event.altKey &&
-    !dirtyClosePromptOpen.value
+    !close.dirtyClosePromptOpen.value
   ) {
     event.preventDefault()
     event.stopPropagation()
-    onRecordButton()
+    recordControl.onRecordButton()
   }
-}
-
-function onPlatterTouch(touched: boolean): void {
-  const sid = session.activeSessionId.value
-  if (!sid || !session.canControl.value) return
-  session.sendControl(buildPlatterTouchPayload(sid, VIRTUAL_DECK, touched))
-}
-
-function onPlatterMove(deltaTurns: number, clientTimeMs: number): void {
-  const sid = session.activeSessionId.value
-  if (!sid || !session.canControl.value) return
-  session.sendControl(buildPlatterMovePayload(sid, VIRTUAL_DECK, deltaTurns, clientTimeMs))
-}
-
-function onCrossfaderChange(value: number): void {
-  const sid = session.activeSessionId.value
-  if (!sid || !session.canControl.value) return
-  session.sendControl(buildCrossfaderPayload(sid, value))
-}
-
-// ── Backing transport (drives the backing channel only) ──────────────────────
-
-// The play/pause and skip controls (and Space) run the prepared backing bed;
-// they never spin the scratch clip, which is heard only when jogged. Disabled
-// until a backing is prepared, and during recording (which owns playback).
-const transportEnabled = computed(
-  () => session.canControl.value
-    && backing.isReady.value
-    && !derived.isRecording.value
-    && !isPatternReplaying.value
-)
-
-function onSkipToStart(): void {
-  const sid = session.activeSessionId.value
-  if (!sid || !transportEnabled.value) return
-  session.sendControl(buildSeekPayload(sid, 0))
-}
-
-function onTogglePlay(): void {
-  if (isPatternReplaying.value) stopReplay()
-  else if (transportEnabled.value) session.togglePlayback()
-}
-
-// ── Single record control (arm → first-touch start → stop) ───────────────────
-
-const recordPhase = computed<'idle' | 'armed' | 'recording'>(() => {
-  if (derived.isRecording.value) return 'recording'
-  if (derived.isArmed.value) return 'armed'
-  return 'idle'
-})
-
-function onRecordButton(): void {
-  if (!derived.canRecord.value && recordPhase.value === 'idle') return
-  if (recordPhase.value === 'recording') session.stopRecording()
-  else if (recordPhase.value === 'armed') session.disarmRecording()
-  else {
-    // Starting a fresh take: discard any existing scratch first so the new
-    // recording replaces it cleanly instead of leaving the old notation on screen.
-    if (derived.hasPattern.value || scratchStore.completedPattern) {
-      stopReplay()
-      scratchStore.clearRecording()
-    }
-    session.armRecording()
-  }
-}
-
-const recordButtonLabel = computed(() => {
-  if (recordPhase.value === 'recording') return 'Stop'
-  if (recordPhase.value === 'armed') return 'Cancel'
-  return 'Record'
-})
-
-const recordButtonClass = computed(() => {
-  if (recordPhase.value === 'recording') return 'bg-red-600 text-white hover:bg-red-700'
-  if (recordPhase.value === 'armed') return 'bg-amber-600 text-white hover:bg-amber-700'
-  return 'bg-red-700 text-white hover:bg-red-600'
-})
-
-const recordButtonAriaLabel = computed(() => {
-  if (recordPhase.value === 'recording') return 'Stop recording'
-  if (recordPhase.value === 'armed') return 'Cancel record arming'
-  return 'Arm scratch recording'
-})
-
-// Scratch monitor level lives with the deck it trims (not the backing panel).
-// Monitor-only; never baked into the recorded pattern, mixdown, or export.
-const scratchPct = computed(() => `${Math.round(backing.scratchGain.value * 100)}%`)
-
-function onScratchGain(event: Event): void {
-  backing.setScratchGain((event.target as HTMLInputElement).valueAsNumber)
 }
 </script>
 
@@ -444,37 +248,22 @@ function onScratchGain(event: Event): void {
         class="dialog-card h-[min(960px,96vh)] !max-h-[96vh] w-[min(1400px,96vw)]"
         @keydown="onKeydown"
       >
-        <header class="dialog-header flex items-baseline gap-3">
-          <h2
-            id="scratch-editor-title"
-            class="dialog-title"
-          >
-            Scratch Editor
-          </h2>
-          <span
-            v-if="derived.clipName.value"
-            class="text-xs text-zinc-400"
-          >{{ derived.clipName.value }}</span>
-          <span
-            v-if="derived.deckLabel.value"
-            class="ml-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-sky-400"
-          >{{ derived.deckLabel.value }}</span>
-          <span
-            v-if="persistence.isSaved.value && !persistence.isDirty.value"
-            class="ml-1 text-[10px] text-emerald-400"
-          >Saved</span>
-        </header>
+        <ScratchEditorHeader
+          :clip-name="derived.clipName.value"
+          :deck-label="derived.deckLabel.value"
+          :show-saved-badge="persistence.isSaved.value && !persistence.isDirty.value"
+        />
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
           <ScratchBackingPanel
             v-if="session.state.value && !derived.statusMessage.value"
             :backing="backing"
-            :disabled="derived.isRecording.value || isPatternReplaying"
-            :monitor-disabled="isPatternReplaying"
+            :disabled="derived.isRecording.value || replay.isPatternReplaying.value"
+            :monitor-disabled="replay.isPatternReplaying.value"
             :is-playing="session.isPlaying.value"
-            :transport-enabled="transportEnabled"
-            @skip-to-start="onSkipToStart"
-            @toggle-play="onTogglePlay"
+            :transport-enabled="transport.transportEnabled.value"
+            @skip-to-start="transport.onSkipToStart"
+            @toggle-play="transport.onTogglePlay"
           />
           <div class="w-full">
             <ScratchWaveformBar
@@ -497,272 +286,67 @@ function onScratchGain(event: Event): void {
           </div>
 
           <div class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_14rem] gap-4">
-            <div class="flex min-w-0 min-h-0 flex-col gap-2 overflow-hidden">
-              <template v-if="derived.statusMessage.value">
-                <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
-                  <div class="w-full max-w-sm px-6 text-center">
-                    <p
-                      class="text-xs"
-                      :class="derived.isError.value ? 'text-red-400' : 'text-zinc-400'"
-                      :role="derived.isError.value ? 'alert' : 'status'"
-                    >
-                      {{ derived.statusMessage.value }}
-                    </p>
-                    <div
-                      v-if="session.state.value?.status === 'preparing'"
-                      class="mt-3"
-                    >
-                      <div
-                        class="h-1.5 overflow-hidden rounded-full bg-zinc-800"
-                        role="progressbar"
-                        aria-label="Preparing audio for scratching"
-                        aria-valuemin="0"
-                        aria-valuemax="100"
-                        :aria-valuenow="preparationPercent"
-                      >
-                        <div
-                          class="h-full rounded-full bg-sky-500 transition-[width] duration-150"
-                          :style="{ width: `${preparationPercent}%` }"
-                        />
-                      </div>
-                      <p class="mt-1 font-mono text-[10px] tabular-nums text-zinc-500">
-                        {{ preparationPercent }}%
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </template>
-              <template v-else>
-                <!-- Notation content by phase -->
-                <template v-if="derived.isRecording.value">
-                  <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
-                    <span
-                      class="inline-flex items-center gap-1.5 text-xs text-red-400"
-                      role="status"
-                    >
-                      <span
-                        class="h-2 w-2 animate-pulse rounded-full bg-red-500"
-                        aria-hidden="true"
-                      />
-                      Recording…
-                    </span>
-                  </div>
-                </template>
-                <template v-else-if="derived.recordingStatus.value === 'completed'">
-                  <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-                    <ScratchNotationEditor
-                      class="min-h-0 flex-1"
-                      :session-id="session.activeSessionId.value"
-                      :replay-position-normalized="notationReplayPositionNormalized"
-                    />
-                  </div>
-                </template>
-                <template v-else>
-                  <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
-                    <div class="text-center">
-                      <template v-if="recordPhase === 'armed'">
-                        <p
-                          class="text-xs text-amber-400"
-                          role="status"
-                        >
-                          Armed — touch the platter to start recording
-                        </p>
-                      </template>
-                      <template v-else>
-                        <p class="text-xs text-zinc-500">
-                          No scratch recorded
-                        </p>
-                        <p class="text-[10px] text-zinc-600">
-                          Press Record, then touch the platter to begin
-                        </p>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-              </template>
-            </div>
+            <ScratchStagePanel
+              :status-message="derived.statusMessage.value"
+              :is-error="derived.isError.value"
+              :is-preparing="session.state.value?.status === 'preparing'"
+              :preparation-percent="preparationPercent"
+              :is-recording="derived.isRecording.value"
+              :has-completed-recording="derived.recordingStatus.value === 'completed'"
+              :is-armed="recordControl.recordPhase.value === 'armed'"
+              :session-id="session.activeSessionId.value"
+              :notation-replay-position-normalized="replay.notationReplayPositionNormalized.value"
+            />
 
-            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3">
-              <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5">
-                <span class="text-[11px] text-zinc-500">Scratch</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  class="h-1 flex-1 cursor-pointer accent-sky-500 outline-none focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-                  :value="backing.scratchGain.value"
-                  :disabled="!session.canControl.value"
-                  aria-label="Scratch monitor level"
-                  @input="onScratchGain"
-                >
-                <span class="w-8 text-right font-mono text-[10px] tabular-nums text-zinc-400">{{ scratchPct }}</span>
-              </div>
-              <div class="flex items-center justify-center">
-                <ScratchVinylDeck
-                  :platter-turns="derived.platterTurns.value"
-                  :touched="derived.isTouched.value"
-                  :disabled="!session.canControl.value"
-                  @platter-touch="onPlatterTouch"
-                  @platter-move="onPlatterMove"
-                />
-              </div>
-              <div class="flex justify-center">
-                <div class="w-1/2">
-                  <ScratchCrossfader
-                    :value="derived.crossfaderValue.value"
-                    :reversed="derived.crossfaderReversed.value"
-                    :disabled="!session.canControl.value"
-                    @change="onCrossfaderChange"
-                  />
-                </div>
-              </div>
-
-              <!-- Record + draft controls, pinned to the bottom so the row aligns
-                   with the foot of the notation panel. Play and Clear act on the
-                   recorded scratch draft and stay disabled until one exists. -->
-              <div class="mt-auto mb-[3px] flex items-stretch gap-1">
-                <button
-                  type="button"
-                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                  :class="recordButtonClass"
-                  :disabled="!derived.canRecord.value && recordPhase === 'idle'"
-                  :aria-label="recordButtonAriaLabel"
-                  title="Toggle record (R)"
-                  @click="onRecordButton"
-                >
-                  <span
-                    class="h-2 w-2 rounded-full"
-                    :class="recordPhase === 'idle' ? 'bg-red-400' : 'animate-pulse bg-white'"
-                    aria-hidden="true"
-                  />
-                  {{ recordButtonLabel }}
-                </button>
-                <button
-                  type="button"
-                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-sky-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
-                  :disabled="!derived.hasPattern.value"
-                  :aria-label="isPatternReplaying ? 'Stop scratch playback' : 'Play scratch'"
-                  @click="isPatternReplaying ? stopReplay() : startDraftReplay()"
-                >
-                  {{ isPatternReplaying ? 'Stop' : 'Play' }}
-                </button>
-                <button
-                  type="button"
-                  class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-sky-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
-                  :disabled="!derived.hasPattern.value"
-                  aria-label="Clear recorded scratch"
-                  title="Discard the recorded scratch"
-                  @click="clearDraft"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
+            <ScratchControlRail
+              :scratch-gain="backing.scratchGain.value"
+              :scratch-gain-disabled="!session.canControl.value"
+              :platter-turns="derived.platterTurns.value"
+              :platter-touched="derived.isTouched.value"
+              :platter-disabled="!replay.controlsEnabled.value"
+              :crossfader-value="derived.crossfaderValue.value"
+              :crossfader-reversed="derived.crossfaderReversed.value"
+              :crossfader-disabled="!replay.controlsEnabled.value"
+              :record-phase="recordControl.recordPhase.value"
+              :record-button-label="recordControl.recordButtonLabel.value"
+              :record-button-class="recordControl.recordButtonClass.value"
+              :record-button-aria-label="recordControl.recordButtonAriaLabel.value"
+              :record-disabled="!derived.canRecord.value && recordControl.recordPhase.value === 'idle'"
+              :has-pattern="derived.hasPattern.value"
+              :is-pattern-replaying="replay.isPatternReplaying.value"
+              @scratch-gain="backing.setScratchGain"
+              @platter-touch="pointerDispatch.onPlatterTouch"
+              @platter-move="pointerDispatch.onPlatterMove"
+              @crossfader-change="pointerDispatch.onCrossfaderChange"
+              @record="recordControl.onRecordButton"
+              @play-toggle="replay.isPatternReplaying.value ? replay.stopReplay() : startDraftReplay()"
+              @clear="clearDraft"
+            />
           </div>
         </div>
 
-        <footer class="dialog-footer justify-end gap-2">
-          <button
-            type="button"
-            class="dialog-btn-cancel"
-            :disabled="savePhase === 'saving'"
-            @click="requestClose"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="dialog-btn-primary"
-            :disabled="!derived.hasPattern.value || savePhase === 'saving'"
-            @click="onSave"
-          >
-            Save
-          </button>
-        </footer>
+        <ScratchEditorFooter
+          :saving="saveFlow.savePhase.value === 'saving'"
+          :has-pattern="derived.hasPattern.value"
+          @cancel="close.requestClose"
+          @save="saveFlow.onSave"
+        />
       </div>
 
       <ScratchDirtyCloseDialog
-        v-if="dirtyClosePromptOpen || persistence.isCloseSavePending.value || persistence.saveError.value"
+        v-if="close.showDirtyCloseDialog.value"
         :persistence="persistence"
-        @save="onDirtyCloseSave"
-        @discard="onDirtyCloseDiscard"
-        @cancel="onDirtyCloseCancel"
+        @save="close.onDirtyCloseSave"
+        @discard="close.onDirtyCloseDiscard"
+        @cancel="close.onDirtyCloseCancel"
       />
 
-      <div
-        v-if="savePhase !== 'idle'"
-        class="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="scratch-save-progress-title"
-      >
-        <div class="dialog-card w-[min(400px,90vw)]">
-          <div class="dialog-header">
-            <h3
-              id="scratch-save-progress-title"
-              class="dialog-title"
-            >
-              {{ savePhase === 'error' ? 'Save Failed' : 'Saving Scratch' }}
-            </h3>
-          </div>
-          <div class="dialog-body">
-            <p
-              v-if="savePhase === 'saving'"
-              class="flex items-center gap-2 text-xs text-zinc-400"
-            >
-              <svg
-                class="h-4 w-4 animate-spin text-sky-400"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"
-                />
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              Baking your scratch to the library…
-            </p>
-            <p
-              v-else
-              class="text-xs text-red-400"
-            >
-              {{ saveErrorMsg }}
-            </p>
-          </div>
-          <div
-            v-if="savePhase === 'error'"
-            class="dialog-footer"
-          >
-            <button
-              type="button"
-              class="dialog-btn-cancel"
-              @click="dismissSaveError"
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              class="dialog-btn-primary"
-              autofocus
-              @click="onSave"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </div>
+      <ScratchSaveProgressOverlay
+        :phase="saveFlow.savePhase.value"
+        :error-message="saveFlow.saveErrorMsg.value"
+        @dismiss="saveFlow.dismissSaveError"
+        @retry="saveFlow.onSave"
+      />
     </div>
   </Transition>
 </template>

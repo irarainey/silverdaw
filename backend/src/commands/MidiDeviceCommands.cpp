@@ -276,8 +276,24 @@ public:
         return juce::var(obj);
     }
 
+    // Flushes each input's ~30 Hz relative-control accumulator immediately
+    // (ignoring the broadcast interval). Called on the message thread before
+    // `activeInputs` is torn down so a partially-accumulated jog delta is not
+    // silently dropped; `ActiveMidiInput`'s destructor cannot do this itself, as
+    // it does not own the bridge/monitor context the broadcast needs.
+    void flushPendingRelativeControls()
+    {
+        for (const auto& active : activeInputs)
+        {
+            broadcastRelativeControls(*active, active->pendingRelativeDeltas,
+                                      active->pendingRelativeTimestamps);
+            active->pendingRelativeDeltas = {};
+        }
+    }
+
     void setEnabledInputs(const juce::StringArray& identifiers, BridgeServer& targetBridge)
     {
+        flushPendingRelativeControls();
         bridge = &targetBridge;
         activeInputs.clear();
 

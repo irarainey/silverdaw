@@ -61,6 +61,16 @@ bool AudioEngine::isScratchPatternReplaying() const noexcept
     return patternReplayActive.load(std::memory_order_acquire);
 }
 
+void AudioEngine::clearScratchSession()
+{
+    // Stop replay (and its synced backing) before tearing down the session so
+    // the scratch/backing sources never keep referencing a snapshot the
+    // project replacement is about to invalidate.
+    if (isScratchPatternReplaying())
+        stopScratchPatternReplay();
+    scratchController.clearSession();
+}
+
 void AudioEngine::rebuildClipPatternSnapshot(const juce::String& clipId,
                                              const ProjectState& projectState)
 {

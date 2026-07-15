@@ -218,21 +218,22 @@ void handleScratchSessionControl(const juce::var& payload,
     }
     if (!engine.controlScratchSession(*control))
     {
-        silverdaw::log::debug("scratch", "ignored inapplicable SCRATCH_SESSION_CONTROL");
-        return;
-    }
-
-    // On recordStop, deliver the completed pattern once via a dedicated message
-    if (control->action == scratch::ControlAction::recordStop)
-    {
-        auto pattern = engine.takeScratchRecordingPattern();
-        if (pattern)
+        // A recordStop can race the controller's own end-of-window
+        // reconciliation: the take auto-finalizes first, so the control is
+        // reported as inapplicable (status is no longer "recording") even
+        // though it arrived for the still-active session. Still publish
+        // immediately via the authoritative broadcastScratchSessionState path
+        // rather than silently waiting for the next timer-driven broadcast.
+        // Guard on the session id so a stale/wrong-session control can never
+        // drain another session's completed pattern.
+        const auto snapshot = engine.getScratchSessionSnapshot();
+        const bool racedRecordStop =
+            control->action == scratch::ControlAction::recordStop
+            && snapshot && snapshot->sessionId == control->sessionId;
+        if (!racedRecordStop)
         {
-            auto* envelope = new juce::DynamicObject();
-            envelope->setProperty("protocolVersion", scratch::kProtocolVersion);
-            envelope->setProperty("sessionId", control->sessionId);
-            envelope->setProperty("pattern", scratch::serializePattern(*pattern));
-            bridge.broadcast("SCRATCH_PATTERN_RECORDED", juce::var(envelope));
+            silverdaw::log::debug("scratch", "ignored inapplicable SCRATCH_SESSION_CONTROL");
+            return;
         }
     }
 

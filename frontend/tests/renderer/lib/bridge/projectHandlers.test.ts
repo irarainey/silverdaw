@@ -5,6 +5,8 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { useScratchEditorStore } from '@/stores/scratchEditorStore'
+import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
@@ -71,5 +73,39 @@ describe('project bridge handlers', () => {
     expect(transport.isPlaying).toBe(false)
     expect(transport.midiPlaybackHoldActive).toBe(false)
     expect(transport.midiPlaybackHoldSources).toEqual([])
+  })
+
+  it('closes and clears the scratch editor on a project reset', () => {
+    const editor = useScratchEditorStore()
+    const scratch = useScratchSessionStore()
+    editor.openClip('clip-old')
+    scratch.applyState({
+      protocolVersion: 1,
+      sessionId: 'scratch-old',
+      clipId: 'clip-old',
+      status: 'ready',
+      positionUs: 0,
+      durationUs: 1_000_000,
+      platterTurns: 0,
+      playbackRate: 0,
+      crossfader: 0,
+      ownerDeviceIdentifier: null,
+      ownerDeck: null,
+      touched: false
+    })
+
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, reset: true })
+
+    expect(editor.isOpen).toBe(false)
+    expect(scratch.current).toBe(null)
+  })
+
+  it('keeps the scratch editor open for a non-reset state refresh', () => {
+    const editor = useScratchEditorStore()
+    editor.openClip('clip-current')
+
+    projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
+
+    expect(editor.isOpen).toBe(true)
   })
 })

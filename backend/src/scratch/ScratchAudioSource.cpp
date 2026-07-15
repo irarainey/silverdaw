@@ -305,6 +305,14 @@ void ScratchAudioSource::endPatternReplay() noexcept
     waitForCallbackQuiescence();
     replayOutputSamples = 0;
     replayNormalized.store(0.0, std::memory_order_release);
+    // Defensive teardown: replay always forces setManualWeightEngaged(false),
+    // so touch/manual-rate state is inert during replay, but stale state left
+    // over from before replay began must not resume and contaminate the first
+    // post-replay callback with the heavier 13 ms manual-scratch smoothing
+    // weight (VinylScratchProcessor::Settings::manualRateSmoothingSeconds).
+    platterTouched.store(false, std::memory_order_release);
+    manualRateUntilOutputSample.store(0, std::memory_order_release);
+    manualSemanticRate.store(0.0, std::memory_order_release);
     active.store(wasActive, std::memory_order_release);
 }
 

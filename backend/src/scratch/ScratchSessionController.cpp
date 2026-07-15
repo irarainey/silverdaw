@@ -117,104 +117,6 @@ double ScratchSessionController::preparedSourceSampleRate() const
     return scratchSource.preparedSampleRate();
 }
 
-// ── Backing bed (ADR 0021, Amendment 1) ───────────────────────────────────────
-
-bool ScratchSessionController::beginBackingPreparation(const juce::String& sessionId)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || session->sessionId != sessionId || session->status == "recording")
-        return false;
-    backingSource.deactivate();
-    session->backingStatus = "preparing";
-    session->backingError.clear();
-    session->backingDurationUs = 0;
-    return true;
-}
-
-bool ScratchSessionController::completeBacking(
-    const juce::String& sessionId,
-    std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
-    double preparedSampleRate)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || session->sessionId != sessionId
-        || session->backingStatus != "preparing"
-        || preparedAudio == nullptr || preparedAudio->getNumSamples() <= 0
-        || preparedAudio->getNumChannels() <= 0 || preparedSampleRate <= 0.0)
-    {
-        return false;
-    }
-    backingSource.activate(std::move(preparedAudio), preparedSampleRate);
-    backingSource.setGain(static_cast<float>(session->backingGain));
-    session->backingStatus = "ready";
-    session->backingError.clear();
-    session->backingDurationUs = backingSource.durationUs();
-    return true;
-}
-
-bool ScratchSessionController::failBacking(const juce::String& sessionId,
-                                           const juce::String& error)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || session->sessionId != sessionId
-        || session->backingStatus != "preparing")
-        return false;
-    backingSource.deactivate();
-    session->backingStatus = "error";
-    session->backingError =
-        error.isNotEmpty() ? error : juce::String("Backing preparation failed");
-    session->backingDurationUs = 0;
-    return true;
-}
-
-bool ScratchSessionController::clearBacking(const juce::String& sessionId)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || session->sessionId != sessionId || session->status == "recording")
-        return false;
-    backingSource.deactivate();
-    session->backingStatus = "none";
-    session->backingError.clear();
-    session->backingDurationUs = 0;
-    return true;
-}
-
-bool ScratchSessionController::backingReadyLocked() const
-{
-    return session && session->backingStatus == "ready" && backingSource.isActive();
-}
-
-void ScratchSessionController::startBackingLocked()
-{
-    if (backingReadyLocked())
-        backingSource.setPlaying(true);
-}
-
-void ScratchSessionController::stopBackingLocked()
-{
-    backingSource.setPlaying(false);
-}
-
-bool ScratchSessionController::beginReplayBacking()
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!backingReadyLocked())
-        return false;
-    // A take is recorded with the bed running from its head (beginArmedRecordingLocked
-    // seeks the bed to 0), so the pattern's t=0 aligns with the bed's origin.
-    // Rewind and start the bed so replay hears it in time.
-    backingSource.seekUs(0);
-    startBackingLocked();
-    return true;
-}
-
-void ScratchSessionController::endReplayBacking()
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    stopBackingLocked();
-    backingSource.seekUs(0);
-}
-
 // ── Unified control ───────────────────────────────────────────────────────────
 
 bool ScratchSessionController::controlSession(const SessionControlPayload& control)
@@ -257,6 +159,11 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
 
         case ControlAction::platterTouch:
         {
+            // Pattern replay drives the scratch source directly (ADR 0021,
+            // Amendment 15/17); a pointer touch arriving mid-replay must not
+            // claim ownership or mutate touch/manual-rate state.
+            if (scratchSource.isPatternReplaying())
+                return false;
             if (!control.deck)
             {
                 return false;
@@ -296,6 +203,8 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
 
         case ControlAction::platterMove:
         {
+            if (scratchSource.isPatternReplaying())
+                return false;
             if (!control.deck || !claimDeck(*control.deck))
                 return false;
             if (s.armed)
@@ -317,6 +226,8 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
 
         case ControlAction::crossfader:
         {
+            if (scratchSource.isPatternReplaying())
+                return false;
             const auto displayValue = juce::jlimit(0.0, 1.0, control.crossfader);
             s.crossfaderDisplay = displayValue;
             s.crossfader = s.midiCrossfaderReversed
@@ -376,226 +287,7 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
     return false;
 }
 
-bool ScratchSessionController::beginArmedRecordingLocked()
-{
-    auto& s = *session;
-    if (s.status == "recording")
-        return false;
-
-    // Seek to crop start first, then capture authoritative position.
-    scratchSource.seekUs(0);
-    backingSource.seekUs(0);
-
-    ScratchActionRecorder::Config cfg;
-    cfg.draftId = juce::Uuid().toString();
-    cfg.draftName = "Scratch " + juce::Time::getCurrentTime().toString(true, true, false);
-    cfg.sessionId = s.sessionId;
-    cfg.clipId = s.clipId;
-    // Use existing owner if claimed; otherwise provisional deck 1 for pointer.
-    cfg.ownerDeck = s.ownerDeck.value_or(DeckSide::deck1);
-    cfg.initialCrossfader = s.crossfader;
-    cfg.cropStartUs = 0;
-    const auto snap = scratchSource.snapshot();
-    cfg.initialPlatterTurns = snap.platterTurns;
-    cfg.initialTouched = snap.touched;
-    if (!recorder.start(cfg))
-        return false;
-    scratchSource.setPlaying(true);
-    startBackingLocked();
-    s.status = "recording";
-    s.armed = false;
-    return true;
-}
-
-// ── MIDI entry points ─────────────────────────────────────────────────────────
-
-bool ScratchSessionController::midiRecordToggle()
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive())
-        return false;
-    auto& s = *session;
-    reconcileSourceEndLocked();
-    // Mirror the on-screen Record button's phases from the physical Cue button:
-    // recording → stop (publishes the take), armed → cancel, otherwise arm. The
-    // armed take still begins on first platter touch via beginArmedRecordingLocked.
-    if (s.status == "recording")
-        return stopRecordingLocked();
-    if (s.armed)
-    {
-        s.armed = false;
-        return true;
-    }
-    s.armed = true;
-    return true;
-}
-
-bool ScratchSessionController::stopRecordingLocked()
-{
-    auto& s = *session;
-    // Update recording owner to actual claimed deck before stop.
-    if (s.ownerDeck.has_value())
-        recorder.updateOwnerDeck(*s.ownerDeck);
-    // Supply the authoritative current platter/crossfader snapshot so the
-    // mandatory final keyframes reflect the true source state at the moment of
-    // stop, not merely the last recorded sample.
-    const auto snap = scratchSource.snapshot();
-    ScratchActionRecorder::FinalSnapshot finalState;
-    finalState.platterTurns = snap.platterTurns;
-    finalState.touched = snap.touched;
-    finalState.crossfader = s.crossfader;
-    recorder.stop(finalState);
-    scratchSource.setPlaying(false);
-    stopBackingLocked();
-    s.status = "ready";
-    s.armed = false;
-    return true;
-}
-
-bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier,
-                                            DeckSide deck, bool touched)
-{
-    if (touched)
-    {
-        std::lock_guard<std::mutex> lock(sessionMutex);
-        if (!session || !scratchSource.isActive()
-            || !claimMidiDeck(deviceIdentifier, deck, true))
-            return false;
-        // Fresh-gesture timing baseline (see pointer touch): the first move
-        // seeds its own elapsed rather than measuring the touch→move gap.
-        session->lastPlatterMoveMs = 0.0;
-        if (session->armed)
-            beginArmedRecordingLocked();
-        if (recorder.state() == ScratchActionRecorder::State::recording)
-        {
-            const auto snap = scratchSource.snapshot();
-            recorder.recordPlatter(snap.platterTurns, true);
-        }
-        return true;
-    }
-    // Release path.
-    return releaseMidiOwner(deviceIdentifier, deck);
-}
-
-bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentifier,
-                                               DeckSide deck,
-                                               double deltaTurns,
-                                               double timestampMs)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive()
-        || !claimMidiDeck(deviceIdentifier, deck, true))
-        return false;
-    if (session->armed)
-        beginArmedRecordingLocked();
-    applyPlatterMove(deltaTurns, timestampMs);
-
-    if (recorder.state() == ScratchActionRecorder::State::recording)
-    {
-        const auto snap = scratchSource.snapshot();
-        recorder.recordPlatter(snap.platterTurns, snap.touched);
-    }
-    return true;
-}
-
-bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdentifier,
-                                                 double directedValue,
-                                                 double displayValue,
-                                                 bool reverseCrossfader)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive()
-        || deviceIdentifier.isEmpty())
-    {
-        return false;
-    }
-    // Crossfader controls are mixer-wide. They may align and update the
-    // editor before a platter claims ownership, but never claim a platter.
-    if (!session->midiCrossfaderEligibleDeviceIdentifier)
-        session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
-    if (*session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier)
-        return false;
-    // Keep the display-only direction mirror in step with the applied routing so
-    // the UI colours the bar by the active direction, not the (gain-entangled)
-    // midiCrossfaderReversed flag.
-    session->crossfaderDisplayReversed = reverseCrossfader;
-    session->crossfader = juce::jlimit(0.0, 1.0, directedValue);
-    session->crossfaderDisplay = displayValue >= 0.0
-        ? juce::jlimit(0.0, 1.0, displayValue)
-        : (session->midiCrossfaderReversed
-               ? 1.0 - session->crossfader
-               : session->crossfader);
-    session->crossfaderHasBeenAdjusted = true;
-    updateGain();
-
-    if (recorder.state() == ScratchActionRecorder::State::recording)
-        recorder.recordCrossfader(session->crossfader);
-    return true;
-}
-
-bool ScratchSessionController::setMidiCrossfaderDirection(
-    const juce::String& deviceIdentifier, bool reverseCrossfader)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive()
-        || !session->midiCrossfaderEligibleDeviceIdentifier
-        || *session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier
-        || session->midiCrossfaderReversed == reverseCrossfader)
-    {
-        return false;
-    }
-    session->midiCrossfaderReversed = reverseCrossfader;
-    session->crossfaderDisplayReversed = reverseCrossfader;
-    session->crossfader = 1.0 - session->crossfader;
-    updateGain();
-    return true;
-}
-
-void ScratchSessionController::setSelectedMidiDeck(
-    const juce::String& deviceIdentifier, DeckSide deck, bool reverseCrossfader)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session)
-        return;
-    session->selectedDeck = deck;
-    session->crossfaderDeck = deck;
-    session->midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
-    session->midiCrossfaderReversed = reverseCrossfader;
-    session->crossfaderDisplayReversed = reverseCrossfader;
-    if (!session->crossfaderHasBeenAdjusted)
-    {
-        const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
-        session->crossfader = reverseCrossfader ? 1.0 - deckEdge : deckEdge;
-        session->crossfaderDisplay = deckEdge;
-    }
-    if (scratchSource.isActive())
-        updateGain();
-}
-
-bool ScratchSessionController::releaseMidiOwner(
-    const juce::String& deviceIdentifier,
-    std::optional<DeckSide> deck)
-{
-    std::lock_guard<std::mutex> lock(sessionMutex);
-    if (!session || !scratchSource.isActive()
-        || !session->ownerDeviceIdentifier
-        || *session->ownerDeviceIdentifier != deviceIdentifier
-        || (deck && session->ownerDeck != deck))
-    {
-        return false;
-    }
-    scratchSource.setTouched(false);
-    if (recorder.state() == ScratchActionRecorder::State::recording)
-    {
-        const auto snap = scratchSource.snapshot();
-        recorder.recordPlatter(snap.platterTurns, false);
-    }
-    session->ownerDeck.reset();
-    session->ownerDeviceIdentifier.reset();
-    resetOwnerTimestamp();
-    updateGain();
-    return true;
-}
+// ── Deck ownership (pointer) ──────────────────────────────────────────────────
 
 bool ScratchSessionController::claimDeck(DeckSide deck)
 {
@@ -620,38 +312,7 @@ bool ScratchSessionController::claimDeck(DeckSide deck)
     return true;
 }
 
-bool ScratchSessionController::claimMidiDeck(
-    const juce::String& deviceIdentifier, DeckSide deck, bool touchesPlatter)
-{
-    auto& s = *session;
-    if (deviceIdentifier.isEmpty()
-        || (s.ownerDeck && *s.ownerDeck != deck)
-        || (s.ownerDeviceIdentifier && *s.ownerDeviceIdentifier != deviceIdentifier)
-        || (s.ownerDeck && !s.ownerDeviceIdentifier))
-    {
-        return false;
-    }
-    if (!s.ownerDeck)
-    {
-        s.ownerDeck = deck;
-        s.selectedDeck = deck;
-        s.ownerDeviceIdentifier = deviceIdentifier;
-        s.crossfaderDeck = deck;
-        s.midiCrossfaderEligibleDeviceIdentifier = deviceIdentifier;
-        if (!s.crossfaderHasBeenAdjusted)
-        {
-            const auto deckEdge = deck == DeckSide::deck1 ? 0.0 : 1.0;
-            s.crossfader =
-                s.midiCrossfaderReversed ? 1.0 - deckEdge : deckEdge;
-            s.crossfaderDisplay = deckEdge;
-        }
-        resetOwnerTimestamp();
-        updateGain();
-    }
-    if (touchesPlatter)
-        scratchSource.setTouched(true);
-    return true;
-}
+// ── Platter timing (shared pointer + MIDI path) ───────────────────────────────
 
 void ScratchSessionController::applyPlatterMove(
     double deltaTurns, double timestampMs)

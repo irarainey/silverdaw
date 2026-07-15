@@ -76,10 +76,13 @@ export function useScratchEditorSession(
   const canControl = computed(() => {
     const status = lifecycle.state.value?.status
     return (
-      status === 'ready' ||
-      status === 'paused' ||
-      status === 'playing' ||
-      status === 'recording'
+      lifecycle.state.value?.replaying !== true &&
+      (
+        status === 'ready' ||
+        status === 'paused' ||
+        status === 'playing' ||
+        status === 'recording'
+      )
     )
   })
 

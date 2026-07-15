@@ -329,6 +329,12 @@ class AudioEngine
     void stopScratchPatternReplay();
     bool isScratchPatternReplaying() const noexcept;
 
+    // Unconditional scratch teardown for project replacement (PROJECT_NEW,
+    // PROJECT_LOAD, PROJECT_LOAD_RECOVERY). Stops any active pattern replay
+    // (and its backing) first, then closes the session, so no scratch
+    // source/backing/replay state survives into the new project.
+    void clearScratchSession();
+
     // Clip-level pattern snapshot management for timeline playback.
     void rebuildClipPatternSnapshot(const juce::String& clipId, const ProjectState& projectState);
     void clearClipPatternSnapshot(const juce::String& clipId);
@@ -336,6 +342,9 @@ class AudioEngine
 
     // Test-only: direct access to the scratch audio source for render verification.
     scratch::ScratchAudioSource& scratchSourceForTest() { return scratchSource; }
+    // Test-only: direct access to the backing monitor source for verifying
+    // clearScratchSession() and replay-backing teardown.
+    scratch::BackingMonitorSource& backingSourceForTest() { return backingSource; }
 
     // Windows under-reports Bluetooth endpoint latency, so known headset names get a
     // conservative visual offset.

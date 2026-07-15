@@ -1,9 +1,12 @@
 #include "TestRegistry.h"
 
 #include "AudioEngine.h"
+#include "BridgeServer.h"
+#include "ScratchSessionCommands.h"
 #include "midi/MidiScratchRouting.h"
 #include "scratch/ScratchSessionController.h"
 #include "scratch/ScratchAudioSource.h"
+#include "scratch/ScratchPatternEvaluator.h"
 #include "scratch/ScratchSourcePreparation.h"
 #include "ScratchTestFixtures.h"
 
@@ -69,6 +72,17 @@ void prepareControllerBacking(scratch::ScratchSessionController& controller,
     require(controller.completeBacking(
                 sessionId, makeScratchBuffer(samples, sampleRate), sampleRate),
             "backing preparation should complete and activate");
+}
+
+// Bridge SCRATCH_SESSION_CONTROL payload (JSON var), for exercising
+// handleScratchSessionControl directly rather than the internal controller API.
+juce::var makeSessionControlPayload(const juce::String& sessionId, const juce::String& action)
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("protocolVersion", scratch::kProtocolVersion);
+    obj->setProperty("sessionId", sessionId);
+    obj->setProperty("action", action);
+    return juce::var(obj);
 }
 
 juce::File writeRampWav(const juce::File& directory, double sampleRate)
@@ -1296,6 +1310,233 @@ void testScratchReplayBackingNoOpWithoutBed()
     require(!backing.isPlaying(), "ending replay stays a no-op with no bed");
 }
 
+void testScratchMidiRecordToggleDoesNotReArmAfterAutoFinalize()
+{
+    // Regression: midiRecordToggle used to call reconcileSourceEndLocked() and
+    // then unconditionally fall through its own arm/cancel logic. When the
+    // reconcile auto-finalized an in-progress take (the backing window ended),
+    // status flips to "ready" and armed is already false, so the same press
+    // fell into the "otherwise arm" branch and immediately re-armed a new take
+    // right after auto-stopping the old one.
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-midi-auto-finalize");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare for auto-finalize testing");
+    prepareControllerBacking(controller, sessionId,
+                             static_cast<int>(sampleRate * 0.05), sampleRate);
+
+    require(controller.midiRecordToggle(), "MIDI play should arm recording");
+    require(controller.midiSetTouch("device-auto-finalize", scratch::DeckSide::deck1, true),
+            "armed platter touch should begin recording");
+    require(controller.getSnapshot()->status == "recording", "session should be recording");
+
+    // Run the backing window past its end so the very next reconciliation
+    // auto-finalizes the take.
+    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.2), 128);
+
+    require(controller.midiRecordToggle(),
+            "MIDI play toggle should act on the auto-finalized take");
+    const auto snap = controller.getSnapshot();
+    require(snap && snap->status == "ready",
+            "auto-finalized take should leave the session ready");
+    require(!snap->armed,
+            "the same toggle press must not re-arm a new take");
+    require(controller.takeCompletedPattern().has_value(),
+            "the auto-finalized pattern should survive and remain retrievable");
+}
+
+void testScratchRecordStopRaceStillPublishesImmediately()
+{
+    // Regression: a recordStop that races reconcileSourceEndLocked's own
+    // auto-finalize used to be reported inapplicable by controlScratchSession
+    // (status is no longer "recording"), so handleScratchSessionControl bailed
+    // out silently instead of publishing the just-completed pattern/state.
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    const auto sessionId = engine.beginScratchSession("clip-record-stop-race");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sampleRate),
+            "scratch session should prepare for the recordStop race test");
+
+    scratch::SessionControlPayload recordStart;
+    recordStart.sessionId = sessionId;
+    recordStart.action = scratch::ControlAction::recordStart;
+    require(engine.controlScratchSession(recordStart), "recordStart should begin recording");
+    require(engine.getScratchSessionSnapshot()->status == "recording",
+            "session should be recording");
+
+    // Run the untouched scratch clip past its own forward end (no backing bed
+    // is prepared here) so the next reconciliation auto-finalizes the take,
+    // racing the recordStop below.
+    renderScratchBlocks(engine.scratchSourceForTest(), static_cast<int>(sampleRate * 0.2), 128);
+
+    BridgeServer bridge("", nullptr);
+    handleScratchSessionControl(
+        makeSessionControlPayload(sessionId, "recordStop"), engine, bridge);
+
+    const auto snapshot = engine.getScratchSessionSnapshot();
+    require(snapshot && snapshot->status == "ready",
+            "the raced recordStop should still leave the session ready");
+    require(!engine.takeScratchRecordingPattern().has_value(),
+            "the completed pattern should already be drained by the immediate publish, "
+            "not left pending for a later broadcast");
+
+    engine.closeScratchSession(sessionId);
+
+    // A stale/wrong-session recordStop must never drain a different session's
+    // pattern. Open and complete a fresh take, then send a recordStop for an
+    // unrelated (never-active) session id.
+    const auto otherSessionId = engine.beginScratchSession("clip-record-stop-race-2");
+    require(engine.completeScratchSession(
+                otherSessionId,
+                makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate), sampleRate),
+            "second scratch session should prepare");
+    recordStart.sessionId = otherSessionId;
+    require(engine.controlScratchSession(recordStart),
+            "recordStart should begin recording the second session");
+
+    handleScratchSessionControl(
+        makeSessionControlPayload("stale-unrelated-session", "recordStop"), engine, bridge);
+
+    const auto otherSnapshot = engine.getScratchSessionSnapshot();
+    require(otherSnapshot && otherSnapshot->status == "recording",
+            "a stale/wrong-session recordStop must not touch the active session's take");
+    engine.closeScratchSession(otherSessionId);
+}
+
+void testScratchReplayIsolatesTouchMoveAndCrossfaderInput()
+{
+    // Pointer/MIDI platter touch, move, and crossfader controls must not
+    // mutate scratch state while a pattern replay is driving the source
+    // (ADR 0021, Amendment 15/17): replay owns the source exclusively.
+    constexpr double sampleRate = 48000.0;
+    scratch::ScratchAudioSource source;
+    source.prepareToPlay(512, sampleRate);
+    scratch::BackingMonitorSource backing;
+    backing.prepareToPlay(512, sampleRate);
+    scratch::ScratchSessionController controller(source, backing);
+    const auto sessionId = controller.beginSession("clip-replay-isolation");
+    require(controller.completeSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for replay isolation testing");
+
+    scratch::Pattern pattern;
+    pattern.id = "replay-isolation";
+    pattern.name = "Replay isolation";
+    pattern.durationUs = 200000;
+    pattern.cropEndUs = pattern.durationUs;
+    pattern.platter = {{0, 0.0, false}, {pattern.durationUs, 0.1, false}};
+    pattern.crossfader = {{0, 0.0}, {pattern.durationUs, 0.0}};
+    const auto replay = scratch::ScratchPatternEvaluator::buildSnapshot(pattern);
+    source.beginPatternReplay(&replay);
+    require(source.isPatternReplaying(), "source should report an active replay");
+
+    scratch::SessionControlPayload touch;
+    touch.sessionId = sessionId;
+    touch.action = scratch::ControlAction::platterTouch;
+    touch.deck = scratch::DeckSide::deck1;
+    touch.touched = true;
+    require(!controller.controlSession(touch),
+            "pointer platter touch must be rejected while replay is active");
+
+    scratch::SessionControlPayload move;
+    move.sessionId = sessionId;
+    move.action = scratch::ControlAction::platterMove;
+    move.deck = scratch::DeckSide::deck1;
+    move.deltaTurns = 0.2;
+    require(!controller.controlSession(move),
+            "pointer platter move must be rejected while replay is active");
+
+    scratch::SessionControlPayload crossfader;
+    crossfader.sessionId = sessionId;
+    crossfader.action = scratch::ControlAction::crossfader;
+    crossfader.crossfader = 1.0;
+    require(!controller.controlSession(crossfader),
+            "pointer crossfader must be rejected while replay is active");
+
+    require(!controller.midiSetTouch("device-replay-isolation", scratch::DeckSide::deck1, true),
+            "MIDI platter touch must be rejected while replay is active");
+    require(!controller.midiMovePlatter(
+                "device-replay-isolation", scratch::DeckSide::deck1, 0.2, 0.0),
+            "MIDI platter move must be rejected while replay is active");
+    require(!controller.midiSetCrossfader("device-replay-isolation", 1.0),
+            "MIDI crossfader must be rejected while replay is active");
+
+    require(!controller.getSnapshot()->ownerDeck.has_value(),
+            "rejected input must not claim deck ownership while replay is active");
+    require(!source.snapshot().touched,
+            "rejected touch input must not leave the source touched while replaying");
+
+    // Defensive teardown: any stale touch/manual-rate state left from before
+    // replay must not survive to contaminate the first post-replay callback
+    // with the heavier 13 ms manual-scratch smoothing weight.
+    source.setTouched(true);
+    source.setManualRate(2.0, 1.0);
+    source.endPatternReplay();
+    require(!source.snapshot().touched,
+            "ending replay should clear stale touched state");
+}
+
+void testScratchClearSessionClearsReplayBackingAndSession()
+{
+    // AudioEngine::clearScratchSession() is the unconditional teardown used by
+    // PROJECT_NEW/PROJECT_LOAD/PROJECT_LOAD_RECOVERY: it must stop an active
+    // pattern replay (and its synced backing) and fully close the session so no
+    // scratch source/backing/replay state survives into the new project.
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    const auto sessionId = engine.beginScratchSession("clip-clear-session");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 2.0), sampleRate),
+                sampleRate),
+            "scratch session should prepare for the clear-session test");
+    require(engine.beginScratchBackingPreparation(sessionId), "backing preparation should begin");
+    require(engine.completeScratchBacking(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 2.0), sampleRate),
+                sampleRate),
+            "backing preparation should complete and activate");
+
+    auto patternVar = makeValidPatternVar("sp-clear-session", "Clear session");
+    const auto pattern = scratch::parsePattern(patternVar);
+    require(pattern.has_value(), "fixture pattern should parse");
+    require(engine.startScratchPatternReplay(*pattern),
+            "pattern replay should start with a prepared backing bed");
+    require(engine.isScratchPatternReplaying(), "engine should report an active replay");
+    require(engine.backingSourceForTest().isPlaying(),
+            "replay should run the synced backing bed");
+
+    engine.clearScratchSession();
+
+    require(!engine.isScratchPatternReplaying(),
+            "clearScratchSession should stop an active pattern replay");
+    require(!engine.hasActiveScratchSession(),
+            "clearScratchSession should close the session");
+    require(!engine.getScratchSessionSnapshot().has_value(),
+            "clearScratchSession should leave no session snapshot");
+    require(!engine.scratchSourceForTest().isActive(),
+            "clearScratchSession should deactivate the scratch source");
+    require(!engine.backingSourceForTest().isActive(),
+            "clearScratchSession should deactivate the backing source");
+    require(!engine.backingSourceForTest().isPlaying(),
+            "clearScratchSession should stop the backing bed");
+
+    // Safe to call again with no session (project-replacement callers always
+    // invoke it unconditionally).
+    engine.clearScratchSession();
+    require(!engine.hasActiveScratchSession(), "a second clear should stay a no-op");
+}
+
 void addScratchSessionTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"scratch session audio transport and hold", testScratchAudioSourceTransport});
@@ -1325,6 +1566,10 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch backing loop restarts the bed at its end", testScratchBackingLoopRestartsAtEnd});
     tests.push_back({"scratch replay plays the backing bed in sync", testScratchReplayBackingPlaysInSync});
     tests.push_back({"scratch replay backing no-op without a prepared bed", testScratchReplayBackingNoOpWithoutBed});
+    tests.push_back({"scratch MIDI record toggle does not re-arm after auto-finalize", testScratchMidiRecordToggleDoesNotReArmAfterAutoFinalize});
+    tests.push_back({"scratch recordStop race still publishes immediately", testScratchRecordStopRaceStillPublishesImmediately});
+    tests.push_back({"scratch replay isolates touch move and crossfader input", testScratchReplayIsolatesTouchMoveAndCrossfaderInput});
+    tests.push_back({"scratch clearScratchSession clears replay backing and session", testScratchClearSessionClearsReplayBackingAndSession});
 }
 
 } // namespace silverdaw::tests
