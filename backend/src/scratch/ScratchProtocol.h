@@ -77,6 +77,10 @@ struct SessionControlPayload
     std::optional<DeckSide> deck;
     std::int64_t positionUs = 0;
     double deltaTurns = 0.0;
+    // Monotonic client-clock timestamp (ms) for platterMove events. 0 = absent
+    // (e.g. MIDI), in which case the backend uses its own receive time. Lets the
+    // rate's delta and elapsed interval share one clock.
+    double clientTimeMs = 0.0;
     double crossfader = 0.0;
     // Monitor-only trim (0..1) for backingGain / scratchGain actions; never recorded.
     double gain = 1.0;

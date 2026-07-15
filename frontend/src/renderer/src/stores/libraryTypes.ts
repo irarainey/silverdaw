@@ -42,6 +42,9 @@ export interface AddLibraryItemInput {
   coverArtHidden?: boolean
   /** Per-item custom cover: basename of an override image in the project's covers dir. */
   coverArtOverride?: string
+  /** Marks a baked-scratch sample (vinyl tile icon) linked to its notation pattern. */
+  scratchOrigin?: boolean
+  scratchPatternId?: string
 }
 
 export interface LibraryItem {
@@ -100,6 +103,10 @@ export interface LibraryItem {
   /** Per-item custom cover: basename of an override image copied into the project's
    *  covers dir, shown instead of the shared media-store cover. Persisted per-item. */
   coverArtOverride?: string
+  /** True when this sample was baked from a recorded scratch (drives the vinyl tile icon). */
+  scratchOrigin?: boolean
+  /** Links a scratch-origin sample to its notation pattern for re-editing in the scratch editor. */
+  scratchPatternId?: string
 }
 
 /** The beat-grid fields the Clip Editor edits as a draft, captured on open so an

@@ -286,6 +286,8 @@ public:
                 scratchRouter.lookupReverseCrossfader(device.identifier);
             active->scratchState.scratchTicksPerTurn =
                 active->controllerMapper.scratchTicksPerTurn();
+            active->scratchState.hasJogTouch =
+                active->controllerMapper.hasJogTouchBinding();
             active->input = juce::MidiInput::openDevice(device.identifier, active.get());
             if (active->input != nullptr)
             {

@@ -181,7 +181,9 @@ export const useLibraryStore = defineStore('library', {
         unresolved: audio.unresolved === true ? true : undefined,
         mediaId: audio.mediaId,
         coverArtHidden: audio.coverArtHidden === true ? true : undefined,
-        coverArtOverride: audio.coverArtOverride
+        coverArtOverride: audio.coverArtOverride,
+        scratchOrigin: audio.scratchOrigin === true ? true : undefined,
+        scratchPatternId: audio.scratchPatternId
       })
       log.info(
         'library',

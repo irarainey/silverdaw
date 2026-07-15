@@ -92,7 +92,8 @@ export function formatUsTime(us: number): string {
 export function buildPlatterMovePayload(
   sessionId: string,
   deck: ScratchDeckSide,
-  deltaTurns: number
+  deltaTurns: number,
+  clientTimeMs?: number
 ): ScratchSessionControlPayload {
   const clamped = Math.max(
     -MAX_SCRATCH_EVENT_DELTA_TURNS,
@@ -103,7 +104,10 @@ export function buildPlatterMovePayload(
     sessionId,
     action: 'platterMove',
     deck,
-    deltaTurns: clamped
+    deltaTurns: clamped,
+    ...(clientTimeMs !== undefined && Number.isFinite(clientTimeMs) && clientTimeMs >= 0
+      ? { clientTimeMs }
+      : {})
   }
 }
 

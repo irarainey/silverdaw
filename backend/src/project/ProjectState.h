@@ -470,6 +470,18 @@ class ProjectState : public juce::ValueTree::Listener
     // Classification override beats low-confidence auto-classification.
     bool setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType);
 
+    // Marks a baked sample library item as scratch-origin: links it to the notation
+    // pattern (scratchPatternId) for re-editing and to the self-contained source
+    // snapshot WAV (scratchSourcePath) used to re-prepare the editor session. Additive
+    // metadata on a kind="sample" item; older builds ignore the unknown properties.
+    bool setLibraryItemScratchMeta(const juce::String& itemId,
+                                   const juce::String& scratchPatternId,
+                                   const juce::String& scratchSourcePath);
+
+    // Empty when the item is not a scratch-origin sample.
+    juce::String getLibraryItemScratchPatternId(const juce::String& itemId) const;
+    juce::String getLibraryItemScratchSourcePath(const juce::String& itemId) const;
+
     // User override to hide a library tile's cover art without deleting the shared media
     // store image (a per-item display flag persisted in the project; marks dirty).
     bool setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden);
@@ -706,6 +718,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kKey;
     static const juce::Identifier kKind;
     static const juce::Identifier kSourceItemId;
+    static const juce::Identifier kScratchSourcePath;
     static const juce::Identifier kSourceClipId;
     static const juce::Identifier kSourceInMs;
     static const juce::Identifier kSourceDurationMs;

@@ -106,6 +106,17 @@ bool ScratchSessionController::hasActiveSession() const
     return session.has_value();
 }
 
+std::shared_ptr<const juce::AudioBuffer<float>>
+ScratchSessionController::preparedSourceAudio() const
+{
+    return scratchSource.preparedAudio();
+}
+
+double ScratchSessionController::preparedSourceSampleRate() const
+{
+    return scratchSource.preparedSampleRate();
+}
+
 // ── Backing bed (ADR 0021, Amendment 1) ───────────────────────────────────────
 
 bool ScratchSessionController::beginBackingPreparation(const juce::String& sessionId)
@@ -254,7 +265,11 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
             {
                 if (!claimDeck(*control.deck))
                     return false;
-                s.lastPlatterMoveMs = juce::Time::getMillisecondCounterHiRes();
+                // Reset the timing baseline so the first move is treated as a
+                // fresh gesture (seeded elapsed) rather than measuring the
+                // touch→first-move gap, which is not a movement interval and may
+                // be on a different clock than the move's client timestamp.
+                s.lastPlatterMoveMs = 0.0;
                 if (s.armed)
                     beginArmedRecordingLocked();
             }
@@ -285,8 +300,13 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
                 return false;
             if (s.armed)
                 beginArmedRecordingLocked();
+            // Prefer the client's monotonic timestamp so the delta and the elapsed
+            // interval it is divided by share one clock; fall back to receive time
+            // for sources that don't carry one (e.g. MIDI).
             applyPlatterMove(
-                control.deltaTurns, juce::Time::getMillisecondCounterHiRes());
+                control.deltaTurns,
+                control.clientTimeMs > 0.0 ? control.clientTimeMs
+                                           : juce::Time::getMillisecondCounterHiRes());
             if (recorder.state() == ScratchActionRecorder::State::recording)
             {
                 const auto snap = scratchSource.snapshot();
@@ -441,7 +461,9 @@ bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier
         if (!session || !scratchSource.isActive()
             || !claimMidiDeck(deviceIdentifier, deck, true))
             return false;
-        session->lastPlatterMoveMs = juce::Time::getMillisecondCounterHiRes();
+        // Fresh-gesture timing baseline (see pointer touch): the first move
+        // seeds its own elapsed rather than measuring the touch→move gap.
+        session->lastPlatterMoveMs = 0.0;
         if (session->armed)
             beginArmedRecordingLocked();
         if (recorder.state() == ScratchActionRecorder::State::recording)

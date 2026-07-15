@@ -96,6 +96,9 @@ public:
     std::array<MidiControllerOutputMessage, 16> hotCueLightMessages(int markerCount) const noexcept;
     const std::vector<std::vector<juce::uint8>>& initMessages() const noexcept;
     int scratchTicksPerTurn() const noexcept;
+    // True when the profile binds a jog-touch (capacitive platter) control, so
+    // touch state is authoritative and untouched jog movement can be ignored.
+    bool hasJogTouchBinding() const noexcept;
 
 private:
     const MidiControllerProfile* profile = nullptr;

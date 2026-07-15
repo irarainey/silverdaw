@@ -19,6 +19,11 @@ struct MidiScratchDeviceState
     bool touchPressed[2]{false, false};
     juce::int64 movementReleaseDeadlineMs[2]{0, 0};
     bool reverseCrossfader = false;
+    // True when the controller has a capacitive platter (jog-touch binding). When
+    // set, touch state is authoritative: jog movement received while the platter
+    // is not touched (a lift-off nudge or pitch-bend) is ignored so it cannot
+    // re-claim the deck or re-arm the movement-release deadline.
+    bool hasJogTouch = false;
     // Relative ticks that equal one physical platter revolution for scratch.
     // Set from the controller profile; defaults to 512 (ordinary 7-bit relative).
     int scratchTicksPerTurn = 512;

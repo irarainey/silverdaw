@@ -123,6 +123,12 @@ class ScratchSessionController
 
     bool hasActiveSession() const;
 
+    // Immutable prepared source audio for offline baking of a saved scratch.
+    // Message-thread only; returns null when no source is prepared. The buffer is
+    // shared_ptr<const>, so a worker thread may read the returned copy safely.
+    std::shared_ptr<const juce::AudioBuffer<float>> preparedSourceAudio() const;
+    double preparedSourceSampleRate() const;
+
   private:
     struct Session
     {

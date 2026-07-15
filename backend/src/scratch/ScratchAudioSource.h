@@ -71,6 +71,15 @@ class ScratchAudioSource final : public juce::AudioSource
 
     Snapshot snapshot() const noexcept;
 
+    // Immutable prepared source access for offline baking. Message-thread only.
+    // The buffer is a shared_ptr<const>, so a worker thread may safely read the
+    // returned copy after this hands it over.
+    std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio() const noexcept
+    {
+        return audio;
+    }
+    double preparedSampleRate() const noexcept { return sourceSampleRate; }
+
   private:
     // Waits for any in-flight audio callback to finish.  Must be called from
     // the message/control thread, NEVER from the audio callback.

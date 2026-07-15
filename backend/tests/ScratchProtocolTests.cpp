@@ -72,6 +72,20 @@ void testScratchSessionPayloads()
     require(move->action == scratch::ControlAction::platterMove, "platter action should be retained");
     require(move->deck == scratch::DeckSide::deck2, "platter deck should be retained");
     requireNear(move->deltaTurns, -0.125, 1.0e-12, "platter delta should be retained");
+    requireNear(move->clientTimeMs, 0.0, 1.0e-12,
+                "platter move without clientTimeMs should default to 0");
+
+    const auto timedMove = scratch::parseSessionControlPayload(parseJson(
+        R"json({"protocolVersion":1,"sessionId":"session-1","action":"platterMove","deck":1,"deltaTurns":0.25,"clientTimeMs":1234.5})json"));
+    require(timedMove.has_value(), "platter move with clientTimeMs should parse");
+    requireNear(timedMove->clientTimeMs, 1234.5, 1.0e-9,
+                "platter clientTimeMs should be retained");
+
+    const auto negativeTime = scratch::parseSessionControlPayload(parseJson(
+        R"json({"protocolVersion":1,"sessionId":"session-1","action":"platterMove","deck":1,"deltaTurns":0.25,"clientTimeMs":-5.0})json"));
+    require(negativeTime.has_value(), "platter move with negative clientTimeMs should still parse");
+    requireNear(negativeTime->clientTimeMs, 0.0, 1.0e-12,
+                "negative clientTimeMs should be ignored (0 = use receive time)");
 
     require(!scratch::parseSessionControlPayload(parseJson(
                  R"json({"protocolVersion":1,"sessionId":"session-1","action":"crossfader","value":1.1})json"))

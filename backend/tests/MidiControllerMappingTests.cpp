@@ -102,6 +102,17 @@ void testMidiMappingMapsShiftedCue()
             "releasing Shift should restore the unshifted Cue action");
 }
 
+void testMidiProfileReportsJogTouchBinding()
+{
+    MidiControllerMapper touchDeck{"DDJ-RB"};
+    require(touchDeck.hasJogTouchBinding(),
+            "a deck that binds jog touch (e.g. DDJ-RB Note 54) should report a touch sensor");
+
+    MidiControllerMapper unmapped{"MPK mini"};
+    require(!unmapped.hasJogTouchBinding(),
+            "a device with no controller profile should not report a jog-touch binding");
+}
+
 void testMidiMappingMapsRelativeControls()
 {
     MidiControllerMapper mapper{"DDJ-RB"};
@@ -382,6 +393,8 @@ void addMidiControllerMappingTests(std::vector<TestCase>& tests)
     tests.push_back({"MIDI profiles reject unmapped devices", testMidiProfilesRejectUnmappedDevices});
     tests.push_back({"MIDI profiles use model-specific codes", testMidiProfilesUseModelSpecificCodes});
     tests.push_back({"MIDI mapping maps deck transport", testMidiMappingMapsDeckTransport});
+    tests.push_back({"MIDI profile reports jog-touch binding",
+                     testMidiProfileReportsJogTouchBinding});
     tests.push_back({"MIDI mapping maps shifted Cue", testMidiMappingMapsShiftedCue});
     tests.push_back({"MIDI mapping maps relative controls", testMidiMappingMapsRelativeControls});
     tests.push_back({"MIDI mapping maps high-resolution controls",

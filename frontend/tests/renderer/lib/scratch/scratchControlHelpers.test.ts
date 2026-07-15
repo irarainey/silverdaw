@@ -209,6 +209,19 @@ describe('buildPlatterMovePayload', () => {
     expect(buildPlatterMovePayload('s', 1, 100)).toMatchObject({ deltaTurns: 8 })
     expect(buildPlatterMovePayload('s', 1, -100)).toMatchObject({ deltaTurns: -8 })
   })
+
+  it('includes a non-negative clientTimeMs when provided', () => {
+    expect(buildPlatterMovePayload('s', 1, 0.1, 1234.5)).toMatchObject({
+      deltaTurns: 0.1,
+      clientTimeMs: 1234.5
+    })
+  })
+
+  it('omits clientTimeMs when absent or invalid', () => {
+    expect(buildPlatterMovePayload('s', 1, 0.1)).not.toHaveProperty('clientTimeMs')
+    expect(buildPlatterMovePayload('s', 1, 0.1, -5)).not.toHaveProperty('clientTimeMs')
+    expect(buildPlatterMovePayload('s', 1, 0.1, Number.NaN)).not.toHaveProperty('clientTimeMs')
+  })
 })
 
 describe('buildPlatterTouchPayload', () => {

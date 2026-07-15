@@ -128,6 +128,26 @@ void handleScratchSessionOpen(const juce::var& payload,
     settings.tempoRatio = clip->tempoRatio;
     settings.semitones = clip->semitones;
     settings.cents = clip->cents;
+    // Re-opening a saved scratch: prepare from its self-contained source snapshot
+    // (the exact window the scratch was performed over) rather than the baked WAV,
+    // which would otherwise be scratched a second time. The snapshot is already the
+    // post-warp/reverse prepared audio, so it is fed back verbatim (identity window).
+    if (fromLibrary)
+    {
+        const auto scratchSource =
+            projectState.getLibraryItemScratchSourcePath(request->libraryItemId);
+        if (scratchSource.isNotEmpty() && juce::File(scratchSource).existsAsFile())
+        {
+            settings.sourceFile = juce::File(scratchSource);
+            settings.inMs = 0.0;
+            settings.durationMs = 0.0;
+            settings.reversed = false;
+            settings.warpEnabled = false;
+            settings.tempoRatio = 1.0;
+            settings.semitones = 0.0;
+            settings.cents = 0.0;
+        }
+    }
     const auto cacheDirectory = projectArtifactsBaseDir(projectPath, "scratch-cache");
     broadcastScratchSessionState(engine, bridge);
 

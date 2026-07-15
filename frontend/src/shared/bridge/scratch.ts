@@ -197,7 +197,13 @@ export const ScratchSessionControlPayloadSchema = z.discriminatedUnion('action',
       .number()
       .finite()
       .min(-MAX_SCRATCH_EVENT_DELTA_TURNS)
-      .max(MAX_SCRATCH_EVENT_DELTA_TURNS)
+      .max(MAX_SCRATCH_EVENT_DELTA_TURNS),
+    // Monotonic client clock (performance.now(), ms) captured when this delta was
+    // flushed. The backend derives elapsed time from consecutive client
+    // timestamps so the rate's numerator and denominator share one clock; absent
+    // for non-pointer sources (e.g. MIDI), where the backend falls back to its
+    // own receive time.
+    clientTimeMs: z.number().finite().nonnegative().optional()
   }),
   z.object({
     ...ScratchSessionControlBase,
@@ -281,6 +287,24 @@ export const ScratchPatternSavePayloadSchema = z.object({
   pattern: ScratchPatternSchema
 })
 export type ScratchPatternSavePayload = z.infer<typeof ScratchPatternSavePayloadSchema>
+
+/**
+ * Bake the recorded scratch into a frozen library sample (WAV) that can be
+ * dragged onto the timeline, while preserving the notation for re-editing.
+ * `itemId` is the target library item: a fresh id for a new scratch, or the
+ * existing id to update it in place on re-save.
+ */
+export const ScratchSaveAsSamplePayloadSchema = z.object({
+  protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),
+  sessionId: z.string().min(1),
+  itemId: z.string().min(1),
+  sampleName: z.string().min(1),
+  // Library item the scratch was recorded over, so the baked sample inherits its
+  // cover art. Optional: a scratch may be recorded without a resolvable source.
+  sourceItemId: z.string().min(1).optional(),
+  pattern: ScratchPatternSchema
+})
+export type ScratchSaveAsSamplePayload = z.infer<typeof ScratchSaveAsSamplePayloadSchema>
 
 export const ScratchPatternDeletePayloadSchema = z.object({
   protocolVersion: z.literal(SCRATCH_PROTOCOL_VERSION),

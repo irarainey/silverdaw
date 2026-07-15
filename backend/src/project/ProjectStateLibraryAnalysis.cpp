@@ -238,6 +238,57 @@ bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juc
     return false;
 }
 
+bool ProjectState::setLibraryItemScratchMeta(const juce::String& itemId,
+                                             const juce::String& scratchPatternId,
+                                             const juce::String& scratchSourcePath)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            if (scratchPatternId.isNotEmpty())
+                item.setProperty(kScratchPatternId, scratchPatternId, nullptr);
+            else
+                item.removeProperty(kScratchPatternId, nullptr);
+            if (scratchSourcePath.isNotEmpty())
+                item.setProperty(kScratchSourcePath, scratchSourcePath, nullptr);
+            else
+                item.removeProperty(kScratchSourcePath, nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::String ProjectState::getLibraryItemScratchPatternId(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+            return item.getProperty(kScratchPatternId, {}).toString();
+    }
+    return {};
+}
+
+juce::String ProjectState::getLibraryItemScratchSourcePath(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+            return item.getProperty(kScratchSourcePath, {}).toString();
+    }
+    return {};
+}
+
 bool ProjectState::setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden)
 {
     auto library = root.getChildWithName(kLibrary);

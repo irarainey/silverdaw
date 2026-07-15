@@ -336,4 +336,18 @@ int MidiControllerMapper::scratchTicksPerTurn() const noexcept
     return profile->scratchTicksPerTurn > 0 ? profile->scratchTicksPerTurn : 512;
 }
 
+bool MidiControllerMapper::hasJogTouchBinding() const noexcept
+{
+    if (profile == nullptr)
+        return false;
+    for (const auto& binding : profile->inputs)
+    {
+        if (binding.action == MidiControllerAction::jogTouch
+            || binding.shiftedAction == MidiControllerAction::jogTouch
+            || binding.touchedAction == MidiControllerAction::jogTouch)
+            return true;
+    }
+    return false;
+}
+
 } // namespace silverdaw

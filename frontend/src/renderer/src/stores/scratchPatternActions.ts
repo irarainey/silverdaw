@@ -21,6 +21,31 @@ export const scratchPatternActions = {
     log.info('project', `saveScratchPattern id=${pattern.id} name=${pattern.name}`)
   },
 
+  /**
+   * Bake the recorded scratch into a frozen library sample (WAV) that can be
+   * dragged onto the timeline, preserving the notation for re-editing. `itemId`
+   * is stable per scratch (derived from the pattern id) so a re-save updates the
+   * same library item in place.
+   */
+  saveScratchAsSample(
+    this: ScratchActionsThis,
+    sessionId: string,
+    itemId: string,
+    sampleName: string,
+    pattern: ScratchPattern,
+    sourceItemId?: string | null
+  ): void {
+    sendBridge('SCRATCH_SAVE_AS_SAMPLE', {
+      protocolVersion: SCRATCH_PROTOCOL_VERSION,
+      sessionId,
+      itemId,
+      sampleName,
+      ...(sourceItemId ? { sourceItemId } : {}),
+      pattern
+    })
+    log.info('project', `saveScratchAsSample item=${itemId} name=${sampleName}`)
+  },
+
   /** Delete a saved scratch pattern by id. */
   deleteScratchPattern(this: ScratchActionsThis, patternId: string): void {
     sendBridge('SCRATCH_PATTERN_DELETE', {

@@ -16,6 +16,12 @@ interface ScratchSessionState {
   /** Canonical serialization of the pattern at the last acknowledged save/load point.
    *  Used for content-based dirty detection instead of ID-only comparison. */
   savedCanonicalBaseline: string | null
+  /** Library item id of an in-flight bake-to-sample save, or null when idle. */
+  bakePendingItemId: string | null
+  /** Monotonic counter bumped on each resolved bake so watchers fire per-result. */
+  bakeResultSeq: number
+  /** Outcome of the most recently resolved bake-to-sample save. */
+  bakeResult: { itemId: string; ok: boolean; error: string | null } | null
 }
 
 export const useScratchSessionStore = defineStore('scratchSession', {
@@ -25,7 +31,10 @@ export const useScratchSessionStore = defineStore('scratchSession', {
     completedPattern: null,
     draftRevision: 0,
     savedPatternId: null,
-    savedCanonicalBaseline: null
+    savedCanonicalBaseline: null,
+    bakePendingItemId: null,
+    bakeResultSeq: 0,
+    bakeResult: null
   }),
 
   getters: {
@@ -88,9 +97,36 @@ export const useScratchSessionStore = defineStore('scratchSession', {
     },
 
     /**
-     * Apply an edited pattern only if the session is still active and the pattern
-     * passes schema validation. Used by the notation editor for each committed edit.
+     * Load a previously saved pattern back into the session as the completed draft
+     * (used when re-opening a saved scratch from the library). Unlike `replacePattern`
+     * this also flips `recordingStatus` to `completed` so the notation editor shows the
+     * pattern and Save/Play become available. Requires an active session.
      */
+    loadSavedPattern(pattern: ScratchPattern): boolean {
+      if (!this.current) return false
+      const result = ScratchPatternSchema.safeParse(pattern)
+      if (!result.success) return false
+      this.completedPattern = result.data
+      this.recordingStatus = 'completed'
+      this.draftRevision += 1
+      return true
+    },
+
+    /** Mark a bake-to-sample save as in flight for the given library item id. */
+    beginScratchBake(itemId: string): void {
+      this.bakePendingItemId = itemId
+      this.bakeResult = null
+    },
+
+    /** Resolve the in-flight bake if it matches; no-op for unrelated SAMPLE_SAVED acks. */
+    resolveScratchBake(itemId: string, ok: boolean, error: string | null): void {
+      if (this.bakePendingItemId !== itemId) return
+      this.bakePendingItemId = null
+      this.bakeResultSeq += 1
+      this.bakeResult = { itemId, ok, error }
+    },
+
+
     editPattern(sessionId: string, pattern: ScratchPattern): boolean {
       if (!this.current || this.current.sessionId !== sessionId) return false
       const result = ScratchPatternSchema.safeParse(pattern)
@@ -120,6 +156,7 @@ export const useScratchSessionStore = defineStore('scratchSession', {
       this.savedPatternId = null
       this.savedCanonicalBaseline = null
       this.draftRevision = 0
+      this.bakePendingItemId = null
     },
 
     /** Record that the current draft was saved to the backend with the given pattern id.

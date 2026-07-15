@@ -319,6 +319,11 @@ class AudioEngine
     // Retrieve completed recording pattern (moves ownership). Returns nullopt if none ready.
     std::optional<scratch::Pattern> takeScratchRecordingPattern();
 
+    // Immutable prepared source audio for offline baking of a saved scratch.
+    // Message-thread only; null when no source is prepared.
+    std::shared_ptr<const juce::AudioBuffer<float>> getScratchPreparedSource() const;
+    double getScratchPreparedSourceSampleRate() const;
+
     // Pattern replay audition (plays a saved pattern through the scratch audio source).
     bool startScratchPatternReplay(const scratch::Pattern& pattern);
     void stopScratchPatternReplay();

@@ -415,6 +415,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ProjectSettingsCommands.cpp
     src/commands/ScratchSessionCommands.cpp
     src/commands/ScratchPatternCommands.cpp
+    src/commands/ScratchSaveCommands.cpp
     src/commands/ScratchPatternReplayCommands.cpp
     src/commands/StemSeparationCommands.cpp
     src/commands/TrackCommands.cpp
@@ -438,6 +439,7 @@ add_library(silverdaw_backend_core STATIC
     src/scratch/ScratchActionRecorder.cpp
     src/scratch/ScratchSessionController.cpp
     src/scratch/ScratchPatternEvaluator.cpp
+    src/scratch/ScratchPatternBake.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/BpmAnalysisHelpers.cpp

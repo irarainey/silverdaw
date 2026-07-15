@@ -103,6 +103,13 @@ void MidiScratchRouter::routeRelative(const juce::String& identifier,
         || event.action == MidiControllerAction::wheelSearch;
     if (!isPlatterMovement)
         return;
+    // With a capacitive platter the touch sensor is authoritative. Jog movement
+    // arriving while the platter is not touched is a lift-off nudge or a
+    // pitch-bend, not a scratch: applying it would re-claim the deck and re-arm
+    // the 120 ms movement-release deadline, stalling playback after release. Drop
+    // it so releasing the platter returns to motor speed immediately.
+    if (state.hasJogTouch && !state.touchPressed[deckIndex])
+        return;
     // Convert raw relative ticks to calibrated platter turns.
     const auto ticksPerTurn = juce::jmax(1, state.scratchTicksPerTurn);
     const auto deltaTurns = event.value / static_cast<double>(ticksPerTurn);

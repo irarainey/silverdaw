@@ -15,7 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   platterTouch: [touched: boolean]
-  platterMove: [deltaTurns: number]
+  platterMove: [deltaTurns: number, clientTimeMs: number]
 }>()
 
 const CX = 100
@@ -38,17 +38,46 @@ let prevClientY = 0
 let prevAngleValid = true
 let capturedId: number | null = null
 
+// Pointer moves are coalesced and flushed once per animation frame so the rate
+// the backend derives pairs one accumulated delta with one frame-length client
+// interval (performance.now()), instead of one raw pointer event against the
+// backend's own jittery receive clock. High-rate mice therefore can't spike the
+// rate, and the delta/elapsed pair share a single clock and interval.
+let pointerPendingTurns = 0
+let pointerRafId: number | null = null
+// True once motion has been emitted since the last idle-zero. Lets the per-frame
+// tick fire a single explicit zero-rate the instant the finger stops moving.
+let pointerHadMotion = false
+
 let wheelTouched = false
 let wheelPendingTurns = 0
 let wheelRafId: number | null = null
 let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+// Runs every frame while the platter is held. Emits one accumulated delta per
+// frame during motion, and a single explicit zero-rate the frame after motion
+// stops so a stationary-but-still-touching finger halts the platter within a
+// frame instead of coasting for the backend's manual-rate hold ("sluggish
+// release"). Re-arms itself while the pointer remains down.
+function pointerTick(): void {
+  if (pointerPendingTurns !== 0) {
+    const delta = pointerPendingTurns
+    pointerPendingTurns = 0
+    pointerHadMotion = true
+    emit('platterMove', delta, performance.now())
+  } else if (pointerHadMotion) {
+    pointerHadMotion = false
+    emit('platterMove', 0, performance.now())
+  }
+  pointerRafId = isDown.value ? requestAnimationFrame(pointerTick) : null
+}
 
 function flushWheelMove(): void {
   wheelRafId = null
   if (wheelPendingTurns === 0) return
   const delta = Math.max(-MAX_WHEEL_DELTA_TURNS, Math.min(MAX_WHEEL_DELTA_TURNS, wheelPendingTurns))
   wheelPendingTurns = 0
-  emit('platterMove', delta)
+  emit('platterMove', delta, performance.now())
 }
 
 function releaseWheelTouch(): void {
@@ -103,6 +132,9 @@ function onPointerDown(event: PointerEvent): void {
   prevClientX = event.clientX
   prevClientY = event.clientY
   prevAngleValid = true
+  pointerPendingTurns = 0
+  pointerHadMotion = false
+  if (pointerRafId === null) pointerRafId = requestAnimationFrame(pointerTick)
   emit('platterTouch', true)
 }
 
@@ -126,13 +158,27 @@ function onPointerMove(event: PointerEvent): void {
   const delta = pointerAngleDeltaTurns(prevClientX, prevClientY, event.clientX, event.clientY, cx, cy)
   prevClientX = event.clientX
   prevClientY = event.clientY
-  if (delta !== 0) emit('platterMove', delta)
+  if (delta !== 0) {
+    pointerPendingTurns += delta
+  }
 }
 
 function releasePointer(event: PointerEvent): void {
   if (capturedId !== event.pointerId) return
   capturedId = null
   isDown.value = false
+  // Stop the per-frame tick and discard any sub-frame motion accumulated at the
+  // instant of release. On a real deck the platter rides a slipmat at constant
+  // motor speed, so letting go snaps the record straight back to full speed; the
+  // little lift-off push a finger imparts on release is not a scratch and must
+  // not be applied as a final rate (which would briefly play slow/reverse before
+  // the motor re-engages). Dropping touch lets the backend resume motor speed.
+  if (pointerRafId !== null) {
+    cancelAnimationFrame(pointerRafId)
+    pointerRafId = null
+  }
+  pointerPendingTurns = 0
+  pointerHadMotion = false
   emit('platterTouch', false)
 }
 
@@ -159,11 +205,17 @@ function onKeydown(event: KeyboardEvent): void {
   }
   event.preventDefault()
   event.stopPropagation()
-  emit('platterMove', delta)
+  emit('platterMove', delta, performance.now())
 }
 
 onBeforeUnmount(() => {
   releaseWheelTouch()
+  if (pointerRafId !== null) {
+    cancelAnimationFrame(pointerRafId)
+    pointerRafId = null
+    pointerPendingTurns = 0
+    pointerHadMotion = false
+  }
   if (capturedId !== null) {
     svgEl.value?.releasePointerCapture(capturedId)
     capturedId = null

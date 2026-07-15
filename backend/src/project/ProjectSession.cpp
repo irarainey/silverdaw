@@ -165,6 +165,7 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("tracks", projectState.tracksAsJson());
     obj->setProperty("library", projectState.libraryAsJson());
     obj->setProperty("markers", projectState.markersAsJson());
+    obj->setProperty("scratchPatterns", projectState.scratchPatternsAsJson());
     obj->setProperty("viewPxPerSecond", projectState.getViewPxPerSecond());
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
@@ -481,7 +482,7 @@ void migrateTempArtifactsIntoProject(const juce::String& projectFilePath, AudioE
                                      ProjectState& projectState, juce::ThreadPool& peakPool,
                                      const DecodedCache& decodedCache)
 {
-    static const char* kCategories[] = {"stems", "samples", "channels"};
+    static const char* kCategories[] = {"stems", "samples", "channels", "scratches"};
 
     const auto tempRoot = tempArtifactsRoot();
     const auto projectDir = juce::File(projectFilePath).getParentDirectory();

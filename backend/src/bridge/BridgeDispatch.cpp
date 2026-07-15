@@ -24,6 +24,7 @@
 #include "SampleExport.h"
 #include "ScratchSessionCommands.h"
 #include "ScratchPatternCommands.h"
+#include "ScratchSaveCommands.h"
 #include "ScratchPatternReplayCommands.h"
 #include "StemSeparationCommands.h"
 #include "StemSeparator.h"
@@ -378,6 +379,11 @@ bool dispatchScratch(const DispatchContext& ctx)
     else if (ctx.type == "SCRATCH_PATTERN_SAVE")
     {
         handleScratchPatternSave(ctx.payload, ctx.projectState, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_SAVE_AS_SAMPLE")
+    {
+        handleScratchSaveAsSample(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                  ctx.peakPool, ctx.cache, ctx.session);
     }
     else if (ctx.type == "SCRATCH_PATTERN_DELETE")
     {

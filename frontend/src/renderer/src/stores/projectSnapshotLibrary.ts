@@ -141,6 +141,8 @@ export function applyProjectLibrary(
         mediaId: item.mediaId,
         coverArtHidden: item.coverArtHidden === true ? true : undefined,
         coverArtOverride: item.coverArtOverride,
+        scratchOrigin: item.scratchOrigin === true ? true : undefined,
+        scratchPatternId: item.scratchPatternId,
         fromSnapshot: true
       })
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.

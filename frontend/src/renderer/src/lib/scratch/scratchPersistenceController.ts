@@ -120,7 +120,7 @@ export function selectAndLoad(deps: ControllerDeps, patternId: string): void {
 
   refs.selectedSavedId.value = patternId
   refs.patternName.value = saved.name
-  scratch.replacePattern(saved)
+  scratch.loadSavedPattern(saved)
   scratch.setSavedPatternId(patternId, canonicalizeScratchPattern(saved))
   refs.isSaved.value = true
 }

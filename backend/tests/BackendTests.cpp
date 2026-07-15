@@ -65,9 +65,9 @@ int main(int argc, char** argv)
 
     const auto tests = buildRegistry();
 #if defined(SILVERDAW_STEM_SEPARATION)
-    require(tests.size() == 342, "backend test registry should contain 342 tests");
+    require(tests.size() == 346, "backend test registry should contain 346 tests");
 #else
-    require(tests.size() == 340, "backend test registry should contain 340 tests");
+    require(tests.size() == 344, "backend test registry should contain 344 tests");
 #endif
 
     bool listOnly = false;

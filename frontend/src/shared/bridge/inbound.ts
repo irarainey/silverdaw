@@ -347,6 +347,12 @@ export const ProjectStateLibraryItemSchema = z
     sourceClipId: z.string().optional(),
     sourceInMs: z.number().optional(),
     sourceDurationMs: z.number().optional(),
+    /** True when this sample was baked from a recorded scratch (drives the vinyl tile icon). */
+    scratchOrigin: z.boolean().optional(),
+    /** Links a scratch-origin sample to its notation pattern for re-editing. */
+    scratchPatternId: z.string().optional(),
+    /** Self-contained source-window snapshot WAV used to re-prepare the scratch editor. */
+    scratchSourcePath: z.string().optional(),
     /** Media GUID minted at first import; key into the project's metadata/covers store. */
     mediaId: z.string().optional(),
     collapsed: z.boolean().optional(),
@@ -511,6 +517,10 @@ const SampleSavedSuccessSchema = z.object({
   sourceItemId: z.string().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
+  /** Set for a baked scratch: drives the vinyl tile icon and re-open metadata. */
+  scratchOrigin: z.boolean().optional(),
+  scratchPatternId: z.string().optional(),
+  scratchSourcePath: z.string().optional(),
   /** Batch slice-to-samples progress, so the renderer shows one summary toast. */
   batchIndex: z.number().int().optional(),
   batchTotal: z.number().int().optional(),

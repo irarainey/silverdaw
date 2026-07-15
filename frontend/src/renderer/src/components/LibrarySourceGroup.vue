@@ -56,6 +56,9 @@ const tileCoverArtUrl = computed(() =>
 // sample shows its pitch + BPM while still reading as a sample at a glance.
 const isSampleTile = computed(() => props.tileIsSampleAsset(props.source))
 const isStemTile = computed(() => props.source.kind === 'stem')
+// A baked-scratch sample reads as a sample everywhere else, but gets a distinct
+// vinyl-record fallback icon so scratches are recognisable at a glance in the library.
+const isScratchTile = computed(() => props.source.scratchOrigin === true)
 // Distinct fallback treatment per kind when no cover image is shown: a coloured
 // background tint + a kind-specific icon so stems, samples, and original tracks read
 // apart at a glance. Samples keep their indigo tint; stems get teal, sources sky.
@@ -99,6 +102,20 @@ const childSummary = computed(() => {
           draggable="false"
         >
         <svg
+          v-else-if="isScratchTile"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          class="h-6 w-6 text-fuchsia-400"
+          aria-hidden="true"
+        >
+          <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 3.5a6.5 6.5 0 016.5 6.5 1 1 0 11-2 0 4.5 4.5 0 00-4.5-4.5 1 1 0 110-2zM12 10a2 2 0 100 4 2 2 0 000-4z"
+          />
+        </svg>
+        <svg
           v-else-if="isSampleTile"
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
@@ -131,6 +148,10 @@ const childSummary = computed(() => {
         <LibraryTypeBadge
           v-if="isStemTile"
           kind="stem"
+        />
+        <LibraryTypeBadge
+          v-else-if="isScratchTile"
+          kind="scratch"
         />
         <LibraryTypeBadge
           v-else-if="isSampleTile"

@@ -763,6 +763,40 @@ void testExplicitSampleDoesNotSeed()
     require(!state.isBpmSeeded(), "a blocked seed must leave the project unseeded");
 }
 
+void testProjectStateScratchLibraryMetadata()
+{
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("scr1", "C:\\proj\\scratches\\p1\\take-001.wav", "take-001.wav",
+                                 1500.0, 48000, 2, "C:\\proj\\scratches\\p1\\take-001.wav", {},
+                                 "sample", "My Scratch"),
+            "baked scratch sample should add as a sample");
+    require(state.setLibraryItemScratchMeta("scr1", "p1", "C:\\proj\\scratches\\p1\\source.wav"),
+            "scratch metadata should apply to an existing item");
+    requireEqual(state.getLibraryItemScratchPatternId("scr1"), "p1",
+                 "scratch pattern id getter should return the linked pattern");
+    requireEqual(state.getLibraryItemScratchSourcePath("scr1"), "C:\\proj\\scratches\\p1\\source.wav",
+                 "scratch source path getter should return the snapshot path");
+
+    const auto library = state.libraryAsJson();
+    require(library.isArray() && library.getArray()->size() == 1,
+            "libraryAsJson should return the one scratch item");
+    const auto item = library.getArray()->getReference(0);
+    require(bool(item.getProperty("scratchOrigin", false)),
+            "libraryAsJson should flag the scratch-origin sample");
+    requireEqual(item.getProperty("scratchPatternId", {}).toString(), "p1",
+                 "libraryAsJson should serialise the scratch pattern id");
+    requireEqual(item.getProperty("scratchSourcePath", {}).toString(),
+                 "C:\\proj\\scratches\\p1\\source.wav",
+                 "libraryAsJson should serialise the scratch source path");
+
+    require(state.setLibraryItemScratchMeta("scr1", {}, {}),
+            "clearing scratch metadata should succeed");
+    require(state.getLibraryItemScratchPatternId("scr1").isEmpty(),
+            "cleared scratch pattern id should be empty");
+    require(!state.setLibraryItemScratchMeta("missing", "p2", "x.wav"),
+            "scratch metadata on an unknown item should fail");
+}
+
 void testLibraryItemDurationLookup()
 {
     silverdaw::ProjectState state;
@@ -1164,6 +1198,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Seeded project BPM is not overridden by later clips", testSeededProjectIsNotReSeeded});
     tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
     tests.push_back({"Library item duration lookup by id", testLibraryItemDurationLookup});
+    tests.push_back({"ProjectState scratch library metadata round-trips", testProjectStateScratchLibraryMetadata});
     tests.push_back({"ProjectState rename is not undoable", testProjectStateRenameIsNotUndoable});
     tests.push_back({"Undo group collapses a compound edit to one step", testUndoGroupCollapsesCompoundEditToOneStep});
     tests.push_back({"Nested undo groups collapse to one step", testNestedUndoGroupsCollapseToOneStep});

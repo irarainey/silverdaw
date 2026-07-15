@@ -4,6 +4,7 @@
 #include "scratch/ScratchActionRecorder.h"
 #include "scratch/ScratchAudioSource.h"
 #include "scratch/ScratchPatternEvaluator.h"
+#include "scratch/ScratchPatternBake.h"
 #include "scratch/ScratchProtocol.h"
 
 #include <cmath>
@@ -446,6 +447,59 @@ void testDraftPatternReplayUsesScratchSource()
     source.endPatternReplay();
 }
 
+void testBakePatternToBufferRendersAudio()
+{
+    // Baking a recorded pattern over its source must render non-silent audio of
+    // the pattern's cropped duration, using the same DSP as live replay, so a
+    // saved scratch can become an ordinary WAV sample (ADR 0021).
+    constexpr double sampleRate = 48000.0;
+    auto sourceAudio = makeRecorderTestBuffer(static_cast<int>(sampleRate * 2.0), sampleRate);
+
+    scratch::Pattern pattern;
+    pattern.id = "bake-basic";
+    pattern.name = "Bake basic";
+    pattern.durationUs = 500000; // 0.5s
+    pattern.cropEndUs = pattern.durationUs;
+    // A forward platter sweep with the crossfader fully open (deck 1, position 0).
+    pattern.platter = {
+        {0, 0.0, true},
+        {pattern.durationUs, 0.25, true}
+    };
+    pattern.crossfader = {
+        {0, 0.0},
+        {pattern.durationUs, 0.0}
+    };
+
+    const auto baked = scratch::bakePatternToBuffer(pattern, sourceAudio, sampleRate);
+
+    const auto expectedSamples = static_cast<int>(std::llround(0.5 * sampleRate));
+    require(baked.getNumChannels() == 2, "baked buffer should be stereo");
+    require(std::abs(baked.getNumSamples() - expectedSamples) <= 1,
+            "baked length should match the pattern's cropped duration");
+    require(baked.getMagnitude(0, 0, baked.getNumSamples()) > 0.001F,
+            "baked scratch should contain audible signal");
+}
+
+void testBakePatternToBufferHandlesMissingInputs()
+{
+    // Empty/degenerate inputs must yield an empty buffer, never crash.
+    constexpr double sampleRate = 48000.0;
+    scratch::Pattern pattern;
+    pattern.id = "bake-empty";
+    pattern.durationUs = 100000;
+    pattern.cropEndUs = pattern.durationUs;
+
+    const auto noSource = scratch::bakePatternToBuffer(pattern, nullptr, sampleRate);
+    require(noSource.getNumSamples() == 0, "missing source should bake to an empty buffer");
+
+    auto sourceAudio = makeRecorderTestBuffer(static_cast<int>(sampleRate), sampleRate);
+    scratch::Pattern emptyPattern;
+    emptyPattern.id = "bake-no-keyframes";
+    const auto noKeyframes = scratch::bakePatternToBuffer(emptyPattern, sourceAudio, sampleRate);
+    require(noKeyframes.getNumSamples() == 0,
+            "pattern without keyframes should bake to an empty buffer");
+}
+
 void testRecorderAbortOnSessionClose()
 {
     AudioEngine engine;
@@ -633,6 +687,8 @@ void addScratchRecorderTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch recorder stale session rejection", testRecorderStaleSessionReject});
     tests.push_back({"scratch recorder engine integration", testRecorderEngineIntegration});
     tests.push_back({"scratch draft pattern replay uses scratch source", testDraftPatternReplayUsesScratchSource});
+    tests.push_back({"scratch bake pattern to buffer renders audio", testBakePatternToBufferRendersAudio});
+    tests.push_back({"scratch bake pattern to buffer handles missing inputs", testBakePatternToBufferHandlesMissingInputs});
     tests.push_back({"scratch recorder abort on session close", testRecorderAbortOnSessionClose});
     tests.push_back({"scratch recorder saturated lane capacity", testRecorderSaturatedLaneCapacity});
     tests.push_back({"scratch recorder owner deck update", testRecorderOwnerDeckUpdate});

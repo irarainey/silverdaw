@@ -134,4 +134,15 @@ std::optional<scratch::Pattern> AudioEngine::takeScratchRecordingPattern()
     return scratchController.takeCompletedPattern();
 }
 
+std::shared_ptr<const juce::AudioBuffer<float>>
+AudioEngine::getScratchPreparedSource() const
+{
+    return scratchController.preparedSourceAudio();
+}
+
+double AudioEngine::getScratchPreparedSourceSampleRate() const
+{
+    return scratchController.preparedSourceSampleRate();
+}
+
 } // namespace silverdaw

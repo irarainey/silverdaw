@@ -15,6 +15,7 @@ import type {
   ScratchBackingPreparePayload,
   ScratchBackingClearPayload,
   ScratchPatternSavePayload,
+  ScratchSaveAsSamplePayload,
   ScratchPatternDeletePayload,
   ScratchPatternRenamePayload,
   ScratchPatternApplyPayload,
@@ -584,6 +585,7 @@ export interface BridgeOutboundMap {
   SCRATCH_BACKING_PREPARE: ScratchBackingPreparePayload
   SCRATCH_BACKING_CLEAR: ScratchBackingClearPayload
   SCRATCH_PATTERN_SAVE: ScratchPatternSavePayload
+  SCRATCH_SAVE_AS_SAMPLE: ScratchSaveAsSamplePayload
   SCRATCH_PATTERN_DELETE: ScratchPatternDeletePayload
   SCRATCH_PATTERN_RENAME: ScratchPatternRenamePayload
   SCRATCH_PATTERN_APPLY: ScratchPatternApplyPayload
@@ -1192,6 +1194,7 @@ export const bridgeOutboundPayloadKinds: {
   SCRATCH_BACKING_PREPARE: 'payload',
   SCRATCH_BACKING_CLEAR: 'payload',
   SCRATCH_PATTERN_SAVE: 'payload',
+  SCRATCH_SAVE_AS_SAMPLE: 'payload',
   SCRATCH_PATTERN_DELETE: 'payload',
   SCRATCH_PATTERN_RENAME: 'payload',
   SCRATCH_PATTERN_APPLY: 'payload',

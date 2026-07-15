@@ -327,6 +327,13 @@ std::optional<SessionControlPayload> parseSessionControlPayload(const juce::var&
             }
             result.deck = *deck;
             result.deltaTurns = *deltaTurns;
+            // Optional monotonic client timestamp; negative/absent leaves 0 so the
+            // controller falls back to backend receive time.
+            if (const auto clientTime = finiteNumber(payload, "clientTimeMs");
+                clientTime && *clientTime >= 0.0)
+            {
+                result.clientTimeMs = *clientTime;
+            }
             break;
         }
         case ControlAction::platterTouch:

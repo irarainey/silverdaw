@@ -8,6 +8,7 @@ import { useScratchBacking } from '@/lib/scratch/useScratchBacking'
 import { useScratchPatternPersistence } from '@/lib/scratch/scratchPatternPersistence'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
 import ScratchCrossfader from '@/components/ScratchCrossfader.vue'
@@ -33,6 +34,7 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 
 const ui = useUiStore()
 const project = useProjectStore()
+const library = useLibraryStore()
 const scratchStore = useScratchSessionStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
 // A session edits either a timeline clip or a whole library item. The library
@@ -65,13 +67,70 @@ useScratchKeyboardControls({
   sendControl: session.sendControl
 })
 
-// Footer Save persists the recorded scratch notation: it updates the existing
-// saved pattern when one is loaded, otherwise saves a new one. Only meaningful
-// once a scratch has actually been recorded.
+// Footer Save persists the recorded scratch notation AND bakes it into a frozen
+// library sample (a draggable timeline clip). It updates the existing saved
+// pattern/library item when one is loaded, otherwise creates new ones. Only
+// meaningful once a scratch has actually been recorded. While a save is in flight
+// a progress popover is shown and the editor closes automatically on success.
+type SavePhase = 'idle' | 'saving' | 'error'
+const savePhase = ref<SavePhase>('idle')
+const saveErrorMsg = ref<string | null>(null)
+
 function onSave(): void {
-  if (!derived.hasPattern.value) return
+  if (!derived.hasPattern.value || savePhase.value === 'saving') return
+  savePhase.value = 'saving'
+  saveErrorMsg.value = null
   if (scratchStore.savedPatternId !== null) persistence.updatePattern()
   else persistence.savePattern()
+  bakeScratchToLibrary()
+}
+
+// The baked sample's library id is derived from the notation pattern id so a
+// re-save of an edited scratch updates the same library item in place, and the
+// item stays linked to its notation for re-opening in the editor.
+function bakeScratchToLibrary(): void {
+  const sid = session.activeSessionId.value
+  const pattern = scratchStore.completedPattern
+  if (sid === null || !pattern) {
+    savePhase.value = 'idle'
+    return
+  }
+  const targetId =
+    persistence.selectedSavedId.value ?? scratchStore.savedPatternId ?? pattern.id
+  const name = persistence.patternName.value.trim() || pattern.name || 'Scratch'
+  const saved: ScratchPattern = { ...pattern, id: targetId, name }
+  const itemId = `scratch-${targetId}`
+  // Inherit cover art from the library item the scratch was recorded over: for a
+  // clip session that's the clip's source item, for a library session the item
+  // itself (e.g. re-editing an existing scratch keeps its inherited art).
+  const sourceItemId =
+    (props.clipId !== null ? project.clips[props.clipId]?.libraryItemId : props.libraryItemId) ??
+    null
+  scratchStore.beginScratchBake(itemId)
+  project.saveScratchAsSample(sid, itemId, name, saved, sourceItemId)
+}
+
+// Resolve the in-flight bake: close the editor on success, or surface the error
+// in the progress popover so the user can retry without losing their recording.
+watch(
+  () => scratchStore.bakeResultSeq,
+  () => {
+    if (savePhase.value !== 'saving') return
+    const result = scratchStore.bakeResult
+    if (!result) return
+    if (result.ok) {
+      savePhase.value = 'idle'
+      doClose()
+    } else {
+      savePhase.value = 'error'
+      saveErrorMsg.value = result.error ?? 'Could not save the scratch to your library.'
+    }
+  }
+)
+
+function dismissSaveError(): void {
+  savePhase.value = 'idle'
+  saveErrorMsg.value = null
 }
 const preparationPercent = computed(() =>
   Math.round((session.state.value?.preparationProgress ?? 0) * 100)
@@ -143,6 +202,9 @@ function requestClose(): void {
 
 function doClose(): void {
   dirtyClosePromptOpen.value = false
+  savePhase.value = 'idle'
+  saveErrorMsg.value = null
+  pendingReopenPatternId.value = null
   stopReplay()
   persistence.reset()
   session.close()
@@ -175,10 +237,18 @@ function onDirtyCloseCancel(): void {
 
 watch(
   () => project.savedScratchPatterns,
-  () => persistence.reconcileSnapshot()
+  () => {
+    persistence.reconcileSnapshot()
+    tryLoadPendingReopen()
+  }
 )
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
+
+// A saved-scratch re-open must load its notation only AFTER the backend session
+// exists (the store rejects a pattern load while `current` is null), so the open
+// watcher records the target pattern id and a session-ready watcher applies it.
+const pendingReopenPatternId = ref<string | null>(null)
 
 watch(
   () => props.open,
@@ -186,12 +256,35 @@ watch(
     ui.clipEditorOpen = open
     if (open) {
       persistence.reset()
+      savePhase.value = 'idle'
+      saveErrorMsg.value = null
+      // Re-opening a saved scratch: remember its notation id so the editor shows
+      // the recorded pattern once the session is ready (a re-save updates it).
+      const openedItemId = props.libraryItemId
+      const scratchPatternId =
+        openedItemId != null ? library.byId[openedItemId]?.scratchPatternId ?? null : null
+      pendingReopenPatternId.value = scratchPatternId
       await nextTick()
       dialogEl.value?.focus()
+    } else {
+      pendingReopenPatternId.value = null
     }
   },
   { immediate: true }
 )
+
+// Once the backend session is live, load any pending saved notation. Guarded so
+// it only clears the pending id after the pattern is actually found (the notation
+// may arrive via PROJECT_STATE a beat after the session becomes ready).
+function tryLoadPendingReopen(): void {
+  const patternId = pendingReopenPatternId.value
+  if (!patternId || !session.activeSessionId.value) return
+  if (!project.savedScratchPatterns.some((p) => p.id === patternId)) return
+  persistence.selectAndLoad(patternId)
+  pendingReopenPatternId.value = null
+}
+
+watch(() => session.activeSessionId.value, tryLoadPendingReopen)
 
 onBeforeUnmount(() => {
   stopReplay()
@@ -202,7 +295,10 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
-    if (dirtyClosePromptOpen.value) {
+    if (savePhase.value === 'saving') return
+    if (savePhase.value === 'error') {
+      dismissSaveError()
+    } else if (dirtyClosePromptOpen.value) {
       onDirtyCloseCancel()
     } else {
       requestClose()
@@ -232,10 +328,10 @@ function onPlatterTouch(touched: boolean): void {
   session.sendControl(buildPlatterTouchPayload(sid, VIRTUAL_DECK, touched))
 }
 
-function onPlatterMove(deltaTurns: number): void {
+function onPlatterMove(deltaTurns: number, clientTimeMs: number): void {
   const sid = session.activeSessionId.value
   if (!sid || !session.canControl.value) return
-  session.sendControl(buildPlatterMovePayload(sid, VIRTUAL_DECK, deltaTurns))
+  session.sendControl(buildPlatterMovePayload(sid, VIRTUAL_DECK, deltaTurns, clientTimeMs))
 }
 
 function onCrossfaderChange(value: number): void {
@@ -350,10 +446,6 @@ function onScratchGain(event: Event): void {
             v-if="persistence.isSaved.value && !persistence.isDirty.value"
             class="ml-1 text-[10px] text-emerald-400"
           >Saved</span>
-          <span
-            v-if="persistence.isSavePending.value"
-            class="ml-1 text-[10px] text-zinc-500"
-          >Saving…</span>
         </header>
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
@@ -557,6 +649,7 @@ function onScratchGain(event: Event): void {
           <button
             type="button"
             class="dialog-btn-cancel"
+            :disabled="savePhase === 'saving'"
             @click="requestClose"
           >
             Cancel
@@ -564,7 +657,7 @@ function onScratchGain(event: Event): void {
           <button
             type="button"
             class="dialog-btn-primary"
-            :disabled="!derived.hasPattern.value"
+            :disabled="!derived.hasPattern.value || savePhase === 'saving'"
             @click="onSave"
           >
             Save
@@ -579,6 +672,80 @@ function onScratchGain(event: Event): void {
         @discard="onDirtyCloseDiscard"
         @cancel="onDirtyCloseCancel"
       />
+
+      <div
+        v-if="savePhase !== 'idle'"
+        class="absolute inset-0 z-10 flex items-center justify-center bg-black/60"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="scratch-save-progress-title"
+      >
+        <div class="dialog-card w-[min(400px,90vw)]">
+          <div class="dialog-header">
+            <h3
+              id="scratch-save-progress-title"
+              class="dialog-title"
+            >
+              {{ savePhase === 'error' ? 'Save Failed' : 'Saving Scratch' }}
+            </h3>
+          </div>
+          <div class="dialog-body">
+            <p
+              v-if="savePhase === 'saving'"
+              class="flex items-center gap-2 text-xs text-zinc-400"
+            >
+              <svg
+                class="h-4 w-4 animate-spin text-sky-400"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle
+                  class="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                />
+                <path
+                  class="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Baking your scratch to the library…
+            </p>
+            <p
+              v-else
+              class="text-xs text-red-400"
+            >
+              {{ saveErrorMsg }}
+            </p>
+          </div>
+          <div
+            v-if="savePhase === 'error'"
+            class="dialog-footer"
+          >
+            <button
+              type="button"
+              class="dialog-btn-cancel"
+              @click="dismissSaveError"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              class="dialog-btn-primary"
+              autofocus
+              @click="onSave"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </Transition>
 </template>

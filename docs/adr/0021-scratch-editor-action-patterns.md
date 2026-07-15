@@ -1208,3 +1208,66 @@ alignment the performer heard while recording, with no stored offset needed.
   prepared bed rewinds to its head, plays during replay, and stops on replay end;
   `scratch pattern replay plays without a backing bed` continues to guard the
   no-bed path.
+
+## Amendment 19 — Save a scratch to the library as a baked WAV sample
+
+- **Date:** 2026-07-16 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Until now a recorded scratch lived only as notation inside the project ValueTree
+(`SCRATCH_PATTERN_SAVE`), auditionable in the editor and applicable live to a
+timeline clip via `OffsetSource`, but never a first-class library asset the user
+could drag onto the arrangement. The goal is two-fold: (1) persist the notation
+so a scratch can be re-opened and edited, and (2) let the scratch behave like any
+other sample clip on the timeline.
+
+Two rubber-duck critiques (Gemini 3.1 Pro, GPT-5.6 Terra) both favoured baking to
+a frozen WAV over a live-scratched clip: it is deterministic, needs no per-clip
+scratch DSP on the timeline, and reuses the entire sample pipeline (drag, warp,
+pitch, mixdown). The alternative — a timeline clip that carries a live
+`scratchPatternId` and re-scratches on playback — was rejected as fragile
+(double-apply risk, replay cost, and no self-contained portability).
+
+### Decision
+
+- **New command `SCRATCH_SAVE_AS_SAMPLE`** bakes the recorded pattern over its
+  prepared source into a stereo WAV (`scratch::bakePatternToBuffer`, which drives
+  a private `ScratchAudioSource` through the same DSP as live replay for fidelity).
+  The bake runs off the audio thread on the peak pool; library registration and
+  broadcasts happen back on the message thread.
+- The result is an ordinary `kind="sample"`, `audioType="simple"` library item
+  (unanalysed — no BPM — but still warp/pitch-able), plus **additive** scratch
+  metadata: `scratchPatternId` (link to the canonical notation) and
+  `scratchSourcePath` (a self-contained copy of the source window, `source.wav`,
+  written beside the baked take). A generated read-only `notation.json` mirrors
+  the ValueTree notation for external inspection only.
+- Files live under `scratches/<patternId>/`; each save writes a **new immutable
+  revision** (`<name>-take-NNN.wav`) and atomically repoints the library item, so
+  a re-save never overwrites bytes a placed clip may still be reading.
+- **Invariant:** a baked scratch sample is a plain audio clip — placed clips carry
+  **no** live `scratchPatternId`, so dropping one plays the frozen audio and never
+  re-scratches. The pattern link is re-open metadata on the *library item* only.
+- **Re-open:** "Open in Scratch Editor" on a scratch-origin item prepares the
+  session from `scratchSourcePath` (not the baked WAV) and loads the linked
+  notation, so editing operates on the original performance window. Re-saving
+  updates the same library item in place.
+- **Kind reuse (backward-compat, ADR 0019):** no new `LibraryItemKind` enum value
+  is introduced; older builds that predate this feature simply ignore the extra
+  optional properties and treat the item as a normal sample.
+
+### Consequences
+
+- New backend module `commands/ScratchSaveCommands.{h,cpp}`; `ScratchAudioSource`
+  and `ScratchSessionController`/`AudioEngine` gain message-thread getters for the
+  immutable prepared source buffer.
+- New `ProjectState` library metadata (`scratchPatternId`, `scratchSourcePath`)
+  with `setLibraryItemScratchMeta` + getters, serialised in `libraryAsJson`
+  (adds `scratchOrigin`).
+- Frontend: outbound `SCRATCH_SAVE_AS_SAMPLE`; additive library + `SAMPLE_SAVED`
+  fields; the footer **Save** persists notation *and* bakes the sample; scratch
+  library tiles show a distinct vinyl-record icon.
+- Regressions: `scratch bake pattern to buffer renders audio` /
+  `... handles missing inputs`, and `ProjectState scratch library metadata
+  round-trips`.
