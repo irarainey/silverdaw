@@ -278,12 +278,6 @@ function onSkipToStart(): void {
   session.sendControl(buildSeekPayload(sid, 0))
 }
 
-function onSkipToEnd(): void {
-  const sid = session.activeSessionId.value
-  if (!sid || !transportEnabled.value) return
-  session.sendControl(buildSeekPayload(sid, session.state.value?.backingDurationUs ?? 0))
-}
-
 function onTogglePlay(): void {
   if (isPatternReplaying.value) stopReplay()
   else if (transportEnabled.value) session.togglePlayback()
@@ -391,7 +385,6 @@ function onScratchGain(event: Event): void {
             :transport-enabled="transportEnabled"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"
-            @skip-to-end="onSkipToEnd"
           />
           <div class="w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950">
             <ScratchWaveformBar
