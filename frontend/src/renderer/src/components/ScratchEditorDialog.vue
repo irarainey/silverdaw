@@ -67,10 +67,18 @@ useScratchKeyboardControls({
   sendControl: session.sendControl
 })
 
-const canSave = computed(() => derived.hasPattern.value && persistence.isDirty.value)
 const canUpdate = computed(
   () => derived.hasPattern.value && persistence.isDirty.value && scratchStore.savedPatternId !== null
 )
+
+// Footer Save persists the recorded scratch notation: it updates the existing
+// saved pattern when one is loaded, otherwise saves a new one. Only meaningful
+// once a scratch has actually been recorded.
+function onSave(): void {
+  if (!derived.hasPattern.value) return
+  if (scratchStore.savedPatternId !== null) persistence.updatePattern()
+  else persistence.savePattern()
+}
 const preparationPercent = computed(() =>
   Math.round((session.state.value?.preparationProgress ?? 0) * 100)
 )
@@ -443,33 +451,6 @@ function onScratchGain(event: Event): void {
                 </div>
               </template>
               <template v-else>
-                <!-- Record control, located with the notation section -->
-                <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5">
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                    :class="recordButtonClass"
-                    :disabled="!derived.canRecord.value && recordPhase === 'idle'"
-                    :aria-label="recordButtonAriaLabel"
-                    title="Toggle record (R)"
-                    @click="onRecordButton"
-                  >
-                    <span
-                      class="h-2 w-2 rounded-full"
-                      :class="recordPhase === 'idle' ? 'bg-red-400' : 'animate-pulse bg-white'"
-                      aria-hidden="true"
-                    />
-                    {{ recordButtonLabel }}
-                  </button>
-                  <span
-                    v-if="recordPhase === 'armed'"
-                    class="text-[11px] text-amber-400"
-                    role="status"
-                  >
-                    Armed — touch the platter to start recording
-                  </span>
-                </div>
-
                 <!-- Notation content by phase -->
                 <template v-if="derived.isRecording.value">
                   <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
@@ -509,7 +490,6 @@ function onScratchGain(event: Event): void {
                 <ScratchPersistencePanel
                   v-if="derived.hasPattern.value"
                   :persistence="persistence"
-                  :can-save="canSave"
                   :can-update="canUpdate"
                   :is-replaying="isPatternReplaying"
                   :on-draft-audition-start="startDraftReplay"
@@ -521,8 +501,8 @@ function onScratchGain(event: Event): void {
               </template>
             </div>
 
-            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 py-2">
-              <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5">
+            <div class="flex min-h-0 min-w-0 flex-col items-stretch gap-3 pb-2">
+              <div class="flex items-center gap-2 rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5">
                 <span class="text-[11px] text-zinc-500">Scratch</span>
                 <input
                   type="range"
@@ -537,7 +517,7 @@ function onScratchGain(event: Event): void {
                 >
                 <span class="w-8 text-right font-mono text-[10px] tabular-nums text-zinc-400">{{ scratchPct }}</span>
               </div>
-              <div class="flex min-h-0 flex-1 items-center justify-center">
+              <div class="flex items-center justify-center">
                 <ScratchVinylDeck
                   :platter-turns="derived.platterTurns.value"
                   :touched="derived.isTouched.value"
@@ -546,12 +526,44 @@ function onScratchGain(event: Event): void {
                   @platter-move="onPlatterMove"
                 />
               </div>
-              <ScratchCrossfader
-                :value="derived.crossfaderValue.value"
-                :reversed="derived.crossfaderReversed.value"
-                :disabled="!session.canControl.value"
-                @change="onCrossfaderChange"
-              />
+              <div class="mt-2 flex justify-center">
+                <div class="w-1/2">
+                  <ScratchCrossfader
+                    :value="derived.crossfaderValue.value"
+                    :reversed="derived.crossfaderReversed.value"
+                    :disabled="!session.canControl.value"
+                    @change="onCrossfaderChange"
+                  />
+                </div>
+              </div>
+
+              <!-- Record control (arm → first-touch start → stop), pinned to the
+                   bottom so it aligns with the foot of the notation panel. -->
+              <div class="mt-auto flex flex-col items-stretch gap-1">
+                <button
+                  type="button"
+                  class="inline-flex w-full items-center justify-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  :class="recordButtonClass"
+                  :disabled="!derived.canRecord.value && recordPhase === 'idle'"
+                  :aria-label="recordButtonAriaLabel"
+                  title="Toggle record (R)"
+                  @click="onRecordButton"
+                >
+                  <span
+                    class="h-2 w-2 rounded-full"
+                    :class="recordPhase === 'idle' ? 'bg-red-400' : 'animate-pulse bg-white'"
+                    aria-hidden="true"
+                  />
+                  {{ recordButtonLabel }}
+                </button>
+                <span
+                  v-if="recordPhase === 'armed'"
+                  class="text-center text-[11px] text-amber-400"
+                  role="status"
+                >
+                  Armed — touch the platter to start recording
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -562,7 +574,15 @@ function onScratchGain(event: Event): void {
             class="dialog-btn-cancel"
             @click="requestClose"
           >
-            Close
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="dialog-btn-primary"
+            :disabled="!derived.hasPattern.value"
+            @click="onSave"
+          >
+            Save
           </button>
         </footer>
       </div>

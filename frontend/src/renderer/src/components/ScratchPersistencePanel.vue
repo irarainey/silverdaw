@@ -4,7 +4,6 @@ import type { ScratchPatternPersistence } from '@/lib/scratch/scratchPatternPers
 
 const props = defineProps<{
   persistence: ScratchPatternPersistence
-  canSave: boolean
   canUpdate: boolean
   /** Whether a pattern is currently being replayed (auditioned). */
   isReplaying?: boolean
@@ -84,14 +83,6 @@ function cancelRename(): void {
         @click="props.onClearDraft()"
       >
         Clear
-      </button>
-      <button
-        type="button"
-        class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200 transition-colors hover:bg-zinc-700 disabled:opacity-40"
-        :disabled="!canSave"
-        @click="persistence.savePattern()"
-      >
-        Save Pattern
       </button>
       <button
         v-if="canUpdate"

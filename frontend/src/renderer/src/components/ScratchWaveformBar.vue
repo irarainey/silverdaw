@@ -298,18 +298,35 @@ function zoomIn(): void {
 }
 
 function onWheel(event: WheelEvent): void {
-  if (!event.ctrlKey) return
   const canvas = canvasEl.value
-  if (!canvas || visibleDurationMs.value <= 0) return
-  event.preventDefault()
+  const vDur = visibleDurationMs.value
+  if (!canvas || vDur <= 0) return
   const rect = canvas.getBoundingClientRect()
-  const anchorMs =
-    visibleStartMs.value
-    + ((event.clientX - rect.left) / rect.width) * visibleDurationMs.value
-  setZoomAnchored(
-    zoom.value + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
-    anchorMs
-  )
+  event.preventDefault()
+
+  // Match the clip editor / preview panel: Ctrl-wheel zooms (anchored under the
+  // pointer); a horizontal or Shift-wheel gesture pans. A plain vertical wheel
+  // does nothing, as there is no vertical axis to scroll here.
+  if (event.ctrlKey) {
+    const anchorMs =
+      visibleStartMs.value + ((event.clientX - rect.left) / rect.width) * vDur
+    setZoomAnchored(
+      zoom.value + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
+      anchorMs
+    )
+    return
+  }
+
+  const absX = Math.abs(event.deltaX)
+  const absY = Math.abs(event.deltaY)
+  const wantsPan = absX > absY || (event.shiftKey && absY > 0)
+  if (wantsPan) {
+    const dx = absX > 0 ? event.deltaX : event.deltaY
+    if (dx === 0) return
+    const msPerPx = vDur / rect.width
+    const next = scrollMs.value + dx * msPerPx
+    scrollMs.value = Math.max(0, Math.min(maxScrollMs.value, next))
+  }
 }
 
 function onScrollbarMouseDown(event: MouseEvent): void {

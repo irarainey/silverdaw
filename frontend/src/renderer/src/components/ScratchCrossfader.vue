@@ -127,7 +127,7 @@ onBeforeUnmount(() => {
     <div class="flex items-center gap-2">
       <div
         ref="trackEl"
-        class="relative h-5 flex-1 rounded-full border border-zinc-700 bg-zinc-800 outline-none"
+        class="relative h-5 flex-1 rounded-sm border border-zinc-700 bg-zinc-800 outline-none"
         :class="[
           disabled ? 'cursor-not-allowed opacity-50' : isDown ? 'cursor-grabbing' : 'cursor-grab',
           isFocused && !disabled ? 'border-sky-500' : ''
@@ -150,7 +150,7 @@ onBeforeUnmount(() => {
         @blur="isFocused = false"
       >
         <div
-          class="absolute inset-y-0 rounded-full bg-sky-600/30"
+          class="absolute inset-y-0 rounded-sm bg-sky-600/30"
           :style="openFillStyle"
         />
         <div

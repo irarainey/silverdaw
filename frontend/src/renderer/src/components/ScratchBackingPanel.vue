@@ -32,7 +32,7 @@ const prepareState = computed<{ variant: PrepareVariant; label: string }>(() => 
   const b = props.backing
   if (b.isPreparing.value) return { variant: 'busy', label: 'Preparing' }
   if (b.hasError.value) return { variant: 'error', label: 'Retry' }
-  if (b.isReady.value) return { variant: 'ready', label: `Ready · ${b.readyDurationSec.value}s` }
+  if (b.isReady.value) return { variant: 'ready', label: 'Ready' }
   return { variant: 'idle', label: 'Prepare' }
 })
 

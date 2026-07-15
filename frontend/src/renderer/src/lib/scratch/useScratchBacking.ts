@@ -170,6 +170,24 @@ export function useScratchBacking(
     sendBridge('SCRATCH_BACKING_CLEAR', buildBackingClearPayload(sid))
   }
 
+  // Any change to the preparation inputs (track selection, start anchor, or
+  // length) invalidates an already-prepared/failed bed: the monitored audio no
+  // longer matches the controls. Clearing resets the backend status to 'none'
+  // so the Prepare button returns to its initial state and a fresh Prepare is
+  // required. Guarded on ready/error so the initial selection seeding — which
+  // happens while status is still 'none' — never fires a spurious clear.
+  const preparationKey = computed(() =>
+    JSON.stringify({
+      tracks: [...audibleSelectedTrackIds.value].sort(),
+      anchor: startAnchor.value,
+      duration: durationSec.value
+    })
+  )
+
+  watch(preparationKey, () => {
+    if (isReady.value || hasError.value) clear()
+  })
+
   return {
     tracks,
     owningTrackId,
