@@ -51,8 +51,8 @@ EvalResult ScratchPatternEvaluator::evaluate(const PatternReplaySnapshot& snapsh
     result.playbackRate = velocityTurnsPerSec * kSecondsPerTurn;
 
     // Crossfader gain.
-    const double xfaderPos = interpolateCrossfader(snapshot.crossfader, timeUs);
-    result.crossfaderGain = linearV1Gain(xfaderPos, snapshot.ownerDeck);
+    result.crossfaderPosition = interpolateCrossfader(snapshot.crossfader, timeUs);
+    result.crossfaderGain = linearV1Gain(result.crossfaderPosition, snapshot.ownerDeck);
 
     return result;
 }

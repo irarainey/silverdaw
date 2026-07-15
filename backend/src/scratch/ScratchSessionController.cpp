@@ -446,6 +446,12 @@ ScratchSessionController::getSnapshot() const
         result.touched = sourceState.touched;
         result.replaying = scratchSource.isPatternReplaying();
         result.replayPositionNormalized = scratchSource.replayPositionNormalized();
+        if (result.replaying)
+        {
+            result.crossfader = session->crossfaderDisplayReversed
+                ? 1.0 - sourceState.replayCrossfaderPosition
+                : sourceState.replayCrossfaderPosition;
+        }
     }
     return result;
 }

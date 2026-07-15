@@ -22,6 +22,7 @@ class ScratchAudioSource final : public juce::AudioSource
         std::int64_t durationUs = 0;
         double platterTurns = 0.0;
         double playbackRate = 0.0;
+        double replayCrossfaderPosition = 0.0;
         bool playing = false;
         bool touched = false;
     };
@@ -106,6 +107,7 @@ class ScratchAudioSource final : public juce::AudioSource
     std::atomic<bool> sourceEndReached{false};
     std::atomic<const PatternReplaySnapshot*> replaySnapshot{nullptr};
     std::atomic<double> replayNormalized{0.0};
+    std::atomic<double> replayCrossfaderPosition{0.0};
 
     std::uint64_t appliedSeekGeneration = 0;
     std::int64_t replayOutputSamples = 0;

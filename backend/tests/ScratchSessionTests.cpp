@@ -709,6 +709,8 @@ void testScratchPatternReplayPlaysWithoutBacking()
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 2.0), sampleRate),
                 sampleRate),
             "scratch session should prepare without a backing bed");
+    engine.setScratchMidiSelectedDeck(
+        "device-replay-display", scratch::DeckSide::deck1, true);
 
     // Use an open crossfader (0.0 → full gain for deck 1) and a forward platter
     // sweep so the audition advances into the clip and is audible; the default
@@ -735,7 +737,7 @@ void testScratchPatternReplayPlaysWithoutBacking()
         crossfader.add(juce::var(c0));
         auto* c1 = new juce::DynamicObject();
         c1->setProperty("timeUs", static_cast<juce::int64>(2000000));
-        c1->setProperty("value", 0.0);
+        c1->setProperty("value", 1.0);
         crossfader.add(juce::var(c1));
         patternVar.getDynamicObject()->setProperty("crossfader", crossfader);
     }
@@ -769,6 +771,8 @@ void testScratchPatternReplayPlaysWithoutBacking()
                 "session snapshot should report an active replay");
         require(replayState->replayPositionNormalized > 0.0,
                 "session snapshot should surface the advancing replay position");
+        require(replayState->crossfader > 0.8 && replayState->crossfader < 1.0,
+                "replay crossfader should animate in the reversed display coordinate space");
     }
 
     engine.stopScratchPatternReplay();

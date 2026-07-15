@@ -43,6 +43,7 @@ struct EvalResult
     double platterTurns = 0.0;     // Absolute platter position in turns at this time.
     double playbackRate = 0.0;     // Instantaneous source playback rate (turns/sec → rate).
     bool touched = false;          // Whether platter is touched (hold) at this time.
+    double crossfaderPosition = 0.0; // Evaluated lane position, 0.0 = left and 1.0 = right.
     double crossfaderGain = 1.0;   // Gain derived from crossfader position and curve.
     bool beyondEnd = false;        // True when timeUs >= pattern duration (silence).
 };

@@ -165,6 +165,9 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         processor.setManualWeightEngaged(false);
         processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
         processor.setTargetGain(static_cast<float>(evaluation.crossfaderGain));
+        replayCrossfaderPosition.store(
+            evaluation.crossfaderPosition,
+            std::memory_order_release);
         processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
         replayOutputSamples += info.numSamples;
         outputSampleCounter.store(blockStart + info.numSamples, std::memory_order_release);
@@ -275,6 +278,7 @@ void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapsho
     waitForCallbackQuiescence();
     replayOutputSamples = 0;
     replayNormalized.store(0.0, std::memory_order_release);
+    replayCrossfaderPosition.store(0.0, std::memory_order_release);
     outputSampleCounter.store(0, std::memory_order_release);
     sourceEndReached.store(false, std::memory_order_release);
 
@@ -293,6 +297,9 @@ void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapsho
         initialPosition,
         initial.playbackRate * sourceSamplesPerOutputSample,
         static_cast<float>(initial.crossfaderGain));
+    replayCrossfaderPosition.store(
+        initial.crossfaderPosition,
+        std::memory_order_release);
     publishedSourcePosition.store(initialPosition, std::memory_order_release);
     replaySnapshot.store(snapshot, std::memory_order_release);
     active.store(wasActive, std::memory_order_release);
@@ -305,6 +312,7 @@ void ScratchAudioSource::endPatternReplay() noexcept
     waitForCallbackQuiescence();
     replayOutputSamples = 0;
     replayNormalized.store(0.0, std::memory_order_release);
+    replayCrossfaderPosition.store(0.0, std::memory_order_release);
     // Defensive teardown: replay always forces setManualWeightEngaged(false),
     // so touch/manual-rate state is inert during replay, but stale state left
     // over from before replay began must not resume and contaminate the first
@@ -342,6 +350,8 @@ ScratchAudioSource::Snapshot ScratchAudioSource::snapshot() const noexcept
     result.platterTurns = VinylScratchProcessor::turnsForSeconds(
         sourcePosition / sourceSampleRate);
     result.playbackRate = publishedSemanticRate.load(std::memory_order_acquire);
+    result.replayCrossfaderPosition =
+        replayCrossfaderPosition.load(std::memory_order_acquire);
     result.playing = motorPlaying.load(std::memory_order_acquire);
     result.touched = platterTouched.load(std::memory_order_acquire);
     return result;
