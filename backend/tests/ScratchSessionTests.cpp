@@ -5,6 +5,7 @@
 #include "scratch/ScratchSessionController.h"
 #include "scratch/ScratchAudioSource.h"
 #include "scratch/ScratchSourcePreparation.h"
+#include "ScratchTestFixtures.h"
 
 #include <cmath>
 #include <memory>
@@ -679,6 +680,75 @@ void testScratchTransportRequiresBacking()
             "transport seek should be rejected when no backing is prepared");
 }
 
+void testScratchPatternReplayPlaysWithoutBacking()
+{
+    // Draft/pattern replay ("Play Scratch") auditions the recorded notation over
+    // the loaded scratch clip. It is driven directly by the scratch source and
+    // must NOT require a prepared backing bed (unlike the transport play button),
+    // otherwise the replay button silently no-ops when no backing is loaded.
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    const auto sessionId = engine.beginScratchSession("clip-replay-no-backing");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 2.0), sampleRate),
+                sampleRate),
+            "scratch session should prepare without a backing bed");
+
+    // Use an open crossfader (0.0 → full gain for deck 1) and a forward platter
+    // sweep so the audition advances into the clip and is audible; the default
+    // fixture starts fully cut and sweeps backward off the sample start.
+    auto patternVar = makeValidPatternVar("sp-replay", "Replay");
+    {
+        juce::Array<juce::var> platter;
+        auto* p0 = new juce::DynamicObject();
+        p0->setProperty("timeUs", static_cast<juce::int64>(0));
+        p0->setProperty("turns", 0.0);
+        p0->setProperty("touched", true);
+        platter.add(juce::var(p0));
+        auto* p1 = new juce::DynamicObject();
+        p1->setProperty("timeUs", static_cast<juce::int64>(2000000));
+        p1->setProperty("turns", 0.5);
+        p1->setProperty("touched", true);
+        platter.add(juce::var(p1));
+        patternVar.getDynamicObject()->setProperty("platter", platter);
+
+        juce::Array<juce::var> crossfader;
+        auto* c0 = new juce::DynamicObject();
+        c0->setProperty("timeUs", static_cast<juce::int64>(0));
+        c0->setProperty("value", 0.0);
+        crossfader.add(juce::var(c0));
+        auto* c1 = new juce::DynamicObject();
+        c1->setProperty("timeUs", static_cast<juce::int64>(2000000));
+        c1->setProperty("value", 0.0);
+        crossfader.add(juce::var(c1));
+        patternVar.getDynamicObject()->setProperty("crossfader", crossfader);
+    }
+    const auto pattern = scratch::parsePattern(patternVar);
+    require(pattern.has_value(), "fixture pattern should parse");
+
+    require(engine.startScratchPatternReplay(*pattern),
+            "pattern replay must start with no backing prepared");
+    require(engine.isScratchPatternReplaying(),
+            "engine should report an active pattern replay");
+
+    auto& source = engine.scratchSourceForTest();
+    juce::AudioBuffer<float> output(2, blockSize);
+    float peak = 0.0F;
+    for (int i = 0; i < 16; ++i)
+    {
+        output.clear();
+        source.getNextAudioBlock({&output, 0, blockSize});
+        peak = juce::jmax(peak, output.getMagnitude(0, blockSize));
+    }
+    require(peak > 1.0e-4F,
+            "pattern replay should produce audible output from the scratch clip");
+
+    engine.stopScratchPatternReplay();
+    engine.closeScratchSession(sessionId);
+}
+
 void testScratchPlayFromReadyAndPausedStartsAndBroadcastsState()
 {
     constexpr double sampleRate = 48000.0;
@@ -996,7 +1066,7 @@ void testScratchDisarmClearsArmedState()
     require(!controller.getSnapshot()->armed, "disarm should clear the armed flag");
 }
 
-void testScratchMidiTransportControlsBackingOnly()
+void testScratchMidiRecordButtonTogglesRecording()
 {
     constexpr double sampleRate = 48000.0;
     scratch::ScratchAudioSource source;
@@ -1004,41 +1074,82 @@ void testScratchMidiTransportControlsBackingOnly()
     scratch::BackingMonitorSource backing;
     backing.prepareToPlay(512, sampleRate);
     scratch::ScratchSessionController controller(source, backing);
-    const auto sessionId = controller.beginSession("clip-midi-transport");
+    const auto sessionId = controller.beginSession("clip-midi-play-record");
     require(controller.completeSession(
-                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.05), sampleRate),
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
                 sampleRate),
-            "scratch session should prepare");
+            "scratch session should prepare for MIDI record toggling");
 
-    // Without a prepared backing the deck's Play button is inert and never spins
-    // the scratch clip.
-    require(!controller.midiTogglePlay(),
-            "MIDI play should be rejected when no backing is prepared");
-    require(!source.snapshot().playing, "inert MIDI transport must not spin the scratch clip");
-    require(controller.getSnapshot()->status == "ready",
-            "rejected MIDI transport should leave the session ready");
+    // The physical Play button mirrors the Record button: first press arms.
+    require(controller.midiRecordToggle(), "MIDI play should arm recording from ready");
+    {
+        const auto snap = controller.getSnapshot();
+        require(snap && snap->armed, "MIDI play arm should set the armed flag");
+        require(snap->status == "ready", "arming alone should not start recording");
+    }
 
-    prepareControllerBacking(controller, sessionId,
-                             static_cast<int>(sampleRate * 0.5), sampleRate);
+    // A platter touch while armed begins the take (existing arm-on-touch path).
+    require(controller.midiSetTouch("device-cue", scratch::DeckSide::deck1, true),
+            "armed platter touch should begin recording");
+    {
+        const auto snap = controller.getSnapshot();
+        require(snap && snap->status == "recording", "platter touch should start the take");
+        require(!snap->armed, "starting recording should clear the armed flag");
+    }
 
-    // Play toggles the backing bed only.
-    require(controller.midiTogglePlay(), "MIDI play should start the backing bed once ready");
-    auto snap = controller.getSnapshot();
-    require(snap && snap->status == "playing", "status should be playing after MIDI play");
-    require(backing.isPlaying(), "backing bed should run after MIDI play");
-    require(!source.snapshot().playing, "MIDI play must not spin the scratch clip");
+    // A second Play press finishes the take and publishes the pattern for the
+    // notation panel.
+    require(controller.midiRecordToggle(), "second MIDI play should stop recording");
+    {
+        const auto snap = controller.getSnapshot();
+        require(snap && snap->status == "ready", "stopping should return the session to ready");
+    }
+    require(controller.takeCompletedPattern().has_value(),
+            "MIDI play stop should yield a completed pattern");
 
-    // Advance the bed; the published snapshot tracks the live backing position.
-    renderBackingBlocks(backing, static_cast<int>(sampleRate * 0.1), 128);
-    require(backing.positionUs() > 0, "backing position should advance while playing");
-    snap = controller.getSnapshot();
-    require(snap && snap->backingPositionUs > 0, "snapshot should publish the live position");
+    // From an armed-but-not-recording state a Play press cancels the arm, matching
+    // the Record button's armed → cancel phase.
+    require(controller.midiRecordToggle(), "MIDI play should re-arm from ready");
+    require(controller.getSnapshot()->armed, "session should be armed again");
+    require(controller.midiRecordToggle(), "MIDI play should cancel the pending arm");
+    require(!controller.getSnapshot()->armed, "second play should clear the armed flag");
+}
 
-    // Play again toggles to paused.
-    require(controller.midiTogglePlay(), "MIDI play should toggle to paused");
-    snap = controller.getSnapshot();
-    require(snap && snap->status == "paused", "status should be paused after second MIDI play");
-    require(!backing.isPlaying(), "backing bed should stop after toggling to paused");
+void testScratchMidiRouterMapsPlayToRecord()
+{
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    const auto sessionId = engine.beginScratchSession("clip-router-play-record");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for router mapping test");
+
+    MidiScratchRouter router;
+    router.setEngine(engine);
+    MidiScratchDeviceState state;
+
+    // The physical Play button now arms scratch recording (Record button parity).
+    MidiControllerEvent play;
+    play.action = MidiControllerAction::playPause;
+    play.kind = MidiControllerValueKind::button;
+    play.value = 1.0;
+    router.routeImmediate("dev-router", state, 0, play, nullptr);
+    require(engine.getScratchSessionSnapshot()->armed,
+            "Play button should arm recording via the router");
+
+    // The physical Cue button (previousMarker) is no longer mapped in the scratch
+    // editor, so it must leave the armed state untouched.
+    MidiControllerEvent cue;
+    cue.action = MidiControllerAction::previousMarker;
+    cue.kind = MidiControllerValueKind::button;
+    cue.value = 1.0;
+    router.routeImmediate("dev-router", state, 0, cue, nullptr);
+    require(engine.getScratchSessionSnapshot()->armed,
+            "Cue button should no longer affect scratch recording");
+
+    engine.closeScratchSession(sessionId);
 }
 
 void testScratchBackingLoopRestartsAtEnd()
@@ -1115,13 +1226,15 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch pointer crossfader cut silences without platter touch", testScratchPointerCrossfaderCutSilencesWithoutTouch});
     tests.push_back({"scratch play from ready and paused starts and broadcasts state", testScratchPlayFromReadyAndPausedStartsAndBroadcastsState});
     tests.push_back({"scratch transport requires a prepared backing", testScratchTransportRequiresBacking});
+    tests.push_back({"scratch pattern replay plays without a backing bed", testScratchPatternReplayPlaysWithoutBacking});
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});
     tests.push_back({"scratch crossfader direction inversion with tracking", testScratchCrossfaderDirectionInversion});
     tests.push_back({"scratch arming starts recording on pointer touch", testScratchArmingStartsRecordingOnPointerTouch});
     tests.push_back({"scratch arming starts recording on MIDI movement", testScratchArmingStartsRecordingOnMidiMovement});
     tests.push_back({"scratch disarm clears armed state", testScratchDisarmClearsArmedState});
-    tests.push_back({"scratch MIDI transport controls backing only", testScratchMidiTransportControlsBackingOnly});
+    tests.push_back({"scratch MIDI play button toggles recording", testScratchMidiRecordButtonTogglesRecording});
+    tests.push_back({"scratch MIDI router maps play to record", testScratchMidiRouterMapsPlayToRecord});
     tests.push_back({"scratch backing loop restarts the bed at its end", testScratchBackingLoopRestartsAtEnd});
 }
 

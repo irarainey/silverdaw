@@ -83,10 +83,11 @@ class ScratchSessionController
     bool controlSession(const SessionControlPayload& control);
 
     // MIDI entry points — may be called from MIDI thread.
-    // Backing-only transport driven by the deck's physical Play button. The
-    // scratch clip is never MIDI-driven; this no-ops unless a backing bed is
-    // prepared (ready). Returns true only when it acts (so the caller broadcasts).
-    bool midiTogglePlay();
+    // Record control driven by the deck's physical Play button — mirrors the
+    // on-screen Record button: idle → arm, armed → cancel, recording → stop. The
+    // armed take still starts on first platter touch and its pattern is published
+    // on stop. Returns true only when it acts (so the caller broadcasts).
+    bool midiRecordToggle();
     bool midiSetTouch(const juce::String& deviceIdentifier, DeckSide deck, bool touched);
     bool midiMovePlatter(const juce::String& deviceIdentifier, DeckSide deck,
                          double deltaTurns, double timestampMs);
@@ -162,6 +163,10 @@ class ScratchSessionController
     // Called with the lock held on an active source when a gesture arrives while
     // armed; performs the same start sequence as recordStart and clears arming.
     bool beginArmedRecordingLocked();
+    // Finalises the in-progress take (mandatory final keyframes, stop playback,
+    // return to ready) — shared by the on-screen recordStop and the MIDI Cue
+    // toggle. Caller holds sessionMutex and has verified status == "recording".
+    bool stopRecordingLocked();
     void applyPlatterMove(double deltaTurns, double timestampMs);
     bool reconcileSourceEndLocked();
     // Backing bed helpers; callers hold sessionMutex.

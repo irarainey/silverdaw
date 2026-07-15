@@ -47,15 +47,18 @@ void MidiScratchRouter::routeImmediate(const juce::String& identifier,
         return;
     bool applied = false;
     bool broadcastImmediately = true;
-    // The deck's physical Play button drives the backing bed only — never the
-    // scratch clip. The engine call no-ops unless a scratch session is active with
-    // a prepared backing, so when the editor is closed (no session) the event falls
-    // through to the timeline's own play handling on the frontend.
+    // The deck's physical Play button drives scratch recording (arm → stop),
+    // mirroring the on-screen Record button — pressing Play as the take begins
+    // reads more naturally than the Cue button. The backing bed is not
+    // MIDI-driven; it is controlled by the on-screen Play button only. The engine
+    // call no-ops unless a scratch session is active, so when the editor is closed
+    // (no session) the event falls through to the timeline's own play handling on
+    // the frontend.
     if (event.action == MidiControllerAction::playPause
         && event.kind == MidiControllerValueKind::button
         && event.value > 0.5)
     {
-        applied = scratchEngine->scratchMidiTogglePlay();
+        applied = scratchEngine->scratchMidiRecordToggle();
     }
     else if (event.action == MidiControllerAction::jogTouch
              && event.kind == MidiControllerValueKind::button

@@ -2107,16 +2107,18 @@ m:ss`, position / prepared length) sits under the transport and is **always
 shown** (dimmed until a bed is ready) so it never reflows the panel; it is driven
 by the `backingPositionUs` snapshot field on the scratch session state.
 
-**MIDI deck Play while the editor is open** (ADR 0021, Amendment 10). The
-physical deck **Play** button toggles the prepared backing bed only and is
-ready-gated — it never spins the scratch clip, and a press is rejected when no bed
-is prepared or a take is recording. It is handled in the backend router
-(`MidiScratchRouter::routeImmediate` → `scratchMidiTogglePlay()`), gated on
+**MIDI deck Play while the editor is open** (ADR 0021, Amendment 16). The
+physical deck **Play** button drives scratch recording, mirroring the on-screen
+**Record** button: idle → arm, armed → cancel, recording → stop. An armed take
+still starts on the first platter touch, and the completed pattern is published to
+the notation panel on stop. The backing bed is **not** MIDI-driven — it is
+controlled by the on-screen **Play** button only. The physical **Cue** button is
+no longer mapped in the scratch editor. Recording is handled in the backend router
+(`MidiScratchRouter::routeImmediate` → `scratchMidiRecordToggle()`), gated on
 scratch-session existence: with the editor **closed** the engine method returns
 `false` and the event falls through to the frontend's timeline handling; with the
-editor **open** the frontend is interaction-blocked, so the also-broadcast event
-is ignored (no double action). The physical **Cue** button is not bound to the
-backing bed.
+editor **open** the frontend is interaction-blocked, so the also-broadcast event is
+ignored (no double action).
 
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The
@@ -2188,7 +2190,10 @@ duration and crop range on an integer µs timebase, the start source offset,
 platter and crossfader keyframes, the owner deck side, the `linear-v1` curve id,
 and optional source provenance. The persistence panel saves, updates, renames,
 deletes, auditions, and applies patterns to a clip (a clip references a saved
-pattern non-destructively); dirty state is tracked against a canonical baseline.
+pattern non-destructively); it also replays the current unsaved draft ("Play
+Scratch") and discards it ("Clear", which resets the notation panel to its empty
+state without touching saved patterns). Dirty state is tracked against a canonical
+baseline.
 Live audition, timeline playback, mixdown, and rendering a new library sample all
 use the same closed-form trajectory evaluator, so live and offline replay of a
 stored pattern are identical regardless of block size or seek history. An

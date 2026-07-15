@@ -104,6 +104,14 @@ function startDraftReplay(): void {
   if (scratchStore.completedPattern) startReplay(scratchStore.completedPattern)
 }
 
+// Discard the freshly recorded (unsaved) draft so the notation panel returns to
+// its empty state, ready for a new take. Saved patterns are untouched.
+function clearDraft(): void {
+  stopReplay()
+  persistence.reset()
+  scratchStore.clearRecording()
+}
+
 function stopReplay(): void {
   clearReplayTimer()
   if (isPatternReplaying.value) project.stopPatternReplay()
@@ -473,7 +481,9 @@ function onScratchGain(event: Event): void {
                   </div>
                 </template>
                 <template v-else-if="derived.recordingStatus.value === 'completed'">
-                  <ScratchNotationEditor :session-id="session.activeSessionId.value" />
+                  <div class="flex min-h-0 flex-1 flex-col overflow-auto">
+                    <ScratchNotationEditor :session-id="session.activeSessionId.value" />
+                  </div>
                 </template>
                 <template v-else>
                   <div class="flex flex-1 items-center justify-center rounded border border-zinc-800 bg-zinc-950/40">
@@ -497,6 +507,7 @@ function onScratchGain(event: Event): void {
                   :on-draft-audition-start="startDraftReplay"
                   :on-audition-start="startReplay"
                   :on-audition-stop="stopReplay"
+                  :on-clear-draft="clearDraft"
                   @confirm-delete="confirmDelete"
                 />
               </template>

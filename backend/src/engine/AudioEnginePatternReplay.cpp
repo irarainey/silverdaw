@@ -29,16 +29,9 @@ bool AudioEngine::startScratchPatternReplay(const scratch::Pattern& pattern)
         return false;
     }
 
-    const auto session = scratchController.getSnapshot();
-    if (!session)
-        return false;
-
-    scratch::SessionControlPayload play;
-    play.sessionId = session->sessionId;
-    play.action = scratch::ControlAction::play;
-    if (!scratchController.controlSession(play))
-        return false;
-
+    // Pattern replay is driven directly by the scratch source over the loaded
+    // scratch clip; it must NOT touch the backing/transport (that would clamp
+    // the backing playback). See ADR 0021.
     scratchSource.endPatternReplay();
     patternReplaySnapshot = std::make_shared<const scratch::PatternReplaySnapshot>(std::move(snapshot));
     scratchSource.beginPatternReplay(patternReplaySnapshot.get());
@@ -55,14 +48,7 @@ void AudioEngine::stopScratchPatternReplay()
     scratchSource.endPatternReplay();
     patternReplaySnapshot = nullptr;
     patternReplayPositionUs.store(0, std::memory_order_release);
-
-    if (const auto session = scratchController.getSnapshot())
-    {
-        scratch::SessionControlPayload pause;
-        pause.sessionId = session->sessionId;
-        pause.action = scratch::ControlAction::pause;
-        scratchController.controlSession(pause);
-    }
+    // Replay never started the backing/transport, so nothing to pause here.
     silverdaw::log::info("scratch-replay", "pattern replay stopped");
 }
 

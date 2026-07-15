@@ -16,6 +16,8 @@ const props = defineProps<{
   onDraftAuditionStart?: () => void
   /** Callback when user requests audition stop. */
   onAuditionStop?: () => void
+  /** Callback when user requests discarding the current unsaved draft. */
+  onClearDraft?: () => void
   /** Callback when user requests applying pattern to the target clip. */
   onApplyToClip?: (patternId: string) => void
   /** Callback when user requests removing pattern from the target clip. */
@@ -73,6 +75,15 @@ function cancelRename(): void {
         @click="props.isReplaying ? props.onAuditionStop?.() : props.onDraftAuditionStart()"
       >
         {{ props.isReplaying ? 'Stop Scratch' : 'Play Scratch' }}
+      </button>
+      <button
+        v-if="props.onClearDraft"
+        type="button"
+        class="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 transition-colors hover:bg-red-900 hover:text-red-200"
+        title="Discard the recorded scratch"
+        @click="props.onClearDraft()"
+      >
+        Clear
       </button>
       <button
         type="button"

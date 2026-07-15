@@ -330,23 +330,7 @@ bool ScratchSessionController::controlSession(const SessionControlPayload& contr
         {
             if (s.status != "recording")
                 return false;
-            // Update recording owner to actual claimed deck before stop.
-            if (s.ownerDeck.has_value())
-                recorder.updateOwnerDeck(*s.ownerDeck);
-            // Supply the authoritative current platter/crossfader snapshot so
-            // the mandatory final keyframes reflect the true source state at
-            // the moment of stop, not merely the last recorded sample.
-            const auto snap = scratchSource.snapshot();
-            ScratchActionRecorder::FinalSnapshot finalState;
-            finalState.platterTurns = snap.platterTurns;
-            finalState.touched = snap.touched;
-            finalState.crossfader = s.crossfader;
-            recorder.stop(finalState);
-            scratchSource.setPlaying(false);
-            stopBackingLocked();
-            s.status = "ready";
-            s.armed = false;
-            return true;
+            return stopRecordingLocked();
         }
     }
     return false;
@@ -385,32 +369,46 @@ bool ScratchSessionController::beginArmedRecordingLocked()
 
 // ── MIDI entry points ─────────────────────────────────────────────────────────
 
-bool ScratchSessionController::midiTogglePlay()
+bool ScratchSessionController::midiRecordToggle()
 {
     std::lock_guard<std::mutex> lock(sessionMutex);
     if (!session || !scratchSource.isActive())
         return false;
     auto& s = *session;
-    // Recording owns transport; a physical Play press must not disturb it.
-    if (s.status == "recording")
-        return false;
     reconcileSourceEndLocked();
-    // Honour backing readiness: with no prepared bed there is nothing to run and
-    // the deck cannot know whether it was prepared, so the button stays inert.
-    if (!backingReadyLocked())
-        return false;
-    if (s.status == "playing")
+    // Mirror the on-screen Record button's phases from the physical Cue button:
+    // recording → stop (publishes the take), armed → cancel, otherwise arm. The
+    // armed take still begins on first platter touch via beginArmedRecordingLocked.
+    if (s.status == "recording")
+        return stopRecordingLocked();
+    if (s.armed)
     {
-        stopBackingLocked();
-        s.status = "paused";
+        s.armed = false;
+        return true;
     }
-    else
-    {
-        if (backingSource.isAtForwardBoundary())
-            backingSource.seekUs(0);
-        startBackingLocked();
-        s.status = "playing";
-    }
+    s.armed = true;
+    return true;
+}
+
+bool ScratchSessionController::stopRecordingLocked()
+{
+    auto& s = *session;
+    // Update recording owner to actual claimed deck before stop.
+    if (s.ownerDeck.has_value())
+        recorder.updateOwnerDeck(*s.ownerDeck);
+    // Supply the authoritative current platter/crossfader snapshot so the
+    // mandatory final keyframes reflect the true source state at the moment of
+    // stop, not merely the last recorded sample.
+    const auto snap = scratchSource.snapshot();
+    ScratchActionRecorder::FinalSnapshot finalState;
+    finalState.platterTurns = snap.platterTurns;
+    finalState.touched = snap.touched;
+    finalState.crossfader = s.crossfader;
+    recorder.stop(finalState);
+    scratchSource.setPlaying(false);
+    stopBackingLocked();
+    s.status = "ready";
+    s.armed = false;
     return true;
 }
 

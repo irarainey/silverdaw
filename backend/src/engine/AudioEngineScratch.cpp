@@ -62,9 +62,9 @@ bool AudioEngine::controlScratchSession(const scratch::SessionControlPayload& co
     return scratchController.controlSession(control);
 }
 
-bool AudioEngine::scratchMidiTogglePlay()
+bool AudioEngine::scratchMidiRecordToggle()
 {
-    return scratchController.midiTogglePlay();
+    return scratchController.midiRecordToggle();
 }
 
 bool AudioEngine::scratchMidiSetTouch(const juce::String& deviceIdentifier,

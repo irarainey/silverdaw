@@ -997,3 +997,128 @@ engine/controller methods keeps the MIDI router free of dead dispatch branches.
 - Supersedes the Cue-to-start portion of Amendment 10; the Play toggle, ready
   gating, and backing timing readout from Amendment 10 are unchanged.
 - The timeline Cue (`previousMarker`) behaviour is unaffected in every context.
+
+## Amendment 14 — Physical Cue button drives scratch recording
+
+- **Date:** 2026-07-14 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 13 unbound the physical **Cue** button from the backing bed, leaving it
+with no role in the scratch editor. The natural hardware gesture for capturing a
+scratch is to arm from the deck, perform the scratch on the platter, then end the
+take — all without reaching for the mouse. The on-screen **Record** button already
+implements that arm → record → stop state machine, so the Cue button should
+mirror it.
+
+### Decision
+
+- **The physical Cue button drives scratch recording, mirroring the on-screen
+  Record button.** Pressing Cue cycles the same phases: **idle → arm**, **armed →
+  cancel**, **recording → stop**. Arming does not itself start a take; the armed
+  take begins on the **first platter touch** (the existing arm-on-touch path), so
+  the performer controls exactly when capture starts by touching the platter, and
+  releasing the platter plays the scratch as normal. A second Cue press **stops**
+  the take and publishes the completed pattern to the notation panel for editing
+  and replay.
+- **Handled in the backend MIDI router, gated on session existence.**
+  `MidiScratchRouter::routeImmediate` routes the physical Cue (`previousMarker`) →
+  `scratchMidiRecordToggle()`, which mirrors the Record button's three phases on
+  the controller. As with the Play button, the engine method returns `false` when
+  no scratch session is active, so with the editor **closed** the event falls
+  through to the frontend's timeline `previousMarker` handling unchanged; with the
+  editor **open** the frontend is interaction-blocked, so the also-broadcast event
+  is ignored (no double action).
+- **The recorded pattern reaches the notation panel via the existing broadcast.**
+  `broadcastScratchSessionState` (already invoked by the router after an applied
+  action) flushes any ready pattern through `broadcastScratchPatternIfReady`, so a
+  MIDI-triggered stop delivers the take identically to the on-screen Record
+  button.
+
+### Why
+
+Mapping Cue to the Record toggle gives the hardware deck a complete
+arm-perform-stop capture loop that matches how a scratch is physically performed,
+without a second dispatch path: the router reuses the same open ⟺ frontend-blocked
+invariant as the Play button, and the controller's record state machine is factored
+into a shared `stopRecordingLocked()` used by both the on-screen `recordStop` and
+the MIDI toggle, so both paths finalise a take identically.
+
+### Consequences
+
+- Supersedes Amendment 13's "Cue is unbound" decision: the Cue button now has an
+  editor-open role again (recording), while the timeline Cue (`previousMarker`)
+  behaviour with the editor closed remains unaffected.
+- New engine method `scratchMidiRecordToggle()` and controller method
+  `midiRecordToggle()`; the `recordStop` logic is shared via `stopRecordingLocked()`.
+- The on-screen Record button and the physical Cue button stay in lock-step because
+  they drive the same backend state machine.
+
+## Amendment 15 — Draft/pattern replay is transport-independent
+
+Auditioning a recorded scratch (the "Play Scratch" button, `SCRATCH_PATTERN_REPLAY_START`)
+must reproduce the notation over the loaded scratch clip only — it must not touch
+the backing bed or the session transport.
+
+### Decision
+
+- `AudioEngine::startScratchPatternReplay` no longer issues a `play` control
+  action, and `stopScratchPatternReplay` no longer issues a `pause`. Replay is
+  driven entirely by `ScratchAudioSource::beginPatternReplay`/`endPatternReplay`.
+  This fixes two defects: (a) replay was silently rejected whenever no backing
+  bed was prepared (the transport `play` requires a ready backing), and (b)
+  pressing Play Scratch disturbed ("clamped") the backing playback.
+
+### Consequences
+
+- Replay works with or without a backing bed and leaves the backing/transport
+  untouched.
+- Backend regression test `scratch pattern replay plays without a backing bed`
+  guards the transport-independence.
+
+## Amendment 16 — Physical Play button drives scratch recording; Cue unbound
+
+- **Date:** 2026-07-15 · **Status:** Accepted · **Owner:** @irarainey ·
+  **Importance:** `IMPORTANT`
+
+### Context
+
+Amendment 14 mapped the physical **Cue** button to the scratch record toggle while
+the physical **Play** button toggled the backing bed (Amendment 13/14). In use,
+pressing **Play** as the take begins reads more naturally than reaching for Cue —
+the gesture "play the scratch" matches the Play button. The backing bed is
+auxiliary and optional, and does not warrant a dedicated hardware control for now.
+
+### Decision
+
+- **The physical Play button drives scratch recording, mirroring the on-screen
+  Record button** (idle → arm, armed → cancel, recording → stop). The armed take
+  still begins on the **first platter touch**, and a second Play press stops the
+  take and publishes the pattern to the notation panel. `MidiScratchRouter::
+  routeImmediate` routes the physical Play (`playPause`) →
+  `scratchMidiRecordToggle()`.
+- **The physical Cue button (`previousMarker`) is no longer mapped in the scratch
+  editor.** With the editor open it does nothing; with the editor closed its
+  timeline behaviour is unchanged.
+- **The backing bed is no longer MIDI-driven.** It is controlled by the on-screen
+  **Play** button only. The now-unused `AudioEngine::scratchMidiTogglePlay()` /
+  `ScratchSessionController::midiTogglePlay()` methods (and their test) are
+  removed.
+
+### Why
+
+Play-as-record gives the deck a single, natural capture control that matches the
+performer's mental model, and removes an under-used MIDI transport path. The
+backing bed stays available via the on-screen Play button, keeping the auxiliary
+feature without a hardware binding.
+
+### Consequences
+
+- Supersedes Amendment 14's "Cue drives recording" and Amendment 13/14's "Play
+  toggles the backing bed" decisions for the editor-open case.
+- Router change only; the on-screen Play (backing) and Record (recording) buttons
+  are unchanged, as is the timeline mapping with the editor closed.
+- Backend regression test `scratch MIDI router maps play to record` guards the new
+  mapping (Play arms recording; Cue is inert). The removed `midiTogglePlay` path
+  drops its `scratch MIDI transport controls backing only` test.
