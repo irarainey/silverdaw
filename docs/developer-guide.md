@@ -2189,11 +2189,9 @@ never change it. When a **MIDI** device owns the session
 **direction** preference (the display-only `crossfaderReversed` flag, `true` =
 `rightToLeft`): `leftToRight` fills blue from the left as the knob moves right
 (blue at the right extreme), and `rightToLeft` mirrors it (blue at the left
-extreme). Under **keyboard/pointer** operation the MIDI direction preference has no
-effect; the bar instead colours by **open/closed** — the scratch deck is audible
-at value 0, so blue stays on the open (value → 0) edge and the bar is black when
-closed (value → 1), reading the same whether nudged by pointer, arrow keys or the
-keyboard cut. The `L`/`R` label on the blue extreme is accented, and changing
+extreme). The session's display direction is retained when platter ownership is
+released, so touching or releasing the platter never recolours an unchanged
+fader. The `L`/`R` label on the blue extreme is accented, and changing
 colouring never moves the knob. When the fader is focused, `←`/`→` step it (0.02,
 or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A momentary **keyboard
 cut** works globally within the editor: holding the configured key opens the fader

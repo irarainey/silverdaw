@@ -144,12 +144,10 @@ device's saved crossfader-direction preference is applied before the gain
 calculation; the first physical movement uses catch-up behaviour so an
 unknown hardware position cannot jump the gain.
 
-The on-screen bar's colour is a pure function of position and control
-source, never of deck ownership or platter touch: while a MIDI device owns
-the session it mirrors that device's direction preference; under
-keyboard/pointer control it colours by open/closed instead, since the
-direction preference is a physical-controller concept the keyboard path does
-not have.
+The on-screen bar's colour is a pure function of position and the session's
+display direction, never of deck ownership or platter touch. The direction is
+retained after platter ownership is released, so an unchanged fader never
+recolours when the platter is touched or released.
 
 A momentary keyboard crossfader cut is available inside the editor: holding a
 single configurable key (`KeyZ` default, `KeyM` alternate, chosen in
