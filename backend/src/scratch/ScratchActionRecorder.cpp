@@ -188,11 +188,16 @@ void ScratchActionRecorder::abort()
 
 void ScratchActionRecorder::recordPlatter(double absoluteTurns, bool touched)
 {
+    recordPlatterAt(elapsedUs(), absoluteTurns, touched);
+}
+
+void ScratchActionRecorder::recordPlatterAt(
+    std::int64_t timeUs, double absoluteTurns, bool touched)
+{
     std::lock_guard<std::mutex> lock(mutex);
     if (currentState.load(std::memory_order_relaxed) != State::recording)
         return;
 
-    const auto timeUs = elapsedUs();
     if (timeUs <= 0 && !platterLane.empty())
         return;
 

@@ -926,13 +926,14 @@ void testScratchMidiReleaseAnchorsPhysicalTurnPosition()
     require(engine.releaseScratchMidiOwner("dev-release-anchor", scratch::DeckSide::deck1),
             "MIDI release should apply the physical endpoint");
     renderScratchBlocks(engine.scratchSourceForTest(), 512, 512);
-    requireNear(engine.scratchSourceForTest().snapshot().platterTurns, 0.5, 0.01,
+    constexpr double forwardTurns = 0.5;
+    requireNear(engine.scratchSourceForTest().snapshot().platterTurns, forwardTurns, 0.01,
                 "MIDI release should align to the forward physical endpoint");
 
     require(engine.scratchMidiSetTouch("dev-release-anchor", scratch::DeckSide::deck1, true),
             "a new MIDI touch should start a new physical gesture");
     require(engine.scratchMidiMovePlatter(
-                "dev-release-anchor", scratch::DeckSide::deck1, -0.5, 1016.0),
+                "dev-release-anchor", scratch::DeckSide::deck1, -forwardTurns, 1016.0),
             "reverse MIDI movement should update the physical endpoint");
     require(engine.releaseScratchMidiOwner("dev-release-anchor", scratch::DeckSide::deck1),
             "reverse MIDI release should apply the physical endpoint");

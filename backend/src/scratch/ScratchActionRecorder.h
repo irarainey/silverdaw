@@ -62,6 +62,7 @@ class ScratchActionRecorder
 
     // Record a platter position sample. Thread-safe (control threads only).
     void recordPlatter(double absoluteTurns, bool touched);
+    void recordPlatterAt(std::int64_t timeUs, double absoluteTurns, bool touched);
 
     // Record a crossfader value. Thread-safe (control threads only).
     void recordCrossfader(double value);

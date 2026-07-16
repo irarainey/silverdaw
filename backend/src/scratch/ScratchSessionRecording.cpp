@@ -29,6 +29,7 @@ bool ScratchSessionController::beginArmedRecordingLocked()
     cfg.initialTouched = snap.touched;
     if (!recorder.start(cfg))
         return false;
+    scratchSource.beginRenderedPlatterCapture();
     scratchSource.setPlaying(true);
     startBackingLocked();
     s.status = "recording";
@@ -74,6 +75,13 @@ bool ScratchSessionController::stopRecordingLocked()
     // Supply the authoritative current platter/crossfader snapshot so the
     // mandatory final keyframes reflect the true source state at the moment of
     // stop, not merely the last recorded sample.
+    scratchSource.endRenderedPlatterCapture();
+    ScratchAudioSource::RenderedPlatterSample rendered;
+    while (scratchSource.popRenderedPlatterSample(rendered))
+    {
+        recorder.recordPlatterAt(
+            rendered.timeUs, rendered.turns, rendered.touched);
+    }
     const auto snap = scratchSource.snapshot();
     ScratchActionRecorder::FinalSnapshot finalState;
     finalState.platterTurns = snap.platterTurns;

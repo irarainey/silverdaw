@@ -209,6 +209,20 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     const auto nextOutputSample = blockStart + info.numSamples;
     outputSampleCounter.store(nextOutputSample, std::memory_order_release);
     publishedSourcePosition.store(sourcePosition, std::memory_order_release);
+    if (renderedCaptureActive.load(std::memory_order_relaxed))
+    {
+        const auto write = renderedCaptureWrite.load(std::memory_order_relaxed);
+        const auto next = (write + 1) % kRenderedCaptureCapacity;
+        if (next != renderedCaptureRead.load(std::memory_order_acquire))
+        {
+            const auto start = renderedCaptureStartSample.load(std::memory_order_relaxed);
+            renderedCapture[write] = {
+                (nextOutputSample - start) * 1000000 / static_cast<std::int64_t>(outputSampleRate),
+                VinylScratchProcessor::turnsForSeconds(sourcePosition / sourceSampleRate),
+                touched};
+            renderedCaptureWrite.store(next, std::memory_order_release);
+        }
+    }
     const auto semanticRateOut =
         sourceSamplesPerOutputSample > 0.0
             ? (reachedForwardEnd ? 0.0
@@ -247,6 +261,32 @@ void ScratchAudioSource::setManualRate(double semanticRate, double holdSeconds) 
     manualRateUntilOutputSample.store(
         outputSampleCounter.load(std::memory_order_acquire) + holdSamples,
         std::memory_order_release);
+}
+
+void ScratchAudioSource::beginRenderedPlatterCapture() noexcept
+{
+    renderedCaptureActive.store(false, std::memory_order_release);
+    renderedCaptureRead.store(0, std::memory_order_release);
+    renderedCaptureWrite.store(0, std::memory_order_release);
+    renderedCaptureStartSample.store(
+        outputSampleCounter.load(std::memory_order_acquire), std::memory_order_release);
+    renderedCaptureActive.store(true, std::memory_order_release);
+}
+
+void ScratchAudioSource::endRenderedPlatterCapture() noexcept
+{
+    renderedCaptureActive.store(false, std::memory_order_release);
+}
+
+bool ScratchAudioSource::popRenderedPlatterSample(RenderedPlatterSample& sample) noexcept
+{
+    const auto read = renderedCaptureRead.load(std::memory_order_relaxed);
+    if (read == renderedCaptureWrite.load(std::memory_order_acquire))
+        return false;
+    sample = renderedCapture[read];
+    renderedCaptureRead.store((read + 1) % kRenderedCaptureCapacity,
+                              std::memory_order_release);
+    return true;
 }
 
 void ScratchAudioSource::setGain(float gain) noexcept

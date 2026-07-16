@@ -28,11 +28,6 @@ bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier
         session->midiPlatterTargetActive = true;
         if (session->armed)
             beginArmedRecordingLocked();
-        if (recorder.state() == ScratchActionRecorder::State::recording)
-        {
-            const auto snap = scratchSource.snapshot();
-            recorder.recordPlatter(snap.platterTurns, true);
-        }
         return true;
     }
     // Release path.
@@ -58,11 +53,6 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
     session->midiPlatterTargetTurns += deltaTurns;
     applyPlatterMove(deltaTurns, timestampMs);
 
-    if (recorder.state() == ScratchActionRecorder::State::recording)
-    {
-        const auto snap = scratchSource.snapshot();
-        recorder.recordPlatter(snap.platterTurns, snap.touched);
-    }
     return true;
 }
 
@@ -159,11 +149,6 @@ bool ScratchSessionController::releaseMidiOwner(
             VinylScratchProcessor::secondsForTurns(session->midiPlatterTargetTurns)
             * 1000000.0));
         session->midiPlatterTargetActive = false;
-    }
-    if (recorder.state() == ScratchActionRecorder::State::recording)
-    {
-        const auto snap = scratchSource.snapshot();
-        recorder.recordPlatter(snap.platterTurns, false);
     }
     session->ownerDeck.reset();
     session->ownerDeviceIdentifier.reset();

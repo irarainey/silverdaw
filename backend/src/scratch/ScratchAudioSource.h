@@ -5,6 +5,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <memory>
 
@@ -51,6 +52,10 @@ class ScratchAudioSource final : public juce::AudioSource
     void setPlaying(bool shouldPlay) noexcept;
     void setTouched(bool isTouched) noexcept;
     void setManualRate(double semanticRate, double holdSeconds = 0.05) noexcept;
+    struct RenderedPlatterSample { std::int64_t timeUs; double turns; bool touched; };
+    void beginRenderedPlatterCapture() noexcept;
+    void endRenderedPlatterCapture() noexcept;
+    bool popRenderedPlatterSample(RenderedPlatterSample& sample) noexcept;
     void setGain(float gain) noexcept;
     void seekUs(std::int64_t positionUs) noexcept;
     void beginPatternReplay(const PatternReplaySnapshot* snapshot) noexcept;
@@ -100,6 +105,12 @@ class ScratchAudioSource final : public juce::AudioSource
     std::atomic<bool> platterTouched{false};
     std::atomic<double> manualSemanticRate{0.0};
     std::atomic<std::int64_t> manualRateUntilOutputSample{0};
+    static constexpr std::size_t kRenderedCaptureCapacity = 16384;
+    std::array<RenderedPlatterSample, kRenderedCaptureCapacity> renderedCapture{};
+    std::atomic<std::size_t> renderedCaptureWrite{0};
+    std::atomic<std::size_t> renderedCaptureRead{0};
+    std::atomic<bool> renderedCaptureActive{false};
+    std::atomic<std::int64_t> renderedCaptureStartSample{0};
     std::atomic<float> targetGain{1.0F};
     std::atomic<std::int64_t> outputSampleCounter{0};
     std::atomic<std::int64_t> pendingSeekSourceSample{0};
