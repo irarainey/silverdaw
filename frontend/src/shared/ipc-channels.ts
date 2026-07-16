@@ -62,6 +62,8 @@ export const IPC = {
     setBrake: 'prefs:setBrake',
     getBackspin: 'prefs:getBackspin',
     setBackspin: 'prefs:setBackspin',
+    getScratchRealism: 'prefs:getScratchRealism',
+    setScratchRealism: 'prefs:setScratchRealism',
     getScratch: 'prefs:getScratch',
     setScratch: 'prefs:setScratch',
     getStems: 'prefs:getStems',

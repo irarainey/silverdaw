@@ -57,6 +57,7 @@ const {
   brakeCurve,
   backspinDuration,
   backspinIntensity,
+  scratchRealismLevel,
   scratchCrossfaderCutKey,
   defaultProjectSampleRate,
   defaultProjectDir,
@@ -235,6 +236,7 @@ function onMidiInputEnabled(identifier: string, enabled: boolean): void {
               v-model:brake-curve="brakeCurve"
               v-model:backspin-duration="backspinDuration"
               v-model:backspin-intensity="backspinIntensity"
+              v-model:scratch-realism-level="scratchRealismLevel"
               v-model:scratch-crossfader-cut-key="scratchCrossfaderCutKey"
             />
             <PreferencesProjectTab

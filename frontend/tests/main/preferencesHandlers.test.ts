@@ -73,6 +73,18 @@ describe('preferences IPC: setStems', () => {
     expect(flush).not.toHaveBeenCalled()
   })
 
+  it('persists valid scratch realism and rejects an invalid level', () => {
+    const setRealism = handlers.get('prefs:setScratchRealism')
+    expect(store.scratchRealism.level).toBe('medium')
+    setRealism?.({}, { level: 'high' })
+    expect(store.scratchRealism.level).toBe('high')
+    expect(flush).toHaveBeenCalledTimes(1)
+
+    setRealism?.({}, { level: 'maximum' })
+    expect(store.scratchRealism.level).toBe('high')
+    expect(flush).toHaveBeenCalledTimes(1)
+  })
+
   it('still persists useGpu and quality changes', () => {
     setStems({ useGpu: true, quality: 'best' })
     expect(store.stems.useGpu).toBe(true)

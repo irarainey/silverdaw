@@ -64,6 +64,7 @@ void ScratchAudioSource::activate(
     settings.maxAbsRate = juce::jmin(32.0, 8.0 * sourceSamplesPerOutputSample);
     processor.prepare(outputSampleRate, settings);
     processor.reset(0.0, 0.0, 1.0F);
+    realismProcessor.prepare(outputSampleRate);
     appliedSeekGeneration = seekGeneration.load(std::memory_order_acquire);
     // 4. Re-enable.
     active.store(audio != nullptr && audio->getNumSamples() > 0,
@@ -98,6 +99,7 @@ void ScratchAudioSource::prepareToPlay(int samplesPerBlockExpected, double newOu
         static_cast<double>(pendingSeekSourceSample.load(std::memory_order_acquire)),
         0.0,
         targetGain.load(std::memory_order_acquire));
+    realismProcessor.prepare(outputSampleRate);
     appliedSeekGeneration = seekGeneration.load(std::memory_order_acquire);
     sourceEndReached.store(false, std::memory_order_release);
 }
@@ -198,6 +200,14 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
     processor.setTargetRate(semanticRate * sourceSamplesPerOutputSample);
     processor.setTargetGain(targetGain.load(std::memory_order_acquire));
     processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
+    const auto renderedSemanticRate =
+        sourceSamplesPerOutputSample > 0.0
+            ? processor.getCurrentRate() / sourceSamplesPerOutputSample
+            : 0.0;
+    realismProcessor.process(
+        *info.buffer, info.startSample, info.numSamples, renderedSemanticRate,
+        processor.getCurrentGain(), touched,
+        realismLevel.load(std::memory_order_acquire));
 
     const auto sourceSamples = audio->getNumSamples();
     const auto lastSourceSample = juce::jmax(0, sourceSamples - 1);
@@ -261,6 +271,11 @@ void ScratchAudioSource::setManualRate(double semanticRate, double holdSeconds) 
     manualRateUntilOutputSample.store(
         outputSampleCounter.load(std::memory_order_acquire) + holdSamples,
         std::memory_order_release);
+}
+
+void ScratchAudioSource::setRealismLevel(ScratchRealismLevel level) noexcept
+{
+    realismLevel.store(level, std::memory_order_release);
 }
 
 void ScratchAudioSource::beginRenderedPlatterCapture() noexcept

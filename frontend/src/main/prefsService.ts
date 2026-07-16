@@ -18,6 +18,7 @@ import {
   sanitiseStemModelDir,
   sanitiseBrakePrefs,
   sanitiseBackspinPrefs,
+  sanitiseScratchRealismPrefs,
   sanitiseScratchPrefs,
   sanitiseKeepAwakeByDevice,
   sanitiseEnabledMidiInputs,
@@ -117,6 +118,7 @@ export class PrefsService {
         midiDevicePreferences: sanitiseMidiDevicePreferences(parsed.midiDevicePreferences),
         brake: sanitiseBrakePrefs(parsed.brake, defaults.brake),
         backspin: sanitiseBackspinPrefs(parsed.backspin, defaults.backspin),
+        scratchRealism: sanitiseScratchRealismPrefs(parsed.scratchRealism, defaults.scratchRealism),
         scratch: sanitiseScratchPrefs(parsed.scratch, defaults.scratch),
         recentProjects: sanitiseRecentList(parsed.recentProjects),
         stems: sanitiseStemPrefs(parsed.stems, defaults.stems)

@@ -140,6 +140,13 @@ export interface BackspinPrefs {
   intensity: BackspinIntensity
 }
 
+// Scratch Editor sound realism is global so pointer and MIDI platter input use
+// the same monitored response.
+export type ScratchRealismLevel = 'off' | 'medium' | 'high'
+export interface ScratchRealismPrefs {
+  level: ScratchRealismLevel
+}
+
 // Scratch Editor input preferences. The crossfader cut key is a momentary
 // keyboard "kill" for the virtual deck; the Z/M choice suits handedness.
 export type ScratchCrossfaderCutKey = 'KeyZ' | 'KeyM'
@@ -165,6 +172,7 @@ export interface Preferences {
   midiDevicePreferences: Record<string, MidiDevicePreferences>
   brake: BrakePrefs
   backspin: BackspinPrefs
+  scratchRealism: ScratchRealismPrefs
   scratch: ScratchPrefs
   stems: StemPrefs
   /** MRU entries (path + display name), newest first, capped and case-insensitive by path. */
@@ -248,6 +256,7 @@ export function buildDefaultPrefs(): Preferences {
     midiDevicePreferences: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
+    scratchRealism: { level: 'medium' },
     scratch: { crossfaderCutKey: 'KeyZ' },
     stems: {
       useGpu: false,
@@ -386,6 +395,20 @@ export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): Ba
   return {
     duration: BACKSPIN_DURATIONS.has(p.duration as BackspinDuration) ? (p.duration as BackspinDuration) : base.duration,
     intensity: BACKSPIN_INTENSITIES.has(p.intensity as BackspinIntensity) ? (p.intensity as BackspinIntensity) : base.intensity
+  }
+}
+
+const SCRATCH_REALISM_LEVELS: ReadonlySet<ScratchRealismLevel> = new Set(['off', 'medium', 'high'])
+
+export function sanitiseScratchRealismPrefs(
+  partial: unknown,
+  base: ScratchRealismPrefs
+): ScratchRealismPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof ScratchRealismPrefs, unknown>>
+  return {
+    level: SCRATCH_REALISM_LEVELS.has(p.level as ScratchRealismLevel)
+      ? (p.level as ScratchRealismLevel)
+      : base.level
   }
 }
 

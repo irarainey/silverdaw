@@ -9,6 +9,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useScratchRealismSettingsStore } from '@/stores/scratchRealismSettingsStore'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -55,6 +56,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
       void useAudioDeviceStore().applyKeepAwakeOnReady()
       void useBrakeSettingsStore().applyBrakeSettingsOnReady()
       void useBackspinSettingsStore().applyBackspinSettingsOnReady()
+      void useScratchRealismSettingsStore().applyScratchRealismOnReady()
       useUiStore().syncSeedTempoPrefToBackend()
     }
     // Recovery distinguishes empty reconnect snapshots from restored resets.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ScratchRealismProcessor.h"
 #include "VinylScratchProcessor.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -52,6 +53,7 @@ class ScratchAudioSource final : public juce::AudioSource
     void setPlaying(bool shouldPlay) noexcept;
     void setTouched(bool isTouched) noexcept;
     void setManualRate(double semanticRate, double holdSeconds = 0.05) noexcept;
+    void setRealismLevel(ScratchRealismLevel level) noexcept;
     struct RenderedPlatterSample { std::int64_t timeUs; double turns; bool touched; };
     void beginRenderedPlatterCapture() noexcept;
     void endRenderedPlatterCapture() noexcept;
@@ -96,6 +98,7 @@ class ScratchAudioSource final : public juce::AudioSource
     double outputSampleRate = 44100.0;
     double sourceSamplesPerOutputSample = 1.0;
     VinylScratchProcessor processor;
+    ScratchRealismProcessor realismProcessor;
 
     std::atomic<bool> active{false};
     // In-flight counter: incremented at callback entry, decremented at exit.
@@ -119,6 +122,7 @@ class ScratchAudioSource final : public juce::AudioSource
     std::atomic<const PatternReplaySnapshot*> replaySnapshot{nullptr};
     std::atomic<double> replayNormalized{0.0};
     std::atomic<double> replayCrossfaderPosition{0.0};
+    std::atomic<ScratchRealismLevel> realismLevel{ScratchRealismLevel::medium};
 
     std::uint64_t appliedSeekGeneration = 0;
     std::int64_t replayOutputSamples = 0;

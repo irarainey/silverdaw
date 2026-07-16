@@ -596,6 +596,7 @@ export interface BridgeOutboundMap {
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
   BACKSPIN_SETTINGS_SET: BackspinSettingsSetPayload
+  SCRATCH_REALISM_SET: ScratchRealismSetPayload
   EDIT_UNDO: undefined
   EDIT_REDO: undefined
   EDIT_GROUP_BEGIN: EditGroupBeginPayload
@@ -1063,6 +1064,11 @@ export interface BackspinSettingsSetPayload {
   curve: number
 }
 
+/** Global held-platter sound realism for all Scratch Editor input sources. */
+export interface ScratchRealismSetPayload {
+  level: 'off' | 'medium' | 'high'
+}
+
 /**
  * Open an explicit undo group. Every undoable mutation sent before the matching `EDIT_GROUP_END`
  * folds into ONE backend UndoManager transaction, so a compound action (split, duplicate, paste, a
@@ -1205,6 +1211,7 @@ export const bridgeOutboundPayloadKinds: {
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',
   BACKSPIN_SETTINGS_SET: 'payload',
+  SCRATCH_REALISM_SET: 'payload',
   EDIT_UNDO: 'none',
   EDIT_REDO: 'none',
   EDIT_GROUP_BEGIN: 'payload',

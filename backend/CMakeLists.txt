@@ -434,6 +434,7 @@ add_library(silverdaw_backend_core STATIC
     src/scratch/ScratchProtocol.cpp
     src/scratch/ScratchProtocolPattern.cpp
     src/scratch/ScratchAudioSource.cpp
+    src/scratch/ScratchRealismProcessor.cpp
     src/scratch/BackingMonitorSource.cpp
     src/scratch/ScratchBackingPreparation.cpp
     src/scratch/ScratchSourcePreparation.cpp

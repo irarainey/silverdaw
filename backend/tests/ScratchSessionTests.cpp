@@ -144,6 +144,92 @@ void testScratchAudioSourceTransport()
             "manual platter movement should advance a paused scratch source");
 }
 
+void testScratchRealismChangesHeldAudioWithoutChangingTrajectory()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+    auto highFrequencyAudio = std::make_shared<juce::AudioBuffer<float>>(2, 96000);
+    for (int sample = 0; sample < highFrequencyAudio->getNumSamples(); ++sample)
+    {
+        const auto value = static_cast<float>(
+            0.5 * std::sin(2.0 * juce::MathConstants<double>::pi * 10000.0
+                           * sample / sampleRate));
+        highFrequencyAudio->setSample(0, sample, value);
+        highFrequencyAudio->setSample(1, sample, value);
+    }
+
+    const auto renderHeld = [&](scratch::ScratchRealismLevel level)
+    {
+        scratch::ScratchAudioSource source(highFrequencyAudio, sampleRate);
+        source.prepareToPlay(blockSize, sampleRate);
+        source.seekUs(500000);
+        source.setTouched(true);
+        source.setManualRate(2.0, 1.0);
+        source.setRealismLevel(level);
+        juce::AudioBuffer<float> output(2, blockSize);
+        for (int block = 0; block < 12; ++block)
+        {
+            output.clear();
+            source.getNextAudioBlock({&output, 0, blockSize});
+        }
+        output.clear();
+        source.getNextAudioBlock({&output, 0, blockSize});
+        return output;
+    };
+
+    const auto offOutput = renderHeld(scratch::ScratchRealismLevel::off);
+    const auto highOutput = renderHeld(scratch::ScratchRealismLevel::high);
+    float offActivity = 0.0F;
+    float highActivity = 0.0F;
+    for (int sample = 1; sample < blockSize; ++sample)
+    {
+        offActivity += std::abs(offOutput.getSample(0, sample)
+                                - offOutput.getSample(0, sample - 1));
+        highActivity += std::abs(highOutput.getSample(0, sample)
+                                 - highOutput.getSample(0, sample - 1));
+    }
+    require(highActivity < offActivity * 0.8F,
+            "high scratch realism should soften held high-frequency movement");
+
+    auto silence = std::make_shared<juce::AudioBuffer<float>>(2, blockSize);
+    silence->clear();
+    scratch::ScratchAudioSource texturedSource(silence, sampleRate);
+    texturedSource.prepareToPlay(blockSize, sampleRate);
+    texturedSource.setTouched(true);
+    texturedSource.setRealismLevel(scratch::ScratchRealismLevel::medium);
+    juce::AudioBuffer<float> texturedOutput(2, blockSize);
+    texturedOutput.clear();
+    texturedSource.getNextAudioBlock({&texturedOutput, 0, blockSize});
+    require(texturedOutput.getMagnitude(0, blockSize) > 1.0e-7F,
+            "held platter realism should add subtle groove texture");
+
+    const auto captureTurns = [&](scratch::ScratchRealismLevel level)
+    {
+        scratch::ScratchAudioSource source(highFrequencyAudio, sampleRate);
+        source.prepareToPlay(blockSize, sampleRate);
+        source.seekUs(500000);
+        source.setTouched(true);
+        source.setManualRate(-1.0, 1.0);
+        source.setRealismLevel(level);
+        source.beginRenderedPlatterCapture();
+        renderScratchBlocks(source, blockSize * 8, blockSize);
+        source.endRenderedPlatterCapture();
+        scratch::ScratchAudioSource::RenderedPlatterSample captured;
+        scratch::ScratchAudioSource::RenderedPlatterSample last{};
+        bool capturedAny = false;
+        while (source.popRenderedPlatterSample(captured))
+        {
+            last = captured;
+            capturedAny = true;
+        }
+        require(capturedAny, "scratch trajectory capture should produce samples");
+        return last.turns;
+    };
+    requireNear(captureTurns(scratch::ScratchRealismLevel::off),
+                captureTurns(scratch::ScratchRealismLevel::high), 1.0e-12,
+                "scratch realism must not alter recorded platter trajectory");
+}
+
 void testScratchSessionLifecycleAndOwnership()
 {
     AudioEngine engine;
@@ -1617,6 +1703,7 @@ void testScratchClearSessionClearsReplayBackingAndSession()
 void addScratchSessionTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"scratch session audio transport and hold", testScratchAudioSourceTransport});
+    tests.push_back({"scratch realism softens held audio without changing trajectory", testScratchRealismChangesHeldAudioWithoutChangingTrajectory});
     tests.push_back({"scratch session lifecycle and deck ownership", testScratchSessionLifecycleAndOwnership});
     tests.push_back({"scratch session prepares and caches clip source", testScratchSourcePreparationCache});
     tests.push_back({"scratch source activate and deactivate cycle", testScratchSourceActivateDeactivate});

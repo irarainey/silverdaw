@@ -2318,6 +2318,11 @@ sidebar:
   8× reverse speed). On save these are pushed to the engine (`BRAKE_SETTINGS_SET`
   / `BACKSPIN_SETTINGS_SET`) and re-applied live to every clip already carrying
   that effect; they are also re-sent on each backend reconnect. This tab also
+  provides **Scratch realism** (Off / Medium / High, default Medium). It applies
+  held-platter high-frequency softening and low-level groove texture to every
+  Scratch Editor input source through `SCRATCH_REALISM_SET`, without changing the
+  recorded platter trajectory. This persisted `scratchRealism.level` preference
+  is also re-sent on each backend reconnect. The tab also
   hosts the **Scratch crossfader cut** key used inside the Scratch Editor — a
   momentary cut that opens the crossfader while held (closed at rest) — choosable as **Z**
   (right-handed, default) or **M** (left-handed). It is a renderer-only

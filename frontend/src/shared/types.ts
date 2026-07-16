@@ -176,6 +176,12 @@ export interface BackspinPrefsDto {
   intensity: BackspinIntensityDto
 }
 
+/** Persisted Scratch Editor realism preference surfaced to the renderer. */
+export type ScratchRealismLevelDto = 'off' | 'medium' | 'high'
+export interface ScratchRealismPrefsDto {
+  level: ScratchRealismLevelDto
+}
+
 /** Persisted Scratch Editor input preferences surfaced to the renderer. */
 export type ScratchCrossfaderCutKeyDto = 'KeyZ' | 'KeyM'
 export interface ScratchPrefsDto {

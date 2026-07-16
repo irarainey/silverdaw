@@ -4,6 +4,7 @@ import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
+import { useScratchRealismSettingsStore } from '@/stores/scratchRealismSettingsStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
@@ -38,12 +39,14 @@ describe('project bridge handlers', () => {
     const midiDevices = useMidiDeviceStore()
     const brakeSettings = useBrakeSettingsStore()
     const backspinSettings = useBackspinSettingsStore()
+    const scratchRealismSettings = useScratchRealismSettingsStore()
     const ui = useUiStore()
     const requestAudioDevices = vi.spyOn(audioDevices, 'requestInitialList').mockImplementation(() => {})
     const applyKeepAwake = vi.spyOn(audioDevices, 'applyKeepAwakeOnReady').mockResolvedValue()
     const applyMidiInputs = vi.spyOn(midiDevices, 'applyEnabledInputsOnReady').mockResolvedValue()
     const applyBrake = vi.spyOn(brakeSettings, 'applyBrakeSettingsOnReady').mockResolvedValue()
     const applyBackspin = vi.spyOn(backspinSettings, 'applyBackspinSettingsOnReady').mockResolvedValue()
+    const applyScratchRealism = vi.spyOn(scratchRealismSettings, 'applyScratchRealismOnReady').mockResolvedValue()
     const syncSeedTempo = vi.spyOn(ui, 'syncSeedTempoPrefToBackend').mockImplementation(() => {})
 
     projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
@@ -54,6 +57,7 @@ describe('project bridge handlers', () => {
     expect(applyMidiInputs).toHaveBeenCalledTimes(1)
     expect(applyBrake).toHaveBeenCalledTimes(1)
     expect(applyBackspin).toHaveBeenCalledTimes(1)
+    expect(applyScratchRealism).toHaveBeenCalledTimes(1)
     expect(syncSeedTempo).toHaveBeenCalledTimes(1)
 
     useTransportStore().setConnected(false)

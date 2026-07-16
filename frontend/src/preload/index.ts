@@ -19,6 +19,7 @@ import type {
   StemPrefsDto,
   BrakePrefsDto,
   BackspinPrefsDto,
+  ScratchRealismPrefsDto,
   ScratchPrefsDto
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
@@ -231,6 +232,11 @@ const api = {
   getBackspinSettings: (): Promise<BackspinPrefsDto> => ipcRenderer.invoke(IPC.prefs.getBackspin),
   setBackspinSettings: (partial: Partial<BackspinPrefsDto>): void => {
     ipcRenderer.send(IPC.prefs.setBackspin, partial)
+  },
+  getScratchRealismSettings: (): Promise<ScratchRealismPrefsDto> =>
+    ipcRenderer.invoke(IPC.prefs.getScratchRealism),
+  setScratchRealismSettings: (partial: Partial<ScratchRealismPrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setScratchRealism, partial)
   },
   // ─── Scratch Editor input (crossfader cut key) ──────────────────────────
   getScratchSettings: (): Promise<ScratchPrefsDto> => ipcRenderer.invoke(IPC.prefs.getScratch),

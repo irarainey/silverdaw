@@ -13,6 +13,7 @@ import type {
   StemPrefsDto as SharedStemPrefsDto,
   BrakePrefsDto as SharedBrakePrefsDto,
   BackspinPrefsDto as SharedBackspinPrefsDto,
+  ScratchRealismPrefsDto as SharedScratchRealismPrefsDto,
   ScratchPrefsDto as SharedScratchPrefsDto,
   LocateStemModelResult as SharedLocateStemModelResult,
   RecentProject as SharedRecentProject
@@ -164,6 +165,8 @@ declare global {
       setBrakeSettings(partial: Partial<SharedBrakePrefsDto>): void
       getBackspinSettings(): Promise<SharedBackspinPrefsDto>
       setBackspinSettings(partial: Partial<SharedBackspinPrefsDto>): void
+      getScratchRealismSettings(): Promise<SharedScratchRealismPrefsDto>
+      setScratchRealismSettings(partial: Partial<SharedScratchRealismPrefsDto>): void
       getScratchSettings(): Promise<SharedScratchPrefsDto>
       setScratchSettings(partial: Partial<SharedScratchPrefsDto>): void
       ensureStemModel(): Promise<SharedEnsureStemModelResult>

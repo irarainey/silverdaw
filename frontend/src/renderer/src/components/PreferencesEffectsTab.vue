@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import ScratchEditorPreferences from './ScratchEditorPreferences.vue'
 import type {
   BrakeDurationDto,
   BrakeCurveDto,
   BackspinDurationDto,
   BackspinIntensityDto,
+  ScratchRealismLevelDto,
   ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 
@@ -11,6 +13,9 @@ const brakeDuration = defineModel<BrakeDurationDto>('brakeDuration', { required:
 const brakeCurve = defineModel<BrakeCurveDto>('brakeCurve', { required: true })
 const backspinDuration = defineModel<BackspinDurationDto>('backspinDuration', { required: true })
 const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity', { required: true })
+const scratchRealismLevel = defineModel<ScratchRealismLevelDto>('scratchRealismLevel', {
+  required: true
+})
 const scratchCrossfaderCutKey = defineModel<ScratchCrossfaderCutKeyDto>('scratchCrossfaderCutKey', {
   required: true
 })
@@ -220,43 +225,9 @@ const scratchCrossfaderCutKey = defineModel<ScratchCrossfaderCutKeyDto>('scratch
       </div>
     </div>
 
-    <div class="border-t border-zinc-800 pt-4">
-      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Scratch crossfader cut
-      </h2>
-      <p class="mb-3 text-zinc-500">
-        In the Scratch Editor a single key acts as the crossfader cut. Holding it
-        silences the deck (fader closed); releasing it opens the fader again. Pick
-        the key that suits your scratching hand.
-      </p>
-      <div class="space-y-2">
-        <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
-          <input
-            v-model="scratchCrossfaderCutKey"
-            type="radio"
-            name="scratch-crossfader-cut-key"
-            value="KeyZ"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Z</span>
-            <span class="text-zinc-500"> — For right-handed scratching</span>
-          </span>
-        </label>
-        <label class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
-          <input
-            v-model="scratchCrossfaderCutKey"
-            type="radio"
-            name="scratch-crossfader-cut-key"
-            value="KeyM"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">M</span>
-            <span class="text-zinc-500"> — For left-handed scratching</span>
-          </span>
-        </label>
-      </div>
-    </div>
+    <ScratchEditorPreferences
+      v-model:scratch-realism-level="scratchRealismLevel"
+      v-model:scratch-crossfader-cut-key="scratchCrossfaderCutKey"
+    />
   </section>
 </template>

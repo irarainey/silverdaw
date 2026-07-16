@@ -307,6 +307,7 @@ class AudioEngine
                                   bool reverseCrossfader = false);
     bool setScratchMidiCrossfaderDirection(const juce::String& deviceIdentifier,
                                            bool reverseCrossfader);
+    void setScratchRealismLevel(scratch::ScratchRealismLevel level) noexcept;
     bool hasActiveScratchSession() const;
     void setScratchMidiSelectedDeck(const juce::String& deviceIdentifier,
                                     scratch::DeckSide deck,

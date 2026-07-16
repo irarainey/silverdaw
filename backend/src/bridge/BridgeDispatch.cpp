@@ -747,6 +747,10 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     {
         silverdaw::handleSetBackspinSettings(payload, engine);
     }
+    else if (type == "SCRATCH_REALISM_SET")
+    {
+        silverdaw::handleScratchRealismSet(payload, engine);
+    }
     else if (type == "AUDIO_FILE_PROBE")
     {
         silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);

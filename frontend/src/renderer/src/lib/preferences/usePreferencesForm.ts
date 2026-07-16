@@ -7,6 +7,7 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useScratchRealismSettingsStore } from '@/stores/scratchRealismSettingsStore'
 import { useScratchInputSettingsStore } from '@/stores/scratchInputSettingsStore'
 import { log } from '@/lib/log'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
@@ -18,6 +19,7 @@ import type {
   MidiCrossfaderDirection,
   MidiDefaultDeck,
   MidiDevicePreferences,
+  ScratchRealismLevelDto,
   ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 import {
@@ -54,6 +56,7 @@ export interface PreferencesForm {
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
   backspinIntensity: Ref<BackspinIntensityDto>
+  scratchRealismLevel: Ref<ScratchRealismLevelDto>
   scratchCrossfaderCutKey: Ref<ScratchCrossfaderCutKeyDto>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
@@ -100,6 +103,7 @@ export function usePreferencesForm(): PreferencesForm {
   const midiDevices = useMidiDeviceStore()
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
+  const scratchRealismSettings = useScratchRealismSettingsStore()
   const scratchInputSettings = useScratchInputSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
 
@@ -260,6 +264,9 @@ export function usePreferencesForm(): PreferencesForm {
   const initialBackspinDuration = ref<BackspinDurationDto>('long')
   const initialBackspinIntensity = ref<BackspinIntensityDto>('medium')
 
+  const scratchRealismLevel = ref<ScratchRealismLevelDto>('medium')
+  const initialScratchRealismLevel = ref<ScratchRealismLevelDto>('medium')
+
   const scratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
   const initialScratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
 
@@ -358,6 +365,7 @@ export function usePreferencesForm(): PreferencesForm {
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
       backspinIntensity.value !== initialBackspinIntensity.value ||
+      scratchRealismLevel.value !== initialScratchRealismLevel.value ||
       scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value
   )
 
@@ -438,6 +446,7 @@ export function usePreferencesForm(): PreferencesForm {
       const backspinPrefs = await window.silverdaw.getBackspinSettings()
       backspinDuration.value = backspinPrefs.duration
       backspinIntensity.value = backspinPrefs.intensity
+      scratchRealismLevel.value = (await window.silverdaw.getScratchRealismSettings()).level
       const scratchPrefs = await window.silverdaw.getScratchSettings()
       scratchCrossfaderCutKey.value = scratchPrefs.crossfaderCutKey
     } catch {
@@ -458,6 +467,7 @@ export function usePreferencesForm(): PreferencesForm {
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
       backspinIntensity.value = 'medium'
+      scratchRealismLevel.value = 'medium'
     }
 
     await stemPrefsLoad
@@ -507,6 +517,7 @@ export function usePreferencesForm(): PreferencesForm {
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
     initialBackspinIntensity.value = backspinIntensity.value
+    initialScratchRealismLevel.value = scratchRealismLevel.value
     initialScratchCrossfaderCutKey.value = scratchCrossfaderCutKey.value
   }
 
@@ -667,6 +678,9 @@ export function usePreferencesForm(): PreferencesForm {
     ) {
       backspinSettings.setBackspinSettings(backspinDuration.value, backspinIntensity.value)
     }
+    if (scratchRealismLevel.value !== initialScratchRealismLevel.value) {
+      scratchRealismSettings.setScratchRealismLevel(scratchRealismLevel.value)
+    }
     if (scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value) {
       scratchInputSettings.setCrossfaderCutKey(scratchCrossfaderCutKey.value)
     }
@@ -730,6 +744,7 @@ export function usePreferencesForm(): PreferencesForm {
     brakeCurve,
     backspinDuration,
     backspinIntensity,
+    scratchRealismLevel,
     scratchCrossfaderCutKey,
     loggingEnabled,
     devToolsEnabled,

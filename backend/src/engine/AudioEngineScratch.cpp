@@ -98,6 +98,11 @@ bool AudioEngine::setScratchMidiCrossfaderDirection(
         deviceIdentifier, reverseCrossfader);
 }
 
+void AudioEngine::setScratchRealismLevel(scratch::ScratchRealismLevel level) noexcept
+{
+    scratchSource.setRealismLevel(level);
+}
+
 bool AudioEngine::hasActiveScratchSession() const
 {
     return scratchController.hasActiveSession();

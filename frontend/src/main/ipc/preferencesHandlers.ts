@@ -14,7 +14,7 @@ import type {
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -321,6 +321,17 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     const next = sanitiseBackspinPrefs(partial, store.backspin)
     if (next.duration === store.backspin.duration && next.intensity === store.backspin.intensity) return
     store.backspin = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Scratch Editor realism (shared by pointer and MIDI platter input) ───
+  ipcMain.handle(IPC.prefs.getScratchRealism, () => ({ ...prefs.get().scratchRealism }))
+
+  ipcMain.on(IPC.prefs.setScratchRealism, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseScratchRealismPrefs(partial, store.scratchRealism)
+    if (next.level === store.scratchRealism.level) return
+    store.scratchRealism = next
     prefs.flushSaveSync()
   })
 
