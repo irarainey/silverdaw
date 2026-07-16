@@ -2152,20 +2152,22 @@ the platter is heard. MIDI tick totals also retain the physical endpoint of a
 touch gesture; release aligns the source to it so repeated pullbacks do not
 accumulate displacement loss. Movement beyond the prepared source produces
 de-clicked silence — the source never wraps. Recording captures compact **platter** and
-**crossfader** keyframes (not audio), starting from the session start against a
-local clock, and still spins the scratch over the backing. A live **timing
+**crossfader** keyframes (not audio), preserving the currently selected scratch
+source position against a local clock, and still spins the scratch over the backing. A live **timing
 readout** (`m:ss / m:ss`, position / prepared length) sits under the transport
 and is **always shown** (dimmed until a bed is ready) so it never reflows the
 panel; it is driven by the `backingPositionUs` snapshot field on the scratch
 session state.
 
-**MIDI deck Play while the editor is open.** The physical deck **Play** button
-drives scratch recording, mirroring the on-screen
-**Record** button: idle → arm, armed → cancel, recording → stop. An armed take
-still starts on the first platter touch, and the completed pattern is published to
-the notation panel on stop. The backing bed is **not** MIDI-driven — it is
-controlled by the on-screen **Play** button only. The physical **Cue** button is
-no longer mapped in the scratch editor. Recording is handled in the backend router
+**MIDI deck controls while the editor is open.** The physical deck **Play** button
+drives scratch recording, mirroring the on-screen **Record** button: idle → arm,
+armed → cancel, recording → stop. An armed take still starts on the first
+eligible platter touch, and the completed pattern is published to the notation
+panel on stop. **Cue** runs the same **Build** action as the backing panel; it
+builds or rebuilds the selected backing configuration. The backing bed's
+play/pause transport is not MIDI-driven. The platter and crossfader control the
+active session directly, while every other deck action remains blocked by the
+modal editor except master volume. Recording is handled in the backend router
 (`MidiScratchRouter::routeImmediate` → `scratchMidiRecordToggle()`), gated on
 scratch-session existence: with the editor **closed** the engine method returns
 `false` and the event falls through to the frontend's timeline handling; with the
@@ -2215,8 +2217,8 @@ timeline** (explicitly muted, or silenced by a solo elsewhere) are always shown
 **unchecked and disabled** and are filtered out of the bed, so the selection
 mirrors what is actually audible. Because the
 bed is a fixed pre-render, the track selection, anchor, and length (and the
-**Prepare** button) are **locked while the backing is playing** — changing them
-would only take effect after a fresh Prepare, so they cannot be swapped in live.
+**Build** button) are **locked while the backing is playing** — changing them
+would only take effect after a fresh build, so they cannot be swapped in live.
 A **Loop** toggle (off by default) controls what happens at the bed's end during
 plain playback: when on, the bed restarts from its head instead of stopping, so
 the accompaniment runs continuously while the performer scratches over it; loop is
@@ -2225,7 +2227,7 @@ authoritative on the backend (`backingLoop`) and honoured in the end-of-window
 reconciliation for the on-screen backing transport. The physical MIDI Play
 button controls recording while the editor is open and never starts the bed.
 The bed is a pre-rendered linear mixdown prepared off the audio thread; the
-**Prepare** button shows a spinner while working and re-preparing simply replaces
+**Build** button shows a spinner while working and rebuilding simply replaces
 the existing bed (there is no separate Clear action). Two **monitor-only** gain
 trims (`0..1`) balance what the performer hears — a **Monitor** (backing) gain
 (default 100%) in the backing panel, and a **Scratch** gain (default 85%, so the
@@ -2237,11 +2239,22 @@ monitor-only and never reaches committed output.
 
 **Notation, cropping, and editing.** The recorded pattern is shown as an editable
 notation view (forward/reverse platter segments, hold spans, and a crossfader
-lane) over the source waveform. Edits change the action data directly and are
-undoable; cropping clips the lanes, evaluates values at the new boundaries,
-rebases time to zero, and preserves the source offset. Waveform peaks are resolved
-from the target's **source item** (a saved clip resolves to its source library
-item), windowed by the clip's in/duration.
+lane) over the source waveform. Recording preserves the scratch source's current
+position, so a take can begin at any phrase in the prepared source; only the
+backing bed restarts at its head. The notation starts at a real time scale of
+180 pixels per second rather than compressing a long take into the panel. It has
+time markers, zoom controls (100%–800%), a horizontal scrollbar when needed, and
+smoothly follows replay with the playhead held near the centre of the viewport.
+
+Click a notation point to select it, then drag it or use the keyboard controls
+listed below. Double-click a lane to add a point; right-click an editable point
+to remove it. Endpoint points remain pinned. Every notation edit changes the
+action data, marks the draft dirty, and participates in the notation-local
+undo/redo history; one point drag is one undo step. Cropping clips the lanes,
+evaluates values at the new boundaries, rebases time to zero, and preserves the
+source offset. Waveform peaks are resolved from the target's **source item** (a
+saved clip resolves to its source library item), windowed by the clip's
+in/duration.
 
 **Persistence, replay, and sample output.** Completed patterns are additive,
 backend-authoritative project state (in the `ValueTree`, written through the
@@ -2739,13 +2752,27 @@ crossfader are described in the [Scratch Editor](#scratch-editor) section.
 
 | Input | Effect |
 |---|---|
+| `B` | Build or rebuild the backing bed from the current track, anchor, and length choices. Does not run while editing a text field. |
 | `Space` | Toggle play / pause of the backing channel (disabled until a backing is prepared, and while recording). |
-| `R` | Toggle record — arms and starts capturing platter and crossfader keyframes, or stops the take. |
+| `R` | Toggle record: arm a take, cancel arming, or stop an active take. Recording starts on the first platter touch after arming. |
+| `P` | Play or stop the current recorded scratch draft. Available when a draft exists. |
+| `C` | Clear the current recorded scratch draft. Saved patterns are unaffected. |
 | `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to open the crossfader (scratch deck audible), release to close. The fader rests closed. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back closed. |
 | `←` / `→` (crossfader focused) | Nudge the crossfader by 0.02 (or 0.1 with `Shift`). |
 | `Home` / `End` (crossfader focused) | Jump the crossfader fully open / fully closed. |
 | `←` `→` `↑` `↓` (platter focused) | Jog the platter by 0.02 turns (0.1 with `Shift`); `Home` / `End` jog by half a turn. |
-| `Escape` | Close the editor (or dismiss the unsaved-changes prompt). |
+| Click a notation point | Select it and focus the notation controls. |
+| `D` (notation focused) | Deselect the current notation point. |
+| `Delete` / `Backspace` (notation focused) | Delete the selected editable notation point. |
+| `←` / `→` (notation focused) | Move the selected point 10 ms earlier or later; hold `Shift` for 50 ms. |
+| `↑` / `↓` (notation focused) | Move the selected platter point by 0.01 turns or the selected crossfader point by 0.02; hold `Shift` for five times the step. |
+| `Insert` / `Enter` (notation focused) | Add a point at the midpoint after the selection, or at the pattern midpoint when nothing is selected. |
+| `T` (platter notation focused) | Toggle the selected platter point's touch state. |
+| `Ctrl` + `Z` / `Ctrl` + `Y` (notation focused) | Undo / redo notation edits. |
+| Double-click a notation lane | Add a point at that time. |
+| Right-click a notation point | Delete that editable point. |
+| `Ctrl` + mouse wheel over notation | Zoom the notation timeline. |
+| `Escape` | Close the editor, or dismiss the unsaved-changes prompt. |
 
 
 Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected track**

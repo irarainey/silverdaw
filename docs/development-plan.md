@@ -2503,9 +2503,13 @@ sequencing into the phase plan is still to be decided.
   compact, editable action pattern (or lets the user draw/edit them by hand),
   replays them non-destructively over the clip, and saves the result as a
   reusable **scratch pattern** that can be applied to a clip or rendered to a new
-  library sample. An optional **backing accompaniment monitor** (a 60/120 s or
-  full-arrangement bed of selected tracks, with monitor-only gain trims) lets the
-  performer scratch in musical context while recording. Everything is authored,
+  library sample. Patterns record from the selected scratch-source position,
+  have time-scaled editable notation with local undo/redo, and replay with
+  smooth follow scrolling. An optional **backing accompaniment monitor** (a
+  60/120 s or full-arrangement bed of selected tracks, with monitor-only gain
+  trims) lets the performer scratch in musical context while recording; **Build**
+  prepares it, including from deck Cue while the editor is open. The held-platter
+  realism preference has Off, Medium, and High levels. Everything is authored,
   re-editable, and non-destructive. Design contract and decisions:
   [ADR 0021](adr/0021-scratch-editor-action-patterns.md); feature detail in the
   [developer guide](developer-guide.md#scratch-editor).

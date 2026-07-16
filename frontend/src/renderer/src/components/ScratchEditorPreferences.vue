@@ -67,7 +67,7 @@ const scratchCrossfaderCutKey = defineModel<ScratchCrossfaderCutKeyDto>('scratch
     </h2>
     <p class="mb-3 text-zinc-500">
       In the Scratch Editor a single key acts as the crossfader cut. Holding it
-      silences the deck (fader closed); releasing it opens the fader again. Pick
+      opens the fader (deck audible); releasing it closes the fader. Pick
       the key that suits your scratching hand.
     </p>
     <div class="space-y-2">

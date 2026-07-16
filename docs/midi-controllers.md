@@ -51,8 +51,8 @@ corresponding binding, Silverdaw applies these actions:
 > **Note:** Not every supported controller provides every mapping or function.
 > Check the supported-controller table below for the controls available on each
 > device. This table describes ordinary timeline behaviour; while the
-> [Scratch Editor](#scratch-editor-with-a-physical-deck) is open, Play, the
-> platter, and the crossfader are repurposed for the session instead.
+> [Scratch Editor](#scratch-editor-with-a-physical-deck) is open, Play, Cue,
+> the platter, and the crossfader are repurposed for the session instead.
 
 | Controller control | Silverdaw action |
 | --- | --- |
@@ -158,8 +158,8 @@ controller and the trackpad or keyboard can be used interchangeably.
 
 ## Scratch Editor with a physical deck
 
-While the Scratch Editor is open, a supported controller's **Play** button and
-platter/crossfader are repurposed for the session; this differs from their
+While the Scratch Editor is open, a supported controller's **Play** and **Cue**
+buttons and its platter/crossfader are repurposed for the session; this differs from their
 ordinary timeline roles described above, which only apply with the editor
 closed.
 
@@ -169,8 +169,9 @@ closed.
   discards the arm), recording → **stopped** (a press while recording
   finalizes the take). The first eligible platter touch while armed starts the
   take.
-- **Cue is unbound** in the editor and has no scratch role; with the editor
-  closed, Cue keeps its ordinary marker-navigation behaviour unchanged.
+- **Cue** runs **Build**, the same action as the backing panel's Build button.
+  It prepares or rebuilds the selected backing tracks, anchor, and length. With
+  the editor closed, Cue keeps its ordinary previous-marker behaviour unchanged.
 - **Touch is authoritative, not the ordinary jog behaviour above.** On a
   capacitive platter, the touch sensor decides ownership and release: lifting
   off returns the platter to motor speed immediately. Jog movement that
@@ -178,9 +179,9 @@ closed.
   used to re-claim the platter, so releasing can never be delayed by
   after-release movement. The separately encoded **search / outer-wheel**
   controls remain ordinary timeline controls only: because they do not report
-  touch, they cannot safely participate in Scratch Editor ownership. A
-  touch-less, movement-only platter instead infers release after a short pause
-  in movement.
+  touch, they cannot safely participate in Scratch Editor ownership and remain
+  unavailable to the modal editor. A touch-less, movement-only platter instead
+  infers release after a short pause in movement.
 
 See [ADR 0021](adr/0021-scratch-editor-action-patterns.md) for the full session
 and recording model.

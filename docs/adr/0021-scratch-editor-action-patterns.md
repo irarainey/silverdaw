@@ -57,19 +57,19 @@ resumes audio. There is no hidden looping.
 
 ### Physical MIDI control model
 
-Only the physical **Play** button and the platter/crossfader controls are
-mapped inside the editor; the physical **Cue** button is unbound and has no
-scratch-editor role (with the editor closed, Cue keeps its ordinary timeline
-behaviour unchanged).
+The physical **Play** and **Cue** buttons and the platter/crossfader controls
+are mapped inside the editor. Cue runs the backing **Build** action; with the
+editor closed, it keeps its ordinary previous-marker behaviour.
 
 Play drives scratch recording, mirroring the on-screen Record button's three
 phases: **idle → armed** (press arms; nothing records yet), **armed →
 cancelled** (a second press before any touch discards the arm), **recording →
 stopped** (a press while recording finalizes the take and publishes the
 pattern). Arming does not itself start capture — the **first eligible platter
-touch** while armed begins the take, seeking both the scratch source and any
-prepared backing bed to zero and starting the recorder with a fresh draft
-identity; at that point the recorder resets its lanes and discards any prior
+touch** while armed begins the take, preserving the currently selected scratch
+source position, seeking any prepared backing bed to zero, and starting the
+recorder with a fresh draft identity; at that point the recorder resets its
+lanes and discards any prior
 completed draft. Separately, the renderer clears its held draft on the rising
 edge of the armed state, so an operator can arm, touch, and start a new take
 without an explicit "clear" step — the prior notation disappears on arm, not
@@ -181,12 +181,12 @@ mixdown, or sample-export chain, and it carries no provenance.
   When a backing window is prepared, it becomes the session's forward time
   bound for plain playback and for recording; without one, the scratch
   source's own bounds apply.
-- **Preparation and locking.** Preparation is an explicit action, runs off
+- **Build and locking.** Building is an explicit action, runs off
   the audio thread onto the disk/cache boundary, and is invalidated by a
   fingerprint over the track set, mixdown, and span. The track, anchor, and
-  length controls (and Prepare itself) are locked while the bed is playing,
-  since a change only takes effect after a fresh prepare; there is no
-  separate "clear" affordance in the UI (re-preparing replaces the existing
+  length controls (and Build itself) are locked while the bed is playing,
+  since a change only takes effect after a fresh build; there is no
+  separate "clear" affordance in the UI (rebuilding replaces the existing
   bed), though the underlying clear command remains available for teardown.
 - **Monitor trims.** Two non-persisted, non-recorded gain trims exist purely
   for audition balance: a backing monitor gain (default 100%) and a scratch
@@ -219,8 +219,19 @@ within a tested audible tolerance; the resulting pattern, not the unsaved
 live gesture, is the source of truth thereafter.
 
 The notation panel is a direct, editable view of the same lanes (platter
-motion segments, holds, and a crossfader automation lane); editing it mutates
-the action data and is undoable, and cropping rebases time to zero while
+motion segments, holds, and a crossfader automation lane). Its 100% scale is
+180 pixels per second, so long takes expand horizontally rather than
+compressing their points; time markers, zoom, and a horizontal scrollbar
+support navigation. Replay follows the playhead with a smooth, forward-only
+viewport scroll anchored at 50% of the visible width.
+
+Clicking a point selects it. Double-clicking a lane adds a point, and
+right-clicking an editable point removes it. `D` deselects;
+`Delete` / `Backspace` remove the selected editable point; arrows nudge it;
+`Insert` or `Enter` adds one; `T` toggles a selected platter point's touch
+state; and `Ctrl+Z` / `Ctrl+Y` undo or redo notation edits. Pointer drags
+coalesce into one undo step. `Escape` belongs to the dialog close flow and
+therefore prompts when the draft is dirty. Cropping rebases time to zero while
 preserving source offset.
 
 A recording is **transient draft state** in the audio engine until the take
@@ -241,10 +252,10 @@ Auditioning a completed pattern ("Play Scratch",
 backing transports: it neither issues nor depends on a transport `play`/
 `pause` action, so it works with or without a prepared backing bed and never
 disturbs backing playback that is already running. When a backing bed is
-ready, replay additionally rewinds it to its head and plays it in lock-step,
-because a take always begins with both the scratch source and the bed seeked
-to zero, so replaying the bed from its head reproduces the alignment heard
-while recording; with no bed ready, replay is scratch-only.
+ready, replay additionally rewinds it to its head and plays it in lock-step.
+The scratch trajectory retains its recorded source position while replaying
+the bed from its head reproduces the alignment heard while recording; with no
+bed ready, replay is scratch-only.
 
 Replay publishes a normalized replay position that drives two live playheads
 — the waveform playhead (via the ordinary scratch-source position) and a
@@ -256,6 +267,15 @@ playback it is auditioning. Ending replay (naturally or by request) stops and
 rewinds any synced backing, clears the replay position, and resets touch/
 manual scratch state so the session returns to its ordinary interactive
 state.
+
+### Scratch realism preference
+
+The persisted global **Effects ▸ Scratch realism** preference has **Off**,
+**Medium** (the default), and **High** levels. It applies only while the
+platter is held, for both on-screen and MIDI control. Medium and High add
+increasing held-platter softening and low-level groove texture. It does not
+change platter positions, recorded keyframes, replay timing, or ordinary
+motor playback.
 
 ### Save to the library
 
