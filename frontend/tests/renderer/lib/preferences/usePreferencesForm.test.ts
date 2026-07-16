@@ -51,6 +51,7 @@ function stubSilverdaw(): void {
       getMidiDevicePreferences: vi.fn(async () => ({})),
       getBrakeSettings: vi.fn(async () => ({ duration: 'medium', curve: 'curved' })),
       getBackspinSettings: vi.fn(async () => ({ duration: 'long', intensity: 'medium' })),
+      getScratchSettings: vi.fn(async () => ({ crossfaderCutKey: 'KeyZ' })),
       getStemPrefs: vi.fn(async () => ({ ...DEFAULTS.stems })),
       setQolPrefs: vi.fn(),
       setDebugPreferences: vi.fn(),
@@ -59,6 +60,7 @@ function stubSilverdaw(): void {
         structuredClone(preferences)
       }),
       setStemPrefs: vi.fn(async () => {}),
+      setScratchSettings: vi.fn(),
       chooseDirectory: vi.fn()
     }
   }
@@ -137,7 +139,8 @@ describe('usePreferencesForm', () => {
     const expected = {
       'ddj-rb': {
         scrubAudioEnabled: false,
-        crossfaderDirection: 'rightToLeft' as const
+        crossfaderDirection: 'rightToLeft' as const,
+        defaultDeck: 'none' as const
       }
     }
     expect(window.silverdaw.setMidiDevicePreferences).toHaveBeenCalledWith(
@@ -148,11 +151,27 @@ describe('usePreferencesForm', () => {
     expect(midiDevices.isScrubAudioEnabled('ddj-rb')).toBe(false)
   })
 
+  it('saves the per-device Default deck preference', async () => {
+    const form = usePreferencesForm()
+    await form.loadCurrent()
+
+    form.setMidiDefaultDeck('ddj-rb', 'deck2')
+    expect(form.hasChanges.value).toBe(true)
+    await form.save()
+
+    expect(window.silverdaw.setMidiDevicePreferences).toHaveBeenCalledWith('ddj-rb', {
+      scrubAudioEnabled: false,
+      crossfaderDirection: 'leftToRight',
+      defaultDeck: 'deck2'
+    })
+  })
+
   it('discards per-device MIDI preference drafts', async () => {
     vi.mocked(window.silverdaw.getMidiDevicePreferences).mockResolvedValueOnce({
       'ddj-rb': {
         scrubAudioEnabled: false,
-        crossfaderDirection: 'rightToLeft'
+        crossfaderDirection: 'rightToLeft',
+        defaultDeck: 'none'
       }
     })
     const form = usePreferencesForm()
@@ -164,7 +183,8 @@ describe('usePreferencesForm', () => {
 
     expect(form.midiDevicePreferencesDraft.value['ddj-rb']).toEqual({
       scrubAudioEnabled: false,
-      crossfaderDirection: 'rightToLeft'
+      crossfaderDirection: 'rightToLeft',
+      defaultDeck: 'none'
     })
   })
 

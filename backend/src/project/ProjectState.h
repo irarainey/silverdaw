@@ -8,6 +8,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 
 #include "EdgeFadeSnapshot.h"
+#include "ProjectStateTypes.h"
 
 namespace silverdaw
 {
@@ -132,18 +133,7 @@ class ProjectState : public juce::ValueTree::Listener
     // Transitions store partners only; overlap is derived from live clip geometry.
 
     // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
-    struct ClipEdgeFade
-    {
-        bool hasFadeIn = false;
-        double fadeInStartMs = 0.0;
-        double fadeInEndMs = 0.0;
-        EdgeFadeCurve fadeInCurve = EdgeFadeCurve::equalPower;
-        bool hasFadeOut = false;
-        double fadeOutStartMs = 0.0;
-        double fadeOutEndMs = 0.0;
-        EdgeFadeCurve fadeOutCurve = EdgeFadeCurve::equalPower;
-        bool any() const noexcept { return hasFadeIn || hasFadeOut; }
-    };
+    using ClipEdgeFade = silverdaw::ClipEdgeFade;
 
     // Rejects invalid overlaps or reused edges so each clip edge has one crossfade owner.
     bool addTransition(const juce::String& trackId, const juce::String& transitionId,
@@ -234,6 +224,13 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's backspin flag. Defaults to false. */
     bool isClipBackspin(const juce::String& clipId) const;
 
+    /** Apply a saved scratch pattern non-destructively to a clip.
+     *  Empty patternId clears the reference. Returns false if the clip is unknown. */
+    bool setClipScratchPatternId(const juce::String& clipId, const juce::String& patternId);
+
+    /** Read the scratch pattern id applied to a clip, or empty if none. */
+    juce::String getClipScratchPatternId(const juce::String& clipId) const;
+
     /** Read the clip's `inMs` (where in the source file it starts reading). 0 if unknown. */
     double getClipInMs(const juce::String& clipId) const;
 
@@ -254,29 +251,12 @@ class ProjectState : public juce::ValueTree::Listener
     juce::String getClipName(const juce::String& clipId) const;
 
     /** Per-warp-clip snapshot returned by `forEachWarpClip`. */
-    struct WarpClipInfo
-    {
-        juce::String clipId;
-        juce::String libraryItemId;
-        bool warpEnabled;
-        bool tempoRatioPinned;
-        double tempoRatio;
-        double semitones;
-        double cents;
-        juce::String warpMode;
-            // Distinguishes pending auto-warp from explicit warp-off before BPM was known.
-        bool pendingAutoWarp;
-    };
+    using WarpClipInfo = silverdaw::WarpClipInfo;
 
     // Used to re-stretch unpinned warped clips after project tempo changes.
     void forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const;
 
-    struct EffectiveClipTiming
-    {
-        double tempoRatio = 1.0;
-        double durationMs = 0.0;
-        bool warpActive = false;
-    };
+    using EffectiveClipTiming = silverdaw::EffectiveClipTiming;
 
     // Effective duration is timeline/output time; stored duration remains source time.
     EffectiveClipTiming getClipEffectiveTiming(const juce::String& clipId) const;
@@ -298,6 +278,19 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Returns the backend-stored file path for `clipId`, or empty if unknown. */
     juce::String getClipFilePath(const juce::String& clipId) const;
+
+    using ClipPreparationInfo = silverdaw::ClipPreparationInfo;
+
+    /** Immutable message-thread snapshot for preparing clip audio off-thread. */
+    std::optional<ClipPreparationInfo> getClipPreparationInfo(const juce::String& clipId) const;
+
+    /**
+     * Preparation snapshot for scratching a whole library item directly (no
+     * timeline clip). Uses the item's full playable audio with no crop, warp, or
+     * pitch shift; the returned `clipId` is the library item id (session identity).
+     */
+    std::optional<ClipPreparationInfo>
+    getLibraryItemPreparationInfo(const juce::String& libraryItemId) const;
 
     // View state persists but is mirrored into cleanSnapshot so it never marks dirty.
 
@@ -477,6 +470,18 @@ class ProjectState : public juce::ValueTree::Listener
     // Classification override beats low-confidence auto-classification.
     bool setLibraryItemAudioType(const juce::String& itemId, const juce::String& audioType);
 
+    // Marks a baked sample library item as scratch-origin: links it to the notation
+    // pattern (scratchPatternId) for re-editing and to the self-contained source
+    // snapshot WAV (scratchSourcePath) used to re-prepare the editor session. Additive
+    // metadata on a kind="sample" item; older builds ignore the unknown properties.
+    bool setLibraryItemScratchMeta(const juce::String& itemId,
+                                   const juce::String& scratchPatternId,
+                                   const juce::String& scratchSourcePath);
+
+    // Empty when the item is not a scratch-origin sample.
+    juce::String getLibraryItemScratchPatternId(const juce::String& itemId) const;
+    juce::String getLibraryItemScratchSourcePath(const juce::String& itemId) const;
+
     // User override to hide a library tile's cover art without deleting the shared media
     // store image (a per-item display flag persisted in the project; marks dirty).
     bool setLibraryItemCoverArtHidden(const juce::String& itemId, bool hidden);
@@ -509,6 +514,26 @@ class ProjectState : public juce::ValueTree::Listener
     juce::var markersAsJson() const;
     int getMarkerCount() const noexcept;
     bool hasMarkerNear(double positionMs, double toleranceMs = 1.0) const noexcept;
+
+    /** Persist a scratch pattern. Updates in place when the id already exists (idempotent).
+     *  Validates via `scratch::parsePattern()` before touching the tree. */
+    bool addScratchPattern(const juce::var& patternData);
+
+    /** Update an existing scratch pattern's data. Returns false when the id is unknown.
+     *  Validates via `scratch::parsePattern()` before mutating. */
+    bool updateScratchPattern(const juce::String& patternId, const juce::var& patternData);
+
+    /** Remove a saved scratch pattern by id. Returns true if it existed. */
+    bool removeScratchPattern(const juce::String& patternId);
+
+    /** Rename a saved scratch pattern. Returns false when the id is unknown. */
+    bool renameScratchPattern(const juce::String& patternId, const juce::String& newName);
+
+    /** True when the given pattern id already exists in the tree. */
+    bool hasScratchPattern(const juce::String& patternId) const noexcept;
+
+    /** Snapshot persisted scratch patterns for PROJECT_STATE. */
+    juce::var scratchPatternsAsJson() const;
 
     juce::var tracksAsJson() const;
 
@@ -661,6 +686,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kReversed;
     static const juce::Identifier kBrake;
     static const juce::Identifier kBackspin;
+    static const juce::Identifier kScratchPatternId;
     static const juce::Identifier kViewPxPerSecond;
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;
@@ -692,6 +718,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kKey;
     static const juce::Identifier kKind;
     static const juce::Identifier kSourceItemId;
+    static const juce::Identifier kScratchSourcePath;
     static const juce::Identifier kSourceClipId;
     static const juce::Identifier kSourceInMs;
     static const juce::Identifier kSourceDurationMs;
@@ -756,6 +783,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kDelayFeedback;
     static const juce::Identifier kDelayTone;
     static const juce::Identifier kDelayMix;
+
+    // Scratch pattern persistence identifiers live in ScratchPatternState.h (scratch_ids namespace).
 };
 
 class AudioEngine;

@@ -45,6 +45,8 @@ struct MixdownSnapshot
         double backspinSeconds{0.0};
         double backspinSpeed{BackspinSnapshot::kDefaultSpinSpeed};
         double backspinCurve{BackspinSnapshot::kDefaultCurvePower};
+        // Scratch pattern applied to this clip (empty = none).
+        juce::String scratchPatternId;
         bool warpEnabled{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};

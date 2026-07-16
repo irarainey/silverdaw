@@ -5,6 +5,7 @@ import type {
   ClipEnvelopePoint,
   ClipWarpMode,
   DelayNoteValue,
+  ScratchPattern,
   TransitionRecipe
 } from '@shared/bridge-protocol'
 
@@ -65,6 +66,8 @@ export interface Clip {
   /** Turntable backspin (reverse rewind): when set, the clip rewinds backwards at speed at its
    *  end, like a DJ pulling the vinyl back. Mutually exclusive with `brake`. Propagated across library-clip siblings. */
   backspin?: boolean
+  /** Scratch pattern applied non-destructively to this clip. Empty/undefined = no pattern. */
+  scratchPatternId?: string
 }
 
 export interface Marker {
@@ -310,4 +313,6 @@ export interface ProjectState {
   projectReverb: ProjectReverbState
   /** Project-shared tempo-locked Delay. Defaults 1/8-note, zero feedback/tone/mix (inaudible). */
   projectDelay: ProjectDelayState
+  /** Saved scratch patterns; backend-authoritative. Empty for projects without any saved patterns. */
+  savedScratchPatterns: ScratchPattern[]
 }

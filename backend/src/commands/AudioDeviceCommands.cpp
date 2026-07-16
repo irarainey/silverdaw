@@ -168,6 +168,21 @@ void handleSetBackspinSettings(const juce::var& payload, silverdaw::AudioEngine&
     engine.setBackspinDefaults(seconds, speed, curve);
 }
 
+void handleScratchRealismSet(const juce::var& payload, silverdaw::AudioEngine& engine)
+{
+    const auto level = payload.getProperty("level", juce::var()).toString();
+    if (level == "off")
+        engine.setScratchRealismLevel(scratch::ScratchRealismLevel::off);
+    else if (level == "medium")
+        engine.setScratchRealismLevel(scratch::ScratchRealismLevel::medium);
+    else if (level == "high")
+        engine.setScratchRealismLevel(scratch::ScratchRealismLevel::high);
+    else
+        return;
+
+    silverdaw::log::info("bridge", "recv SCRATCH_REALISM_SET level=" + level);
+}
+
 void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
                           silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
 {

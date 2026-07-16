@@ -96,6 +96,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/commands/` | Per-domain bridge command handlers | — |
 | `backend/src/midi/` | Generic JSON-profile loader, MIDI decoder, and feedback encoder | `docs/developer-guide.md#midi-controller-architecture` |
 | `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
+| `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (EQ, Leveler, Reverb, Delay, peaks) | — |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |
@@ -104,6 +105,7 @@ One line each; open the linked area only when the task touches it.
 | `frontend/src/main/` | Window, menu, IPC, prefs, backend spawn + supervisor | ADR 0008 |
 | `frontend/src/preload/` | `contextBridge` surface | — |
 | `frontend/src/renderer/src/` | Vue SPA, Pinia stores, PixiJS timeline | — |
+| `frontend/src/renderer/src/lib/scratch/` | Scratch dialog orchestration, backing, controls, replay, notation layout/editing, persistence, and save flow | ADR 0021 |
 | `frontend/src/shared/` | `bridge-protocol.ts` facade over `bridge/inbound.ts` (zod schemas) + `outbound.ts` (typed interfaces) — wire SoT | ADR 0004 |
 
 ## Why it is built this way

@@ -20,7 +20,7 @@ const comment = defineModel<string>('comment', { required: true })
         <input
           v-model="title"
           type="text"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
       <label class="flex flex-col gap-0.5">
@@ -28,7 +28,7 @@ const comment = defineModel<string>('comment', { required: true })
         <input
           v-model="artist"
           type="text"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
       <label class="flex flex-col gap-0.5">
@@ -36,7 +36,7 @@ const comment = defineModel<string>('comment', { required: true })
         <input
           v-model="album"
           type="text"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
       <label class="flex flex-col gap-0.5">
@@ -45,7 +45,7 @@ const comment = defineModel<string>('comment', { required: true })
           v-model="year"
           type="text"
           inputmode="numeric"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
       <label class="flex flex-col gap-0.5">
@@ -53,7 +53,7 @@ const comment = defineModel<string>('comment', { required: true })
         <input
           v-model="genre"
           type="text"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
       <label class="col-span-2 flex flex-col gap-0.5">
@@ -61,7 +61,7 @@ const comment = defineModel<string>('comment', { required: true })
         <input
           v-model="comment"
           type="text"
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-cyan-500"
+          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100 outline-none focus:border-sky-500"
         >
       </label>
     </div>

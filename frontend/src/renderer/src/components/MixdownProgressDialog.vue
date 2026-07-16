@@ -73,7 +73,7 @@ function onCancel(): void {
             aria-valuemax="100"
           >
             <div
-              class="h-full bg-cyan-500 transition-[width] duration-150 ease-out"
+              class="h-full bg-sky-500 transition-[width] duration-150 ease-out"
               :style="{ width: `${percent}%` }"
             />
           </div>

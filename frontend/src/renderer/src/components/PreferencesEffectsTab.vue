@@ -1,15 +1,24 @@
 <script setup lang="ts">
+import ScratchEditorPreferences from './ScratchEditorPreferences.vue'
 import type {
   BrakeDurationDto,
   BrakeCurveDto,
   BackspinDurationDto,
-  BackspinIntensityDto
+  BackspinIntensityDto,
+  ScratchRealismLevelDto,
+  ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 
 const brakeDuration = defineModel<BrakeDurationDto>('brakeDuration', { required: true })
 const brakeCurve = defineModel<BrakeCurveDto>('brakeCurve', { required: true })
 const backspinDuration = defineModel<BackspinDurationDto>('backspinDuration', { required: true })
 const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity', { required: true })
+const scratchRealismLevel = defineModel<ScratchRealismLevelDto>('scratchRealismLevel', {
+  required: true
+})
+const scratchCrossfaderCutKey = defineModel<ScratchCrossfaderCutKeyDto>('scratchCrossfaderCutKey', {
+  required: true
+})
 </script>
 
 <template>
@@ -215,5 +224,10 @@ const backspinIntensity = defineModel<BackspinIntensityDto>('backspinIntensity',
         </label>
       </div>
     </div>
+
+    <ScratchEditorPreferences
+      v-model:scratch-realism-level="scratchRealismLevel"
+      v-model:scratch-crossfader-cut-key="scratchCrossfaderCutKey"
+    />
   </section>
 </template>

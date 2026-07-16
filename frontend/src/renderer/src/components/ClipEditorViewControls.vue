@@ -1,9 +1,8 @@
 <script setup lang="ts">
 // Clip Editor view/zoom toolbar: the Volume-shape toggle, non-destructive Trim,
-// Source/Clip view switch, and zoom controls. Two-way `volumeEditMode` and
-// `viewExpanded` flow through v-model; action intents are emitted to the parent.
-import { MAX_ZOOM } from '@/lib/clipEditor/useClipEditorViewport'
-
+// and Source/Clip view switch. Two-way `volumeEditMode` and `viewExpanded` flow
+// through v-model; action intents are emitted to the parent. Zoom controls live
+// as an overlay on the waveform panel itself.
 const volumeEditMode = defineModel<boolean>('volumeEditMode', { required: true })
 const sliceEditMode = defineModel<boolean>('sliceEditMode', { required: true })
 const viewExpanded = defineModel<boolean>('viewExpanded', { required: true })
@@ -19,8 +18,6 @@ defineProps<{
   djEffectAvailable: boolean
   brakeActive: boolean
   backspinActive: boolean
-  zoom: number
-  zoomPercent: number
 }>()
 
 defineEmits<{
@@ -31,9 +28,6 @@ defineEmits<{
   (e: 'toggle-reverse'): void
   (e: 'toggle-brake'): void
   (e: 'toggle-backspin'): void
-  (e: 'zoom-out'): void
-  (e: 'reset-zoom'): void
-  (e: 'zoom-in'): void
 }>()
 </script>
 
@@ -232,32 +226,6 @@ defineEmits<{
       @click="viewExpanded = !viewExpanded"
     >
       {{ viewExpanded ? 'Clip' : 'Source' }}
-    </button>
-    <button
-      type="button"
-      class="ml-1 flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-      title="Zoom out (-)"
-      :disabled="zoom <= 1.0001"
-      @click="$emit('zoom-out')"
-    >
-      <span class="text-base leading-none">−</span>
-    </button>
-    <button
-      type="button"
-      class="rounded bg-zinc-800 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200 hover:bg-zinc-700"
-      title="Reset zoom (0)"
-      @click="$emit('reset-zoom')"
-    >
-      {{ zoomPercent }}%
-    </button>
-    <button
-      type="button"
-      class="flex h-7 w-7 items-center justify-center rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
-      title="Zoom in (+)"
-      :disabled="zoom >= MAX_ZOOM - 0.01"
-      @click="$emit('zoom-in')"
-    >
-      <span class="text-base leading-none">+</span>
     </button>
   </div>
 </template>

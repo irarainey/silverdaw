@@ -26,6 +26,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import type { MidiControlPayload } from '@shared/bridge-protocol'
 
 const JOG_MS_PER_STEP = {
@@ -306,6 +307,15 @@ function applyAbsoluteControl(payload: Extract<MidiControlPayload, { kind: 'abso
   )
 }
 
+/**
+ * The master volume is the one MIDI control that stays live while a modal or
+ * editor dialog owns input, so the performer can keep riding the main output
+ * level from the deck while working in the clip or scratch editor.
+ */
+export function isMasterVolumeControl(payload: MidiControlPayload): boolean {
+  return payload.kind === 'absolute' && payload.control === 'masterVolume'
+}
+
 export function handleMidiControl(payload: MidiControlPayload): void {
   if (payload.kind === 'relative') {
     if (payload.control === 'browseTracks') {
@@ -343,6 +353,10 @@ export function handleMidiControl(payload: MidiControlPayload): void {
       handleBrowsePress(payload.deviceIdentifier)
       break
     case 'previousMarker':
+      if (useScratchSessionStore().activeSessionId !== null) {
+        window.dispatchEvent(new Event('silverdaw:scratch-build-backing'))
+        break
+      }
       seekToPreviousMarker('MIDI Cue')
       break
     case 'nextMarker':

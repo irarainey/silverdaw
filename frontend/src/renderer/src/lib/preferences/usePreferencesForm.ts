@@ -7,6 +7,8 @@ import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { useScratchRealismSettingsStore } from '@/stores/scratchRealismSettingsStore'
+import { useScratchInputSettingsStore } from '@/stores/scratchInputSettingsStore'
 import { log } from '@/lib/log'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
 import type {
@@ -15,7 +17,10 @@ import type {
   BrakeCurveDto,
   BrakeDurationDto,
   MidiCrossfaderDirection,
-  MidiDevicePreferences
+  MidiDefaultDeck,
+  MidiDevicePreferences,
+  ScratchRealismLevelDto,
+  ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 import {
   BACKEND_PREFERENCE,
@@ -45,11 +50,14 @@ export interface PreferencesForm {
     identifier: string,
     direction: MidiCrossfaderDirection
   ) => void
+  setMidiDefaultDeck: (identifier: string, defaultDeck: MidiDefaultDeck) => void
   discardMidiInputChanges: () => void
   brakeDuration: Ref<BrakeDurationDto>
   brakeCurve: Ref<BrakeCurveDto>
   backspinDuration: Ref<BackspinDurationDto>
   backspinIntensity: Ref<BackspinIntensityDto>
+  scratchRealismLevel: Ref<ScratchRealismLevelDto>
+  scratchCrossfaderCutKey: Ref<ScratchCrossfaderCutKeyDto>
   loggingEnabled: Ref<boolean>
   devToolsEnabled: Ref<boolean>
   logDirectory: Ref<string>
@@ -95,6 +103,8 @@ export function usePreferencesForm(): PreferencesForm {
   const midiDevices = useMidiDeviceStore()
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
+  const scratchRealismSettings = useScratchRealismSettingsStore()
+  const scratchInputSettings = useScratchInputSettingsStore()
   const uniqueDevices = useUniqueAudioDevices()
 
   // Pending audio output; `null/null` means system default.
@@ -202,7 +212,8 @@ export function usePreferencesForm(): PreferencesForm {
       const previous = effectiveMidiDevicePreferences(initial, identifier)
       if (
         next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
-        next.crossfaderDirection !== previous.crossfaderDirection
+        next.crossfaderDirection !== previous.crossfaderDirection ||
+        next.defaultDeck !== previous.defaultDeck
       ) {
         return true
       }
@@ -229,6 +240,14 @@ export function usePreferencesForm(): PreferencesForm {
     }
   }
 
+  function setMidiDefaultDeck(identifier: string, defaultDeck: MidiDefaultDeck): void {
+    const current = effectiveMidiDevicePreferences(midiDevicePreferencesDraft.value, identifier)
+    midiDevicePreferencesDraft.value = {
+      ...midiDevicePreferencesDraft.value,
+      [identifier]: { ...current, defaultDeck }
+    }
+  }
+
   function discardMidiInputChanges(): void {
     enabledMidiInputsDraft.value = { ...initialEnabledMidiInputs.value }
     midiDevicePreferencesDraft.value = { ...initialMidiDevicePreferences.value }
@@ -244,6 +263,12 @@ export function usePreferencesForm(): PreferencesForm {
   const backspinIntensity = ref<BackspinIntensityDto>('medium')
   const initialBackspinDuration = ref<BackspinDurationDto>('long')
   const initialBackspinIntensity = ref<BackspinIntensityDto>('medium')
+
+  const scratchRealismLevel = ref<ScratchRealismLevelDto>('medium')
+  const initialScratchRealismLevel = ref<ScratchRealismLevelDto>('medium')
+
+  const scratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
+  const initialScratchCrossfaderCutKey = ref<ScratchCrossfaderCutKeyDto>('KeyZ')
 
   const loggingEnabled = ref(false)
   const devToolsEnabled = ref(false)
@@ -339,7 +364,9 @@ export function usePreferencesForm(): PreferencesForm {
       brakeDuration.value !== initialBrakeDuration.value ||
       brakeCurve.value !== initialBrakeCurve.value ||
       backspinDuration.value !== initialBackspinDuration.value ||
-      backspinIntensity.value !== initialBackspinIntensity.value
+      backspinIntensity.value !== initialBackspinIntensity.value ||
+      scratchRealismLevel.value !== initialScratchRealismLevel.value ||
+      scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value
   )
 
   async function loadCurrent(): Promise<void> {
@@ -419,6 +446,9 @@ export function usePreferencesForm(): PreferencesForm {
       const backspinPrefs = await window.silverdaw.getBackspinSettings()
       backspinDuration.value = backspinPrefs.duration
       backspinIntensity.value = backspinPrefs.intensity
+      scratchRealismLevel.value = (await window.silverdaw.getScratchRealismSettings()).level
+      const scratchPrefs = await window.silverdaw.getScratchSettings()
+      scratchCrossfaderCutKey.value = scratchPrefs.crossfaderCutKey
     } catch {
       loggingEnabled.value = false
       devToolsEnabled.value = false
@@ -437,6 +467,7 @@ export function usePreferencesForm(): PreferencesForm {
       brakeCurve.value = 'curved'
       backspinDuration.value = 'long'
       backspinIntensity.value = 'medium'
+      scratchRealismLevel.value = 'medium'
     }
 
     await stemPrefsLoad
@@ -486,6 +517,8 @@ export function usePreferencesForm(): PreferencesForm {
     initialBrakeCurve.value = brakeCurve.value
     initialBackspinDuration.value = backspinDuration.value
     initialBackspinIntensity.value = backspinIntensity.value
+    initialScratchRealismLevel.value = scratchRealismLevel.value
+    initialScratchCrossfaderCutKey.value = scratchCrossfaderCutKey.value
   }
 
   async function chooseProjectDir(): Promise<void> {
@@ -621,11 +654,13 @@ export function usePreferencesForm(): PreferencesForm {
         const previous = effectiveMidiDevicePreferences(initial, identifier)
         if (
           next.scrubAudioEnabled !== previous.scrubAudioEnabled ||
-          next.crossfaderDirection !== previous.crossfaderDirection
+          next.crossfaderDirection !== previous.crossfaderDirection ||
+          next.defaultDeck !== previous.defaultDeck
         ) {
           window.silverdaw.setMidiDevicePreferences(identifier, {
             scrubAudioEnabled: next.scrubAudioEnabled,
-            crossfaderDirection: next.crossfaderDirection
+            crossfaderDirection: next.crossfaderDirection,
+            defaultDeck: next.defaultDeck
           })
         }
       }
@@ -642,6 +677,12 @@ export function usePreferencesForm(): PreferencesForm {
       backspinIntensity.value !== initialBackspinIntensity.value
     ) {
       backspinSettings.setBackspinSettings(backspinDuration.value, backspinIntensity.value)
+    }
+    if (scratchRealismLevel.value !== initialScratchRealismLevel.value) {
+      scratchRealismSettings.setScratchRealismLevel(scratchRealismLevel.value)
+    }
+    if (scratchCrossfaderCutKey.value !== initialScratchCrossfaderCutKey.value) {
+      scratchInputSettings.setCrossfaderCutKey(scratchCrossfaderCutKey.value)
     }
     const stemPatch: Parameters<typeof window.silverdaw.setStemPrefs>[0] = {}
     if (useGpuForStems.value !== initialUseGpuForStems.value) {
@@ -697,11 +738,14 @@ export function usePreferencesForm(): PreferencesForm {
     midiDevicePreferencesDraft,
     setMidiScrubAudio,
     setMidiCrossfaderDirection,
+    setMidiDefaultDeck,
     discardMidiInputChanges,
     brakeDuration,
     brakeCurve,
     backspinDuration,
     backspinIntensity,
+    scratchRealismLevel,
+    scratchCrossfaderCutKey,
     loggingEnabled,
     devToolsEnabled,
     logDirectory,

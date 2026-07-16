@@ -52,6 +52,9 @@ class PlayheadEmitter : public juce::Timer
     std::vector<BusGraph::TrackPeakSnapshot> trackPeakScratch;
     // Last observed bus-graph skip count, to log only newly dropped blocks.
     juce::uint64 lastSkippedBlocks = 0;
+    int scratchStateTick = 0;
+    juce::String lastScratchStatus;
+    double lastScratchCrossfader = -1.0;
     // Wall-clock throttle for the perf.tracks per-track output-peak diagnostic.
     // Pinpoints which track falls silent (e.g. after a gain/filter change) since the
     // master meter alone hides a single muted track behind the others. Peaks are

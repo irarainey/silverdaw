@@ -50,7 +50,9 @@ corresponding binding, Silverdaw applies these actions:
 
 > **Note:** Not every supported controller provides every mapping or function.
 > Check the supported-controller table below for the controls available on each
-> device.
+> device. This table describes ordinary timeline behaviour; while the
+> [Scratch Editor](#scratch-editor-with-a-physical-deck) is open, Play, Cue,
+> the platter, and the crossfader are repurposed for the session instead.
 
 | Controller control | Silverdaw action |
 | --- | --- |
@@ -127,6 +129,62 @@ Controls not listed for a profile are not mapped.
 The Hercules DJControl Inpulse 200 MK2 and Hercules DJControl Inpulse 300 MK2
 are explicitly excluded because their byte-level mappings have not been
 verified. A similar name does not make an unlisted controller compatible.
+
+## Scratch Editor without a controller
+
+The Scratch Editor can be driven by a physical deck, but it does not require
+one. When no controller is connected you can perform the same platter and
+crossfader-cut moves with a trackpad and the keyboard, using the on-screen
+virtual deck.
+
+- **Platter (trackpad).** Two-finger pan across the on-screen platter jogs it,
+  exactly like touching a physical platter. Rightward or downward movement
+  scratches forward; leftward or upward scratches back. The gesture only
+  registers while your fingers are moving — Windows precision touchpads report
+  nothing while fingers rest — so the platter releases automatically a moment
+  after you stop.
+- **Platter (mouse and keyboard).** Click and drag around the platter to
+  scratch, or focus it and use the arrow keys; hold Shift for larger steps.
+- **Dead stop.** Press **Space** to toggle playback, which also acts as the
+  stop when the platter is spinning.
+- **Crossfader cut (keyboard).** Hold a single key to open the crossfader
+  and make the deck audible; release it to close the fader again. The resting
+  default is closed (silent). Choose **Z** (right-handed) or **M** (left-handed)
+  to suit your scratching hand in **Preferences ▸ Effects ▸ Scratch crossfader
+  cut** (the default is Z).
+
+These on-screen controls share the same session model as a physical deck, so a
+controller and the trackpad or keyboard can be used interchangeably.
+
+## Scratch Editor with a physical deck
+
+While the Scratch Editor is open, a supported controller's **Play** and **Cue**
+buttons and its platter/crossfader are repurposed for the session; this differs from their
+ordinary timeline roles described above, which only apply with the editor
+closed.
+
+- **Play** drives scratch recording instead of transport playback, mirroring
+  the on-screen Record button's three phases: idle → **armed** (press arms;
+  nothing records yet), armed → **cancelled** (a second press before any touch
+  discards the arm), recording → **stopped** (a press while recording
+  finalizes the take). The first eligible platter touch while armed starts the
+  take.
+- **Cue** runs **Build**, the same action as the backing panel's Build button.
+  It prepares or rebuilds the selected backing tracks, anchor, and length. With
+  the editor closed, Cue keeps its ordinary previous-marker behaviour unchanged.
+- **Touch is authoritative, not the ordinary jog behaviour above.** On a
+  capacitive platter, the touch sensor decides ownership and release: lifting
+  off returns the platter to motor speed immediately. Jog movement that
+  arrives after release (a lift-off nudge) is dropped rather than applied or
+  used to re-claim the platter, so releasing can never be delayed by
+  after-release movement. The separately encoded **search / outer-wheel**
+  controls remain ordinary timeline controls only: because they do not report
+  touch, they cannot safely participate in Scratch Editor ownership and remain
+  unavailable to the modal editor. A touch-less, movement-only platter instead
+  infers release after a short pause in movement.
+
+See [ADR 0021](adr/0021-scratch-editor-action-patterns.md) for the full session
+and recording model.
 
 ## Diagnose a controller
 

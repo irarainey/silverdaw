@@ -37,5 +37,10 @@
     { "purpose": "cueLight", "message": "note", "data1": 12, "channels": [0, 1] },
     { "purpose": "deckSelectionLight", "message": "note", "data1": 84, "channels": [0, 1] },
     { "purpose": "hotCueLights", "message": "note", "data1": 0, "channels": [7, 8] }
+  ],
+  "init": [
+    [240, 0, 32, 127, 3, 1, 247],
+    [240, 0, 64, 5, 0, 0, 2, 6, 0, 3, 1, 247],
+    [155, 9, 127]
   ]
 }

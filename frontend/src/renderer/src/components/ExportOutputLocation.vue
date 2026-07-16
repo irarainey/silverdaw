@@ -16,7 +16,7 @@ defineProps<Readonly<{
         v-model="outputPath"
         type="text"
         spellcheck="false"
-        class="flex-1 min-w-0 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500"
+        class="flex-1 min-w-0 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-sky-500"
       >
       <button
         type="button"

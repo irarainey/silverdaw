@@ -2,6 +2,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 #include <juce_core/juce_core.h>
 
@@ -65,6 +66,7 @@ class MidiDeckActivationState
 {
 public:
     bool toggle(int deck) noexcept;
+    void selectExclusive(int deck) noexcept;
     void setEnabled(int deck, bool active) noexcept;
     bool isEnabled(int deck) const noexcept;
     bool allows(const MidiControllerEvent& event) const noexcept;
@@ -92,6 +94,11 @@ public:
     std::array<MidiControllerOutputMessage, 2> deckSelectionLightMessages(
         bool deck1Active, bool deck2Active) const noexcept;
     std::array<MidiControllerOutputMessage, 16> hotCueLightMessages(int markerCount) const noexcept;
+    const std::vector<std::vector<juce::uint8>>& initMessages() const noexcept;
+    int scratchTicksPerTurn() const noexcept;
+    // True when the profile binds a jog-touch (capacitive platter) control, so
+    // touch state is authoritative and untouched jog movement can be ignored.
+    bool hasJogTouchBinding() const noexcept;
 
 private:
     const MidiControllerProfile* profile = nullptr;

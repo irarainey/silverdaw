@@ -32,28 +32,34 @@ overriding per-component. Add a new shared class there when a pattern repeats in
 
 Silverdaw uses exactly **one neutral ramp**, **one interactive accent**, and a
 **small fixed severity set**. Never reach for `gray`, `slate`, `neutral`,
-`blue`, `indigo`, `violet`, `teal`, `green`, `orange`, etc.
+`blue`, `cyan`, `indigo`, `violet`, `teal`, `green`, `orange`, etc.
 
 | Role | Palette | Typical tokens | Notes |
 | --- | --- | --- | --- |
 | Neutral surfaces & text | `zinc` | `zinc-950 900 800 700 / 100 200 300 400 500` | The entire UI skeleton. |
-| Interactive accent (focus, selection, inline links, sliders) | `sky` | `sky-400 500 600`, tints `sky-500/15`, `sky-600/30`, text `sky-200` | The "active/selected/has-focus" colour. |
-| Dialog primary action button | `cyan` | via `.dialog-btn-primary` (`cyan-700`/`cyan-600`) | Only through the shared class — do **not** hand-roll cyan buttons. |
+| Interactive accent (focus, selection, inline links, sliders, action buttons) | `sky` | `sky-400 500 600`, tints `sky-500/15`, `sky-600/30`, text `sky-200` | The "active/selected/has-focus" colour, and the fill for primary/action buttons. |
 | Success / positive / "connected" | `emerald` | `emerald-400 500` | Status dots, completion ticks, drop indicators. |
 | Warning / caution / advisory | `amber` | `amber-200 300 400`, `amber-900/30` bg, `amber-700` border | Variable-tempo, unsupported sample rate, soft warnings. |
 | Destructive / error | `red` | `red-600 700` via `.dialog-btn-destructive`; `red-400` text | Irreversible actions and hard errors only. |
 
 Rules:
 
-- **Accent vs dialog-primary:** inline focus/selection/active states use `sky`;
-  the primary push-button in a dialog footer uses the `cyan`-based
-  `.dialog-btn-primary` class. Keep that split — it already exists across the
-  app.
+- **One blue only.** `sky` is the sole interactive accent — focus/selection/
+  active states, sliders, inline links, and every action button (including the
+  dialog footer primary via `.dialog-btn-primary`). There is **no** second blue;
+  `cyan` is retired. Button hierarchy is carried by emphasis, not hue: the
+  primary action is a **filled** `sky` button, secondary/Cancel is a **neutral
+  zinc** ghost (`.dialog-btn-cancel`).
 - **Severity is content, not chrome.** Dialog frames stay neutral `zinc`; convey
   warning/error through body content (an `amber`/`red` inline box), never by
   recolouring the `.dialog-card` border.
 - Reserve `red` for genuinely destructive/irreversible choices and real errors.
   A plain Cancel/Close is `.dialog-btn-cancel` (neutral zinc), never red.
+- **One deliberate exception — categorical data-viz.** The musical key-badge
+  palette (`lib/keyBadge.ts`) intentionally maps the 12 keys onto a full colour
+  wheel (including otherwise-forbidden families) so each key is distinguishable.
+  This is categorical encoding, not chrome — the "one accent" rule does not apply
+  to it. Do not fold these into `sky`.
 
 ## 2. Surfaces & elevation
 

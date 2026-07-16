@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
-import type { MidiCrossfaderDirection, MidiDevicePreferences } from '@shared/types'
+import type {
+  MidiCrossfaderDirection,
+  MidiDefaultDeck,
+  MidiDevicePreferences
+} from '@shared/types'
 
 const props = defineProps<{
   inputs: ReadonlyArray<{
@@ -25,6 +29,7 @@ const props = defineProps<{
     identifier: string,
     direction: MidiCrossfaderDirection
   ) => void
+  setDefaultDeck: (identifier: string, defaultDeck: MidiDefaultDeck) => void
 }>()
 
 function onEnabledChange(identifier: string, event: Event): void {
@@ -42,6 +47,13 @@ function crossfaderDirection(identifier: string): MidiCrossfaderDirection {
   return (
     props.devicePreferencesByIdentifier[identifier]?.crossfaderDirection ??
     DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection
+  )
+}
+
+function defaultDeck(identifier: string): MidiDefaultDeck {
+  return (
+    props.devicePreferencesByIdentifier[identifier]?.defaultDeck ??
+    DEFAULT_MIDI_DEVICE_PREFERENCES.defaultDeck
   )
 }
 
@@ -192,6 +204,45 @@ function onScrubAudioChange(identifier: string, event: Event): void {
                   @change="setCrossfaderDirection(input.identifier, 'rightToLeft')"
                 >
                 Right to left
+              </label>
+            </fieldset>
+
+            <fieldset class="flex flex-wrap items-center gap-2">
+              <legend class="mr-1 text-[11px] text-zinc-500">
+                Default deck
+              </legend>
+              <label class="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-300">
+                <input
+                  type="radio"
+                  :name="`default-deck-${input.identifier}`"
+                  value="none"
+                  :checked="defaultDeck(input.identifier) === 'none'"
+                  class="h-3.5 w-3.5 cursor-pointer accent-sky-500"
+                  @change="setDefaultDeck(input.identifier, 'none')"
+                >
+                None
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-300">
+                <input
+                  type="radio"
+                  :name="`default-deck-${input.identifier}`"
+                  value="deck1"
+                  :checked="defaultDeck(input.identifier) === 'deck1'"
+                  class="h-3.5 w-3.5 cursor-pointer accent-sky-500"
+                  @change="setDefaultDeck(input.identifier, 'deck1')"
+                >
+                Deck 1 (Left)
+              </label>
+              <label class="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-300">
+                <input
+                  type="radio"
+                  :name="`default-deck-${input.identifier}`"
+                  value="deck2"
+                  :checked="defaultDeck(input.identifier) === 'deck2'"
+                  class="h-3.5 w-3.5 cursor-pointer accent-sky-500"
+                  @change="setDefaultDeck(input.identifier, 'deck2')"
+                >
+                Deck 2 (Right)
               </label>
             </fieldset>
           </div>

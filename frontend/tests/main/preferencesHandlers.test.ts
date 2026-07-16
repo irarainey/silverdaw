@@ -73,6 +73,18 @@ describe('preferences IPC: setStems', () => {
     expect(flush).not.toHaveBeenCalled()
   })
 
+  it('persists valid scratch realism and rejects an invalid level', () => {
+    const setRealism = handlers.get('prefs:setScratchRealism')
+    expect(store.scratchRealism.level).toBe('medium')
+    setRealism?.({}, { level: 'high' })
+    expect(store.scratchRealism.level).toBe('high')
+    expect(flush).toHaveBeenCalledTimes(1)
+
+    setRealism?.({}, { level: 'maximum' })
+    expect(store.scratchRealism.level).toBe('high')
+    expect(flush).toHaveBeenCalledTimes(1)
+  })
+
   it('still persists useGpu and quality changes', () => {
     setStems({ useGpu: true, quality: 'best' })
     expect(store.stems.useGpu).toBe(true)
@@ -108,24 +120,26 @@ describe('preferences IPC: setStems', () => {
     const setPreferences = handlers.get('prefs:setMidiDevicePreferences')
     setPreferences?.({}, 'ddj-rb', {
       scrubAudioEnabled: false,
-      crossfaderDirection: 'rightToLeft'
+      crossfaderDirection: 'rightToLeft',
+      defaultDeck: 'deck1'
     })
 
     expect(store.midiDevicePreferences['ddj-rb']).toEqual({
       scrubAudioEnabled: false,
-      crossfaderDirection: 'rightToLeft'
+      crossfaderDirection: 'rightToLeft',
+      defaultDeck: 'deck1'
     })
     expect(flush).toHaveBeenCalledTimes(1)
   })
 
   it('defaults corrupt MIDI device preference fields safely', () => {
     expect(sanitiseMidiDevicePreferences({
-      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft', defaultDeck: 'deck2' },
       partial: { scrubAudioEnabled: 'no' },
       wrong: 'enabled'
     })).toEqual({
-      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft' },
-      partial: { scrubAudioEnabled: false, crossfaderDirection: 'leftToRight' }
+      valid: { scrubAudioEnabled: false, crossfaderDirection: 'rightToLeft', defaultDeck: 'deck2' },
+      partial: { scrubAudioEnabled: false, crossfaderDirection: 'leftToRight', defaultDeck: 'none' }
     })
   })
 })

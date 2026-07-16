@@ -18,7 +18,9 @@ import type {
   StemModelState,
   StemPrefsDto,
   BrakePrefsDto,
-  BackspinPrefsDto
+  BackspinPrefsDto,
+  ScratchRealismPrefsDto,
+  ScratchPrefsDto
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
@@ -230,6 +232,16 @@ const api = {
   getBackspinSettings: (): Promise<BackspinPrefsDto> => ipcRenderer.invoke(IPC.prefs.getBackspin),
   setBackspinSettings: (partial: Partial<BackspinPrefsDto>): void => {
     ipcRenderer.send(IPC.prefs.setBackspin, partial)
+  },
+  getScratchRealismSettings: (): Promise<ScratchRealismPrefsDto> =>
+    ipcRenderer.invoke(IPC.prefs.getScratchRealism),
+  setScratchRealismSettings: (partial: Partial<ScratchRealismPrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setScratchRealism, partial)
+  },
+  // ─── Scratch Editor input (crossfader cut key) ──────────────────────────
+  getScratchSettings: (): Promise<ScratchPrefsDto> => ipcRenderer.invoke(IPC.prefs.getScratch),
+  setScratchSettings: (partial: Partial<ScratchPrefsDto>): void => {
+    ipcRenderer.send(IPC.prefs.setScratch, partial)
   },
   // ─── Autosave folder + manifest IPCs ────────────────────────────────────
   /** Resolve an autosave bucket after strict `projectId` validation. */

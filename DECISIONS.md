@@ -27,3 +27,4 @@ decision and add its line here.
 | D-0018 | `IMPORTANT` | Autosave-backed crash recovery | `docs/adr/0018-autosave-crash-recovery.md` |
 | D-0019 | `CRITICAL` | Backward compatibility for a released product (versioned, read-old/write-latest) | `docs/adr/0019-backward-compatibility-released-product.md` |
 | D-0020 | `IMPORTANT` | Exclude inaudible tracks from playback and effects processing | `docs/adr/0020-exclude-inaudible-tracks-from-rendering.md` |
+| D-0021 | `IMPORTANT` | Scratch Editor: modal single-session editor over a prepared, bounded scratch source, with direct MIDI-to-audio control, a monitor-only pre-rendered backing bed, notation-based recording, transport-independent replay, and save-to-library as a baked sample | `docs/adr/0021-scratch-editor-action-patterns.md` |

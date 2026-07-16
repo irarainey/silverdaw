@@ -28,6 +28,8 @@ void AudioEngine::initialiseGraph()
     // Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
     // volume-independent. Wiring the source graph needs no open device.
     topMixer.addInputSource(&master, false);
+    topMixer.addInputSource(&scratchSource, false);
+    topMixer.addInputSource(&backingSource, false);
     sourcePlayer.setSource(&masterMeter);
 }
 

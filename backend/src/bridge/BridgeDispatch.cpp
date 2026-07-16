@@ -22,6 +22,10 @@
 #include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SampleExport.h"
+#include "ScratchSessionCommands.h"
+#include "ScratchPatternCommands.h"
+#include "ScratchSaveCommands.h"
+#include "ScratchPatternReplayCommands.h"
 #include "StemSeparationCommands.h"
 #include "StemSeparator.h"
 #include "TrackCommands.h"
@@ -296,6 +300,7 @@ bool dispatchPreview(const DispatchContext& ctx)
     {
         silverdaw::handlePreviewLoad(payload, engine, projectState, bridge, decodedCache);
     }
+
     else if (type == "PREVIEW_UNLOAD")
     {
         silverdaw::handlePreviewUnload(engine, bridge);
@@ -339,6 +344,70 @@ bool dispatchPreview(const DispatchContext& ctx)
     else if (type == "PREVIEW_SET_BACKSPIN")
     {
         silverdaw::handlePreviewSetBackspin(payload, engine, projectState);
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchScratch(const DispatchContext& ctx)
+{
+    if (ctx.type == "SCRATCH_SESSION_OPEN")
+    {
+        handleScratchSessionOpen(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                 ctx.peakPool, ctx.session.currentPath);
+    }
+    else if (ctx.type == "SCRATCH_SESSION_CLOSE")
+    {
+        handleScratchSessionClose(ctx.payload, ctx.engine, ctx.bridge);
+    }
+    else if (ctx.type == "SCRATCH_SESSION_CONTROL")
+    {
+        handleScratchSessionControl(ctx.payload, ctx.engine, ctx.bridge);
+    }
+    else if (ctx.type == "SCRATCH_BACKING_PREPARE")
+    {
+        handleScratchBackingPrepare(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                    ctx.peakPool);
+    }
+    else if (ctx.type == "SCRATCH_BACKING_CLEAR")
+    {
+        handleScratchBackingClear(ctx.payload, ctx.engine, ctx.bridge);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_SAVE")
+    {
+        handleScratchPatternSave(ctx.payload, ctx.projectState, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_SAVE_AS_SAMPLE")
+    {
+        handleScratchSaveAsSample(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                  ctx.peakPool, ctx.cache, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_DELETE")
+    {
+        handleScratchPatternDelete(ctx.payload, ctx.projectState, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_RENAME")
+    {
+        handleScratchPatternRename(ctx.payload, ctx.projectState, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_APPLY")
+    {
+        handleScratchPatternApply(ctx.payload, ctx.projectState, ctx.engine, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_REMOVE")
+    {
+        handleScratchPatternRemove(ctx.payload, ctx.projectState, ctx.engine, ctx.bridge, ctx.session);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_REPLAY_START")
+    {
+        handleScratchPatternReplayStart(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge);
+    }
+    else if (ctx.type == "SCRATCH_PATTERN_REPLAY_STOP")
+    {
+        handleScratchPatternReplayStop(ctx.payload, ctx.engine, ctx.bridge);
     }
     else
     {
@@ -678,6 +747,10 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     {
         silverdaw::handleSetBackspinSettings(payload, engine);
     }
+    else if (type == "SCRATCH_REALISM_SET")
+    {
+        silverdaw::handleScratchRealismSet(payload, engine);
+    }
     else if (type == "AUDIO_FILE_PROBE")
     {
         silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);
@@ -691,6 +764,7 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
 
 bool dispatchMidi(const DispatchContext& ctx)
 {
+    silverdaw::setMidiScratchEngine(ctx.engine);
     if (ctx.type == "MIDI_DEVICES_REQUEST")
     {
         silverdaw::log::debug("bridge", "recv MIDI_DEVICES_REQUEST");
@@ -705,6 +779,11 @@ bool dispatchMidi(const DispatchContext& ctx)
     if (ctx.type == "MIDI_DECK_SELECTION_SET")
     {
         silverdaw::handleMidiDeckSelectionSet(ctx.payload, ctx.bridge);
+        return true;
+    }
+    if (ctx.type == "MIDI_SCRATCH_SETTINGS_SET")
+    {
+        silverdaw::handleMidiScratchSettingsSet(ctx.payload);
         return true;
     }
     return false;
@@ -865,7 +944,7 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     const DispatchContext ctx{type, payload, engine, projectState, bridge, peakPool,
                               cache, decodedCache, peakJobs, session};
     const bool handled = dispatchClip(ctx) || dispatchLibrary(ctx) || dispatchTransport(ctx) ||
-                         dispatchPreview(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
+                         dispatchPreview(ctx) || dispatchScratch(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
                          dispatchWaveform(ctx) || dispatchProject(ctx) || dispatchMarker(ctx) ||
                          dispatchAudioDevice(ctx) || dispatchMidi(ctx) || dispatchMixdown(ctx) ||
                          dispatchStem(ctx) || dispatchUndo(ctx) || dispatchTransition(ctx);

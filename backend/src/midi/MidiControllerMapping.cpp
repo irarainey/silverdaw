@@ -108,6 +108,14 @@ bool MidiDeckActivationState::toggle(int deck) noexcept
     return active;
 }
 
+void MidiDeckActivationState::selectExclusive(int deck) noexcept
+{
+    if (deck < 1 || deck > 2) return;
+    const auto index = static_cast<std::size_t>(deck - 1);
+    enabled[index] = true;
+    enabled[1 - index] = false;
+}
+
 void MidiDeckActivationState::setEnabled(int deck, bool active) noexcept
 {
     if (deck >= 1 && deck <= 2) enabled[deck - 1] = active;
@@ -313,6 +321,33 @@ std::array<MidiControllerOutputMessage, 16> MidiControllerMapper::hotCueLightMes
                               pad < activeCount ? binding->onValue : binding->offValue);
         }
     return messages;
+}
+
+const std::vector<std::vector<juce::uint8>>& MidiControllerMapper::initMessages() const noexcept
+{
+    static const std::vector<std::vector<juce::uint8>> empty;
+    return profile != nullptr ? profile->initMessages : empty;
+}
+
+int MidiControllerMapper::scratchTicksPerTurn() const noexcept
+{
+    if (profile == nullptr)
+        return 512;
+    return profile->scratchTicksPerTurn > 0 ? profile->scratchTicksPerTurn : 512;
+}
+
+bool MidiControllerMapper::hasJogTouchBinding() const noexcept
+{
+    if (profile == nullptr)
+        return false;
+    for (const auto& binding : profile->inputs)
+    {
+        if (binding.action == MidiControllerAction::jogTouch
+            || binding.shiftedAction == MidiControllerAction::jogTouch
+            || binding.touchedAction == MidiControllerAction::jogTouch)
+            return true;
+    }
+    return false;
 }
 
 } // namespace silverdaw

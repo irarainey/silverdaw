@@ -6,11 +6,13 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 
 export type WarpDialogPanel = 'tempo' | 'pitch'
 
 export interface ClipDialogActions {
   openEditor(clipId: string): void
+  openScratchEditor(clipId: string): void
   openInfo(clipId: string): void
   openWarp(clipId: string, panel: WarpDialogPanel): void
   openSampleType(clipId: string): void
@@ -60,6 +62,9 @@ export function useClipDialogs(): ClipDialogs {
   function closeEditor(): void {
     editorClipId.value = null
   }
+  function openScratchEditor(clipId: string): void {
+    useScratchEditorStore().openClip(clipId)
+  }
 
   function openInfo(clipId: string): void {
     infoClipId.value = clipId
@@ -97,6 +102,7 @@ export function useClipDialogs(): ClipDialogs {
     infoItem,
     openEditor,
     closeEditor,
+    openScratchEditor,
     openInfo,
     closeInfo,
     openWarp,

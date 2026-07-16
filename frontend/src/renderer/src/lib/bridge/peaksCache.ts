@@ -9,6 +9,7 @@ import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import { getProjectMedia } from '@/lib/library/projectMedia'
@@ -153,7 +154,14 @@ export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise
 export async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
   const notifications = useNotificationsStore()
   if (!payload.ok) {
-    notifications.pushError(`Sample export failed: ${payload.error ?? 'unknown error'}`)
+    // A baked-scratch save routes its outcome to the Scratch Editor's own progress
+    // popover; suppress the generic export toast in that case to avoid double errors.
+    const scratch = useScratchSessionStore()
+    const wasScratchBake = scratch.bakePendingItemId === payload.itemId
+    scratch.resolveScratchBake(payload.itemId, false, payload.error ?? null)
+    if (!wasScratchBake) {
+      notifications.pushError(`Sample export failed: ${payload.error ?? 'unknown error'}`)
+    }
     log.warn('bridge', `SAMPLE_SAVED failed source=${payload.clipId ?? payload.libraryItemId ?? '?'} error=${payload.error ?? 'unknown'}`)
     return
   }
@@ -168,6 +176,46 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   // may be a derived item (e.g. a library-clip region), so walk its chain to the origin.
   const mediaSource = payload.sourceItemId ? (library.byId[payload.sourceItemId] ?? null) : null
   const sampleMediaId = resolveLibraryItemMediaId(mediaSource, library.byId)
+  // Re-save of an existing scratch re-baked in place under the same id: update
+  // the row rather than add a duplicate, since `addItem` dedups by file path and a
+  // re-save writes a NEW revision file. Placed clips key on the item id, so they
+  // pick up the new audio + peaks. Scoped to scratch-origin items so ordinary
+  // sample saves (fresh ids, cover-art inheritance) are unaffected.
+  const existingItem = library.byId[payload.itemId]
+  if (existingItem && payload.scratchOrigin === true) {
+    existingItem.filePath = payload.filePath
+    existingItem.fileName = payload.fileName
+    existingItem.playbackFilePath = payload.filePath
+    existingItem.durationMs = payload.durationMs
+    if (payload.scratchOrigin === true) existingItem.scratchOrigin = true
+    if (payload.scratchPatternId) existingItem.scratchPatternId = payload.scratchPatternId
+    // Refresh the source window so a re-opened scratch keeps displaying its original
+    // source aligned to the playhead (the baked duration differs from the window).
+    if (payload.sourceItemId) {
+      existingItem.derivedFrom = {
+        sourceItemId: payload.sourceItemId,
+        inMs: payload.sourceInMs ?? existingItem.derivedFrom?.inMs ?? 0,
+        durationMs: payload.sourceDurationMs ?? existingItem.derivedFrom?.durationMs ?? payload.durationMs
+      }
+    }
+    library.setItemAudioDetails(
+      existingItem.id,
+      payload.durationMs,
+      payload.sampleRate,
+      payload.channelCount
+    )
+    library.setItemPeaks(existingItem.id, peaks, payload.sampleRate, payload.peaksPerSecond)
+    if (parsed && parsed.channels.length > 0) {
+      library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
+    }
+    if (payload.audioType) {
+      const item = library.byId[payload.itemId]
+      if (item) item.audioType = payload.audioType
+    }
+    log.info('bridge', `SAMPLE_SAVED updated existing item id=${payload.itemId}`)
+    useScratchSessionStore().resolveScratchBake(payload.itemId, true, null)
+    return
+  }
   library.addItem({
     id: payload.itemId,
     kind: 'sample',
@@ -188,9 +236,11 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       ? {
           sourceItemId: payload.sourceItemId,
           inMs: payload.sourceInMs ?? 0,
-          durationMs: payload.durationMs
+          durationMs: payload.sourceDurationMs ?? payload.durationMs
         }
       : undefined,
+    scratchOrigin: payload.scratchOrigin === true ? true : undefined,
+    scratchPatternId: payload.scratchPatternId,
     fromSnapshot: true
   })
   if (parsed && parsed.channels.length > 0) {
@@ -216,7 +266,13 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   }
   // A batch slice-to-samples run shows ONE summary toast on the final item
   // instead of N per-sample toasts.
-  if (payload.batchTotal && payload.batchTotal > 1) {
+  const scratch = useScratchSessionStore()
+  const wasScratchBake = scratch.bakePendingItemId === payload.itemId
+  scratch.resolveScratchBake(payload.itemId, true, null)
+  if (wasScratchBake) {
+    // The Scratch Editor surfaces its own save feedback and closes on success;
+    // skip the generic sample toast to avoid duplicate notifications.
+  } else if (payload.batchTotal && payload.batchTotal > 1) {
     if ((payload.batchIndex ?? 0) >= payload.batchTotal - 1) {
       notifications.pushInfo(`Saved ${payload.batchTotal} samples.`)
     }

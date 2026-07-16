@@ -63,11 +63,9 @@ set(LIBSAMPLERATE_GIT_TAG "0.2.2" CACHE STRING "libsamplerate version to fetch")
 set(LIBSAMPLERATE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LIBSAMPLERATE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-# Newer CMake (>= 4) refuses to build projects whose
-# `cmake_minimum_required` is below 3.5 — libsamplerate 0.2.2 still
-# uses an older floor. This policy override lets it configure with
-# modern CMake without forking the upstream source.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+# libsamplerate 0.2.2 declares an obsolete policy floor. Apply the
+# current CMake compatibility floor without patching upstream source.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE STRING "" FORCE)
 
 FetchContent_Declare(libsamplerate
     GIT_REPOSITORY https://github.com/libsndfile/libsamplerate.git
@@ -120,12 +118,9 @@ FetchContent_Declare(rubberband
     GIT_TAG        ${RUBBERBAND_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
-# Populate-only: do NOT call FetchContent_MakeAvailable — Rubber Band has
-# no CMakeLists.txt and would fail the add_subdirectory pass.
-FetchContent_GetProperties(rubberband)
-if(NOT rubberband_POPULATED)
-    FetchContent_Populate(rubberband)
-endif()
+# With no upstream CMakeLists.txt, MakeAvailable populates the sources
+# without adding a dependency target; Silverdaw defines that target below.
+FetchContent_MakeAvailable(rubberband)
 
 set(RB_DIR ${rubberband_SOURCE_DIR})
 
@@ -224,10 +219,7 @@ FetchContent_Declare(rnnoise
     GIT_TAG        ${RNNOISE_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
-FetchContent_GetProperties(rnnoise)
-if(NOT rnnoise_POPULATED)
-    FetchContent_Populate(rnnoise)
-endif()
+FetchContent_MakeAvailable(rnnoise)
 
 set(RNN_DIR ${rnnoise_SOURCE_DIR})
 
@@ -341,19 +333,13 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
             URL https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/${ORT_DML_VERSION}/microsoft.ml.onnxruntime.directml.${ORT_DML_VERSION}.nupkg
             URL_HASH SHA256=${ORT_DML_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_GetProperties(onnxruntime_dml)
-        if(NOT onnxruntime_dml_POPULATED)
-            FetchContent_Populate(onnxruntime_dml)
-        endif()
+        FetchContent_MakeAvailable(onnxruntime_dml)
 
         FetchContent_Declare(directml
             URL https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/${DIRECTML_VERSION}/microsoft.ai.directml.${DIRECTML_VERSION}.nupkg
             URL_HASH SHA256=${DIRECTML_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_GetProperties(directml)
-        if(NOT directml_POPULATED)
-            FetchContent_Populate(directml)
-        endif()
+        FetchContent_MakeAvailable(directml)
 
         set(ORT_INCLUDE_DIR "${onnxruntime_dml_SOURCE_DIR}/build/native/include")
         set(ORT_LIB "${onnxruntime_dml_SOURCE_DIR}/runtimes/win-x64/native/onnxruntime.lib")
@@ -376,13 +362,8 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
             URL https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-win-x64-${ONNXRUNTIME_VERSION}.zip
             URL_HASH SHA256=${ONNXRUNTIME_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        # Prebuilt binary distribution — no CMakeLists, so populate only (mirrors
-        # the Rubber Band block above; FetchContent_MakeAvailable would try to
-        # add_subdirectory and fail).
-        FetchContent_GetProperties(onnxruntime)
-        if(NOT onnxruntime_POPULATED)
-            FetchContent_Populate(onnxruntime)
-        endif()
+        # With no CMakeLists.txt, MakeAvailable only extracts the binary archive.
+        FetchContent_MakeAvailable(onnxruntime)
 
         set(ORT_INCLUDE_DIR "${onnxruntime_SOURCE_DIR}/include")
         set(ORT_LIB "${onnxruntime_SOURCE_DIR}/lib/onnxruntime.lib")
@@ -432,6 +413,10 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ProjectCommands.cpp
     src/commands/ProjectFxCommands.cpp
     src/commands/ProjectSettingsCommands.cpp
+    src/commands/ScratchSessionCommands.cpp
+    src/commands/ScratchPatternCommands.cpp
+    src/commands/ScratchSaveCommands.cpp
+    src/commands/ScratchPatternReplayCommands.cpp
     src/commands/StemSeparationCommands.cpp
     src/commands/TrackCommands.cpp
     src/commands/TransitionCommands.cpp
@@ -444,6 +429,22 @@ add_library(silverdaw_backend_core STATIC
     # midi
     src/midi/MidiControllerMapping.cpp
     src/midi/MidiControllerProfiles.cpp
+    src/midi/MidiScratchRouting.cpp
+    # scratch
+    src/scratch/ScratchProtocol.cpp
+    src/scratch/ScratchProtocolPattern.cpp
+    src/scratch/ScratchAudioSource.cpp
+    src/scratch/ScratchRealismProcessor.cpp
+    src/scratch/BackingMonitorSource.cpp
+    src/scratch/ScratchBackingPreparation.cpp
+    src/scratch/ScratchSourcePreparation.cpp
+    src/scratch/ScratchActionRecorder.cpp
+    src/scratch/ScratchSessionController.cpp
+    src/scratch/ScratchSessionBacking.cpp
+    src/scratch/ScratchSessionRecording.cpp
+    src/scratch/ScratchSessionMidi.cpp
+    src/scratch/ScratchPatternEvaluator.cpp
+    src/scratch/ScratchPatternBake.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/BpmAnalysisHelpers.cpp
@@ -451,6 +452,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/EnhancerDsp.cpp
     src/dsp/SharedFx.cpp
     src/dsp/ToneEq.cpp
+    src/dsp/VinylScratchProcessor.cpp
     src/dsp/VocalEnhancer.cpp
     src/dsp/VocalDenoiser.cpp
     src/dsp/VocalDebleeder.cpp
@@ -470,6 +472,8 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineClipEdit.cpp
     src/engine/AudioEngineClips.cpp
     src/engine/AudioEnginePreview.cpp
+    src/engine/AudioEngineScratch.cpp
+    src/engine/AudioEnginePatternReplay.cpp
     src/engine/BusGraph.cpp
     src/engine/BusGraphRender.cpp
     src/engine/DecodedCache.cpp
@@ -498,6 +502,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
     src/project/ProjectStateMarkers.cpp
+    src/project/ProjectStateScratchPatterns.cpp
     src/project/ProjectStateProjectFx.cpp
     src/project/ProjectStateSerialization.cpp
     src/project/ProjectStateSettings.cpp
@@ -720,6 +725,14 @@ if(SILVERDAW_BUILD_TESTS)
         tests/BridgeTests.cpp
         tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp
+        tests/ScratchDspTests.cpp
+        tests/BackingMonitorSourceTests.cpp
+        tests/ScratchProtocolTests.cpp
+        tests/ScratchSessionTests.cpp
+        tests/ScratchRecorderTests.cpp
+        tests/ScratchPatternPersistenceTests.cpp
+        tests/ScratchPatternEvaluatorTests.cpp
+        tests/ScratchPatternReplayProjectStateTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
@@ -745,6 +758,12 @@ tests/MixdownRenderTests.cpp
     # Run: SilverdawBpmEval <manifest>  (manifest lines: <path>|<referenceBpm>)
     add_executable(SilverdawBpmEval tools/bpm_eval/BpmEval.cpp)
     target_link_libraries(SilverdawBpmEval PRIVATE silverdaw_backend_core)
+
+    # Offline scratch-DSP quality/performance harness (dev tool, not shipped).
+    add_executable(SilverdawScratchDspEval
+        tools/scratch_dsp_eval/ScratchDspEval.cpp)
+    target_link_libraries(SilverdawScratchDspEval PRIVATE
+        silverdaw_backend_core)
 
     # Offline stem-separation quality harness (dev tool, not shipped, not a CTest
     # test). Run: SilverdawStemEval <manifest>

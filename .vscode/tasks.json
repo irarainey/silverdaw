@@ -16,7 +16,7 @@
         "Bypass",
         "-File",
         "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
-        "cmake -S '${workspaceFolder}/backend' -B '${workspaceFolder}/backend/build' -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+        "cmake -S '${workspaceFolder}/backend' -B '${workspaceFolder}/backend/build' -G 'Visual Studio 17 2022'"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -24,7 +24,7 @@
         "reveal": "always",
         "clear": true
       },
-      "detail": "Configure the JUCE backend with CMake + Ninja (Debug)."
+      "detail": "Configure the JUCE backend with the existing Visual Studio generator."
     },
     {
       "label": "backend: kill running",
@@ -54,7 +54,7 @@
         "Bypass",
         "-File",
         "${workspaceFolder}/scripts/Invoke-DevShell.ps1",
-        "cmake --build '${workspaceFolder}/backend/build' --config Debug --parallel"
+        "cmake --build '${workspaceFolder}/backend/build' --config Debug --target SilverdawBackend --parallel"
       ],
       "dependsOn": ["backend: kill running", "backend: configure"],
       "dependsOrder": "sequence",
@@ -67,7 +67,7 @@
         "panel": "dedicated",
         "reveal": "always"
       },
-      "detail": "Build the JUCE backend (Debug)."
+      "detail": "Build the Debug backend executable used by the F5 Electron launch."
     },
     {
       "label": "backend: build (Release)",

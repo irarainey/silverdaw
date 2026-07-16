@@ -198,7 +198,10 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         locked: c.locked === true ? true : undefined,
         reversed: c.reversed === true ? true : undefined,
         brake: c.brake === true ? true : undefined,
-        backspin: c.backspin === true ? true : undefined
+        backspin: c.backspin === true ? true : undefined,
+        scratchPatternId: typeof c.scratchPatternId === 'string' && c.scratchPatternId
+          ? c.scratchPatternId
+          : undefined
       }
       target.clips[c.id] = placeholder
       track.clipIds.push(c.id)

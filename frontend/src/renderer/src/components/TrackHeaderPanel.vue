@@ -368,7 +368,7 @@ function isTrackFxShowing(trackId: string): boolean {
           class="pointer-events-auto absolute flex flex-col gap-1.5 rounded border border-zinc-700 px-2 py-1.5 text-xs"
           :class="{
             'opacity-50': track.muted || (project.anySoloed && !track.soloed),
-            'ring-1 ring-inset ring-cyan-500/60': track.soloed,
+            'ring-1 ring-inset ring-sky-500/60': track.soloed,
             'opacity-30': reorderingTrackId === track.id,
             'bg-zinc-800/40': project.selectedTrackId === track.id,
             'rounded-b-none border-b-0': ui.automationLanes[track.id]
@@ -433,7 +433,7 @@ function isTrackFxShowing(trackId: string): boolean {
                 v-model="editingValue"
                 type="text"
                 spellcheck="false"
-                class="w-full rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-cyan-500"
+                class="w-full rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-xs font-medium text-zinc-100 outline-none focus:border-sky-500"
                 @blur="commitRename(track.id)"
                 @keydown="(e) => onRenameKeydown(e, track.id)"
               >
@@ -491,7 +491,7 @@ function isTrackFxShowing(trackId: string): boolean {
                 inputmode="text"
                 spellcheck="false"
                 autocomplete="off"
-                class="w-10 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-cyan-500"
+                class="w-10 shrink-0 rounded border border-zinc-600 bg-zinc-950 px-0.5 py-px text-right font-mono text-[10px] tabular-nums text-zinc-100 outline-none focus:border-sky-500"
                 @input="onGainInput"
                 @blur="commitGainEdit(track.id)"
                 @keydown="(e) => onGainKeydown(e, track.id)"
@@ -500,7 +500,7 @@ function isTrackFxShowing(trackId: string): boolean {
                 v-else
                 type="button"
                 data-borderless-button="true"
-                class="w-10 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-cyan-300"
+                class="w-10 shrink-0 cursor-text appearance-none border-0 bg-transparent p-0 text-right font-mono text-[10px] tabular-nums text-zinc-500 outline-none hover:text-zinc-200 focus-visible:text-sky-300"
                 :title="`Volume ${formatLinearAsDb(track.volume, { unit: true })} — double-click to type a dB value (e.g. -3, +1.5, -inf)`"
                 @dblclick.stop="startGainEdit(track.id, track.volume)"
               >
@@ -628,7 +628,7 @@ function isTrackFxShowing(trackId: string): boolean {
               type="button"
               class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors"
               :class="track.soloed
-                ? 'border-cyan-400 bg-cyan-500 text-zinc-950 hover:bg-cyan-400'
+                ? 'border-sky-400 bg-sky-500 text-zinc-950 hover:bg-sky-400'
                 : (project.anySoloed
                   ? 'border-zinc-800 bg-zinc-800 text-zinc-600 hover:border-zinc-600 hover:text-zinc-300'
                   : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100')

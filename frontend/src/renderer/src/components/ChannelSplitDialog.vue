@@ -77,7 +77,7 @@ function onCancel(): void {
               >
                 <input
                   type="checkbox"
-                  class="accent-cyan-500"
+                  class="accent-sky-500"
                   :checked="selection?.selected[row.channel] ?? false"
                   @change="onToggle(row.channel)"
                 >

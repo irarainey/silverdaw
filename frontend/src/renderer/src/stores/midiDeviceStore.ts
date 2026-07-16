@@ -11,7 +11,7 @@ import type {
   MidiMessagePayload
 } from '@shared/bridge-protocol'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '@shared/types'
-import type { MidiDeckSelection, MidiDevicePreferences } from '@shared/types'
+import type { MidiDeckSelection, MidiDefaultDeck, MidiDevicePreferences } from '@shared/types'
 import {
   releaseMidiPlaybackHoldsForDeck,
   releaseMidiPlaybackHoldsForDevice
@@ -20,6 +20,14 @@ import {
 const RESCAN_SAFETY_MS = 6000
 const MAX_MONITOR_MESSAGES = 200
 let rescanSafetyTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Live deck selection a device auto-applies at startup for its Default deck preference. */
+export function deckSelectionForDefault(defaultDeck: MidiDefaultDeck): MidiDeckSelection {
+  return {
+    deck1Enabled: defaultDeck === 'deck1',
+    deck2Enabled: defaultDeck === 'deck2'
+  }
+}
 
 interface MidiDeviceState {
   /** Connected MIDI input devices and their live backend state. */
@@ -77,8 +85,22 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.deckSelectionSyncPending = false
       for (const input of payload.inputs) {
         if (!input.enabled) continue
-        const selection = this.deckSelectionByIdentifier[input.identifier]
-        if (!selection) continue
+        let selection = this.deckSelectionByIdentifier[input.identifier]
+        if (!selection) {
+          // No cue-set selection is persisted for this device: fall back to its
+          // Default deck preference. This is applied to the live selection only
+          // and never persisted, so the preference re-applies on every startup
+          // until the cue button saves an explicit selection.
+          const defaultDeck =
+            this.devicePreferencesByIdentifier[input.identifier]?.defaultDeck ??
+            DEFAULT_MIDI_DEVICE_PREFERENCES.defaultDeck
+          if (defaultDeck === 'none') continue
+          selection = deckSelectionForDefault(defaultDeck)
+          this.deckSelectionByIdentifier = {
+            ...this.deckSelectionByIdentifier,
+            [input.identifier]: selection
+          }
+        }
         sendBridge('MIDI_DECK_SELECTION_SET', {
           deviceIdentifier: input.identifier,
           ...selection
@@ -147,10 +169,12 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
           identifier,
           {
             scrubAudioEnabled: value.scrubAudioEnabled,
-            crossfaderDirection: value.crossfaderDirection
+            crossfaderDirection: value.crossfaderDirection,
+            defaultDeck: value.defaultDeck
           }
         ])
       )
+      this.pushScratchSettings()
     },
 
     /** Ask the backend to enumerate MIDI inputs; the reply lands in `applyList`. */
@@ -180,6 +204,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
         this.devicePreferencesByIdentifier = {}
       }
       this.pushEnabledInputs()
+      this.pushScratchSettings()
       this.requestList()
     },
 
@@ -205,6 +230,17 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.deckSelectionSyncPending = sendBridge('MIDI_INPUTS_SET', {
         identifiers
       })
+    },
+
+    /** Send MIDI_SCRATCH_SETTINGS_SET for each device with crossfader direction
+     *  preferences so the backend scratch router honours the configured direction. */
+    pushScratchSettings(): void {
+      for (const [identifier, prefs] of Object.entries(this.devicePreferencesByIdentifier)) {
+        sendBridge('MIDI_SCRATCH_SETTINGS_SET', {
+          deviceIdentifier: identifier,
+          crossfaderDirection: prefs.crossfaderDirection
+        })
+      }
     },
 
     /** Show rescan progress until the refreshed device list arrives. */

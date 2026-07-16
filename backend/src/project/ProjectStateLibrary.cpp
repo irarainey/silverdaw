@@ -348,6 +348,20 @@ juce::var ProjectState::libraryAsJson() const
                 obj->setProperty("audioType", audioType);
             }
         }
+        if (item.hasProperty(kScratchPatternId))
+        {
+            const auto scratchPatternId = item.getProperty(kScratchPatternId).toString();
+            if (scratchPatternId.isNotEmpty())
+            {
+                obj->setProperty("scratchPatternId", scratchPatternId);
+                obj->setProperty("scratchOrigin", true);
+            }
+        }
+        if (item.hasProperty(kScratchSourcePath))
+        {
+            obj->setProperty("scratchSourcePath",
+                             item.getProperty(kScratchSourcePath).toString());
+        }
         if (item.hasProperty(kSourceItemId))
         {
             obj->setProperty("sourceItemId", item.getProperty(kSourceItemId).toString());

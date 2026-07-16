@@ -4,6 +4,7 @@ import AppTitleBar from '@/components/AppTitleBar.vue'
 import TimelineView from '@/components/TimelineView.vue'
 import TransportBar from '@/components/TransportBar.vue'
 import LibraryPanel from '@/components/LibraryPanel.vue'
+import ScratchEditorDialog from '@/components/ScratchEditorDialog.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import NotificationToasts from '@/components/NotificationToasts.vue'
 import {
@@ -26,6 +27,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
@@ -40,6 +42,7 @@ import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
 import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useRenderedDialogPresence } from '@/lib/app/useRenderedDialogPresence'
+import { useDialogInputCapture } from '@/lib/app/useDialogInputCapture'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useMidiControllerActions } from '@/lib/midi/useMidiControllerActions'
@@ -65,10 +68,12 @@ const project = useProjectStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
+const scratchEditor = useScratchEditorStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
 const renderedDialogOpen = useRenderedDialogPresence()
+useDialogInputCapture(renderedDialogOpen)
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
@@ -488,6 +493,13 @@ const { handleMenuAction } = useAppMenuActions({
       @update:height="ui.setLibraryPanelHeight"
     />
 
+    <ScratchEditorDialog
+      :open="scratchEditor.isOpen"
+      :clip-id="scratchEditor.clipId"
+      :library-item-id="scratchEditor.libraryItemId"
+      @close="scratchEditor.close"
+    />
+
     <StatusBar />
 
     <NotificationToasts />
@@ -676,5 +688,15 @@ button[data-borderless-button="true"]:focus-visible {
 
 .silverdaw-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(161 161 170);
+}
+
+/* Scrolls programmatically but hides its native scrollbars — used where a
+   custom overlay scrollbar (matching the waveform window) is drawn instead. */
+.no-native-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-native-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 </style>

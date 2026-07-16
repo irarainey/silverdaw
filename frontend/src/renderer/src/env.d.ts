@@ -13,6 +13,8 @@ import type {
   StemPrefsDto as SharedStemPrefsDto,
   BrakePrefsDto as SharedBrakePrefsDto,
   BackspinPrefsDto as SharedBackspinPrefsDto,
+  ScratchRealismPrefsDto as SharedScratchRealismPrefsDto,
+  ScratchPrefsDto as SharedScratchPrefsDto,
   LocateStemModelResult as SharedLocateStemModelResult,
   RecentProject as SharedRecentProject
 } from '@shared/types'
@@ -119,6 +121,7 @@ declare global {
           {
             scrubAudioEnabled: boolean
             crossfaderDirection: 'leftToRight' | 'rightToLeft'
+            defaultDeck: 'none' | 'deck1' | 'deck2'
           }
         >
       >
@@ -127,6 +130,7 @@ declare global {
         preferences: {
           scrubAudioEnabled: boolean
           crossfaderDirection: 'leftToRight' | 'rightToLeft'
+          defaultDeck: 'none' | 'deck1' | 'deck2'
         }
       ): void
       // ── Autosave folder + manifest IPCs ───────────────────────────────
@@ -161,6 +165,10 @@ declare global {
       setBrakeSettings(partial: Partial<SharedBrakePrefsDto>): void
       getBackspinSettings(): Promise<SharedBackspinPrefsDto>
       setBackspinSettings(partial: Partial<SharedBackspinPrefsDto>): void
+      getScratchRealismSettings(): Promise<SharedScratchRealismPrefsDto>
+      setScratchRealismSettings(partial: Partial<SharedScratchRealismPrefsDto>): void
+      getScratchSettings(): Promise<SharedScratchPrefsDto>
+      setScratchSettings(partial: Partial<SharedScratchPrefsDto>): void
       ensureStemModel(): Promise<SharedEnsureStemModelResult>
       cancelStemModelDownload(): void
       onStemModelDownloadProgress(

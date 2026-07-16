@@ -6,6 +6,10 @@
 // splitting is deferred to preserve the schema/guard boundary.
 
 import { z } from 'zod'
+import type { ScratchPatternRecordedPayload, ScratchSessionStatePayload } from './scratch'
+import { ScratchPatternSchema } from './scratch'
+
+export * from './scratch'
 import type {
   MidiControlPayload,
   MidiDeckSelectionPayload,
@@ -227,6 +231,8 @@ export const ProjectStateClipSchema = z.object({
   brake: z.boolean().optional(),
   /** Turntable backspin (reverse rewind) applied at the clip end; absent = off. */
   backspin: z.boolean().optional(),
+  /** Scratch pattern applied non-destructively; absent = no pattern. */
+  scratchPatternId: z.string().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
   unresolved: z.boolean().optional(),
@@ -341,6 +347,12 @@ export const ProjectStateLibraryItemSchema = z
     sourceClipId: z.string().optional(),
     sourceInMs: z.number().optional(),
     sourceDurationMs: z.number().optional(),
+    /** True when this sample was baked from a recorded scratch (drives the vinyl tile icon). */
+    scratchOrigin: z.boolean().optional(),
+    /** Links a scratch-origin sample to its notation pattern for re-editing. */
+    scratchPatternId: z.string().optional(),
+    /** Self-contained source-window snapshot WAV used to re-prepare the scratch editor. */
+    scratchSourcePath: z.string().optional(),
     /** Media GUID minted at first import; key into the project's metadata/covers store. */
     mediaId: z.string().optional(),
     collapsed: z.boolean().optional(),
@@ -416,6 +428,8 @@ export const ProjectStatePayloadSchema = z.object({
   markers: z.array(ProjectStateMarkerSchema).optional(),
   /** Persisted library catalogue; cover art/ID3 metadata is re-fetched on load. */
   library: z.array(ProjectStateLibraryItemSchema).optional(),
+  /** Saved scratch patterns; backend-authoritative. Absent in older projects = empty. */
+  scratchPatterns: z.array(ScratchPatternSchema).optional(),
   tracks: z.array(ProjectStateTrackSchema)
 })
 export type ProjectStatePayload = z.infer<typeof ProjectStatePayloadSchema>
@@ -503,6 +517,12 @@ const SampleSavedSuccessSchema = z.object({
   sourceItemId: z.string().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
+  /** Source window length in ms; persisted so a re-opened scratch windows its source. */
+  sourceDurationMs: z.number().optional(),
+  /** Set for a baked scratch: drives the vinyl tile icon and re-open metadata. */
+  scratchOrigin: z.boolean().optional(),
+  scratchPatternId: z.string().optional(),
+  scratchSourcePath: z.string().optional(),
   /** Batch slice-to-samples progress, so the renderer shows one summary toast. */
   batchIndex: z.number().int().optional(),
   batchTotal: z.number().int().optional(),
@@ -833,6 +853,8 @@ export interface BridgeInboundMap {
   MIDI_MESSAGE: MidiMessagePayload
   MIDI_CONTROL: MidiControlPayload
   MIDI_DECK_SELECTION: MidiDeckSelectionPayload
+  SCRATCH_SESSION_STATE: ScratchSessionStatePayload
+  SCRATCH_PATTERN_RECORDED: ScratchPatternRecordedPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -902,6 +924,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIDI_MESSAGE',
   'MIDI_CONTROL',
   'MIDI_DECK_SELECTION',
+  'SCRATCH_SESSION_STATE',
+  'SCRATCH_PATTERN_RECORDED',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',

@@ -396,7 +396,8 @@ describe('MIDI controller actions', () => {
     midiDevices.applyDevicePreferences({
       'ddj-rb': {
         scrubAudioEnabled: true,
-        crossfaderDirection: 'leftToRight'
+        crossfaderDirection: 'leftToRight',
+        defaultDeck: 'none'
       }
     })
 
@@ -534,6 +535,24 @@ describe('MIDI controller actions', () => {
     })
     animationFrame?.(10)
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2284 })
+  })
+
+  it('seeks the timeline from the DDJ-RB side wheel', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.positionMs = 2000
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'relative',
+      control: 'wheelPitchBend',
+      deck: 2,
+      value: 1
+    })
+
+    animationFrame?.(0)
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2032 })
   })
 
   it('leaves the reserved crossfader without an operational audio command', () => {

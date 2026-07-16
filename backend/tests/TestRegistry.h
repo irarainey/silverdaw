@@ -17,6 +17,11 @@ void addPersistenceTests(std::vector<TestCase>& tests);
 void addBridgeTests(std::vector<TestCase>& tests);
 void addMidiControllerMappingTests(std::vector<TestCase>& tests);
 void addWarpTests(std::vector<TestCase>& tests);
+void addScratchDspTests(std::vector<TestCase>& tests);
+void addBackingMonitorSourceTests(std::vector<TestCase>& tests);
+void addScratchProtocolTests(std::vector<TestCase>& tests);
+void addScratchSessionTests(std::vector<TestCase>& tests);
+void addScratchRecorderTests(std::vector<TestCase>& tests);
 void addAudioEngineTests(std::vector<TestCase>& tests);
 void addFxDspTests(std::vector<TestCase>& tests);
 void addLoudnessTests(std::vector<TestCase>& tests);
@@ -35,5 +40,8 @@ void addOtherEnhancerTests(std::vector<TestCase>& tests);
 void addMelRoformerSpectralTests(std::vector<TestCase>& tests);
 void addBsRoformerSpectralTests(std::vector<TestCase>& tests);
 void addLibraryCleanupTests(std::vector<TestCase>& tests);
+void addScratchPatternPersistenceTests(std::vector<TestCase>& tests);
+void addScratchPatternEvaluatorTests(std::vector<TestCase>& tests);
+void addScratchPatternReplayProjectStateTests(std::vector<TestCase>& tests);
 
 } // namespace silverdaw::tests

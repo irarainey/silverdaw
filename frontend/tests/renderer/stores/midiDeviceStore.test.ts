@@ -139,6 +139,99 @@ describe('midiDeviceStore', () => {
       .toBe('rightToLeft')
   })
 
+  it('applies the Default deck preference when a device has no saved selection', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({}),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'leftToRight',
+            defaultDeck: 'deck1'
+          }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+    // The preference-derived selection is live but never persisted, so the
+    // preference re-applies on every startup until the cue button saves one.
+    expect(store.deckSelectionByIdentifier['ddj-rb']).toEqual({
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+    expect(setMidiDeckSelection).not.toHaveBeenCalled()
+  })
+
+  it('leaves decks deselected when Default deck is none and nothing is saved', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({}),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'leftToRight',
+            defaultDeck: 'none'
+          }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+
+    expect(sendBridge).not.toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', expect.anything())
+    expect(store.deckSelectionByIdentifier['ddj-rb']).toBeUndefined()
+  })
+
+  it('prefers a saved cue selection over the Default deck preference', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({
+          'ddj-rb': { deck1Enabled: false, deck2Enabled: true }
+        }),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'leftToRight',
+            defaultDeck: 'deck1'
+          }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: false,
+      deck2Enabled: true
+    })
+  })
+
   it('does not send saved deck selection to a disconnected historical identifier', async () => {
     vi.stubGlobal('window', {
       silverdaw: {
@@ -197,7 +290,8 @@ describe('midiDeviceStore', () => {
     store.applyDevicePreferences({
       'new-controller': {
         scrubAudioEnabled: true,
-        crossfaderDirection: 'leftToRight'
+        crossfaderDirection: 'leftToRight',
+        defaultDeck: 'none'
       }
     })
     expect(store.isScrubAudioEnabled('new-controller')).toBe(true)
@@ -288,5 +382,60 @@ describe('midiDeviceStore', () => {
     expect(store.syncPressed[2]).toBe(true)
     expect(store.jogTouched[1]).toBe(true)
     expect(store.crossfaderPosition).toBe(0.75)
+  })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET on hydrate for devices with direction preferences', async () => {
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({}),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({
+          'ddj-rb': {
+            scrubAudioEnabled: false,
+            crossfaderDirection: 'rightToLeft'
+          }
+        }),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+    await store.applyEnabledInputsOnReady()
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'ddj-rb',
+      crossfaderDirection: 'rightToLeft'
+    })
+  })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET when device preferences are applied', () => {
+    const store = useMidiDeviceStore()
+    store.applyDevicePreferences({
+      'ddj-rb': {
+        scrubAudioEnabled: true,
+        crossfaderDirection: 'rightToLeft',
+        defaultDeck: 'none'
+      }
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'ddj-rb',
+      crossfaderDirection: 'rightToLeft'
+    })
+  })
+
+  it('sends MIDI_SCRATCH_SETTINGS_SET with leftToRight for default direction', () => {
+    const store = useMidiDeviceStore()
+    store.applyDevicePreferences({
+      controller: {
+        scrubAudioEnabled: false,
+        crossfaderDirection: 'leftToRight',
+        defaultDeck: 'none'
+      }
+    })
+
+    expect(sendBridge).toHaveBeenCalledWith('MIDI_SCRATCH_SETTINGS_SET', {
+      deviceIdentifier: 'controller',
+      crossfaderDirection: 'leftToRight'
+    })
   })
 })

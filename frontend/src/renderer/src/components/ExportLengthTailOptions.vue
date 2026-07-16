@@ -28,7 +28,7 @@ defineProps<Readonly<{
           min="-64"
           max="4096"
           step="1"
-          class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-right font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500"
+          class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-right font-mono text-xs text-zinc-100 outline-none focus:border-sky-500"
         >
         <span class="text-xs text-zinc-400">timeline ruler bar</span>
       </div>
@@ -49,7 +49,7 @@ defineProps<Readonly<{
           type="text"
           spellcheck="false"
           inputmode="decimal"
-          class="w-20 rounded border px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500"
+          class="w-20 rounded border px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-sky-500"
           :class="tailValid
             ? 'border-zinc-700 bg-zinc-950'
             : 'border-rose-600 bg-zinc-950'"
@@ -72,7 +72,7 @@ defineProps<Readonly<{
           v-model="lengthMode"
           type="radio"
           value="fixed-duration"
-          class="accent-cyan-500"
+          class="accent-sky-500"
         >
         <span>Clip at duration</span>
         <input
@@ -80,7 +80,7 @@ defineProps<Readonly<{
           type="text"
           spellcheck="false"
           :disabled="lengthMode !== 'fixed-duration'"
-          class="ml-2 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+          class="ml-2 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-100 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
       </label>
       <label class="flex cursor-pointer items-center gap-1.5">
@@ -88,7 +88,7 @@ defineProps<Readonly<{
           v-model="lengthMode"
           type="radio"
           value="trim-to-last-clip"
-          class="accent-cyan-500"
+          class="accent-sky-500"
         >
         <span>Trim to end of last clip</span>
         <span

@@ -8,6 +8,7 @@
 // and a viewport-space playhead.
 
 import { getCurrentInstance, onBeforeUnmount, shallowRef, type ShallowRef } from 'vue'
+import { COL_EDITOR_BG } from '@/lib/clipEditor/clipEditorWaveformTheme'
 import type {
   Application,
   Container,
@@ -19,9 +20,6 @@ import type {
 } from 'pixi.js'
 import { loadPixi } from '@/lib/timeline/pixiLoader'
 import { log } from '@/lib/log'
-
-/** Waveform-area background (zinc-950-ish); the ruler band paints over the top. */
-const EDITOR_BG = 0x0a0a0a
 
 export interface ClipEditorScene {
   isReady: ShallowRef<boolean>
@@ -104,7 +102,7 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
 
       const instance = new pixi.Application()
       await instance.init({
-        background: EDITOR_BG,
+        background: COL_EDITOR_BG,
         antialias: true,
         resizeTo: host,
         autoDensity: true,

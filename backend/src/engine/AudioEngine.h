@@ -15,6 +15,11 @@
 #include "Metronome.h"
 #include "OffsetSource.h"
 #include "PreviewMetronomeSource.h"
+#include "scratch/ScratchSessionController.h"
+#include "scratch/ScratchAudioSource.h"
+#include "scratch/BackingMonitorSource.h"
+#include "scratch/ScratchProtocol.h"
+#include "scratch/ScratchPatternEvaluator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -36,6 +41,8 @@
 
 namespace silverdaw
 {
+
+class ProjectState;
 
 class AudioEngine
 {
@@ -268,6 +275,78 @@ class AudioEngine
 
     juce::int64 getPreviewGeneration() const;
 
+    using ScratchSessionSnapshot = scratch::ScratchSessionController::Snapshot;
+
+    juce::String beginScratchSession(const juce::String& clipId);
+    bool completeScratchSession(
+        const juce::String& sessionId,
+        std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+        double preparedSampleRate);
+    bool failScratchSession(const juce::String& sessionId, const juce::String& error);
+    bool setScratchPreparationProgress(const juce::String& sessionId, double progress);
+    bool closeScratchSession(const juce::String& sessionId);
+    // Backing accompaniment monitor (ADR 0021, Amendment 1).
+    bool beginScratchBackingPreparation(const juce::String& sessionId);
+    bool completeScratchBacking(
+        const juce::String& sessionId,
+        std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
+        double preparedSampleRate);
+    bool failScratchBacking(const juce::String& sessionId, const juce::String& error);
+    bool clearScratchBacking(const juce::String& sessionId);
+    bool controlScratchSession(const scratch::SessionControlPayload& control);
+    bool scratchMidiRecordToggle();
+    bool scratchMidiSetTouch(const juce::String& deviceIdentifier,
+                             scratch::DeckSide deck,
+                             bool touched);
+    bool scratchMidiMovePlatter(const juce::String& deviceIdentifier,
+                                scratch::DeckSide deck,
+                                double deltaTurns,
+                                double timestampMs);
+    bool scratchMidiSetCrossfader(const juce::String& deviceIdentifier,
+                                  double directedValue, double displayValue = -1.0,
+                                  bool reverseCrossfader = false);
+    bool setScratchMidiCrossfaderDirection(const juce::String& deviceIdentifier,
+                                           bool reverseCrossfader);
+    void setScratchRealismLevel(scratch::ScratchRealismLevel level) noexcept;
+    bool hasActiveScratchSession() const;
+    void setScratchMidiSelectedDeck(const juce::String& deviceIdentifier,
+                                    scratch::DeckSide deck,
+                                    bool reverseCrossfader);
+    bool releaseScratchMidiOwner(const juce::String& deviceIdentifier,
+                                 std::optional<scratch::DeckSide> deck = std::nullopt);
+    std::optional<ScratchSessionSnapshot> getScratchSessionSnapshot() const;
+    bool reconcileScratchSessionSourceEnd();
+
+    // Retrieve completed recording pattern (moves ownership). Returns nullopt if none ready.
+    std::optional<scratch::Pattern> takeScratchRecordingPattern();
+
+    // Immutable prepared source audio for offline baking of a saved scratch.
+    // Message-thread only; null when no source is prepared.
+    std::shared_ptr<const juce::AudioBuffer<float>> getScratchPreparedSource() const;
+    double getScratchPreparedSourceSampleRate() const;
+
+    // Pattern replay audition (plays a saved pattern through the scratch audio source).
+    bool startScratchPatternReplay(const scratch::Pattern& pattern);
+    void stopScratchPatternReplay();
+    bool isScratchPatternReplaying() const noexcept;
+
+    // Unconditional scratch teardown for project replacement (PROJECT_NEW,
+    // PROJECT_LOAD, PROJECT_LOAD_RECOVERY). Stops any active pattern replay
+    // (and its backing) first, then closes the session, so no scratch
+    // source/backing/replay state survives into the new project.
+    void clearScratchSession();
+
+    // Clip-level pattern snapshot management for timeline playback.
+    void rebuildClipPatternSnapshot(const juce::String& clipId, const ProjectState& projectState);
+    void clearClipPatternSnapshot(const juce::String& clipId);
+    void rebuildAllClipPatternSnapshots(const ProjectState& projectState);
+
+    // Test-only: direct access to the scratch audio source for render verification.
+    scratch::ScratchAudioSource& scratchSourceForTest() { return scratchSource; }
+    // Test-only: direct access to the backing monitor source for verifying
+    // clearScratchSession() and replay-backing teardown.
+    scratch::BackingMonitorSource& backingSourceForTest() { return backingSource; }
+
     // Windows under-reports Bluetooth endpoint latency, so known headset names get a
     // conservative visual offset.
     double getOutputLatencyMs() const;
@@ -353,6 +432,8 @@ class AudioEngine
         std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
         std::unique_ptr<BackspinSnapshot> backspinSnapshot;
         std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
+        // Immutable pattern replay snapshot published to OffsetSource for audio-thread reads.
+        std::shared_ptr<const scratch::PatternReplaySnapshot> patternSnapshot;
         double sampleRate = 44100.0;
         int numChannels = 2;
         juce::int64 latencySamples = 0;
@@ -527,6 +608,19 @@ class AudioEngine
     double previewMetronomeBpm = 0.0;
     double previewMetronomeAnchorSec = 0.0;
     std::atomic<juce::int64> previewGeneration{0};
+
+    // Persistent scratch audio source — always wired into topMixer (fixed topology).
+    // Session open/close activates/deactivates via atomics; no callback allocation.
+    scratch::ScratchAudioSource scratchSource;
+    // Backing accompaniment bed (ADR 0021, Amendment 1) — also fixed topology in
+    // topMixer; activated only when a backing window is prepared.
+    scratch::BackingMonitorSource backingSource;
+    scratch::ScratchSessionController scratchController{scratchSource, backingSource};
+
+    // Pattern replay state (audition of a saved pattern through the scratch source).
+    std::shared_ptr<const scratch::PatternReplaySnapshot> patternReplaySnapshot;
+    std::atomic<bool> patternReplayActive{false};
+    std::atomic<std::int64_t> patternReplayPositionUs{0};
 };
 
 } // namespace silverdaw

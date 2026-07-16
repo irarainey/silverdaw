@@ -140,6 +140,20 @@ export interface BackspinPrefs {
   intensity: BackspinIntensity
 }
 
+// Scratch Editor sound realism is global so pointer and MIDI platter input use
+// the same monitored response.
+export type ScratchRealismLevel = 'off' | 'medium' | 'high'
+export interface ScratchRealismPrefs {
+  level: ScratchRealismLevel
+}
+
+// Scratch Editor input preferences. The crossfader cut key is a momentary
+// keyboard "kill" for the virtual deck; the Z/M choice suits handedness.
+export type ScratchCrossfaderCutKey = 'KeyZ' | 'KeyM'
+export interface ScratchPrefs {
+  crossfaderCutKey: ScratchCrossfaderCutKey
+}
+
 export interface Preferences {
   window: WindowPrefs
   ui: UiPrefs
@@ -158,6 +172,8 @@ export interface Preferences {
   midiDevicePreferences: Record<string, MidiDevicePreferences>
   brake: BrakePrefs
   backspin: BackspinPrefs
+  scratchRealism: ScratchRealismPrefs
+  scratch: ScratchPrefs
   stems: StemPrefs
   /** MRU entries (path + display name), newest first, capped and case-insensitive by path. */
   recentProjects: RecentProject[]
@@ -240,6 +256,8 @@ export function buildDefaultPrefs(): Preferences {
     midiDevicePreferences: {},
     brake: { duration: 'medium', curve: 'curved' },
     backspin: { duration: 'long', intensity: 'medium' },
+    scratchRealism: { level: 'medium' },
+    scratch: { crossfaderCutKey: 'KeyZ' },
     stems: {
       useGpu: false,
       quality: 'balanced',
@@ -380,6 +398,32 @@ export function sanitiseBackspinPrefs(partial: unknown, base: BackspinPrefs): Ba
   }
 }
 
+const SCRATCH_REALISM_LEVELS: ReadonlySet<ScratchRealismLevel> = new Set(['off', 'medium', 'high'])
+
+export function sanitiseScratchRealismPrefs(
+  partial: unknown,
+  base: ScratchRealismPrefs
+): ScratchRealismPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof ScratchRealismPrefs, unknown>>
+  return {
+    level: SCRATCH_REALISM_LEVELS.has(p.level as ScratchRealismLevel)
+      ? (p.level as ScratchRealismLevel)
+      : base.level
+  }
+}
+
+const SCRATCH_CUT_KEYS: ReadonlySet<ScratchCrossfaderCutKey> = new Set(['KeyZ', 'KeyM'])
+
+// Single source of truth for scratch-input-prefs validation.
+export function sanitiseScratchPrefs(partial: unknown, base: ScratchPrefs): ScratchPrefs {
+  const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof ScratchPrefs, unknown>>
+  return {
+    crossfaderCutKey: SCRATCH_CUT_KEYS.has(p.crossfaderCutKey as ScratchCrossfaderCutKey)
+      ? (p.crossfaderCutKey as ScratchCrossfaderCutKey)
+      : base.crossfaderCutKey
+  }
+}
+
 // Single source of truth for the per-device keep-awake map. Only non-empty device names
 // that are explicitly enabled (value === true) are kept — off is the default, so `false` /
 // absent entries are dropped and a corrupt prefs file can never inject a wrong-typed value.
@@ -415,7 +459,11 @@ export function sanitiseMidiDevicePreferences(
       crossfaderDirection:
         candidate.crossfaderDirection === 'rightToLeft'
           ? 'rightToLeft'
-          : DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.crossfaderDirection,
+      defaultDeck:
+        candidate.defaultDeck === 'deck1' || candidate.defaultDeck === 'deck2'
+          ? candidate.defaultDeck
+          : DEFAULT_MIDI_DEVICE_PREFERENCES.defaultDeck
     }
   }
   return out

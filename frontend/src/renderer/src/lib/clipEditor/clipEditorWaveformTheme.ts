@@ -8,6 +8,8 @@ export const RULER_LABEL_STYLE = {
 } as const
 
 export const COL_RULER_BG = 0x18181b
+// Waveform-area background (neutral-950); the ruler band paints over the top.
+export const COL_EDITOR_BG = 0x0a0a0a
 export const COL_RULER_BORDER = 0x27272a
 export const COL_RULER_TICK = 0x3f3f46
 export const COL_BASELINE = 0x27272a

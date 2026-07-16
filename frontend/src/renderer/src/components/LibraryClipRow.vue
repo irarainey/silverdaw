@@ -58,7 +58,7 @@ const inUsePillClass = computed(
         spellcheck="false"
         draggable="false"
         data-borderless-button="true"
-        class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-cyan-500"
+        class="w-full min-w-0 rounded border border-zinc-600 bg-zinc-950 px-1 py-px text-[11px] font-medium text-zinc-100 outline-none focus:border-sky-500"
         @click.stop
         @dblclick.stop
         @mousedown.stop

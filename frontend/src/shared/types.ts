@@ -98,14 +98,19 @@ export interface MidiDeckSelection {
 
 export type MidiCrossfaderDirection = 'leftToRight' | 'rightToLeft'
 
+/** Which deck a device auto-selects at startup when it has no saved cue selection. */
+export type MidiDefaultDeck = 'none' | 'deck1' | 'deck2'
+
 export interface MidiDevicePreferences {
   scrubAudioEnabled: boolean
   crossfaderDirection: MidiCrossfaderDirection
+  defaultDeck: MidiDefaultDeck
 }
 
 export const DEFAULT_MIDI_DEVICE_PREFERENCES: Readonly<MidiDevicePreferences> = {
   scrubAudioEnabled: false,
-  crossfaderDirection: 'leftToRight'
+  crossfaderDirection: 'leftToRight',
+  defaultDeck: 'none'
 }
 
 // ─── Stem-separation model store (download-on-first-use) ──────────────────────
@@ -169,6 +174,18 @@ export type BackspinIntensityDto = 'gentle' | 'medium' | 'wild'
 export interface BackspinPrefsDto {
   duration: BackspinDurationDto
   intensity: BackspinIntensityDto
+}
+
+/** Persisted Scratch Editor realism preference surfaced to the renderer. */
+export type ScratchRealismLevelDto = 'off' | 'medium' | 'high'
+export interface ScratchRealismPrefsDto {
+  level: ScratchRealismLevelDto
+}
+
+/** Persisted Scratch Editor input preferences surfaced to the renderer. */
+export type ScratchCrossfaderCutKeyDto = 'KeyZ' | 'KeyM'
+export interface ScratchPrefsDto {
+  crossfaderCutKey: ScratchCrossfaderCutKeyDto
 }
 
 /** Where the stem model lives and whether it is a user-located copy. */

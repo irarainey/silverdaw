@@ -65,6 +65,8 @@ import {
   isWaveformFailedPayload,
   isWaveformReadyPayload,
   isEngineAudioStatusPayload,
+  isScratchSessionStatePayload,
+  isScratchPatternRecordedPayload,
   type BridgeInboundMessage,
   type BridgeInboundType
 } from '@shared/bridge-protocol'
@@ -208,6 +210,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isEngineErrorPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'ENGINE_AUDIO_STATUS':
       return isEngineAudioStatusPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'SCRATCH_SESSION_STATE':
+      return isScratchSessionStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'SCRATCH_PATTERN_RECORDED':
+      return isScratchPatternRecordedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

@@ -14,7 +14,7 @@ import type {
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -259,14 +259,18 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
         key.length === 0 ||
         typeof candidate.scrubAudioEnabled !== 'boolean' ||
         (candidate.crossfaderDirection !== 'leftToRight' &&
-          candidate.crossfaderDirection !== 'rightToLeft')
+          candidate.crossfaderDirection !== 'rightToLeft') ||
+        (candidate.defaultDeck !== 'none' &&
+          candidate.defaultDeck !== 'deck1' &&
+          candidate.defaultDeck !== 'deck2')
       ) {
         return
       }
       const current = prefs.get().midiDevicePreferences[key]
       if (
         current?.scrubAudioEnabled === candidate.scrubAudioEnabled &&
-        current.crossfaderDirection === candidate.crossfaderDirection
+        current.crossfaderDirection === candidate.crossfaderDirection &&
+        current.defaultDeck === candidate.defaultDeck
       ) {
         return
       }
@@ -274,7 +278,8 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
         ...prefs.get().midiDevicePreferences,
         [key]: {
           scrubAudioEnabled: candidate.scrubAudioEnabled,
-          crossfaderDirection: candidate.crossfaderDirection
+          crossfaderDirection: candidate.crossfaderDirection,
+          defaultDeck: candidate.defaultDeck
         }
       }
       prefs.schedulePrefsSave()
@@ -316,6 +321,28 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
     const next = sanitiseBackspinPrefs(partial, store.backspin)
     if (next.duration === store.backspin.duration && next.intensity === store.backspin.intensity) return
     store.backspin = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Scratch Editor realism (shared by pointer and MIDI platter input) ───
+  ipcMain.handle(IPC.prefs.getScratchRealism, () => ({ ...prefs.get().scratchRealism }))
+
+  ipcMain.on(IPC.prefs.setScratchRealism, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseScratchRealismPrefs(partial, store.scratchRealism)
+    if (next.level === store.scratchRealism.level) return
+    store.scratchRealism = next
+    prefs.flushSaveSync()
+  })
+
+  // ─── Scratch Editor input (crossfader cut key) ───────────────────────────
+  ipcMain.handle(IPC.prefs.getScratch, () => ({ ...prefs.get().scratch }))
+
+  ipcMain.on(IPC.prefs.setScratch, (_evt, partial: unknown) => {
+    const store = prefs.get()
+    const next = sanitiseScratchPrefs(partial, store.scratch)
+    if (next.crossfaderCutKey === store.scratch.crossfaderCutKey) return
+    store.scratch = next
     prefs.flushSaveSync()
   })
 }

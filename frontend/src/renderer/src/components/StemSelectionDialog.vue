@@ -113,7 +113,7 @@ function onCancel(): void {
               >
                 <input
                   type="checkbox"
-                  class="accent-cyan-500"
+                  class="accent-sky-500"
                   :checked="selection?.selected[row.stem] ?? false"
                   @change="onToggle(row.stem)"
                 >
@@ -129,7 +129,7 @@ function onCancel(): void {
               >
                 <input
                   type="checkbox"
-                  class="accent-cyan-500"
+                  class="accent-sky-500"
                   :checked="selection?.dereverb ?? false"
                   :disabled="!vocalsSelected"
                   @change="onToggleDereverb"

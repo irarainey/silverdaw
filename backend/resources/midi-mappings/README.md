@@ -32,7 +32,7 @@ Supported input actions:
 | Action | Meaning |
 | --- | --- |
 | `playPause` | Toggle project playback. |
-| `previousMarker`, `nextMarker` | Move to the previous or next timeline marker. |
+| `previousMarker`, `nextMarker` | Move to the previous or next timeline marker. While a Scratch Editor session is open, `previousMarker` runs the backing Build action instead. |
 | `deckToggle` | Enable or disable messages from one physical deck. |
 | `shift`, `syncModifier`, `jogTouch` | Maintain modifier or touch state for other actions. |
 | `jogScratch`, `jogPitchBend`, `jogSearch` | Move the timeline playhead from a jog control; search is the faster variant. |

@@ -66,6 +66,14 @@ struct MidiControllerProfile
     std::vector<juce::String> excludedModels;
     std::vector<MidiInputBinding> inputs;
     std::vector<MidiOutputBinding> outputs;
+    // Raw MIDI frames (short messages and/or SysEx) sent once when the output
+    // port opens. Used to wake controllers out of their power-on demo/standby
+    // state and to request the current positions of physical controls, sourced
+    // from each controller's Mixxx mapping. Empty when the profile defines none.
+    std::vector<std::vector<juce::uint8>> initMessages;
+    // Relative ticks per physical platter revolution for scratch.
+    // 0 = auto-detect from jog binding encoding (512 for relative, 16384 for absolute14Relative).
+    int scratchTicksPerTurn = 0;
 };
 
 const MidiControllerProfile* findMidiControllerProfile(const juce::String& deviceName);
