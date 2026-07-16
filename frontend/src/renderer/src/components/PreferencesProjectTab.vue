@@ -27,7 +27,7 @@ const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { requir
           </p>
           <div class="flex items-center gap-2">
             <code
-              class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+              class="selectable-text flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
               :title="defaultProjectDir"
             >{{ defaultProjectDir || '(home)' }}</code>
             <button
@@ -50,7 +50,7 @@ const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { requir
           </p>
           <div class="flex items-center gap-2">
             <code
-              class="flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
+              class="selectable-text flex-1 truncate rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1 text-[11px] text-zinc-300"
               :title="defaultClipDir"
             >{{ defaultClipDir || '(home)' }}</code>
             <button
@@ -80,7 +80,7 @@ const cleanupProjectFiles = defineModel<boolean>('cleanupProjectFiles', { requir
           <span class="mt-0.5 block text-zinc-500">
             Periodically writes a recovery copy of any project with
             unsaved changes into
-            <code class="text-zinc-400">%APPDATA%/Silverdaw/autosave/</code>.
+            <code class="selectable-text text-zinc-400">%APPDATA%/Silverdaw/autosave/</code>.
             The next launch offers to restore anything left behind
             by a crash or unclean shutdown.
           </span>

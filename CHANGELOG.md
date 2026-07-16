@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Dragging controls no longer accidentally selects interface text.
 - Warp playback performance is improved.
 - Tracks with neutral Tone controls now skip inactive filtering during playback.
 - Shared room and echo effects now stop processing once their tails are silent.

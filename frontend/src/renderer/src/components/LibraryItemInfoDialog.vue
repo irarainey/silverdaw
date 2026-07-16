@@ -386,7 +386,7 @@ const {
                 <dt class="text-zinc-500">
                   {{ label }}
                 </dt>
-                <dd class="wrap-break-word text-zinc-200">
+                <dd class="selectable-text wrap-break-word text-zinc-200">
                   {{ value }}
                 </dd>
               </template>
@@ -410,26 +410,26 @@ const {
               <dt class="text-zinc-500">
                 Library ID
               </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
+              <dd class="selectable-text break-all font-mono text-[11px] text-zinc-300">
                 {{ item.id }}
               </dd>
               <dt class="text-zinc-500">
                 File name
               </dt>
-              <dd class="break-all text-zinc-200">
+              <dd class="selectable-text break-all text-zinc-200">
                 {{ item.fileName }}
               </dd>
               <dt class="text-zinc-500">
                 {{ playbackPathDistinct ? 'Source file' : 'File path' }}
               </dt>
-              <dd class="break-all font-mono text-[11px] text-zinc-300">
+              <dd class="selectable-text break-all font-mono text-[11px] text-zinc-300">
                 {{ item.filePath }}
               </dd>
               <template v-if="playbackPathDistinct">
                 <dt class="text-zinc-500">
                   Playback cache
                 </dt>
-                <dd class="break-all font-mono text-[11px] text-zinc-300">
+                <dd class="selectable-text break-all font-mono text-[11px] text-zinc-300">
                   {{ displayDecodedCachePath }}
                 </dd>
               </template>

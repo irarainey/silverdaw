@@ -1,5 +1,17 @@
 @import 'tailwindcss';
 
+@layer base {
+  #app {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #app :is(input, textarea, select, [contenteditable='true'], .selectable-text) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 /* ── Dialog primitives ─────────────────────────────────────────────────
  *
  * Every modal dialog in the renderer (Project Properties, Preferences,
