@@ -144,7 +144,7 @@ async function relinkOne(row: MissingFileRow): Promise<void> {
               <div class="flex min-w-0 flex-1 flex-col">
                 <span class="truncate text-sm font-medium text-zinc-100">{{ row.fileName }}</span>
                 <code
-                  class="truncate text-[10px] text-zinc-500"
+                  class="selectable-text truncate text-[10px] text-zinc-500"
                   :title="row.filePath"
                 >{{ row.filePath || '(no path)' }}</code>
                 <span class="mt-0.5 text-[10px] text-zinc-600">
