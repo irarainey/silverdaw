@@ -77,10 +77,11 @@ interface ScratchKeyboardControlsOptions {
   activeSessionId: Ref<string | null>
   canControl: Ref<boolean>
   sendControl: (payload: ScratchSessionControlPayload) => void
+  buildBacking: () => void
 }
 
 export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptions): void {
-  const { activeSessionId, canControl, sendControl } = options
+  const { activeSessionId, canControl, sendControl, buildBacking } = options
   const inputSettings = useScratchInputSettingsStore()
 
   const controller = createScratchKeyboardCutController({
@@ -90,7 +91,19 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
     sendControl
   })
 
-  const onKeyDown = (event: KeyboardEvent): void => controller.handleKeyDown(event)
+  const onKeyDown = (event: KeyboardEvent): void => {
+    const target = event.target
+    const editingText = target instanceof HTMLInputElement
+      || target instanceof HTMLTextAreaElement
+      || target instanceof HTMLSelectElement
+      || (target instanceof HTMLElement && target.isContentEditable)
+    if (event.code === 'KeyB' && !event.repeat && !editingText) {
+      event.preventDefault()
+      buildBacking()
+      return
+    }
+    controller.handleKeyDown(event)
+  }
   const onKeyUp = (event: KeyboardEvent): void => controller.handleKeyUp(event)
   const onBlur = (): void => controller.forceClosed()
 

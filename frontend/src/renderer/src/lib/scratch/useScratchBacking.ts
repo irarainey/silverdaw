@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { useProjectStore } from '@/stores/projectStore'
 import {
@@ -163,6 +163,10 @@ export function useScratchBacking(
       )
     )
   }
+
+  const onMidiCueBuild = (): void => prepare()
+  onMounted(() => window.addEventListener('silverdaw:scratch-build-backing', onMidiCueBuild))
+  onBeforeUnmount(() => window.removeEventListener('silverdaw:scratch-build-backing', onMidiCueBuild))
 
   function clear(): void {
     const sid = sessionId.value

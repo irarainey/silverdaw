@@ -25,16 +25,16 @@ const anchorOptions: { value: ScratchBackingStartAnchor; label: string }[] = [
   { value: 'playhead', label: 'Playhead' }
 ]
 
-// The Prepare button carries the whole preparation lifecycle in one control:
+// The Build button carries the whole preparation lifecycle in one control:
 // idle → busy (spinner) → ready (check), or an error state that invites a retry.
 // This replaces the separate status caption that used to sit above the button.
 type PrepareVariant = 'idle' | 'busy' | 'ready' | 'error'
 const prepareState = computed<{ variant: PrepareVariant; label: string }>(() => {
   const b = props.backing
-  if (b.isPreparing.value) return { variant: 'busy', label: 'Preparing' }
+  if (b.isPreparing.value) return { variant: 'busy', label: 'Building' }
   if (b.hasError.value) return { variant: 'error', label: 'Retry' }
   if (b.isReady.value) return { variant: 'ready', label: 'Ready' }
-  return { variant: 'idle', label: 'Prepare' }
+  return { variant: 'idle', label: 'Build' }
 })
 
 const prepareClass = computed(() => {
@@ -51,13 +51,13 @@ const prepareClass = computed(() => {
 const prepareTitle = computed(() => {
   const b = props.backing
   if (b.hasError.value) return b.errorMessage.value ?? 'Preparation failed — click to retry'
-  if (b.isReady.value) return 'Backing ready — click to re-prepare'
+  if (b.isReady.value) return 'Backing ready — click to rebuild'
   return undefined
 })
 
 // The prepared bed is fixed once it is playing: changing the track selection,
 // anchor, or length would only take effect after a fresh Prepare, so locking the
-// preparation config while playing avoids implying tracks can be swapped in live.
+// build config while playing avoids implying tracks can be swapped in live.
 const configDisabled = computed(() => props.disabled || props.isPlaying)
 
 const monitorPct = computed(() => `${Math.round(props.backing.monitorGain.value * 100)}%`)

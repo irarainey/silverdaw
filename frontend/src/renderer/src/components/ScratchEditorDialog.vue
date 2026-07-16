@@ -63,7 +63,8 @@ const replay = useScratchReplay({
 useScratchKeyboardControls({
   activeSessionId: session.activeSessionId,
   canControl: replay.controlsEnabled,
-  sendControl: session.sendControl
+  sendControl: session.sendControl,
+  buildBacking: backing.prepare
 })
 
 const saveFlow = useScratchSaveFlow({
@@ -196,6 +197,18 @@ onBeforeUnmount(() => {
 })
 
 function onKeydown(event: KeyboardEvent): void {
+  const target = event.target
+  const editingText = target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || (target instanceof HTMLElement && target.isContentEditable)
+  const scratchShortcut = !event.repeat
+    && !event.ctrlKey
+    && !event.metaKey
+    && !event.altKey
+    && !editingText
+    && !close.dirtyClosePromptOpen.value
+
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
@@ -211,17 +224,22 @@ function onKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     event.stopPropagation()
     transport.onTogglePlay()
-  } else if (
-    (event.key === 'r' || event.key === 'R') &&
-    !event.repeat &&
-    !event.ctrlKey &&
-    !event.metaKey &&
-    !event.altKey &&
-    !close.dirtyClosePromptOpen.value
-  ) {
+  } else if ((event.key === 'r' || event.key === 'R') && scratchShortcut) {
     event.preventDefault()
     event.stopPropagation()
     recordControl.onRecordButton()
+  } else if ((event.key === 'p' || event.key === 'P') && scratchShortcut && derived.hasPattern.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (replay.isPatternReplaying.value) {
+      replay.stopReplay()
+    } else {
+      startDraftReplay()
+    }
+  } else if ((event.key === 'c' || event.key === 'C') && scratchShortcut && derived.hasPattern.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    clearDraft()
   }
 }
 </script>

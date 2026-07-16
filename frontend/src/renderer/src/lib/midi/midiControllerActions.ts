@@ -26,6 +26,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import type { MidiControlPayload } from '@shared/bridge-protocol'
 
 const JOG_MS_PER_STEP = {
@@ -352,6 +353,10 @@ export function handleMidiControl(payload: MidiControlPayload): void {
       handleBrowsePress(payload.deviceIdentifier)
       break
     case 'previousMarker':
+      if (useScratchSessionStore().activeSessionId !== null) {
+        window.dispatchEvent(new Event('silverdaw:scratch-build-backing'))
+        break
+      }
       seekToPreviousMarker('MIDI Cue')
       break
     case 'nextMarker':
