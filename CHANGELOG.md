@@ -5,6 +5,8 @@
 ### Added
 
 - Supported MIDI deck controllers can control transport, timeline navigation, markers, selected-track mixing, controller feedback, and vinyl-style platter holding and scratching.
+- The Scratch Editor records editable vinyl-style scratches from audio and saves them as reusable samples.
+- Scratch realism adds adjustable vinyl character to held-platter scratching.
 
 ### Changed
 

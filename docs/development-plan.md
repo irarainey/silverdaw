@@ -1594,8 +1594,7 @@ no single feature is committed as "next". Candidates, strongest first:
    the remaining recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus"
    ducking need genuinely new per-clip FX automation tied to transition geometry.
 2. **Scratch authoring (§11.7)** — MIDI deck input shipped in 1.2.0; the Scratch
-   Editor for recording, editing, and replaying authored scratch movements is now
-   **implemented and tested** (see §11.7), not yet cut into a release.
+   Editor records, edits, and replays authored scratch movements (see §11.7).
 
 **Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
 useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
@@ -2485,7 +2484,7 @@ sequencing into the phase plan is still to be decided.
   count-in and a record-enabled transport path; a finished take becomes a normal,
   non-destructive editable clip. Keep the surface deliberately minimal.
 
-### 11.7 MIDI & DJ control — *deck input shipped (1.2.0); Scratch Editor implemented, unreleased*
+### 11.7 MIDI & DJ control — *deck input and Scratch Editor shipped*
 
 - [x] **MIDI DJ deck input** (issue #29) — *shipped in 1.2.0.* Supported deck controllers can be
   enabled from Preferences and drive transport, timeline/marker navigation,
@@ -2493,8 +2492,8 @@ sequencing into the phase plan is still to be decided.
   validated JSON profiles. Unsupported MIDI devices remain visible but cannot
   be enabled. See the
   [supported controller reference](midi-controllers.md).
-- [ ] **Scratch authoring with on-screen decks** (issue #37) — *implemented and
-  tested; not yet cut into a release.* A studio feature for **creating
+- [x] **Scratch authoring with on-screen decks** (issue #37) — *shipped.* A
+  studio feature for **creating
   scratches of an audio clip to use in a mix**, not for live performance. The
   **Scratch Editor** (a single reused modal, opened from a timeline clip or a
   library item) prepares a linear scratch source and drives an on-screen platter

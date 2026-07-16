@@ -6,8 +6,7 @@
 
 The Scratch Editor lets a user perform a vinyl-style scratch over one timeline
 clip or library item, edit the recorded performance as notation, replay it
-non-destructively, and bake it into a new library sample. It is unreleased —
-built and tested, not yet in a public build.
+non-destructively, and bake it into a new library sample.
 
 The feature crosses the MIDI input, real-time audio, project-state, preview,
 export, and dialog boundaries at once, so it needs one authoritative contract
@@ -37,6 +36,18 @@ the single virtual deck; a capacitive platform's touch sensor is authoritative
 over ownership and release. Device disconnect, deck disable, dialog close, or
 engine recovery releases ownership and clears held input. Pointer-operated
 virtual controls remain available without connected hardware.
+
+### Input hierarchy and fallback
+
+Supported MIDI DJ decks are the primary Scratch Editor input. Their platter,
+crossfader, Play, and Cue controls give the intended high-rate, tactile
+authoring workflow and route eligible scratch control directly to audio.
+
+The on-screen virtual deck's trackpad and keyboard controls are a deliberately
+less expressive fallback when a deck is unavailable. They are sufficient to
+create a simple scratch pattern, which the notation editor can then reshape
+into a more complex performance. The fallback does not aim to reproduce the
+physical-deck workflow.
 
 ### Source preparation and clip semantics
 

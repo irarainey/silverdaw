@@ -3,7 +3,8 @@
 Silverdaw can use supported MIDI deck controllers to operate the arrangement
 timeline, markers, selected-track mixer controls, and transport. Controller
 support is model-specific and comes from the JSON profiles installed with the
-application.
+application. You can enable multiple supported MIDI deck devices at the same
+time.
 
 > **Only supported deck MIDI controllers can be enabled.** Other MIDI devices
 > are still shown in **Preferences ▸ MIDI**, but their checkboxes are disabled.
@@ -11,13 +12,15 @@ application.
 > and controllers that require HID, SysEx initialisation, or periodic
 > keep-alive messages are not supported.
 
-Silverdaw remains a studio creation tool. MIDI deck control edits and navigates
-the arrangement; it is not a live-performance mode and does not sequence MIDI
-notes or control virtual instruments.
+> **Hardware testing:** The Pioneer DJ DDJ-RB is the only controller tested on
+> physical hardware so far. Other listed devices have profile coverage but may
+> need refinement; please report any issue with the device name and MIDI Monitor
+> output.
 
-> **Scratch Editor availability:** The Scratch Editor is implemented and tested,
-> but is not included in a released build yet. Its sections below describe the
-> planned release behavior.
+Silverdaw remains a studio creation tool. MIDI deck control edits and navigates
+the arrangement, including recording editable scratch patterns into a mix; it
+is not a live-performance mode and does not sequence MIDI notes or control
+virtual instruments.
 
 ## Connect and enable a controller
 
@@ -79,9 +82,11 @@ Physical deck numbers identify the source control; they are not assigned to
 specific Silverdaw tracks. Channel faders, EQ, and filter controls always target
 the track currently selected in the arrangement.
 
-Absolute faders and knobs use a short catch-up transition when the hardware and
-software values differ. This prevents an abrupt jump when a selected track
-changes or a value was edited on screen.
+Silverdaw cannot read every dial and slider's position when a controller first
+connects. When you first move an absolute fader, dial, or knob whose hardware
+value differs from the on-screen value, it catches up gradually instead of
+jumping. This soft adjustment prevents an abrupt change after selecting a track
+or editing a value on screen.
 
 ## Controller feedback
 
@@ -136,10 +141,11 @@ verified. A similar name does not make an unlisted controller compatible.
 
 ## Scratch Editor without a controller
 
-The Scratch Editor can be driven by a physical deck, but it does not require
-one. When no controller is connected you can perform the same platter and
-crossfader-cut moves with a trackpad and the keyboard, using the on-screen
-virtual deck.
+The Scratch Editor is designed around supported physical decks, which are the
+primary way to perform scratches. The on-screen virtual deck is a less
+expressive fallback when no controller is connected: use a trackpad and
+keyboard to create a simple scratch, then edit its notation into a more complex
+pattern.
 
 - **Platter (trackpad).** Two-finger pan across the on-screen platter jogs it,
   exactly like touching a physical platter. Rightward or downward movement
@@ -156,9 +162,14 @@ virtual deck.
   default is closed (silent). Choose **Z** (right-handed) or **M** (left-handed)
   to suit your scratching hand in **Preferences ▸ Effects ▸ Scratch crossfader
   cut** (the default is Z).
+- **Scratch realism.** Choose **Off**, **Medium** (the default), or **High** in
+  **Preferences ▸ Effects** to add increasing held-platter softening and
+  low-level groove texture. It affects on-screen and MIDI scratching only
+  while the platter is held.
 
-These on-screen controls share the same session model as a physical deck, so a
-controller and the trackpad or keyboard can be used interchangeably.
+These on-screen controls share the same session model as a physical deck, so
+you can begin a pattern without hardware and later refine it with a controller
+or in the notation editor.
 
 ## Scratch Editor with a physical deck
 

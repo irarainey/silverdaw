@@ -2116,6 +2116,11 @@ format, and the backing monitor — lives in
 [ADR 0021](adr/0021-scratch-editor-action-patterns.md); this section covers the
 protocol, module layout, and UI detail that ADR does not.
 
+**Input hierarchy.** Supported MIDI DJ decks are the primary Scratch Editor
+input. The on-screen deck's trackpad and keyboard controls are a less
+expressive fallback for creating a simple pattern, which the notation editor
+can refine into a more complex scratch.
+
 **Opening.** A single reused dialog instance is hosted in `App.vue` and driven by
 `useScratchEditorStore`. It opens either from a **timeline clip** (right-click ▸
 *Open in Scratch Editor*, enabled only for a resolved clip that has a library

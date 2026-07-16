@@ -14,7 +14,9 @@ and arrange, trim, re-pitch, and tempo-match them into a finished mix. It is
 designed for bedroom DJs, producers, and mixers — anyone who wants to create
 mixes and mashups easily by combining and reshaping existing audio. It is geared
 towards DJs and producers as a studio creation tool, not a live-performance
-instrument.
+instrument. Supported MIDI DJ decks can also record editable vinyl-style
+scratches directly from audio into a mix, combining deck control with a
+non-destructive studio workflow.
 
 ## Installation
 
@@ -135,6 +137,14 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   export. Reverse, Brake, and Backspin are mutually exclusive — set one and the
   others stay visible but disabled until you turn it off. Tune how long they take
   and how they feel in **Preferences ▸ Effects**.
+- **Vinyl-style scratch authoring.** Open a clip or library item in the Scratch
+  Editor and use a supported MIDI DJ deck to record platter and crossfader
+  moves. Deck control is the primary workflow; the on-screen deck offers a
+  trackpad and keyboard fallback for creating a simple scratch that you can
+  edit into a more complex pattern. Replay the result, apply it
+  non-destructively to a clip, or save it as a new library sample for use in
+  your mix. **Scratch realism** adds adjustable held-platter softening and
+  groove texture, with Off, Medium, and High levels in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels (the default), in Preferences —
   applied across the timeline and the Clip Editor.
