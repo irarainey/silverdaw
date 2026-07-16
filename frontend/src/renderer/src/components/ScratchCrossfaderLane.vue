@@ -68,6 +68,7 @@ function isSelected(index: number): boolean {
       :aria-label="`Crossfader point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${(kf.value * 100).toFixed(0)}%`"
       :tabindex="0"
       @pointerdown="pointerInteraction.handlePointDown('crossfader', i, $event)"
+      @contextmenu="pointerInteraction.handlePointContextMenu('crossfader', i, $event)"
       @keydown.enter.prevent="editor.selectKeyframe('crossfader', i)"
       @focus="editor.selectKeyframe('crossfader', i)"
     />

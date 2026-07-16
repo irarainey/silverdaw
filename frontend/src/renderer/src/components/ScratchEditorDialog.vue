@@ -269,7 +269,7 @@ function onKeydown(event: KeyboardEvent): void {
         <ScratchEditorHeader
           :clip-name="derived.clipName.value"
           :deck-label="derived.deckLabel.value"
-          :show-saved-badge="persistence.isSaved.value && !persistence.isDirty.value"
+          :is-dirty="persistence.isDirty.value"
         />
 
         <div class="dialog-body flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">

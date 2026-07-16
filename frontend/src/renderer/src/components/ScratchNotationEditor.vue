@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchNotationEditor } from '@/lib/scratch/useScratchNotationEditor'
 import { useScratchNotationLayout, ZOOM_STEP_PERCENT } from '@/lib/scratch/useScratchNotationLayout'
@@ -18,10 +18,18 @@ const editor = useScratchNotationEditor(sessionIdRef)
 
 const containerEl = ref<HTMLDivElement | null>(null)
 const viewportEl = ref<HTMLDivElement | null>(null)
-const layout = useScratchNotationLayout({ containerEl, viewportEl })
-
 const pattern = computed<ScratchPattern | null>(() => editor.pattern.value)
 const durationUs = computed(() => pattern.value?.durationUs ?? 0)
+const layout = useScratchNotationLayout({ containerEl, viewportEl, durationUs })
+
+watch(
+  () => props.replayPositionNormalized,
+  (position) => {
+    if (position === null || position === undefined || !pattern.value) return
+    const { cropStartUs, cropEndUs } = pattern.value
+    layout.followPlayback(cropStartUs + position * (cropEndUs - cropStartUs))
+  }
+)
 
 // Keyboard handler (extracted module) — events stop propagation when consumed
 function onKeydown(event: KeyboardEvent): void {
@@ -32,7 +40,7 @@ function onKeydown(event: KeyboardEvent): void {
 <template>
   <div
     ref="containerEl"
-    class="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 p-2"
+    class="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 p-2 outline-none focus:border-zinc-800 focus:outline-none focus-visible:border-zinc-800 focus-visible:outline-none"
     tabindex="0"
     role="application"
     :aria-label="pattern ? 'Scratch notation editor' : 'No pattern to edit'"

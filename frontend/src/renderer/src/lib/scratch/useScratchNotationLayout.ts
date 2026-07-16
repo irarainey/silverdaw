@@ -9,6 +9,7 @@ import { DEFAULT_NOTATION_LAYOUT } from './scratchNotationCoordinates'
 const MIN_ZOOM_PERCENT = 100
 const MAX_ZOOM_PERCENT = 800
 const ZOOM_STEP_PERCENT = 10
+const BASE_PIXELS_PER_SECOND = 180
 const LANE_VERTICAL_MARGIN = 24 // 12px gap between lanes + 12px bottom padding
 const MIN_SVG_HEIGHT =
   DEFAULT_NOTATION_LAYOUT.platterLaneHeight +
@@ -35,6 +36,7 @@ export interface ScratchNotationLayout {
   scrollThumbWidthPct: ComputedRef<number>
   scrollThumbLeftPct: ComputedRef<number>
   setZoom(nextZoom: number): Promise<void>
+  followPlayback(timeUs: number): void
   onZoomWheel(event: WheelEvent): void
   onViewportScroll(): void
   onScrollbarMouseDown(event: MouseEvent): void
@@ -43,13 +45,18 @@ export interface ScratchNotationLayout {
 export function useScratchNotationLayout(refs: {
   containerEl: Ref<HTMLElement | null>
   viewportEl: Ref<HTMLElement | null>
+  durationUs: Ref<number>
 }): ScratchNotationLayout {
-  const { containerEl, viewportEl } = refs
+  const { containerEl, viewportEl, durationUs } = refs
   const { paddingX: PADDING_X } = DEFAULT_NOTATION_LAYOUT
 
   const zoomPercent = ref(100)
   const scrollLeftPx = ref(0)
   const cfLaneRatio = ref(DEFAULT_CF_LANE_RATIO)
+  let playbackTargetScrollLeft: number | null = null
+  let playbackFollowFrame: number | null = null
+  let lastPlaybackFollowAt = 0
+  let lastPlaybackTimeUs = 0
 
   // Resize observer for SVG width/height tracking.
   let resizeObserver: ResizeObserver | null = null
@@ -65,12 +72,18 @@ export function useScratchNotationLayout(refs: {
   onBeforeUnmount(() => {
     resizeObserver?.disconnect()
     resizeObserver = null
+    if (playbackFollowFrame !== null) {
+      cancelAnimationFrame(playbackFollowFrame)
+      playbackFollowFrame = null
+    }
   })
 
   const svgWidth = computed(() => {
     void resizeKey.value // depend on resize trigger
-    if (!viewportEl.value) return 600
-    return Math.max(300, (viewportEl.value.clientWidth * zoomPercent.value) / 100)
+    const viewportWidth = viewportEl.value?.clientWidth ?? 600
+    const timelineWidth = (durationUs.value / 1_000_000) * BASE_PIXELS_PER_SECOND + PADDING_X * 2
+    const baseWidth = Math.max(300, viewportWidth, timelineWidth)
+    return (baseWidth * zoomPercent.value) / 100
   })
   const contentWidth = computed(() => Math.max(1, svgWidth.value - PADDING_X * 2))
   const svgHeight = computed(() => {
@@ -94,6 +107,61 @@ export function useScratchNotationLayout(refs: {
     if (viewport) {
       viewport.scrollLeft = previousCentre * viewport.scrollWidth - viewport.clientWidth / 2
       scrollLeftPx.value = viewport.scrollLeft
+    }
+  }
+
+  function followPlayback(timeUs: number): void {
+    const viewport = viewportEl.value
+    if (!viewport || svgWidth.value <= viewport.clientWidth) return
+
+    const normalizedTime = durationUs.value > 0
+      ? Math.max(0, Math.min(1, timeUs / durationUs.value))
+      : 0
+    const playheadX = PADDING_X + normalizedTime * contentWidth.value
+    const maxScrollLeft = viewport.scrollWidth - viewport.clientWidth
+    const desiredScrollLeft = Math.max(
+      0,
+      Math.min(maxScrollLeft, playheadX - viewport.clientWidth / 2)
+    )
+    if (timeUs < lastPlaybackTimeUs) {
+      playbackTargetScrollLeft = null
+      lastPlaybackFollowAt = 0
+    }
+    lastPlaybackTimeUs = timeUs
+    if (desiredScrollLeft <= viewport.scrollLeft) return
+
+    playbackTargetScrollLeft = desiredScrollLeft
+    if (playbackFollowFrame === null) {
+      playbackFollowFrame = requestAnimationFrame(advancePlaybackFollow)
+    }
+  }
+
+  function advancePlaybackFollow(now: number): void {
+    playbackFollowFrame = null
+    const viewport = viewportEl.value
+    const target = playbackTargetScrollLeft
+    if (!viewport || target === null || target <= viewport.scrollLeft) {
+      lastPlaybackFollowAt = 0
+      return
+    }
+
+    const elapsedSeconds = lastPlaybackFollowAt === 0
+      ? 1 / 60
+      : Math.min(0.1, (now - lastPlaybackFollowAt) / 1000)
+    lastPlaybackFollowAt = now
+    const gap = target - viewport.scrollLeft
+    const playbackPixelsPerSecond = durationUs.value > 0
+      ? contentWidth.value / (durationUs.value / 1_000_000)
+      : 0
+    const ratePerSecond = Math.max(playbackPixelsPerSecond * 3, gap * 5)
+    const step = Math.min(gap, ratePerSecond * elapsedSeconds)
+    viewport.scrollLeft += step
+    scrollLeftPx.value = viewport.scrollLeft
+
+    if (target - viewport.scrollLeft > 0.5) {
+      playbackFollowFrame = requestAnimationFrame(advancePlaybackFollow)
+    } else {
+      lastPlaybackFollowAt = 0
     }
   }
 
@@ -180,10 +248,11 @@ export function useScratchNotationLayout(refs: {
     scrollThumbWidthPct,
     scrollThumbLeftPct,
     setZoom,
+    followPlayback,
     onZoomWheel,
     onViewportScroll,
     onScrollbarMouseDown
   }
 }
 
-export { MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT, ZOOM_STEP_PERCENT }
+export { BASE_PIXELS_PER_SECOND, MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT, ZOOM_STEP_PERCENT }

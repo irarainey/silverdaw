@@ -72,6 +72,7 @@ function segmentColor(kind: string): string {
       :aria-label="`Platter point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${kf.turns.toFixed(3)} turns${kf.touched ? ', touched' : ''}`"
       :tabindex="0"
       @pointerdown="pointerInteraction.handlePointDown('platter', i, $event)"
+      @contextmenu="pointerInteraction.handlePointContextMenu('platter', i, $event)"
       @keydown.enter.prevent="editor.selectKeyframe('platter', i)"
       @focus="editor.selectKeyframe('platter', i)"
     />

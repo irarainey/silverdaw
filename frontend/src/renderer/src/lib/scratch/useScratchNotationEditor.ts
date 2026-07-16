@@ -30,6 +30,8 @@ export interface ScratchNotationEditor {
 
   selectKeyframe(lane: NotationLane, index: number): void
   clearSelection(): void
+  beginEditGroup(): void
+  endEditGroup(): void
 
   movePlatter(index: number, timeUs: number, turns: number): boolean
   moveCrossfader(index: number, timeUs: number, value: number): boolean
@@ -37,13 +39,21 @@ export interface ScratchNotationEditor {
   addCrossfaderPoint(timeUs: number): boolean
   deleteSelected(): boolean
   togglePlatterTouch(index: number): boolean
+  undo(): boolean
+  redo(): boolean
 }
+
+const MAX_HISTORY_ENTRIES = 100
 
 export function useScratchNotationEditor(
   sessionId: Ref<string | null>
 ): ScratchNotationEditor {
   const store = useScratchSessionStore()
   const selection = ref<NotationSelection | null>(null)
+  const undoHistory: ScratchPattern[] = []
+  const redoHistory: ScratchPattern[] = []
+  let editGroupBaseline: ScratchPattern | null = null
+  let editGroupHasChanges = false
 
   const pattern = computed<ScratchPattern | null>(() => store.completedPattern)
 
@@ -61,6 +71,10 @@ export function useScratchNotationEditor(
       } else {
         // External replacement (session state, recording, or other source).
         selection.value = null
+        undoHistory.length = 0
+        redoHistory.length = 0
+        editGroupBaseline = null
+        editGroupHasChanges = false
       }
     }
   )
@@ -68,6 +82,10 @@ export function useScratchNotationEditor(
   watch(sessionId, () => {
     selection.value = null
     expectedRevisions.clear()
+    undoHistory.length = 0
+    redoHistory.length = 0
+    editGroupBaseline = null
+    editGroupHasChanges = false
   })
 
   function commitEdit(newPattern: ScratchPattern): boolean {
@@ -77,7 +95,62 @@ export function useScratchNotationEditor(
     if (!current) return false
     // Mark the upcoming revision as ours so the watcher doesn't clear selection.
     expectedRevisions.add(store.draftRevision + 1)
-    return store.editPattern(sid, newPattern)
+    const committed = store.editPattern(sid, newPattern)
+    if (!committed) return false
+
+    if (editGroupBaseline) {
+      editGroupHasChanges = true
+      return true
+    }
+    undoHistory.push(current)
+    if (undoHistory.length > MAX_HISTORY_ENTRIES) undoHistory.shift()
+    redoHistory.length = 0
+    return true
+  }
+
+  function beginEditGroup(): void {
+    if (editGroupBaseline || !pattern.value) return
+    editGroupBaseline = pattern.value
+    editGroupHasChanges = false
+  }
+
+  function endEditGroup(): void {
+    if (editGroupBaseline && editGroupHasChanges) {
+      undoHistory.push(editGroupBaseline)
+      if (undoHistory.length > MAX_HISTORY_ENTRIES) undoHistory.shift()
+      redoHistory.length = 0
+    }
+    editGroupBaseline = null
+    editGroupHasChanges = false
+  }
+
+  function restoreHistory(target: ScratchPattern, source: ScratchPattern[]): boolean {
+    const sid = sessionId.value
+    const current = store.completedPattern
+    if (!sid || !current || !store.isActiveSession(sid)) return false
+    expectedRevisions.add(store.draftRevision + 1)
+    if (!store.editPattern(sid, target)) return false
+    source.push(current)
+    selection.value = null
+    return true
+  }
+
+  function undo(): boolean {
+    endEditGroup()
+    const previous = undoHistory.pop()
+    if (!previous) return false
+    const restored = restoreHistory(previous, redoHistory)
+    if (!restored) undoHistory.push(previous)
+    return restored
+  }
+
+  function redo(): boolean {
+    endEditGroup()
+    const next = redoHistory.pop()
+    if (!next) return false
+    const restored = restoreHistory(next, undoHistory)
+    if (!restored) redoHistory.push(next)
+    return restored
   }
 
   function selectKeyframe(lane: NotationLane, index: number): void {
@@ -172,11 +245,15 @@ export function useScratchNotationEditor(
     selection,
     selectKeyframe,
     clearSelection,
+    beginEditGroup,
+    endEditGroup,
     movePlatter,
     moveCrossfader,
     addPlatter,
     addCrossfaderPoint,
     deleteSelected,
-    togglePlatterTouch
+    togglePlatterTouch,
+    undo,
+    redo
   }
 }

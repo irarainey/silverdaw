@@ -57,6 +57,20 @@ export function handleNotationKeydown(
     return false
   }
 
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'z' || event.key === 'Z')) {
+    event.preventDefault()
+    event.stopPropagation()
+    editor.undo()
+    return true
+  }
+
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'y' || event.key === 'Y')) {
+    event.preventDefault()
+    event.stopPropagation()
+    editor.redo()
+    return true
+  }
+
   // Delete / Backspace — delete selected keyframe
   if (event.key === 'Delete' || event.key === 'Backspace') {
     if (editor.selection.value) {
@@ -68,15 +82,12 @@ export function handleNotationKeydown(
     return false
   }
 
-  // Escape — clear selection (not close dialog)
-  if (event.key === 'Escape') {
-    if (editor.selection.value) {
-      event.preventDefault()
-      event.stopPropagation()
-      editor.clearSelection()
-      return true
-    }
-    return false
+  if ((event.key === 'd' || event.key === 'D') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (!editor.selection.value) return false
+    event.preventDefault()
+    event.stopPropagation()
+    editor.clearSelection()
+    return true
   }
 
   // Space — play/pause toggle (placeholder, no-op for notation-only scope)

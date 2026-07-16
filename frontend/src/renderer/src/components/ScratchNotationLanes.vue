@@ -38,6 +38,22 @@ const svgEl = ref<SVGSVGElement | null>(null)
 
 const durationUs = computed(() => props.pattern.durationUs)
 const contentWidth = computed(() => Math.max(1, props.svgWidth - PADDING_X * 2))
+const timeMarkers = computed(() => {
+  const durationSeconds = durationUs.value / 1_000_000
+  if (durationSeconds <= 0) return []
+
+  const pixelsPerSecond = contentWidth.value / durationSeconds
+  const intervals = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60]
+  const intervalSeconds = intervals.find((interval) => interval * pixelsPerSecond >= 80) ?? 60
+  const markerCount = Math.floor(durationSeconds / intervalSeconds)
+  return Array.from({ length: markerCount + 1 }, (_, index) => {
+    const seconds = index * intervalSeconds
+    return {
+      timeUs: Math.round(seconds * 1_000_000),
+      label: seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`
+    }
+  })
+})
 
 // Platter turns span used by both the pointer interaction (drag math) and the
 // platter lane's own vertical scale.
@@ -84,11 +100,17 @@ const pointerInteraction = createNotationPointerInteraction(
     cfLaneHeight: computed(() => props.cfLaneHeight)
   },
   {
+    onBeginEdit: () => props.editor.beginEditGroup(),
+    onEndEdit: () => props.editor.endEditGroup(),
     onSelect: (lane, index) => props.editor.selectKeyframe(lane, index),
     onMovePlatter: (index, t, turns) => props.editor.movePlatter(index, t, turns),
     onMoveCrossfader: (index, t, value) => props.editor.moveCrossfader(index, t, value),
     onAddPlatter: (t) => props.editor.addPlatter(t),
-    onAddCrossfader: (t) => props.editor.addCrossfaderPoint(t)
+    onAddCrossfader: (t) => props.editor.addCrossfaderPoint(t),
+    onDelete: (lane, index) => {
+      props.editor.selectKeyframe(lane, index)
+      props.editor.deleteSelected()
+    }
   }
 )
 
@@ -127,17 +149,44 @@ function onDividerPointerUp(event: PointerEvent): void {
 <template>
   <svg
     ref="svgEl"
-    class="block max-w-none select-none"
+    class="block max-w-none select-none outline-none focus:outline-none focus-visible:outline-none"
     :style="{ width: `${svgWidth}px` }"
     :height="svgHeight"
     :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
     preserveAspectRatio="none"
+    tabindex="-1"
     aria-label="Pattern lanes. Use arrow keys to move selected point, Insert to add, Delete to remove, T to toggle touch."
     @pointermove="pointerInteraction.handlePointerMove"
     @pointerup="pointerInteraction.handlePointerUp"
     @pointercancel="pointerInteraction.handlePointerCancel"
     @lostpointercapture="pointerInteraction.handleLostPointerCapture"
   >
+    <!-- Time grid stays proportional to the recording, so longer takes gain
+         usable horizontal space rather than compressing their keyframes. -->
+    <g class="pointer-events-none select-none">
+      <template
+        v-for="marker in timeMarkers"
+        :key="marker.timeUs"
+      >
+        <line
+          :x1="toX(marker.timeUs)"
+          y1="0"
+          :x2="toX(marker.timeUs)"
+          :y2="svgHeight"
+          stroke="rgb(39 39 42)"
+          stroke-width="1"
+        />
+        <text
+          :x="toX(marker.timeUs) + 3"
+          y="11"
+          fill="rgb(113 113 122)"
+          font-size="9"
+        >
+          {{ marker.label }}
+        </text>
+      </template>
+    </g>
+
     <ScratchPlatterLane
       :platter="pattern.platter"
       :svg-width="svgWidth"

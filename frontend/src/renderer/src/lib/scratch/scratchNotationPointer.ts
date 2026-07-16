@@ -33,11 +33,14 @@ export interface PointerInteractionContext {
 }
 
 export interface PointerCallbacks {
+  onBeginEdit(): void
+  onEndEdit(): void
   onSelect(lane: NotationLane, index: number): void
   onMovePlatter(index: number, timeUs: number, turns: number): void
   onMoveCrossfader(index: number, timeUs: number, value: number): void
   onAddPlatter(timeUs: number): void
   onAddCrossfader(timeUs: number): void
+  onDelete(lane: NotationLane, index: number): void
 }
 
 export interface NotationPointerInteraction {
@@ -48,6 +51,7 @@ export interface NotationPointerInteraction {
   handlePointerCancel(event: PointerEvent): void
   handleLostPointerCapture(event: PointerEvent): void
   handleDoubleClick(lane: NotationLane, event: MouseEvent): void
+  handlePointContextMenu(lane: NotationLane, index: number, event: MouseEvent): void
 }
 
 export function createNotationPointerInteraction(
@@ -71,6 +75,7 @@ export function createNotationPointerInteraction(
   function resetDrag(): void {
     dragState.value = { active: false, lane: null, index: -1 }
     capturedPointerId = null
+    callbacks.onEndEdit()
   }
 
   function getSvgCoords(event: PointerEvent): { x: number; y: number } | null {
@@ -86,9 +91,15 @@ export function createNotationPointerInteraction(
     )
   }
 
+  function focusSvg(): void {
+    context.svgEl.value?.focus({ preventScroll: true })
+  }
+
   function handlePointDown(lane: NotationLane, index: number, event: PointerEvent): void {
     event.preventDefault()
+    focusSvg()
     callbacks.onSelect(lane, index)
+    callbacks.onBeginEdit()
     dragState.value = { active: true, lane, index }
     try {
       ;(event.target as Element)?.setPointerCapture?.(event.pointerId)
@@ -143,6 +154,7 @@ export function createNotationPointerInteraction(
   function handleDoubleClick(lane: NotationLane, event: MouseEvent): void {
     const svg = context.svgEl.value
     if (!svg) return
+    focusSvg()
     const rect = svg.getBoundingClientRect()
     const coords = clientToSvgCoordinates(
       event.clientX,
@@ -164,6 +176,13 @@ export function createNotationPointerInteraction(
     }
   }
 
+  function handlePointContextMenu(lane: NotationLane, index: number, event: MouseEvent): void {
+    event.preventDefault()
+    focusSvg()
+    callbacks.onSelect(lane, index)
+    callbacks.onDelete(lane, index)
+  }
+
   return {
     dragState,
     handlePointDown,
@@ -171,6 +190,7 @@ export function createNotationPointerInteraction(
     handlePointerUp,
     handlePointerCancel,
     handleLostPointerCapture,
-    handleDoubleClick
+    handleDoubleClick,
+    handlePointContextMenu
   }
 }

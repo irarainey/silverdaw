@@ -56,6 +56,8 @@ function makeMockEditor(pattern: ScratchPattern | null, selection: NotationSelec
   const added: Array<{ lane: string; time: number }> = []
   const deleted: boolean[] = []
   const toggled: number[] = []
+  const undone: boolean[] = []
+  const redone: boolean[] = []
 
   const sel = ref(selection)
 
@@ -64,21 +66,29 @@ function makeMockEditor(pattern: ScratchPattern | null, selection: NotationSelec
     selection: sel,
     selectKeyframe: (lane: NotationLane, index: number) => { sel.value = { lane, index } },
     clearSelection: () => { sel.value = null },
+    beginEditGroup: () => {},
+    endEditGroup: () => {},
     movePlatter: (index: number, timeUs: number, turns: number) => { moved.push({ lane: 'platter', index, time: timeUs, value: turns }); return true },
     moveCrossfader: (index: number, timeUs: number, value: number) => { moved.push({ lane: 'crossfader', index, time: timeUs, value }); return true },
     addPlatter: (timeUs: number) => { added.push({ lane: 'platter', time: timeUs }); return true },
     addCrossfaderPoint: (timeUs: number) => { added.push({ lane: 'crossfader', time: timeUs }); return true },
     deleteSelected: () => { deleted.push(true); return true },
     togglePlatterTouch: (index: number) => { toggled.push(index); return true },
+    undo: () => { undone.push(true); return true },
+    redo: () => { redone.push(true); return true },
     _moved: moved,
     _added: added,
     _deleted: deleted,
-    _toggled: toggled
+    _toggled: toggled,
+    _undone: undone,
+    _redone: redone
   } as unknown as ScratchNotationEditor & {
     _moved: typeof moved
     _added: typeof added
     _deleted: typeof deleted
     _toggled: typeof toggled
+    _undone: typeof undone
+    _redone: typeof redone
   }
 }
 
@@ -222,13 +232,13 @@ describe('handleNotationKeydown', () => {
   })
 
   describe('escape', () => {
-    it('Escape clears selection and stops propagation', () => {
+    it('Escape with a selection passes through to the dialog close flow', () => {
       const editor = makeMockEditor(makePattern(), { lane: 'platter', index: 0 })
       const event = makeKeyEvent('Escape')
       ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
       const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
-      expect(consumed).toBe(true)
-      expect(editor.selection.value).toBe(null)
+      expect(consumed).toBe(false)
+      expect(editor.selection.value).toEqual({ lane: 'platter', index: 0 })
     })
 
     it('Escape without selection does not consume', () => {
@@ -237,6 +247,41 @@ describe('handleNotationKeydown', () => {
       ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
       const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
       expect(consumed).toBe(false)
+    })
+  })
+
+  describe('deselect and history', () => {
+    it('D clears the selected point', () => {
+      const editor = makeMockEditor(makePattern(), { lane: 'platter', index: 0 })
+      const event = makeKeyEvent('d')
+      ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
+
+      const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
+
+      expect(consumed).toBe(true)
+      expect(editor.selection.value).toBe(null)
+    })
+
+    it('Ctrl+Z invokes notation undo', () => {
+      const editor = makeMockEditor(makePattern()) as ReturnType<typeof makeMockEditor>
+      const event = makeKeyEvent('z', { ctrlKey: true })
+      ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
+
+      const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
+
+      expect(consumed).toBe(true)
+      expect((editor as unknown as { _undone: boolean[] })._undone).toHaveLength(1)
+    })
+
+    it('Ctrl+Y invokes notation redo', () => {
+      const editor = makeMockEditor(makePattern()) as ReturnType<typeof makeMockEditor>
+      const event = makeKeyEvent('y', { ctrlKey: true })
+      ;(event as unknown as { target: HTMLElement }).target = makeElement('DIV')
+
+      const consumed = handleNotationKeydown(event, { editor, durationUs: 1_000_000 })
+
+      expect(consumed).toBe(true)
+      expect((editor as unknown as { _redone: boolean[] })._redone).toHaveLength(1)
     })
   })
 })
