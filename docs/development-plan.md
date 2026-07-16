@@ -1761,8 +1761,8 @@ detected BPM/key, warp, region selection, and a tag-aware library.
   detected BPM, and unknown BPMs are applied after analysis
 - [x] Clip pitch shift UI: semitone field + cents trim in the Warp settings dialog / context menu
 
-**Region selection + clip editing:**
-- [x] Drag-select region on a clip (snap + Alt-bypass)
+**Clip Editor region selection + clip editing:**
+- [x] Drag-select a region in the Clip Editor waveform (snap + Alt-bypass)
 - [x] Mark-points selection (`[` / `]` at playhead)
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)

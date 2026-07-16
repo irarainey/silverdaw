@@ -15,6 +15,10 @@ Silverdaw remains a studio creation tool. MIDI deck control edits and navigates
 the arrangement; it is not a live-performance mode and does not sequence MIDI
 notes or control virtual instruments.
 
+> **Scratch Editor availability:** The Scratch Editor is implemented and tested,
+> but is not included in a released build yet. Its sections below describe the
+> planned release behavior.
+
 ## Connect and enable a controller
 
 1. Connect and power on the controller.

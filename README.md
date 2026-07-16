@@ -58,6 +58,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   cut/copy/paste them in one step. Bar numbering starts at 1 by default,
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
+- **Crossfade transitions.** Extend a clip edge over an adjacent clip to create
+  a crossfade. Right-click the fade to choose a Smooth or Fade out/in recipe,
+  or remove it.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
   beat positions, so clips can line up musically. Once a clip's tempo is known it
   automatically snaps to the timeline's bar grid so its bars line up with the
@@ -149,9 +152,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   step, and undo or redo any edit. **Help ▸ Keyboard Shortcuts** opens the full
   shortcut reference.
 - **Supported MIDI deck control.** Use a recognised deck controller for
-  transport, timeline and marker navigation, jog movement, clip browsing, and
-  selected-track mixer controls. Other MIDI devices remain visible but cannot
-  be enabled. See the
+  transport, timeline and marker navigation, clip browsing, selected-track
+  mixer controls, platter holding and scratching, plus supported lights and
+  meters. Other MIDI devices remain visible but cannot be enabled. See the
   **[supported controller list and control reference](docs/midi-controllers.md)**.
 
 ## Supported audio

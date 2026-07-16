@@ -11,7 +11,7 @@ questions; state any assumptions explicitly.
 
 This prompt is the **deliberate full-repo sweep**. For scoped or interactive
 review of a single change, subsystem, or PR, use the **Code Reviewer** agent
-(`.github/chatmodes/code-reviewer.chatmode.md`) instead.
+(`.github/agents/code-reviewer.md`) instead.
 
 ## Standards (single source of truth — do not restate, apply them)
 

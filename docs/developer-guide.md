@@ -181,6 +181,9 @@ Silverdaw currently supports the core arrangement workflow:
   tracks, applied atomically), nudge it with **Shift + ←/→**, or lock, colour, duplicate,
   delete, and cut/copy/paste the whole selection from a dedicated right-click menu. Each
   multi-clip edit is a single undo step.
+- Extend a clip edge over an adjacent clip to create a transition. Right-click
+  the resulting fade to choose the **Smooth** or **Fade out/in** recipe, or
+  remove it; every change is undoable.
 - Split a stereo clip's **Left** and/or **Right** channel onto its own new track
   (right-click ▸ **Split Stereo Channels…**); each channel becomes a stereo clip carrying
   only that side, inheriting the source's grid and warping like a stem.
@@ -534,7 +537,7 @@ handler-level fault that the engine **caught and survived**. Their behaviour and
 the recovery UX they drive are described under
 [Engine resilience and recovery](#engine-resilience-and-recovery).
 
-The MIDI control path uses seven domain envelopes:
+The MIDI control path uses eight domain envelopes:
 
 - `MIDI_DEVICES_REQUEST` asks the backend to enumerate connected inputs.
 - `MIDI_INPUTS_SET { identifiers }` replaces the set of enabled inputs. The
@@ -551,6 +554,8 @@ The MIDI control path uses seven domain envelopes:
   controller action.
 - `MIDI_DECK_SELECTION` reports a physical deck-selection change made from the
   controller.
+- `MIDI_SCRATCH_SETTINGS_SET` applies per-device scratch-audio and crossfader
+  preferences.
 
 The Scratch Editor adds its own domain of envelopes (full schemas in
 [`frontend/src/shared/bridge/scratch.ts`](../frontend/src/shared/bridge/scratch.ts);
@@ -798,7 +803,7 @@ possibly-imperfect edit is preferred over a dead engine.
 The backend is not optional — without its audio engine the app is unusable — so
 a backend that **can't start** is a hard failure, surfaced to the user as
 "could not connect to the audio engine" (the renderer's cold-start connect
-timeout, `BRIDGE_CONNECTION_TIMEOUT_MS`, 30 s). Because a hard fault during
+timeout, `BRIDGE_CONNECTION_TIMEOUT_MS`, 60 s). Because a hard fault during
 startup (e.g. an access violation deep in a WASAPI/COM audio driver while
 enumerating devices) happens *before* the bridge is listening — and MSVC's
 default `/EHsc` means the top-level `try` / `catch` in `main()` cannot catch a
@@ -848,22 +853,26 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         viewSelectedTrack?, viewFxPanelOpen?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
-        metronomeEnabled?,
+        metronomeEnabled?, clipEditorMetronomeEnabled?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
-        delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
+        delayNoteValue?, delayFeedback?, delayTone?, delayMix?,
+        scratchPatterns?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
-        toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
-        sendReverb?, sendDelay?, pan?, levelerAmount?, automation?]
+        colorIndex?, toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
+        sendReverb?, sendDelay?, pan?, levelerAmount?, automation?, transitions?]
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
          envelopePoints?,
-         effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?]
+         effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?,
+         scratchPatternId?]
   LIBRARY
      ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
           playbackFilePath?, variableTempo?, lowConfidence?, audioType?, collapsed?,
+          mediaId?, coverArtHidden?, coverArtOverride?, unresolved?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
+          scratchOrigin?, scratchPatternId?, scratchSourcePath?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
   MARKERS
     MARKER[id, positionMs]
@@ -1597,7 +1606,7 @@ instance first.
 ### Processing progress panel
 
 A floating panel in the bottom-right shows each in-flight import or reanalysis
-job with three sequential stages so the long-tail analysis isn't invisible:
+job with up to four sequential stages so the long-tail analysis isn't invisible:
 
 1. **Preparing audio…** — renderer is decoding the file's bytes.
 2. **Analysing tempo…** — backend's BTrack job (the long stage on long files).
@@ -2019,7 +2028,8 @@ a **WARP** pill in the editor header; the playhead is shown at the start of
 the view immediately, and Play becomes available once the backend preview
 voice is ready. Auditioning runs through an independent **backend preview
 voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
+`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_ENVELOPE` /
+`PREVIEW_SET_REVERSED` / `PREVIEW_SET_METRONOME` / `PREVIEW_SET_BRAKE` /
 `PREVIEW_SET_BACKSPIN` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
 `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
 monotonic `generation` counter on the preview voice means stale events for a
@@ -2071,7 +2081,7 @@ Within the dialog:
   fine-tuning. Drag a handle to adjust just that edge of the selection without
   redrawing the whole range.
 - **Trim** lives in the inline clip-controls row beside the **Source / Clip**
-  toggle and the zoom controls. It narrows the in-dialog view to the current
+  toggle. It narrows the in-dialog view to the current
   selection without writing anything to the project — purely a non-destructive
   preview zoom. Ctrl+Z / Ctrl+Y inside the dialog walk a dialog-local trim
   history so the user can experiment freely. **Source** / **Clip** flips between
@@ -2621,6 +2631,20 @@ The full, version-matched shortcut reference is published online and opened from
 Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` before
 `/guide/shortcuts`, so a release must have the matching versioned page live.
 
+### Application commands
+
+| Input | Effect |
+|---|---|
+| `Ctrl + N` / `Ctrl + O` | Create a new project or open an existing project. |
+| `Ctrl + S` / `Ctrl + Shift + S` | Save the current project or open Save As. |
+| `Ctrl + I` / `Ctrl + T` | Import audio into the library or add a track. |
+| `Ctrl + M` / `Ctrl + E` | Open Export Mixdown or exit the application. |
+| `Ctrl + J` | Toggle the Library / FX panel. |
+| `F11` | Toggle full screen. |
+| `Ctrl + 1`–`Ctrl + 8` | Set timeline zoom to 100%–800%. |
+
+### Timeline commands
+
 | Input | Effect |
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
@@ -2661,7 +2685,6 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `Escape` | Step down through the selection: when a track and clip(s) are selected, the first press clears the clip(s) (and any selected automation point) but keeps the track selected, and a second press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
-| `F2` | Rename project (also activates the title-bar rename input). |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
 | `Delete` / `Backspace` | Delete the selected clip. |
@@ -2693,6 +2716,8 @@ and the following set takes over instead:
 | `K` | Toggle the Clip Editor metronome (only when the metronome control is shown). Scoped to the dialog — the main timeline metronome is a separate setting and stays unchanged. |
 | `Home` / `End` | Jump the preview playhead to the start / end of the active playback range (honouring the selection bounds, like the skip-to-start / skip-to-end buttons). |
 | `Ctrl` + `F` | Fit the whole working view — the cropped clip or the full source — into the canvas and scroll to the start (mirrors the timeline's zoom-to-fit; behaves the same in the clip editor and the library preview window). |
+| `Ctrl + Z` / `Ctrl + Y` / `Ctrl + Shift + Z` | Undo / redo local crop edits without affecting the project undo stack. |
+| `Ctrl + D` | Clear the current playback sub-selection. |
 | Drag on waveform | Mark a sub-selection. The selection drives Save-as-new and Apply-trim. |
 | Drag on a selection handle | Fine-tune the selection edge. |
 | **Volume** toolbar toggle (cropped Clip view only) | Turn Volume Shape editing on / off. The volume line is always drawn faint as read-only context; toggling on makes its breakpoints editable. |
@@ -2709,7 +2734,7 @@ and the following set takes over instead:
 | Mouse wheel | Zoom (anchored on the pointer), capped at 64× / 6400%. |
 | `Shift` + wheel | Pan left / right. |
 | `+` / `-` / `0` | Zoom in / out / reset. |
-| `Esc` | Close the dialog. |
+| `Esc` | Clear the active playback sub-selection, or close the dialog when no selection remains. |
 
 The transport bar's **previous / next** buttons honour the **Previous / next
 button target** preference (`ui.skipButtonTarget`). With the default
@@ -3195,7 +3220,8 @@ pnpm dist:dir    # win-unpacked only, no packaging
   debugger, so a Debug JUCE build ends on a benign breakpoint stop code even
   though every test passes and the report is written — that code is expected.
   `scripts/Coverage.ps1` runs frontend and/or backend coverage in one step
-  (`./scripts/Coverage.ps1 -Target All | Frontend | Backend`) and collects both
+  (`./scripts/Coverage.ps1 -Target All`, `-Target Frontend`, or
+  `-Target Backend`) and collects both
   viewable HTML reports into a single gitignored root folder —
   `coverage/frontend/`, `coverage/backend/`, and a `coverage/index.html` landing
   page linking both.
