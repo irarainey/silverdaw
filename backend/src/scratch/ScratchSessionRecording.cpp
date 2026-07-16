@@ -11,8 +11,9 @@ bool ScratchSessionController::beginArmedRecordingLocked()
     if (s.status == "recording")
         return false;
 
-    // Seek to crop start first, then capture authoritative position.
-    scratchSource.seekUs(0);
+    // The scratch source may already be positioned for the desired phrase.
+    // Recording must preserve that position; only the backing starts at its
+    // prepared window head.
     backingSource.seekUs(0);
 
     ScratchActionRecorder::Config cfg;
@@ -76,9 +77,12 @@ bool ScratchSessionController::stopRecordingLocked()
     // mandatory final keyframes reflect the true source state at the moment of
     // stop, not merely the last recorded sample.
     scratchSource.endRenderedPlatterCapture();
+    const auto recordingDurationUs = recorder.currentDurationUs();
     ScratchAudioSource::RenderedPlatterSample rendered;
     while (scratchSource.popRenderedPlatterSample(rendered))
     {
+        if (rendered.timeUs >= recordingDurationUs)
+            continue;
         recorder.recordPlatterAt(
             rendered.timeUs, rendered.turns, rendered.touched);
     }

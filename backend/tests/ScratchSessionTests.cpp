@@ -1237,6 +1237,7 @@ void testScratchMidiRecordButtonTogglesRecording()
                 sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
                 sampleRate),
             "scratch session should prepare for MIDI record toggling");
+    source.seekUs(200000);
 
     // The physical Play button mirrors the Record button: first press arms.
     require(controller.midiRecordToggle(), "MIDI play should arm recording from ready");
@@ -1254,6 +1255,11 @@ void testScratchMidiRecordButtonTogglesRecording()
         require(snap && snap->status == "recording", "platter touch should start the take");
         require(!snap->armed, "starting recording should clear the armed flag");
     }
+    require(controller.releaseMidiOwner("device-cue", scratch::DeckSide::deck1),
+            "MIDI release should succeed after recording starts");
+    requireNear(source.snapshot().platterTurns,
+                VinylScratchProcessor::turnsForSeconds(0.2), 1.0e-12,
+                "recording start must preserve the selected scratch position");
 
     // A second Play press finishes the take and publishes the pattern for the
     // notation panel.
