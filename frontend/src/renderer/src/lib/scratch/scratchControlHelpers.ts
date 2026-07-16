@@ -174,14 +174,6 @@ export function buildSeekPayload(
   }
 }
 
-export function buildRecordArmPayload(sessionId: string): ScratchSessionControlPayload {
-  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordArm' }
-}
-
-export function buildRecordDisarmPayload(sessionId: string): ScratchSessionControlPayload {
-  return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordDisarm' }
-}
-
 export function buildRecordStartPayload(sessionId: string): ScratchSessionControlPayload {
   return { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId, action: 'recordStart' }
 }
