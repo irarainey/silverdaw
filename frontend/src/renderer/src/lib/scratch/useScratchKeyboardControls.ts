@@ -14,13 +14,14 @@
 
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import type { Ref } from 'vue'
-import type { ScratchSessionControlPayload } from '@shared/bridge-protocol'
+import type { ScratchDeckSide, ScratchSessionControlPayload } from '@shared/bridge-protocol'
 import type { ScratchCrossfaderCutKeyDto } from '@shared/types'
 import { useScratchInputSettingsStore } from '@/stores/scratchInputSettingsStore'
 import { buildCrossfaderPayload, crossfaderCutValue, VIRTUAL_DECK } from './scratchControlHelpers'
 
 interface ScratchKeyboardCutOptions {
   getCutKey: () => ScratchCrossfaderCutKeyDto
+  getDeck: () => ScratchDeckSide
   getSessionId: () => string | null
   canControl: () => boolean
   sendControl: (payload: ScratchSessionControlPayload) => void
@@ -41,13 +42,13 @@ export interface ScratchKeyboardCutController {
 export function createScratchKeyboardCutController(
   options: ScratchKeyboardCutOptions
 ): ScratchKeyboardCutController {
-  const { getCutKey, getSessionId, canControl, sendControl } = options
+  const { getCutKey, getDeck, getSessionId, canControl, sendControl } = options
   let opened = false
 
   function sendCut(open: boolean): void {
     const sid = getSessionId()
     if (!sid || !canControl()) return
-    sendControl(buildCrossfaderPayload(sid, crossfaderCutValue(open, VIRTUAL_DECK)))
+    sendControl(buildCrossfaderPayload(sid, crossfaderCutValue(open, getDeck())))
   }
 
   return {
@@ -76,16 +77,18 @@ export function createScratchKeyboardCutController(
 interface ScratchKeyboardControlsOptions {
   activeSessionId: Ref<string | null>
   canControl: Ref<boolean>
+  selectedDeck: Ref<ScratchDeckSide | null | undefined>
   sendControl: (payload: ScratchSessionControlPayload) => void
   buildBacking: () => void
 }
 
 export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptions): void {
-  const { activeSessionId, canControl, sendControl, buildBacking } = options
+  const { activeSessionId, canControl, selectedDeck, sendControl, buildBacking } = options
   const inputSettings = useScratchInputSettingsStore()
 
   const controller = createScratchKeyboardCutController({
     getCutKey: () => inputSettings.crossfaderCutKey,
+    getDeck: () => selectedDeck.value ?? VIRTUAL_DECK,
     getSessionId: () => activeSessionId.value,
     canControl: () => canControl.value,
     sendControl
@@ -102,9 +105,22 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
       buildBacking()
       return
     }
+    if (event.code === inputSettings.crossfaderCutKey) {
+      // Swallow every auto-repeat while held. The controller only sends the
+      // opening edge once, but letting repeated key events reach the browser
+      // and dialog handlers makes pointer interaction sluggish.
+      event.preventDefault()
+      event.stopPropagation()
+    }
     controller.handleKeyDown(event)
   }
-  const onKeyUp = (event: KeyboardEvent): void => controller.handleKeyUp(event)
+  const onKeyUp = (event: KeyboardEvent): void => {
+    if (event.code === inputSettings.crossfaderCutKey) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    controller.handleKeyUp(event)
+  }
   const onBlur = (): void => controller.forceClosed()
 
   // Settle the fader to its closed resting default once the session is

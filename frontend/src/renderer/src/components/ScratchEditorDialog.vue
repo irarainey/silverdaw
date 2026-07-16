@@ -63,6 +63,7 @@ const replay = useScratchReplay({
 useScratchKeyboardControls({
   activeSessionId: session.activeSessionId,
   canControl: replay.controlsEnabled,
+  selectedDeck: computed(() => session.state.value?.selectedDeck),
   sendControl: session.sendControl,
   buildBacking: backing.prepare
 })

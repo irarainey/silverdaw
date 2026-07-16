@@ -1,20 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createScratchKeyboardCutController } from '@/lib/scratch/useScratchKeyboardControls'
-import type { ScratchSessionControlPayload } from '@shared/bridge-protocol'
+import type { ScratchDeckSide, ScratchSessionControlPayload } from '@shared/bridge-protocol'
 import type { ScratchCrossfaderCutKeyDto } from '@shared/types'
 
 function setup(
   cutKey: ScratchCrossfaderCutKeyDto = 'KeyZ',
-  overrides: { sessionId?: string | null; canControl?: boolean } = {}
+  overrides: { sessionId?: string | null; canControl?: boolean; deck?: ScratchDeckSide } = {}
 ) {
   const sendControl = vi.fn<(payload: ScratchSessionControlPayload) => void>()
   const state = {
     cutKey,
+    deck: overrides.deck ?? 1,
     sessionId: 'sessionId' in overrides ? (overrides.sessionId ?? null) : 'sid-1',
     canControl: overrides.canControl ?? true
   }
   const controller = createScratchKeyboardCutController({
     getCutKey: () => state.cutKey,
+    getDeck: () => state.deck,
     getSessionId: () => state.sessionId,
     canControl: () => state.canControl,
     sendControl
@@ -51,6 +53,22 @@ describe('createScratchKeyboardCutController', () => {
     controller.handleKeyDown({ code: 'KeyM', repeat: false })
     expect(sendControl).toHaveBeenCalledTimes(1)
     expect(sendControl).toHaveBeenNthCalledWith(1, expect.objectContaining({ value: 0 }))
+  })
+
+  it('opens and closes the selected right deck at its matching fader edges', () => {
+    const { controller, sendControl } = setup('KeyZ', { deck: 2 })
+
+    controller.handleKeyDown({ code: 'KeyZ', repeat: false })
+    controller.handleKeyUp({ code: 'KeyZ' })
+
+    expect(sendControl).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ action: 'crossfader', value: 1 })
+    )
+    expect(sendControl).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ action: 'crossfader', value: 0 })
+    )
   })
 
   it('ignores auto-repeat key-down events', () => {
