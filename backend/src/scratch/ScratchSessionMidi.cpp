@@ -21,6 +21,11 @@ bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier
         // Fresh-gesture timing baseline (see pointer touch): the first move
         // seeds its own elapsed rather than measuring the touch→move gap.
         session->lastPlatterMoveMs = 0.0;
+        // Retain an absolute physical endpoint independently of the live
+        // velocity path, which avoids accumulating rounding drift across
+        // touch/release gestures.
+        session->midiPlatterTargetTurns = scratchSource.snapshot().platterTurns;
+        session->midiPlatterTargetActive = true;
         if (session->armed)
             beginArmedRecordingLocked();
         if (recorder.state() == ScratchActionRecorder::State::recording)
@@ -45,6 +50,12 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
         return false;
     if (session->armed)
         beginArmedRecordingLocked();
+    if (!session->midiPlatterTargetActive)
+    {
+        session->midiPlatterTargetTurns = scratchSource.snapshot().platterTurns;
+        session->midiPlatterTargetActive = true;
+    }
+    session->midiPlatterTargetTurns += deltaTurns;
     applyPlatterMove(deltaTurns, timestampMs);
 
     if (recorder.state() == ScratchActionRecorder::State::recording)
@@ -142,6 +153,13 @@ bool ScratchSessionController::releaseMidiOwner(
         return false;
     }
     scratchSource.setTouched(false);
+    if (session->midiPlatterTargetActive)
+    {
+        scratchSource.seekUs(static_cast<std::int64_t>(
+            VinylScratchProcessor::secondsForTurns(session->midiPlatterTargetTurns)
+            * 1000000.0));
+        session->midiPlatterTargetActive = false;
+    }
     if (recorder.state() == ScratchActionRecorder::State::recording)
     {
         const auto snap = scratchSource.snapshot();

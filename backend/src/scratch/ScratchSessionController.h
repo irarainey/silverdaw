@@ -145,6 +145,8 @@ class ScratchSessionController
         double crossfader = 0.0;
         double crossfaderDisplay = 0.0;
         double lastPlatterMoveMs = 0.0;
+        double midiPlatterTargetTurns = 0.0;
+        bool midiPlatterTargetActive = false;
         bool midiCrossfaderReversed = false;
         // Display-only mirror of the crossfader direction preference (true =
         // right-to-left). Kept separate from midiCrossfaderReversed, which is

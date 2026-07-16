@@ -99,7 +99,10 @@ dropped rather than applied or used to extend ownership, so releasing the
 platter returns to motor speed immediately and cannot be delayed by
 after-release jog input on touch-equipped decks. A touch-less, movement-only
 deck instead infers release after a bounded idle interval and auto-releases
-ownership.
+ownership. During a MIDI touch gesture, calibrated tick totals retain an
+absolute physical endpoint alongside the live velocity response; release
+aligns the source to that endpoint, preventing pullback drift from
+accumulating across gestures.
 
 Two feedback paths are bounded and coalesced rather than driving audio: the
 jog/relative `MIDI_CONTROL` UI echo is throttled to ~30 Hz (per-deck deltas

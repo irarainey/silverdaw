@@ -2148,8 +2148,10 @@ actively held (`manualRateSmoothingSeconds`) gives light/high-resolution jog
 wheels a modest rotational-inertia feel, and a fast ~4 ms weight
 (`rateSmoothingSeconds`) applies on release/at motor speed; touch-off always
 engages the fast weight immediately, so it never delays how quickly releasing
-the platter is heard. Movement beyond the prepared source produces de-clicked
-silence — the source never wraps. Recording captures compact **platter** and
+the platter is heard. MIDI tick totals also retain the physical endpoint of a
+touch gesture; release aligns the source to it so repeated pullbacks do not
+accumulate displacement loss. Movement beyond the prepared source produces
+de-clicked silence — the source never wraps. Recording captures compact **platter** and
 **crossfader** keyframes (not audio), starting from the session start against a
 local clock, and still spins the scratch over the backing. A live **timing
 readout** (`m:ss / m:ss`, position / prepared length) sits under the transport

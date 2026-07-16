@@ -907,6 +907,42 @@ void testScratchJogCalibration()
     source.deactivate();
 }
 
+void testScratchMidiReleaseAnchorsPhysicalTurnPosition()
+{
+    constexpr double sampleRate = 48000.0;
+    AudioEngine engine;
+    engine.initialiseGraph();
+    const auto sessionId = engine.beginScratchSession("clip-midi-release-anchor");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 4.0), sampleRate),
+                sampleRate),
+            "scratch session should prepare for MIDI release anchoring");
+
+    require(engine.scratchMidiSetTouch("dev-release-anchor", scratch::DeckSide::deck1, true),
+            "MIDI touch should claim the scratch deck");
+    require(engine.scratchMidiMovePlatter(
+                "dev-release-anchor", scratch::DeckSide::deck1, 0.5, 1000.0),
+            "forward MIDI movement should update the physical endpoint");
+    require(engine.releaseScratchMidiOwner("dev-release-anchor", scratch::DeckSide::deck1),
+            "MIDI release should apply the physical endpoint");
+    renderScratchBlocks(engine.scratchSourceForTest(), 512, 512);
+    requireNear(engine.scratchSourceForTest().snapshot().platterTurns, 0.5, 0.01,
+                "MIDI release should align to the forward physical endpoint");
+
+    require(engine.scratchMidiSetTouch("dev-release-anchor", scratch::DeckSide::deck1, true),
+            "a new MIDI touch should start a new physical gesture");
+    require(engine.scratchMidiMovePlatter(
+                "dev-release-anchor", scratch::DeckSide::deck1, -0.5, 1016.0),
+            "reverse MIDI movement should update the physical endpoint");
+    require(engine.releaseScratchMidiOwner("dev-release-anchor", scratch::DeckSide::deck1),
+            "reverse MIDI release should apply the physical endpoint");
+    renderScratchBlocks(engine.scratchSourceForTest(), 512, 512);
+    requireNear(engine.scratchSourceForTest().snapshot().platterTurns, 0.0, 0.01,
+                "equal reverse movement should return to the original physical endpoint");
+
+    engine.closeScratchSession(sessionId);
+}
+
 void testScratchCrossfaderDirectionInversion()
 {
     // Test that reverse crossfader setting inverts the physical value.
@@ -1597,6 +1633,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch pattern replay plays without a backing bed", testScratchPatternReplayPlaysWithoutBacking});
     tests.push_back({"scratch repeat play-end cycles survive without deactivation", testScratchRepeatPlayEndCycles});
     tests.push_back({"scratch jog calibration tick-to-turn conversion", testScratchJogCalibration});
+    tests.push_back({"scratch MIDI release anchors physical turn position", testScratchMidiReleaseAnchorsPhysicalTurnPosition});
     tests.push_back({"scratch crossfader direction inversion with tracking", testScratchCrossfaderDirectionInversion});
     tests.push_back({"scratch arming starts recording on pointer touch", testScratchArmingStartsRecordingOnPointerTouch});
     tests.push_back({"scratch arming starts recording on MIDI movement", testScratchArmingStartsRecordingOnMidiMovement});
