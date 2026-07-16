@@ -79,7 +79,7 @@ function onScratchGain(event: Event): void {
     <!-- Record + draft controls, pinned to the bottom so the row aligns
          with the foot of the notation panel. Play and Clear act on the
          recorded scratch draft and stay disabled until one exists. -->
-    <div class="mt-auto mb-[3px] flex items-stretch gap-1">
+    <div class="mt-auto mb-0.75 flex items-stretch gap-1">
       <button
         type="button"
         class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded px-2 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"

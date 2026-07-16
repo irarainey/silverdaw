@@ -264,7 +264,7 @@ function onKeydown(event: KeyboardEvent): void {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="dialog-card h-[min(960px,96vh)] !max-h-[96vh] w-[min(1400px,96vw)]"
+        class="dialog-card h-[min(960px,96vh)] max-h-[96vh]! w-[min(1400px,96vw)]"
         @keydown="onKeydown"
       >
         <ScratchEditorHeader
