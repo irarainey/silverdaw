@@ -2170,6 +2170,12 @@ scratch-session existence: with the editor **closed** the engine method returns
 editor **open** the frontend is interaction-blocked, so the also-broadcast event is
 ignored (no double action).
 
+**MIDI search / outer-wheel control.** The separately encoded `jogSearch`,
+`wheelPitchBend`, and `wheelSearch` controls seek the ordinary main timeline
+when the Scratch Editor is closed. They are intentionally excluded from the
+Scratch Editor because they do not report contact; Scratch ownership requires a
+platter touch signal where the controller provides one.
+
 **Crossfader and keyboard cut.** The virtual crossfader controls only the scratch
 deck's gain via a stored `linear-v1` curve (deck-1 audible at value 0). The
 on-screen fader **bar** is coloured by fader position and a display `reversed`

@@ -86,6 +86,17 @@ void testMidiMappingMapsDeckTransport()
     require(release.has_value() && release->action == MidiControllerAction::jogTouch &&
                 release->deck == 2 && release->value == 0.0,
             "deck 2 jog touch should map Note 54 release");
+
+    const auto sideWheelClockwise = mapper.mapMessage(0xb1, 33, 65);
+    const auto sideWheelAntiClockwise = mapper.mapMessage(0xb1, 33, 63);
+    require(sideWheelClockwise.has_value()
+                && sideWheelClockwise->action == MidiControllerAction::wheelPitchBend
+                && sideWheelClockwise->deck == 2 && sideWheelClockwise->value == 1.0,
+            "DDJ-RB side wheel clockwise movement should map from CC 33");
+    require(sideWheelAntiClockwise.has_value()
+                && sideWheelAntiClockwise->action == MidiControllerAction::wheelPitchBend
+                && sideWheelAntiClockwise->deck == 2 && sideWheelAntiClockwise->value == -1.0,
+            "DDJ-RB side wheel anti-clockwise movement should map from CC 33");
 }
 
 void testMidiMappingMapsShiftedCue()

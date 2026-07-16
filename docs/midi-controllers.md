@@ -176,8 +176,11 @@ closed.
   off returns the platter to motor speed immediately. Jog movement that
   arrives after release (a lift-off nudge) is dropped rather than applied or
   used to re-claim the platter, so releasing can never be delayed by
-  after-release movement. A touch-less, movement-only deck instead infers
-  release after a short pause in movement.
+  after-release movement. The separately encoded **search / outer-wheel**
+  controls remain ordinary timeline controls only: because they do not report
+  touch, they cannot safely participate in Scratch Editor ownership. A
+  touch-less, movement-only platter instead infers release after a short pause
+  in movement.
 
 See [ADR 0021](adr/0021-scratch-editor-action-patterns.md) for the full session
 and recording model.

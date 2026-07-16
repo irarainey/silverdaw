@@ -97,17 +97,11 @@ void MidiScratchRouter::routeRelative(const juce::String& identifier,
     const auto deckIndex = static_cast<std::size_t>(event.deck - 1);
     const bool isPlatterMovement =
         event.action == MidiControllerAction::jogScratch
-        || event.action == MidiControllerAction::jogPitchBend
-        || event.action == MidiControllerAction::jogSearch
-        || event.action == MidiControllerAction::wheelPitchBend
-        || event.action == MidiControllerAction::wheelSearch;
+        || event.action == MidiControllerAction::jogPitchBend;
     if (!isPlatterMovement)
         return;
-    // With a capacitive platter the touch sensor is authoritative. Jog movement
-    // arriving while the platter is not touched is a lift-off nudge or a
-    // pitch-bend, not a scratch: applying it would re-claim the deck and re-arm
-    // the 120 ms movement-release deadline, stalling playback after release. Drop
-    // it so releasing the platter returns to motor speed immediately.
+    // Side/search-wheel movement has no touch state, so it is intentionally
+    // excluded above. A capacitive platter's sensor remains authoritative.
     if (state.hasJogTouch && !state.touchPressed[deckIndex])
         return;
     // Convert raw relative ticks to calibrated platter turns.

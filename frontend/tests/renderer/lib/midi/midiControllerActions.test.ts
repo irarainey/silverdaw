@@ -537,6 +537,24 @@ describe('MIDI controller actions', () => {
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2284 })
   })
 
+  it('seeks the timeline from the DDJ-RB side wheel', () => {
+    seedProject()
+    const transport = useTransportStore()
+    transport.positionMs = 2000
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'relative',
+      control: 'wheelPitchBend',
+      deck: 2,
+      value: 1
+    })
+
+    animationFrame?.(0)
+    expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 2032 })
+  })
+
   it('leaves the reserved crossfader without an operational audio command', () => {
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',

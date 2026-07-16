@@ -1187,6 +1187,42 @@ void testScratchMidiRouterMapsPlayToRecord()
     engine.closeScratchSession(sessionId);
 }
 
+void testScratchSearchJogDoesNotClaimScratchDeck()
+{
+    AudioEngine engine;
+    engine.initialiseGraph();
+    constexpr double sampleRate = 48000.0;
+    const auto sessionId = engine.beginScratchSession("clip-router-search-jog");
+    require(engine.completeScratchSession(
+                sessionId, makeScratchBuffer(static_cast<int>(sampleRate * 0.5), sampleRate),
+                sampleRate),
+            "scratch session should prepare for search-jog exclusion");
+
+    MidiScratchRouter router;
+    router.setEngine(engine);
+    MidiScratchDeviceState state;
+    state.hasJogTouch = true;
+
+    MidiControllerEvent platterMove;
+    platterMove.action = MidiControllerAction::jogScratch;
+    platterMove.kind = MidiControllerValueKind::relative;
+    platterMove.deck = 1;
+    platterMove.value = 1.0;
+    router.routeRelative("dev-router-search", state, 1000, platterMove);
+    require(!engine.getScratchSessionSnapshot()->ownerDeck.has_value(),
+            "untouched capacitive platter movement must remain ignored");
+
+    MidiControllerEvent sideWheelMove = platterMove;
+    sideWheelMove.action = MidiControllerAction::wheelPitchBend;
+    router.routeRelative("dev-router-search", state, 1000, sideWheelMove);
+    require(!engine.getScratchSessionSnapshot()->ownerDeck.has_value(),
+            "side-wheel movement must not claim the scratch deck");
+    require(!engine.scratchSourceForTest().snapshot().touched,
+            "side-wheel movement must not touch the scratch source");
+
+    engine.closeScratchSession(sessionId);
+}
+
 void testScratchBackingLoopRestartsAtEnd()
 {
     constexpr double sampleRate = 48000.0;
@@ -1567,6 +1603,7 @@ void addScratchSessionTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch disarm clears armed state", testScratchDisarmClearsArmedState});
     tests.push_back({"scratch MIDI play button toggles recording", testScratchMidiRecordButtonTogglesRecording});
     tests.push_back({"scratch MIDI router maps play to record", testScratchMidiRouterMapsPlayToRecord});
+    tests.push_back({"scratch search jog does not claim scratch deck", testScratchSearchJogDoesNotClaimScratchDeck});
     tests.push_back({"scratch backing loop restarts the bed at its end", testScratchBackingLoopRestartsAtEnd});
     tests.push_back({"scratch replay plays the backing bed in sync", testScratchReplayBackingPlaysInSync});
     tests.push_back({"scratch replay backing no-op without a prepared bed", testScratchReplayBackingNoOpWithoutBed});
