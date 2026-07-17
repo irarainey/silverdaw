@@ -25,21 +25,21 @@ function setup(
 }
 
 describe('createScratchKeyboardCutController', () => {
-  it('opens the fader on cut-key down and closes on key up', () => {
+  it('toggles the fader on each cut-key press', () => {
     const { controller, sendControl } = setup('KeyZ')
 
     controller.handleKeyDown({ code: 'KeyZ', repeat: false })
     expect(sendControl).toHaveBeenCalledTimes(1)
     expect(sendControl).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ action: 'crossfader', value: 0 })
+      expect.objectContaining({ action: 'crossfader', value: 1 })
     )
 
-    controller.handleKeyUp({ code: 'KeyZ' })
+    controller.handleKeyDown({ code: 'KeyZ', repeat: false })
     expect(sendControl).toHaveBeenCalledTimes(2)
     expect(sendControl).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ action: 'crossfader', value: 1 })
+      expect.objectContaining({ action: 'crossfader', value: 0 })
     )
   })
 
@@ -52,22 +52,22 @@ describe('createScratchKeyboardCutController', () => {
 
     controller.handleKeyDown({ code: 'KeyM', repeat: false })
     expect(sendControl).toHaveBeenCalledTimes(1)
-    expect(sendControl).toHaveBeenNthCalledWith(1, expect.objectContaining({ value: 0 }))
+    expect(sendControl).toHaveBeenNthCalledWith(1, expect.objectContaining({ value: 1 }))
   })
 
-  it('opens and closes the selected right deck at its matching fader edges', () => {
+  it('toggles the selected right deck at its matching fader edges', () => {
     const { controller, sendControl } = setup('KeyZ', { deck: 2 })
 
     controller.handleKeyDown({ code: 'KeyZ', repeat: false })
-    controller.handleKeyUp({ code: 'KeyZ' })
+    controller.handleKeyDown({ code: 'KeyZ', repeat: false })
 
     expect(sendControl).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ action: 'crossfader', value: 1 })
+      expect.objectContaining({ action: 'crossfader', value: 0 })
     )
     expect(sendControl).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ action: 'crossfader', value: 0 })
+      expect.objectContaining({ action: 'crossfader', value: 1 })
     )
   })
 
@@ -78,13 +78,6 @@ describe('createScratchKeyboardCutController', () => {
     controller.handleKeyDown({ code: 'KeyZ', repeat: true })
     controller.handleKeyDown({ code: 'KeyZ', repeat: true })
     expect(sendControl).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not close on a key-up it never opened', () => {
-    const { controller, sendControl } = setup('KeyZ')
-
-    controller.handleKeyUp({ code: 'KeyZ' })
-    expect(sendControl).not.toHaveBeenCalled()
   })
 
   it('does not send while the session cannot be controlled', () => {
@@ -101,41 +94,32 @@ describe('createScratchKeyboardCutController', () => {
     expect(sendControl).not.toHaveBeenCalled()
   })
 
-  it('settles the fader to its closed resting default on activation', () => {
+  it('settles the fader to its open resting default on activation', () => {
     const { controller, sendControl } = setup('KeyZ')
 
-    controller.applyRestingClosed()
+    controller.applyRestingOpen()
     expect(sendControl).toHaveBeenCalledTimes(1)
     expect(sendControl).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ action: 'crossfader', value: 1 })
+      expect.objectContaining({ action: 'crossfader', value: 0 })
     )
 
-    // A later key-up must not fire — resting reset cleared any open state.
-    controller.handleKeyUp({ code: 'KeyZ' })
-    expect(sendControl).toHaveBeenCalledTimes(1)
   })
 
-  it('forces the fader closed exactly once while the key is held', () => {
-    const { controller, sendControl } = setup('KeyZ')
+  it('reports a cut value for an immediate visual update after sending it', () => {
+    const onCutValueChange = vi.fn()
+    const { sendControl } = setup('KeyZ')
+    const visualController = createScratchKeyboardCutController({
+      getCutKey: () => 'KeyZ',
+      getDeck: () => 1,
+      getSessionId: () => 'sid-1',
+      canControl: () => true,
+      sendControl,
+      onCutValueChange
+    })
 
-    controller.handleKeyDown({ code: 'KeyZ', repeat: false })
-    controller.forceClosed()
-    expect(sendControl).toHaveBeenCalledTimes(2)
-    expect(sendControl).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ action: 'crossfader', value: 1 })
-    )
-
-    // A later key-up must not re-close — state was already reset by forceClosed.
-    controller.handleKeyUp({ code: 'KeyZ' })
-    expect(sendControl).toHaveBeenCalledTimes(2)
+    visualController.handleKeyDown({ code: 'KeyZ', repeat: false })
+    expect(onCutValueChange).toHaveBeenCalledWith(1)
   })
 
-  it('forceClosed is a no-op when the fader is already closed', () => {
-    const { controller, sendControl } = setup('KeyZ')
-
-    controller.forceClosed()
-    expect(sendControl).not.toHaveBeenCalled()
-  })
 })

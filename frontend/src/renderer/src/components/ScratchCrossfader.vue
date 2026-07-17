@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { crossfaderValueFromHorizontalDelta } from '@/lib/scratch/scratchControlHelpers'
 
 const props = defineProps<{
@@ -15,18 +15,24 @@ const emit = defineEmits<{
 const KNOB_W = 28
 const KEYBOARD_STEP = 0.02
 const KEYBOARD_LARGE_STEP = 0.1
+const DISPLAY_ACK_TIMEOUT_MS = 250
 
 const trackEl = ref<HTMLDivElement | null>(null)
 const isDown = ref(false)
 const isFocused = ref(false)
 const trackW = ref(200)
+const displayValue = ref(props.value)
 let startClientX = 0
 let startValue = 0
 let capturedId: number | null = null
 let ro: ResizeObserver | null = null
+let pendingDisplayValue: number | null = null
+let pendingDisplayTimer: ReturnType<typeof setTimeout> | null = null
+let pendingPointerValue: number | null = null
+let pointerFrame: number | null = null
 
 const knobLeft = computed(() =>
-  Math.max(0, Math.min(trackW.value - KNOB_W, props.value * (trackW.value - KNOB_W)))
+  Math.max(0, Math.min(trackW.value - KNOB_W, displayValue.value * (trackW.value - KNOB_W)))
 )
 
 // The fill colours the bar by fader position and the direction supplied by the
@@ -34,13 +40,34 @@ const knobLeft = computed(() =>
 // grows from the left as the knob moves right. Reversed: it is mirrored.
 const reversed = computed(() => props.reversed === true)
 
-const openFillStyle = computed(() => {
+const positionFillStyle = computed(() => {
   if (reversed.value) {
     const width = Math.max(0, trackW.value - (knobLeft.value + KNOB_W))
     return { right: '0px', width: `${width}px` }
   }
   return { left: '0px', width: `${knobLeft.value}px` }
 })
+
+function emitDisplayValue(value: number): void {
+  const nextValue = Math.max(0, Math.min(1, value))
+  displayValue.value = nextValue
+  pendingDisplayValue = nextValue
+  if (pendingDisplayTimer !== null) clearTimeout(pendingDisplayTimer)
+  pendingDisplayTimer = setTimeout(() => {
+    pendingDisplayTimer = null
+    pendingDisplayValue = null
+    displayValue.value = props.value
+  }, DISPLAY_ACK_TIMEOUT_MS)
+  emit('change', nextValue)
+}
+
+function clearPendingDisplay(): void {
+  if (pendingDisplayTimer !== null) {
+    clearTimeout(pendingDisplayTimer)
+    pendingDisplayTimer = null
+  }
+  pendingDisplayValue = null
+}
 
 function onPointerDown(event: PointerEvent): void {
   if (props.disabled) return
@@ -49,21 +76,40 @@ function onPointerDown(event: PointerEvent): void {
   capturedId = event.pointerId
   isDown.value = true
   startClientX = event.clientX
-  startValue = props.value
+  startValue = displayValue.value
 }
 
 function onPointerMove(event: PointerEvent): void {
   if (!isDown.value || capturedId !== event.pointerId) return
   const usable = trackW.value - KNOB_W
   if (usable <= 0) return
-  const newValue = crossfaderValueFromHorizontalDelta(startValue, event.clientX - startClientX, usable)
-  emit('change', newValue)
+  pendingPointerValue = crossfaderValueFromHorizontalDelta(
+    startValue,
+    event.clientX - startClientX,
+    usable
+  )
+  if (pointerFrame === null) {
+    pointerFrame = requestAnimationFrame(flushPointerValue)
+  }
 }
 
 function releasePointer(event: PointerEvent): void {
   if (capturedId !== event.pointerId) return
   capturedId = null
   isDown.value = false
+  if (pointerFrame !== null) {
+    cancelAnimationFrame(pointerFrame)
+    pointerFrame = null
+    flushPointerValue()
+  }
+}
+
+function flushPointerValue(): void {
+  pointerFrame = null
+  if (pendingPointerValue === null) return
+  const value = pendingPointerValue
+  pendingPointerValue = null
+  emitDisplayValue(value)
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -77,12 +123,12 @@ function onKeydown(event: KeyboardEvent): void {
       delta = event.shiftKey ? -KEYBOARD_LARGE_STEP : -KEYBOARD_STEP
       break
     case 'Home':
-      emit('change', 0)
+      emitDisplayValue(0)
       event.preventDefault()
       event.stopPropagation()
       return
     case 'End':
-      emit('change', 1)
+      emitDisplayValue(1)
       event.preventDefault()
       event.stopPropagation()
       return
@@ -91,8 +137,32 @@ function onKeydown(event: KeyboardEvent): void {
   }
   event.preventDefault()
   event.stopPropagation()
-  emit('change', Math.max(0, Math.min(1, props.value + delta)))
+  emitDisplayValue(displayValue.value + delta)
 }
+
+watch(
+  () => props.value,
+  (value) => {
+    if (pendingDisplayValue !== null) {
+      if (Math.abs(value - pendingDisplayValue) <= 0.001) {
+        clearPendingDisplay()
+        displayValue.value = value
+      }
+      return
+    }
+    displayValue.value = value
+  }
+)
+
+watch(
+  () => props.disabled,
+  (disabled) => {
+    if (disabled) {
+      clearPendingDisplay()
+      displayValue.value = props.value
+    }
+  }
+)
 
 onMounted(() => {
   const el = trackEl.value
@@ -105,6 +175,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearPendingDisplay()
+  if (pointerFrame !== null) {
+    cancelAnimationFrame(pointerFrame)
+    pointerFrame = null
+  }
+  pendingPointerValue = null
   ro?.disconnect()
   ro = null
   if (capturedId !== null) {
@@ -129,7 +205,7 @@ onBeforeUnmount(() => {
         ]"
         role="slider"
         aria-label="Crossfader position"
-        :aria-valuenow="Math.round(value * 100)"
+        :aria-valuenow="Math.round(displayValue * 100)"
         aria-valuemin="0"
         aria-valuemax="100"
         aria-orientation="horizontal"
@@ -146,7 +222,7 @@ onBeforeUnmount(() => {
       >
         <div
           class="absolute inset-y-0 rounded-sm bg-sky-600/30"
-          :style="openFillStyle"
+          :style="positionFillStyle"
         />
         <div
           class="absolute inset-y-0 flex items-center justify-center"

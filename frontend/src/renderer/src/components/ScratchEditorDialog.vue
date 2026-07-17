@@ -59,13 +59,58 @@ const replay = useScratchReplay({
   startPatternReplay: (pattern) => project.startPatternReplay(pattern),
   stopPatternReplay: () => project.stopPatternReplay()
 })
+const keyboardCutVisualValue = ref<number | null>(null)
+const usesVirtualCrossfader = computed(() => {
+  const selectedDeck = session.state.value?.selectedDeck
+  return selectedDeck !== 1 && selectedDeck !== 2
+})
+const virtualCutControlsEnabled = computed(
+  () => replay.controlsEnabled.value && usesVirtualCrossfader.value
+)
+const displayCrossfaderValue = computed(
+  () => keyboardCutVisualValue.value ?? (
+    usesVirtualCrossfader.value
+      ? 1 - derived.crossfaderValue.value
+      : derived.crossfaderValue.value
+  )
+)
+
+watch(
+  () => replay.controlsEnabled.value,
+  (enabled) => {
+    if (!enabled) keyboardCutVisualValue.value = null
+  }
+)
+watch(
+  () => session.state.value?.crossfader,
+  (value) => {
+    const pendingActualValue = keyboardCutVisualValue.value === null
+      ? null
+      : usesVirtualCrossfader.value
+        ? 1 - keyboardCutVisualValue.value
+        : keyboardCutVisualValue.value
+    if (
+      value !== undefined
+      && pendingActualValue !== null
+      && Math.abs(value - pendingActualValue) <= 0.001
+    ) {
+      keyboardCutVisualValue.value = null
+    }
+  }
+)
+watch(usesVirtualCrossfader, () => {
+  keyboardCutVisualValue.value = null
+})
 
 useScratchKeyboardControls({
   activeSessionId: session.activeSessionId,
-  canControl: replay.controlsEnabled,
+  canControl: virtualCutControlsEnabled,
   selectedDeck: computed(() => session.state.value?.selectedDeck),
   sendControl: session.sendControl,
-  buildBacking: backing.prepare
+  buildBacking: backing.prepare,
+  onCrossfaderCutValueChange: (value) => {
+    keyboardCutVisualValue.value = usesVirtualCrossfader.value ? 1 - value : value
+  }
 })
 
 const saveFlow = useScratchSaveFlow({
@@ -122,6 +167,12 @@ const pointerDispatch = useScratchPointerDispatch({
   controlsEnabled: replay.controlsEnabled,
   sendControl: session.sendControl
 })
+
+function onCrossfaderChange(value: number): void {
+  pointerDispatch.onCrossfaderChange(
+    usesVirtualCrossfader.value ? 1 - value : value
+  )
+}
 
 const transport = useScratchTransportControls({
   activeSessionId: session.activeSessionId,
@@ -206,12 +257,13 @@ function onKeydown(event: KeyboardEvent): void {
     || target instanceof HTMLTextAreaElement
     || target instanceof HTMLSelectElement
     || (target instanceof HTMLElement && target.isContentEditable)
-  const scratchShortcut = !event.repeat
-    && !event.ctrlKey
+  const canUseScratchShortcut = !event.ctrlKey
     && !event.metaKey
     && !event.altKey
     && !editingText
     && !close.dirtyClosePromptOpen.value
+  const scratchShortcut = !event.repeat
+    && canUseScratchShortcut
 
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -334,7 +386,7 @@ onMounted(() => {
               :platter-turns="derived.platterTurns.value"
               :platter-touched="derived.isTouched.value"
               :platter-disabled="!replay.controlsEnabled.value"
-              :crossfader-value="derived.crossfaderValue.value"
+              :crossfader-value="displayCrossfaderValue"
               :crossfader-reversed="derived.crossfaderReversed.value"
               :crossfader-disabled="!replay.controlsEnabled.value"
               :record-phase="recordControl.recordPhase.value"
@@ -347,7 +399,7 @@ onMounted(() => {
               @scratch-gain="backing.setScratchGain"
               @platter-touch="pointerDispatch.onPlatterTouch"
               @platter-move="pointerDispatch.onPlatterMove"
-              @crossfader-change="pointerDispatch.onCrossfaderChange"
+              @crossfader-change="onCrossfaderChange"
               @record="recordControl.onRecordButton"
               @play-toggle="replay.isPatternReplaying.value ? replay.stopReplay() : startDraftReplay()"
               @clear="clearDraft"

@@ -2117,9 +2117,9 @@ format, and the backing monitor — lives in
 protocol, module layout, and UI detail that ADR does not.
 
 **Input hierarchy.** Supported MIDI DJ decks are the primary Scratch Editor
-input. The on-screen deck's trackpad and keyboard controls are a less
-expressive fallback for creating a simple pattern, which the notation editor
-can refine into a more complex scratch.
+input. The on-screen deck's experimental trackpad and keyboard controls are a
+less expressive fallback for creating a simple pattern, which the notation
+editor can refine into a more complex scratch.
 
 **Opening.** A single reused dialog instance is hosted in `App.vue` and driven by
 `useScratchEditorStore`. It opens either from a **timeline clip** (right-click ▸
@@ -2350,7 +2350,7 @@ sidebar:
   recorded platter trajectory. This persisted `scratchRealism.level` preference
   is also re-sent on each backend reconnect. The tab also
   hosts the **Scratch crossfader cut** key used inside the Scratch Editor — a
-  momentary cut that opens the crossfader while held (closed at rest) — choosable as **Z**
+  toggle that closes or opens the crossfader (open at rest) — choosable as **Z**
   (right-handed, default) or **M** (left-handed). It is a renderer-only
   preference (`scratch.crossfaderCutKey`, values `KeyZ` / `KeyM`) that is never
   sent to the backend; an unrecognised persisted value falls back to `KeyZ`.
@@ -2786,7 +2786,8 @@ gestures on the platter and crossfader are described in the
 | `R` | Toggle record: arm a take, cancel arming, or stop an active take. Recording starts on the first platter touch after arming. Unavailable during scratch replay. |
 | `P` | Play or stop the current recorded scratch draft. Available when a draft exists. |
 | `C` | Clear the current recorded scratch draft. Saved patterns are unaffected. Unavailable during scratch replay. |
-| `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to open the crossfader (scratch deck audible), release to close. The fader rests closed. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back closed. |
+| Tap the virtual platter | **Experimental trackpad control.** Toggle the virtual platter hold. While held, move one finger around the platter or use a two-finger pan to scratch. Small accidental movements are ignored; larger movements respond more quickly. |
+| `Z` / `M` (configurable) | **Crossfader cut toggle** — press to close the crossfader (scratch deck silent), press again to open. The fader starts open. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused. |
 | `←` / `→` (crossfader focused) | Nudge the crossfader by 0.02 (or 0.1 with `Shift`). |
 | `Home` / `End` (crossfader focused) | Jump the crossfader fully open / fully closed. |
 | `←` `→` `↑` `↓` (platter focused) | Jog the platter by 0.02 turns (0.1 with `Shift`); `Home` / `End` jog by half a turn. |

@@ -1,10 +1,8 @@
-// Momentary crossfader "cut" driven by a single configurable key (Z or M).
-// The resting default is closed (deck silent); holding the key opens the fader
-// (deck audible) and releasing it closes again — the press is akin to swinging
-// the fader in. The closed default is asserted when the session becomes
-// controllable so the visible fader and audio agree before any key is pressed.
-// Blur/unmount force the fader back closed so a held key can never leave the
-// deck stuck open.
+// Toggle crossfader cut driven by a single configurable key (Z or M). The
+// resting default is open (deck audible); each press switches the fader between
+// open and closed. The open default is asserted when the virtual fallback
+// becomes controllable so the visible fader and audio agree before any key is
+// pressed.
 //
 // This is the keyboard/trackpad path only; it never touches the MIDI crossfader
 // controls, which own their own direction and gain handling.
@@ -25,50 +23,42 @@ interface ScratchKeyboardCutOptions {
   getSessionId: () => string | null
   canControl: () => boolean
   sendControl: (payload: ScratchSessionControlPayload) => void
+  onCutValueChange?: (value: number) => void
 }
 
 export interface ScratchKeyboardCutController {
   handleKeyDown(event: { code: string; repeat: boolean }): void
-  handleKeyUp(event: { code: string }): void
-  applyRestingClosed(): void
-  forceClosed(): void
+  applyRestingOpen(): void
 }
 
 /**
- * Stateful key→crossfader mapper. Tracks whether the cut is currently open so
- * auto-repeat is ignored, key-up only closes a fader it actually opened, and
- * activation/blur/unmount can settle the fader back to its closed resting state.
+ * Stateful key→crossfader mapper. Tracks whether the cut is currently closed so
+ * each non-repeating key-down toggles its state and activation can settle the
+ * fader back to its open resting state.
  */
 export function createScratchKeyboardCutController(
   options: ScratchKeyboardCutOptions
 ): ScratchKeyboardCutController {
-  const { getCutKey, getDeck, getSessionId, canControl, sendControl } = options
-  let opened = false
+  const { getCutKey, getDeck, getSessionId, canControl, sendControl, onCutValueChange } = options
+  let closed = false
 
-  function sendCut(open: boolean): void {
+  function sendCut(shouldClose: boolean): boolean {
     const sid = getSessionId()
-    if (!sid || !canControl()) return
-    sendControl(buildCrossfaderPayload(sid, crossfaderCutValue(open, getDeck())))
+    if (!sid || !canControl()) return false
+    const value = crossfaderCutValue(!shouldClose, getDeck())
+    sendControl(buildCrossfaderPayload(sid, value))
+    onCutValueChange?.(value)
+    return true
   }
 
   return {
     handleKeyDown(event): void {
-      if (event.repeat || event.code !== getCutKey() || opened) return
-      opened = true
-      sendCut(true)
+      if (event.repeat || event.code !== getCutKey()) return
+      const nextClosed = !closed
+      if (sendCut(nextClosed)) closed = nextClosed
     },
-    handleKeyUp(event): void {
-      if (event.code !== getCutKey() || !opened) return
-      opened = false
-      sendCut(false)
-    },
-    applyRestingClosed(): void {
-      opened = false
-      sendCut(false)
-    },
-    forceClosed(): void {
-      if (!opened) return
-      opened = false
+    applyRestingOpen(): void {
+      closed = false
       sendCut(false)
     }
   }
@@ -80,10 +70,18 @@ interface ScratchKeyboardControlsOptions {
   selectedDeck: Ref<ScratchDeckSide | null | undefined>
   sendControl: (payload: ScratchSessionControlPayload) => void
   buildBacking: () => void
+  onCrossfaderCutValueChange?: (value: number) => void
 }
 
 export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptions): void {
-  const { activeSessionId, canControl, selectedDeck, sendControl, buildBacking } = options
+  const {
+    activeSessionId,
+    canControl,
+    selectedDeck,
+    sendControl,
+    buildBacking,
+    onCrossfaderCutValueChange
+  } = options
   const inputSettings = useScratchInputSettingsStore()
 
   const controller = createScratchKeyboardCutController({
@@ -91,7 +89,8 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
     getDeck: () => selectedDeck.value ?? VIRTUAL_DECK,
     getSessionId: () => activeSessionId.value,
     canControl: () => canControl.value,
-    sendControl
+    sendControl,
+    onCutValueChange: onCrossfaderCutValueChange
   })
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -105,30 +104,21 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
       buildBacking()
       return
     }
-    if (event.code === inputSettings.crossfaderCutKey) {
-      // Swallow every auto-repeat while held. The controller only sends the
-      // opening edge once, but letting repeated key events reach the browser
-      // and dialog handlers makes pointer interaction sluggish.
+    if (event.code === inputSettings.crossfaderCutKey && !event.repeat) {
       event.preventDefault()
       event.stopPropagation()
+      controller.handleKeyDown(event)
+      return
     }
     controller.handleKeyDown(event)
   }
-  const onKeyUp = (event: KeyboardEvent): void => {
-    if (event.code === inputSettings.crossfaderCutKey) {
-      event.preventDefault()
-      event.stopPropagation()
-    }
-    controller.handleKeyUp(event)
-  }
-  const onBlur = (): void => controller.forceClosed()
 
-  // Settle the fader to its closed resting default once the session is
+  // Settle the fader to its open resting default once the virtual fallback is
   // controllable, so the visible fader and audio start in agreement.
   watch(
     () => canControl.value && activeSessionId.value !== null,
     (ready) => {
-      if (ready) controller.applyRestingClosed()
+      if (ready) controller.applyRestingOpen()
     },
     { immediate: true }
   )
@@ -136,14 +126,9 @@ export function useScratchKeyboardControls(options: ScratchKeyboardControlsOptio
   onMounted(() => {
     void inputSettings.hydrate()
     window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    window.addEventListener('blur', onBlur)
   })
 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeyDown)
-    window.removeEventListener('keyup', onKeyUp)
-    window.removeEventListener('blur', onBlur)
-    controller.forceClosed()
   })
 }

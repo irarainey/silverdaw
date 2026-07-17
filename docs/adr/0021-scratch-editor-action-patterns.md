@@ -43,11 +43,11 @@ Supported MIDI DJ decks are the primary Scratch Editor input. Their platter,
 crossfader, Play, and Cue controls give the intended high-rate, tactile
 authoring workflow and route eligible scratch control directly to audio.
 
-The on-screen virtual deck's trackpad and keyboard controls are a deliberately
-less expressive fallback when a deck is unavailable. They are sufficient to
-create a simple scratch pattern, which the notation editor can then reshape
-into a more complex performance. The fallback does not aim to reproduce the
-physical-deck workflow.
+The on-screen virtual deck's trackpad and keyboard controls are an experimental,
+deliberately less expressive fallback when a deck is unavailable. They are
+sufficient to create a simple scratch pattern, which the notation editor can
+then reshape into a more complex performance. The fallback does not aim to
+reproduce the physical-deck workflow.
 
 ### Source preparation and clip semantics
 
@@ -160,16 +160,14 @@ display direction, never of deck ownership or platter touch. The direction is
 retained after platter ownership is released, so an unchanged fader never
 recolours when the platter is touched or released.
 
-A momentary keyboard crossfader cut is available inside the editor: holding a
-single configurable key (`KeyZ` default, `KeyM` alternate, chosen in
-Preferences) opens the crossfader (scratch deck audible) from a closed
-resting default; releasing the key closes it again. The session asserts the
-closed default once it becomes controllable, and losing focus or closing the
-dialog always forces the fader closed, so a held key can never strand the
-deck audible. The cut writes the same `0..1` crossfader value as any other
-fader input — it is an input method, not a new recorded field — so while
-recording it is captured into the pattern identically to a pointer or MIDI
-fader move. MIDI crossfader handling is untouched by this keyboard path.
+A keyboard crossfader cut toggle is available for the virtual fallback:
+pressing a single configurable key (`KeyZ` default, `KeyM` alternate, chosen in
+Preferences) switches the crossfader between its open default (scratch deck
+audible) and closed (scratch deck silent) states. The cut writes the same
+`0..1` crossfader value as any other fader input — it is an input method, not a
+new recorded field — so while recording it is captured into the pattern
+identically to a pointer or MIDI fader move. MIDI crossfader handling is
+untouched by this keyboard path.
 
 ### Backing accompaniment bed
 

@@ -309,11 +309,16 @@ export function send<K extends BridgeOutboundType>(...args: BridgeOutboundArgs<K
     return false
   }
   outboundCount++
-  // TRACK_GAIN can fire per slider pixel; keep it at debug.
-  if (type !== 'TRACK_GAIN') {
-    log.info('bridge', `send ${type}`)
-  } else {
-    log.debug('bridge', `send ${type}`)
+  // High-rate controls are coalesced by their UI surfaces, but still send up to
+  // one message per frame. Scratch session control logging is omitted entirely:
+  // every renderer log level is batched over IPC, which can otherwise starve
+  // pointer and keyboard input while a platter or crossfader is moving.
+  if (type !== 'SCRATCH_SESSION_CONTROL') {
+    if (type !== 'TRACK_GAIN') {
+      log.info('bridge', `send ${type}`)
+    } else {
+      log.debug('bridge', `send ${type}`)
+    }
   }
   socket.send(serialised)
   return true
