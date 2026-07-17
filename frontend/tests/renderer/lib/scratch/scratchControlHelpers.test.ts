@@ -31,25 +31,33 @@ describe('wheelDeltaToTurns', () => {
     expect(wheelDeltaToTurns(100, 0, -10)).toBe(0)
   })
 
-  it('maps one full pixelsPerTurn of horizontal travel to one turn', () => {
-    expect(wheelDeltaToTurns(WHEEL_PIXELS_PER_TURN, 0, WHEEL_PIXELS_PER_TURN)).toBeCloseTo(1, 10)
+  it('ignores sub-pixel trackpad jitter', () => {
+    expect(wheelDeltaToTurns(1, 0, WHEEL_PIXELS_PER_TURN)).toBe(0)
+    expect(wheelDeltaToTurns(0, -1, WHEEL_PIXELS_PER_TURN)).toBe(0)
   })
 
   it('uses the dominant axis (vertical when it is larger)', () => {
-    expect(wheelDeltaToTurns(10, 300, 600)).toBeCloseTo(0.5, 10)
+    expect(wheelDeltaToTurns(10, 300, 600)).toBeGreaterThan(299 / 600)
   })
 
   it('uses the dominant axis (horizontal when it is larger)', () => {
-    expect(wheelDeltaToTurns(300, 10, 600)).toBeCloseTo(0.5, 10)
+    expect(wheelDeltaToTurns(300, 10, 600)).toBeGreaterThan(299 / 600)
   })
 
   it('prefers horizontal on an exact tie', () => {
-    expect(wheelDeltaToTurns(120, -120, 600)).toBeCloseTo(0.2, 10)
+    expect(wheelDeltaToTurns(120, -120, 600)).toBeGreaterThan(0)
+  })
+
+  it('increases gain as movement becomes larger', () => {
+    const small = wheelDeltaToTurns(30, 0, WHEEL_PIXELS_PER_TURN)
+    const large = wheelDeltaToTurns(300, 0, WHEEL_PIXELS_PER_TURN)
+
+    expect(large / 10).toBeGreaterThan(small)
   })
 
   it('treats rightward/downward as forward and leftward/upward as reverse', () => {
-    expect(wheelDeltaToTurns(-600, 0, 600)).toBeCloseTo(-1, 10)
-    expect(wheelDeltaToTurns(0, -600, 600)).toBeCloseTo(-1, 10)
+    expect(wheelDeltaToTurns(-600, 0, 600)).toBeLessThan(0)
+    expect(wheelDeltaToTurns(0, -600, 600)).toBeLessThan(0)
   })
 })
 

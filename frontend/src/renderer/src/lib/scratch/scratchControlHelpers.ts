@@ -21,6 +21,8 @@ export const VIRTUAL_DECK: ScratchDeckSide = 1
  * platter revolution. Tunable: lower = more sensitive scratching.
  */
 export const WHEEL_PIXELS_PER_TURN = 600
+const TRACKPAD_DEAD_ZONE_PX = 1
+const TRACKPAD_MAX_GAIN = 1.5
 
 /** Angle in degrees [0, 360) derived from absolute platter turns modulo one revolution. */
 export function platterAngleDeg(turns: number): number {
@@ -59,13 +61,17 @@ export function crossfaderValueFromHorizontalDelta(
 }
 
 /**
- * Turns delta from a trackpad wheel gesture. Uses the dominant axis so both
- * two-finger horizontal and vertical pans scratch; rightward/downward is forward.
+ * Turns delta from a trackpad gesture. Ignores small pointer jitter, uses the
+ * dominant axis, and increases the response for larger movements.
  */
 export function wheelDeltaToTurns(deltaX: number, deltaY: number, pixelsPerTurn: number): number {
   if (pixelsPerTurn <= 0) return 0
   const dominant = Math.abs(deltaX) >= Math.abs(deltaY) ? deltaX : deltaY
-  return dominant / pixelsPerTurn
+  const magnitude = Math.abs(dominant)
+  if (magnitude <= TRACKPAD_DEAD_ZONE_PX) return 0
+  const normalized = (magnitude - TRACKPAD_DEAD_ZONE_PX) / pixelsPerTurn
+  const gain = 1 + Math.min(1, normalized) * (TRACKPAD_MAX_GAIN - 1)
+  return Math.sign(dominant) * normalized * gain
 }
 
 /**

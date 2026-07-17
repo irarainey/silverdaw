@@ -139,9 +139,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   and how they feel in **Preferences ▸ Effects**.
 - **Vinyl-style scratch authoring.** Open a clip or library item in the Scratch
   Editor and use a supported MIDI DJ deck to record platter and crossfader
-  moves. Deck control is the primary workflow; the on-screen deck offers a
-  trackpad and keyboard fallback for creating a simple scratch that you can
-  edit into a more complex pattern. Replay the result, apply it
+  moves. Deck control is the primary workflow; the on-screen deck offers an
+  experimental trackpad and keyboard fallback for creating a simple scratch
+  that you can edit into a more complex pattern. Replay the result, apply it
   non-destructively to a clip, or save it as a new library sample for use in
   your mix. **Scratch realism** adds adjustable held-platter softening and
   groove texture, with Off, Medium, and High levels in **Preferences ▸ Effects**.

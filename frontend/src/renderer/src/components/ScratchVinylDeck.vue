@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   platterAngleDeg,
   pointerAngleDeltaTurns,
   wheelDeltaToTurns,
   WHEEL_PIXELS_PER_TURN
 } from '@/lib/scratch/scratchControlHelpers'
+import { createScratchPlatterHoldController } from '@/lib/scratch/scratchPlatterHold'
 
 const props = defineProps<{
   platterTurns: number
@@ -29,6 +30,7 @@ const KEYBOARD_LARGE_STEP_TURNS = 0.1
 // the first delta claims the platter and an idle timeout releases it.
 const WHEEL_IDLE_RELEASE_MS = 120
 const MAX_WHEEL_DELTA_TURNS = 8
+const WHEEL_START_THRESHOLD_PX = 2
 
 const svgEl = ref<SVGSVGElement | null>(null)
 const isDown = ref(false)
@@ -37,6 +39,8 @@ let prevClientX = 0
 let prevClientY = 0
 let prevAngleValid = true
 let capturedId: number | null = null
+let pointerCenterX = 0
+let pointerCenterY = 0
 
 // Pointer moves are coalesced and flushed once per animation frame so the rate
 // the backend derives pairs one accumulated delta with one frame-length client
@@ -45,6 +49,8 @@ let capturedId: number | null = null
 // rate, and the delta/elapsed pair share a single clock and interval.
 let pointerPendingTurns = 0
 let pointerRafId: number | null = null
+let latchedPointerPrimed = false
+let pointerMoved = false
 // True once motion has been emitted since the last idle-zero. Lets the per-frame
 // tick fire a single explicit zero-rate the instant the finger stops moving.
 let pointerHadMotion = false
@@ -53,12 +59,23 @@ let wheelTouched = false
 let wheelPendingTurns = 0
 let wheelRafId: number | null = null
 let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null
+let virtualTouchEmitted = false
+const virtualTouchActive = ref(false)
+const doubleTapHold = createScratchPlatterHoldController()
+
+function syncVirtualTouch(): void {
+  const active = !props.disabled && (isDown.value || wheelTouched || doubleTapHold.isHeld.value)
+  virtualTouchActive.value = active
+  if (active === virtualTouchEmitted) return
+  virtualTouchEmitted = active
+  emit('platterTouch', virtualTouchEmitted)
+}
 
 // Runs every frame while the platter is held. Emits one accumulated delta per
 // frame during motion, and a single explicit zero-rate the frame after motion
 // stops so a stationary-but-still-touching finger halts the platter within a
 // frame instead of coasting for the backend's manual-rate hold ("sluggish
-// release"). Re-arms itself while the pointer remains down.
+// release").
 function pointerTick(): void {
   if (pointerPendingTurns !== 0) {
     const delta = pointerPendingTurns
@@ -69,7 +86,9 @@ function pointerTick(): void {
     pointerHadMotion = false
     emit('platterMove', 0, performance.now())
   }
-  pointerRafId = isDown.value ? requestAnimationFrame(pointerTick) : null
+  pointerRafId = isDown.value || pointerPendingTurns !== 0 || pointerHadMotion
+    ? requestAnimationFrame(pointerTick)
+    : null
 }
 
 function flushWheelMove(): void {
@@ -91,16 +110,19 @@ function releaseWheelTouch(): void {
   }
   if (wheelTouched) {
     wheelTouched = false
-    emit('platterTouch', false)
+    syncVirtualTouch()
   }
 }
 
 function onWheel(event: WheelEvent): void {
-  if (props.disabled) return
+  if (props.disabled || event.ctrlKey || event.metaKey || event.altKey) return
   event.preventDefault()
   if (!wheelTouched) {
+    if (Math.max(Math.abs(event.deltaX), Math.abs(event.deltaY)) < WHEEL_START_THRESHOLD_PX) {
+      return
+    }
     wheelTouched = true
-    emit('platterTouch', true)
+    syncVirtualTouch()
   }
   // Inverted so the wheel gesture matches the expected scratch direction.
   wheelPendingTurns -= wheelDeltaToTurns(event.deltaX, event.deltaY, WHEEL_PIXELS_PER_TURN)
@@ -123,48 +145,83 @@ function clientCenter(): { cx: number; cy: number } {
   return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 }
 }
 
-function onPointerDown(event: PointerEvent): void {
-  if (props.disabled) return
-  event.preventDefault()
-  svgEl.value?.setPointerCapture(event.pointerId)
-  capturedId = event.pointerId
-  isDown.value = true
+function resetPointerPosition(event: PointerEvent): void {
   prevClientX = event.clientX
   prevClientY = event.clientY
+  const center = clientCenter()
+  pointerCenterX = center.cx
+  pointerCenterY = center.cy
   prevAngleValid = true
-  pointerPendingTurns = 0
-  pointerHadMotion = false
-  if (pointerRafId === null) pointerRafId = requestAnimationFrame(pointerTick)
-  emit('platterTouch', true)
 }
 
-function onPointerMove(event: PointerEvent): void {
-  if (!isDown.value || capturedId !== event.pointerId) return
-  const { cx, cy } = clientCenter()
-  const dx = event.clientX - cx
-  const dy = event.clientY - cy
+function queuePointerMove(deltaTurns: number): boolean {
+  if (deltaTurns === 0) return false
+  pointerPendingTurns += deltaTurns
+  if (pointerRafId === null) pointerRafId = requestAnimationFrame(pointerTick)
+  return true
+}
+
+function updatePointerMove(event: PointerEvent): boolean {
+  const dx = event.clientX - pointerCenterX
+  const dy = event.clientY - pointerCenterY
   if (dx * dx + dy * dy < 25) {
     // Inside the dead zone — invalidate prior angle so exit doesn't jump.
     prevAngleValid = false
-    return
+    return false
   }
   if (!prevAngleValid) {
     // Re-entering valid zone: reseed without emitting a delta.
     prevClientX = event.clientX
     prevClientY = event.clientY
     prevAngleValid = true
-    return
+    return false
   }
-  const delta = pointerAngleDeltaTurns(prevClientX, prevClientY, event.clientX, event.clientY, cx, cy)
+  const delta = pointerAngleDeltaTurns(
+    prevClientX,
+    prevClientY,
+    event.clientX,
+    event.clientY,
+    pointerCenterX,
+    pointerCenterY
+  )
   prevClientX = event.clientX
   prevClientY = event.clientY
-  if (delta !== 0) {
-    pointerPendingTurns += delta
-  }
+  return queuePointerMove(delta)
 }
 
-function releasePointer(event: PointerEvent): void {
-  if (capturedId !== event.pointerId) return
+function onPointerDown(event: PointerEvent): void {
+  if (props.disabled) return
+  event.preventDefault()
+  svgEl.value?.setPointerCapture(event.pointerId)
+  capturedId = event.pointerId
+  isDown.value = true
+  latchedPointerPrimed = false
+  pointerMoved = false
+  resetPointerPosition(event)
+  pointerPendingTurns = 0
+  pointerHadMotion = false
+}
+
+function onPointerMove(event: PointerEvent): void {
+  if (isDown.value && capturedId === event.pointerId) {
+    if (updatePointerMove(event)) {
+      pointerMoved = true
+      syncVirtualTouch()
+    }
+    return
+  }
+  if (!doubleTapHold.isHeld.value) return
+  if (!latchedPointerPrimed) {
+    latchedPointerPrimed = true
+    resetPointerPosition(event)
+    return
+  }
+  if (updatePointerMove(event)) syncVirtualTouch()
+}
+
+function releasePointer(event: PointerEvent): boolean {
+  if (capturedId !== event.pointerId) return false
+  const wasTap = !pointerMoved
   capturedId = null
   isDown.value = false
   // Stop the per-frame tick and discard any sub-frame motion accumulated at the
@@ -179,7 +236,17 @@ function releasePointer(event: PointerEvent): void {
   }
   pointerPendingTurns = 0
   pointerHadMotion = false
-  emit('platterTouch', false)
+  latchedPointerPrimed = false
+  pointerMoved = false
+  syncVirtualTouch()
+  return wasTap
+}
+
+function onPointerUp(event: PointerEvent): void {
+  if (!releasePointer(event) || props.disabled) return
+  doubleTapHold.toggle()
+  latchedPointerPrimed = false
+  syncVirtualTouch()
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -208,22 +275,50 @@ function onKeydown(event: KeyboardEvent): void {
   emit('platterMove', delta, performance.now())
 }
 
-onBeforeUnmount(() => {
-  releaseWheelTouch()
+function releaseAllVirtualTouch(forceRelease = false): void {
+  if (wheelIdleTimer !== null) {
+    clearTimeout(wheelIdleTimer)
+    wheelIdleTimer = null
+  }
+  if (wheelRafId !== null) {
+    cancelAnimationFrame(wheelRafId)
+    wheelRafId = null
+  }
+  wheelPendingTurns = 0
+  wheelTouched = false
   if (pointerRafId !== null) {
     cancelAnimationFrame(pointerRafId)
     pointerRafId = null
-    pointerPendingTurns = 0
-    pointerHadMotion = false
   }
+  pointerPendingTurns = 0
+  pointerHadMotion = false
+  latchedPointerPrimed = false
+  pointerMoved = false
   if (capturedId !== null) {
     svgEl.value?.releasePointerCapture(capturedId)
     capturedId = null
   }
-  if (isDown.value) {
-    isDown.value = false
+  isDown.value = false
+  doubleTapHold.release()
+  if (forceRelease && virtualTouchEmitted) {
+    virtualTouchActive.value = false
+    virtualTouchEmitted = false
     emit('platterTouch', false)
+    return
   }
+  syncVirtualTouch()
+}
+
+watch(
+  () => props.disabled,
+  (disabled) => {
+    if (disabled) releaseAllVirtualTouch(true)
+    else syncVirtualTouch()
+  }
+)
+
+onBeforeUnmount(() => {
+  releaseAllVirtualTouch(true)
 })
 </script>
 
@@ -248,9 +343,10 @@ onBeforeUnmount(() => {
       aria-valuemax="360"
       :aria-disabled="disabled"
       tabindex="0"
+      title="Tap to toggle platter hold"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
-      @pointerup="releasePointer"
+      @pointerup="onPointerUp"
       @pointercancel="releasePointer"
       @lostpointercapture="releasePointer"
       @wheel="onWheel"
@@ -315,7 +411,7 @@ onBeforeUnmount(() => {
       />
       <!-- Touch ring — sky accent when platter is held -->
       <circle
-        v-if="touched || isDown"
+        v-if="touched || virtualTouchActive"
         cx="100"
         cy="100"
         r="96"

@@ -139,27 +139,31 @@ The Hercules DJControl Inpulse 200 MK2 and Hercules DJControl Inpulse 300 MK2
 are explicitly excluded because their byte-level mappings have not been
 verified. A similar name does not make an unlisted controller compatible.
 
-## Scratch Editor without a controller
+## Scratch Editor without a controller (experimental)
 
 The Scratch Editor is designed around supported physical decks, which are the
-primary way to perform scratches. The on-screen virtual deck is a less
-expressive fallback when no controller is connected: use a trackpad and
+primary way to perform scratches. The on-screen virtual deck is an experimental,
+less expressive fallback when no controller is connected: use a trackpad and
 keyboard to create a simple scratch, then edit its notation into a more complex
 pattern.
 
-- **Platter (trackpad).** Two-finger pan across the on-screen platter jogs it,
-  exactly like touching a physical platter. Rightward or downward movement
-  scratches forward; leftward or upward scratches back. The gesture only
-  registers while your fingers are moving — Windows precision touchpads report
-  nothing while fingers rest — so the platter releases automatically a moment
-  after you stop.
+- **Platter (experimental trackpad control).** Two-finger pan across the
+  on-screen platter jogs it, exactly like touching a physical platter.
+  Rightward or downward movement scratches forward; leftward or upward
+  scratches back. The gesture only registers while your fingers are moving —
+  Windows precision touchpads report nothing while fingers rest — so the
+  platter releases automatically a moment after you stop. Tap the virtual
+  platter to toggle its hold. While held, move one finger around the platter or
+  use a two-finger pan to scratch. Small accidental movements are ignored;
+  larger movements respond more quickly.
 - **Platter (mouse and keyboard).** Click and drag around the platter to
   scratch, or focus it and use the arrow keys; hold Shift for larger steps.
-- **Dead stop.** Press **Space** to toggle playback, which also acts as the
-  stop when the platter is spinning.
-- **Crossfader cut (keyboard).** Hold a single key to open the crossfader
-  and make the deck audible; release it to close the fader again. The resting
-  default is closed (silent). Choose **Z** (right-handed) or **M** (left-handed)
+- **Backing transport.** Press **Space** to toggle the prepared backing bed.
+  It does not control scratch replay; press **P** to play or stop a recorded
+  scratch.
+- **Crossfader cut (keyboard).** Press the configured key to close the
+  crossfader and silence the virtual deck; press it again to open the fader.
+  The resting default is open (audible). Choose **Z** (right-handed) or **M** (left-handed)
   to suit your scratching hand in **Preferences ▸ Effects ▸ Scratch crossfader
   cut** (the default is Z).
 - **Scratch realism.** Choose **Off**, **Medium** (the default), or **High** in
