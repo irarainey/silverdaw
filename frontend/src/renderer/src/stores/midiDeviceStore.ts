@@ -19,7 +19,28 @@ import {
 
 const RESCAN_SAFETY_MS = 6000
 const MAX_MONITOR_MESSAGES = 200
+// Windows can expose a USB MIDI controller well after the application has connected. Probe
+// quickly at first, then less often, and stop after the startup window rather than polling.
+const STARTUP_DISCOVERY_RETRY_DELAYS_MS = [
+  1000, 2000, 4000, 8000, 10000, 10000, 10000, 10000, 10000, 10000
+]
 let rescanSafetyTimer: ReturnType<typeof setTimeout> | null = null
+let startupDiscoveryTimer: ReturnType<typeof setTimeout> | null = null
+let startupDiscoveryRetryIndex = 0
+let startupDiscoveryActive = false
+let startupDiscoveryEnableRequestPending = false
+
+function resetMidiStartupDiscovery(): void {
+  if (startupDiscoveryTimer) clearTimeout(startupDiscoveryTimer)
+  startupDiscoveryTimer = null
+  startupDiscoveryRetryIndex = 0
+  startupDiscoveryActive = false
+  startupDiscoveryEnableRequestPending = false
+}
+
+export function resetMidiStartupDiscoveryForTests(): void {
+  resetMidiStartupDiscovery()
+}
 
 /** Live deck selection a device auto-applies at startup for its Default deck preference. */
 export function deckSelectionForDefault(defaultDeck: MidiDefaultDeck): MidiDeckSelection {
@@ -69,6 +90,8 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
 
   actions: {
     applyList(payload: MidiDevicesListPayload): void {
+      const wasAwaitingStartupEnableResult = startupDiscoveryEnableRequestPending
+      startupDiscoveryEnableRequestPending = false
       const enabledIdentifiers = new Set(
         payload.inputs.filter((input) => input.enabled).map((input) => input.identifier)
       )
@@ -80,11 +103,13 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.inputs = [...payload.inputs]
       this.hydrated = true
       this.finishRescan()
+      this.reconcileStartupInputDiscovery(wasAwaitingStartupEnableResult)
       if (!this.deckSelectionSyncPending) return
 
-      this.deckSelectionSyncPending = false
+      let appliedSelectionToEnabledInput = false
       for (const input of payload.inputs) {
-        if (!input.enabled) continue
+        if (!input.enabled || !this.enabledByIdentifier[input.identifier]) continue
+        appliedSelectionToEnabledInput = true
         let selection = this.deckSelectionByIdentifier[input.identifier]
         if (!selection) {
           // No cue-set selection is persisted for this device: fall back to its
@@ -105,6 +130,9 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
           deviceIdentifier: input.identifier,
           ...selection
         })
+      }
+      if (appliedSelectionToEnabledInput) {
+        this.deckSelectionSyncPending = false
       }
     },
 
@@ -203,6 +231,7 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
         log.warn('midi', `device preference hydrate failed: ${String(err)}`)
         this.devicePreferencesByIdentifier = {}
       }
+      this.beginStartupInputDiscovery()
       this.pushEnabledInputs()
       this.pushScratchSettings()
       this.requestList()
@@ -215,12 +244,14 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
         log.warn('midi', `cannot enable unsupported MIDI input: ${input.name}`)
         return
       }
+      this.stopStartupInputDiscovery()
       if (enabled) this.enabledByIdentifier[identifier] = true
       else delete this.enabledByIdentifier[identifier]
       this.pushEnabledInputs()
     },
 
     applyEnabledInputs(enabledByIdentifier: Record<string, boolean>): void {
+      this.stopStartupInputDiscovery()
       this.enabledByIdentifier = { ...enabledByIdentifier }
       this.pushEnabledInputs()
     },
@@ -230,6 +261,60 @@ export const useMidiDeviceStore = defineStore('midiDevice', {
       this.deckSelectionSyncPending = sendBridge('MIDI_INPUTS_SET', {
         identifiers
       })
+    },
+
+    beginStartupInputDiscovery(): void {
+      this.stopStartupInputDiscovery()
+      startupDiscoveryActive = Object.values(this.enabledByIdentifier).some(Boolean)
+    },
+
+    stopStartupInputDiscovery(): void {
+      resetMidiStartupDiscovery()
+    },
+
+    hasAllSavedInputsEnabled(): boolean {
+      const wantedIdentifiers = Object.entries(this.enabledByIdentifier)
+        .filter(([, enabled]) => enabled)
+        .map(([identifier]) => identifier)
+      return wantedIdentifiers.every((identifier) =>
+        this.inputs.some((input) => input.identifier === identifier && input.enabled)
+      )
+    },
+
+    hasSavedInputAwaitingEnable(): boolean {
+      return this.inputs.some(
+        (input) => this.enabledByIdentifier[input.identifier] && !input.enabled
+      )
+    },
+
+    reconcileStartupInputDiscovery(wasAwaitingEnableResult = false): void {
+      if (!startupDiscoveryActive) return
+      if (this.hasAllSavedInputsEnabled()) {
+        this.stopStartupInputDiscovery()
+        return
+      }
+      // Re-enable only when a previously absent saved input becomes visible.
+      // Re-sending the full enabled set on every probe tears down and recreates
+      // working deck inputs, which loses a held platter touch and partial
+      // high-resolution fader pair.
+      if (this.hasSavedInputAwaitingEnable() && !wasAwaitingEnableResult) {
+        startupDiscoveryEnableRequestPending = true
+        this.pushEnabledInputs()
+        return
+      }
+      if (
+        startupDiscoveryTimer ||
+        startupDiscoveryRetryIndex >= STARTUP_DISCOVERY_RETRY_DELAYS_MS.length
+      ) {
+        return
+      }
+
+      const delayMs = STARTUP_DISCOVERY_RETRY_DELAYS_MS[startupDiscoveryRetryIndex++]
+      startupDiscoveryTimer = setTimeout(() => {
+        startupDiscoveryTimer = null
+        if (!startupDiscoveryActive) return
+        this.requestList()
+      }, delayMs)
     },
 
     /** Send MIDI_SCRATCH_SETTINGS_SET for each device with crossfader direction

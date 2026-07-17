@@ -30,7 +30,6 @@ const KEYBOARD_LARGE_STEP_TURNS = 0.1
 // the first delta claims the platter and an idle timeout releases it.
 const WHEEL_IDLE_RELEASE_MS = 120
 const MAX_WHEEL_DELTA_TURNS = 8
-const WHEEL_START_THRESHOLD_PX = 2
 
 const svgEl = ref<SVGSVGElement | null>(null)
 const isDown = ref(false)
@@ -117,15 +116,14 @@ function releaseWheelTouch(): void {
 function onWheel(event: WheelEvent): void {
   if (props.disabled || event.ctrlKey || event.metaKey || event.altKey) return
   event.preventDefault()
+  const turns = wheelDeltaToTurns(event.deltaX, event.deltaY, WHEEL_PIXELS_PER_TURN)
+  if (turns === 0) return
   if (!wheelTouched) {
-    if (Math.max(Math.abs(event.deltaX), Math.abs(event.deltaY)) < WHEEL_START_THRESHOLD_PX) {
-      return
-    }
     wheelTouched = true
     syncVirtualTouch()
   }
   // Inverted so the wheel gesture matches the expected scratch direction.
-  wheelPendingTurns -= wheelDeltaToTurns(event.deltaX, event.deltaY, WHEEL_PIXELS_PER_TURN)
+  wheelPendingTurns -= turns
   if (wheelRafId === null) {
     wheelRafId = requestAnimationFrame(flushWheelMove)
   }
@@ -219,20 +217,20 @@ function onPointerMove(event: PointerEvent): void {
   if (updatePointerMove(event)) syncVirtualTouch()
 }
 
-function releasePointer(event: PointerEvent): boolean {
+function releasePointer(event: PointerEvent, flushPendingMove = false): boolean {
   if (capturedId !== event.pointerId) return false
   const wasTap = !pointerMoved
+  const pendingTurns = pointerPendingTurns
   capturedId = null
   isDown.value = false
-  // Stop the per-frame tick and discard any sub-frame motion accumulated at the
-  // instant of release. On a real deck the platter rides a slipmat at constant
-  // motor speed, so letting go snaps the record straight back to full speed; the
-  // little lift-off push a finger imparts on release is not a scratch and must
-  // not be applied as a final rate (which would briefly play slow/reverse before
-  // the motor re-engages). Dropping touch lets the backend resume motor speed.
+  // Flush a genuine quick flick before dropping touch, but keep stationary taps
+  // from creating a final platter movement.
   if (pointerRafId !== null) {
     cancelAnimationFrame(pointerRafId)
     pointerRafId = null
+  }
+  if (flushPendingMove && !wasTap && pendingTurns !== 0) {
+    emit('platterMove', pendingTurns, performance.now())
   }
   pointerPendingTurns = 0
   pointerHadMotion = false
@@ -243,7 +241,7 @@ function releasePointer(event: PointerEvent): boolean {
 }
 
 function onPointerUp(event: PointerEvent): void {
-  if (!releasePointer(event) || props.disabled) return
+  if (!releasePointer(event, true) || props.disabled) return
   doubleTapHold.toggle()
   latchedPointerPrimed = false
   syncVirtualTouch()

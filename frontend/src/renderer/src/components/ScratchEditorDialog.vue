@@ -12,6 +12,7 @@ import { useScratchDialogClose } from '@/lib/scratch/useScratchDialogClose'
 import { useScratchReopenLifecycle } from '@/lib/scratch/useScratchReopenLifecycle'
 import { useScratchPointerDispatch } from '@/lib/scratch/useScratchPointerDispatch'
 import { useScratchTransportControls } from '@/lib/scratch/useScratchTransportControls'
+import { virtualKeyboardCutDisplayValue } from '@/lib/scratch/scratchControlHelpers'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
@@ -68,11 +69,7 @@ const virtualCutControlsEnabled = computed(
   () => replay.controlsEnabled.value && usesVirtualCrossfader.value
 )
 const displayCrossfaderValue = computed(
-  () => keyboardCutVisualValue.value ?? (
-    usesVirtualCrossfader.value
-      ? 1 - derived.crossfaderValue.value
-      : derived.crossfaderValue.value
-  )
+  () => keyboardCutVisualValue.value ?? derived.crossfaderValue.value
 )
 
 watch(
@@ -84,15 +81,10 @@ watch(
 watch(
   () => session.state.value?.crossfader,
   (value) => {
-    const pendingActualValue = keyboardCutVisualValue.value === null
-      ? null
-      : usesVirtualCrossfader.value
-        ? 1 - keyboardCutVisualValue.value
-        : keyboardCutVisualValue.value
     if (
       value !== undefined
-      && pendingActualValue !== null
-      && Math.abs(value - pendingActualValue) <= 0.001
+      && keyboardCutVisualValue.value !== null
+      && Math.abs(value - (1 - keyboardCutVisualValue.value)) > 0.001
     ) {
       keyboardCutVisualValue.value = null
     }
@@ -109,7 +101,7 @@ useScratchKeyboardControls({
   sendControl: session.sendControl,
   buildBacking: backing.prepare,
   onCrossfaderCutValueChange: (value) => {
-    keyboardCutVisualValue.value = usesVirtualCrossfader.value ? 1 - value : value
+    keyboardCutVisualValue.value = virtualKeyboardCutDisplayValue(value)
   }
 })
 
@@ -169,9 +161,8 @@ const pointerDispatch = useScratchPointerDispatch({
 })
 
 function onCrossfaderChange(value: number): void {
-  pointerDispatch.onCrossfaderChange(
-    usesVirtualCrossfader.value ? 1 - value : value
-  )
+  keyboardCutVisualValue.value = null
+  pointerDispatch.onCrossfaderChange(value)
 }
 
 const transport = useScratchTransportControls({
