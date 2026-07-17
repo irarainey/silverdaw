@@ -24,8 +24,15 @@ const layout = useScratchNotationLayout({ containerEl, viewportEl, durationUs })
 
 watch(
   () => props.replayPositionNormalized,
-  (position) => {
-    if (position === null || position === undefined || !pattern.value) return
+  (position, previousPosition) => {
+    if (position === null || position === undefined) {
+      layout.stopPlaybackFollowing()
+      return
+    }
+    if (previousPosition === null || previousPosition === undefined) {
+      layout.resetPlaybackPosition()
+    }
+    if (!pattern.value) return
     const { cropStartUs, cropEndUs } = pattern.value
     layout.followPlayback(cropStartUs + position * (cropEndUs - cropStartUs))
   }

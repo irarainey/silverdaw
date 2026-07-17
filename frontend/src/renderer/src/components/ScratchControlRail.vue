@@ -109,7 +109,7 @@ function onScratchGain(event: Event): void {
       <button
         type="button"
         class="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded bg-sky-600 px-2 py-1 text-xs font-medium text-zinc-50 transition-colors hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
-        :disabled="!hasPattern"
+        :disabled="!hasPattern || isPatternReplaying"
         aria-label="Clear recorded scratch"
         title="Discard the recorded scratch (C)"
         @click="emit('clear')"

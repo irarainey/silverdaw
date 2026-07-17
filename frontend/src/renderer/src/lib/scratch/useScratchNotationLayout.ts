@@ -36,6 +36,8 @@ export interface ScratchNotationLayout {
   scrollThumbWidthPct: ComputedRef<number>
   scrollThumbLeftPct: ComputedRef<number>
   setZoom(nextZoom: number): Promise<void>
+  stopPlaybackFollowing(): void
+  resetPlaybackPosition(): void
   followPlayback(timeUs: number): void
   onZoomWheel(event: WheelEvent): void
   onViewportScroll(): void
@@ -108,6 +110,22 @@ export function useScratchNotationLayout(refs: {
       viewport.scrollLeft = previousCentre * viewport.scrollWidth - viewport.clientWidth / 2
       scrollLeftPx.value = viewport.scrollLeft
     }
+  }
+
+  function stopPlaybackFollowing(): void {
+    if (playbackFollowFrame !== null) {
+      cancelAnimationFrame(playbackFollowFrame)
+      playbackFollowFrame = null
+    }
+    playbackTargetScrollLeft = null
+    lastPlaybackFollowAt = 0
+    lastPlaybackTimeUs = 0
+  }
+
+  function resetPlaybackPosition(): void {
+    stopPlaybackFollowing()
+    if (viewportEl.value) viewportEl.value.scrollLeft = 0
+    scrollLeftPx.value = 0
   }
 
   function followPlayback(timeUs: number): void {
@@ -248,6 +266,8 @@ export function useScratchNotationLayout(refs: {
     scrollThumbWidthPct,
     scrollThumbLeftPct,
     setZoom,
+    stopPlaybackFollowing,
+    resetPlaybackPosition,
     followPlayback,
     onZoomWheel,
     onViewportScroll,

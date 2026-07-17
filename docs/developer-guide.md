@@ -2775,16 +2775,17 @@ step, so they survive the geometry's snap-to-step) and shared by the menu and it
 ### Scratch Editor shortcuts
 
 When the Scratch Editor dialog is open, the global timeline shortcuts are
-suspended and this set applies instead. Pointer/wheel gestures on the platter and
-crossfader are described in the [Scratch Editor](#scratch-editor) section.
+suspended and this set applies regardless of focus within the editor. Pointer/wheel
+gestures on the platter and crossfader are described in the
+[Scratch Editor](#scratch-editor) section.
 
 | Input | Effect |
 |---|---|
 | `B` | Build or rebuild the backing bed from the current track, anchor, and length choices. Does not run while editing a text field. |
-| `Space` | Toggle play / pause of the backing channel (disabled until a backing is prepared, and while recording). |
-| `R` | Toggle record: arm a take, cancel arming, or stop an active take. Recording starts on the first platter touch after arming. |
+| `Space` | Toggle play / pause of the backing channel (disabled until a backing is prepared, while recording, or during scratch replay). |
+| `R` | Toggle record: arm a take, cancel arming, or stop an active take. Recording starts on the first platter touch after arming. Unavailable during scratch replay. |
 | `P` | Play or stop the current recorded scratch draft. Available when a draft exists. |
-| `C` | Clear the current recorded scratch draft. Saved patterns are unaffected. |
+| `C` | Clear the current recorded scratch draft. Saved patterns are unaffected. Unavailable during scratch replay. |
 | `Z` / `M` (configurable) | **Momentary crossfader cut** — hold to open the crossfader (scratch deck audible), release to close. The fader rests closed. The key is chosen in **Preferences ▸ Effects ▸ Scratch crossfader cut** (**Z** right-handed default, **M** left-handed). Works even when the fader is not focused; blur or close forces the fader back closed. |
 | `←` / `→` (crossfader focused) | Nudge the crossfader by 0.02 (or 0.1 with `Shift`). |
 | `Home` / `End` (crossfader focused) | Jump the crossfader fully open / fully closed. |

@@ -8,11 +8,13 @@ function setup(overrides: {
   isRecording?: boolean
   isArmed?: boolean
   canRecord?: boolean
+  isPatternReplaying?: boolean
   hasDraft?: boolean
 } = {}) {
   const isRecording = ref(overrides.isRecording ?? false)
   const isArmed = ref(overrides.isArmed ?? false)
   const canRecord = ref(overrides.canRecord ?? true)
+  const isPatternReplaying = ref(overrides.isPatternReplaying ?? false)
   const hasDraft = ref(overrides.hasDraft ?? false)
   const armRecording = vi.fn()
   const disarmRecording = vi.fn()
@@ -23,6 +25,7 @@ function setup(overrides: {
     isRecording,
     isArmed,
     canRecord,
+    isPatternReplaying,
     hasDraft,
     armRecording,
     disarmRecording,
@@ -30,7 +33,18 @@ function setup(overrides: {
     discardDraft
   })
 
-  return { control, isRecording, isArmed, canRecord, hasDraft, armRecording, disarmRecording, stopRecording, discardDraft }
+  return {
+    control,
+    isRecording,
+    isArmed,
+    canRecord,
+    isPatternReplaying,
+    hasDraft,
+    armRecording,
+    disarmRecording,
+    stopRecording,
+    discardDraft
+  }
 }
 
 describe('useScratchRecordControl', () => {
@@ -85,6 +99,14 @@ describe('useScratchRecordControl', () => {
 
   it('ignores the press when idle and recording is not currently allowed', () => {
     const { control, armRecording } = setup({ canRecord: false })
+    control.onRecordButton()
+    expect(armRecording).not.toHaveBeenCalled()
+  })
+
+  it('disables and ignores the record control while a scratch is replaying', () => {
+    const { control, armRecording } = setup({ isPatternReplaying: true })
+    expect(control.recordButtonDisabled.value).toBe(true)
+
     control.onRecordButton()
     expect(armRecording).not.toHaveBeenCalled()
   })

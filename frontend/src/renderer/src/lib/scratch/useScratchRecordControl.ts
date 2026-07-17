@@ -10,6 +10,7 @@ export interface ScratchRecordControlOptions {
   isRecording: Ref<boolean>
   isArmed: Ref<boolean>
   canRecord: Ref<boolean>
+  isPatternReplaying: Ref<boolean>
   /** Whether an existing (unsaved) draft would be discarded by arming a fresh take. */
   hasDraft: Ref<boolean>
   armRecording(): void
@@ -24,13 +25,24 @@ export interface ScratchRecordControl {
   recordButtonLabel: ComputedRef<string>
   recordButtonClass: ComputedRef<string>
   recordButtonAriaLabel: ComputedRef<string>
+  recordButtonDisabled: ComputedRef<boolean>
   onRecordButton(): void
 }
 
 export function useScratchRecordControl(
   options: ScratchRecordControlOptions
 ): ScratchRecordControl {
-  const { isRecording, isArmed, canRecord, hasDraft, armRecording, disarmRecording, stopRecording, discardDraft } =
+  const {
+    isRecording,
+    isArmed,
+    canRecord,
+    isPatternReplaying,
+    hasDraft,
+    armRecording,
+    disarmRecording,
+    stopRecording,
+    discardDraft
+  } =
     options
 
   const recordPhase = computed<ScratchRecordPhase>(() => {
@@ -57,8 +69,12 @@ export function useScratchRecordControl(
     return 'Arm scratch recording'
   })
 
+  const recordButtonDisabled = computed(
+    () => isPatternReplaying.value || (!canRecord.value && recordPhase.value === 'idle')
+  )
+
   function onRecordButton(): void {
-    if (!canRecord.value && recordPhase.value === 'idle') return
+    if (recordButtonDisabled.value) return
     if (recordPhase.value === 'recording') {
       stopRecording()
     } else if (recordPhase.value === 'armed') {
@@ -71,5 +87,12 @@ export function useScratchRecordControl(
     }
   }
 
-  return { recordPhase, recordButtonLabel, recordButtonClass, recordButtonAriaLabel, onRecordButton }
+  return {
+    recordPhase,
+    recordButtonLabel,
+    recordButtonClass,
+    recordButtonAriaLabel,
+    recordButtonDisabled,
+    onRecordButton
+  }
 }

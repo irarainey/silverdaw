@@ -15,7 +15,6 @@ export interface ScratchTransportControlsOptions {
   backingReady: Ref<boolean>
   isRecording: Ref<boolean>
   isPatternReplaying: Ref<boolean>
-  stopReplay(): void
   togglePlayback(): void
   sendControl(payload: ScratchSessionControlPayload): void
 }
@@ -35,7 +34,6 @@ export function useScratchTransportControls(
     backingReady,
     isRecording,
     isPatternReplaying,
-    stopReplay,
     togglePlayback,
     sendControl
   } = options
@@ -51,8 +49,7 @@ export function useScratchTransportControls(
   }
 
   function onTogglePlay(): void {
-    if (isPatternReplaying.value) stopReplay()
-    else if (transportEnabled.value) togglePlayback()
+    if (transportEnabled.value) togglePlayback()
   }
 
   return { transportEnabled, onSkipToStart, onTogglePlay }

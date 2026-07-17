@@ -14,7 +14,6 @@ function setup(overrides: {
   const backingReady = ref(overrides.backingReady ?? true)
   const isRecording = ref(overrides.isRecording ?? false)
   const isPatternReplaying = ref(overrides.isPatternReplaying ?? false)
-  const stopReplay = vi.fn()
   const togglePlayback = vi.fn()
   const sendControl = vi.fn()
 
@@ -24,7 +23,6 @@ function setup(overrides: {
     backingReady,
     isRecording,
     isPatternReplaying,
-    stopReplay,
     togglePlayback,
     sendControl
   })
@@ -36,7 +34,6 @@ function setup(overrides: {
     backingReady,
     isRecording,
     isPatternReplaying,
-    stopReplay,
     togglePlayback,
     sendControl
   }
@@ -63,24 +60,21 @@ describe('useScratchTransportControls', () => {
     expect(disabled.sendControl).not.toHaveBeenCalled()
   })
 
-  it('toggle-play stops replay first, without touching the backing transport', () => {
-    const { transport, stopReplay, togglePlayback } = setup({ isPatternReplaying: true })
+  it('toggle-play does nothing while scratch replay has disabled the backing transport', () => {
+    const { transport, togglePlayback } = setup({ isPatternReplaying: true })
     transport.onTogglePlay()
-    expect(stopReplay).toHaveBeenCalledTimes(1)
     expect(togglePlayback).not.toHaveBeenCalled()
   })
 
-  it('toggle-play runs the backing transport when not replaying and enabled', () => {
-    const { transport, togglePlayback, stopReplay } = setup()
+  it('toggle-play runs the backing transport when enabled', () => {
+    const { transport, togglePlayback } = setup()
     transport.onTogglePlay()
     expect(togglePlayback).toHaveBeenCalledTimes(1)
-    expect(stopReplay).not.toHaveBeenCalled()
   })
 
-  it('toggle-play does nothing when transport is disabled and not replaying', () => {
-    const { transport, togglePlayback, stopReplay } = setup({ backingReady: false })
+  it('toggle-play does nothing when transport is disabled', () => {
+    const { transport, togglePlayback } = setup({ backingReady: false })
     transport.onTogglePlay()
     expect(togglePlayback).not.toHaveBeenCalled()
-    expect(stopReplay).not.toHaveBeenCalled()
   })
 })

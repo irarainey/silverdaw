@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
 import { useScratchKeyboardControls } from '@/lib/scratch/useScratchKeyboardControls'
 import { useScratchEditorDerived } from '@/lib/scratch/useScratchEditorDerived'
@@ -109,6 +109,7 @@ const recordControl = useScratchRecordControl({
   isRecording: derived.isRecording,
   isArmed: derived.isArmed,
   canRecord: derived.canRecord,
+  isPatternReplaying: replay.isPatternReplaying,
   hasDraft: computed(() => derived.hasPattern.value || Boolean(scratchStore.completedPattern)),
   armRecording: () => session.armRecording(),
   disarmRecording: () => session.disarmRecording(),
@@ -128,7 +129,6 @@ const transport = useScratchTransportControls({
   backingReady: backing.isReady,
   isRecording: derived.isRecording,
   isPatternReplaying: replay.isPatternReplaying,
-  stopReplay: replay.stopReplay,
   togglePlayback: session.togglePlayback,
   sendControl: session.sendControl
 })
@@ -193,11 +193,14 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, { capture: true })
   replay.stopReplay()
   ui.clipEditorOpen = false
 })
 
 function onKeydown(event: KeyboardEvent): void {
+  if (!isDialogOpen.value) return
+
   const target = event.target
   const editingText = target instanceof HTMLInputElement
     || target instanceof HTMLTextAreaElement
@@ -237,12 +240,21 @@ function onKeydown(event: KeyboardEvent): void {
     } else {
       startDraftReplay()
     }
-  } else if ((event.key === 'c' || event.key === 'C') && scratchShortcut && derived.hasPattern.value) {
+  } else if (
+    (event.key === 'c' || event.key === 'C')
+    && scratchShortcut
+    && derived.hasPattern.value
+    && !replay.isPatternReplaying.value
+  ) {
     event.preventDefault()
     event.stopPropagation()
     clearDraft()
   }
 }
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown, { capture: true })
+})
 </script>
 
 <template>
@@ -265,7 +277,6 @@ function onKeydown(event: KeyboardEvent): void {
         ref="dialogEl"
         tabindex="-1"
         class="dialog-card h-[min(960px,96vh)] max-h-[96vh]! w-[min(1400px,96vw)]"
-        @keydown="onKeydown"
       >
         <ScratchEditorHeader
           :clip-name="derived.clipName.value"
@@ -330,7 +341,7 @@ function onKeydown(event: KeyboardEvent): void {
               :record-button-label="recordControl.recordButtonLabel.value"
               :record-button-class="recordControl.recordButtonClass.value"
               :record-button-aria-label="recordControl.recordButtonAriaLabel.value"
-              :record-disabled="!derived.canRecord.value && recordControl.recordPhase.value === 'idle'"
+              :record-disabled="recordControl.recordButtonDisabled.value"
               :has-pattern="derived.hasPattern.value"
               :is-pattern-replaying="replay.isPatternReplaying.value"
               @scratch-gain="backing.setScratchGain"

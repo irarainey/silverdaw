@@ -206,11 +206,11 @@ mixdown, or sample-export chain, and it carries no provenance.
   skip-to-end) and its `Space` shortcut drive the backing bed only — never
   the scratch source at nominal speed, which is heard only when the platter
   is jogged or during recording. The transport is disabled until a bed is
-  ready and while a take is recording. An optional per-session **Loop**
-  toggle (off by default) makes plain playback auto-restart the bed at its
-  end; loop never applies to recording, which always stops exactly at the
-  window's end regardless of the flag. A live position/duration readout is
-  always shown, dimmed until a bed is ready.
+  ready, while a take is recording, or during pattern replay. An optional
+  per-session **Loop** toggle (off by default) makes plain playback auto-restart
+  the bed at its end; loop never applies to recording, which always stops
+  exactly at the window's end regardless of the flag. A live position/duration
+  readout is always shown, dimmed until a bed is ready.
 
 ### Recording and pattern model
 
