@@ -68,11 +68,7 @@ const virtualCutControlsEnabled = computed(
   () => replay.controlsEnabled.value && usesVirtualCrossfader.value
 )
 const displayCrossfaderValue = computed(
-  () => keyboardCutVisualValue.value ?? (
-    usesVirtualCrossfader.value
-      ? 1 - derived.crossfaderValue.value
-      : derived.crossfaderValue.value
-  )
+  () => keyboardCutVisualValue.value ?? derived.crossfaderValue.value
 )
 
 watch(
@@ -84,15 +80,10 @@ watch(
 watch(
   () => session.state.value?.crossfader,
   (value) => {
-    const pendingActualValue = keyboardCutVisualValue.value === null
-      ? null
-      : usesVirtualCrossfader.value
-        ? 1 - keyboardCutVisualValue.value
-        : keyboardCutVisualValue.value
     if (
       value !== undefined
-      && pendingActualValue !== null
-      && Math.abs(value - pendingActualValue) <= 0.001
+      && keyboardCutVisualValue.value !== null
+      && Math.abs(value - keyboardCutVisualValue.value) <= 0.001
     ) {
       keyboardCutVisualValue.value = null
     }
@@ -109,7 +100,7 @@ useScratchKeyboardControls({
   sendControl: session.sendControl,
   buildBacking: backing.prepare,
   onCrossfaderCutValueChange: (value) => {
-    keyboardCutVisualValue.value = usesVirtualCrossfader.value ? 1 - value : value
+    keyboardCutVisualValue.value = value
   }
 })
 
@@ -169,9 +160,7 @@ const pointerDispatch = useScratchPointerDispatch({
 })
 
 function onCrossfaderChange(value: number): void {
-  pointerDispatch.onCrossfaderChange(
-    usesVirtualCrossfader.value ? 1 - value : value
-  )
+  pointerDispatch.onCrossfaderChange(value)
 }
 
 const transport = useScratchTransportControls({

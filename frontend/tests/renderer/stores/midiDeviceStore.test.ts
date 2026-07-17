@@ -1,6 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  resetMidiStartupDiscoveryForTests,
+  useMidiDeviceStore
+} from '@/stores/midiDeviceStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import {
   handleMidiJogTouch,
@@ -32,6 +35,7 @@ describe('midiDeviceStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    resetMidiStartupDiscoveryForTests()
     vi.mocked(sendBridge).mockReturnValue(true)
     resetMidiPlaybackHoldForTests()
     vi.stubGlobal('window', {
@@ -39,6 +43,11 @@ describe('midiDeviceStore', () => {
         setMidiDeckSelection
       }
     })
+  })
+
+  afterEach(() => {
+    resetMidiStartupDiscoveryForTests()
+    vi.useRealTimers()
   })
 
   it('starts empty and un-hydrated', () => {
@@ -137,6 +146,69 @@ describe('midiDeviceStore', () => {
     expect(store.isScrubAudioEnabled('ddj-rb')).toBe(false)
     expect(store.devicePreferencesByIdentifier['ddj-rb']?.crossfaderDirection)
       .toBe('rightToLeft')
+  })
+
+  it('retries saved MIDI inputs that were missing during the initial scan', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({ 'ddj-rb': true }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({
+          'ddj-rb': { deck1Enabled: true, deck2Enabled: false }
+        }),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({}),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({ inputs: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(sendBridge).toHaveBeenCalledTimes(3)
+    expect(sendBridge).toHaveBeenLastCalledWith('MIDI_DEVICES_REQUEST')
+
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+    await vi.advanceTimersByTimeAsync(90_000)
+
+    expect(sendBridge).toHaveBeenCalledTimes(4)
+    expect(sendBridge).toHaveBeenLastCalledWith('MIDI_DECK_SELECTION_SET', {
+      deviceIdentifier: 'ddj-rb',
+      deck1Enabled: true,
+      deck2Enabled: false
+    })
+  })
+
+  it('does not reopen an active deck while waiting for another saved input', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', {
+      silverdaw: {
+        getEnabledMidiInputs: vi.fn().mockResolvedValue({
+          'ddj-rb': true,
+          delayed: true
+        }),
+        getMidiDeckSelections: vi.fn().mockResolvedValue({
+          'ddj-rb': { deck1Enabled: true, deck2Enabled: false }
+        }),
+        getMidiDevicePreferences: vi.fn().mockResolvedValue({}),
+        setMidiDeckSelection
+      }
+    })
+    const store = useMidiDeviceStore()
+
+    await store.applyEnabledInputsOnReady()
+    store.applyList({
+      inputs: [input('ddj-rb', { enabled: true, controllerProfile: 'MIDI deck' })]
+    })
+    vi.mocked(sendBridge).mockClear()
+
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(sendBridge).toHaveBeenCalledTimes(1)
+    expect(sendBridge).toHaveBeenLastCalledWith('MIDI_DEVICES_REQUEST')
   })
 
   it('applies the Default deck preference when a device has no saved selection', async () => {

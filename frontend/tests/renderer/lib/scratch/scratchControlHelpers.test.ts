@@ -36,6 +36,10 @@ describe('wheelDeltaToTurns', () => {
     expect(wheelDeltaToTurns(0, -1, WHEEL_PIXELS_PER_TURN)).toBe(0)
   })
 
+  it('accepts trackpad movement immediately above the jitter threshold', () => {
+    expect(wheelDeltaToTurns(1.5, 0, WHEEL_PIXELS_PER_TURN)).toBeGreaterThan(0)
+  })
+
   it('uses the dominant axis (vertical when it is larger)', () => {
     expect(wheelDeltaToTurns(10, 300, 600)).toBeGreaterThan(299 / 600)
   })
