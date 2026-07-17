@@ -83,6 +83,11 @@ export function crossfaderCutValue(open: boolean, deck: ScratchDeckSide = VIRTUA
   return open ? audibleEdge : 1 - audibleEdge
 }
 
+/** Visual coordinate for a virtual keyboard cut, mirrored from its audio value. */
+export function virtualKeyboardCutDisplayValue(value: number): number {
+  return 1 - Math.max(0, Math.min(1, value))
+}
+
 /** Formats a microsecond position as `M:SS.mmm` or `S.mmms` for transport display. */
 export function formatUsTime(us: number): string {
   const totalMs = Math.max(0, us) / 1000

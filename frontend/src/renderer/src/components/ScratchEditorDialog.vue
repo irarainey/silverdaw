@@ -12,6 +12,7 @@ import { useScratchDialogClose } from '@/lib/scratch/useScratchDialogClose'
 import { useScratchReopenLifecycle } from '@/lib/scratch/useScratchReopenLifecycle'
 import { useScratchPointerDispatch } from '@/lib/scratch/useScratchPointerDispatch'
 import { useScratchTransportControls } from '@/lib/scratch/useScratchTransportControls'
+import { virtualKeyboardCutDisplayValue } from '@/lib/scratch/scratchControlHelpers'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
@@ -83,7 +84,7 @@ watch(
     if (
       value !== undefined
       && keyboardCutVisualValue.value !== null
-      && Math.abs(value - keyboardCutVisualValue.value) <= 0.001
+      && Math.abs(value - (1 - keyboardCutVisualValue.value)) > 0.001
     ) {
       keyboardCutVisualValue.value = null
     }
@@ -100,7 +101,7 @@ useScratchKeyboardControls({
   sendControl: session.sendControl,
   buildBacking: backing.prepare,
   onCrossfaderCutValueChange: (value) => {
-    keyboardCutVisualValue.value = value
+    keyboardCutVisualValue.value = virtualKeyboardCutDisplayValue(value)
   }
 })
 
@@ -160,6 +161,7 @@ const pointerDispatch = useScratchPointerDispatch({
 })
 
 function onCrossfaderChange(value: number): void {
+  keyboardCutVisualValue.value = null
   pointerDispatch.onCrossfaderChange(value)
 }
 

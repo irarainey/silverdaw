@@ -13,6 +13,7 @@ import {
   formatUsTime,
   platterAngleDeg,
   pointerAngleDeltaTurns,
+  virtualKeyboardCutDisplayValue,
   VIRTUAL_DECK,
   wheelDeltaToTurns,
   WHEEL_PIXELS_PER_TURN
@@ -81,6 +82,13 @@ describe('crossfaderCutValue', () => {
   it('defaults to the virtual (deck 1) side', () => {
     expect(crossfaderCutValue(true)).toBe(crossfaderCutValue(true, VIRTUAL_DECK))
     expect(crossfaderCutValue(false)).toBe(crossfaderCutValue(false, VIRTUAL_DECK))
+  })
+})
+
+describe('virtualKeyboardCutDisplayValue', () => {
+  it('mirrors the virtual keyboard cut without changing its backend value', () => {
+    expect(virtualKeyboardCutDisplayValue(0)).toBe(1)
+    expect(virtualKeyboardCutDisplayValue(1)).toBe(0)
   })
 })
 
