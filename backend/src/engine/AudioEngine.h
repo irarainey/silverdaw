@@ -538,6 +538,8 @@ class AudioEngine
     juce::String openAudioDeviceBlocking(const juce::String& preferredTypeName,
                                          const juce::String& preferredDeviceName,
                                          bool& outFellBack);
+    juce::String selectOutputDeviceBlocking(const juce::String& typeName,
+                                            const juce::String& deviceName);
 
     // The message-thread half of openAudioDevice(): attaches the audio callback + device
     // change listener, rebuilds the device snapshot, logs the inventory, and flips audioReady.

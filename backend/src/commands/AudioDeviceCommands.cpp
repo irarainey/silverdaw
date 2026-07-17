@@ -126,6 +126,17 @@ void handleAudioDeviceSelect(const juce::var& payload, silverdaw::AudioEngine& e
     if (err.isNotEmpty()) p->setProperty("error", err);
     bridge.broadcast("AUDIO_DEVICE_CHANGED", juce::var(p));
 
+    if (err.isEmpty())
+    {
+        broadcastAudioDevicesList(bridge,
+                                  buildAudioDevicesListEnvelope(engine.getAudioDevicesSnapshot()),
+                                  /*dedupe*/ true);
+    }
+
+    auto* status = new juce::DynamicObject();
+    status->setProperty("state", engine.isAudioReady() ? "ready" : "no_device");
+    bridge.broadcast("ENGINE_AUDIO_STATUS", juce::var(status));
+
     // JUCE fires `audioDeviceListChanged` after a successful switch.
 
     silverdaw::log::info("audio",

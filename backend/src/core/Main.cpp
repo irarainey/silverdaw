@@ -318,10 +318,10 @@ int runBackend(int argc, char* argv[])
             sendToClient("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
             // Seed menu state before first paint.
             sendToClient("EDIT_UNDO_STATE", silverdaw::buildEditUndoStateEnvelope(projectState));
-            // Tell the new client whether audio is ready yet, so it can gate the transport UI
-            // (the device may still be opening on the worker thread).
+            // This message-thread callback runs after the synchronous startup open, so a
+            // non-ready engine has no output device rather than an open still in progress.
             auto* status = new juce::DynamicObject();
-            status->setProperty("state", engine.isAudioReady() ? "ready" : "starting");
+            status->setProperty("state", engine.isAudioReady() ? "ready" : "no_device");
             sendToClient("ENGINE_AUDIO_STATUS", juce::var(status));
         });
 

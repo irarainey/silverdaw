@@ -16,9 +16,15 @@ export const transportBridgeHandlers: BridgeInboundHandlers<
   },
 
   ENGINE_AUDIO_STATUS: (payload) => {
-    // Audio device open progress (opens on a backend worker thread). Transport controls stay
-    // gated until 'ready'; the project/timeline can render before then.
-    useTransportStore().setAudioState(payload.state)
+    const transport = useTransportStore()
+    const wasUnavailable = transport.audioState === 'no_device'
+    transport.setAudioState(payload.state)
+    if (payload.state === 'no_device' && !wasUnavailable) {
+      useNotificationsStore().pushError(
+        'No audio output could be opened. Check your device connection or choose another output.',
+        8000
+      )
+    }
   },
 
   PLAYHEAD_UPDATE: (payload) => {

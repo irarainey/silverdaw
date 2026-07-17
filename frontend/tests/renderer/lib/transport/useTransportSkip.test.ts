@@ -69,6 +69,7 @@ describe('useTransportSkip', () => {
   it('play starts playback when stopped before the project end', () => {
     const transport = useTransportStore()
     transport.isPlaying = false
+    transport.audioState = 'ready'
     seedTrackLength(5000)
     transport.positionMs = 0
     const setState = vi.spyOn(transport, 'setPlaybackState')
@@ -78,6 +79,18 @@ describe('useTransportSkip', () => {
 
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PLAY')
     expect(setState).toHaveBeenCalledWith(true)
+  })
+
+  it('does not start playback while no output device is available', () => {
+    const transport = useTransportStore()
+    transport.audioState = 'no_device'
+    seedTrackLength(5000)
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.isPlaying).toBe(false)
   })
 
   it('play is a no-op when parked at the project end', () => {

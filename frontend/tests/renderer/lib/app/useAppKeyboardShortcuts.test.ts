@@ -20,6 +20,7 @@ interface FakeStores {
     engineRecovery: string
     isPlaying: boolean
     midiPlaybackHoldActive: boolean
+    audioState: 'starting' | 'ready' | 'failed' | 'no_device'
     positionMs: number
     bpm: number
     setPlaybackState: ReturnType<typeof vi.fn>
@@ -71,6 +72,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       engineRecovery: 'ok',
       isPlaying: false,
       midiPlaybackHoldActive: false,
+      audioState: 'ready',
       positionMs: 0,
       bpm: 120,
       setPlaybackState: vi.fn(),
@@ -177,6 +179,15 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     kb.onGlobalShortcutKey(e)
     expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PAUSE')
     expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(false)
+  })
+
+  it('Space does not start playback without an audio output', () => {
+    h.stores.transport.audioState = 'no_device'
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(h.stores.transport.setPlaybackState).not.toHaveBeenCalledWith(true)
   })
 
   it('Space changes play intent without starting audio while a MIDI platter is held', () => {

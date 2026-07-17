@@ -161,6 +161,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
         transport.setPlaybackState(false)
         log.info('transport', 'shortcut pause')
       } else {
+        if (transport.audioState !== 'ready') {
+          log.info('transport', 'shortcut play ignored (audio output unavailable)')
+          return
+        }
         // Playhead parked at the end → Spacebar Play is a no-op.
         // Mirrors `TransportBar.onPlay`'s guard so the keyboard
         // shortcut can't bypass the disabled Play button.

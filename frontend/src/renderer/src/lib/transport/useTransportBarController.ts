@@ -142,6 +142,10 @@ export function useTransportBarController() {
   const playButtonTitle = computed(() => {
     if (transport.isPlaybackHeld) return 'Playback held by MIDI jog wheel'
     if (transport.isPlaying) return 'Pause'
+    if (transport.audioState === 'no_device') {
+      return 'No audio output available — choose an output device'
+    }
+    if (transport.audioState === 'failed') return 'Audio engine failed to start'
     if (!audioReady.value) return 'Starting audio engine…'
     if (playDisabled.value) return 'Playhead at end of project — skip back to play'
     return 'Play'

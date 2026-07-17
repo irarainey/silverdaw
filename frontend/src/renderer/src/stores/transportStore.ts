@@ -105,6 +105,13 @@ export const useTransportStore = defineStore('transport', {
     },
     /** Audio-device readiness from the backend `ENGINE_AUDIO_STATUS` broadcast. */
     setAudioState(state: TransportState['audioState']): void {
+      if (
+        state === 'starting' &&
+        (this.audioState === 'no_device' || this.audioState === 'failed')
+      ) {
+        log.warn('transport', `ignored stale audioState -> ${state}`)
+        return
+      }
       if (this.audioState !== state) {
         log.info('transport', `audioState -> ${state}`)
       }

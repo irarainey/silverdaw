@@ -85,6 +85,10 @@ export function seekToMarkerIndex(index: number, source = 'marker shortcut'): vo
 export function toggleTransportPlayback(source = 'click'): void {
   const project = useProjectStore()
   const transport = useTransportStore()
+  if (!transport.isPlaying && transport.audioState !== 'ready') {
+    log.info('transport', `${source} play ignored (audio output unavailable)`)
+    return
+  }
   if (transport.midiPlaybackHoldActive) {
     if (transport.isPlaying) {
       log.info('transport', `${source} pause while MIDI playback is held`)

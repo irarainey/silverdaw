@@ -57,7 +57,7 @@ juce::String AudioEngine::openAudioDeviceBlocking(const juce::String& preferredT
     juce::String err;
     if (preferredTypeName.isNotEmpty() && preferredDeviceName.isNotEmpty())
     {
-        err = selectOutputDevice(preferredTypeName, preferredDeviceName);
+        err = selectOutputDeviceBlocking(preferredTypeName, preferredDeviceName);
         if (err.isNotEmpty())
         {
             silverdaw::log::warn("audio",
@@ -158,6 +158,18 @@ void AudioEngine::refreshAudioDevices()
 }
 
 juce::String AudioEngine::selectOutputDevice(const juce::String& typeName, const juce::String& deviceName)
+{
+    const bool needsInitialisation = ! isAudioReady();
+    const auto err = selectOutputDeviceBlocking(typeName, deviceName);
+    if (err.isEmpty() && needsInitialisation)
+    {
+        finaliseAudioDevice(/*fellBack*/ false);
+    }
+    return err;
+}
+
+juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeName,
+                                                      const juce::String& deviceName)
 {
     if (typeName.isEmpty() && deviceName.isEmpty())
     {

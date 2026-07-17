@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- Audio output startup failures now show a clear message and recover when you choose an available device.
 - Dragging controls no longer accidentally selects interface text.
 - Warp playback performance is improved.
 - Tracks with neutral Tone controls now skip inactive filtering during playback.
