@@ -6,6 +6,8 @@ import LibraryClipRow from '@/components/LibraryClipRow.vue'
 
 const props = defineProps<{
   itemCount: number
+  filteredItemCount: number
+  filterQuery: string
   sourceItems: readonly LibraryItem[]
   orphanLibraryClipItems: readonly LibraryItem[]
   isDragOver: boolean
@@ -58,6 +60,12 @@ const editingValue = defineModel<string>('editingValue', { required: true })
       to add them.
     </div>
     <div
+      v-else-if="props.filteredItemCount === 0"
+      class="flex h-full w-full items-center justify-center text-xs text-zinc-500"
+    >
+      No library items match "{{ props.filterQuery }}".
+    </div>
+    <div
       v-else
       class="flex w-full min-w-0 flex-wrap items-start content-start gap-3"
     >
@@ -67,6 +75,7 @@ const editingValue = defineModel<string>('editingValue', { required: true })
         v-model:editing-value="editingValue"
         :source="source"
         :children="props.childItems(source)"
+        :force-expanded="props.filterQuery.trim().length > 0"
         :cover-art-url="props.groupCoverArtUrl(source)"
         :show-tile-images="props.showTileImages"
         :editing-item-id="props.editingItemId"

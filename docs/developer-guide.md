@@ -1998,6 +1998,10 @@ The bottom library panel stores source, stem, sample, and clip items as draggabl
 Tiles wrap to the available width and the panel scrolls vertically when there are more
 tiles than fit; it does not expose a horizontal scrollbar. Each source tile shows
 duration, detected key and detected BPM when those fields are available.
+Use the filter field beside **Import** to narrow items by their displayed name,
+artist, or BPM. The circled **X** clears the filter. A matching saved clip keeps
+its source group visible and expands it for the duration of the filter. Press
+**Escape** while the filter field is focused to clear it.
 
 **Saved clips** — choose **Library ▸ Save Clip to Library** on a timeline clip to
 turn its trim window into a reusable library entry. Saved clips are non-destructive

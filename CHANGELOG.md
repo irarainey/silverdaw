@@ -5,6 +5,7 @@
 ### Added
 
 - Explorer audio files can now be dropped directly onto the timeline.
+- The Library can now be filtered by track name, artist, or BPM.
 - Beat Repeat adds tempo-aligned per-track repeat regions from the timeline Effects menu.
 - Bit Crusher track effect adds per-track lo-fi digital reduction controls.
 - Punch track effect adds per-track transient enhancement controls.

@@ -8,6 +8,7 @@ import { LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasse
 const props = defineProps<{
   source: LibraryItem
   children: readonly LibraryItem[]
+  forceExpanded?: boolean
   coverArtUrl?: string
   showTileImages: boolean
   editingItemId: string | null
@@ -66,6 +67,7 @@ const tileFallbackBgClass = computed(() =>
   isSampleTile.value ? 'bg-indigo-900/40' : isStemTile.value ? 'bg-teal-950/50' : 'bg-sky-950/40'
 )
 const libraryClipChildren = computed(() => props.children.filter((item) => item.kind === 'clip'))
+const childrenExpanded = computed(() => props.forceExpanded || !props.source.collapsed)
 
 /** Compact summary for the collapse header, e.g. "3 saved clips". */
 const childSummary = computed(() => {
@@ -238,8 +240,10 @@ const childSummary = computed(() => {
       <button
         type="button"
         data-borderless-button="true"
-        class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300"
-        :title="props.source.collapsed ? 'Show saved clips' : 'Hide saved clips'"
+        class="flex w-full items-center gap-1.5 border-t border-zinc-800/80 px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 transition-colors"
+        :class="props.forceExpanded ? 'cursor-default' : 'hover:bg-zinc-800/60 hover:text-zinc-300'"
+        :title="props.forceExpanded ? 'Saved clips shown while filtering' : childrenExpanded ? 'Hide saved clips' : 'Show saved clips'"
+        :disabled="props.forceExpanded"
         @click="emit('toggleCollapsed', props.source.id, !props.source.collapsed)"
       >
         <svg
@@ -247,14 +251,14 @@ const childSummary = computed(() => {
           viewBox="0 0 24 24"
           fill="currentColor"
           class="h-3 w-3 transition-transform"
-          :class="props.source.collapsed ? '-rotate-90' : ''"
+          :class="childrenExpanded ? '' : '-rotate-90'"
           aria-hidden="true"
         >
           <path d="M7 10l5 5 5-5H7z" />
         </svg>
         <span>{{ childSummary }}</span>
       </button>
-      <template v-if="!props.source.collapsed">
+      <template v-if="childrenExpanded">
         <LibraryClipRow
           v-for="item in libraryClipChildren"
           :key="item.id"
