@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Project Delay Time now uses direct beat-division buttons.
 - Effect racks now provide hover explanations for each effect.
 - Project FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
 - Track FX keeps its five responsive effect columns within the effects panel.
