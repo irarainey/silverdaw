@@ -192,6 +192,22 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("automation", track.getProperty(kAutomation));
         }
 
+        const auto beatRepeats = getBeatRepeatRegions(track.getProperty(kId).toString());
+        if (!beatRepeats.empty())
+        {
+            juce::Array<juce::var> regions;
+            for (const auto& region : beatRepeats)
+            {
+                auto* regionObj = new juce::DynamicObject();
+                regionObj->setProperty("id", region.id);
+                regionObj->setProperty("startBeat", region.startBeat);
+                regionObj->setProperty("lengthBeats", region.lengthBeats);
+                regionObj->setProperty("division", region.division);
+                regions.add(juce::var(regionObj));
+            }
+            trackObj->setProperty("beatRepeats", regions);
+        }
+
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)
         {

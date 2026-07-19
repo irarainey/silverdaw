@@ -17,7 +17,8 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import {
   effectiveClipDurationMs,
   TRACK_PALETTE,
-  useProjectStore
+  useProjectStore,
+  type Clip
 } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -31,6 +32,8 @@ import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
 import { requestChannelSplitForClip } from '@/lib/stems/channelSplitFlow'
 import { log } from '@/lib/log'
+import { DEFAULT_BEATS_PER_BAR, DEFAULT_SUBS_PER_BEAT } from '@/lib/musicTime'
+import type { BeatRepeatDivision } from '@shared/bridge-protocol'
 
 export type ChooseAudioFile = (args: {
   title?: string
@@ -73,6 +76,8 @@ export interface TimelineContextMenu {
   contextMenuOpen: Ref<boolean>
   contextMenuX: Ref<number>
   contextMenuY: Ref<number>
+  /** Beat snapped from the playhead when the menu opened. */
+  contextMenuStartBeat: Ref<number>
   contextMenuClipId: Ref<string | null>
   /** Track targeted by an empty-lane right-click (Paste menu); null otherwise. */
   contextMenuTrackId: Ref<string | null>
@@ -87,6 +92,14 @@ const DEFAULT_CHOOSE_AUDIO_FILE: ChooseAudioFile = (args) => {
   if (!api) return Promise.resolve(null)
   return api.chooseAudioFile(args)
 }
+
+const BEAT_REPEAT_DIVISIONS: readonly BeatRepeatDivision[] = ['1/4', '1/8', '1/16']
+const BEAT_REPEAT_LENGTHS = [
+  { beats: 0.5, label: '1/2 Beat' },
+  { beats: 1, label: '1 Beat' },
+  { beats: 2, label: '2 Beats' },
+  { beats: DEFAULT_BEATS_PER_BAR, label: '1 Bar' }
+] as const
 
 export function useTimelineContextMenu(
   inputs: UseTimelineContextMenuInputs
@@ -115,8 +128,85 @@ export function useTimelineContextMenu(
   const contextMenuOpen = ref(false)
   const contextMenuX = ref(0)
   const contextMenuY = ref(0)
+  const contextMenuStartBeat = ref(0)
   const contextMenuClipId = ref<string | null>(null)
   const contextMenuTrackId = ref<string | null>(null)
+
+  function beatRepeatItem(trackId: string, clip?: Clip): ClipContextMenuItem {
+    const track = project.tracks.find((candidate) => candidate.id === trackId)
+    const startBeat = contextMenuStartBeat.value
+    const regions = track?.beatRepeats ?? []
+    const activeRegion = regions.find(
+      (region) => startBeat >= region.startBeat && startBeat < region.startBeat + region.lengthBeats
+    )
+    const clipStartBeat = clip ? (clip.startMs / 60000) * transport.bpm : Number.NaN
+    const clipEndBeat = clip
+      ? ((clip.startMs + effectiveClipDurationMs(clip)) / 60000) * transport.bpm
+      : Number.NaN
+    const affectingClip = Number.isFinite(clipStartBeat) && Number.isFinite(clipEndBeat)
+      ? regions.filter(
+          (region) =>
+            region.startBeat < clipEndBeat && region.startBeat + region.lengthBeats > clipStartBeat
+        )
+      : activeRegion
+        ? [activeRegion]
+        : []
+    const additions = BEAT_REPEAT_LENGTHS.map(({ beats, label }) => {
+      const endBeat = startBeat + beats
+      const overlaps = regions.some(
+        (region) => startBeat < region.startBeat + region.lengthBeats && endBeat > region.startBeat
+      )
+      return {
+        command: `track.beatRepeatLength:${beats}`,
+        label,
+        disabled: overlaps,
+        title: overlaps ? 'A Beat Repeat region already overlaps this duration' : undefined,
+        submenu: BEAT_REPEAT_DIVISIONS.map((division) => ({
+          command: `track.beatRepeatAdd:${beats}:${division}`,
+          label: division
+        }))
+      }
+    })
+    const removals = affectingClip.map((region, index) => ({
+      command: `track.beatRepeatDelete:${region.id}`,
+      label: `✓ Beat ${region.startBeat + 1} · ${region.division}`,
+      title: 'Remove this Beat Repeat region',
+      separatorAbove: index === 0
+    }))
+    return {
+      command: 'track.beatRepeat',
+      label: affectingClip.length > 0 ? '✓ Beat Repeat' : 'Beat Repeat',
+      title: affectingClip.length > 0
+        ? 'This clip intersects one or more Beat Repeat regions'
+        : 'Repeat the first division of one bar from the playhead',
+      submenu: [...additions, ...removals]
+    }
+  }
+
+  function effectsItem(
+    trackId: string,
+    playbackItems: ReadonlyArray<ClipContextMenuItem> = [],
+    clip?: Clip
+  ): ClipContextMenuItem {
+    return {
+      command: 'track.effects',
+      label: 'Effects',
+      submenu: [beatRepeatItem(trackId, clip), ...playbackItems]
+    }
+  }
+
+  function snapContextMenuBeatToPlayhead(): void {
+    const timelineMs = transport.positionMs
+    const bpm = transport.bpm
+    contextMenuStartBeat.value =
+      Number.isFinite(timelineMs) && Number.isFinite(bpm) && bpm > 0
+        ? Math.max(
+            0,
+            Math.round((timelineMs / 60000) * bpm * DEFAULT_SUBS_PER_BEAT) /
+              DEFAULT_SUBS_PER_BEAT
+          )
+        : 0
+  }
 
   const contextMenuItems = computed<ClipContextMenuItem[]>(() => {
     // Empty track-lane right-click: a Paste-only menu that drops the clipboard
@@ -127,7 +217,8 @@ export function useTimelineContextMenu(
           command: 'track.paste',
           label: 'Paste',
           disabled: !project.clipboardClip && !project.clipboardClips
-        }
+        },
+        { ...effectsItem(contextMenuTrackId.value), separatorAbove: true }
       ]
     }
     // Multi-selection: a short, dedicated menu of operations that apply to the whole group,
@@ -166,43 +257,27 @@ export function useTimelineContextMenu(
     }
     const hasLibraryItem = !!clipParent
     items.push({
-      command: 'clip.openEditor',
-      label: 'Open in Clip Editor',
-      disabled: !clip || clip.unresolved || !hasLibraryItem
+      command: 'clip.open',
+      label: 'Open',
+      submenu: [
+        {
+          command: 'clip.openEditor',
+          label: 'Clip Editor',
+          disabled: !clip || clip.unresolved || !hasLibraryItem
+        },
+        {
+          command: 'clip.openScratchEditor',
+          label: 'Scratch Editor',
+          disabled: !clip || clip.unresolved || !hasLibraryItem,
+          title: 'Open this clip in the Scratch Editor'
+        },
+        {
+          command: 'clip.info',
+          label: 'Show Information',
+          disabled: !clip || clip.unresolved || !hasLibraryItem
+        }
+      ]
     })
-    items.push({
-      command: 'clip.openScratchEditor',
-      label: 'Open in Scratch Editor',
-      disabled: !clip || clip.unresolved || !hasLibraryItem,
-      title: 'Open this clip in the Scratch Editor'
-    })
-    items.push({
-      command: 'clip.info',
-      label: 'Show Information',
-      disabled: !clip || clip.unresolved || !hasLibraryItem
-    })
-    items.push({ command: 'clip.cut', label: 'Cut', separatorAbove: true })
-    items.push({ command: 'clip.copy', label: 'Copy' })
-    items.push({
-      command: 'clip.paste',
-      label: 'Paste',
-      // Paste needs a clip (single or group) on the clipboard; it lands on this
-      // clip's track at the playhead, mirroring the Edit-menu / Ctrl+V behaviour.
-      disabled: !project.clipboardClip && !project.clipboardClips
-    })
-    items.push({ command: 'clip.duplicate', label: 'Duplicate' })
-    items.push({ command: 'clip.delete', label: 'Delete' })
-    if (clip) {
-      // Lock toggle: label flips based on the current flag so a single
-      // command + a single menu row covers both directions. Placed in
-      // its own separator group so it's visually distinct from the
-      // destructive Delete/Duplicate row above.
-      items.push({
-        command: clip.locked ? 'clip.unlock' : 'clip.lock',
-        label: clip.locked ? 'Unlock' : 'Lock',
-        separatorAbove: true
-      })
-    }
     const isLinkedClip = clipParent?.kind === 'clip'
     const playheadOverClip =
       !!clip &&
@@ -210,33 +285,29 @@ export function useTimelineContextMenu(
       transport.positionMs > clip.startMs &&
       transport.positionMs < clip.startMs + effectiveClipDurationMs(clip)
     items.push({
-      command: 'clip.split',
-      label: clip?.locked ? 'Split at Playhead (clip is locked)' : 'Split at Playhead',
-      disabled: isLinkedClip || !playheadOverClip
-    })
-    // Quick chop: slice the whole clip onto the beat grid without opening the
-    // editor. Only offered for an unlocked, unlinked clip with a known tempo
-    // (the editor's Slice mode adds manual markers and 1/32).
-    const chopSrc = clip ? library.byId[clip.libraryItemId] : undefined
-    if (clip && !clip.locked && !isLinkedClip && chopSrc?.bpm && chopSrc.bpm > 0) {
-      const SUBS: { sub: SliceSubdivision; label: string }[] = [
-        { sub: '1 bar', label: '1 bar' },
-        { sub: '1/2 bar', label: '1/2 bar' },
-        { sub: '1/4', label: '1/4' },
-        { sub: '1/8', label: '1/8' },
-        { sub: '1/16', label: '1/16' }
+      command: 'clip.edit',
+      label: 'Edit',
+      separatorAbove: true,
+      submenu: [
+        { command: 'clip.cut', label: 'Cut' },
+        { command: 'clip.copy', label: 'Copy' },
+        {
+          command: 'clip.paste',
+          label: 'Paste',
+          disabled: !project.clipboardClip && !project.clipboardClips
+        },
+        { command: 'clip.duplicate', label: 'Duplicate' },
+        {
+          command: clip?.locked ? 'clip.unlock' : 'clip.lock',
+          label: clip?.locked ? 'Unlock' : 'Lock'
+        },
+        {
+          command: 'clip.split',
+          label: clip?.locked ? 'Split at Playhead (clip is locked)' : 'Split at Playhead',
+          disabled: isLinkedClip || !playheadOverClip
+        }
       ]
-      items.push({
-        command: 'clip.chopGrid',
-        label: 'Chop to Grid',
-        separatorAbove: true,
-        title: 'Slice the clip into adjacent clips on the beat grid',
-        submenu: SUBS.map(({ sub, label }) => ({
-          command: `clip.chopGrid:${sub}`,
-          label
-        }))
-      })
-    }
+    })
     if (clip) {
       const track = project.tracks.find((t) => t.id === clip.trackId)
       const selected =
@@ -253,20 +324,44 @@ export function useTimelineContextMenu(
         selectedSwatch: selected
       })
     }
-    items.push({ command: 'clip.warp', label: 'Warp', separatorAbove: true })
-    items.push({ command: 'clip.pitch', label: 'Pitch' })
-    items.push({
-      command: 'clip.separateStems',
-      label: 'Separate Stems',
-      title:
-        'Split the clip into vocals, drums, bass, and other stems, each on its own ' +
-        'new track (non-destructive). A one-time model download is needed on first use.',
-      disabled: !clip || clip.unresolved || !hasLibraryItem
-    })
+    const transformItems: ClipContextMenuItem[] = [
+      { command: 'clip.warp', label: 'Warp' },
+      { command: 'clip.pitch', label: 'Pitch' },
+      {
+        command: 'clip.separateStems',
+        label: 'Separate Stems',
+        title:
+          'Split the clip into vocals, drums, bass, and other stems, each on its own ' +
+          'new track (non-destructive). A one-time model download is needed on first use.',
+        disabled: !clip || clip.unresolved || !hasLibraryItem
+      }
+    ]
+    // Quick chop: slice the whole clip onto the beat grid without opening the
+    // editor. Only offered for an unlocked, unlinked clip with a known tempo
+    // (the editor's Slice mode adds manual markers and 1/32).
+    const chopSrc = clip ? library.byId[clip.libraryItemId] : undefined
+    if (clip && !clip.locked && !isLinkedClip && chopSrc?.bpm && chopSrc.bpm > 0) {
+      const subdivisions: { sub: SliceSubdivision; label: string }[] = [
+        { sub: '1 bar', label: '1 bar' },
+        { sub: '1/2 bar', label: '1/2 bar' },
+        { sub: '1/4', label: '1/4' },
+        { sub: '1/8', label: '1/8' },
+        { sub: '1/16', label: '1/16' }
+      ]
+      transformItems.unshift({
+        command: 'clip.chopGrid',
+        label: 'Chop to Grid',
+        title: 'Slice the clip into adjacent clips on the beat grid',
+        submenu: subdivisions.map(({ sub, label }) => ({
+          command: `clip.chopGrid:${sub}`,
+          label
+        }))
+      })
+    }
     // Stereo-only: split a channel out to its own track (that channel copied to both
     // sides). Hidden entirely when the source isn't a stereo file.
     if (clip && hasLibraryItem && clipParent?.channelCount === 2) {
-      items.push({
+      transformItems.push({
         command: 'clip.splitChannels',
         label: 'Split Stereo Channels…',
         title:
@@ -275,6 +370,12 @@ export function useTimelineContextMenu(
         disabled: clip.unresolved
       })
     }
+    items.push({
+      command: 'clip.transform',
+      label: 'Transform',
+      separatorAbove: true,
+      submenu: transformItems
+    })
     if (clip) {
       // Reverse and the two turntable tail effects (brake / backspin) form a
       // mutually-exclusive group: each row stays visible but is disabled while
@@ -289,7 +390,8 @@ export function useTimelineContextMenu(
       const groupHint =
         'a clip can be reversed or have a turntable effect, not both'
 
-      items.push({
+      const playbackItems: ClipContextMenuItem[] = []
+      playbackItems.push({
         command: 'clip.reverse',
         label: reversed ? '\u2713 Reverse' : 'Reverse',
         disabled: !reversed && (brakeOn || backspinOn),
@@ -301,7 +403,7 @@ export function useTimelineContextMenu(
               ? 'Play the clip backwards. Applies to every linked instance of this saved clip.'
               : 'Play the clip backwards (non-destructive).'
       })
-      items.push({
+      playbackItems.push({
         command: 'clip.brake',
         label: brakeOn ? '\u2713 Brake' : 'Brake',
         disabled: !brakeOn && (reversed || backspinOn),
@@ -311,7 +413,7 @@ export function useTimelineContextMenu(
             ? 'Turn off Backspin first — a clip can have a brake or a backspin, not both'
             : 'Decelerate the clip to a stop at its end, like a turntable record-stop'
       })
-      items.push({
+      playbackItems.push({
         command: 'clip.backspin',
         label: backspinOn ? '\u2713 Backspin' : 'Backspin',
         disabled: !backspinOn && (reversed || brakeOn),
@@ -320,6 +422,10 @@ export function useTimelineContextMenu(
           : !backspinOn && brakeOn
             ? 'Turn off Brake first — a clip can have a brake or a backspin, not both'
             : 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
+      })
+      items.push({
+        ...effectsItem(clip.trackId, playbackItems, clip),
+        separatorAbove: true
       })
     }
     // §12.1 — crossfade recipe + removal. A clip can fade out into its
@@ -333,6 +439,7 @@ export function useTimelineContextMenu(
       const clipTransitions = track?.transitions ?? []
       const asLeft = clipTransitions.find((tr) => tr.leftClipId === clip.id)
       const asRight = clipTransitions.find((tr) => tr.rightClipId === clip.id)
+      const crossfadeItems: ClipContextMenuItem[] = []
       const pushRecipeGroup = (
         tr: { id: string; recipe: { kind: string } },
         sideLabel: string,
@@ -341,14 +448,14 @@ export function useTimelineContextMenu(
       ): void => {
         TRANSITION_RECIPES.forEach((recipe, idx) => {
           const on = tr.recipe.kind === recipe.kind
-          items.push({
+          crossfadeItems.push({
             command: `clip.setTransitionRecipe:${tr.id}:${recipe.kind}`,
             label: `${on ? '\u2713 ' : ''}${sideLabel}: ${recipe.label}`,
             title: recipe.description,
             separatorAbove: firstSeparator && idx === 0
           })
         })
-        items.push({ command: `clip.removeTransition:${tr.id}`, label: removeLabel })
+        crossfadeItems.push({ command: `clip.removeTransition:${tr.id}`, label: removeLabel })
       }
       if (asLeft) {
         pushRecipeGroup(asLeft, 'Crossfade to next', 'Remove Crossfade to Next Clip', true)
@@ -361,17 +468,24 @@ export function useTimelineContextMenu(
           !asLeft
         )
       }
+      if (crossfadeItems.length > 0) {
+        items.push({
+          command: 'clip.crossfade',
+          label: 'Crossfade',
+          separatorAbove: true,
+          submenu: crossfadeItems
+        })
+      }
     }
-    items.push({
+    const libraryItems: ClipContextMenuItem[] = [{
       command: 'clip.saveToLibrary',
       label: 'Save Clip to Library',
-      separatorAbove: true,
       disabled: isLinkedClip
-    })
+    }]
     if (clip && isLinkedClip) {
-      items.push({ command: 'clip.unlink', label: 'Unlink from Library' })
+      libraryItems.push({ command: 'clip.unlink', label: 'Unlink from Library' })
     }
-    items.push({
+    libraryItems.push({
       command: 'clip.saveSample',
       label: 'Save as Sample\u2026',
       title:
@@ -380,6 +494,13 @@ export function useTimelineContextMenu(
         'source tempo, beats, and key so it warps on drop) or a simple one-shot (no musical ' +
         'metadata, never warps). Samples are not linked back to this clip.'
     })
+    items.push({
+      command: 'clip.library',
+      label: 'Library',
+      separatorAbove: true,
+      submenu: libraryItems
+    })
+    items.push({ command: 'clip.delete', label: 'Delete', separatorAbove: true })
     return items
   })
 
@@ -394,6 +515,7 @@ export function useTimelineContextMenu(
     const rect = host.getBoundingClientRect()
     const worldX = e.clientX - rect.left + inputs.scrollX.value
     const worldY = e.clientY - rect.top + inputs.scrollY.value
+    snapContextMenuBeatToPlayhead()
     const regions = inputs.getClipHitRegions()
     // Reverse iterate so the visually top-most clip wins on overlap.
     for (let i = regions.length - 1; i >= 0; i--) {
@@ -447,6 +569,38 @@ export function useTimelineContextMenu(
       }
       contextMenuTrackId.value = null
       contextMenuClipId.value = null
+      return
+    }
+    const beatRepeatTrackId =
+      contextMenuTrackId.value ??
+      (contextMenuClipId.value ? project.clips[contextMenuClipId.value]?.trackId : undefined)
+    if (command.startsWith('track.beatRepeatAdd:')) {
+      const [lengthText, divisionText] = command.slice('track.beatRepeatAdd:'.length).split(':')
+      const lengthBeats = Number(lengthText)
+      const division = divisionText as BeatRepeatDivision
+      if (
+        beatRepeatTrackId &&
+        BEAT_REPEAT_LENGTHS.some((option) => option.beats === lengthBeats) &&
+        BEAT_REPEAT_DIVISIONS.includes(division)
+      ) {
+        project.addTrackBeatRepeat(
+          beatRepeatTrackId,
+          contextMenuStartBeat.value,
+          lengthBeats,
+          division
+        )
+      }
+      contextMenuClipId.value = null
+      contextMenuTrackId.value = null
+      return
+    }
+    if (command.startsWith('track.beatRepeatDelete:')) {
+      const regionId = command.slice('track.beatRepeatDelete:'.length)
+      if (beatRepeatTrackId && regionId.length > 0) {
+        project.deleteTrackBeatRepeat(beatRepeatTrackId, regionId)
+      }
+      contextMenuClipId.value = null
+      contextMenuTrackId.value = null
       return
     }
     // Multi-selection batch operations (each is one undo step; see the store actions).
@@ -630,6 +784,7 @@ export function useTimelineContextMenu(
     contextMenuOpen,
     contextMenuX,
     contextMenuY,
+    contextMenuStartBeat,
     contextMenuClipId,
     contextMenuTrackId,
     contextMenuItems,

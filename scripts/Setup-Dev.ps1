@@ -224,13 +224,30 @@ if (-not $SkipPrereqs) {
     }
     Write-Step 'corepack enable'
     & corepack enable | Out-Null
-    Write-Step 'corepack prepare pnpm@latest --activate'
-    & corepack prepare 'pnpm@latest' --activate | Out-Null
+    $packageManager = (Get-Content (Join-Path $frontendDir 'package.json') -Raw |
+        ConvertFrom-Json).packageManager
+    if ($packageManager -notmatch '^pnpm@') {
+        throw "frontend/package.json must declare pnpm in its packageManager field."
+    }
     Update-PathFromMachine
-    if (Test-CommandOnPath 'pnpm') {
-        Write-Ok "pnpm activated: $(& pnpm --version)"
-    } else {
+    if (-not (Test-CommandOnPath 'pnpm')) {
         throw "pnpm still not on PATH after corepack activation. Open a new shell and re-run."
+    }
+
+    Push-Location $frontendDir
+    try {
+        Write-Step "corepack install ($packageManager)"
+        & corepack install | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "corepack could not install $packageManager."
+        }
+        $pnpmVersion = & pnpm --version
+        if ($LASTEXITCODE -ne 0) {
+            throw "pnpm could not start after Corepack installation."
+        }
+        Write-Ok "pnpm activated: $pnpmVersion"
+    } finally {
+        Pop-Location
     }
 } else {
     Write-Section '1. Prerequisites (skipped)'

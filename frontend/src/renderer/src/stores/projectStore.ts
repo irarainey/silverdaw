@@ -50,6 +50,7 @@ import { trackActions } from './projectTrackActions'
 import { clipActions } from './projectClipActions'
 import { clipLibraryActions } from './projectClipLibraryActions'
 import { transitionActions } from './projectTransitionActions'
+import { beatRepeatActions } from './projectBeatRepeatActions'
 import { scratchPatternActions } from './scratchPatternActions'
 
 // Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
@@ -160,6 +161,7 @@ export const useProjectStore = defineStore('project', {
     ...clipActions,
     ...clipLibraryActions,
     ...transitionActions,
+    ...beatRepeatActions,
     ...scratchPatternActions,
 
     selectClip(clipId: string | null): void {

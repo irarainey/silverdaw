@@ -110,6 +110,21 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () => redraw()
   )
 
+  // Beat Repeat regions are beat-space; both region edits and BPM changes alter their footprint.
+  watch(
+    () =>
+      project.tracks
+        .map((track) =>
+          (track.beatRepeats ?? [])
+            .map((region) =>
+              `${region.id}:${region.startBeat}:${region.lengthBeats}:${region.division}`
+            )
+            .join(',')
+        )
+        .join('|'),
+    () => redraw()
+  )
+
   // BPM drives ruler ticks, grid lines, and snap units.
   watch(() => transport.bpm, () => {
     redraw()

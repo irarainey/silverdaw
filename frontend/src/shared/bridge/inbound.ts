@@ -293,6 +293,19 @@ export const ProjectStateTransitionSchema = z.object({
 })
 export type ProjectStateTransition = z.infer<typeof ProjectStateTransitionSchema>
 
+/** Musical loop duration captured by a Beat Repeat region. */
+export const BeatRepeatDivisionSchema = z.enum(['1/4', '1/8', '1/16'])
+export type BeatRepeatDivision = z.infer<typeof BeatRepeatDivisionSchema>
+
+/** Per-track, beat-space repeat region. The backend owns timing and validation. */
+export const ProjectStateBeatRepeatRegionSchema = z.object({
+  id: z.string(),
+  startBeat: z.number().nonnegative(),
+  lengthBeats: z.number().positive(),
+  division: BeatRepeatDivisionSchema
+})
+export type ProjectStateBeatRepeatRegion = z.infer<typeof ProjectStateBeatRepeatRegionSchema>
+
 export const ProjectStateTrackSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
@@ -330,7 +343,8 @@ export const ProjectStateTrackSchema = z.object({
     )
     .optional(),
   clips: z.array(ProjectStateClipSchema),
-  transitions: z.array(ProjectStateTransitionSchema).optional()
+  transitions: z.array(ProjectStateTransitionSchema).optional(),
+  beatRepeats: z.array(ProjectStateBeatRepeatRegionSchema).optional()
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
 

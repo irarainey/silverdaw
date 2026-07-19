@@ -1,6 +1,7 @@
 #include "MixdownRenderPass1.h"
 
 #include "BusGraph.h"
+#include "BeatRepeatSnapshot.h"
 #include "Log.h"
 #include "MixdownBroadcast.h"
 #include "SafetyLimiter.h"
@@ -102,6 +103,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     // `mixdownPos`, updated to the project frame before each block, so the export
     // tracks the curves identically to live playback (same control quantum).
     std::vector<std::unique_ptr<silverdaw::TrackAutomationSnapshot>> automationSnaps;
+    std::vector<std::unique_ptr<silverdaw::BeatRepeatSnapshot>> beatRepeatSnaps;
     std::atomic<juce::int64> mixdownPos{0};
     busGraph.setTimelineSamplesSource(&mixdownPos);
     for (const auto& trackSnap : snapshot.tracks)
@@ -122,11 +124,24 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                 snap->has[pi] = true;
                 snap->curves[pi] = std::move(curve);
             }
+
         }
         if (snap->hasAny())
         {
             busGraph.setTrackAutomationPtr(trackSnap.id, snap.get());
             automationSnaps.push_back(std::move(snap));
+        }
+    }
+
+    for (const auto& trackSnap : snapshot.tracks)
+    {
+        if (trackSnap.beatRepeats.empty()) continue;
+        auto snap = silverdaw::makeBeatRepeatSnapshot(
+            trackSnap.beatRepeats, static_cast<double>(snapshot.projectSampleRate), snapshot.bpm);
+        if (!snap->regions.empty())
+        {
+            busGraph.setTrackBeatRepeatPtr(trackSnap.id, snap.get());
+            beatRepeatSnaps.push_back(std::move(snap));
         }
     }
 

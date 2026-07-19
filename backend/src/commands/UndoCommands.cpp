@@ -28,6 +28,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_SET_BIT_CRUSHER" ||
            type == "TRACK_SET_PAN" ||
            type == "TRACK_SET_AUTOMATION" ||
+           type == "TRACK_BEAT_REPEAT_ADD" || type == "TRACK_BEAT_REPEAT_DELETE" ||
            type == "CLIP_SET_ENVELOPE" ||
            type == "CLIP_SET_REVERSED" || type == "CLIP_SET_BRAKE" ||
            type == "CLIP_SET_BACKSPIN" ||
@@ -79,6 +80,8 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_BIT_CRUSHER") return "Change track bit crusher";
     if (type == "TRACK_SET_PAN") return "Change track pan";
     if (type == "TRACK_SET_AUTOMATION") return "Edit track automation";
+    if (type == "TRACK_BEAT_REPEAT_ADD") return "Add beat repeat";
+    if (type == "TRACK_BEAT_REPEAT_DELETE") return "Remove beat repeat";
     if (type == "CLIP_SET_ENVELOPE") return "Edit clip volume envelope";
     if (type == "CLIP_SET_REVERSED") return "Reverse clip";
     if (type == "CLIP_SET_BRAKE") return "Brake clip";

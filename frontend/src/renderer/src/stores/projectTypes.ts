@@ -4,6 +4,7 @@ import type {
   AutomationPoint,
   ClipEnvelopePoint,
   ClipWarpMode,
+  BeatRepeatDivision,
   DelayNoteValue,
   ScratchPattern,
   TransitionRecipe
@@ -86,6 +87,25 @@ export interface Transition {
   recipe: TransitionRecipe
 }
 
+/** A beat-aligned, per-track captured-loop region. */
+export interface BeatRepeatRegion {
+  readonly id: string
+  startBeat: number
+  lengthBeats: number
+  division: BeatRepeatDivision
+}
+
+export function beatRepeatDivisionBeats(division: BeatRepeatDivision): number {
+  switch (division) {
+    case '1/4':
+      return 1
+    case '1/8':
+      return 0.5
+    case '1/16':
+      return 0.25
+  }
+}
+
 export interface Track {
   readonly id: string
   name: string
@@ -123,6 +143,8 @@ export interface Track {
   bitCrusherMix?: number
   /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
   transitions?: Transition[]
+  /** Persisted beat-aligned stutter regions for this track. */
+  beatRepeats?: BeatRepeatRegion[]
   /** Per-track effect automation curves, keyed by parameter id. A lane is present
    *  only when it has a drawn curve (>= 2 breakpoints). */
   automation?: Partial<Record<AutomationParamId, AutomationPoint[]>>

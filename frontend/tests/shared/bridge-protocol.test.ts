@@ -470,6 +470,38 @@ describe('isProjectStatePayload', () => {
     ).toBe(true)
   })
 
+  it('accepts beat repeat regions and rejects invalid timing or divisions', () => {
+    const track = { id: 't1', gain: 1.0, clips: [] }
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 4, division: '1/8' }]
+      }]
+    })).toBe(true)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: -1, lengthBeats: 4, division: '1/8' }]
+      }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 0, division: '1/8' }]
+      }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 4, division: '1/32' }]
+      }]
+    })).toBe(false)
+  })
+
   it('rejects missing name or wrong-typed filePath', () => {
     expect(isProjectStatePayload({ filePath: null, tracks: [] })).toBe(false)
     expect(isProjectStatePayload({ name: 'x', tracks: [] })).toBe(false)

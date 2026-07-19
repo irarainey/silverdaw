@@ -10,6 +10,7 @@
 #include <juce_core/juce_core.h>
 
 #include "EdgeFadeSnapshot.h"
+#include "ProjectStateTypes.h"
 #include "BrakeSnapshot.h"
 #include "BackspinSnapshot.h"
 
@@ -82,6 +83,7 @@ struct MixdownSnapshot
             std::vector<std::pair<double, float>> points; // (timeMs, value)
         };
         std::vector<AutomationLane> automation;
+        std::vector<BeatRepeatRegion> beatRepeats;
         std::vector<ClipSnapshot> clips;
     };
 

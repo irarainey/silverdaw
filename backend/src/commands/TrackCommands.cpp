@@ -97,6 +97,7 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         engine.removeClip(clipId);
     }
+    engine.clearTrackBeatRepeatRegions(trackId);
     projectState.removeTrack(trackId);
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);

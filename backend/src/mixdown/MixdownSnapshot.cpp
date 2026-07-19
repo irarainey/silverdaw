@@ -79,6 +79,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
         track.reverbSend = project.getTrackReverbSend(track.id);
         track.delaySend = project.getTrackDelaySend(track.id);
         track.pan = project.getTrackPan(track.id);
+        track.beatRepeats = project.getBeatRepeatRegions(track.id);
 
         // Per-track effect automation lanes for export parity with playback.
         const auto autoLanes = project.getTrackAutomationLanes(track.id);

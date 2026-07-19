@@ -35,6 +35,7 @@ std::vector<TestCase> buildRegistry()
     addLoudnessTests(tests);
     addEnvelopeFadeTests(tests);
     addAutomationTests(tests);
+    addBeatRepeatTests(tests);
     addMixdownRenderTests(tests);
     addStemSeparationTests(tests);
     addBpmDetectorTests(tests);
@@ -65,9 +66,9 @@ int main(int argc, char** argv)
 
     const auto tests = buildRegistry();
 #if defined(SILVERDAW_STEM_SEPARATION)
-    require(tests.size() == 363, "backend test registry should contain 363 tests");
+    require(tests.size() == 365, "backend test registry should contain 365 tests");
 #else
-    require(tests.size() == 361, "backend test registry should contain 361 tests");
+    require(tests.size() == 363, "backend test registry should contain 363 tests");
 #endif
 
     bool listOnly = false;

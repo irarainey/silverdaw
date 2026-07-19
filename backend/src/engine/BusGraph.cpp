@@ -79,6 +79,9 @@ void BusGraph::attachClip(const juce::String& trackId,
         auto automationIt = pendingAutomation.find(trackId);
         if (createdRuntime && automationIt != pendingAutomation.end())
             rt->publishedAutomation = automationIt->second;
+        auto beatRepeatIt = pendingBeatRepeats.find(trackId);
+        if (createdRuntime && beatRepeatIt != pendingBeatRepeats.end())
+            rt->publishedBeatRepeat = beatRepeatIt->second;
 
         auto toneIt = pendingTone.find(trackId);
         if (toneIt != pendingTone.end())
@@ -434,6 +437,32 @@ void BusGraph::setTrackAutomationPtr(const juce::String& trackId,
     }
 }
 
+void BusGraph::setTrackBeatRepeatPtr(const juce::String& trackId,
+                                     const BeatRepeatSnapshot* snap)
+{
+    if (trackId.isEmpty()) return;
+    const juce::ScopedLock sl(lock);
+    if (snap == nullptr)
+        pendingBeatRepeats.erase(trackId);
+    else
+        pendingBeatRepeats[trackId] = snap;
+
+    auto it = runtimes.find(trackId);
+    if (it != runtimes.end())
+    {
+        it->second->publishedBeatRepeat = snap;
+        it->second->beatRepeatResetRequested.store(true, std::memory_order_release);
+        publishRenderSnapshot();
+    }
+}
+
+void BusGraph::resetBeatRepeats() noexcept
+{
+    const juce::ScopedLock sl(lock);
+    for (auto& [trackId, runtime] : runtimes)
+        runtime->beatRepeatResetRequested.store(true, std::memory_order_release);
+}
+
 void BusGraph::synchronizeRenderThread()
 {
     const juce::ScopedLock sl(lock);
@@ -469,6 +498,7 @@ void BusGraph::clear()
     pendingSends.clear();
     pendingPans.clear();
     pendingAutomation.clear();
+    pendingBeatRepeats.clear();
     sharedFx.reset();
 }
 

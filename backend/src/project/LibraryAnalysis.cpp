@@ -1,6 +1,7 @@
 #include "LibraryAnalysis.h"
 
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "BpmDetector.h"
 #include "BridgeServer.h"
 #include "DecodedCache.h"
@@ -281,6 +282,7 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     maybeSeedProjectBpmFor(itemId, projectState, bridge);
     // Keep the monitoring metronome in time if this analysis just (re)seeded the project tempo.
     engine.setMetronomeBpm(projectState.getBpm());
+    syncBeatRepeatRegions(engine, projectState);
     return true;
 }
 

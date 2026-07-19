@@ -1,6 +1,7 @@
 #include "BridgeDispatch.h"
 
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "AudioDeviceCommands.h"
 #include "BridgeServer.h"
 #include "ClipCommands.h"
@@ -526,6 +527,16 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             payload.getProperty("trackId", "").toString() +
                                             " paramId=" + payload.getProperty("paramId", "").toString());
         silverdaw::handleTrackSetAutomation(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_BEAT_REPEAT_ADD")
+    {
+        silverdaw::applyBeatRepeatAdd(payload, projectState);
+        silverdaw::finishBeatRepeatEdit(engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_BEAT_REPEAT_DELETE")
+    {
+        silverdaw::applyBeatRepeatDelete(payload, projectState);
+        silverdaw::finishBeatRepeatEdit(engine, projectState, bridge, ctx.session);
     }
     else
     {

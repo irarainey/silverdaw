@@ -248,6 +248,18 @@ Silverdaw currently supports the core arrangement workflow:
   project-wide Reverb and Delay return buses). The open
   FX tab and the selected track are project **view state**, round-tripped through
   `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
+
+  Beat Repeat regions are stored per track in beat space, so they follow project
+  tempo changes. Right-click a clip or empty track lane and choose **Effects →
+  Beat Repeat**, choose a `1/2`-beat, 1-beat, 2-beat, or 1-bar duration, then
+  `1/4`, `1/8`, or `1/16`, to add a region at the beat-snapped playhead.
+  Its first division of the mixed track is captured and repeated until the
+  region ends. The same context menu removes a region under the pointer.
+  Regions show as a sky overlay and affected clips carry a **REPEAT** badge.
+  Playback and mixdown use the same processor. A seek, timeline discontinuity,
+  or region edit clears the capture so playback begins from fresh track audio
+  instead of replaying an old slice. Older projects omit the optional region
+  data and continue without Beat Repeat.
   The whole panel can also be **minimised to its tab strip** and expanded again
   via the tab-strip toggle (clicking any tab while minimised also expands it); a
   quick height-slide animates the change. That collapsed state
@@ -535,6 +547,12 @@ backend are extracted through the strict
 (`tryGetString` / `tryGetRequiredString` / `tryGetNumber`) which reject
 malformed values up front instead of silently coercing them via
 `juce::var::toString()`.
+
+Beat Repeat uses `TRACK_BEAT_REPEAT_ADD { trackId, startBeat, lengthBeats,
+division }` and `TRACK_BEAT_REPEAT_DELETE { trackId, regionId }`. The backend
+validates the non-overlapping per-track regions, publishes the updated
+`PROJECT_STATE`, and includes each region in its track's optional `beatRepeats`
+array. Valid divisions are `1/4`, `1/8`, and `1/16`.
 
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
@@ -1245,8 +1263,8 @@ the way in, and the original file is never modified (non-destructive editing).
 
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp, the
 per-clip volume-shape multiplier, the per-clip turntable brake / backspin tail
-varispeed (`OffsetSource`), per-track summing, the per-track
-Tone EQ + bipolar Filter, the per-track Leveler, Saturation, and Bit Crusher
+varispeed (`OffsetSource`), per-track summing and optional Beat Repeat, the
+per-track Tone EQ + bipolar Filter, the per-track Leveler, Saturation, and Bit Crusher
 ([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
 [`Saturation`](../backend/src/dsp/Saturation.h) /
 [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
@@ -3042,9 +3060,11 @@ winget install --id Kitware.CMake
 winget install --id Ninja-build.Ninja
 winget install --id OpenJS.NodeJS.LTS
 
-# Activate pnpm (corepack is bundled with Node)
+# Cache the pnpm version pinned by frontend/package.json
 corepack enable
-corepack prepare pnpm@latest --activate
+Push-Location frontend
+corepack install
+Pop-Location
 ```
 
 If you already have Visual Studio or Build Tools installed without the C++ workload, run the

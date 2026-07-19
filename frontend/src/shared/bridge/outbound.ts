@@ -7,7 +7,12 @@
 // by domain would only add file-hopping cost.
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
-import type { LibraryItemKind, StemName, TransitionRecipe } from './inbound'
+import type {
+  BeatRepeatDivision,
+  LibraryItemKind,
+  StemName,
+  TransitionRecipe
+} from './inbound'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -455,6 +460,20 @@ export interface TransitionSetRecipePayload {
   recipe: TransitionRecipe
 }
 
+/** Add a one-shot, beat-aligned repeat region to one track. */
+export interface TrackBeatRepeatAddPayload {
+  trackId: string
+  startBeat: number
+  lengthBeats: number
+  division: BeatRepeatDivision
+}
+
+/** Remove a Beat Repeat region by its backend-minted id. */
+export interface TrackBeatRepeatDeletePayload {
+  trackId: string
+  regionId: string
+}
+
 /** Project-shared Reverb bus. Scalars linear [0,1]; all optional (partial-update). */
 export interface ProjectSetReverbPayload extends GestureHints {
   size?: number
@@ -551,6 +570,8 @@ export interface BridgeOutboundMap {
   TRANSITION_CREATE: TransitionCreatePayload
   TRANSITION_DELETE: TransitionDeletePayload
   TRANSITION_SET_RECIPE: TransitionSetRecipePayload
+  TRACK_BEAT_REPEAT_ADD: TrackBeatRepeatAddPayload
+  TRACK_BEAT_REPEAT_DELETE: TrackBeatRepeatDeletePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
   TRANSPORT_PLAY: undefined
@@ -1174,6 +1195,8 @@ export const bridgeOutboundPayloadKinds: {
   TRANSITION_CREATE: 'payload',
   TRANSITION_DELETE: 'payload',
   TRANSITION_SET_RECIPE: 'payload',
+  TRACK_BEAT_REPEAT_ADD: 'payload',
+  TRACK_BEAT_REPEAT_DELETE: 'payload',
   PROJECT_SET_REVERB: 'payload',
   PROJECT_SET_DELAY: 'payload',
   PROJECT_SET_SAFETY_LIMITER: 'payload',

@@ -1,6 +1,7 @@
 #include "ProjectSession.h"
 
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "DecodedCache.h"
 #include "EnginePlaybackPath.h"
 #include "LibraryAnalysis.h"
@@ -437,6 +438,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
     engine.setMetronomeBpm(projectState.getBpm());
     engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    syncBeatRepeatRegions(engine, projectState);
 
     // Always reset shared FX on new/load so projects never inherit prior settings.
     engine.setProjectReverb(projectState.getProjectReverbSize(),

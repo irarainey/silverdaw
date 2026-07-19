@@ -9,6 +9,8 @@
 #include "Log.h"
 #include "OutputKeepAlive.h"
 #include "TrackChain.h"
+#include "BeatRepeatSnapshot.h"
+#include "ProjectStateTypes.h"
 #include "WarpProcessor.h"
 #include "MasterClockSource.h"
 #include "MeteringSource.h"
@@ -148,6 +150,12 @@ class AudioEngine
     // undo/redo can't leave its last automated value stuck live in the chain. No-op when the
     // track has no automation.
     void clearAllTrackAutomation(const juce::String& trackId);
+
+    void setTrackBeatRepeatRegions(const juce::String& trackId,
+                                   const std::vector<BeatRepeatRegion>& regions,
+                                   double bpm);
+    void clearTrackBeatRepeatRegions(const juce::String& trackId);
+    void retainBeatRepeatRegionsForTracks(const juce::StringArray& trackIds);
 
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
 
@@ -529,7 +537,16 @@ class AudioEngine
     // reclaims them, so the audio thread never frees. See setTrackAutomation.
     std::unordered_map<juce::String, std::unique_ptr<TrackAutomationSnapshot>> automationCurrent;
     std::vector<std::unique_ptr<TrackAutomationSnapshot>> retiredAutomation;
+    struct BeatRepeatDefinition
+    {
+        std::vector<BeatRepeatRegion> regions;
+        double bpm = 120.0;
+    };
+    std::unordered_map<juce::String, BeatRepeatDefinition> beatRepeatDefinitions;
+    std::unordered_map<juce::String, std::unique_ptr<BeatRepeatSnapshot>> beatRepeatCurrent;
+    std::vector<std::unique_ptr<BeatRepeatSnapshot>> retiredBeatRepeats;
 
+    void rebuildBeatRepeatSnapshotsForCurrentSampleRate();
     void rebuildDevicesSnapshot(bool rescan);
 
     // Opens the default OUTPUT endpoint only (no capture). The engine never records, and

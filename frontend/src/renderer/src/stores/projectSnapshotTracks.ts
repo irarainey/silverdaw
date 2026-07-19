@@ -16,7 +16,7 @@ import {
   TRACK_PALETTE
 } from './projectTypes'
 import type { AutomationParamId, AutomationPoint, Clip } from './projectTypes'
-import { filePathToDisplayName, hydrateTransitions } from './projectHelpers'
+import { filePathToDisplayName, hydrateBeatRepeats, hydrateTransitions } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 
 /** Rebuild a track's automation map from the snapshot lanes (sanitised, lanes with
@@ -159,8 +159,9 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
           ? t.bitCrusherMix
           : undefined
     }
-    // Transitions are backend-authoritative and cleared by absent snapshot data.
+    // Timeline effects are backend-authoritative and cleared by absent snapshot data.
     track.transitions = hydrateTransitions(t.transitions)
+    track.beatRepeats = hydrateBeatRepeats(t.beatRepeats)
     // Automation lanes are backend-authoritative too.
     track.automation = hydrateAutomation(t.automation)
     for (const c of t.clips) {

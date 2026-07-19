@@ -126,6 +126,14 @@ class ProjectState : public juce::ValueTree::Listener
     float getTrackBitCrusherBoost(const juce::String& trackId) const;
     float getTrackBitCrusherMix(const juce::String& trackId) const;
 
+    // Non-destructive beat-space regions. The frontend chooses the placement;
+    // this model owns validation, overlap prevention, persistence, and undo.
+    bool addBeatRepeatRegion(const juce::String& trackId, const juce::String& regionId,
+                             double startBeat, double lengthBeats,
+                             const juce::String& division = "1/8");
+    bool removeBeatRepeatRegion(const juce::String& trackId, const juce::String& regionId);
+    std::vector<BeatRepeatRegion> getBeatRepeatRegions(const juce::String& trackId) const;
+
     // One array property keeps envelope drags atomic and default suppression simple.
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;

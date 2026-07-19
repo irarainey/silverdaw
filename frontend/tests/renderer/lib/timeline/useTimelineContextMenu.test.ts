@@ -107,14 +107,18 @@ function setupMenu(opts: {
 }
 
 function commandsOf(menu: ReturnType<typeof useTimelineContextMenu>): string[] {
-  return menu.contextMenuItems.value.map((i) => i.command)
+  return allItems(menu.contextMenuItems.value).map((item) => item.command)
+}
+
+function allItems(items: ReadonlyArray<ClipContextMenuItem>): ClipContextMenuItem[] {
+  return items.flatMap((item) => [item, ...(item.submenu ? allItems(item.submenu) : [])])
 }
 
 function findItem(
   menu: ReturnType<typeof useTimelineContextMenu>,
   command: string
 ): ClipContextMenuItem | undefined {
-  return menu.contextMenuItems.value.find((i) => i.command === command)
+  return allItems(menu.contextMenuItems.value).find((item) => item.command === command)
 }
 
 describe('useTimelineContextMenu — items builder', () => {
@@ -296,10 +300,81 @@ describe('useTimelineContextMenu — items builder', () => {
     expect(commandsOf(menu).some((c) => c.startsWith('clip.removeTransition:'))).toBe(false)
     expect(commandsOf(menu).some((c) => c.startsWith('clip.setTransitionRecipe:'))).toBe(false)
   })
+
+  it('offers Beat Repeat lengths before division at the context-menu beat', () => {
+    const menu = setupMenu({ clip: makeClip(), item: makeAudioFileItem() })
+    menu.contextMenuStartBeat.value = 4
+
+    const beatRepeat = findItem(menu, 'track.beatRepeat')
+    expect(beatRepeat?.submenu?.map((item) => item.command)).toEqual([
+      'track.beatRepeatLength:0.5',
+      'track.beatRepeatLength:1',
+      'track.beatRepeatLength:2',
+      'track.beatRepeatLength:4'
+    ])
+    expect(beatRepeat?.submenu?.[0]?.submenu?.map((item) => item.command)).toEqual([
+      'track.beatRepeatAdd:0.5:1/4',
+      'track.beatRepeatAdd:0.5:1/8',
+      'track.beatRepeatAdd:0.5:1/16'
+    ])
+  })
+
+  it('checks Beat Repeat and lists each intersecting region for removal', () => {
+    const menu = setupMenu({
+      clip: makeClip({ startMs: 2_400, durationMs: 1_000 }),
+      item: makeAudioFileItem()
+    })
+    const project = useProjectStore()
+    project.tracks[0]!.beatRepeats = [{
+      id: 'repeat-1',
+      startBeat: 4,
+      lengthBeats: 4,
+      division: '1/8'
+    }]
+    menu.contextMenuStartBeat.value = 5
+
+    const beatRepeat = findItem(menu, 'track.beatRepeat')
+    expect(beatRepeat?.label).toBe('✓ Beat Repeat')
+    expect(beatRepeat?.submenu).toContainEqual({
+      command: 'track.beatRepeatDelete:repeat-1',
+      label: '✓ Beat 5 · 1/8',
+      title: 'Remove this Beat Repeat region',
+      separatorAbove: true
+    })
+  })
 })
 
 describe('useTimelineContextMenu — command dispatch', () => {
   beforeEach(() => setActivePinia(createPinia()))
+
+  it('uses the beat-snapped playhead rather than the context-menu pointer for Beat Repeat', () => {
+    const clip = makeClip()
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    project.clips = { [clip.id]: clip }
+    project.tracks = [{ id: clip.trackId, beatRepeats: [] } as never]
+    transport.bpm = 120
+    transport.positionMs = 2_625
+    const host = {
+      getBoundingClientRect: () => ({ left: 0, top: 0 })
+    } as HTMLDivElement
+    const menu = useTimelineContextMenu({
+      host: ref(host),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [{ clipId: clip.id, x: 0, y: 0, w: 1_000, h: 100 }],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+
+    menu.onContextMenu({
+      clientX: 900,
+      clientY: 50,
+      preventDefault: vi.fn()
+    } as unknown as MouseEvent)
+
+    expect(menu.contextMenuStartBeat.value).toBe(5.25)
+  })
 
   it('openEditor / openInfo route to the dialog actions', () => {
     const clip = makeClip()
@@ -547,7 +622,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
     expect(paste).toHaveBeenCalledWith(1_234)
   })
 
-  it('empty track-lane menu offers a single Paste, gated on the clipboard', () => {
+  it('empty track-lane menu offers Paste and Beat Repeat, with Paste gated on the clipboard', () => {
     const project = useProjectStore()
     const menu = useTimelineContextMenu({
       host: ref(null),
@@ -560,11 +635,14 @@ describe('useTimelineContextMenu — command dispatch', () => {
     menu.contextMenuClipId.value = null
     menu.contextMenuTrackId.value = 'track-1'
 
-    expect(menu.contextMenuItems.value.map((i) => i.command)).toEqual(['track.paste'])
-    expect(menu.contextMenuItems.value[0]?.disabled).toBe(true)
+    expect(menu.contextMenuItems.value.map((item) => item.command)).toEqual([
+      'track.paste',
+      'track.effects'
+    ])
+    expect(findItem(menu, 'track.paste')?.disabled).toBe(true)
 
     project.clipboardClip = { libraryItemId: 'src' } as never
-    expect(menu.contextMenuItems.value[0]?.disabled).toBeFalsy()
+    expect(findItem(menu, 'track.paste')?.disabled).toBeFalsy()
   })
 
   it('track.paste targets the right-clicked track and pastes at the playhead', () => {
@@ -582,6 +660,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
       headerWidth: () => 200,
       dialogs: useClipDialogs()
     })
+
     menu.contextMenuClipId.value = null
     menu.contextMenuTrackId.value = 'track-9'
     menu.onContextMenuCommand('track.paste')
@@ -590,6 +669,29 @@ describe('useTimelineContextMenu — command dispatch', () => {
     expect(paste).toHaveBeenCalledWith(2_500)
     // Target is cleared after dispatch.
     expect(menu.contextMenuTrackId.value).toBeNull()
+  })
+
+  it('Beat Repeat creation and removal target the context track and snapped beat', () => {
+    const project = useProjectStore()
+    const menu = useTimelineContextMenu({
+      host: ref(null),
+      scrollX: ref(0),
+      scrollY: ref(0),
+      getClipHitRegions: () => [],
+      headerWidth: () => 200,
+      dialogs: useClipDialogs()
+    })
+    const add = vi.spyOn(project, 'addTrackBeatRepeat').mockImplementation(() => {})
+    const remove = vi.spyOn(project, 'deleteTrackBeatRepeat').mockImplementation(() => {})
+
+    menu.contextMenuTrackId.value = 'track-9'
+    menu.contextMenuStartBeat.value = 12
+    menu.onContextMenuCommand('track.beatRepeatAdd:2:1/16')
+    expect(add).toHaveBeenCalledWith('track-9', 12, 2, '1/16')
+
+    menu.contextMenuTrackId.value = 'track-9'
+    menu.onContextMenuCommand('track.beatRepeatDelete:repeat-1')
+    expect(remove).toHaveBeenCalledWith('track-9', 'repeat-1')
   })
 
   it('clip.reverse toggles project.setClipReversed for a source clip', () => {

@@ -3,7 +3,13 @@
 
 import { type ShallowRef } from 'vue'
 import type { Container, Graphics, Text } from 'pixi.js'
-import { isClipTempoWarpActive, type Clip, type TrackPaletteEntry } from '@/stores/projectStore'
+import {
+  effectiveClipDurationMs,
+  isClipTempoWarpActive,
+  useProjectStore,
+  type Clip,
+  type TrackPaletteEntry
+} from '@/stores/projectStore'
 import { libraryItemDisplayName, libraryItemShowsLinkBadge, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { isWarpPending } from '@/lib/warp'
@@ -21,6 +27,7 @@ export interface ClipHeaderRendererDeps {
 
 export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
   const { tracksLayer, GraphicsCtor, TextCtor, transport, acquireGraphics } = deps
+  const project = useProjectStore()
 
   function drawClipHeader(
     clip: Clip,
@@ -46,6 +53,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const BRAKE_BADGE_FULL_W = 44
     const SPIN_BADGE_FULL_W = 38
     const REV_BADGE_FULL_W = 30
+    const REPEAT_BADGE_FULL_W = 48
     const STATUS_BADGE_H = 14
     const STATUS_BADGE_R = 5
     const BADGE_GAP = 4
@@ -85,6 +93,14 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const SPIN_BADGE_W = hasBackspin ? SPIN_BADGE_FULL_W : 0
     const hasReversed = clip.reversed === true
     const REV_BADGE_W = hasReversed ? REV_BADGE_FULL_W : 0
+    const clipStartBeat = (clip.startMs / 60000) * transport.bpm
+    const clipEndBeat =
+      ((clip.startMs + effectiveClipDurationMs(clip)) / 60000) * transport.bpm
+    const hasBeatRepeat = (project.tracks.find((track) => track.id === clip.trackId)?.beatRepeats ?? [])
+      .some((region) =>
+        region.startBeat < clipEndBeat && region.startBeat + region.lengthBeats > clipStartBeat
+      )
+    const REPEAT_BADGE_W = hasBeatRepeat ? REPEAT_BADGE_FULL_W : 0
     const BADGE_COUNT =
       (isLinked ? 1 : 0) +
       (isLocked ? 1 : 0) +
@@ -92,6 +108,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
       (hasBrake ? 1 : 0) +
       (hasBackspin ? 1 : 0) +
       (hasReversed ? 1 : 0) +
+      (hasBeatRepeat ? 1 : 0) +
       (warpIsPending || warpIsActive ? 1 : 0)
     const BADGES_W =
       BADGE_COUNT === 0
@@ -103,6 +120,7 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
           BRAKE_BADGE_W +
           SPIN_BADGE_W +
           REV_BADGE_W +
+          REPEAT_BADGE_W +
           WARP_BADGE_W +
           Math.max(0, BADGE_COUNT - 1) * BADGE_GAP
     const maxTextW = Math.max(0, clipW - PAD_X * 2 - BADGES_W)
@@ -258,6 +276,35 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
       badge.y = Math.round(cy - 7)
       tracksL.addChild(badge)
       badgeRight -= REV_BADGE_FULL_W + BADGE_GAP
+    }
+    if (hasBeatRepeat) {
+      const bg = acquireGraphics(G)
+      const cx = badgeRight - REPEAT_BADGE_FULL_W / 2
+      const cy = clipInnerY + HEADER_H / 2
+      bg
+        .roundRect(
+          cx - REPEAT_BADGE_FULL_W / 2,
+          cy - STATUS_BADGE_H / 2,
+          REPEAT_BADGE_FULL_W,
+          STATUS_BADGE_H,
+          STATUS_BADGE_R
+        )
+        .fill({ color: 0x0c4a6e, alpha: 0.95 })
+        .stroke({ color: 0x7dd3fc, width: 1, alpha: 0.95 })
+      tracksL.addChild(bg)
+      const badge = new T({
+        text: 'REPEAT',
+        style: {
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontSize: 9,
+          fontWeight: '700',
+          fill: 0xe0f2fe
+        }
+      })
+      badge.x = Math.round(cx - 17)
+      badge.y = Math.round(cy - 7)
+      tracksL.addChild(badge)
+      badgeRight -= REPEAT_BADGE_FULL_W + BADGE_GAP
     }
     if (hasBrake) {
       const bg = acquireGraphics(G)

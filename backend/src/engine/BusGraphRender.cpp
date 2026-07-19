@@ -14,6 +14,7 @@ void BusGraph::TrackRuntime::prepareToPlay(int samplesPerBlockExpected, double s
     preparedRate = sampleRate;
     mixScratch.setSize(2, preparedBlockSize, false, true, false);
     mixScratch.clear();
+    beatRepeatProcessor.prepare(sampleRate);
     for (auto* source : clips)
         if (source != nullptr) source->prepareToPlay(preparedBlockSize, preparedRate);
     chain.prepare(sampleRate, samplesPerBlockExpected, /*numChannels*/ 2);
@@ -36,7 +37,9 @@ void BusGraph::TrackRuntime::getNextAudioBlock(const juce::AudioSourceChannelInf
 }
 
 void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& sources,
-                                         const juce::AudioSourceChannelInfo& info)
+                                         const juce::AudioSourceChannelInfo& info,
+                                         juce::int64 timelineStart,
+                                         const BeatRepeatSnapshot* beatRepeat)
 {
     if (info.buffer == nullptr || info.numSamples <= 0)
         return;
@@ -65,6 +68,9 @@ void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& 
                                  info.numSamples);
     }
 
+    if (beatRepeatResetRequested.exchange(false, std::memory_order_acq_rel))
+        beatRepeatProcessor.reset();
+    beatRepeatProcessor.process(*info.buffer, info.startSample, info.numSamples, timelineStart, beatRepeat);
     chain.process(*info.buffer, info.startSample, info.numSamples);
 
     const int numCh = info.buffer->getNumChannels();
@@ -116,7 +122,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
     {
         if (runtime == nullptr || runtime->clips.empty() || !runtime->renderEnabled) continue;
         snapshot->tracks.push_back(
-            {runtime.get(), runtime->clips, runtime->publishedAutomation});
+            {runtime.get(), runtime->clips, runtime->publishedAutomation, runtime->publishedBeatRepeat});
         snapshot->hasAutomation =
             snapshot->hasAutomation || runtime->publishedAutomation != nullptr;
     }
@@ -135,6 +141,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding
         RenderTrack track;
         track.runtime = runtime.get();
         track.automation = runtime->publishedAutomation;
+        track.beatRepeat = runtime->publishedBeatRepeat;
         track.clips.reserve(runtime->clips.size());
         for (auto* source : runtime->clips)
             if (source != excluded) track.clips.push_back(source);
@@ -228,7 +235,7 @@ void BusGraph::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
 
             scratch.clear(0, n);
             juce::AudioSourceChannelInfo sub(&scratch, 0, n);
-            runtime.renderClips(track.clips, sub);
+            runtime.renderClips(track.clips, sub, subStartSamples, track.beatRepeat);
 
             const float rSend = runtime.reverbSend.load(std::memory_order_relaxed);
             const float dSend = runtime.delaySend.load(std::memory_order_relaxed);

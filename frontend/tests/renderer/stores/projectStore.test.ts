@@ -1398,6 +1398,27 @@ describe('projectStore', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
+  it('forwards Beat Repeat region add and delete requests without optimistic state', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    project.addTrackBeatRepeat(trackId, 8, 4, '1/16')
+    expect(sendMock).toHaveBeenCalledWith('TRACK_BEAT_REPEAT_ADD', {
+      trackId,
+      startBeat: 8,
+      lengthBeats: 4,
+      division: '1/16'
+    })
+
+    sendMock.mockClear()
+    project.deleteTrackBeatRepeat(trackId, 'repeat-1')
+    expect(sendMock).toHaveBeenCalledWith('TRACK_BEAT_REPEAT_DELETE', {
+      trackId,
+      regionId: 'repeat-1'
+    })
+  })
+
   it('updates and forwards the project Reverb and Delay, clamping to [0, 1]', () => {
     const project = useProjectStore()
     sendMock.mockClear()

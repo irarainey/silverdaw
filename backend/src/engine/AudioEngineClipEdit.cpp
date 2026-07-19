@@ -17,6 +17,7 @@ void AudioEngine::setPositionMs(double ms)
     master.setPositionSamples(masterSamples);
 
     busGraph.resetSharedFx();
+    busGraph.resetBeatRepeats();
     // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play
     // start.
     const bool playing = master.isPlaying();
@@ -64,6 +65,7 @@ bool AudioEngine::scrubPositionMs(double positionMs, double deltaMs)
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
     master.setPositionSamples(logicalSamples);
+    busGraph.resetBeatRepeats();
 
     for (auto& [id, track] : tracks)
     {

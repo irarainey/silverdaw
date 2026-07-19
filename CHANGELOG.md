@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0
+
+### Added
+
+- Bit Crusher adds per-track lo-fi digital reduction controls.
+- Beat Repeat adds tempo-aligned per-track repeat regions from the timeline Effects menu.
+- Saturation adds Drive and Mix controls for per-track soft clipping.
+- Safety Limiter adds a fixed -1 dBFS final-output guard to Project FX.
+
+### Changed
+
+- Track FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
+
 ## 1.2.0
 
 ### Added

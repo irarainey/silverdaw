@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.2.0
+    VERSION 1.3.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -403,6 +403,7 @@ add_library(silverdaw_backend_core STATIC
     src/bridge/PlayheadEmitter.cpp
     # commands
     src/commands/AudioDeviceCommands.cpp
+    src/commands/BeatRepeatCommands.cpp
     src/commands/ClipCommands.cpp
     src/commands/LibraryCommands.cpp
     src/commands/MarkerCommands.cpp
@@ -466,6 +467,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/Waveform.cpp
     # engine
     src/engine/AudioEngine.cpp
+    src/engine/AudioEngineBeatRepeat.cpp
     src/engine/AudioEngineAudibility.cpp
     src/engine/AudioEngineDevice.cpp
     src/engine/AudioEngineTransport.cpp
@@ -477,6 +479,8 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEnginePatternReplay.cpp
     src/engine/BusGraph.cpp
     src/engine/BusGraphRender.cpp
+    src/engine/BeatRepeatProcessor.cpp
+    src/engine/BeatRepeatSnapshot.cpp
     src/engine/DecodedCache.cpp
     src/engine/EnginePlaybackPath.cpp
     src/engine/OffsetSource.cpp
@@ -499,6 +503,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectSession.cpp
     src/project/ProjectState.cpp
     src/project/ProjectStateAutomation.cpp
+    src/project/ProjectStateBeatRepeat.cpp
     src/project/ProjectStateClips.cpp
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
@@ -742,6 +747,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/LoudnessTests.cpp
         tests/EnvelopeFadeTests.cpp
         tests/AutomationTests.cpp
+        tests/BeatRepeatTests.cpp
 tests/MixdownRenderTests.cpp
         tests/StemSeparationTests.cpp
         tests/BpmDetectorTests.cpp
