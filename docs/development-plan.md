@@ -1110,10 +1110,9 @@ Delay between repeats or running Reverb far past audibility.
     spectral-radius / max-loop-gain of the feedback matrix instead of
     the scalar feedback in the same formula — never a per-channel
     scalar that ignores cross-feed.
-  - The 4 s safety cap is the absolute upper bound; a runaway
-    high-feedback echo at `feedback = 0.95` and a long delay time
-    would be forcibly truncated there with a logged warning, not
-    silently.
+  - The 4 s safety cap is a minimum fallback. The effective cap is never
+    shorter than the analytic repeat duration, so long delays retain every
+    audible feedback repeat while still terminating deterministically.
 
 **Transport-aware behaviour.** Tail rendering kicks in only when the
 dry input has actually gone silent. Live transport rules:
@@ -1139,7 +1138,7 @@ dry input has actually gone silent. Live transport rules:
 detector-based termination or their safety cap. `addedSilenceDone` =
 the user's "silence tail" knob's frame count has been written after
 FX termination. A **hard fail-safe cutoff** at
-`projectEnd + max(roomCap, echoCap) + userTail` guarantees the loop
+`projectEnd + max(roomCap, requiredEchoTail) + userTail` guarantees the loop
 exits even if both detectors malfunction. The user-facing "silence
 tail" knob in the Export dialog is **additive** on top of whatever
 the FX tail produced — set it to 0 and the file ends the moment FX

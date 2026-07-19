@@ -601,6 +601,42 @@ void testSharedFxEchoRepeatsAndTerminates()
             "a deferred delay target must not replace the active idle-published time");
 }
 
+void testSharedFxLongDelayPreservesFeedbackRepeat()
+{
+    constexpr double sr = 48000.0;
+    constexpr int n = 256;
+    constexpr double delayMs = 4000.0;
+    silverdaw::SharedFx fx;
+    fx.prepare(sr, n);
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fx.setDelayParams(delayMs, 0.5F, 1.0F, 1.0F, /*snap*/ true, /*applyTimeNow*/ true);
+
+    juce::AudioBuffer<float> sendR(2, n), sendD(2, n), out(2, n);
+    sendR.clear();
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+
+    sendD.clear();
+    const int secondRepeatBlock = static_cast<int>(
+        std::ceil(2.0 * delayMs * sr / (1000.0 * n)));
+    bool heardSecondRepeat = false;
+    for (int block = 0; block <= secondRepeatBlock; ++block)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        if (block >= secondRepeatBlock - 1 && out.getMagnitude(0, 0, n) > 0.1F)
+            heardSecondRepeat = true;
+    }
+
+    require(heardSecondRepeat,
+            "maximum-delay feedback must preserve the second repeat beyond four seconds");
+    require(! fx.echoTerminated(),
+            "maximum-delay feedback must not terminate before its analytic tail");
+}
+
 void testEqualPowerPanGains()
 {
         float gL = 0.0F;
@@ -757,6 +793,36 @@ void testBusGraphStructuralEditsDoNotDropAudio()
     require(bg.audioBlocksSkipped() == 0,
             "lock-free structural graph edits must not skip callback blocks");
     bg.detachClip("steady", &steady);
+    bg.releaseResources();
+}
+
+void testBusGraphBatchDetachmentRemovesCompletedClips()
+{
+    constexpr int kBlock = 128;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, 48000.0);
+
+    ConstantSource first(0.1F);
+    ConstantSource second(0.2F);
+    ConstantSource retained(0.4F);
+    bg.attachClip("t1", "first", &first);
+    bg.attachClip("t1", "second", &second);
+    bg.attachClip("t2", "retained", &retained);
+
+    const std::vector<silverdaw::BusGraph::ClipDetachment> completed{
+        {"first", &first},
+        {"second", &second},
+    };
+    bg.detachClips(completed);
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    out.clear();
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    bg.getNextAudioBlock(info);
+    requireNear(out.getMagnitude(0, 0, kBlock), 0.4, 1.0e-5,
+                "batch detachment must remove every completed clip in one graph update");
+
+    bg.detachClip("retained", &retained);
     bg.releaseResources();
 }
 
@@ -1298,10 +1364,12 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});
     tests.push_back({"SharedFx Room rings a tail after input stops and terminates", testSharedFxRoomTailRingsAndTerminates});
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
+    tests.push_back({"SharedFx maximum delay preserves feedback repeats beyond four seconds", testSharedFxLongDelayPreservesFeedbackRepeat});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
     tests.push_back({"BusGraph excludes bypassed tracks from processing", testBusGraphExcludesBypassedTrackProcessing});
     tests.push_back({"BusGraph structural edits do not drop callback audio", testBusGraphStructuralEditsDoNotDropAudio});
+    tests.push_back({"BusGraph batch detachment removes all completed clips", testBusGraphBatchDetachmentRemovesCompletedClips});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph saturation automation restores static track values", testBusGraphSaturationAutomationRestoresStaticValues});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});

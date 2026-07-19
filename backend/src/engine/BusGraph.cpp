@@ -153,7 +153,8 @@ void BusGraph::detachClip(const juce::String& clipId,
     auto* rt = it->second;
     const bool removeRuntime =
         rt->clips.size() == 1 && rt->clips.front() == clipTransport;
-    auto nextRenderSnapshot = buildRenderSnapshotExcluding(clipTransport);
+    const std::vector<const juce::AudioSource*> excluded{clipTransport};
+    auto nextRenderSnapshot = buildRenderSnapshotExcluding(excluded);
 
     // Publish before mutating bookkeeping. If snapshot construction throws,
     // the existing graph and clip lookup remain intact for a safe retry.
@@ -166,6 +167,63 @@ void BusGraph::detachClip(const juce::String& clipId,
         clipTransport->releaseResources();
 
     if (removeRuntime || rt->clips.empty())
+    {
+        rt->chain.reset();
+        runtimes.erase(rt->trackId);
+    }
+}
+
+void BusGraph::detachClips(const std::vector<ClipDetachment>& clips,
+                           bool releaseSources)
+{
+    if (clips.empty()) return;
+    const juce::ScopedLock sl(lock);
+
+    std::vector<const juce::AudioSource*> excluded;
+    excluded.reserve(clips.size());
+    for (const auto& clip : clips)
+    {
+        if (clip.clipId.isEmpty() || clip.clipTransport == nullptr) continue;
+        const auto it = clipToTrack.find(clip.clipId);
+        if (it == clipToTrack.end() || it->second == nullptr) continue;
+        if (std::find(it->second->clips.begin(), it->second->clips.end(),
+                      clip.clipTransport) == it->second->clips.end())
+            continue;
+        if (std::find(excluded.begin(), excluded.end(), clip.clipTransport) == excluded.end())
+            excluded.push_back(clip.clipTransport);
+    }
+    if (excluded.empty()) return;
+
+    auto nextRenderSnapshot = buildRenderSnapshotExcluding(excluded);
+
+    // Publish before releasing any source so an in-flight callback can only see
+    // a complete snapshot that retains its source.
+    publishRenderSnapshot(std::move(nextRenderSnapshot));
+
+    std::vector<TrackRuntime*> emptyRuntimes;
+    emptyRuntimes.reserve(clips.size());
+    for (const auto& clip : clips)
+    {
+        const auto it = clipToTrack.find(clip.clipId);
+        if (it == clipToTrack.end() || it->second == nullptr
+            || clip.clipTransport == nullptr)
+            continue;
+
+        auto* rt = it->second;
+        const auto source = std::find(rt->clips.begin(), rt->clips.end(), clip.clipTransport);
+        if (source == rt->clips.end()) continue;
+
+        rt->clips.erase(source);
+        clipToTrack.erase(it);
+        if (releaseSources)
+            clip.clipTransport->releaseResources();
+        if (rt->clips.empty()
+            && std::find(emptyRuntimes.begin(), emptyRuntimes.end(), rt)
+                   == emptyRuntimes.end())
+            emptyRuntimes.push_back(rt);
+    }
+
+    for (auto* rt : emptyRuntimes)
     {
         rt->chain.reset();
         runtimes.erase(rt->trackId);

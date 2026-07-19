@@ -130,6 +130,15 @@ public:
                     juce::AudioSource* clipTransport,
                     bool releaseSource = true);
 
+    struct ClipDetachment
+    {
+        juce::String clipId;
+        juce::AudioSource* clipTransport = nullptr;
+    };
+
+    void detachClips(const std::vector<ClipDetachment>& clips,
+                     bool releaseSources = true);
+
     bool consumeTrackPeaks(const juce::String& trackId,
                            float& outL, float& outR) noexcept;
 
@@ -229,7 +238,7 @@ private:
     std::unique_ptr<RenderSnapshot> buildRenderSnapshot() const;
 
     std::unique_ptr<RenderSnapshot> buildRenderSnapshotExcluding(
-        const juce::AudioSource* excluded) const;
+        const std::vector<const juce::AudioSource*>& excluded) const;
 
     void publishRenderSnapshot();
     void publishEmptyRenderSnapshot();

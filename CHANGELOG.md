@@ -16,6 +16,12 @@
 - Project FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
 - Track FX keeps its five responsive effect columns within the effects panel.
 
+### Fixed
+
+- Long Delay feedback tails now preserve audible repeats in playback and mixdown.
+- Mixdown now reuses output buffers to avoid repeated allocations during resampling.
+- Mixdown now retires completed clips in batches for faster exports with many clips.
+
 ## 1.2.0
 
 ### Added

@@ -130,7 +130,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
 }
 
 std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding(
-    const juce::AudioSource* excluded) const
+    const std::vector<const juce::AudioSource*>& excluded) const
 {
     auto snapshot = std::make_unique<RenderSnapshot>();
     snapshot->tracks.reserve(runtimes.size());
@@ -144,7 +144,8 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding
         track.beatRepeat = runtime->publishedBeatRepeat;
         track.clips.reserve(runtime->clips.size());
         for (auto* source : runtime->clips)
-            if (source != excluded) track.clips.push_back(source);
+            if (std::find(excluded.begin(), excluded.end(), source) == excluded.end())
+                track.clips.push_back(source);
         if (track.clips.empty()) continue;
 
         snapshot->hasAutomation =
