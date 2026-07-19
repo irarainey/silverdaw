@@ -48,6 +48,7 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // new project's default (rebuildEngineFromProject only runs on load/clip ops).
     engine.setMasterGain(projectState.getMasterVolume());
     engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
     engine.setMetronomeBpm(projectState.getBpm());
     engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
 

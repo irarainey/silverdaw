@@ -9,7 +9,7 @@ import FxRangeControl from '@/components/FxRangeControl.vue'
 
 type CrusherControl = 'rate' | 'bits' | 'boost' | 'mix'
 
-const props = defineProps<{ trackId: string }>()
+const props = defineProps<{ trackId: string; gridArea?: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('bit-crusher')
@@ -120,6 +120,7 @@ onBeforeUnmount(gesture.endGesture)
     title="Bit Crusher"
     :cols="1"
     :rows="2"
+    :grid-area="props.gridArea"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <FxRangeControl

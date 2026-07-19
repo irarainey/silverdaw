@@ -67,6 +67,7 @@ struct MixdownSnapshot
         float toneTrebleDb{0.0F};
         float toneFilter{0.0F};
         float levelerAmount{0.0F};
+        float punchAmount{0.0F};
         float saturationDrive{0.0F};
         float saturationMix{1.0F};
         float bitCrusherRate{1.0F};
@@ -92,6 +93,7 @@ struct MixdownSnapshot
     // encode.
     float masterGain{1.0F};
     bool safetyLimiterEnabled{false};
+    float mixGlueAmount{0.0F};
     // Offline render uses the same SharedFx settings as playback for export parity.
     float reverbSize{0.0F};
     float reverbDecay{0.0F};

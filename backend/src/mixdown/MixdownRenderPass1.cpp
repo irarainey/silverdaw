@@ -3,6 +3,7 @@
 #include "BusGraph.h"
 #include "BeatRepeatSnapshot.h"
 #include "Log.h"
+#include "Leveler.h"
 #include "MixdownBroadcast.h"
 #include "SafetyLimiter.h"
 #include "SharedFx.h"  // delayNoteToMs
@@ -89,6 +90,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
                               trackSnap.toneTrebleDb, trackSnap.toneFilter, /*snap*/ true);
         busGraph.setTrackLeveler(trackSnap.id, trackSnap.levelerAmount, /*snap*/ true);
+        busGraph.setTrackPunch(trackSnap.id, trackSnap.punchAmount, /*snap*/ true);
         busGraph.setTrackSaturation(trackSnap.id, trackSnap.saturationDrive,
                                     trackSnap.saturationMix, /*snap*/ true);
         busGraph.setTrackBitCrusher(trackSnap.id, trackSnap.bitCrusherRate,
@@ -185,6 +187,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     juce::String writerError;
 
     juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
+    silverdaw::Leveler mixGlue;
+    mixGlue.prepare(static_cast<double>(snapshot.projectSampleRate), kOutputChannels);
+    mixGlue.setParams(snapshot.mixGlueAmount, /*snap*/ true);
     silverdaw::SafetyLimiter safetyLimiter;
     safetyLimiter.prepare(static_cast<double>(snapshot.projectSampleRate));
     safetyLimiter.setEnabled(snapshot.safetyLimiterEnabled, /*snap*/ true);
@@ -273,6 +278,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         mixdownPos.store(projectFramesRendered, std::memory_order_relaxed);
         busGraph.getNextAudioBlock(busInfo);
 
+        mixGlue.process(mixBus, 0, blockFrames);
         if (! juce::approximatelyEqual(snapshot.masterGain, 1.0F))
         {
             mixBus.applyGain(0, blockFrames, snapshot.masterGain);

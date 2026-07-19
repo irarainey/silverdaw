@@ -6,7 +6,7 @@ import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 
-const props = defineProps<{ trackId: string }>()
+const props = defineProps<{ trackId: string; gridArea?: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('saturation')
@@ -56,6 +56,7 @@ onBeforeUnmount(gesture.endGesture)
     title="Saturation"
     :cols="1"
     :rows="2"
+    :grid-area="props.gridArea"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <FxRangeControl

@@ -114,15 +114,20 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
   **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),
   a bipolar **Filter** (a single DJ-style sweep from low-pass through off to
-  high-pass), a single-knob **Compressor** (gentle dynamics control), plus Reverb and
-  Delay sends, **Saturation** (soft clipping), and a **Bit Crusher** (lo-fi
-  digital reduction). Project FX hosts the song-wide Reverb and Delay those sends
-  feed, plus a fixed-ceiling **Safety Limiter** for the final output. Plus
+  high-pass), a single-knob **Compressor** (gentle dynamics control), **Punch**
+  (transient enhancement), **Saturation** (soft clipping), a **Bit Crusher**
+  (lo-fi digital reduction), and Reverb and Delay sends. Project FX hosts the
+  song-wide Reverb and Delay those sends feed, a one-control **Mix Glue**
+  compressor after their returns and before master gain, plus a fixed-ceiling
+  **Safety Limiter** for the final output. Track FX keeps five responsive
+  columns: Tone; Filter above Reverb & Delay; Compressor above Punch;
+  Saturation; and Bit Crusher. Plus
   drag-to-resize and reorder tracks, and a master output with live metering.
 - **Track effect automation.** Open a collapsible lane under any track to draw
   breakpoint curves that automate a parameter over the timeline — Filter, Pan,
-  Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, Saturation, Bit
-  Crusher, or **Gain** (a post-FX track level). Add, drag, right-click or
+  Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, Punch,
+  Saturation, Bit Crusher, or **Gain** (a post-FX track level). Add, drag,
+  right-click or
   Alt-click to delete, and arrow-key nudge points; raise/lower or copy/paste a
   whole curve; values play live and render identically in the mixdown. Each
   Track FX control has an **A** button to automate it: the slider sets the

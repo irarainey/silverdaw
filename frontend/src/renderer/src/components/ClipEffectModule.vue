@@ -13,16 +13,22 @@ const props = withDefaults(
     cols?: number
     /** Height of the module in base cells. */
     rows?: number
+    /** Named grid area for an explicitly positioned rack layout. */
+    gridArea?: string
   }>(),
-  { cols: 1, rows: 1 }
+  { cols: 1, rows: 1, gridArea: undefined }
 )
 
 const headingId = useId()
 
-const gridStyle = computed(() => ({
-  gridColumn: `span ${Math.max(1, Math.round(props.cols))}`,
-  gridRow: `span ${Math.max(1, Math.round(props.rows))}`
-}))
+const gridStyle = computed(() =>
+  props.gridArea
+    ? { gridArea: props.gridArea }
+    : {
+        gridColumn: `span ${Math.max(1, Math.round(props.cols))}`,
+        gridRow: `span ${Math.max(1, Math.round(props.rows))}`
+      }
+)
 </script>
 
 <template>

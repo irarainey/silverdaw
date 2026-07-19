@@ -11,7 +11,7 @@
 namespace silverdaw
 {
 
-// Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
+// Apply master gain before metering and inject keep-alive after gain so the endpoint floor is
 // volume-independent. The metronome click is also mixed post-gain so the project master volume
 // never silences the monitoring tick.
 class MeteringSource : public juce::AudioSource

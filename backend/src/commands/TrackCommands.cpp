@@ -267,6 +267,24 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& eng
                      {{"trackId", trackId}, {"amount", canonAmount}});
 }
 
+void handleTrackSetPunch(const juce::var& payload, silverdaw::AudioEngine& engine,
+                         silverdaw::ProjectState& projectState,
+                         silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const auto amountVar = tryGetNumber(payload, "amount");
+    if (!amountVar.has_value()) return;
+
+    const float amount = juce::jlimit(0.0F, 1.0F, static_cast<float>(*amountVar));
+    if (!projectState.setTrackPunchAmount(trackId, amount)) return;
+
+    const float canonAmount = projectState.getTrackPunchAmount(trackId);
+    engine.setTrackPunch(trackId, canonAmount, /*snap*/ false);
+    broadcastApplied(bridge, "TRACK_PUNCH_APPLIED",
+                     {{"trackId", trackId}, {"amount", canonAmount}});
+}
+
 void handleTrackSetSaturation(const juce::var& payload, silverdaw::AudioEngine& engine,
                               silverdaw::ProjectState& projectState,
                               silverdaw::BridgeServer& bridge)

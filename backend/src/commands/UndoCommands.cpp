@@ -24,6 +24,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
            type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
            type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
+           type == "TRACK_SET_PUNCH" ||
            type == "TRACK_SET_SATURATION" ||
            type == "TRACK_SET_BIT_CRUSHER" ||
            type == "TRACK_SET_PAN" ||
@@ -33,6 +34,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "CLIP_SET_REVERSED" || type == "CLIP_SET_BRAKE" ||
            type == "CLIP_SET_BACKSPIN" ||
            type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
+           type == "PROJECT_SET_MIX_GLUE" ||
            type == "LIBRARY_ADD" || type == "LIBRARY_REMOVE" ||
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "LIBRARY_ITEM_SET_AUDIO_TYPE" ||
@@ -76,6 +78,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_SET_SENDS") return "Change track reverb/delay";
     if (type == "TRACK_SET_TONE") return "Change track tone";
     if (type == "TRACK_SET_LEVELER") return "Change track leveler";
+    if (type == "TRACK_SET_PUNCH") return "Change track punch";
     if (type == "TRACK_SET_SATURATION") return "Change track saturation";
     if (type == "TRACK_SET_BIT_CRUSHER") return "Change track bit crusher";
     if (type == "TRACK_SET_PAN") return "Change track pan";
@@ -88,6 +91,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "CLIP_SET_BACKSPIN") return "Backspin clip";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change delay";
+    if (type == "PROJECT_SET_MIX_GLUE") return "Change mix glue";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";
@@ -160,6 +164,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     }
     else if (type == "TRACK_GAIN" || type == "TRACK_SET_SENDS" ||
              type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
+             type == "TRACK_SET_PUNCH" ||
              type == "TRACK_SET_SATURATION" || type == "TRACK_SET_BIT_CRUSHER" ||
              type == "TRACK_SET_PAN")
     {
@@ -172,7 +177,8 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
                  readOptionalString(payload, "paramId").value_or(juce::String{});
     }
     else if (type == "PROJECT_SET_MASTER_VOLUME" || type == "PROJECT_SET_SAFETY_LIMITER" ||
-             type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")
+             type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
+             type == "PROJECT_SET_MIX_GLUE")
     {
         idPart = "_";
     }

@@ -502,6 +502,13 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             " amount=" + payload.getProperty("amount", "").toString());
         silverdaw::handleTrackSetLeveler(payload, engine, projectState, bridge);
     }
+    else if (type == "TRACK_SET_PUNCH")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_PUNCH trackId=" +
+                                            payload.getProperty("trackId", "").toString() +
+                                            " amount=" + payload.getProperty("amount", "").toString());
+        silverdaw::handleTrackSetPunch(payload, engine, projectState, bridge);
+    }
     else if (type == "TRACK_SET_SATURATION")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_SATURATION trackId=" +
@@ -562,6 +569,11 @@ bool dispatchProjectFx(const DispatchContext& ctx)
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
         silverdaw::handleProjectSetDelay(payload, engine, projectState, bridge);
+    }
+    else if (type == "PROJECT_SET_MIX_GLUE")
+    {
+        silverdaw::log::debug("bridge", "recv PROJECT_SET_MIX_GLUE");
+        silverdaw::handleProjectSetMixGlue(payload, engine, projectState, bridge);
     }
     else
     {

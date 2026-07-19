@@ -13,6 +13,7 @@
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "Punch.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
 #include "SafetyLimiter.h"
@@ -209,6 +210,7 @@ void testLevelerPassthroughAndCompression()
                 d[i] = amp * static_cast<float>(
                                  std::sin(2.0 * juce::MathConstants<double>::pi * freq * i / sr));
         }
+
     };
 
     // Amount 0 (snapped) must leave every sample untouched, bit-for-bit.
@@ -312,6 +314,74 @@ void testLevelerPassthroughAndCompression()
             for (int i = 0; i < n; ++i)
                 if (! std::isfinite(buf.getSample(ch, i))) { finite = false; break; }
         require(finite, "Leveler must recover to finite output after a NaN/Inf input sample");
+    }
+}
+
+void testPunchBypassAndStereoLinkedTransientShaping()
+{
+    constexpr int n = 512;
+    silverdaw::Punch punch;
+    punch.prepare(44100.0);
+
+    juce::AudioBuffer<float> bypass(2, n);
+    juce::AudioBuffer<float> reference(2, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            bypass.setSample(ch, i, static_cast<float>((i % 17) - 8) / 16.0F);
+    reference.makeCopyOf(bypass);
+    punch.setAmount(0.0F, /*snap*/ true);
+    punch.process(bypass, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(bypass.getSample(ch, i) == reference.getSample(ch, i),
+                    "Punch at Amount 0 must be bit-exact passthrough");
+
+    juce::AudioBuffer<float> shaped(2, n);
+    shaped.clear();
+    shaped.setSample(0, 128, 0.5F);
+    shaped.setSample(1, 128, 0.25F);
+    punch.reset();
+    punch.setAmount(1.0F, /*snap*/ true);
+    punch.process(shaped, 0, n);
+    require(shaped.getSample(0, 128) > 0.5F,
+            "Punch must boost a transient at full amount");
+    requireNear(shaped.getSample(0, 128) / shaped.getSample(1, 128), 2.0, 0.0001,
+                "Punch transient detection must preserve the stereo image");
+}
+
+void testMixGlueHasExactBypassAndStereoLinkedCompression()
+{
+    constexpr int n = 8192;
+    silverdaw::Leveler mixGlue;
+    mixGlue.prepare(44100.0, 2);
+
+    juce::AudioBuffer<float> bypass(2, n);
+    juce::AudioBuffer<float> reference(2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        const float sample = (i % 13 == 0) ? 0.9F : -0.45F;
+        bypass.setSample(0, i, sample);
+        bypass.setSample(1, i, sample * 0.5F);
+        reference.setSample(0, i, sample);
+        reference.setSample(1, i, sample * 0.5F);
+    }
+    mixGlue.setParams(0.0F, /*snap*/ true);
+    mixGlue.process(bypass, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(bypass.getSample(ch, i) == reference.getSample(ch, i),
+                    "Mix Glue Amount 0 must be a bit-exact bypass");
+
+    mixGlue.setParams(1.0F, /*snap*/ true);
+    mixGlue.process(reference, 0, n);
+    require(reference.getMagnitude(0, n / 2, n / 2) < 0.8F,
+            "Mix Glue must reduce a hot project-bus signal");
+    for (int i = n / 2; i < n; ++i)
+    {
+        const float left = reference.getSample(0, i);
+        const float right = reference.getSample(1, i);
+        requireNear(right, left * 0.5F, 1.0e-5,
+                    "Mix Glue must apply stereo-linked gain to both channels");
     }
 }
 
@@ -1222,6 +1292,8 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
     tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
+    tests.push_back({"Punch is bit-exact at Amount 0 and stereo-links transient shaping", testPunchBypassAndStereoLinkedTransientShaping});
+    tests.push_back({"Mix Glue has exact bypass and stereo-linked compression", testMixGlueHasExactBypassAndStereoLinkedCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});
     tests.push_back({"SharedFx Room rings a tail after input stops and terminates", testSharedFxRoomTailRingsAndTerminates});

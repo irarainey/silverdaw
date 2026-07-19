@@ -30,6 +30,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   | 'EDIT_UNDO_STATE'
   | 'PROJECT_REVERB_APPLIED'
   | 'PROJECT_DELAY_APPLIED'
+  | 'PROJECT_MIX_GLUE_APPLIED'
 > = {
   PROJECT_STATE: (payload) => {
     if (payload.reset === true) {
@@ -163,5 +164,13 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
       },
       { localOnly: true }
     )
+  },
+
+  PROJECT_MIX_GLUE_APPLIED: (payload) => {
+    if (!payload.ok) {
+      log.warn('bridge', 'PROJECT_MIX_GLUE_APPLIED ok=false')
+      return
+    }
+    useProjectStore().setProjectMixGlueAmount(payload.amount, { localOnly: true })
   }
 }

@@ -24,6 +24,7 @@ import {
   isProjectViewStateSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
+  isTrackPunchAppliedPayload,
   isSampleSavedPayload,
   isStemProgressPayload,
   isStemPartialPayload,
@@ -87,6 +88,7 @@ const INBOUND_TYPES = {
   TRACK_SENDS_APPLIED: true,
   TRACK_TONE_APPLIED: true,
   TRACK_LEVELER_APPLIED: true,
+  TRACK_PUNCH_APPLIED: true,
   TRACK_SATURATION_APPLIED: true,
   TRACK_BIT_CRUSHER_APPLIED: true,
   TRACK_PAN_APPLIED: true,
@@ -94,6 +96,7 @@ const INBOUND_TYPES = {
   CLIP_ENVELOPE_APPLIED: true,
   PROJECT_REVERB_APPLIED: true,
   PROJECT_DELAY_APPLIED: true,
+  PROJECT_MIX_GLUE_APPLIED: true,
   PONG: true,
   ENGINE_ERROR: true,
   ENGINE_AUDIO_STATUS: true,
@@ -122,6 +125,13 @@ describe('isBridgeInboundType', () => {
 describe('isReadyPayload', () => {
   it('accepts a well-shaped payload', () => {
     expect(isReadyPayload({ version: '0.1.0' })).toBe(true)
+  })
+
+  describe('isTrackPunchAppliedPayload', () => {
+    it('accepts only a clamped Punch acknowledgement', () => {
+      expect(isTrackPunchAppliedPayload({ trackId: 'track-1', amount: 0.6, ok: true })).toBe(true)
+      expect(isTrackPunchAppliedPayload({ trackId: 'track-1', amount: 1.1, ok: true })).toBe(false)
+    })
   })
 
   it('rejects missing or wrong-typed version', () => {
@@ -543,6 +553,11 @@ describe('isProjectStatePayload', () => {
       ...base,
       tracks: [{ ...track, bitCrusherMix: -1 }]
     })).toBe(false)
+  })
+
+  it('accepts a bounded Mix Glue amount and rejects an invalid amount', () => {
+    expect(isProjectStatePayload({ ...base, mixGlueAmount: 0.65, tracks: [] })).toBe(true)
+    expect(isProjectStatePayload({ ...base, mixGlueAmount: 1.01, tracks: [] })).toBe(false)
   })
 
   it('rejects malformed clip entries', () => {

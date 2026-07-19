@@ -2,6 +2,7 @@
 
 #include "BitCrusher.h"
 #include "Leveler.h"
+#include "Punch.h"
 #include "Saturation.h"
 #include "ToneEq.h"
 
@@ -24,6 +25,7 @@ public:
         juce::ignoreUnused(maxBlockSize);
         tone.prepare(sampleRate, numChannels);
         leveler.prepare(sampleRate, numChannels);
+        punch.prepare(sampleRate);
         saturation.prepare(sampleRate);
         bitCrusher.prepare(sampleRate, numChannels);
         levelGain = 1.0F;
@@ -35,6 +37,7 @@ public:
     {
         tone.reset();
         leveler.reset();
+        punch.reset();
         saturation.reset();
         bitCrusher.reset();
         levelGain = targetLevelGain;
@@ -49,6 +52,7 @@ public:
 
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
     void setLeveler(float amount, bool snap) noexcept { leveler.setParams(amount, snap); }
+    void setPunch(float amount, bool snap) noexcept { punch.setAmount(amount, snap); }
     void setSaturation(float drive, float mix, bool snap) noexcept
     {
         saturation.setParams(drive, mix, snap);
@@ -67,6 +71,7 @@ public:
     {
         saturation.setDriveTarget(drive, snap);
     }
+    void setPunchTarget(float amount, bool snap) noexcept { punch.setAmount(amount, snap); }
     void setSaturationMixTarget(float mix, bool snap) noexcept
     {
         saturation.setMixTarget(mix, snap);
@@ -101,6 +106,7 @@ public:
     {
         tone.process(buffer, startSample, numSamples);
         leveler.process(buffer, startSample, numSamples);
+        punch.process(buffer, startSample, numSamples);
         saturation.process(buffer, startSample, numSamples);
         bitCrusher.process(buffer, startSample, numSamples);
         if (levelGain != targetLevelGain)
@@ -123,6 +129,7 @@ public:
 private:
     ToneEq tone;
     Leveler leveler;
+    Punch punch;
     Saturation saturation;
     BitCrusher bitCrusher;
     float levelGain = 1.0F;

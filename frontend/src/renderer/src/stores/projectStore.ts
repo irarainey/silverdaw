@@ -104,6 +104,7 @@ export const useProjectStore = defineStore('project', {
     exportSettingsJson: null,
     masterVolume: 1.0,
     safetyLimiterEnabled: false,
+    mixGlueAmount: 0,
     barCounterStart: 1,
     mixdownStartBar: 1,
     metronomeEnabled: false,
@@ -355,6 +356,22 @@ export const useProjectStore = defineStore('project', {
           feedback: patch.feedback,
           tone: patch.tone,
           mix: patch.mix,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /** Set project-bus compression; localOnly reconciles backend acknowledgements. */
+    setProjectMixGlueAmount(
+      amount: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const next = Number.isFinite(amount) ? Math.max(0, Math.min(1, amount)) : 0
+      this.mixGlueAmount = next
+      if (!opts?.localOnly) {
+        sendBridge('PROJECT_SET_MIX_GLUE', {
+          amount: next,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })

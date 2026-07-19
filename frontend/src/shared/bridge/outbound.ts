@@ -365,6 +365,12 @@ export interface TrackSetLevelerPayload extends GestureHints {
   amount: number
 }
 
+/** Per-track transient enhancement amount, linear `[0,1]`; zero is bypass. */
+export interface TrackSetPunchPayload extends GestureHints {
+  trackId: string
+  amount: number
+}
+
 /** Per-track soft saturation. Drive and Mix are linear `[0,1]`; Mix defaults to fully wet. */
 export interface TrackSetSaturationPayload extends GestureHints {
   trackId: string
@@ -399,6 +405,7 @@ export type AutomationParamId =
   | 'reverbSend'
   | 'delaySend'
   | 'leveler'
+  | 'punch'
   | 'saturationDrive'
   | 'saturationMix'
   | 'bitCrusherRate'
@@ -493,6 +500,11 @@ export interface ProjectSetDelayPayload extends GestureHints {
   mix?: number
 }
 
+/** Project-bus compressor amount. Zero is a transparent bypass. */
+export interface ProjectSetMixGluePayload extends GestureHints {
+  amount: number
+}
+
 export interface LibraryItemSaveAsSamplePayload {
   libraryItemId: string
   itemId: string
@@ -562,6 +574,7 @@ export interface BridgeOutboundMap {
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
+  TRACK_SET_PUNCH: TrackSetPunchPayload
   TRACK_SET_SATURATION: TrackSetSaturationPayload
   TRACK_SET_BIT_CRUSHER: TrackSetBitCrusherPayload
   TRACK_SET_PAN: TrackSetPanPayload
@@ -574,6 +587,7 @@ export interface BridgeOutboundMap {
   TRACK_BEAT_REPEAT_DELETE: TrackBeatRepeatDeletePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
+  PROJECT_SET_MIX_GLUE: ProjectSetMixGluePayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
@@ -1187,6 +1201,7 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_SET_SENDS: 'payload',
   TRACK_SET_TONE: 'payload',
   TRACK_SET_LEVELER: 'payload',
+  TRACK_SET_PUNCH: 'payload',
   TRACK_SET_SATURATION: 'payload',
   TRACK_SET_BIT_CRUSHER: 'payload',
   TRACK_SET_PAN: 'payload',
@@ -1199,6 +1214,7 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_BEAT_REPEAT_DELETE: 'payload',
   PROJECT_SET_REVERB: 'payload',
   PROJECT_SET_DELAY: 'payload',
+  PROJECT_SET_MIX_GLUE: 'payload',
   PROJECT_SET_SAFETY_LIMITER: 'payload',
   TRANSPORT_PLAY: 'none',
   TRANSPORT_PAUSE: 'none',

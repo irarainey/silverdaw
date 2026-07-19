@@ -212,6 +212,26 @@ void ProjectState::setSafetyLimiterEnabled(bool enabled)
         root.removeProperty(kSafetyLimiterEnabled, &undoManager);
 }
 
+float ProjectState::getProjectMixGlueAmount() const
+{
+    const float stored = static_cast<float>(
+        static_cast<double>(root.getProperty(kMixGlueAmount, 0.0)));
+    return std::isfinite(stored) ? juce::jlimit(0.0F, 1.0F, stored) : 0.0F;
+}
+
+bool ProjectState::setProjectMixGlueAmount(float amount)
+{
+    const float clamped = std::isfinite(amount) ? juce::jlimit(0.0F, 1.0F, amount) : 0.0F;
+    const float previous = getProjectMixGlueAmount();
+    if (juce::approximatelyEqual(previous, clamped)) return false;
+
+    if (juce::approximatelyEqual(clamped, 0.0F))
+        root.removeProperty(kMixGlueAmount, &undoManager);
+    else
+        root.setProperty(kMixGlueAmount, clamped, &undoManager);
+    return true;
+}
+
 int ProjectState::getBarCounterStart() const
 {
     return static_cast<int>(root.getProperty(kBarCounterStart, 1));

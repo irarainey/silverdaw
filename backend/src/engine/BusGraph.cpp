@@ -93,6 +93,9 @@ void BusGraph::attachClip(const juce::String& trackId,
         auto levelerIt = pendingLeveler.find(trackId);
         if (levelerIt != pendingLeveler.end())
             rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
+        auto punchIt = pendingPunch.find(trackId);
+        if (punchIt != pendingPunch.end())
+            rt->chain.setPunch(punchIt->second, /*snap*/ true);
 
         auto saturationIt = pendingSaturation.find(trackId);
         if (saturationIt != pendingSaturation.end())
@@ -255,6 +258,16 @@ void BusGraph::setTrackLeveler(const juce::String& trackId, float amount, bool s
         it->second->chain.setLeveler(a, snap);
 }
 
+void BusGraph::setTrackPunch(const juce::String& trackId, float amount, bool snap)
+{
+    if (trackId.isEmpty()) return;
+    const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
+    pendingPunch[trackId] = a;
+    auto it = runtimes.find(trackId);
+    if (it != runtimes.end())
+        it->second->chain.setPunch(a, snap);
+}
+
 void BusGraph::setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap)
 {
     if (trackId.isEmpty()) return;
@@ -358,6 +371,12 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
         case AutomationParam::toneMid: rt.chain.setMidTarget(0.0F, true); break;
         case AutomationParam::toneTreble: rt.chain.setTrebleTarget(0.0F, true); break;
         case AutomationParam::leveler: rt.chain.setLeveler(0.0F, true); break;
+        case AutomationParam::punch:
+        {
+            const auto punch = pendingPunch.find(trackId);
+            rt.chain.setPunchTarget(punch != pendingPunch.end() ? punch->second : 0.0F, true);
+            break;
+        }
         case AutomationParam::saturationDrive:
         {
             const auto saturation = pendingSaturation.find(trackId);
@@ -493,6 +512,7 @@ void BusGraph::clear()
     clipToTrack.clear();
     pendingTone.clear();
     pendingLeveler.clear();
+    pendingPunch.clear();
     pendingSaturation.clear();
     pendingBitCrusher.clear();
     pendingSends.clear();

@@ -5,13 +5,16 @@
 ### Added
 
 - Bit Crusher adds per-track lo-fi digital reduction controls.
+- Punch adds per-track transient enhancement controls.
 - Beat Repeat adds tempo-aligned per-track repeat regions from the timeline Effects menu.
 - Saturation adds Drive and Mix controls for per-track soft clipping.
+- Mix Glue adds one-control project-bus compression before the master output.
 - Safety Limiter adds a fixed -1 dBFS final-output guard to Project FX.
 
 ### Changed
 
-- Track FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
+- Project FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
+- Track FX keeps its five responsive effect columns within the effects panel.
 
 ## 1.2.0
 

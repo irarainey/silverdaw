@@ -141,6 +141,12 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("levelerAmount",
                                   static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
         }
+        if (track.hasProperty(kPunchAmount))
+        {
+            trackObj->setProperty("punchAmount",
+                                  static_cast<double>(
+                                      getTrackPunchAmount(track.getProperty(kId).toString())));
+        }
         if (track.hasProperty(kSaturationDrive))
         {
             trackObj->setProperty("saturationDrive",
@@ -427,6 +433,9 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
                           saturation::sanitizeDrive(
                               static_cast<double>(track.getProperty(kSaturationDrive, 0.0))),
                           0.0);
+            if (track.hasProperty(kPunchAmount))
+                normalize(kPunchAmount,
+                          getTrackPunchAmount(track.getProperty(kId).toString()), 0.0);
             if (track.hasProperty(kSaturationMix))
                 normalize(kSaturationMix,
                           saturation::sanitizeMix(
@@ -455,6 +464,7 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
 
             const auto trackId = track.getProperty(kId).toString();
             for (const auto& paramId : {juce::String{"saturationDrive"},
+                                        juce::String{"punch"},
                                         juce::String{"saturationMix"},
                                         juce::String{"bitCrusherRate"},
                                         juce::String{"bitCrusherBits"},

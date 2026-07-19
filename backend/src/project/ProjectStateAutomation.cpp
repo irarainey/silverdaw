@@ -65,6 +65,8 @@ double normalizeAutomationValue(const juce::String& paramId, double value)
 {
     if (paramId == "saturationDrive")
         return saturation::sanitizeDrive(value);
+    if (paramId == "punch")
+        return juce::jlimit(0.0, 1.0, std::isfinite(value) ? value : 0.0);
     if (paramId == "saturationMix")
         return saturation::sanitizeMix(value);
     if (paramId == "bitCrusherRate")

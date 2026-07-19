@@ -74,6 +74,10 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
           typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
             ? t.levelerAmount
             : undefined,
+        punchAmount:
+          typeof t.punchAmount === 'number' && t.punchAmount !== 0
+            ? t.punchAmount
+            : undefined,
         saturationDrive:
           typeof t.saturationDrive === 'number' && t.saturationDrive !== 0
             ? t.saturationDrive
@@ -133,6 +137,10 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
       track.levelerAmount =
         typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
           ? t.levelerAmount
+          : undefined
+      track.punchAmount =
+        typeof t.punchAmount === 'number' && t.punchAmount !== 0
+          ? t.punchAmount
           : undefined
       track.saturationDrive =
         typeof t.saturationDrive === 'number' && t.saturationDrive !== 0

@@ -114,6 +114,9 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackLevelerAmount(const juce::String& trackId, float amount);
     float getTrackLevelerAmount(const juce::String& trackId) const;
 
+    bool setTrackPunchAmount(const juce::String& trackId, float amount);
+    float getTrackPunchAmount(const juce::String& trackId) const;
+
     // Drive defaults to off; Mix defaults to fully wet once Drive is raised.
     bool setTrackSaturation(const juce::String& trackId, float drive, float mix);
     float getTrackSaturationDrive(const juce::String& trackId) const;
@@ -394,6 +397,10 @@ class ProjectState : public juce::ValueTree::Listener
     // New projects opt in explicitly; absent remains off for older project files.
     bool getSafetyLimiterEnabled() const;
     void setSafetyLimiterEnabled(bool enabled);
+
+    // Project-bus compression amount. Zero is an exact bypass and remains absent on disk.
+    float getProjectMixGlueAmount() const;
+    bool setProjectMixGlueAmount(float amount);
 
     // Bar-label offset for the timeline ruler. 0 (default) labels the first bar "1";
     // -1 labels it "0" so a lead-in bar can sit before bar one. Marks dirty.
@@ -725,6 +732,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kExportSettingsJson;
     static const juce::Identifier kMasterVolume;
     static const juce::Identifier kSafetyLimiterEnabled;
+    static const juce::Identifier kMixGlueAmount;
     static const juce::Identifier kBarCounterStart;
     static const juce::Identifier kMixdownStartBar;
     static const juce::Identifier kMetronomeEnabled;
@@ -776,6 +784,7 @@ class ProjectState : public juce::ValueTree::Listener
 
     // Leveler is currently persisted as the user-facing amount knob.
     static const juce::Identifier kLevelerAmount;
+    static const juce::Identifier kPunchAmount;
     static const juce::Identifier kSaturationDrive;
     static const juce::Identifier kSaturationMix;
     static const juce::Identifier kBitCrusherRate;

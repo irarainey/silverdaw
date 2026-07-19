@@ -179,7 +179,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Waveform drawing                            | PixiJS (using peaks arrays from backend)        |
 | Drag and drop                               | Electron / Vue                                  |
 | Audio playback                              | JUCE backend                                    |
-| Per-track FX, mixer routing                 | JUCE backend (per-track Tone EQ + filters, sends, pan, and Leveler shipped) |
+| Per-track FX, mixer routing                 | JUCE backend (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, sends, pan, and Beat Repeat shipped) |
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
@@ -692,13 +692,13 @@ how a beginner actually thinks about the work:
 - **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
   itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
-  controls (Tone, Filter, Compressor, Saturation, Bit Crusher, Reverb amount,
+  controls (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, Reverb amount,
   Delay amount) in the **Track FX** tab of the bottom panel (see §7.12). These
   same parameters — plus a post-FX **Gain** — can also be automated over the
   timeline (see §7.11.1).
 - **Per project** — "the song's space" → one shared Reverb and one shared
-  Delay for the whole project, with character set once, plus a fixed-ceiling
-  Safety Limiter on the final output.
+  Delay for the whole project, a one-control Mix Glue compressor across the
+  completed mix, plus a fixed-ceiling Safety Limiter on the final output.
 
 User-facing language favours familiar, DAW-standard terms — **Reverb**,
 **Delay**, **Pan**, **Bass / Mid / Treble**, **Compressor** — so the app reads
@@ -725,8 +725,8 @@ The engine topology uses two runtime objects:
 - **`TrackRuntime`** — one per UI track, **independent of clip count**.
   Owns a stable per-track output buffer at the engine's nominal block
   size + channel count, the per-track **`TrackChain`** of DSP processors
-  (Tone, Leveler, Saturation, Bit Crusher, gain/mute/solo, pan), and the
-  per-track send scalars
+  (Tone/Filter, Compressor, Punch, Saturation, Bit Crusher, gain/mute/solo),
+  equal-power pan, and the per-track send scalars
   (`reverbSend`, `delaySend`). Clips on this track feed their pre-FX
   audio into this buffer. Defined as `BusGraph::TrackRuntime` in
   `backend/src/engine/BusGraph.h`.
@@ -801,6 +801,7 @@ clips[clipId]
       Tone (3-band EQ)
       Filter (bipolar LPF↔HPF sweep)
       Leveler (Compressor)
+      Punch (transient boost)
       Saturation (soft clipping)
       Bit Crusher (sample-rate and bit-depth reduction)
       gain
@@ -814,8 +815,12 @@ clips[clipId]
   │ Shared Reverb (pulled once)           │
   │ Shared Delay   (pulled once, BPM-sync) │
   └───────────────────────────────────────┘
-  → wet returns ⊕= dryBus → master mix
-  → MeteringSource (master gain + peak meter)
+  → wet returns ⊕= dryBus → project mix
+  → Mix Glue (project bus only)
+  → topMixer (adds preview and scratch sources during live playback)
+  → master gain
+  → Safety Limiter
+  → peak meter
   → device output  /  mixdown writer
 ```
 
@@ -849,6 +854,8 @@ which is what users expect.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
   through a hand-rolled stereo-linked soft-knee compressor, with a
   deterministic static makeup-gain map (no live loudness analysis — see §7.10).
+- **Punch** — a stereo-linked transient boost with one Amount control. Amount
+  `0` is an exact bypass.
 - **Saturation** — Drive and Mix controls for per-track soft clipping. Drive
   `0` is an exact bypass.
 - **Bit Crusher** — Rate, Bits, Boost, and Mix controls for per-track
@@ -856,8 +863,8 @@ which is what users expect.
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
 - **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
-- **pan** — equal-power, surfaced in the Track FX tab. In the **stereo**
-  waveform display the timeline reflects pan per channel: each channel's
+- **pan** — equal-power, surfaced in the track header below the gain fader. In
+  the **stereo** waveform display the timeline reflects pan per channel: each channel's
   lane height and opacity scale with its normalised equal-power pan gain,
   so a hard-panned channel collapses to a faint near-flat lane while the
   other stays full (a centred track leaves both lanes full).
@@ -882,6 +889,9 @@ which is what users expect.
 - **Safety Limiter** — a final, stereo-linked sample-peak guard with a fixed
   `-1 dBFS` ceiling. It protects playback and mixdown output but is not a
   true-peak or mastering limiter.
+- **Mix Glue** — a one-control, stereo-linked project-bus compressor applied
+  after the shared Reverb / Delay returns and before master gain. Amount 0 is
+  a bit-exact bypass.
 
 Putting reverb/delay on a **shared instance with per-track send amounts**
 (rather than per-track inserts) is a deliberate ethos call:
@@ -904,8 +914,9 @@ ask for it.
 Stereo peak meter + dB fader in the transport bar (range `-∞..0 dB`, no
 boost) backed by `PROJECT.masterVolume` / `PROJECT_SET_MASTER_VOLUME`;
 same gain is applied to live playback and the mixdown render so the
-exported file matches what the user hears. LUFS / RMS readouts and a
-master Limiter are deferred to Phase 8.
+exported file matches what the user hears. The fixed-ceiling **Safety Limiter**
+runs after master gain and before peak metering. LUFS / RMS readouts and an
+advanced mastering limiter are deferred to Phase 8.
 
 #### 7.9.6 Live / mixdown render parity
 
@@ -975,11 +986,12 @@ diverges from mixdown in real conditions.
 - Master Limiter + LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
 
-**Status (shipped):** Per-track linear `gain`, master meter + fader,
-mixdown export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph`
-+ canonical `TrackChain`), Tone + Filter, Leveler, shared Reverb / Delay with
-per-track sends, pan, mute / solo, per-clip Volume Shape, and track effect
-automation (§7.11.1) are all shipped.
+**Status (shipped):** Per-track linear `gain`, master meter + fader, mixdown
+export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph` + canonical
+`TrackChain`), Tone + Filter, Compressor, Punch, Saturation, Bit Crusher,
+shared Reverb / Delay with per-track sends, Mix Glue, Safety Limiter, Beat
+Repeat, pan, mute / solo, per-clip Volume Shape, and track effect automation
+(§7.11.1) are all shipped.
 
 ### 7.10 Effects (Built-in)
 
@@ -1019,6 +1031,14 @@ DSP class in `code`.
   on transport stop — **never** at clip boundaries, which would cause
   audible thumps on adjacent clips on the same track. This is only
   achievable because `TrackRuntime` is decoupled from clips (§7.9.1).
+- **Punch** — one Amount control (`0..100 %`) drives a stereo-linked transient
+  boost after the Compressor. Amount 0 is a bit-exact bypass. The detector
+  follows a track's mixed signal so both channels receive the same gain,
+  preserving the stereo image.
+- **Saturation** — Drive and Mix controls for soft clipping. Drive 0 is a
+  bit-exact bypass regardless of Mix.
+- **Bit Crusher** — Rate, Bits, Boost, and Mix controls for sample-rate and
+  bit-depth reduction. Mix 0 is a bit-exact bypass.
 
 **Project-level (one of each, shared by every track):**
 
@@ -1029,6 +1049,12 @@ DSP class in `code`.
   feedback,
   tone, and overall mix are independent. Each track contributes via its
   **Delay amount** send (§7.9).
+- **Mix Glue** — a one-control stereo-linked compressor for the completed
+  project bus. It runs after the shared Reverb and Delay returns and before
+  master gain; Amount 0 is a bit-exact bypass.
+- **Safety Limiter** — a fixed `-1 dBFS` stereo-linked sample-peak guard at
+  final output. It protects playback and mixdown but is not a true-peak or
+  mastering limiter.
 
 **Per-clip (one of each, per Clip — see §7.11):**
 
@@ -1036,6 +1062,14 @@ DSP class in `code`.
   waveform in the Clip Editor. Fade-in / fade-out are expressed by
   dragging the end breakpoints down to silence (there is no separate
   fade feature).
+
+**Timeline (per track):**
+
+- **Beat Repeat** — an `Effects ▸ Beat Repeat` region captures the first
+  selected division of a beat-snapped region and repeats it until that region
+  ends. The duration choices are 1/2 beat, 1 beat, 2 beats, or 1 bar; divisions
+  are 1/4, 1/8, or 1/16. Regions are non-destructive, survive tempo changes,
+  and apply identically during playback and mixdown.
 
 **Tail-render policy.** After every dry track has gone silent the
 `BusGraph` keeps pulling the shared Reverb and Delay processors with zero
@@ -1119,12 +1153,15 @@ silence.
   **Volume** button (see §7.11). There is no separate fade control, no
   timeline drag handles, and no standalone dialog; on the timeline the
   envelope is reflected in the waveform's height rather than as an overlay.
-- **Per-track Tone / Filter / Compressor / Saturation / Bit Crusher /
+- **Per-track Tone / Filter / Compressor / Punch / Saturation / Bit Crusher /
   Reverb amount / Delay amount** — surfaced in a **Track FX** tab of the
   bottom panel (shares its space with the Library; one-at-a-time tab switch —
-  see §7.12).
-- **Project Reverb / Delay / Safety Limiter** — a **Project FX** subtab within
-  the same bottom panel area, clearly separated from the per-track controls.
+  see §7.12). Five equal-width responsive columns keep Tone, Filter above
+  Reverb & Delay, Compressor above Punch, Saturation, and Bit Crusher together
+  without horizontal scrolling.
+- **Project Reverb / Delay / Mix Glue / Safety Limiter** — a **Project FX**
+  tab within the same bottom panel area, clearly separated from the per-track
+  controls.
 - **Beat Repeat** — per-track, tempo-aligned regions added from the timeline
   **Effects** menu rather than a continuous Track FX control.
 
@@ -1620,8 +1657,9 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 ### Agreed near-term sequence
 
 Phases 1–7 are complete: the Phase 5 mixing/effects/automation work
-(engine refactor, Volume Shape, Tone + Filter, shared Reverb + Delay, Leveler,
-pan, master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
+(engine refactor, Volume Shape, Tone + Filter, Compressor, Punch, Saturation,
+Bit Crusher, shared Reverb + Delay, Mix Glue, Safety Limiter, Beat Repeat, pan,
+master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
 packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer**
 (§7.6), the Phase 7 polish / performance / packaging pass, Track FX automation
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
@@ -1873,9 +1911,10 @@ playable at every point):
   to pre-change for fixed test projects (summing order may differ in
   the last bit of float math, so byte-identical is too strict; the
   parity harness tolerance is `< 0.5 LSB at 32-bit float`).
-- [x] **1b. Canonical `TrackChain` (empty).** Define the
-  `TrackChain` abstraction (Tone → Leveler → Saturation → Bit Crusher → gain → mute/solo, all
-  no-op for now) and run it inside `TrackRuntime` for every block.
+- [x] **1b. Canonical `TrackChain` (initially empty).** Define the
+  `TrackChain` abstraction (Tone → Leveler → Punch → Saturation → Bit Crusher
+  → gain → mute/solo, initially all no-op) and run it inside `TrackRuntime` for
+  every block.
   `MixdownEngine` is refactored to consume the same `TrackChain`.
   Acceptance: parity harness (§7.9.6 conditions a–d) passes — first
   block, non-4096 block sizes, smoothed-parameter projects, non-zero
@@ -1968,15 +2007,18 @@ playable at every point):
 - [x] **5. Tabbed bottom panel** (Library / Track FX / Project FX) inside
   `LibraryPanel`. The track header's **Fx** button switches the panel
   to the Track FX view (`TrackFxPanel`); whether an effects rack is open
-  (vs the Library) is persisted in the project's view state (`fxPanelOpen`,
+  (vs the Library) is persisted in the project's view state (`viewFxPanelOpen`,
   round-tripped via `PROJECT_SET_VIEW`) so it survives Save / Load — note
   this is per-project memory, a deliberate deviation from the original
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
-  Track FX (Tone + Pan + Reverb/Delay) or the project-wide Project FX (shared
-  Reverb + Delay) — is a UI-only `fxTab` selection that defaults back to Track FX on
-  reload, keeping the per-track and project-scoped effects on clearly
-  separate tabs rather than mixing both on one panel. The Library
+  Track FX (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, and
+  Reverb/Delay sends) or the project-wide Project FX (shared Reverb, Delay,
+  Mix Glue, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
+  back to Track FX on reload, keeping the per-track and project-scoped effects
+  on clearly separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
+  Track FX arranges the modules in five responsive columns: Tone; Filter above
+  Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.
   **Shipped as a one-at-a-time tab switch, _not_ the originally-
   specified side-by-side split-view.** The split-view + draggable
   splitter (and the related `v-show` / drag-source-cleanup machinery)
@@ -2010,15 +2052,16 @@ playable at every point):
   Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
   across the track's lifetime and resets on transport stop / seek,
   **never** at clip boundaries. Runs in `TrackChain` after Tone
-  (Tone → Leveler → Saturation → Bit Crusher) and is mirrored in the offline `MixdownEngine` for
-  export parity. Bridge: `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
+  (Tone → Leveler → Punch → Saturation → Bit Crusher) and is mirrored in the
+  offline `MixdownEngine` for export parity. Bridge:
+  `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
   activated end-to-end (engine push + persistence + renderer snapshot).
   The **Advanced** disclosure (threshold / ratio / attack / release /
   makeup) is deferred as a clean follow-up.
 - [x] **9. mute / solo / pan.** _(mute / solo shipped via the existing
   `TRACK_MUTE` / `TRACK_SOLO` envelopes; **pan** now shipped.)_ Track
-  header has mute/solo buttons; the Track FX tab carries an equal-power
-  **pan** control (signed `[-1, 1]`, unity at centre so a centred track
+  header has mute/solo buttons and an equal-power **pan** control below the
+  gain fader (signed `[-1, 1]`, unity at centre so a centred track
   is bit-exact with the no-pan path). Pan is applied to the dry path
   AFTER the pre-pan send tap, so Reverb / Delay sends stay pre-pan, and is
   mirrored in the offline `MixdownEngine` for export parity (§7.9.6).
@@ -2026,8 +2069,8 @@ playable at every point):
   `pan` persists through `tracksAsJson` and survives save / reload.
 - [x] **10. Master bus metering.** Transport-bar stereo peak meter
   + dB master fader is *shipped* (`PROJECT_SET_MASTER_VOLUME`).
-  LUFS / RMS readouts and a master Limiter are deferred to
-  Phase 8.
+  LUFS / RMS readouts and a mastering limiter are deferred to Phase 8; the
+  fixed-ceiling **Safety Limiter** is shipped in Project FX.
 - [x] **Export**: stereo mixdown via `MIXDOWN_START` /
   `MIXDOWN_PROGRESS` / `MIXDOWN_DONE` / `MIXDOWN_CANCEL` /
   `MIXDOWN_FAILED`. Formats: WAV (16 / 24 / 32-float), FLAC
@@ -2044,9 +2087,10 @@ playable at every point):
   dirty-mark). Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
-  TrackRuntime → TrackChain (Tone → Leveler → Saturation → Bit Crusher → gain → mute/solo) →
+  TrackRuntime → TrackChain (Tone → Leveler → Punch → Saturation → Bit Crusher → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
-  master meter → final-stage libsamplerate`) so warped / pitch-
+  Mix Glue → master gain → Safety Limiter → master meter →
+  final-stage libsamplerate`) so warped / pitch-
   shifted / effected output is **sample-equivalent to live
   playback at the internal master float bus** under deterministic
   conditions (same project, fixed rate, fixed block size, no

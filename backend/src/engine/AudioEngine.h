@@ -115,6 +115,7 @@ class AudioEngine
 
     void setMasterGain(float gain);
     void setSafetyLimiterEnabled(bool enabled, bool snap);
+    void setProjectMixGlue(float amount, bool snap);
 
     // Metronome monitoring click (post master gain). Enable/disable and keep the click in time with
     // the project tempo. Both publish to the audio thread via atomics.
@@ -130,6 +131,7 @@ class AudioEngine
                       bool snap);
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
+    void setTrackPunch(const juce::String& trackId, float amount, bool snap);
     void setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap);
     void setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
                             float boost, float mix, bool snap);

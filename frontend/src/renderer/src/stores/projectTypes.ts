@@ -133,6 +133,8 @@ export interface Track {
   pan?: number
   /** Leveler (soft-knee compressor) amount, linear [0,1] (0 = off). Suppressed-when-default. */
   levelerAmount?: number
+  /** Stereo-linked transient enhancement amount, linear [0,1] (0 = off). */
+  punchAmount?: number
   /** Saturation drive and wet mix, linear [0,1]. Mix defaults to 1 when absent. */
   saturationDrive?: number
   saturationMix?: number
@@ -329,6 +331,8 @@ export interface ProjectState {
   masterVolume: number
   /** Fixed-ceiling final-output protection. */
   safetyLimiterEnabled: boolean
+  /** One-control project-bus compressor amount. Zero is an exact bypass. */
+  mixGlueAmount: number
   /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower
    *  adds lead-in bars before bar one. Persisted with the project. */
   barCounterStart: number

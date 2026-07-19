@@ -42,6 +42,7 @@ const STATIC_FIELD: Partial<Record<AutomationParamId, keyof Track>> = {
   reverbSend: 'reverbSend',
   delaySend: 'delaySend',
   leveler: 'levelerAmount',
+  punch: 'punchAmount',
   saturationDrive: 'saturationDrive',
   saturationMix: 'saturationMix',
   bitCrusherRate: 'bitCrusherRate',
@@ -187,6 +188,26 @@ export const trackActions = {
       track.levelerAmount = clamped !== 0 ? clamped : undefined
       if (!opts?.localOnly) {
         sendBridge('TRACK_SET_LEVELER', {
+          trackId,
+          amount: clamped,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /** Update stereo-linked transient Punch; localOnly reconciles backend acks. */
+    setTrackPunch(
+      trackId: string,
+      amount: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamped = Math.max(0, Math.min(1, Number.isFinite(amount) ? amount : 0))
+      track.punchAmount = clamped !== 0 ? clamped : undefined
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_PUNCH', {
           trackId,
           amount: clamped,
           gestureId: opts?.gestureId,

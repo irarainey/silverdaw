@@ -338,6 +338,7 @@ int runBackend(int argc, char* argv[])
     silverdaw::crash::setPhase("audio-graph-init");
     engine.initialiseGraph();
     engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
     silverdaw::log::info("perf", "graph-initialised @ " + elapsedSinceStart());
 
     const auto preferredAudioTypeName =

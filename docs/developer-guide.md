@@ -228,19 +228,29 @@ Silverdaw currently supports the core arrangement workflow:
   (a single bipolar DJ-style sweep, low-pass at the left through off at centre
   to high-pass at the right), a **Compressor** (a single **Amount** knob `0..1`
   driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
-  bit-exact passthrough; internal class `Leveler`), **Saturation** (Drive and
+  bit-exact passthrough; internal class `Leveler`), **Punch** (a stereo-linked
+  transient boost with one Amount control; Amount 0 is a bit-exact bypass), **Saturation** (Drive and
   Mix controls for soft clipping; Drive 0 is a bit-exact bypass), and a
   **Bit Crusher** (Rate, Bits, Boost, and Mix controls for lo-fi digital
   reduction; Mix 0 is a bit-exact bypass), and a
   **Reverb & Delay** rack setting how much the track feeds the project-wide
   Reverb and Delay buses. **Project FX** hosts the
   shared, song-wide returns those amounts route into: a **Reverb** and a
-  **Delay** (tempo-locked), plus a **Safety Limiter** switch. The limiter is a
-  fixed -1 dBFS, stereo-linked sample-peak guard on final output; it is not a
-  true-peak or mastering limiter. All are edited live (slider drags coalesce into one undo
-  step) and applied to both playback and mixdown. FX racks wrap to the available
-  panel width and the panel scrolls vertically rather than horizontally. The DSP lives in
+  **Delay** (tempo-locked), a one-control **Mix Glue** compressor, plus a
+  **Safety Limiter** switch. Mix Glue processes the completed project bus after
+  the shared Reverb and Delay returns and before master gain; Amount 0 is a
+  bit-exact bypass. The limiter is a fixed -1 dBFS, stereo-linked sample-peak
+  guard on final output; it is not a true-peak or mastering limiter. All are
+  edited live (slider drags coalesce into one undo step) and applied to both
+  playback and mixdown. **Track FX** keeps five effect columns side-by-side:
+  Tone, Saturation, and Bit Crusher occupy full-height columns; Filter sits
+  above Reverb & Delay, and Compressor sits above Punch. Each retains the
+  same share of the available panel width. The grid stops growing after
+  `120rem`, so wider displays do not stretch the racks.
+  **Project FX** modules wrap to the available panel width. Both panels scroll
+  vertically rather than horizontally. The DSP lives in
   [`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
+  [`Punch`](../backend/src/dsp/Punch.h) /
   [`Saturation`](../backend/src/dsp/Saturation.h) /
   [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
   [`TrackChain`](../backend/src/dsp/TrackChain.h)
@@ -481,8 +491,8 @@ play seamlessly.
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain
-beyond the per-track Tone EQ + Filter, Compressor, Saturation, and Bit Crusher,
-the project-wide Reverb and Delay sends, Safety Limiter, and Beat Repeat,
+beyond the per-track Tone EQ + Filter, Compressor, Punch, Saturation, and Bit Crusher,
+the project-wide Reverb and Delay sends, Mix Glue, Safety Limiter, and Beat Repeat,
 the track effect automation lanes, the per-clip Volume Shape, and the per-clip
 turntable Brake / Backspin tails that already ship).
 
@@ -556,6 +566,14 @@ division }` and `TRACK_BEAT_REPEAT_DELETE { trackId, regionId }`. The backend
 validates the non-overlapping per-track regions, publishes the updated
 `PROJECT_STATE`, and includes each region in its track's optional `beatRepeats`
 array. Valid divisions are `1/4`, `1/8`, and `1/16`.
+
+Track FX uses `TRACK_SET_TONE`, `TRACK_SET_LEVELER`, `TRACK_SET_PUNCH`,
+`TRACK_SET_SATURATION`, `TRACK_SET_BIT_CRUSHER`, and `TRACK_SET_SENDS`. The
+backend clamps and persists each effect value, publishes it to live audio, and
+reconciles the renderer with the matching `TRACK_*_APPLIED` acknowledgement.
+Project FX uses `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`,
+`PROJECT_SET_MIX_GLUE`, and `PROJECT_SET_SAFETY_LIMITER`; Reverb, Delay, and
+Mix Glue similarly return canonical `PROJECT_*_APPLIED` state.
 
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
@@ -883,13 +901,13 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         metronomeEnabled?, clipEditorMetronomeEnabled?,
-        safetyLimiterEnabled?,
+        safetyLimiterEnabled?, mixGlueAmount?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?,
         scratchPatterns?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         colorIndex?, toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
-        sendReverb?, sendDelay?, pan?, levelerAmount?, saturationDrive?, saturationMix?,
+        sendReverb?, sendDelay?, pan?, levelerAmount?, punchAmount?, saturationDrive?, saturationMix?,
         bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?, automation?,
         transitions?]
     BEAT_REPEAT[id, startBeat, lengthBeats, division]*
@@ -1007,7 +1025,8 @@ high-pass / Low Cut),
 Reverb and Delay buses, `pan` is the equal-power pan position, signed
 `[-1, 1]` (`-1` = hard left, `0` = centre, `+1` = hard right), and
 `levelerAmount` is the per-track **Leveler** strength in `[0, 1]` (`0` = off /
-bypassed). `saturationDrive` and `saturationMix` are `[0, 1]`: Drive defaults
+bypassed). `punchAmount` is the stereo-linked transient boost amount in `[0, 1]`
+(`0` = bypassed). `saturationDrive` and `saturationMix` are `[0, 1]`: Drive defaults
 to `0` (off), Mix defaults to `1` (fully wet), and both are suppressed from
 save at their defaults. `bitCrusherRate` is a `[0.01, 1]` sample-rate ratio,
 `bitCrusherBits` is an integer in `[1, 16]`, and `bitCrusherBoost` /
@@ -1015,9 +1034,11 @@ save at their defaults. `bitCrusherRate` is a `[0.01, 1]` sample-rate ratio,
 `0`, and Mix `0`. The shared buses themselves live on the `PROJECT` node:
 `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
 project **Reverb**, and `delayNoteValue` / `delayFeedback` / `delayTone` /
-`delayMix` the project **Delay** (tempo-locked). `safetyLimiterEnabled` enables
-the final fixed `-1 dBFS` sample-peak guard. Each `TRACK` can also have optional
-`BEAT_REPEAT` children: `{ id, startBeat, lengthBeats, division }` regions stored
+`delayMix` the project **Delay** (tempo-locked). `mixGlueAmount` controls the
+project-bus compressor (`0..1`; absent or zero is a bit-exact bypass).
+`safetyLimiterEnabled` enables the final fixed `-1 dBFS` sample-peak guard.
+Each `TRACK` can also have optional `BEAT_REPEAT` children: `{ id, startBeat,
+lengthBeats, division }` regions stored
 in beat space; older projects simply have none. `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
@@ -1272,20 +1293,21 @@ the way in, and the original file is never modified (non-destructive editing).
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp, the
 per-clip volume-shape multiplier, the per-clip turntable brake / backspin tail
 varispeed (`OffsetSource`), per-track summing and optional Beat Repeat, the
-per-track Tone EQ + bipolar Filter, the per-track Leveler, Saturation, and Bit Crusher
+per-track Tone EQ + bipolar Filter, the per-track Leveler, Punch, Saturation, and Bit Crusher
 ([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
+[`Punch`](../backend/src/dsp/Punch.h) /
 [`Saturation`](../backend/src/dsp/Saturation.h) /
 [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
 [`TrackChain`](../backend/src/dsp/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,
-track gain and mute / solo, equal-power panning, the master mix, master gain,
-Safety Limiter, metering, and the `MasterClockSource` that gates playback and
-feeds the device. The
+track gain and mute / solo, equal-power panning, the master mix, Mix Glue,
+master gain, Safety Limiter, metering, and the `MasterClockSource` that gates
+playback and feeds the device. The
 `AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
 final master is back in range. (`TrackChain` is the canonical per-track DSP
-seam shared by live playback and mixdown, running Tone → Leveler → Saturation → Bit Crusher → gain →
+seam shared by live playback and mixdown, running Tone → Leveler → Punch → Saturation → Bit Crusher → gain →
 mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
@@ -2889,7 +2911,7 @@ renderer-only (never serialised), so it needs no migration.
 Each track header has an **A** toggle that opens an automation lane (a strip reserved at the
 bottom of the track row; clips compress above it, so a collapsed lane leaves the timeline
 layout untouched). A parameter picker chooses what the lane edits — **Filter**, **Pan**, the
-3-band **Tone**, **Reverb/Delay sends**, **Compressor**, **Saturation**,
+3-band **Tone**, **Reverb/Delay sends**, **Compressor**, **Punch**, **Saturation**,
 **Bit Crusher**, or
 **Gain** (a post-FX track level in
 dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
@@ -2908,7 +2930,7 @@ control (and the header **Pan**) carries a small **A** button that opens that pa
 shows an **AUTO** tag, so it is clear the lane is in charge. While automated the control is
 **read-only but live**: its slider and readout follow the curve's value sampled at the playhead
 (`useFxAutomation.displayValue` reading `transport.positionMs`), so during playback or scrub the
-Filter / Tone / Sends / Compressor / Saturation / Bit Crusher sliders and the header Pan animate to the current automated
+Filter / Tone / Sends / Compressor / Punch / Saturation / Bit Crusher sliders and the header Pan animate to the current automated
 value (the static value remains the resting baseline the curve rides). The keyboard/value nudges
 snap to the parameter default so 0 / centre
 is always reachable. The lane resizes via a thin middle splitter (redistributes height between

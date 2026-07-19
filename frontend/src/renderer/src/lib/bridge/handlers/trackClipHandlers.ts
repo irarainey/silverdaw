@@ -26,6 +26,7 @@ export const trackClipBridgeHandlers: BridgeInboundHandlers<
   | 'TRACK_SENDS_APPLIED'
   | 'TRACK_PAN_APPLIED'
   | 'TRACK_LEVELER_APPLIED'
+  | 'TRACK_PUNCH_APPLIED'
   | 'TRACK_SATURATION_APPLIED'
   | 'TRACK_BIT_CRUSHER_APPLIED'
   | 'TRACK_AUTOMATION_APPLIED'
@@ -141,6 +142,14 @@ export const trackClipBridgeHandlers: BridgeInboundHandlers<
       return
     }
     useProjectStore().setTrackLeveler(payload.trackId, payload.amount, { localOnly: true })
+  },
+
+  TRACK_PUNCH_APPLIED: (payload) => {
+    if (!payload.ok) {
+      log.warn('bridge', `TRACK_PUNCH_APPLIED ok=false for ${payload.trackId}`)
+      return
+    }
+    useProjectStore().setTrackPunch(payload.trackId, payload.amount, { localOnly: true })
   },
 
   TRACK_SATURATION_APPLIED: (payload) => {

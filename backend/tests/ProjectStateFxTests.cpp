@@ -14,6 +14,7 @@
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
 #include "ProjectFile.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
@@ -183,6 +184,63 @@ void testProjectStateSafetyLimiterDefaultsAndRoundTrip()
     require(static_cast<bool>(fresh.getTree().getProperty(
                 juce::Identifier{"safetyLimiterEnabled"}, false)),
             "enabled safety limiter must be stored in project state");
+}
+
+void testProjectStateMixGlueDefaultsAndRoundTrip()
+{
+    silverdaw::ProjectState state;
+    const juce::Identifier kMixGlueAmount{"mixGlueAmount"};
+    requireNear(state.getProjectMixGlueAmount(), 0.0, 0.0001,
+                "a fresh project must bypass Mix Glue");
+    require(!state.getTree().hasProperty(kMixGlueAmount),
+            "a fresh project must suppress the zero Mix Glue property");
+
+    require(state.setProjectMixGlueAmount(0.65F), "non-zero Mix Glue should persist");
+    requireNear(state.getProjectMixGlueAmount(), 0.65, 0.0001,
+                "Mix Glue amount should round-trip through project state");
+
+    silverdaw::ProjectSession session;
+    const auto envelope = silverdaw::buildProjectStateEnvelope(session, state, false);
+    requireNear(static_cast<double>(envelope.getProperty("mixGlueAmount", 0.0)), 0.65, 0.0001,
+                "Mix Glue amount should project into PROJECT_STATE");
+
+    require(state.setProjectMixGlueAmount(0.0F), "returning Mix Glue to zero should mutate state");
+    require(!state.getTree().hasProperty(kMixGlueAmount),
+            "zero Mix Glue should use default suppression");
+
+    juce::ValueTree legacyProject(juce::Identifier{"PROJECT"});
+    state.replaceTree(legacyProject);
+    requireNear(state.getProjectMixGlueAmount(), 0.0, 0.0001,
+                "a legacy project without Mix Glue must preserve its prior sound");
+}
+
+void testProjectStateTrackPunchPersistenceAndLegacyLoad()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t-punch"), "addTrack should succeed");
+    const auto track = state.getTree().getChildWithProperty(
+        juce::Identifier{"id"}, juce::var("t-punch"));
+    const juce::Identifier punchAmount{"punchAmount"};
+    requireNear(state.getTrackPunchAmount("t-punch"), 0.0, 0.0001,
+                "fresh Punch must default to bypass");
+    require(!track.hasProperty(punchAmount), "default Punch must be suppressed");
+    require(state.setTrackPunchAmount("t-punch", 1.5F), "Punch change should persist");
+    requireNear(state.getTrackPunchAmount("t-punch"), 1.0, 0.0001,
+                "Punch amount must clamp to one");
+    const auto tracks = state.tracksAsJson();
+    const auto& item = tracks.getArray()->getReference(0);
+    requireNear(static_cast<double>(item.getProperty("punchAmount", 0.0)), 1.0, 0.0001,
+                "Punch must appear in the project-state payload");
+    require(state.setTrackPunchAmount("t-punch", 0.0F), "Punch reset should mutate state");
+    require(!track.hasProperty(punchAmount), "zero Punch must be suppressed");
+
+    juce::ValueTree legacy(juce::Identifier{"PROJECT"});
+    juce::ValueTree legacyTrack(juce::Identifier{"TRACK"});
+    legacyTrack.setProperty(juce::Identifier{"id"}, "legacy", nullptr);
+    legacy.appendChild(legacyTrack, nullptr);
+    require(state.replaceTree(legacy).wasOk(), "legacy project should load");
+    requireNear(state.getTrackPunchAmount("legacy"), 0.0, 0.0001,
+                "legacy projects without Punch must remain bypassed");
 }
 
 void testProjectStateTrackToneJsonRoundTrip()
@@ -593,6 +651,8 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState clip envelope sort / dedupe / clear", testProjectStateClipEnvelopeNormalisation});
     tests.push_back({"ProjectState project delay noteValue guard", testProjectStateDelayNoteValueGuard});
     tests.push_back({"ProjectState safety limiter defaults and legacy round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
+    tests.push_back({"ProjectState Mix Glue defaults, persistence, and legacy round-trip", testProjectStateMixGlueDefaultsAndRoundTrip});
+    tests.push_back({"ProjectState per-track Punch persists and legacy load bypasses", testProjectStateTrackPunchPersistenceAndLegacyLoad});
     tests.push_back({"ProjectState per-track tone round-trips through tracksAsJson", testProjectStateTrackToneJsonRoundTrip});
     tests.push_back({"ProjectState per-track leveler round-trips through tracksAsJson", testProjectStateLevelerJsonRoundTrip});
     tests.push_back({"ProjectState per-track saturation round-trips through tracksAsJson", testProjectStateSaturationJsonRoundTrip});

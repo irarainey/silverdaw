@@ -199,6 +199,10 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     }
     if (projectState.getSafetyLimiterEnabled())
         obj->setProperty("safetyLimiterEnabled", true);
+    {
+        const auto mixGlueAmount = projectState.getProjectMixGlueAmount();
+        if (mixGlueAmount > 1.0e-4F) obj->setProperty("mixGlueAmount", mixGlueAmount);
+    }
     // Omit default (one) bar settings so legacy projects round-trip byte-clean.
     {
         const auto barCounterStart = projectState.getBarCounterStart();
@@ -339,6 +343,8 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                                 projectState.getTrackToneFilter(toneTrackId), /*snap*/ true);
             engine.setTrackLeveler(toneTrackId, projectState.getTrackLevelerAmount(toneTrackId),
                                    /*snap*/ true);
+            engine.setTrackPunch(toneTrackId, projectState.getTrackPunchAmount(toneTrackId),
+                                 /*snap*/ true);
             engine.setTrackSaturation(toneTrackId,
                                       projectState.getTrackSaturationDrive(toneTrackId),
                                       projectState.getTrackSaturationMix(toneTrackId),
@@ -434,6 +440,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     // Keep live master gain aligned with loaded, recovered, and undo/redo state.
     engine.setMasterGain(projectState.getMasterVolume());
     engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
 
     // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
     engine.setMetronomeBpm(projectState.getBpm());

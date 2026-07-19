@@ -300,6 +300,7 @@ void BusGraph::applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnaps
     if (snap->hasParam(AutomationParam::toneMid)) rt.chain.setMidTarget(sample(AutomationParam::toneMid), discontinuity);
     if (snap->hasParam(AutomationParam::toneTreble)) rt.chain.setTrebleTarget(sample(AutomationParam::toneTreble), discontinuity);
     if (snap->hasParam(AutomationParam::leveler)) rt.chain.setLeveler(sample(AutomationParam::leveler), discontinuity);
+    if (snap->hasParam(AutomationParam::punch)) rt.chain.setPunchTarget(sample(AutomationParam::punch), discontinuity);
     if (snap->hasParam(AutomationParam::saturationDrive)) rt.chain.setSaturationDriveTarget(sample(AutomationParam::saturationDrive), discontinuity);
     if (snap->hasParam(AutomationParam::saturationMix)) rt.chain.setSaturationMixTarget(sample(AutomationParam::saturationMix), discontinuity);
     if (snap->hasParam(AutomationParam::bitCrusherRate)) rt.chain.setBitCrusherRateTarget(sample(AutomationParam::bitCrusherRate), discontinuity);

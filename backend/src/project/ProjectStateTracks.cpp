@@ -455,6 +455,23 @@ float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
     return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
 }
 
+bool ProjectState::setTrackPunchAmount(const juce::String& trackId, float amount)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+    const float safeAmount = std::isfinite(amount) ? amount : 0.0F;
+    return applyUnitFloat(track, kPunchAmount, safeAmount, kLevelerEpsilon, &undoManager);
+}
+
+float ProjectState::getTrackPunchAmount(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0F;
+    const float amount = static_cast<float>(
+        static_cast<double>(track.getProperty(kPunchAmount, 0.0)));
+    return std::isfinite(amount) ? juce::jlimit(0.0F, 1.0F, amount) : 0.0F;
+}
+
 bool ProjectState::setTrackSaturation(const juce::String& trackId, float drive, float mix)
 {
     auto track = findTrack(trackId);

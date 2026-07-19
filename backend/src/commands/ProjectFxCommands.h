@@ -15,5 +15,7 @@ void handleProjectSetReverb(const juce::var& payload, AudioEngine& engine, Proje
                             BridgeServer& bridge);
 void handleProjectSetDelay(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                            BridgeServer& bridge);
+void handleProjectSetMixGlue(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
+                             BridgeServer& bridge);
 
 } // namespace silverdaw

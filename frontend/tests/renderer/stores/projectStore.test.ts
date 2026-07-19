@@ -126,6 +126,22 @@ describe('projectStore', () => {
     expect(project.metronomeEnabled).toBe(false)
   })
 
+  it('sets Mix Glue amount and notifies the bridge', () => {
+    const project = useProjectStore()
+    sendMock.mockReturnValue(true)
+
+    project.setProjectMixGlueAmount(0.65, { gestureId: 'mix-glue-1', gestureEnd: true })
+    expect(project.mixGlueAmount).toBe(0.65)
+    expect(sendMock).toHaveBeenCalledWith('PROJECT_SET_MIX_GLUE', {
+      amount: 0.65,
+      gestureId: 'mix-glue-1',
+      gestureEnd: true
+    })
+
+    project.setProjectMixGlueAmount(4, { localOnly: true })
+    expect(project.mixGlueAmount).toBe(1)
+  })
+
   it('toggles the metronome and notifies the bridge, no-op when unchanged', () => {
     const project = useProjectStore()
     sendMock.mockReturnValue(true)
@@ -1356,6 +1372,28 @@ describe('projectStore', () => {
     project.setTrackSaturation(trackId, { drive: 0, mix: 1 }, { localOnly: true })
     expect(track?.saturationDrive).toBeUndefined()
     expect(track?.saturationMix).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('clamps and forwards per-track Punch, suppressing its neutral default', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    project.setTrackPunch(trackId, 2, { gestureId: 'punch-1', gestureEnd: true })
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.punchAmount).toBe(1)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_PUNCH', {
+      trackId,
+      amount: 1,
+      gestureId: 'punch-1',
+      gestureEnd: true
+    })
+
+    sendMock.mockClear()
+    project.setTrackPunch(trackId, 0, { localOnly: true })
+    expect(track?.punchAmount).toBeUndefined()
     expect(sendMock).not.toHaveBeenCalled()
   })
 
