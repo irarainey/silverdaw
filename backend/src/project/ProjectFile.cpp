@@ -3,6 +3,10 @@
 #include "ValueTreeJson.h"
 #include "Version.h"
 
+#if JUCE_WINDOWS
+#include <windows.h>
+#endif
+
 namespace silverdaw::ProjectFile
 {
 
@@ -52,6 +56,18 @@ juce::String fromPortablePath(const juce::String& stored, const juce::File& proj
         return stored;
     }
     return projectDir.getChildFile(stored).getFullPathName();
+}
+
+bool replaceFileAtomically(const juce::File& tempFile, const juce::File& targetFile)
+{
+#if JUCE_WINDOWS
+    const auto tempPath = tempFile.getFullPathName();
+    const auto targetPath = targetFile.getFullPathName();
+    return ::MoveFileExW(tempPath.toWideCharPointer(), targetPath.toWideCharPointer(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return tempFile.moveFileTo(targetFile);
+#endif
 }
 
 // Recursively rewrite portable path properties throughout the serialised project
@@ -123,13 +139,10 @@ juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var&
         return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
     }
 
-    if (file.existsAsFile())
+    if (!replaceFileAtomically(tempFile, file))
     {
-        file.deleteFile();
-    }
-    if (!tempFile.moveFileTo(file))
-    {
-        return juce::Result::fail("Failed to rename temp file to " + file.getFullPathName());
+        tempFile.deleteFile();
+        return juce::Result::fail("Failed to replace project file " + file.getFullPathName());
     }
 
     return juce::Result::ok();
@@ -358,4 +371,3 @@ LoadResult load(const juce::File& file, ProjectState& project)
 }
 
 } // namespace silverdaw::ProjectFile
-

@@ -2088,7 +2088,9 @@ playable at every point):
   file-level tags (mapped per-format to ID3 / RIFF INFO /
   VORBIS_COMMENT / AIFF text chunks), and ITU-R BS.1770-4 loudness
   analysis with optional two-pass normalisation to a target LUFS /
-  true-peak ceiling. Dialog choices (including output path) are
+  true-peak ceiling. An optional `MIXDOWN_DONE.warning` reports a
+  non-fatal metadata-tag write failure after the audio has been exported.
+  Dialog choices (including output path) are
   persisted at the *project* level via a single
   `PROJECT.exportSettingsJson` blob (capped 64 KB, whitelist +
   clamp + schema-version guard on parse, no undo entries — only a

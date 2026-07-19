@@ -268,8 +268,15 @@ void runMixdownJob(MixdownSnapshot snapshot,
             while (remaining > 0)
             {
                 const int chunk = static_cast<int>(juce::jmin<int64_t>(remaining, kBlockFrames));
-                if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, chunk)) break;
+                if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, chunk))
+                {
+                    writer.reset();
+                    pass1File.deleteFile();
+                    failWith(MixdownFailureCode::Io, "Failed while writing final silence.");
+                    return;
+                }
                 remaining -= chunk;
+                outputFramesWritten += chunk;
             }
         }
         const auto padEndMs = juce::Time::getMillisecondCounter();
@@ -352,6 +359,18 @@ void runMixdownJob(MixdownSnapshot snapshot,
             return;
         }
 
+        juce::String metadataWarning;
+        if (options.format == MixdownOptions::Format::Flac && ! options.metadata.isEmpty()
+            && !writeFlacVorbisComment(tmpFile, options.metadata))
+        {
+            metadataWarning = "Metadata could not be applied; the audio was exported without tags.";
+        }
+        if (options.format == MixdownOptions::Format::Aiff && ! options.metadata.isEmpty()
+            && !writeAiffTextChunks(tmpFile, options.metadata))
+        {
+            metadataWarning = "Metadata could not be applied; the audio was exported without tags.";
+        }
+
         if (!atomicReplace(tmpFile, targetFile))
         {
             tmpFile.deleteFile();
@@ -360,11 +379,6 @@ void runMixdownJob(MixdownSnapshot snapshot,
             return;
         }
         const auto replaceEndMs = juce::Time::getMillisecondCounter();
-
-        if (options.format == MixdownOptions::Format::Flac && ! options.metadata.isEmpty())
-            writeFlacVorbisComment(targetFile, options.metadata);
-        if (options.format == MixdownOptions::Format::Aiff && ! options.metadata.isEmpty())
-            writeAiffTextChunks(targetFile, options.metadata);
 
         broadcastProgress(bridge, 100.0, "finalize");
         const double actualDurationMs =
@@ -383,7 +397,7 @@ void runMixdownJob(MixdownSnapshot snapshot,
         broadcastDone(bridge, targetFile, actualDurationMs,
                       analyzing ? &finalLoudness : nullptr,
                       limitedByTruePeak, appliedGainDb,
-                      pass2ClippedSamples, pass2PostGainPeakAmp);
+                      pass2ClippedSamples, pass2PostGainPeakAmp, metadataWarning);
 
         busyFlag.store(false);
 

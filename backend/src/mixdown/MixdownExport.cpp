@@ -161,7 +161,7 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
         silverdaw::log::warn("mixdown", "AIFF metadata: failed to write temp; tags not applied");
         return false;
     }
-    if (! tmp.moveFileTo(aiffFile))
+    if (! atomicReplace(tmp, aiffFile))
     {
         tmp.deleteFile();
         silverdaw::log::warn("mixdown", "AIFF metadata: failed to rename temp over output");
@@ -311,7 +311,7 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         silverdaw::log::warn("mixdown", "FLAC metadata: failed to write temp; tags not applied");
         return false;
     }
-    if (! tmp.moveFileTo(flacFile))
+    if (! atomicReplace(tmp, flacFile))
     {
         tmp.deleteFile();
         silverdaw::log::warn("mixdown", "FLAC metadata: failed to rename temp over output");
@@ -326,9 +326,9 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
 bool atomicReplace(const juce::File& tmp, const juce::File& target)
 {
 #if JUCE_WINDOWS
-    const auto tmpStr = tmp.getFullPathName().toWideCharPointer();
-    const auto targetStr = target.getFullPathName().toWideCharPointer();
-    return ::MoveFileExW(tmpStr, targetStr,
+    const auto tmpPath = tmp.getFullPathName();
+    const auto targetPath = target.getFullPathName();
+    return ::MoveFileExW(tmpPath.toWideCharPointer(), targetPath.toWideCharPointer(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
     target.deleteFile();
