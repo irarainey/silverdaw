@@ -86,6 +86,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Tone"
+    help-text="Shape bass, mids and treble"
     :cols="1"
     :rows="2"
     :grid-area="props.gridArea"

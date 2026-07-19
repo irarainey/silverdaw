@@ -555,7 +555,7 @@ describe('isProjectStatePayload', () => {
     })).toBe(false)
   })
 
-  it('accepts a bounded Mix Glue amount and rejects an invalid amount', () => {
+  it('accepts a bounded Glue Compressor amount and rejects an invalid amount', () => {
     expect(isProjectStatePayload({ ...base, mixGlueAmount: 0.65, tracks: [] })).toBe(true)
     expect(isProjectStatePayload({ ...base, mixGlueAmount: 1.01, tracks: [] })).toBe(false)
   })

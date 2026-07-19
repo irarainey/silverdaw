@@ -84,6 +84,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Delay"
+    help-text="Repeat sound in time with the beat"
     :cols="1"
     :rows="2"
   >

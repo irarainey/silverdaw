@@ -38,7 +38,8 @@ onBeforeUnmount(gesture.endGesture)
 
 <template>
   <ClipEffectModule
-    title="Mix Glue"
+    title="Glue Compressor"
+    help-text="Gently bring the mix together"
     :cols="1"
     :rows="1"
   >
@@ -49,7 +50,7 @@ onBeforeUnmount(gesture.endGesture)
       :min="0"
       :max="1"
       :step="0.01"
-      assistive-label="Mix Glue amount"
+      assistive-label="Glue Compressor amount"
       title="Double-click to reset to 0%"
       @input="setAmount($event, false)"
       @change="onChange"

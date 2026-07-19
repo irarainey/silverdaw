@@ -98,7 +98,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
-| `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Mix Glue, Safety Limiter, peaks) | — |
+| `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks) | — |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |
 | `backend/src/mixdown/` | Offline render/export on the canonical chain | — |
 | `backend/src/project/` | `ValueTree` state, UndoManager, save/load, peaks cache | ADR 0002 |

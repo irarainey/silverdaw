@@ -118,6 +118,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Bit Crusher"
+    help-text="Add lo-fi digital grit"
     :cols="1"
     :rows="2"
     :grid-area="props.gridArea"

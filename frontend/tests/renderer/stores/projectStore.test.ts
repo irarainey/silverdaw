@@ -126,7 +126,7 @@ describe('projectStore', () => {
     expect(project.metronomeEnabled).toBe(false)
   })
 
-  it('sets Mix Glue amount and notifies the bridge', () => {
+  it('sets Glue Compressor amount and notifies the bridge', () => {
     const project = useProjectStore()
     sendMock.mockReturnValue(true)
 

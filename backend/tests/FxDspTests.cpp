@@ -370,18 +370,18 @@ void testMixGlueHasExactBypassAndStereoLinkedCompression()
     for (int ch = 0; ch < 2; ++ch)
         for (int i = 0; i < n; ++i)
             require(bypass.getSample(ch, i) == reference.getSample(ch, i),
-                    "Mix Glue Amount 0 must be a bit-exact bypass");
+                    "Glue Compressor Amount 0 must be a bit-exact bypass");
 
     mixGlue.setParams(1.0F, /*snap*/ true);
     mixGlue.process(reference, 0, n);
     require(reference.getMagnitude(0, n / 2, n / 2) < 0.8F,
-            "Mix Glue must reduce a hot project-bus signal");
+            "Glue Compressor must reduce a hot project-bus signal");
     for (int i = n / 2; i < n; ++i)
     {
         const float left = reference.getSample(0, i);
         const float right = reference.getSample(1, i);
         requireNear(right, left * 0.5F, 1.0e-5,
-                    "Mix Glue must apply stereo-linked gain to both channels");
+                    "Glue Compressor must apply stereo-linked gain to both channels");
     }
 }
 
@@ -1359,7 +1359,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
     tests.push_back({"Punch is bit-exact at Amount 0 and stereo-links transient shaping", testPunchBypassAndStereoLinkedTransientShaping});
-    tests.push_back({"Mix Glue has exact bypass and stereo-linked compression", testMixGlueHasExactBypassAndStereoLinkedCompression});
+    tests.push_back({"Glue Compressor has exact bypass and stereo-linked compression", testMixGlueHasExactBypassAndStereoLinkedCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});
     tests.push_back({"SharedFx Room rings a tail after input stops and terminates", testSharedFxRoomTailRingsAndTerminates});

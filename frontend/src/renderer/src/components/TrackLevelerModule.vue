@@ -67,6 +67,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     :title="'Compressor'"
+    help-text="Evens out loud and quiet parts"
     :cols="1"
     :rows="1"
     :grid-area="props.gridArea"

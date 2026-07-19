@@ -13,6 +13,7 @@ function onChange(event: Event): void {
 <template>
   <ClipEffectModule
     title="Safety Limiter"
+    help-text="Protect the final output from clipping"
     :cols="1"
     :rows="1"
   >

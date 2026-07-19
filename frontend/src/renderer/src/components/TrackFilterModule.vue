@@ -77,6 +77,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Filter"
+    help-text="Cut highs or lows"
     :cols="1"
     :rows="1"
     :grid-area="props.gridArea"

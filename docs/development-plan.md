@@ -697,7 +697,7 @@ how a beginner actually thinks about the work:
   same parameters — plus a post-FX **Gain** — can also be automated over the
   timeline (see §7.11.1).
 - **Per project** — "the song's space" → one shared Reverb and one shared
-  Delay for the whole project, a one-control Mix Glue compressor across the
+  Delay for the whole project, a one-control Glue Compressor across the
   completed mix, plus a fixed-ceiling Safety Limiter on the final output.
 
 User-facing language favours familiar, DAW-standard terms — **Reverb**,
@@ -816,7 +816,7 @@ clips[clipId]
   │ Shared Delay   (pulled once, BPM-sync) │
   └───────────────────────────────────────┘
   → wet returns ⊕= dryBus → project mix
-  → Mix Glue (project bus only)
+  → Glue Compressor (project bus only)
   → topMixer (adds preview and scratch sources during live playback)
   → master gain
   → Safety Limiter
@@ -889,7 +889,7 @@ which is what users expect.
 - **Safety Limiter** — a final, stereo-linked sample-peak guard with a fixed
   `-1 dBFS` ceiling. It protects playback and mixdown output but is not a
   true-peak or mastering limiter.
-- **Mix Glue** — a one-control, stereo-linked project-bus compressor applied
+- **Glue Compressor** — a one-control, stereo-linked project-bus compressor applied
   after the shared Reverb / Delay returns and before master gain. Amount 0 is
   a bit-exact bypass.
 
@@ -989,7 +989,7 @@ diverges from mixdown in real conditions.
 **Status (shipped):** Per-track linear `gain`, master meter + fader, mixdown
 export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph` + canonical
 `TrackChain`), Tone + Filter, Compressor, Punch, Saturation, Bit Crusher,
-shared Reverb / Delay with per-track sends, Mix Glue, Safety Limiter, Beat
+shared Reverb / Delay with per-track sends, Glue Compressor, Safety Limiter, Beat
 Repeat, pan, mute / solo, per-clip Volume Shape, and track effect automation
 (§7.11.1) are all shipped.
 
@@ -1049,7 +1049,7 @@ DSP class in `code`.
   feedback,
   tone, and overall mix are independent. Each track contributes via its
   **Delay amount** send (§7.9).
-- **Mix Glue** — a one-control stereo-linked compressor for the completed
+- **Glue Compressor** — a one-control stereo-linked compressor for the completed
   project bus. It runs after the shared Reverb and Delay returns and before
   master gain; Amount 0 is a bit-exact bypass.
 - **Safety Limiter** — a fixed `-1 dBFS` stereo-linked sample-peak guard at
@@ -1158,7 +1158,7 @@ silence.
   see §7.12). Five equal-width responsive columns keep Tone, Filter above
   Reverb & Delay, Compressor above Punch, Saturation, and Bit Crusher together
   without horizontal scrolling.
-- **Project Reverb / Delay / Mix Glue / Safety Limiter** — a **Project FX**
+- **Project Reverb / Delay / Glue Compressor / Safety Limiter** — a **Project FX**
   tab within the same bottom panel area, clearly separated from the per-track
   controls.
 - **Beat Repeat** — per-track, tempo-aligned regions added from the timeline
@@ -1657,7 +1657,7 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 
 Phases 1–7 are complete: the Phase 5 mixing/effects/automation work
 (engine refactor, Volume Shape, Tone + Filter, Compressor, Punch, Saturation,
-Bit Crusher, shared Reverb + Delay, Mix Glue, Safety Limiter, Beat Repeat, pan,
+Bit Crusher, shared Reverb + Delay, Glue Compressor, Safety Limiter, Beat Repeat, pan,
 master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
 packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer**
 (§7.6), the Phase 7 polish / performance / packaging pass, Track FX automation
@@ -2012,7 +2012,7 @@ playable at every point):
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
   Track FX (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, and
   Reverb/Delay sends) or the project-wide Project FX (shared Reverb, Delay,
-  Mix Glue, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
+  Glue Compressor, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
   back to Track FX on reload, keeping the per-track and project-scoped effects
   on clearly separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
@@ -2088,7 +2088,7 @@ playable at every point):
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
   TrackRuntime → TrackChain (Tone → Leveler → Punch → Saturation → Bit Crusher → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
-  Mix Glue → master gain → Safety Limiter → master meter →
+  Glue Compressor → master gain → Safety Limiter → master meter →
   final-stage libsamplerate`) so warped / pitch-
   shifted / effected output is **sample-equivalent to live
   playback at the internal master float bus** under deterministic

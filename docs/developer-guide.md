@@ -236,8 +236,8 @@ Silverdaw currently supports the core arrangement workflow:
   **Reverb & Delay** rack setting how much the track feeds the project-wide
   Reverb and Delay buses. **Project FX** hosts the
   shared, song-wide returns those amounts route into: a **Reverb** and a
-  **Delay** (tempo-locked), a one-control **Mix Glue** compressor, plus a
-  **Safety Limiter** switch. Mix Glue processes the completed project bus after
+  **Delay** (tempo-locked), a one-control **Glue Compressor**, plus a
+  **Safety Limiter** switch. Glue Compressor processes the completed project bus after
   the shared Reverb and Delay returns and before master gain; Amount 0 is a
   bit-exact bypass. The limiter is a fixed -1 dBFS, stereo-linked sample-peak
   guard on final output; it is not a true-peak or mastering limiter. All are
@@ -492,7 +492,7 @@ The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain
 beyond the per-track Tone EQ + Filter, Compressor, Punch, Saturation, and Bit Crusher,
-the project-wide Reverb and Delay sends, Mix Glue, Safety Limiter, and Beat Repeat,
+the project-wide Reverb and Delay sends, Glue Compressor, Safety Limiter, and Beat Repeat,
 the track effect automation lanes, the per-clip Volume Shape, and the per-clip
 turntable Brake / Backspin tails that already ship).
 
@@ -573,7 +573,7 @@ backend clamps and persists each effect value, publishes it to live audio, and
 reconciles the renderer with the matching `TRACK_*_APPLIED` acknowledgement.
 Project FX uses `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`,
 `PROJECT_SET_MIX_GLUE`, and `PROJECT_SET_SAFETY_LIMITER`; Reverb, Delay, and
-Mix Glue similarly return canonical `PROJECT_*_APPLIED` state.
+Glue Compressor similarly return canonical `PROJECT_*_APPLIED` state.
 
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
@@ -1300,7 +1300,7 @@ per-track Tone EQ + bipolar Filter, the per-track Leveler, Punch, Saturation, an
 [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
 [`TrackChain`](../backend/src/dsp/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,
-track gain and mute / solo, equal-power panning, the master mix, Mix Glue,
+track gain and mute / solo, equal-power panning, the master mix, Glue Compressor,
 master gain, Safety Limiter, metering, and the `MasterClockSource` that gates
 playback and feeds the device. The
 `AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts

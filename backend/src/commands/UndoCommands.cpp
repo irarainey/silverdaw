@@ -91,7 +91,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "CLIP_SET_BACKSPIN") return "Backspin clip";
     if (type == "PROJECT_SET_REVERB") return "Change reverb";
     if (type == "PROJECT_SET_DELAY") return "Change delay";
-    if (type == "PROJECT_SET_MIX_GLUE") return "Change mix glue";
+    if (type == "PROJECT_SET_MIX_GLUE") return "Change Glue Compressor";
     if (type == "LIBRARY_ADD") return "Update library item";
     if (type == "LIBRARY_REMOVE") return "Remove library item";
     if (type == "LIBRARY_REANALYSE") return "Reanalyse library item";

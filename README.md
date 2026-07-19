@@ -117,7 +117,7 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   high-pass), a single-knob **Compressor** (gentle dynamics control), **Punch**
   (transient enhancement), **Saturation** (soft clipping), a **Bit Crusher**
   (lo-fi digital reduction), and Reverb and Delay sends. Project FX hosts the
-  song-wide Reverb and Delay those sends feed, a one-control **Mix Glue**
+  song-wide Reverb and Delay those sends feed, a one-control **Glue Compressor**
   compressor after their returns and before master gain, plus a fixed-ceiling
   **Safety Limiter** for the final output. Track FX keeps five responsive
   columns: Tone; Filter above Reverb & Delay; Compressor above Punch;

@@ -191,27 +191,27 @@ void testProjectStateMixGlueDefaultsAndRoundTrip()
     silverdaw::ProjectState state;
     const juce::Identifier kMixGlueAmount{"mixGlueAmount"};
     requireNear(state.getProjectMixGlueAmount(), 0.0, 0.0001,
-                "a fresh project must bypass Mix Glue");
+                "a fresh project must bypass Glue Compressor");
     require(!state.getTree().hasProperty(kMixGlueAmount),
-            "a fresh project must suppress the zero Mix Glue property");
+            "a fresh project must suppress the zero Glue Compressor property");
 
-    require(state.setProjectMixGlueAmount(0.65F), "non-zero Mix Glue should persist");
+    require(state.setProjectMixGlueAmount(0.65F), "non-zero Glue Compressor should persist");
     requireNear(state.getProjectMixGlueAmount(), 0.65, 0.0001,
-                "Mix Glue amount should round-trip through project state");
+                "Glue Compressor amount should round-trip through project state");
 
     silverdaw::ProjectSession session;
     const auto envelope = silverdaw::buildProjectStateEnvelope(session, state, false);
     requireNear(static_cast<double>(envelope.getProperty("mixGlueAmount", 0.0)), 0.65, 0.0001,
-                "Mix Glue amount should project into PROJECT_STATE");
+                "Glue Compressor amount should project into PROJECT_STATE");
 
-    require(state.setProjectMixGlueAmount(0.0F), "returning Mix Glue to zero should mutate state");
+    require(state.setProjectMixGlueAmount(0.0F), "returning Glue Compressor to zero should mutate state");
     require(!state.getTree().hasProperty(kMixGlueAmount),
-            "zero Mix Glue should use default suppression");
+            "zero Glue Compressor should use default suppression");
 
     juce::ValueTree legacyProject(juce::Identifier{"PROJECT"});
     state.replaceTree(legacyProject);
     requireNear(state.getProjectMixGlueAmount(), 0.0, 0.0001,
-                "a legacy project without Mix Glue must preserve its prior sound");
+                "a legacy project without Glue Compressor must preserve its prior sound");
 }
 
 void testProjectStateTrackPunchPersistenceAndLegacyLoad()
@@ -651,7 +651,7 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState clip envelope sort / dedupe / clear", testProjectStateClipEnvelopeNormalisation});
     tests.push_back({"ProjectState project delay noteValue guard", testProjectStateDelayNoteValueGuard});
     tests.push_back({"ProjectState safety limiter defaults and legacy round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
-    tests.push_back({"ProjectState Mix Glue defaults, persistence, and legacy round-trip", testProjectStateMixGlueDefaultsAndRoundTrip});
+    tests.push_back({"ProjectState Glue Compressor defaults, persistence, and legacy round-trip", testProjectStateMixGlueDefaultsAndRoundTrip});
     tests.push_back({"ProjectState per-track Punch persists and legacy load bypasses", testProjectStateTrackPunchPersistenceAndLegacyLoad});
     tests.push_back({"ProjectState per-track tone round-trips through tracksAsJson", testProjectStateTrackToneJsonRoundTrip});
     tests.push_back({"ProjectState per-track leveler round-trips through tracksAsJson", testProjectStateLevelerJsonRoundTrip});

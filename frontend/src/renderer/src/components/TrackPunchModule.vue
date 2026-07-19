@@ -50,6 +50,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Punch"
+    help-text="Boost the attack of hits"
     :cols="1"
     :rows="1"
     :grid-area="props.gridArea"

@@ -73,6 +73,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Reverb"
+    help-text="Add space to the whole mix"
     :cols="1"
     :rows="2"
   >

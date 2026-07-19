@@ -54,6 +54,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Saturation"
+    help-text="Add warmth and grit"
     :cols="1"
     :rows="2"
     :grid-area="props.gridArea"
