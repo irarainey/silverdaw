@@ -4,6 +4,7 @@
 
 ### Added
 
+- Explorer audio files can now be dropped directly onto the timeline.
 - Beat Repeat adds tempo-aligned per-track repeat regions from the timeline Effects menu.
 - Bit Crusher track effect adds per-track lo-fi digital reduction controls.
 - Punch track effect adds per-track transient enhancement controls.
@@ -20,6 +21,8 @@
 
 ### Fixed
 
+- The main window no longer shows a vertical scrollbar when resized.
+- Window controls now remain visible and usable in restored windows.
 - Long Delay feedback tails now preserve audible repeats in playback and mixdown.
 - Mixdown now reuses output buffers to avoid repeated allocations during resampling.
 - Mixdown now retires completed clips in batches for faster exports with many clips.

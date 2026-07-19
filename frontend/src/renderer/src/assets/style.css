@@ -1,6 +1,13 @@
 @import 'tailwindcss';
 
 @layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    overflow: hidden;
+  }
+
   #app {
     -webkit-user-select: none;
     user-select: none;

@@ -47,9 +47,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 ## Key features
 
 - **Project library.** Drop audio files onto the Library to import them, or use
-  the Import button and **File ▸ Import to Library…**. Then drag library items
-  straight onto the timeline. Files are grouped and easy to reuse. Tiles show a
-  track's cover art (or a per-kind icon when there's none); right-click a tile to
+  the Import button and **File ▸ Import to Library…**. You can also drop a file
+  directly onto a timeline track to import and place it, or onto empty timeline
+  space to create a track for it. Dropping several files creates one new track
+  per file. Library items are grouped and easy to reuse. Tiles show a track's
+  cover art (or a per-kind icon when there's none); right-click a tile to
   **Update Image…** with your own picture, or **Remove** / **Restore** the image —
   all per-tile and non-destructive.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,

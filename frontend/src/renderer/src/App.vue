@@ -479,12 +479,12 @@ const { handleMenuAction } = useAppMenuActions({
 </script>
 
 <template>
-  <div class="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-    <AppTitleBar :window-controls-disabled="isInteractionBlocked()" />
+  <div class="flex h-screen min-h-0 flex-col overflow-hidden bg-zinc-950 text-zinc-100">
+    <AppTitleBar />
 
     <TransportBar />
 
-    <main class="flex-1 overflow-hidden">
+    <main class="min-h-0 flex-1 overflow-hidden">
       <TimelineView v-if="!startupScreenVisible" />
     </main>
 

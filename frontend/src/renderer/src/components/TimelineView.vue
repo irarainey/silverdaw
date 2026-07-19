@@ -18,6 +18,7 @@ const vScrollbarTrack = ref<HTMLDivElement | null>(null)
 const {
   project,
   hoverCursor,
+  isFileDragOver,
   scrollY,
   onWheel,
   renameOverlayStyle,
@@ -69,6 +70,12 @@ const {
       class="absolute inset-0"
       :style="{ cursor: hoverCursor }"
     />
+    <div
+      v-if="isFileDragOver"
+      class="pointer-events-none absolute inset-1 z-10 flex items-center justify-center border-2 border-dashed border-sky-500 bg-sky-500/10 text-sm font-medium text-sky-200"
+    >
+      Drop audio to import and add to the timeline
+    </div>
 
     <!-- HTML overlay for track headers (name + M/S/X buttons). The header rows
              are pointer-events-auto and would otherwise swallow wheel events, so

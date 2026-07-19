@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { buildMenus, type MenuItemDef } from '@/menu'
 // The 32x32 variant displays cleanly at the 16-px title-bar size on
 // both 100% and 200%-DPI displays. Vite turns the import into a
@@ -7,18 +7,12 @@ import iconUrl from '@resources/icons/32x32.png'
 import { DEFAULT_PROJECT_NAME, useProjectStore } from '@/stores/projectStore'
 import { useAppStore } from '@/stores/appStore'
 
-export type AppTitleBarProps = {
-  windowControlsDisabled?: boolean
-}
-
 export function useAppTitleBarController(
-  props: Readonly<AppTitleBarProps>,
   root: Ref<HTMLElement | null>,
   renameInput: Ref<HTMLInputElement | null>
 ) {
   const project = useProjectStore()
   const appStore = useAppStore()
-  const windowControlsDisabled = toRef(props, 'windowControlsDisabled')
 
   // True when any track has at least one clip. Drives the
   // File ▸ Export Mixdown enabled state — there's nothing to render on
@@ -177,7 +171,6 @@ export function useAppTitleBarController(
 
   return {
     project,
-    windowControlsDisabled,
     iconUrl,
     visibleMenus,
     isItemDisabled,

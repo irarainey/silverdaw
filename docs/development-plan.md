@@ -1721,7 +1721,9 @@ remain **deprioritised**. Final ordering is still under review.
 
 **Goal:** Import a file, see it on the timeline, drag it around, hear it play.
 
-- [x] File drop onto timeline: sends `CLIP_ADD`, renders clip on `CLIP_ADDED`
+- [x] Explorer file drop onto timeline: imports through the Library pipeline,
+  places one file on the target track, or creates one new track per file when
+  dropped onto empty timeline space or as a multi-file drop
 - [x] File drop onto Library: imports dropped audio through the same preflight
   and import pipeline as the Import button
 - [x] Clip drag-and-drop in PixiJS: move along timeline and between tracks

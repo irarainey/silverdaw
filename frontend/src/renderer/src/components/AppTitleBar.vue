@@ -1,19 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AppTitleBarWindowControls from '@/components/AppTitleBarWindowControls.vue'
-import {
-  useAppTitleBarController,
-  type AppTitleBarProps
-} from '@/lib/app/useAppTitleBarController'
-
-const props = defineProps<AppTitleBarProps>()
+import { useAppTitleBarController } from '@/lib/app/useAppTitleBarController'
 
 const root = ref<HTMLElement | null>(null)
 const renameInput = ref<HTMLInputElement | null>(null)
 
 const {
   project,
-  windowControlsDisabled,
   iconUrl,
   visibleMenus,
   isItemDisabled,
@@ -33,7 +27,7 @@ const {
   startRename,
   commitRename,
   cancelRename
-} = useAppTitleBarController(props, root, renameInput)
+} = useAppTitleBarController(root, renameInput)
 </script>
 
 <template>
@@ -215,10 +209,9 @@ const {
     </div>
 
     <!-- Drag spacer + renderer-owned window controls. Native window-controls-overlay
-         is disabled so modal dialogs can make these buttons inaccessible. -->
+         is disabled so the app can keep these controls available consistently. -->
     <div class="flex-1" />
     <AppTitleBarWindowControls
-      :disabled="windowControlsDisabled"
       @minimize="minimizeWindow"
       @toggle-maximize="toggleMaximizeWindow"
       @close="requestCloseWindow"

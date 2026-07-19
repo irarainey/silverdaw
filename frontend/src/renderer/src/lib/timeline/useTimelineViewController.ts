@@ -14,6 +14,7 @@ import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import { useDropZone } from '@/lib/timeline/useDropZone'
+import { useTimelineFileDrop } from '@/lib/timeline/useTimelineFileDrop'
 import { useTimelineDrawing } from '@/lib/timeline/useTimelineDrawing'
 import { useScrollbarDrag } from '@/lib/timeline/useScrollbarDrag'
 import { send as sendBridge } from '@/lib/bridgeService'
@@ -44,6 +45,7 @@ export function useTimelineViewController(
   let redraw: () => void = () => { }
   let redrawNow: () => void = () => { }
   let updatePlayhead: () => void = () => { }
+  let disposeTimelineFileDrop = (): void => {}
 
   // ─── Composables ──────────────────────────────────────────────────────────
   const geometry = useGridGeometry()
@@ -75,7 +77,7 @@ export function useTimelineViewController(
     onPlayheadMoved: () => { updatePlayhead() }
   })
 
-  const { dropPreview } = useDropZone({
+  const { dropPreview, resolveDropTarget, startMsForItem } = useDropZone({
     host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
     onPreviewChanged: () => { updatePlayhead() }
   })
@@ -105,6 +107,17 @@ export function useTimelineViewController(
   updatePlayhead = drawing.updatePlayhead
   const applyScroll = drawing.applyScroll
   const setDisplayPositionMs = drawing.setDisplayPositionMs
+
+  const { isFileDragOver, dispose: disposeFileDrop } = useTimelineFileDrop({
+    host,
+    resolveDropTarget,
+    startMsForItem,
+    onPlaced: () => {
+      redraw()
+      updatePlayhead()
+    }
+  })
+  disposeTimelineFileDrop = disposeFileDrop
 
   const hasPendingWarpClip = computed(() =>
     Object.values(project.clips).some((clip) => {
@@ -144,6 +157,7 @@ export function useTimelineViewController(
     host.value?.removeEventListener('dblclick', onDoubleClick)
     document.removeEventListener('keydown', onRenameDocumentKeyDown, { capture: true })
     document.removeEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
+    disposeTimelineFileDrop()
     stopPlayheadRaf()
     redrawScheduler.cancel()
   })
@@ -440,6 +454,7 @@ export function useTimelineViewController(
     project,
     host,
     hoverCursor,
+    isFileDragOver,
     scrollY,
     onWheel,
     renameOverlayStyle,
