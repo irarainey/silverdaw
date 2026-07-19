@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Stem exports now preserve an existing file when replacement fails.
 - Project saves and mixdown metadata rewrites now preserve the previous file if replacement fails.
 - Mixdown no longer publishes a partial export when writing final silence fails.
 - The main window no longer shows a vertical scrollbar when resized.

@@ -414,6 +414,10 @@ class AudioEngine : private AudioEngineGraphState,
     // in place, so re-setting the source is the only reliable flush when the transport is stopped.
     void rebuildPreviewReadAhead();
 
+    // Releases preview processors/snapshots only after the stopped transport has flushed its
+    // read-ahead buffer, so no audio callback can retain a superseded pointer.
+    void reclaimRetiredPreviewSnapshots();
+
     // Push the preview's current in-point + warp ratio to the metronome wrapper so its clicks track
     // the clip's beat grid through any time-warp.
     void updatePreviewMetronomeMapping();

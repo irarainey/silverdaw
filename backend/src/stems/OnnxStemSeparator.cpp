@@ -15,6 +15,10 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#if JUCE_WINDOWS
+#include <windows.h>
+#endif
+
 #if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
 // The DirectML execution provider factory ships only with a DirectML-enabled
 // ONNX Runtime build. It is compiled in solely when the backend is built
@@ -41,6 +45,18 @@ namespace
 
 constexpr int kModelSampleRate = 44100;
 constexpr int kModelChannels = 2;
+
+bool replaceStemFileAtomically(const juce::File& tempFile, const juce::File& outputFile)
+{
+#if JUCE_WINDOWS
+    const auto tempPath = tempFile.getFullPathName();
+    const auto outputPath = outputFile.getFullPathName();
+    return ::MoveFileExW(tempPath.toWideCharPointer(), outputPath.toWideCharPointer(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    return tempFile.moveFileTo(outputFile);
+#endif
+}
 
 // htdemucs-ft is a "bag" of four specialist models — one .onnx per source. Every
 // specialist still emits all four demucs sources in the fixed order
@@ -164,13 +180,16 @@ juce::AudioBuffer<float> decodeStereo44k(const juce::File& sourceFile, double st
 
 void writeStemWav(const juce::File& outputFile, const juce::AudioBuffer<float>& buffer)
 {
-    if (outputFile.existsAsFile()) outputFile.deleteFile();
+    const auto tempFile = outputFile.getSiblingFile(outputFile.getFileName() + ".tmp");
+    if (tempFile.existsAsFile() && !tempFile.deleteFile())
+        throw StemSeparationError(StemFailureCode::Io,
+                                  "Could not replace stale stem temp file: " + tempFile.getFullPathName());
 
     juce::WavAudioFormat wavFormat;
-    std::unique_ptr<juce::OutputStream> stream(outputFile.createOutputStream());
+    std::unique_ptr<juce::OutputStream> stream(tempFile.createOutputStream());
     if (stream == nullptr)
         throw StemSeparationError(StemFailureCode::Io,
-                                  "Could not open stem output: " + outputFile.getFullPathName());
+                                  "Could not open stem temp output: " + tempFile.getFullPathName());
 
     const auto writerOptions = juce::AudioFormatWriterOptions{}
                                    .withSampleRate(kModelSampleRate)
@@ -179,13 +198,29 @@ void writeStemWav(const juce::File& outputFile, const juce::AudioBuffer<float>& 
 
     std::unique_ptr<juce::AudioFormatWriter> writer(wavFormat.createWriterFor(stream, writerOptions));
     if (writer == nullptr)
+    {
+        stream.reset();
+        tempFile.deleteFile();
         throw StemSeparationError(StemFailureCode::Io,
                                   "Could not create WAV writer: " + outputFile.getFullPathName());
+    }
 
     // The writer took ownership of the stream on success.
     if (! writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples()))
+    {
+        writer.reset();
+        tempFile.deleteFile();
         throw StemSeparationError(StemFailureCode::Io,
                                   "Failed writing stem: " + outputFile.getFullPathName());
+    }
+
+    writer.reset();
+    if (!replaceStemFileAtomically(tempFile, outputFile))
+    {
+        tempFile.deleteFile();
+        throw StemSeparationError(StemFailureCode::Io,
+                                  "Could not finalise stem output: " + outputFile.getFullPathName());
+    }
 }
 
 // Triangular overlap-add window (demucs `apply_model`): rises 1..L/2 then falls

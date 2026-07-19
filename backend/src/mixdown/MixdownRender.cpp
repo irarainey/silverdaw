@@ -238,9 +238,11 @@ void runMixdownJob(MixdownSnapshot snapshot,
 
         auto p1 = mixdown_render_pass1::runPass1(
             snapshot, options, formatManager, *writer, analyzer.get(),
-            normalizing, analyzing, pass1File, rngL, rngR, bridge, cancelFlag);
+            normalizing, analyzing, rngL, rngR, bridge, cancelFlag);
         if (! p1.ok)
         {
+            writer.reset();
+            pass1File.deleteFile();
             failWith(p1.code, p1.message);
             return;
         }

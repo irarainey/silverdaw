@@ -23,6 +23,7 @@ export interface TimelineFileDrop {
 export function useTimelineFileDrop(options: TimelineFileDropOptions): TimelineFileDrop {
   const project = useProjectStore()
   const isFileDragOver = ref(false)
+  let attachedHost: HTMLElement | null = null
 
   function clearDragState(): void {
     isFileDragOver.value = false
@@ -84,20 +85,25 @@ export function useTimelineFileDrop(options: TimelineFileDropOptions): TimelineF
     if (placed) options.onPlaced()
   }
 
+  function detachHostListeners(): void {
+    if (!attachedHost) return
+    attachedHost.removeEventListener('dragenter', onDragEnter)
+    attachedHost.removeEventListener('dragover', onDragOver)
+    attachedHost.removeEventListener('dragleave', onDragLeave)
+    attachedHost.removeEventListener('drop', onDrop)
+    attachedHost = null
+  }
+
   const stopHostWatch = watch(
     options.host,
-    (element, previous) => {
-      if (previous) {
-        previous.removeEventListener('dragenter', onDragEnter)
-        previous.removeEventListener('dragover', onDragOver)
-        previous.removeEventListener('dragleave', onDragLeave)
-        previous.removeEventListener('drop', onDrop)
-      }
+    (element) => {
+      detachHostListeners()
       if (element) {
         element.addEventListener('dragenter', onDragEnter)
         element.addEventListener('dragover', onDragOver)
         element.addEventListener('dragleave', onDragLeave)
         element.addEventListener('drop', onDrop)
+        attachedHost = element
       }
     },
     { immediate: true }
@@ -105,6 +111,7 @@ export function useTimelineFileDrop(options: TimelineFileDropOptions): TimelineF
 
   function dispose(): void {
     stopHostWatch()
+    detachHostListeners()
     clearDragState()
   }
 

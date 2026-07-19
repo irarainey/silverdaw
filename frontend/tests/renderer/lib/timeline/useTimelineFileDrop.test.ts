@@ -34,16 +34,21 @@ interface EventHandlers {
   drop: (event: DragEvent) => Promise<void>
 }
 
-function createHost(): { host: HTMLElement; handlers: Partial<EventHandlers> } {
+function createHost(): {
+  host: HTMLElement
+  handlers: Partial<EventHandlers>
+  removeEventListener: ReturnType<typeof vi.fn>
+} {
   const handlers: Partial<EventHandlers> = {}
+  const removeEventListener = vi.fn()
   const host = {
     addEventListener: (type: keyof EventHandlers, handler: EventHandlers[keyof EventHandlers]) => {
       handlers[type] = handler as never
     },
-    removeEventListener: vi.fn(),
+    removeEventListener,
     contains: () => false
   } as unknown as HTMLElement
-  return { host, handlers }
+  return { host, handlers, removeEventListener }
 }
 
 function fileDropEvent(files: { name: string }[]): DragEvent {
@@ -112,5 +117,23 @@ describe('useTimelineFileDrop', () => {
     expect(addTrackMock).toHaveBeenCalledTimes(2)
     expect(addClipFromLibraryMock).toHaveBeenNthCalledWith(1, 'track-2', { id: 'library-1' }, 900)
     expect(addClipFromLibraryMock).toHaveBeenNthCalledWith(2, 'track-3', { id: 'library-2' }, 1_000)
+  })
+
+  it('removes drag listeners from the host when disposed', () => {
+    const { host, removeEventListener } = createHost()
+    const drop = useTimelineFileDrop({
+      host: ref(host),
+      resolveDropTarget: vi.fn(),
+      startMsForItem: vi.fn(),
+      onPlaced: vi.fn()
+    })
+
+    drop.dispose()
+
+    expect(removeEventListener).toHaveBeenCalledTimes(4)
+    expect(removeEventListener).toHaveBeenCalledWith('dragenter', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('dragover', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('dragleave', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('drop', expect.any(Function))
   })
 })

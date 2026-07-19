@@ -159,6 +159,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         preview.offsetSource->setWarpProcessor(nullptr);
         if (preview.warp != nullptr) preview.retiredWarps.push_back(std::move(preview.warp));
         updatePreviewMetronomeMapping();
+        reclaimRetiredPreviewSnapshots();
         return true;
     }
     const int channels =
@@ -186,6 +187,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         if (oldWarp != nullptr) preview.retiredWarps.push_back(std::move(oldWarp));
         preview.offsetSource->requestWarpReseek();
         updatePreviewMetronomeMapping();
+        reclaimRetiredPreviewSnapshots();
         return true;
     }
     if (auto* w = preview.warp.get())
@@ -234,7 +236,7 @@ bool AudioEngine::setPreviewEnvelope(const juce::Array<juce::var>& points)
     // envelope.
     if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
     {
-        rebuildPreviewReadAhead();
+        reclaimRetiredPreviewSnapshots();
     }
     return true;
 }
@@ -286,7 +288,7 @@ bool AudioEngine::setPreviewBrake(double brakeSeconds, double curvePower)
                           std::string("setPreviewBrake seconds=") + std::to_string(brakeSeconds));
     if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
     {
-        rebuildPreviewReadAhead();
+        reclaimRetiredPreviewSnapshots();
     }
     return true;
 }
@@ -324,7 +326,7 @@ bool AudioEngine::setPreviewBackspin(double backspinSeconds, double spinSpeed, d
                               std::to_string(backspinSeconds));
     if (preview.transportSource != nullptr && !preview.transportSource->isPlaying())
     {
-        rebuildPreviewReadAhead();
+        reclaimRetiredPreviewSnapshots();
     }
     return true;
 }
@@ -340,6 +342,20 @@ void AudioEngine::rebuildPreviewReadAhead()
     preview.transportSource->setPosition(pos);
     silverdaw::log::debug("preview",
                           "rebuildPreviewReadAhead pos=" + juce::String(pos, 3).toStdString());
+}
+
+void AudioEngine::reclaimRetiredPreviewSnapshots()
+{
+    if (preview.transportSource == nullptr || preview.transportSource->isPlaying())
+        return;
+
+    // Snapshot changes are upstream of read-ahead; flush even on the first update, which has
+    // nothing retired yet but may have cached audio processed by the prior state.
+    rebuildPreviewReadAhead();
+    preview.retiredWarps.clear();
+    preview.retiredEnvelopes.clear();
+    preview.retiredBrakes.clear();
+    preview.retiredBackspins.clear();
 }
 
 void AudioEngine::playPreview()
@@ -370,6 +386,7 @@ void AudioEngine::pausePreview()
 {
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
+    reclaimRetiredPreviewSnapshots();
 }
 
 void AudioEngine::stopPreview()
@@ -377,6 +394,7 @@ void AudioEngine::stopPreview()
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
     preview.transportSource->setPosition(0.0);
+    reclaimRetiredPreviewSnapshots();
 }
 
 void AudioEngine::setPreviewPositionMs(double ms)
