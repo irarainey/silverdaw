@@ -611,6 +611,8 @@ target_compile_definitions(silverdaw_backend_core PRIVATE
 file(GLOB SILVERDAW_MIDI_MAPPING_FILES CONFIGURE_DEPENDS
     "${SILVERDAW_MIDI_MAPPING_DIR}/*.json")
 add_custom_target(SilverdawMidiMappings
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "$<TARGET_FILE_DIR:SilverdawBackend>/midi-mappings"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${SILVERDAW_MIDI_MAPPING_DIR}"
         "$<TARGET_FILE_DIR:SilverdawBackend>/midi-mappings"

@@ -1,7 +1,12 @@
 {
   "name": "Pioneer DDJ-REV7",
   "models": ["DDJ-REV7"],
+  "sources": [
+    "https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-REV7/DDJ-REV7_MIDI_message_List_E2.pdf"
+  ],
   "inputs": [
+    { "action": "playPause", "encoding": "button", "message": "note", "data1": 19, "channels": [0, 1], "decks": [1, 2] },
+    { "action": "previousMarker", "encoding": "button", "message": "note", "data1": 18, "channels": [0, 1], "decks": [1, 2] },
     { "action": "shift", "encoding": "button", "message": "note", "data1": 63, "channels": [6], "decks": [0] },
     { "action": "syncModifier", "encoding": "button", "message": "note", "data1": 88, "channels": [0, 1], "decks": [1, 2] },
     { "action": "jogScratch", "encoding": "absolute14Relative", "message": "cc", "data1": 25, "lsbData1": 57, "channels": [0, 1], "decks": [1, 2] },

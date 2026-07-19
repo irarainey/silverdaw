@@ -127,10 +127,9 @@ Controls not listed for a profile are not mapped.
 | Pioneer DJ DDJ-200 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-400; DDJ-FLX4; DDJ-FLX6 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, master level, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-REV5 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
-| Pioneer DJ DDJ-REV7 | Sync, Shift, Browse/zoom, scratch platter, eight marker pads, channel fader, crossfader | Marker pads |
+| Pioneer DJ DDJ-REV7 | Play, Cue, Sync, Shift, Browse/zoom, scratch platter, eight marker pads, channel fader, crossfader | Marker pads |
 | Pioneer DJ DDJ-SX3 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ OMNIS-DUO; XDJ-RR; XDJ-RX2; XDJ-RX3; XDJ-XZ | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
-| Pioneer DJ OPUS-QUAD | Play, Cue, Sync, Shift, Browse/zoom, eight marker-jump pads, channel fader, crossfader | Play, Cue, marker pads |
 | Pioneer DJ XDJ-AERO; XDJ-R1 | Play, Cue/Shift+Cue, Sync, Browse, jog/touch/search, crossfader | Play, Cue |
 | Pioneer DJ XDJ-RX | Play, Cue, Sync, Browse, jog/touch/search, channel fader, crossfader | Selected-track meter, Play, Cue |
 | Reloop Beatmix 2 MK2; Beatmix 4 MK2; shared device name Beatmix 2/4 MK2 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, three-band EQ, crossfader | Play, Cue, deck selection, marker pads |
