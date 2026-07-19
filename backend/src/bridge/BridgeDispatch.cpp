@@ -1,6 +1,7 @@
 #include "BridgeDispatch.h"
 
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "AudioDeviceCommands.h"
 #include "BridgeServer.h"
 #include "ClipCommands.h"
@@ -501,6 +502,25 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             " amount=" + payload.getProperty("amount", "").toString());
         silverdaw::handleTrackSetLeveler(payload, engine, projectState, bridge);
     }
+    else if (type == "TRACK_SET_PUNCH")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_PUNCH trackId=" +
+                                            payload.getProperty("trackId", "").toString() +
+                                            " amount=" + payload.getProperty("amount", "").toString());
+        silverdaw::handleTrackSetPunch(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_SATURATION")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_SATURATION trackId=" +
+                                            payload.getProperty("trackId", "").toString());
+        silverdaw::handleTrackSetSaturation(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_BIT_CRUSHER")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_BIT_CRUSHER trackId=" +
+                                            payload.getProperty("trackId", "").toString());
+        silverdaw::handleTrackSetBitCrusher(payload, engine, projectState, bridge);
+    }
     else if (type == "TRACK_SET_PAN")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_PAN trackId=" +
@@ -514,6 +534,16 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             payload.getProperty("trackId", "").toString() +
                                             " paramId=" + payload.getProperty("paramId", "").toString());
         silverdaw::handleTrackSetAutomation(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_BEAT_REPEAT_ADD")
+    {
+        silverdaw::applyBeatRepeatAdd(payload, projectState);
+        silverdaw::finishBeatRepeatEdit(engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_BEAT_REPEAT_DELETE")
+    {
+        silverdaw::applyBeatRepeatDelete(payload, projectState);
+        silverdaw::finishBeatRepeatEdit(engine, projectState, bridge, ctx.session);
     }
     else
     {
@@ -539,6 +569,11 @@ bool dispatchProjectFx(const DispatchContext& ctx)
     {
         silverdaw::log::debug("bridge", "recv PROJECT_SET_DELAY");
         silverdaw::handleProjectSetDelay(payload, engine, projectState, bridge);
+    }
+    else if (type == "PROJECT_SET_MIX_GLUE")
+    {
+        silverdaw::log::debug("bridge", "recv PROJECT_SET_MIX_GLUE");
+        silverdaw::handleProjectSetMixGlue(payload, engine, projectState, bridge);
     }
     else
     {
@@ -663,6 +698,10 @@ bool dispatchProject(const DispatchContext& ctx)
     else if (type == "PROJECT_SET_MASTER_VOLUME")
     {
         silverdaw::handleProjectSetMasterVolume(payload, engine, projectState);
+    }
+    else if (type == "PROJECT_SET_SAFETY_LIMITER")
+    {
+        silverdaw::handleProjectSetSafetyLimiter(payload, engine, projectState);
     }
     else if (type == "PROJECT_SET_BAR_COUNTER_START")
     {

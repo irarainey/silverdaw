@@ -7,7 +7,12 @@
 // by domain would only add file-hopping cost.
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
-import type { LibraryItemKind, StemName, TransitionRecipe } from './inbound'
+import type {
+  BeatRepeatDivision,
+  LibraryItemKind,
+  StemName,
+  TransitionRecipe
+} from './inbound'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -360,6 +365,28 @@ export interface TrackSetLevelerPayload extends GestureHints {
   amount: number
 }
 
+/** Per-track transient enhancement amount, linear `[0,1]`; zero is bypass. */
+export interface TrackSetPunchPayload extends GestureHints {
+  trackId: string
+  amount: number
+}
+
+/** Per-track soft saturation. Drive and Mix are linear `[0,1]`; Mix defaults to fully wet. */
+export interface TrackSetSaturationPayload extends GestureHints {
+  trackId: string
+  drive?: number
+  mix?: number
+}
+
+/** Per-track bit crusher. Rate is a reduced-sample-rate ratio `[0.01,1]`; Bits is `[1,16]`. */
+export interface TrackSetBitCrusherPayload extends GestureHints {
+  trackId: string
+  rate?: number
+  bits?: number
+  boost?: number
+  mix?: number
+}
+
 /** One breakpoint on a track automation curve. */
 export interface AutomationPoint {
   /** Timeline-absolute ms (>= 0). */
@@ -378,6 +405,13 @@ export type AutomationParamId =
   | 'reverbSend'
   | 'delaySend'
   | 'leveler'
+  | 'punch'
+  | 'saturationDrive'
+  | 'saturationMix'
+  | 'bitCrusherRate'
+  | 'bitCrusherBits'
+  | 'bitCrusherBoost'
+  | 'bitCrusherMix'
   | 'level'
 
 /** Per-track effect automation curve for one parameter (one atomic mutation per
@@ -433,6 +467,20 @@ export interface TransitionSetRecipePayload {
   recipe: TransitionRecipe
 }
 
+/** Add a one-shot, beat-aligned repeat region to one track. */
+export interface TrackBeatRepeatAddPayload {
+  trackId: string
+  startBeat: number
+  lengthBeats: number
+  division: BeatRepeatDivision
+}
+
+/** Remove a Beat Repeat region by its backend-minted id. */
+export interface TrackBeatRepeatDeletePayload {
+  trackId: string
+  regionId: string
+}
+
 /** Project-shared Reverb bus. Scalars linear [0,1]; all optional (partial-update). */
 export interface ProjectSetReverbPayload extends GestureHints {
   size?: number
@@ -450,6 +498,11 @@ export interface ProjectSetDelayPayload extends GestureHints {
   feedback?: number
   tone?: number
   mix?: number
+}
+
+/** Project-bus compressor amount. Zero is a transparent bypass. */
+export interface ProjectSetMixGluePayload extends GestureHints {
+  amount: number
 }
 
 export interface LibraryItemSaveAsSamplePayload {
@@ -521,14 +574,20 @@ export interface BridgeOutboundMap {
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
+  TRACK_SET_PUNCH: TrackSetPunchPayload
+  TRACK_SET_SATURATION: TrackSetSaturationPayload
+  TRACK_SET_BIT_CRUSHER: TrackSetBitCrusherPayload
   TRACK_SET_PAN: TrackSetPanPayload
   TRACK_SET_AUTOMATION: TrackSetAutomationPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
   TRANSITION_CREATE: TransitionCreatePayload
   TRANSITION_DELETE: TransitionDeletePayload
   TRANSITION_SET_RECIPE: TransitionSetRecipePayload
+  TRACK_BEAT_REPEAT_ADD: TrackBeatRepeatAddPayload
+  TRACK_BEAT_REPEAT_DELETE: TrackBeatRepeatDeletePayload
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
+  PROJECT_SET_MIX_GLUE: ProjectSetMixGluePayload
   TRANSPORT_PLAY: undefined
   TRANSPORT_PAUSE: undefined
   TRANSPORT_STOP: undefined
@@ -550,6 +609,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
   PROJECT_SET_EXPORT_SETTINGS: ProjectSetExportSettingsPayload
   PROJECT_SET_MASTER_VOLUME: ProjectSetMasterVolumePayload
+  PROJECT_SET_SAFETY_LIMITER: ProjectSetSafetyLimiterPayload
   PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
   PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
   PROJECT_SET_METRONOME: ProjectSetMetronomePayload
@@ -718,6 +778,11 @@ export interface ProjectSetExportSettingsPayload {
  */
 export interface ProjectSetMasterVolumePayload {
   gain: number
+}
+
+/** Project-wide fixed-ceiling output protection. */
+export interface ProjectSetSafetyLimiterPayload {
+  enabled: boolean
 }
 
 /**
@@ -1136,14 +1201,21 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_SET_SENDS: 'payload',
   TRACK_SET_TONE: 'payload',
   TRACK_SET_LEVELER: 'payload',
+  TRACK_SET_PUNCH: 'payload',
+  TRACK_SET_SATURATION: 'payload',
+  TRACK_SET_BIT_CRUSHER: 'payload',
   TRACK_SET_PAN: 'payload',
   TRACK_SET_AUTOMATION: 'payload',
   CLIP_SET_ENVELOPE: 'payload',
   TRANSITION_CREATE: 'payload',
   TRANSITION_DELETE: 'payload',
   TRANSITION_SET_RECIPE: 'payload',
+  TRACK_BEAT_REPEAT_ADD: 'payload',
+  TRACK_BEAT_REPEAT_DELETE: 'payload',
   PROJECT_SET_REVERB: 'payload',
   PROJECT_SET_DELAY: 'payload',
+  PROJECT_SET_MIX_GLUE: 'payload',
+  PROJECT_SET_SAFETY_LIMITER: 'payload',
   TRANSPORT_PLAY: 'none',
   TRANSPORT_PAUSE: 'none',
   TRANSPORT_STOP: 'none',

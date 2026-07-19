@@ -8,10 +8,10 @@
 namespace silverdaw
 {
 
-// Per-track single-knob compressor; deterministic makeup keeps live/export parity.
-// Owned by `TrackChain`. The message-thread setter publishes the target lock-free (atomic +
-// a release `snapRequested` flag); `process` consumes the flag and owns all derived recompute,
-// so the audio callback is never blocked. Per-track detector state avoids clip-edge thumps.
+// Single-knob compressor shared by per-track and project-bus owners; deterministic makeup keeps
+// live/export parity. The message-thread setter publishes the target lock-free (atomic + a release
+// `snapRequested` flag); `process` consumes the flag and owns all derived recompute, so the audio
+// callback is never blocked.
 class Leveler
 {
 public:

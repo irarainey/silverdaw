@@ -84,6 +84,7 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
 {
     deviceManager.addAudioCallback(&sourcePlayer);
     deviceManager.addChangeListener(&deviceChangeListener);
+    rebuildBeatRepeatSnapshotsForCurrentSampleRate();
 
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
     rebuildDevicesSnapshot(/*rescan*/ false);
@@ -146,6 +147,9 @@ void AudioEngine::shutdown()
     busGraph.clear();
     automationCurrent.clear();
     retiredAutomation.clear();
+    beatRepeatDefinitions.clear();
+    beatRepeatCurrent.clear();
+    retiredBeatRepeats.clear();
     tracks.clear();
     trackAudibility.clear();
     deviceManager.closeAudioDevice();
@@ -176,6 +180,7 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
         const auto err = openDefaultOutputOnly();
         rebuildDevicesSnapshot(/*rescan*/ false);
         devicesSnapshot.fellBackToDefault = false;
+        rebuildBeatRepeatSnapshotsForCurrentSampleRate();
         return err;
     }
 
@@ -342,6 +347,7 @@ void AudioEngine::onDeviceListChanged()
         openDefaultOutputOnly();
         rebuildDevicesSnapshot(/*rescan*/ false);
     }
+    rebuildBeatRepeatSnapshotsForCurrentSampleRate();
 
     if (deviceListChangedCallback)
     {

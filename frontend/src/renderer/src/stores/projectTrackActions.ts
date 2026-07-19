@@ -41,7 +41,14 @@ const STATIC_FIELD: Partial<Record<AutomationParamId, keyof Track>> = {
   toneTreble: 'toneTrebleDb',
   reverbSend: 'reverbSend',
   delaySend: 'delaySend',
-  leveler: 'levelerAmount'
+  leveler: 'levelerAmount',
+  punch: 'punchAmount',
+  saturationDrive: 'saturationDrive',
+  saturationMix: 'saturationMix',
+  bitCrusherRate: 'bitCrusherRate',
+  bitCrusherBits: 'bitCrusherBits',
+  bitCrusherBoost: 'bitCrusherBoost',
+  bitCrusherMix: 'bitCrusherMix'
 }
 
 /** A param's resting native value for a track: its static FX field, or the
@@ -183,6 +190,93 @@ export const trackActions = {
         sendBridge('TRACK_SET_LEVELER', {
           trackId,
           amount: clamped,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /** Update stereo-linked transient Punch; localOnly reconciles backend acks. */
+    setTrackPunch(
+      trackId: string,
+      amount: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamped = Math.max(0, Math.min(1, Number.isFinite(amount) ? amount : 0))
+      track.punchAmount = clamped !== 0 ? clamped : undefined
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_PUNCH', {
+          trackId,
+          amount: clamped,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    /** Update soft-saturation Drive and Mix; absent Mix is fully wet. */
+    setTrackSaturation(
+      trackId: string,
+      patch: { drive?: number; mix?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamp = (value: number, fallback: number): number =>
+        Math.max(0, Math.min(1, Number.isFinite(value) ? value : fallback))
+      if (patch.drive !== undefined) {
+        const drive = clamp(patch.drive, 0)
+        track.saturationDrive = drive !== 0 ? drive : undefined
+      }
+      if (patch.mix !== undefined) {
+        const mix = clamp(patch.mix, 1)
+        track.saturationMix = mix !== 1 ? mix : undefined
+      }
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_SATURATION', {
+          trackId,
+          drive: patch.drive,
+          mix: patch.mix,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
+    setTrackBitCrusher(
+      trackId: string,
+      patch: { rate?: number; bits?: number; boost?: number; mix?: number },
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const track = this.tracks.find((t) => t.id === trackId)
+      if (!track) return
+      const clamp = (value: number, min: number, max: number, fallback: number): number =>
+        Math.max(min, Math.min(max, Number.isFinite(value) ? value : fallback))
+      if (patch.rate !== undefined) {
+        const rate = clamp(patch.rate, 0.01, 1, 1)
+        track.bitCrusherRate = rate !== 1 ? rate : undefined
+      }
+      if (patch.bits !== undefined) {
+        const bits = Math.round(clamp(patch.bits, 1, 16, 16))
+        track.bitCrusherBits = bits !== 16 ? bits : undefined
+      }
+      if (patch.boost !== undefined) {
+        const boost = clamp(patch.boost, 0, 1, 0)
+        track.bitCrusherBoost = boost !== 0 ? boost : undefined
+      }
+      if (patch.mix !== undefined) {
+        const mix = clamp(patch.mix, 0, 1, 0)
+        track.bitCrusherMix = mix !== 0 ? mix : undefined
+      }
+      if (!opts?.localOnly) {
+        sendBridge('TRACK_SET_BIT_CRUSHER', {
+          trackId,
+          rate: patch.rate,
+          bits: patch.bits,
+          boost: patch.boost,
+          mix: patch.mix,
           gestureId: opts?.gestureId,
           gestureEnd: opts?.gestureEnd
         })

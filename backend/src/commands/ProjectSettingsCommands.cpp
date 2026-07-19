@@ -5,6 +5,7 @@
 
 #include "AudioConstants.h"
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "BridgeServer.h"
 #include "LibraryAnalysis.h"
 #include "Log.h"
@@ -55,10 +56,11 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
     if (bpmVar.isDouble() || bpmVar.isInt() || bpmVar.isInt64())
     {
         const double bpm = static_cast<double>(bpmVar);
-        if (bpm > 0.0)
+        if (bpm >= 20.0 && bpm <= 300.0)
         {
             projectState.setBpm(bpm);
             engine.setMetronomeBpm(bpm);
+            syncBeatRepeatRegions(engine, projectState);
             // Pinned tempo ratios opt out of project-BPM tracking.
             projectState.forEachWarpClip(
                 [&](const silverdaw::ProjectState::WarpClipInfo& info)
@@ -151,6 +153,16 @@ void handleProjectSetMasterVolume(const juce::var& payload, silverdaw::AudioEngi
         projectState.setMasterVolume(clamped);
         engine.setMasterGain(clamped);
     }
+}
+
+void handleProjectSetSafetyLimiter(const juce::var& payload, silverdaw::AudioEngine& engine,
+                                   silverdaw::ProjectState& projectState)
+{
+    const auto enabledOpt = readOptionalBool(payload, "enabled");
+    if (!enabledOpt.has_value()) return;
+
+    projectState.setSafetyLimiterEnabled(*enabledOpt);
+    engine.setSafetyLimiterEnabled(*enabledOpt, /*snap*/ *enabledOpt);
 }
 
 void handleProjectSetBarCounterStart(const juce::var& payload, silverdaw::ProjectState& projectState)

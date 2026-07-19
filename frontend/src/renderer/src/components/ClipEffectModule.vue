@@ -9,20 +9,28 @@ const props = withDefaults(
   defineProps<{
     /** Module heading shown in the header bar. */
     title: string
+    /** One-line explanation shown from the header's info icon. */
+    helpText?: string
     /** Width of the module in base cells. */
     cols?: number
     /** Height of the module in base cells. */
     rows?: number
+    /** Named grid area for an explicitly positioned rack layout. */
+    gridArea?: string
   }>(),
-  { cols: 1, rows: 1 }
+  { cols: 1, rows: 1, gridArea: undefined, helpText: undefined }
 )
 
 const headingId = useId()
 
-const gridStyle = computed(() => ({
-  gridColumn: `span ${Math.max(1, Math.round(props.cols))}`,
-  gridRow: `span ${Math.max(1, Math.round(props.rows))}`
-}))
+const gridStyle = computed(() =>
+  props.gridArea
+    ? { gridArea: props.gridArea }
+    : {
+        gridColumn: `span ${Math.max(1, Math.round(props.cols))}`,
+        gridRow: `span ${Math.max(1, Math.round(props.rows))}`
+      }
+)
 </script>
 
 <template>
@@ -36,12 +44,46 @@ const gridStyle = computed(() => ({
     >
       <h3
         :id="headingId"
-        class="truncate text-[11px] font-semibold uppercase tracking-wider text-zinc-200"
+        class="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-zinc-200"
       >
         {{ title }}
       </h3>
       <!-- Reserved for per-effect controls (e.g. a future bypass toggle). -->
       <div class="flex shrink-0 items-center gap-1">
+        <span
+          v-if="helpText"
+          class="inline-flex h-4 w-4 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-300"
+          role="img"
+          :aria-label="helpText"
+          :title="helpText"
+        >
+          <svg
+            class="h-3 w-3"
+            viewBox="0 0 16 16"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="8"
+              cy="8"
+              r="6.25"
+              stroke="currentColor"
+              stroke-width="1.5"
+            />
+            <path
+              d="M8 7v4"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            />
+            <circle
+              cx="8"
+              cy="4.75"
+              r=".9"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
         <slot name="actions" />
       </div>
     </header>

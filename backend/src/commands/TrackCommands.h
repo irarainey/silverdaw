@@ -29,6 +29,12 @@ void handleTrackSetTone(const juce::var& payload, AudioEngine& engine, ProjectSt
                         BridgeServer& bridge);
 void handleTrackSetLeveler(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                            BridgeServer& bridge);
+void handleTrackSetPunch(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
+                         BridgeServer& bridge);
+void handleTrackSetSaturation(const juce::var& payload, AudioEngine& engine,
+                              ProjectState& projectState, BridgeServer& bridge);
+void handleTrackSetBitCrusher(const juce::var& payload, AudioEngine& engine,
+                              ProjectState& projectState, BridgeServer& bridge);
 void handleTrackSetAutomation(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                               BridgeServer& bridge);
 

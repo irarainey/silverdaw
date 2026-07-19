@@ -42,6 +42,9 @@ public:
     void setDelayParams(double delayMs, float feedback, float tone, float mix, bool snap,
                         bool applyTimeNow) noexcept;
 
+    /** Returns the minimum delay-tail duration needed to preserve feedback repeats. */
+    static double minimumEchoTailSeconds(double delayMs, float feedback) noexcept;
+
     void process(const juce::AudioBuffer<float>& reverbSend,
                  const juce::AudioBuffer<float>& delaySend,
                  juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept;
@@ -62,7 +65,7 @@ private:
     static constexpr float kRmsFloorLin = 0.001F;     // -60 dBFS
     static constexpr float kRmsRestartLin = 0.0014125F; // -57 dBFS (+3 dB hysteresis)
     static constexpr double kRoomCapSeconds = 8.0;
-    static constexpr double kEchoCapSeconds = 4.0;
+    static constexpr double kEchoCapSeconds = 4.0; // Minimum fallback cap.
     static constexpr double kSilenceWindowMs = 50.0;  // Reverb RMS run + Delay hold pad
     static constexpr float kSignalEpsilon = 1.0e-7F;
     static constexpr double kSmoothTauSeconds = 0.02; // 20 ms glide
@@ -72,6 +75,7 @@ private:
     static float sanitize(float v) noexcept { return std::isfinite(v) ? v : 0.0F; }
 
     int computeDelaySamples(double ms) const noexcept;
+    static int analyticEchoTailRepeats(float feedback) noexcept;
     static double mapToneHz(float tone01) noexcept;
     float blockAlpha(int numSamples) const noexcept;
 

@@ -56,11 +56,15 @@ import {
   isTrackSendsAppliedPayload,
   isTrackToneAppliedPayload,
   isTrackLevelerAppliedPayload,
+  isTrackPunchAppliedPayload,
+  isTrackSaturationAppliedPayload,
+  isTrackBitCrusherAppliedPayload,
   isTrackPanAppliedPayload,
   isTrackAutomationAppliedPayload,
   isClipEnvelopeAppliedPayload,
   isProjectReverbAppliedPayload,
   isProjectDelayAppliedPayload,
+  isProjectMixGlueAppliedPayload,
   isTrackRemovedPayload,
   isWaveformFailedPayload,
   isWaveformReadyPayload,
@@ -194,6 +198,12 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isTrackToneAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_LEVELER_APPLIED':
       return isTrackLevelerAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_PUNCH_APPLIED':
+      return isTrackPunchAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_SATURATION_APPLIED':
+      return isTrackSaturationAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_BIT_CRUSHER_APPLIED':
+      return isTrackBitCrusherAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_PAN_APPLIED':
       return isTrackPanAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'TRACK_AUTOMATION_APPLIED':
@@ -204,6 +214,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectReverbAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_DELAY_APPLIED':
       return isProjectDelayAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_MIX_GLUE_APPLIED':
+      return isProjectMixGlueAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PONG':
       return isPongPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'ENGINE_ERROR':

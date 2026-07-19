@@ -16,7 +16,7 @@ import {
   TRACK_PALETTE
 } from './projectTypes'
 import type { AutomationParamId, AutomationPoint, Clip } from './projectTypes'
-import { filePathToDisplayName, hydrateTransitions } from './projectHelpers'
+import { filePathToDisplayName, hydrateBeatRepeats, hydrateTransitions } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 
 /** Rebuild a track's automation map from the snapshot lanes (sanitised, lanes with
@@ -73,6 +73,34 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         levelerAmount:
           typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
             ? t.levelerAmount
+            : undefined,
+        punchAmount:
+          typeof t.punchAmount === 'number' && t.punchAmount !== 0
+            ? t.punchAmount
+            : undefined,
+        saturationDrive:
+          typeof t.saturationDrive === 'number' && t.saturationDrive !== 0
+            ? t.saturationDrive
+            : undefined,
+        saturationMix:
+          typeof t.saturationMix === 'number' && t.saturationMix !== 1
+            ? t.saturationMix
+            : undefined,
+        bitCrusherRate:
+          typeof t.bitCrusherRate === 'number' && t.bitCrusherRate !== 1
+            ? t.bitCrusherRate
+            : undefined,
+        bitCrusherBits:
+          typeof t.bitCrusherBits === 'number' && t.bitCrusherBits !== 16
+            ? t.bitCrusherBits
+            : undefined,
+        bitCrusherBoost:
+          typeof t.bitCrusherBoost === 'number' && t.bitCrusherBoost !== 0
+            ? t.bitCrusherBoost
+            : undefined,
+        bitCrusherMix:
+          typeof t.bitCrusherMix === 'number' && t.bitCrusherMix !== 0
+            ? t.bitCrusherMix
             : undefined
       }
       target.tracks.push(track)
@@ -110,9 +138,38 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
           ? t.levelerAmount
           : undefined
+      track.punchAmount =
+        typeof t.punchAmount === 'number' && t.punchAmount !== 0
+          ? t.punchAmount
+          : undefined
+      track.saturationDrive =
+        typeof t.saturationDrive === 'number' && t.saturationDrive !== 0
+          ? t.saturationDrive
+          : undefined
+      track.saturationMix =
+        typeof t.saturationMix === 'number' && t.saturationMix !== 1
+          ? t.saturationMix
+          : undefined
+      track.bitCrusherRate =
+        typeof t.bitCrusherRate === 'number' && t.bitCrusherRate !== 1
+          ? t.bitCrusherRate
+          : undefined
+      track.bitCrusherBits =
+        typeof t.bitCrusherBits === 'number' && t.bitCrusherBits !== 16
+          ? t.bitCrusherBits
+          : undefined
+      track.bitCrusherBoost =
+        typeof t.bitCrusherBoost === 'number' && t.bitCrusherBoost !== 0
+          ? t.bitCrusherBoost
+          : undefined
+      track.bitCrusherMix =
+        typeof t.bitCrusherMix === 'number' && t.bitCrusherMix !== 0
+          ? t.bitCrusherMix
+          : undefined
     }
-    // Transitions are backend-authoritative and cleared by absent snapshot data.
+    // Timeline effects are backend-authoritative and cleared by absent snapshot data.
     track.transitions = hydrateTransitions(t.transitions)
+    track.beatRepeats = hydrateBeatRepeats(t.beatRepeats)
     // Automation lanes are backend-authoritative too.
     track.automation = hydrateAutomation(t.automation)
     for (const c of t.clips) {

@@ -10,6 +10,14 @@
 namespace silverdaw
 {
 
+struct BeatRepeatRegion
+{
+    juce::String id;
+    double startBeat{0.0};
+    double lengthBeats{4.0};
+    juce::String division{"1/8"};
+};
+
 // Per-warp-clip snapshot returned by `ProjectState::forEachWarpClip`.
 struct WarpClipInfo
 {

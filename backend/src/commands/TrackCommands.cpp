@@ -97,6 +97,7 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         engine.removeClip(clipId);
     }
+    engine.clearTrackBeatRepeatRegions(trackId);
     projectState.removeTrack(trackId);
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
@@ -264,6 +265,82 @@ void handleTrackSetLeveler(const juce::var& payload, silverdaw::AudioEngine& eng
 
     broadcastApplied(bridge, "TRACK_LEVELER_APPLIED",
                      {{"trackId", trackId}, {"amount", canonAmount}});
+}
+
+void handleTrackSetPunch(const juce::var& payload, silverdaw::AudioEngine& engine,
+                         silverdaw::ProjectState& projectState,
+                         silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+    const auto amountVar = tryGetNumber(payload, "amount");
+    if (!amountVar.has_value()) return;
+
+    const float amount = juce::jlimit(0.0F, 1.0F, static_cast<float>(*amountVar));
+    if (!projectState.setTrackPunchAmount(trackId, amount)) return;
+
+    const float canonAmount = projectState.getTrackPunchAmount(trackId);
+    engine.setTrackPunch(trackId, canonAmount, /*snap*/ false);
+    broadcastApplied(bridge, "TRACK_PUNCH_APPLIED",
+                     {{"trackId", trackId}, {"amount", canonAmount}});
+}
+
+void handleTrackSetSaturation(const juce::var& payload, silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState,
+                              silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+
+    const float drive = static_cast<float>(
+        readOptionalNumber(payload, "drive").value_or(projectState.getTrackSaturationDrive(trackId)));
+    const float mix = static_cast<float>(
+        readOptionalNumber(payload, "mix").value_or(projectState.getTrackSaturationMix(trackId)));
+
+    if (!projectState.setTrackSaturation(trackId, drive, mix)) return;
+
+    const float canonDrive = projectState.getTrackSaturationDrive(trackId);
+    const float canonMix = projectState.getTrackSaturationMix(trackId);
+    engine.setTrackSaturation(trackId, canonDrive, canonMix, /*snap*/ false);
+
+    broadcastApplied(bridge, "TRACK_SATURATION_APPLIED",
+                     {{"trackId", trackId}, {"drive", canonDrive}, {"mix", canonMix}});
+}
+
+void handleTrackSetBitCrusher(const juce::var& payload, silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState,
+                              silverdaw::BridgeServer& bridge)
+{
+    const juce::String trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+    if (trackId.isEmpty()) return;
+
+    const float rate = static_cast<float>(
+        readOptionalNumber(payload, "rate").value_or(projectState.getTrackBitCrusherRate(trackId)));
+    const double requestedBits =
+        readOptionalNumber(payload, "bits").value_or(projectState.getTrackBitCrusherBits(trackId));
+    const float clampedBits = juce::jlimit(
+        1.0F, 16.0F,
+        std::isfinite(requestedBits) ? static_cast<float>(requestedBits) : 16.0F);
+    const int bits = static_cast<int>(std::lround(clampedBits));
+    const float boost = static_cast<float>(
+        readOptionalNumber(payload, "boost").value_or(projectState.getTrackBitCrusherBoost(trackId)));
+    const float mix = static_cast<float>(
+        readOptionalNumber(payload, "mix").value_or(projectState.getTrackBitCrusherMix(trackId)));
+
+    if (!projectState.setTrackBitCrusher(trackId, rate, bits, boost, mix)) return;
+
+    const float canonRate = projectState.getTrackBitCrusherRate(trackId);
+    const int canonBits = projectState.getTrackBitCrusherBits(trackId);
+    const float canonBoost = projectState.getTrackBitCrusherBoost(trackId);
+    const float canonMix = projectState.getTrackBitCrusherMix(trackId);
+    engine.setTrackBitCrusher(trackId, canonRate, canonBits, canonBoost, canonMix, /*snap*/ false);
+
+    broadcastApplied(bridge, "TRACK_BIT_CRUSHER_APPLIED",
+                     {{"trackId", trackId},
+                      {"rate", canonRate},
+                      {"bits", canonBits},
+                      {"boost", canonBoost},
+                      {"mix", canonMix}});
 }
 
 // Per-track effect automation curve for one parameter. Stores/normalises the

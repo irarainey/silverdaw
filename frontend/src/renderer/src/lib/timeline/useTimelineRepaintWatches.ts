@@ -78,7 +78,7 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () =>
       project.tracks
         .map((t) =>
-          [t.toneBassDb, t.toneMidDb, t.toneTrebleDb, t.toneFilter, t.reverbSend, t.delaySend, t.levelerAmount]
+          [t.toneBassDb, t.toneMidDb, t.toneTrebleDb, t.toneFilter, t.reverbSend, t.delaySend, t.levelerAmount, t.punchAmount, t.saturationDrive, t.saturationMix, t.bitCrusherRate, t.bitCrusherBits, t.bitCrusherBoost, t.bitCrusherMix]
             .map((v) => v ?? 0)
             .join(',')
         )
@@ -104,6 +104,21 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
         .map((t) =>
           (t.transitions ?? [])
             .map((tr) => `${tr.id}:${tr.leftClipId}>${tr.rightClipId}:${tr.recipe.kind}`)
+            .join(',')
+        )
+        .join('|'),
+    () => redraw()
+  )
+
+  // Beat Repeat regions are beat-space; both region edits and BPM changes alter their footprint.
+  watch(
+    () =>
+      project.tracks
+        .map((track) =>
+          (track.beatRepeats ?? [])
+            .map((region) =>
+              `${region.id}:${region.startBeat}:${region.lengthBeats}:${region.division}`
+            )
             .join(',')
         )
         .join('|'),

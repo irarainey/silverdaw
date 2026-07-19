@@ -14,7 +14,7 @@ import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 
-const props = defineProps<{ trackId: string }>()
+const props = defineProps<{ trackId: string; gridArea?: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('send')
@@ -83,8 +83,10 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     :title="'Reverb & Delay'"
+    help-text="Send sound to the shared effects"
     :cols="1"
     :rows="1"
+    :grid-area="props.gridArea"
   >
     <div class="grid w-full grid-cols-2 gap-3 text-xs">
       <FxRangeControl

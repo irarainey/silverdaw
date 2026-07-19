@@ -139,6 +139,34 @@ export const TrackLevelerAppliedPayloadSchema = z.object({
 })
 export type TrackLevelerAppliedPayload = z.infer<typeof TrackLevelerAppliedPayloadSchema>
 
+/** Ack for `TRACK_SET_PUNCH` — echoes the clamped amount. */
+export const TrackPunchAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  amount: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type TrackPunchAppliedPayload = z.infer<typeof TrackPunchAppliedPayloadSchema>
+
+/** Ack for `TRACK_SET_SATURATION`; echoes the full clamped state. */
+export const TrackSaturationAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  drive: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type TrackSaturationAppliedPayload = z.infer<typeof TrackSaturationAppliedPayloadSchema>
+
+/** Ack for `TRACK_SET_BIT_CRUSHER`; echoes the full clamped state. */
+export const TrackBitCrusherAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  rate: z.number().min(0.01).max(1),
+  bits: z.number().int().min(1).max(16),
+  boost: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type TrackBitCrusherAppliedPayload = z.infer<typeof TrackBitCrusherAppliedPayloadSchema>
+
 /** Ack for `TRACK_SET_PAN`; delta ack avoids full snapshots during pan drags. */
 export const TrackPanAppliedPayloadSchema = z.object({
   trackId: z.string(),
@@ -195,6 +223,13 @@ export const ProjectDelayAppliedPayloadSchema = z.object({
   ok: z.boolean()
 })
 export type ProjectDelayAppliedPayload = z.infer<typeof ProjectDelayAppliedPayloadSchema>
+
+/** Ack for `PROJECT_SET_MIX_GLUE` — echoes the clamped project-bus amount. */
+export const ProjectMixGlueAppliedPayloadSchema = z.object({
+  amount: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type ProjectMixGlueAppliedPayload = z.infer<typeof ProjectMixGlueAppliedPayloadSchema>
 
 export const ProjectViewStateSavedPayloadSchema = z.object({
   filePath: z.string(),
@@ -273,6 +308,19 @@ export const ProjectStateTransitionSchema = z.object({
 })
 export type ProjectStateTransition = z.infer<typeof ProjectStateTransitionSchema>
 
+/** Musical loop duration captured by a Beat Repeat region. */
+export const BeatRepeatDivisionSchema = z.enum(['1/4', '1/8', '1/16'])
+export type BeatRepeatDivision = z.infer<typeof BeatRepeatDivisionSchema>
+
+/** Per-track, beat-space repeat region. The backend owns timing and validation. */
+export const ProjectStateBeatRepeatRegionSchema = z.object({
+  id: z.string(),
+  startBeat: z.number().nonnegative(),
+  lengthBeats: z.number().positive(),
+  division: BeatRepeatDivisionSchema
+})
+export type ProjectStateBeatRepeatRegion = z.infer<typeof ProjectStateBeatRepeatRegionSchema>
+
 export const ProjectStateTrackSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
@@ -292,6 +340,13 @@ export const ProjectStateTrackSchema = z.object({
   /** Bipolar DJ-style Filter sweep, `[-1, +1]` (0 = off; <0 High Cut, >0 Low Cut). */
   toneFilter: z.number().optional(),
   levelerAmount: z.number().optional(),
+  punchAmount: z.number().min(0).max(1).optional(),
+  saturationDrive: z.number().min(0).max(1).optional(),
+  saturationMix: z.number().min(0).max(1).optional(),
+  bitCrusherRate: z.number().min(0.01).max(1).optional(),
+  bitCrusherBits: z.number().int().min(1).max(16).optional(),
+  bitCrusherBoost: z.number().min(0).max(1).optional(),
+  bitCrusherMix: z.number().min(0).max(1).optional(),
   /** Equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),
   /** Per-track effect automation lanes: `{ paramId, points: [{ timeMs, value }] }`. */
@@ -304,7 +359,8 @@ export const ProjectStateTrackSchema = z.object({
     )
     .optional(),
   clips: z.array(ProjectStateClipSchema),
-  transitions: z.array(ProjectStateTransitionSchema).optional()
+  transitions: z.array(ProjectStateTransitionSchema).optional(),
+  beatRepeats: z.array(ProjectStateBeatRepeatRegionSchema).optional()
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
 
@@ -408,6 +464,10 @@ export const ProjectStatePayloadSchema = z.object({
   /** Renderer-owned export settings JSON; backend round-trips it opaque. */
   exportSettingsJson: z.string().optional().nullable(),
   masterVolume: z.number().min(0).max(1).optional(),
+  /** Fixed -1 dBFS output protection; absent means off for older projects. */
+  safetyLimiterEnabled: z.boolean().optional(),
+  /** Project-bus compression amount; absent/zero is a transparent legacy-compatible bypass. */
+  mixGlueAmount: z.number().min(0).max(1).optional(),
   /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower for lead-in. */
   barCounterStart: z.number().optional(),
   /** Displayed bar number a mixdown begins from; 1 (default) is the first bar. */
@@ -826,11 +886,15 @@ export interface BridgeInboundMap {
   TRACK_SENDS_APPLIED: TrackSendsAppliedPayload
   TRACK_TONE_APPLIED: TrackToneAppliedPayload
   TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
+  TRACK_PUNCH_APPLIED: TrackPunchAppliedPayload
+  TRACK_SATURATION_APPLIED: TrackSaturationAppliedPayload
+  TRACK_BIT_CRUSHER_APPLIED: TrackBitCrusherAppliedPayload
   TRACK_PAN_APPLIED: TrackPanAppliedPayload
   TRACK_AUTOMATION_APPLIED: TrackAutomationAppliedPayload
   CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
   PROJECT_REVERB_APPLIED: ProjectReverbAppliedPayload
   PROJECT_DELAY_APPLIED: ProjectDelayAppliedPayload
+  PROJECT_MIX_GLUE_APPLIED: ProjectMixGlueAppliedPayload
   PROJECT_SAVED: ProjectSavedPayload
   PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
   PROJECT_AUTOSAVED: ProjectAutosavedPayload
@@ -897,11 +961,15 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_SENDS_APPLIED',
   'TRACK_TONE_APPLIED',
   'TRACK_LEVELER_APPLIED',
+  'TRACK_PUNCH_APPLIED',
+  'TRACK_SATURATION_APPLIED',
+  'TRACK_BIT_CRUSHER_APPLIED',
   'TRACK_PAN_APPLIED',
   'TRACK_AUTOMATION_APPLIED',
   'CLIP_ENVELOPE_APPLIED',
   'PROJECT_REVERB_APPLIED',
   'PROJECT_DELAY_APPLIED',
+  'PROJECT_MIX_GLUE_APPLIED',
   'PROJECT_SAVED',
   'PROJECT_VIEW_STATE_SAVED',
   'PROJECT_AUTOSAVED',
@@ -1051,6 +1119,18 @@ export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLeve
   return TrackLevelerAppliedPayloadSchema.safeParse(value).success
 }
 
+export function isTrackPunchAppliedPayload(value: unknown): value is TrackPunchAppliedPayload {
+  return TrackPunchAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isTrackSaturationAppliedPayload(value: unknown): value is TrackSaturationAppliedPayload {
+  return TrackSaturationAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isTrackBitCrusherAppliedPayload(value: unknown): value is TrackBitCrusherAppliedPayload {
+  return TrackBitCrusherAppliedPayloadSchema.safeParse(value).success
+}
+
 export function isTrackPanAppliedPayload(value: unknown): value is TrackPanAppliedPayload {
   return TrackPanAppliedPayloadSchema.safeParse(value).success
 }
@@ -1071,6 +1151,10 @@ export function isProjectReverbAppliedPayload(value: unknown): value is ProjectR
 
 export function isProjectDelayAppliedPayload(value: unknown): value is ProjectDelayAppliedPayload {
   return ProjectDelayAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isProjectMixGlueAppliedPayload(value: unknown): value is ProjectMixGlueAppliedPayload {
+  return ProjectMixGlueAppliedPayloadSchema.safeParse(value).success
 }
 
 export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {

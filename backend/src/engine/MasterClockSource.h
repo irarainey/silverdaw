@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioConstants.h"
+#include "Leveler.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
 
@@ -35,11 +36,13 @@ class MasterClockSource : public juce::AudioSource
         silverdaw::log::info("master",
                              "prepareToPlay block=" + juce::String(blockSize) + " sr=" + juce::String(newSampleRate));
         child.prepareToPlay(blockSize, newSampleRate);
+        mixGlue.prepare(newSampleRate, 2);
     }
 
     void releaseResources() override
     {
         silverdaw::log::info("master", "releaseResources");
+        mixGlue.reset();
         child.releaseResources();
     }
 
@@ -78,6 +81,7 @@ class MasterClockSource : public juce::AudioSource
 
             juce::AudioSourceChannelInfo scrubInfo(info.buffer, info.startSample, renderSamples);
             child.getNextAudioBlock(scrubInfo);
+            mixGlue.process(*info.buffer, info.startSample, renderSamples);
             if (scrubDirection.load(std::memory_order_relaxed) < 0)
             {
                 for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
@@ -138,6 +142,7 @@ class MasterClockSource : public juce::AudioSource
         // Playing: deliver the source to the output verbatim. We do NOT apply a master declick
         // fade-in, so opening transients (e.g. a drum hit on beat 1) are preserved exactly.
         child.getNextAudioBlock(info);
+        mixGlue.process(*info.buffer, info.startSample, info.numSamples);
 
         positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
         publishAudioPerf(startTicks, info.numSamples);
@@ -177,6 +182,11 @@ class MasterClockSource : public juce::AudioSource
     bool isContentLoaded() const noexcept
     {
         return keepAlive.isContentLoaded();
+    }
+
+    void setMixGlueAmount(float amount, bool snap) noexcept
+    {
+        mixGlue.setParams(amount, snap);
     }
 
     void setPositionSamples(juce::int64 p) noexcept
@@ -242,6 +252,7 @@ class MasterClockSource : public juce::AudioSource
 
     juce::AudioSource& child;
     OutputKeepAlive& keepAlive;
+    Leveler mixGlue;
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<double> sampleRate{0.0};
     std::atomic<std::uint64_t> callbackCount{0};

@@ -36,6 +36,7 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // headroom; opened/loaded projects keep their own stored master volume.
     fresh.setProperty(juce::Identifier{"masterVolume"},
                       silverdaw::ProjectState::kDefaultMasterVolume, nullptr);
+    fresh.setProperty(juce::Identifier{"safetyLimiterEnabled"}, true, nullptr);
     projectState.replaceTree(fresh);
     session.currentPath.clear();
 
@@ -46,6 +47,8 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // replaceTree does not touch the live engine, so align master gain with the
     // new project's default (rebuildEngineFromProject only runs on load/clip ops).
     engine.setMasterGain(projectState.getMasterVolume());
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
     engine.setMetronomeBpm(projectState.getBpm());
     engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
 

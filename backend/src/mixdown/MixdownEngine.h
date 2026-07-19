@@ -10,6 +10,7 @@
 #include <juce_core/juce_core.h>
 
 #include "EdgeFadeSnapshot.h"
+#include "ProjectStateTypes.h"
 #include "BrakeSnapshot.h"
 #include "BackspinSnapshot.h"
 
@@ -66,6 +67,13 @@ struct MixdownSnapshot
         float toneTrebleDb{0.0F};
         float toneFilter{0.0F};
         float levelerAmount{0.0F};
+        float punchAmount{0.0F};
+        float saturationDrive{0.0F};
+        float saturationMix{1.0F};
+        float bitCrusherRate{1.0F};
+        int bitCrusherBits{16};
+        float bitCrusherBoost{0.0F};
+        float bitCrusherMix{0.0F};
         float reverbSend{0.0F};
         float delaySend{0.0F};
         float pan{0.0F};
@@ -76,6 +84,7 @@ struct MixdownSnapshot
             std::vector<std::pair<double, float>> points; // (timeMs, value)
         };
         std::vector<AutomationLane> automation;
+        std::vector<BeatRepeatRegion> beatRepeats;
         std::vector<ClipSnapshot> clips;
     };
 
@@ -83,6 +92,8 @@ struct MixdownSnapshot
     // Loudness normalization uses a measured pass before final gain, limiting, dither, and
     // encode.
     float masterGain{1.0F};
+    bool safetyLimiterEnabled{false};
+    float mixGlueAmount{0.0F};
     // Offline render uses the same SharedFx settings as playback for export parity.
     float reverbSize{0.0F};
     float reverbDecay{0.0F};

@@ -76,4 +76,18 @@ void handleProjectSetDelay(const juce::var& payload, silverdaw::AudioEngine& eng
                       {"mix", canonMix}});
 }
 
+void handleProjectSetMixGlue(const juce::var& payload, silverdaw::AudioEngine& engine,
+                             silverdaw::ProjectState& projectState,
+                             silverdaw::BridgeServer& bridge)
+{
+    const auto amount = readOptionalNumber(payload, "amount");
+    if (!amount.has_value()) return;
+
+    if (!projectState.setProjectMixGlueAmount(static_cast<float>(*amount))) return;
+
+    const float canonicalAmount = projectState.getProjectMixGlueAmount();
+    engine.setProjectMixGlue(canonicalAmount, /*snap*/ false);
+    broadcastApplied(bridge, "PROJECT_MIX_GLUE_APPLIED", {{"amount", canonicalAmount}});
+}
+
 } // namespace silverdaw

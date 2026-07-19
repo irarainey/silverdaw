@@ -179,7 +179,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Waveform drawing                            | PixiJS (using peaks arrays from backend)        |
 | Drag and drop                               | Electron / Vue                                  |
 | Audio playback                              | JUCE backend                                    |
-| Per-track FX, mixer routing                 | JUCE backend (per-track Tone EQ + filters, sends, pan, and Leveler shipped) |
+| Per-track FX, mixer routing                 | JUCE backend (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, sends, pan, and Beat Repeat shipped) |
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
@@ -525,7 +525,7 @@ the backend and driven from the shared master transport clock.
 Users turn a timeline clip or a library clip item into a reusable sample in one
 action (region-to-sample arrives with the selection primitive in §7.2.1):
 
-- Select a timeline clip → right-click → **Save as Sample…**, then choose
+- Select a timeline clip → **Library ▸ Save as Sample…**, then choose
   **Music** or **Simple** in the **Save as Sample** dialog
 - Select a library clip tile → right-click → **Save as Sample (Music)** or
   **Save as Sample (Simple)**
@@ -582,12 +582,37 @@ Runs automatically on every import, in the background:
 ### 7.5 Clip Editing Primitives
 Non-destructive clip operations on the timeline. Each operation mutates the `ValueTree` (so undoable) but never touches the underlying audio file — they're just changes to in/out points and clip references.
 
+**Nested clip context menu.** The single-clip menu groups commands under
+**Open** (Clip Editor, Scratch Editor, information), **Edit** (cut, copy, paste,
+duplicate, lock, split), **Transform** (Chop to Grid, Warp, Pitch, Separate
+Stems, Split Stereo Channels), **Effects** (Beat Repeat, Reverse, Brake,
+Backspin), **Crossfade** (recipes and removal when applicable), and **Library**
+(save, unlink, bake a sample). The **Colour** picker and **Delete** remain direct
+entries; **Relink** is also direct when the clip is unresolved. Multi-selection
+and empty-track menus intentionally show only the actions that apply to them.
+
 - **Crop** — trim a clip's `inMs` / `outMs` to a selected region. Underlying file untouched.
 - **Split** — slice a clip at the playhead (or at every selected mark) into N adjacent clips that together reference the same file. Cheap: O(1) ValueTree edits, zero audio I/O.
-- **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or right-click → "Duplicate to Beat Grid"). Both clips reference the same file; the duplicate gets its own clip id so it can be edited independently.
+- **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or
+  **Edit ▸ Duplicate**). Both clips reference the same file; the duplicate gets
+  its own clip id so it can be edited independently.
 - **Repeat-to-loop** — a special-case duplicate that fills a region with N copies of a clip at clip-length spacing; ideal for looping a short sample across a section.
-- **Lock / Unlock** — `Ctrl+L` or right-click ▸ Lock freezes a single clip against accidental move / trim / split. Locked clips show a padlock badge on the title strip, refuse drag-move and edge-trim gestures silently, and surface a toast if Split-at-playhead is invoked on them. Double-click still opens the Clip Editor so warp / pitch / crop remain editable via that surface. The lock is per-clip — linked saved clip siblings stay independently lockable — and persisted on the clip's `locked` ValueTree property (absent == unlocked).
-- **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked saved clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
+- **Lock / Unlock** — `Ctrl+L` or **Edit ▸ Lock** freezes a single clip against
+  accidental move / trim / split. Locked clips show a padlock badge on the title
+  strip, refuse drag-move and edge-trim gestures silently, and surface a toast if
+  Split-at-playhead is invoked on them. Double-click still opens the Clip Editor
+  so warp / pitch / crop remain editable via that surface. The lock is per-clip —
+  linked saved clip siblings stay independently lockable — and persisted on the
+  clip's `locked` ValueTree property (absent == unlocked).
+- **Reverse** — **Effects ▸ Reverse** (a checkmarked toggle) or the
+  **Reverse** toggle in the Clip Editor toolbar plays the clip's source window
+  back-to-front. It is non-destructive: the source file is never rewritten —
+  the audio engine reads the clip window in reverse. From the context menu the
+  toggle propagates to every linked saved clip sibling; in the Clip Editor it is
+  part of the transactional draft, previewed live, and committed on **Save**
+  following the same scope as the other draft edits. Persisted on the clip's
+  `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` /
+  `PREVIEW_SET_REVERSED`.
 
 ### 7.6 Loop Slicing
 
@@ -599,8 +624,8 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
 
 - **Surface.** The primary home is the **Clip Editor** as a **Slice** mode toggle
   (mirroring the Volume Shape overlay): full-source waveform, zoom, and looped
-  audition. A thin timeline context-menu **Chop to Grid** submenu (1 bar · 1/2 bar
-  · 1/4 · 1/8 · 1/16) is a cheap wrapper over the same commit path for the common
+  audition. A thin **Transform ▸ Chop to Grid** submenu (1 bar · 1/2 bar ·
+  1/4 · 1/8 · 1/16) is a cheap wrapper over the same commit path for the common
   "chop a loop" case.
 - **Slice points (source-absolute draft).** Markers are held in **source-time ms**
   — the Clip Editor's native coordinate space — and only converted to timeline
@@ -637,7 +662,7 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
   the musical grid; butted slices are sample-continuous until rearranged.
 
 ### 7.7 Stem Separation
-- Triggered from the clip context menu (**Separate Stems**) or from a source or
+- Triggered from the clip context menu (**Transform ▸ Separate Stems**) or from a source or
   sample library item's context menu; it is hidden for stems, and a one-time
   model download is offered on first use
 - When the required models are missing, the one-time download prompt is shown **first**; the stem picker (vocals / drums / bass / other, nothing ticked by default so you pick only what you need) opens once the download completes — or immediately when the models are already installed. Only the chosen stems are separated, which proportionally shortens the run. The picker also carries an optional per-run **Remove Reverb & Echo** tick nested under Vocals (Light / Medium / Strong), a fresh choice each run rather than a saved preference
@@ -651,7 +676,8 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
 
 ### 7.8 Harmonic Matching
 - Detected key displayed on every clip in the timeline
-- Clip-level pitch shift via Rubber Band, applied non-destructively (controlled from the clip inspector / context menu — semitone field + cents trim)
+- Clip-level pitch shift via Rubber Band, applied non-destructively (controlled
+  from the clip inspector or **Transform ▸ Pitch** — semitone field + cents trim)
 - Phase 8 visual indicators can flag harmonically compatible clip pairs once
   the core key display and pitch controls are stable
 
@@ -666,11 +692,13 @@ how a beginner actually thinks about the work:
 - **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
   itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
-  controls (Tone, Compressor, Reverb amount, Delay amount) in the **Track FX**
-  tab of the bottom panel (see §7.12). These same parameters — plus a post-FX
-  **Gain** — can also be automated over the timeline (see §7.11.1).
+  controls (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, Reverb amount,
+  Delay amount) in the **Track FX** tab of the bottom panel (see §7.12). These
+  same parameters — plus a post-FX **Gain** — can also be automated over the
+  timeline (see §7.11.1).
 - **Per project** — "the song's space" → one shared Reverb and one shared
-  Delay for the whole project, with character set once.
+  Delay for the whole project, a one-control Glue Compressor across the
+  completed mix, plus a fixed-ceiling Safety Limiter on the final output.
 
 User-facing language favours familiar, DAW-standard terms — **Reverb**,
 **Delay**, **Pan**, **Bass / Mid / Treble**, **Compressor** — so the app reads
@@ -697,7 +725,8 @@ The engine topology uses two runtime objects:
 - **`TrackRuntime`** — one per UI track, **independent of clip count**.
   Owns a stable per-track output buffer at the engine's nominal block
   size + channel count, the per-track **`TrackChain`** of DSP processors
-  (Tone, Leveler, gain/mute/solo, pan), and the per-track send scalars
+  (Tone/Filter, Compressor, Punch, Saturation, Bit Crusher, gain/mute/solo),
+  equal-power pan, and the per-track send scalars
   (`reverbSend`, `delaySend`). Clips on this track feed their pre-FX
   audio into this buffer. Defined as `BusGraph::TrackRuntime` in
   `backend/src/engine/BusGraph.h`.
@@ -772,6 +801,9 @@ clips[clipId]
       Tone (3-band EQ)
       Filter (bipolar LPF↔HPF sweep)
       Leveler (Compressor)
+      Punch (transient boost)
+      Saturation (soft clipping)
+      Bit Crusher (sample-rate and bit-depth reduction)
       gain
       mute / solo gate
   → SEND TAP (pre-pan, post everything above)
@@ -783,8 +815,12 @@ clips[clipId]
   │ Shared Reverb (pulled once)           │
   │ Shared Delay   (pulled once, BPM-sync) │
   └───────────────────────────────────────┘
-  → wet returns ⊕= dryBus → master mix
-  → MeteringSource (master gain + peak meter)
+  → wet returns ⊕= dryBus → project mix
+  → Glue Compressor (project bus only)
+  → topMixer (adds preview and scratch sources during live playback)
+  → master gain
+  → Safety Limiter
+  → peak meter
   → device output  /  mixdown writer
 ```
 
@@ -818,11 +854,17 @@ which is what users expect.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
   through a hand-rolled stereo-linked soft-knee compressor, with a
   deterministic static makeup-gain map (no live loudness analysis — see §7.10).
+- **Punch** — a stereo-linked transient boost with one Amount control. Amount
+  `0` is an exact bypass.
+- **Saturation** — Drive and Mix controls for per-track soft clipping. Drive
+  `0` is an exact bypass.
+- **Bit Crusher** — Rate, Bits, Boost, and Mix controls for per-track
+  sample-rate and bit-depth reduction. Mix `0` is an exact bypass.
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
 - **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
-- **pan** — equal-power, surfaced in the Track FX tab. In the **stereo**
-  waveform display the timeline reflects pan per channel: each channel's
+- **pan** — equal-power, surfaced in the track header below the gain fader. In
+  the **stereo** waveform display the timeline reflects pan per channel: each channel's
   lane height and opacity scale with its normalised equal-power pan gain,
   so a hard-panned channel collapses to a faint near-flat lane while the
   other stays full (a centred track leaves both lanes full).
@@ -844,6 +886,12 @@ which is what users expect.
   is worth the implementation cost for a Phase 5 effect that's almost
   always set once per project. If real usage shows users sweeping BPM
   during playback we'll revisit in Phase 8.
+- **Safety Limiter** — a final, stereo-linked sample-peak guard with a fixed
+  `-1 dBFS` ceiling. It protects playback and mixdown output but is not a
+  true-peak or mastering limiter.
+- **Glue Compressor** — a one-control, stereo-linked project-bus compressor applied
+  after the shared Reverb / Delay returns and before master gain. Amount 0 is
+  a bit-exact bypass.
 
 Putting reverb/delay on a **shared instance with per-track send amounts**
 (rather than per-track inserts) is a deliberate ethos call:
@@ -866,8 +914,9 @@ ask for it.
 Stereo peak meter + dB fader in the transport bar (range `-∞..0 dB`, no
 boost) backed by `PROJECT.masterVolume` / `PROJECT_SET_MASTER_VOLUME`;
 same gain is applied to live playback and the mixdown render so the
-exported file matches what the user hears. LUFS / RMS readouts and a
-master Limiter are deferred to Phase 8.
+exported file matches what the user hears. The fixed-ceiling **Safety Limiter**
+runs after master gain and before peak metering. LUFS / RMS readouts and an
+advanced mastering limiter are deferred to Phase 8.
 
 #### 7.9.6 Live / mixdown render parity
 
@@ -931,17 +980,18 @@ diverges from mixdown in real conditions.
 - Per-track insert reverb / delay (alternative to the shared sends above).
 - VST3 plugin hosting via JUCE `AudioPluginHost` — track-vs-clip scope
   decided in Phase 8 once we've lived with the per-track model.
-- Saturator and Utility (gain / phase / mono) effects — only added if real
+- Utility (gain / phase / mono) effects — only added if real
   usage shows the need; the simple ethos is to ship fewer, well-explained
   effects.
 - Master Limiter + LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
 
-**Status (shipped):** Per-track linear `gain`, master meter + fader,
-mixdown export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph`
-+ canonical `TrackChain`), Tone + Filter, Leveler, shared Reverb / Delay with
-per-track sends, pan, mute / solo, per-clip Volume Shape, and track effect
-automation (§7.11.1) are all shipped.
+**Status (shipped):** Per-track linear `gain`, master meter + fader, mixdown
+export, the engine refactor (`BusGraph::TrackRuntime` + `BusGraph` + canonical
+`TrackChain`), Tone + Filter, Compressor, Punch, Saturation, Bit Crusher,
+shared Reverb / Delay with per-track sends, Glue Compressor, Safety Limiter, Beat
+Repeat, pan, mute / solo, per-clip Volume Shape, and track effect automation
+(§7.11.1) are all shipped.
 
 ### 7.10 Effects (Built-in)
 
@@ -981,16 +1031,30 @@ DSP class in `code`.
   on transport stop — **never** at clip boundaries, which would cause
   audible thumps on adjacent clips on the same track. This is only
   achievable because `TrackRuntime` is decoupled from clips (§7.9.1).
+- **Punch** — one Amount control (`0..100 %`) drives a stereo-linked transient
+  boost after the Compressor. Amount 0 is a bit-exact bypass. The detector
+  follows a track's mixed signal so both channels receive the same gain,
+  preserving the stereo image.
+- **Saturation** — Drive and Mix controls for soft clipping. Drive 0 is a
+  bit-exact bypass regardless of Mix.
+- **Bit Crusher** — Rate, Bits, Boost, and Mix controls for sample-rate and
+  bit-depth reduction. Mix 0 is a bit-exact bypass.
 
 **Project-level (one of each, shared by every track):**
 
 - **Reverb** — `juce::Reverb` (Freeverb, `juce_audio_basics`). Parameters: Size,
   Decay, Tone, Mix. Each track contributes via its **Reverb amount** send (§7.9).
 - **Delay** — hand-rolled integer-sample stereo delay (independent L/R lines +
-  feedback + one-pole tone filter). Time is a note value (1/4, 1/8, 1/8T, 1/16);
-  feedback,
+  feedback + one-pole tone filter). Time uses direct 1/4, 1/8, 1/8T, and 1/16
+  beat-division buttons, backed by the same persisted note values; feedback,
   tone, and overall mix are independent. Each track contributes via its
   **Delay amount** send (§7.9).
+- **Glue Compressor** — a one-control stereo-linked compressor for the completed
+  project bus. It runs after the shared Reverb and Delay returns and before
+  master gain; Amount 0 is a bit-exact bypass.
+- **Safety Limiter** — a fixed `-1 dBFS` stereo-linked sample-peak guard at
+  final output. It protects playback and mixdown but is not a true-peak or
+  mastering limiter.
 
 **Per-clip (one of each, per Clip — see §7.11):**
 
@@ -998,6 +1062,14 @@ DSP class in `code`.
   waveform in the Clip Editor. Fade-in / fade-out are expressed by
   dragging the end breakpoints down to silence (there is no separate
   fade feature).
+
+**Timeline (per track):**
+
+- **Beat Repeat** — an `Effects ▸ Beat Repeat` region captures the first
+  selected division of a beat-snapped region and repeats it until that region
+  ends. The duration choices are 1/2 beat, 1 beat, 2 beats, or 1 bar; divisions
+  are 1/4, 1/8, or 1/16. Regions are non-destructive, survive tempo changes,
+  and apply identically during playback and mixdown.
 
 **Tail-render policy.** After every dry track has gone silent the
 `BusGraph` keeps pulling the shared Reverb and Delay processors with zero
@@ -1038,10 +1110,9 @@ Delay between repeats or running Reverb far past audibility.
     spectral-radius / max-loop-gain of the feedback matrix instead of
     the scalar feedback in the same formula — never a per-channel
     scalar that ignores cross-feed.
-  - The 4 s safety cap is the absolute upper bound; a runaway
-    high-feedback echo at `feedback = 0.95` and a long delay time
-    would be forcibly truncated there with a logged warning, not
-    silently.
+  - The 4 s safety cap is a minimum fallback. The effective cap is never
+    shorter than the analytic repeat duration, so long delays retain every
+    audible feedback repeat while still terminating deterministically.
 
 **Transport-aware behaviour.** Tail rendering kicks in only when the
 dry input has actually gone silent. Live transport rules:
@@ -1067,7 +1138,7 @@ dry input has actually gone silent. Live transport rules:
 detector-based termination or their safety cap. `addedSilenceDone` =
 the user's "silence tail" knob's frame count has been written after
 FX termination. A **hard fail-safe cutoff** at
-`projectEnd + max(roomCap, echoCap) + userTail` guarantees the loop
+`projectEnd + max(roomCap, requiredEchoTail) + userTail` guarantees the loop
 exits even if both detectors malfunction. The user-facing "silence
 tail" knob in the Export dialog is **additive** on top of whatever
 the FX tail produced — set it to 0 and the file ends the moment FX
@@ -1081,11 +1152,18 @@ silence.
   **Volume** button (see §7.11). There is no separate fade control, no
   timeline drag handles, and no standalone dialog; on the timeline the
   envelope is reflected in the waveform's height rather than as an overlay.
-- **Per-track Tone / Compressor / Reverb amount / Delay amount** — surfaced
-  in a **Track FX** tab of the bottom panel (shares its space with
-  the Library; one-at-a-time tab switch — see §7.12).
-- **Project Reverb / Delay** — a **Project FX** subtab within the
-  same bottom panel area, clearly separated from the per-track controls.
+- **Per-track Tone / Filter / Compressor / Punch / Saturation / Bit Crusher /
+  Reverb amount / Delay amount** — surfaced in a **Track FX** tab of the
+  bottom panel (shares its space with the Library; one-at-a-time tab switch —
+  see §7.12). Five equal-width responsive columns keep Tone, Filter above
+  Reverb & Delay, Compressor above Punch, Saturation, and Bit Crusher together
+  without horizontal scrolling.
+- **Project Reverb / Delay / Glue Compressor / Safety Limiter** — a **Project FX**
+  tab within the same bottom panel area, clearly separated from the per-track
+  controls. Each Track FX and Project FX module header has an info icon with a
+  short hover explanation.
+- **Beat Repeat** — per-track, tempo-aligned regions added from the timeline
+  **Effects** menu rather than a continuous Track FX control.
 
 **Deferred to Phase 8** (and explicitly NOT in Phase 5):
 
@@ -1095,7 +1173,7 @@ silence.
 - Per-track insert reverb / delay (so a single track can have its own
   unique room without the shared one).
 - Sidechain compression.
-- Saturator and Utility (gain / phase / mono).
+- Utility (gain / phase / mono).
 - Master Limiter.
 
 ### 7.11 Clip Volume Shape
@@ -1290,7 +1368,7 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 - **Drag-to-timeline** creates a clip at the drop position; default-on auto-warp
   matches eligible music to the project BPM, including variable-tempo sources
   via their representative detected BPM. The Timeline preference can disable it.
-- **Saved clips** — right-click a timeline clip → **Save Clip to Library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
+- **Saved clips** — **Library ▸ Save Clip to Library** on a timeline clip turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). **Library ▸ Unlink from Library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
 - **Tile images:** library tiles can show embedded cover art or a fallback icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. The fallback is styled **per kind** when no cover shows (an original source: sky music-note on a sky tint; a stem: teal layers icon on a teal tint; a saved sample: indigo bars icon on an indigo tint), plus the persistent stem / sample corner badge. A tile's right-click menu manages its cover art: **Update Image…** (pick a new image, copied into the project's `covers/` dir as a per-item `coverArtOverride` shown on that tile only), **Remove Image** / **Restore Image** (a per-item `coverArtHidden` display flag that suppresses the cover without deleting the shared media-store image). Both are per-item, persisted in the project, and never mutate the GUID-keyed shared media store. List view is deferred to Phase 8.
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
 - **Vertical scroll:** virtualised list once item count exceeds visible height; library never overflows the panel.
@@ -1527,7 +1605,7 @@ and grinds to a halt.
   on Preferences Save and on every (re)connect — the keep-awake pattern. Changing it
   re-applies live to all braked clips and to mixdown export; the backend keeps the
   built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
-- **UI**: a **Brake** toggle in both the timeline right-click menu and the Clip
+- **UI**: an **Effects ▸ Brake** toggle in the timeline menu and the Clip
   Editor toolbar (the latter auditions it live on the preview voice via
   `PREVIEW_SET_BRAKE` and draws the same tail overlay on the editor waveform).
   Reverse, Brake and Backspin form a **mutually-exclusive group** — in both surfaces
@@ -1565,7 +1643,7 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 - **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
   gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
   exactly like the brake settings.
-- **UI**: a **Backspin** toggle in both the timeline right-click menu and the Clip
+- **UI**: an **Effects ▸ Backspin** toggle in the timeline menu and the Clip
   Editor toolbar (same live-preview + editor-overlay treatment as the brake, and the
   same linked-sibling propagation via `library.updateLibraryClipBackspin`), a violet
   `SPIN` clip-header badge, and a
@@ -1579,8 +1657,9 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 ### Agreed near-term sequence
 
 Phases 1–7 are complete: the Phase 5 mixing/effects/automation work
-(engine refactor, Volume Shape, Tone + Filter, shared Reverb + Delay, Leveler,
-pan, master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
+(engine refactor, Volume Shape, Tone + Filter, Compressor, Punch, Saturation,
+Bit Crusher, shared Reverb + Delay, Glue Compressor, Safety Limiter, Beat Repeat, pan,
+master metering, mixdown), the Phase 6 stem engine (RoFormer-first quality
 packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer**
 (§7.6), the Phase 7 polish / performance / packaging pass, Track FX automation
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
@@ -1732,7 +1811,7 @@ library, transport, UI layout and per-clip edits — from a single
   silent playback)
 - [x] Auto-popping `RelinkDialog` listing every missing file with a
   *Locate file…* button per row; single info toast summarises the
-  count. Right-click **Relink…** entry on unresolved clips re-enters
+  count. The direct **Relink** entry on unresolved clips re-enters
   the flow later.
 - [x] `CLIP_RELINK { clipId, filePath }` envelope; backend updates the
   path in the `ValueTree`, re-creates the engine source, rebroadcasts
@@ -1765,9 +1844,12 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Mark-points selection (`[` / `]` at playhead)
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)
-- [x] Split clip at playhead (`S` key + Edit menu + clip context menu — splits every clip whose timeline window straddles the playhead)
-- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
-- [x] Delete clip (`Delete` or `Backspace` + Edit menu + clip context menu)
+- [x] Split clip at playhead (`S` key + Edit menu + **Edit ▸ Split at
+  Playhead** — splits every clip whose timeline window straddles the playhead)
+- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + **Edit ▸ Duplicate** —
+  lands immediately after the source, toast when no space)
+- [x] Delete clip (`Delete` or `Backspace` + Edit menu + the direct **Delete**
+  clip-menu entry)
 - [x] Cut / Copy / Paste clips (`Ctrl + X` / `Ctrl + C` / `Ctrl + V`); paste lands after the source clip on its track, or at the playhead when pasting onto a different (selected) track; toast when the destination slot is occupied
 - [x] Clip selection (thicker outline) + track selection (highlighted row border) — drives the Cut/Copy/Paste/Duplicate/Delete target
 - [x] Deselect with `Escape` — stepped: clears the clip(s) / automation point first (keeping the track selected), then the track on a second press
@@ -1829,9 +1911,10 @@ playable at every point):
   to pre-change for fixed test projects (summing order may differ in
   the last bit of float math, so byte-identical is too strict; the
   parity harness tolerance is `< 0.5 LSB at 32-bit float`).
-- [x] **1b. Canonical `TrackChain` (empty).** Define the
-  `TrackChain` abstraction (Tone → Leveler → gain → mute/solo, all
-  no-op for now) and run it inside `TrackRuntime` for every block.
+- [x] **1b. Canonical `TrackChain` (initially empty).** Define the
+  `TrackChain` abstraction (Tone → Leveler → Punch → Saturation → Bit Crusher
+  → gain → mute/solo, initially all no-op) and run it inside `TrackRuntime` for
+  every block.
   `MixdownEngine` is refactored to consume the same `TrackChain`.
   Acceptance: parity harness (§7.9.6 conditions a–d) passes — first
   block, non-4096 block sizes, smoothed-parameter projects, non-zero
@@ -1924,15 +2007,18 @@ playable at every point):
 - [x] **5. Tabbed bottom panel** (Library / Track FX / Project FX) inside
   `LibraryPanel`. The track header's **Fx** button switches the panel
   to the Track FX view (`TrackFxPanel`); whether an effects rack is open
-  (vs the Library) is persisted in the project's view state (`fxPanelOpen`,
+  (vs the Library) is persisted in the project's view state (`viewFxPanelOpen`,
   round-tripped via `PROJECT_SET_VIEW`) so it survives Save / Load — note
   this is per-project memory, a deliberate deviation from the original
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
-  Track FX (Tone + Pan + Reverb/Delay) or the project-wide Project FX (shared
-  Reverb + Delay) — is a UI-only `fxTab` selection that defaults back to Track FX on
-  reload, keeping the per-track and project-scoped effects on clearly
-  separate tabs rather than mixing both on one panel. The Library
+  Track FX (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, and
+  Reverb/Delay sends) or the project-wide Project FX (shared Reverb, Delay,
+  Glue Compressor, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
+  back to Track FX on reload, keeping the per-track and project-scoped effects
+  on clearly separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
+  Track FX arranges the modules in five responsive columns: Tone; Filter above
+  Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.
   **Shipped as a one-at-a-time tab switch, _not_ the originally-
   specified side-by-side split-view.** The split-view + draggable
   splitter (and the related `v-show` / drag-source-cleanup machinery)
@@ -1966,15 +2052,16 @@ playable at every point):
   Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
   across the track's lifetime and resets on transport stop / seek,
   **never** at clip boundaries. Runs in `TrackChain` after Tone
-  (Tone → Leveler) and is mirrored in the offline `MixdownEngine` for
-  export parity. Bridge: `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
+  (Tone → Leveler → Punch → Saturation → Bit Crusher) and is mirrored in the
+  offline `MixdownEngine` for export parity. Bridge:
+  `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
   activated end-to-end (engine push + persistence + renderer snapshot).
   The **Advanced** disclosure (threshold / ratio / attack / release /
   makeup) is deferred as a clean follow-up.
 - [x] **9. mute / solo / pan.** _(mute / solo shipped via the existing
   `TRACK_MUTE` / `TRACK_SOLO` envelopes; **pan** now shipped.)_ Track
-  header has mute/solo buttons; the Track FX tab carries an equal-power
-  **pan** control (signed `[-1, 1]`, unity at centre so a centred track
+  header has mute/solo buttons and an equal-power **pan** control below the
+  gain fader (signed `[-1, 1]`, unity at centre so a centred track
   is bit-exact with the no-pan path). Pan is applied to the dry path
   AFTER the pre-pan send tap, so Reverb / Delay sends stay pre-pan, and is
   mirrored in the offline `MixdownEngine` for export parity (§7.9.6).
@@ -1982,8 +2069,8 @@ playable at every point):
   `pan` persists through `tracksAsJson` and survives save / reload.
 - [x] **10. Master bus metering.** Transport-bar stereo peak meter
   + dB master fader is *shipped* (`PROJECT_SET_MASTER_VOLUME`).
-  LUFS / RMS readouts and a master Limiter are deferred to
-  Phase 8.
+  LUFS / RMS readouts and a mastering limiter are deferred to Phase 8; the
+  fixed-ceiling **Safety Limiter** is shipped in Project FX.
 - [x] **Export**: stereo mixdown via `MIXDOWN_START` /
   `MIXDOWN_PROGRESS` / `MIXDOWN_DONE` / `MIXDOWN_CANCEL` /
   `MIXDOWN_FAILED`. Formats: WAV (16 / 24 / 32-float), FLAC
@@ -2000,9 +2087,10 @@ playable at every point):
   dirty-mark). Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
-  TrackRuntime → TrackChain (Tone → Leveler → gain → mute/solo) →
+  TrackRuntime → TrackChain (Tone → Leveler → Punch → Saturation → Bit Crusher → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
-  master meter → final-stage libsamplerate`) so warped / pitch-
+  Glue Compressor → master gain → Safety Limiter → master meter →
+  final-stage libsamplerate`) so warped / pitch-
   shifted / effected output is **sample-equivalent to live
   playback at the internal master float bus** under deterministic
   conditions (same project, fixed rate, fixed block size, no
@@ -2030,7 +2118,7 @@ playable at every point):
 - Bus / send routing UI beyond the two shared sends in §7.9.
 - Sidechain Leveler routing.
 - Per-track insert reverb / delay.
-- Saturator and Utility effects.
+- Utility effects.
 - VST3 hosting (scope decided then — per-track or per-clip).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
@@ -2081,9 +2169,10 @@ playable at every point):
     `saveWindowAsSampleAsync`; `SAMPLE_SAVED` carries optional `batchIndex` /
     `batchTotal` so the renderer shows one summary toast. Vitest coverage of the
     envelope construction.
-  - [x] **L5 — Timeline "Chop to Grid" context submenu.** Thin wrapper over the L3
-    commit (1 bar · 1/2 bar · 1/4 · 1/8 · 1/16) for the common case, no editor
-    round-trip. Added hover-flyout submenu support to the clip context menu.
+  - [x] **L5 — Timeline "Transform ▸ Chop to Grid" submenu.** Thin wrapper over
+    the L3 commit (1 bar · 1/2 bar · 1/4 · 1/8 · 1/16) for the common case, no
+    editor round-trip. The recursive hover-flyout menu supports the nested
+    action groups and deeper subdivision choices.
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
 
 ### Phase 7 — Polish, Performance & Packaging

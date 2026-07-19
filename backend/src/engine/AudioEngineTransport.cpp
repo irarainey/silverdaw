@@ -180,6 +180,7 @@ void AudioEngine::stop()
     master.setPlaying(false);
     master.setPositionSamples(0);
     busGraph.resetSharedFx();
+    busGraph.resetBeatRepeats();
     for (auto& [id, track] : tracks)
     {
         if (track->transportSource != nullptr)
@@ -205,11 +206,13 @@ void AudioEngine::reclaimRetiredPlaybackSnapshots()
         track->retiredBackspins.clear();
     }
     retiredAutomation.clear();
+    retiredBeatRepeats.clear();
 }
 
 std::size_t AudioEngine::retiredPlaybackSnapshotCount() const noexcept
 {
     std::size_t count = retiredAutomation.size()
+                      + retiredBeatRepeats.size()
                       + preview.retiredWarps.size()
                       + preview.retiredEnvelopes.size()
                       + preview.retiredBrakes.size()

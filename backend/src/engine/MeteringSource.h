@@ -3,6 +3,7 @@
 #include "MasterClockSource.h"
 #include "Metronome.h"
 #include "OutputKeepAlive.h"
+#include "SafetyLimiter.h"
 
 #include <atomic>
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -10,7 +11,7 @@
 namespace silverdaw
 {
 
-// Apply master gain before metering; inject keep-alive after gain so the endpoint floor is
+// Apply master gain before metering and inject keep-alive after gain so the endpoint floor is
 // volume-independent. The metronome click is also mixed post-gain so the project master volume
 // never silences the monitoring tick.
 class MeteringSource : public juce::AudioSource
@@ -30,11 +31,13 @@ class MeteringSource : public juce::AudioSource
         keepAlive.setDeviceActive(true);
         smoothedGain.reset(sampleRate, 0.01);
         smoothedGain.setCurrentAndTargetValue(targetGain.load(std::memory_order_relaxed));
+        limiter.prepare(sampleRate);
     }
 
     void releaseResources() override
     {
         keepAlive.setDeviceActive(false);
+        limiter.reset();
         source.releaseResources();
     }
 
@@ -76,6 +79,8 @@ class MeteringSource : public juce::AudioSource
         if (clock.getPositionSamples() == posBefore + static_cast<juce::int64>(n))
             metronome.render(*info.buffer, info.startSample, n, posBefore, clock.getSampleRate());
 
+        limiter.process(*info.buffer, info.startSample, n);
+
         if (numCh > 0)
             atomicMaxFloat(peakL_, info.buffer->getMagnitude(0, info.startSample, n));
         if (numCh > 1)
@@ -89,6 +94,11 @@ class MeteringSource : public juce::AudioSource
     void setTargetGain(float g) noexcept
     {
         targetGain.store(juce::jlimit(0.0F, 1.0F, g), std::memory_order_relaxed);
+    }
+
+    void setSafetyLimiterEnabled(bool enabled, bool snap) noexcept
+    {
+        limiter.setEnabled(enabled, snap);
     }
 
     void consumePeaks(float& outL, float& outR) noexcept
@@ -111,6 +121,7 @@ class MeteringSource : public juce::AudioSource
     MasterClockSource& clock;
     Metronome& metronome;
     juce::LinearSmoothedValue<float> smoothedGain;
+    SafetyLimiter limiter;
     std::atomic<float> targetGain{1.0F};
     std::atomic<float> peakL_{0.0F};
     std::atomic<float> peakR_{0.0F};

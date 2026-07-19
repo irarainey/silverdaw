@@ -15,7 +15,7 @@ import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 
-const props = defineProps<{ trackId: string }>()
+const props = defineProps<{ trackId: string; gridArea?: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('filter')
@@ -77,8 +77,10 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Filter"
+    help-text="Cut highs or lows"
     :cols="1"
     :rows="1"
+    :grid-area="props.gridArea"
   >
     <div class="flex w-full flex-col gap-1 text-xs">
       <FxRangeControl

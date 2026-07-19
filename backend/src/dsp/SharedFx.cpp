@@ -98,6 +98,14 @@ void SharedFx::setDelayParams(double delayMs, float feedback, float tone, float 
     if (snap) echoSnapRequested.store(true, std::memory_order_release);
 }
 
+double SharedFx::minimumEchoTailSeconds(double delayMs, float feedback) noexcept
+{
+    const double clampedMs = juce::jlimit(1.0, kMaxDelayMs,
+        std::isfinite(delayMs) ? delayMs : 1.0);
+    return (clampedMs / 1000.0)
+           * static_cast<double>(analyticEchoTailRepeats(feedback));
+}
+
 // ── Process ───────────────────────────────────────────────────────────────────
 
 void SharedFx::process(const juce::AudioBuffer<float>& reverbSend,
@@ -207,25 +215,31 @@ void SharedFx::resetDetectors() noexcept
 {
     reverbSilentBlocks = 0;
     reverbFramesSinceInput = 0;
-    reverbDone.store(false, std::memory_order_relaxed);
+    // A reset processor has no tail; the first new input restarts its detector.
+    reverbDone.store(true, std::memory_order_relaxed);
     echoFramesSinceInput = 0;
-    echoDone.store(false, std::memory_order_relaxed);
+    echoDone.store(true, std::memory_order_relaxed);
 }
 
 void SharedFx::recomputeAnalyticTail() noexcept
 {
+    analyticTailRepeats.store(
+        analyticEchoTailRepeats(targetFeedback.load(std::memory_order_relaxed)),
+        std::memory_order_relaxed);
+}
+
+int SharedFx::analyticEchoTailRepeats(float feedback) noexcept
+{
     // Feedback is clamped below unity, so the analytic tail log stays finite.
     const double fb = juce::jlimit(0.0, static_cast<double>(kMaxFeedback),
-        static_cast<double>(targetFeedback.load(std::memory_order_relaxed)));
+        static_cast<double>(sanitize(feedback)));
     if (fb <= 1.0e-4)
     {
-        analyticTailRepeats.store(1, std::memory_order_relaxed); // single slap
-        return;
+        return 1; // single slap
     }
     const double n = std::ceil(
         std::log(static_cast<double>(kRmsFloorLin)) / std::log(fb));
-    analyticTailRepeats.store(juce::jlimit(1, 4096, static_cast<int>(n)),
-                              std::memory_order_relaxed);
+    return juce::jlimit(1, 4096, static_cast<int>(n));
 }
 
 // ── Reverb processing ─────────────────────────────────────────────────────────
@@ -429,7 +443,8 @@ void SharedFx::updateEchoDetector(double sumSq, int numSamples, int delaySamps,
         static_cast<int64_t>(analyticTailRepeats.load(std::memory_order_relaxed))
         * delaySamps;
     const int64_t requiredFrames = juce::jmax(holdFrames, analyticFrames);
-    const int64_t capFrames = static_cast<int64_t>(kEchoCapSeconds * sr);
+    const int64_t capFrames = juce::jmax(
+        static_cast<int64_t>(kEchoCapSeconds * sr), requiredFrames);
 
     const bool rmsSilent       = rms < kRmsFloorLin;
     const bool repeatAwareDone = rmsSilent && echoFramesSinceInput >= requiredFrames;

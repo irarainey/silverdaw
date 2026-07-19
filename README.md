@@ -61,8 +61,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Crossfade transitions.** Extend a clip edge over an adjacent clip to create
-  a crossfade. Right-click the fade to choose a Smooth or Fade out/in recipe,
-  or remove it.
+  a crossfade. Use the clip menu's **Crossfade** group to choose a Smooth or
+  Fade out/in recipe, or remove it.
 - **Automatic analysis.** Imported audio is analysed for key, tempo (BPM), and
   beat positions, so clips can line up musically. Once a clip's tempo is known it
   automatically snaps to the timeline's bar grid so its bars line up with the
@@ -81,10 +81,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   **Fast / Balanced / Best** speed control and optional one-click cleanup let you
   trade speed for polish, and an optional per-run **reverb & echo removal** cleans
   room reverb and slap-back off the vocal as it separates.
-- **Split stereo channels.** Right-click a stereo clip to split its **Left**
-  and/or **Right** channel onto its own new track — each channel becomes a stereo
-  clip carrying only that side (copied to both). Non-destructive, and each split
-  keeps the original's tempo, key, and artwork, just like a stem.
+- **Split stereo channels.** Use **Transform ▸ Split Stereo Channels…** on a
+  stereo clip to split its **Left** and/or **Right** channel onto its own new
+  track — each channel becomes a stereo clip carrying only that side (copied to
+  both). Non-destructive, and each split keeps the original's tempo, key, and
+  artwork, just like a stem.
 - **Tempo and pitch.** Clips can automatically match the project tempo and be
   pitch-shifted independently, all without changing the source file.
 - **Saved clips and samples.** Save reusable clips to the library and bake any
@@ -92,9 +93,13 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Loop slicing.** Chop a clip into slices — on a bar or beat grid (from a whole
   bar down to 1/32) or with hand-placed markers — then lay the slices back on the
   timeline as separate clips, or save each one as its own sample to rearrange and
-  rebuild. Right-click a clip for a quick **Chop to Grid**, or open the Clip
-  Editor's **Slice** mode for hands-on control. Non-destructive — the source file
-  is untouched.
+  rebuild. Use **Transform ▸ Chop to Grid** for a quick grid chop, or open the
+  Clip Editor's **Slice** mode for hands-on control. Non-destructive — the
+  source file is untouched.
+- **Beat Repeat.** Use **Effects ▸ Beat Repeat** on a clip or empty track lane
+  to add a tempo-aligned repeat region at the playhead. Choose a duration and a
+  1/4, 1/8, or 1/16 division to capture and repeat part of the track without
+  changing its source audio.
 - **Portable projects.** Saving a project nests it in its own folder and keeps
   its generated stems and samples beside the project file, so the whole folder
   can be moved or synced between machines (for example via cloud storage) and
@@ -109,34 +114,43 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
   **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),
   a bipolar **Filter** (a single DJ-style sweep from low-pass through off to
-  high-pass), a single-knob **Compressor** (gentle dynamics control), plus Reverb and
-  Delay sends; Project FX hosts the song-wide Reverb and Delay those sends
-  feed. Plus drag-to-resize and reorder tracks, and a master output with live
-  metering.
+  high-pass), a single-knob **Compressor** (gentle dynamics control), **Punch**
+  (transient enhancement), **Saturation** (soft clipping), a **Bit Crusher**
+  (lo-fi digital reduction), and Reverb and Delay sends. Project FX hosts the
+  song-wide Reverb and Delay those sends feed, a one-control **Glue Compressor**
+  compressor after their returns and before master gain, plus a fixed-ceiling
+  **Safety Limiter** for the final output. Delay Time uses direct 1/4, 1/8,
+  1/8T, and 1/16 beat-division buttons, while each Track FX and Project FX
+  header offers a hover explanation. Track FX keeps five responsive columns:
+  Tone; Filter above Reverb & Delay; Compressor above Punch; Saturation; and
+  Bit Crusher. Plus
+  drag-to-resize and reorder tracks, and a master output with live metering.
 - **Track effect automation.** Open a collapsible lane under any track to draw
   breakpoint curves that automate a parameter over the timeline — Filter, Pan,
-  Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, or **Gain** (a
-  post-FX track level). Add, drag, right-click or Alt-click to delete, and
-  arrow-key nudge points; raise/lower or copy/paste a whole curve; values play
-  live and render identically in the mixdown. Each Track FX control has an
-  **A** button to automate it: the slider sets the resting value, and a drawn
-  curve overlays it over time — and while a curve is active its slider follows
-  the automation, so you can watch each control move as the track plays.
+  Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, Punch,
+  Saturation, Bit Crusher, or **Gain** (a post-FX track level). Add, drag,
+  right-click or
+  Alt-click to delete, and arrow-key nudge points; raise/lower or copy/paste a
+  whole curve; values play live and render identically in the mixdown. Each
+  Track FX control has an **A** button to automate it: the slider sets the
+  resting value, and a drawn curve overlays it over time — and while a curve is
+  active its slider follows the automation, so you can watch each control move
+  as the track plays.
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
   in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
   range to silence or full volume with hard edges — all non-destructive
   and applied to both playback and export.
-- **Reverse a clip.** Play any clip back-to-front from the timeline right-click
-  menu or a toggle in the Clip Editor (with live preview) — non-destructive, so
-  the source file is never altered.
+- **Reverse a clip.** Play any clip back-to-front from **Effects ▸ Reverse** or
+  a toggle in the Clip Editor (with live preview) — non-destructive, so the
+  source file is never altered.
 - **DJ turntable effects.** Add a **Brake** (a vinyl record-stop that slows the
   clip to a halt) or a **Backspin** (a reverse rewind, like pulling the record
-  back) at the end of a clip from the right-click menu or the Clip Editor
-  toolbar (with live preview) — non-destructive, one or the other per clip, applied
-  to every linked copy, working on warped clips too and carried through to
-  export. Reverse, Brake, and Backspin are mutually exclusive — set one and the
-  others stay visible but disabled until you turn it off. Tune how long they take
-  and how they feel in **Preferences ▸ Effects**.
+  back) at the end of a clip from **Effects ▸ Brake / Backspin** or the Clip
+  Editor toolbar (with live preview) — non-destructive, one or the other per
+  clip, applied to every linked copy, working on warped clips too and carried
+  through to export. Reverse, Brake, and Backspin are mutually exclusive — set
+  one and the others stay visible but disabled until you turn it off. Tune how
+  long they take and how they feel in **Preferences ▸ Effects**.
 - **Vinyl-style scratch authoring.** Open a clip or library item in the Scratch
   Editor and use a supported MIDI DJ deck to record platter and crossfader
   moves. Deck control is the primary workflow; the on-screen deck offers an

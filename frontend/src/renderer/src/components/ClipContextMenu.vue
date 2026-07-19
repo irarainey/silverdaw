@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// Floating context menu shown when the user right-clicks a clip in
-// the timeline. The host (TimelineView) tracks the pointer position
-// and the targeted clip id; this component renders the menu and emits
-// `command` events when an enabled item is chosen. Disabled items are
-// rendered greyed-out so the user can see what's coming without being
-// able to invoke them (yet).
-
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
+import ClipContextMenuItems from '@/components/ClipContextMenuItems.vue'
 
 export type { ClipContextMenuItem }
 
@@ -25,13 +19,8 @@ const emit = defineEmits<{
 }>()
 
 const menuEl = ref<HTMLDivElement | null>(null)
-// Computed display position with edge-clamp so the menu never overflows
-// the viewport. Updated on open + on resize.
 const displayX = ref(0)
 const displayY = ref(0)
-// Which row's submenu flyout is open, and which side it opens on (flip near the
-// right edge so it stays on-screen).
-const openSubmenuIndex = ref<number | null>(null)
 const submenuToLeft = ref(false)
 
 function computePosition(): void {
@@ -54,9 +43,6 @@ watch(
   () => [props.open, props.x, props.y] as const,
   ([open]) => {
     if (!open) return
-    openSubmenuIndex.value = null
-    // The element may not exist yet on the first open; defer one tick
-    // so `menuEl` is mounted and we can measure its width/height.
     requestAnimationFrame(computePosition)
   }
 )
@@ -66,32 +52,18 @@ function onWindowResize(): void {
 }
 
 function onWindowKey(e: KeyboardEvent): void {
-  if (!props.open) return
-  if (e.key === 'Escape') {
+  if (props.open && e.key === 'Escape') {
     e.preventDefault()
     emit('close')
   }
 }
 
 function onBackdropPointer(e: PointerEvent): void {
-  // Click outside the menu — close. The menu's own pointer-down doesn't
-  // bubble here because it's wrapped in `@pointerdown.stop`.
-  if (e.button !== 0 && e.button !== 2) return
-  emit('close')
+  if (e.button === 0 || e.button === 2) emit('close')
 }
 
-function onItemClick(item: ClipContextMenuItem): void {
-  if (item.disabled) return
-  if (item.swatches) return
-  emit('command', item.command)
-  emit('close')
-}
-
-function onSwatchClick(item: ClipContextMenuItem, index: number): void {
-  // Encode the swatch index into the command string so the host's
-  // existing `onContextMenuCommand` switch can fan out on a single
-  // parameter without us adding a separate emit channel.
-  emit('command', `${item.command}:${index}`)
+function onItemSelect(command: string): void {
+  emit('command', command)
   emit('close')
 }
 
@@ -121,105 +93,11 @@ onBeforeUnmount(() => {
         role="menu"
         @pointerdown.stop
       >
-        <template
-          v-for="(item, i) in items"
-          :key="item.command + i"
-        >
-          <div
-            v-if="item.separatorAbove && i > 0"
-            class="my-1 h-px bg-zinc-800"
-          />
-          <div
-            v-if="item.swatches"
-            class="px-3 py-1.5"
-          >
-            <div class="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">
-              {{ item.label }}
-            </div>
-            <div class="grid grid-cols-8 gap-1">
-              <button
-                v-for="(s, idx) in item.swatches"
-                :key="idx"
-                type="button"
-                data-borderless-button="true"
-                class="h-4 w-4 rounded-sm transition-transform hover:scale-110"
-                :class="
-                  item.selectedSwatch === idx
-                    ? 'ring-1 ring-zinc-100'
-                    : ''
-                "
-                :style="{ backgroundColor: s.cssHex }"
-                :title="s.label"
-                @click="onSwatchClick(item, idx)"
-              />
-            </div>
-          </div>
-          <button
-            v-else-if="!item.submenu"
-            type="button"
-            role="menuitem"
-            data-borderless-button="true"
-            class="flex w-full items-center px-3 py-1.5 text-left transition-colors"
-            :class="
-              item.disabled
-                ? 'cursor-not-allowed text-zinc-600'
-                : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
-            "
-            :disabled="item.disabled"
-            :title="item.title"
-            @click="onItemClick(item)"
-          >
-            {{ item.label }}
-          </button>
-          <div
-            v-else
-            class="relative"
-            @mouseenter="openSubmenuIndex = i"
-            @mouseleave="openSubmenuIndex = null"
-          >
-            <button
-              type="button"
-              role="menuitem"
-              data-borderless-button="true"
-              class="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors"
-              :class="
-                item.disabled
-                  ? 'cursor-not-allowed text-zinc-600'
-                  : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
-              "
-              :disabled="item.disabled"
-              :title="item.title"
-            >
-              <span>{{ item.label }}</span>
-              <span class="text-zinc-500">›</span>
-            </button>
-            <div
-              v-if="openSubmenuIndex === i && !item.disabled"
-              class="absolute top-0 min-w-[150px] rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl"
-              :class="submenuToLeft ? 'right-full mr-0.5' : 'left-full ml-0.5'"
-              role="menu"
-            >
-              <button
-                v-for="(sub, si) in item.submenu"
-                :key="sub.command + si"
-                type="button"
-                role="menuitem"
-                data-borderless-button="true"
-                class="flex w-full items-center px-3 py-1.5 text-left transition-colors"
-                :class="
-                  sub.disabled
-                    ? 'cursor-not-allowed text-zinc-600'
-                    : 'cursor-pointer text-zinc-200 hover:bg-zinc-800 hover:text-zinc-50'
-                "
-                :disabled="sub.disabled"
-                :title="sub.title"
-                @click="onItemClick(sub)"
-              >
-                {{ sub.label }}
-              </button>
-            </div>
-          </div>
-        </template>
+        <ClipContextMenuItems
+          :items="items"
+          :submenu-to-left="submenuToLeft"
+          @select="onItemSelect"
+        />
       </div>
     </div>
   </Teleport>

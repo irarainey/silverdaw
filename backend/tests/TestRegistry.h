@@ -27,6 +27,7 @@ void addFxDspTests(std::vector<TestCase>& tests);
 void addLoudnessTests(std::vector<TestCase>& tests);
 void addEnvelopeFadeTests(std::vector<TestCase>& tests);
 void addAutomationTests(std::vector<TestCase>& tests);
+void addBeatRepeatTests(std::vector<TestCase>& tests);
 void addMixdownRenderTests(std::vector<TestCase>& tests);
 void addStemSeparationTests(std::vector<TestCase>& tests);
 void addBpmDetectorTests(std::vector<TestCase>& tests);

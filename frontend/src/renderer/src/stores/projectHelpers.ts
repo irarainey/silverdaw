@@ -1,5 +1,8 @@
-import type { ProjectStateTransition } from '@shared/bridge-protocol'
-import type { Transition } from './projectTypes'
+import type {
+  ProjectStateBeatRepeatRegion,
+  ProjectStateTransition
+} from '@shared/bridge-protocol'
+import type { BeatRepeatRegion, Transition } from './projectTypes'
 
 /**
  * Stable `projectId` from an absolute path, used to bucket autosave artefacts.
@@ -60,6 +63,19 @@ export function hydrateTransitions(
     leftClipId: tr.leftClipId,
     rightClipId: tr.rightClipId,
     recipe: tr.recipe
+  }))
+}
+
+/** Map backend Beat Repeat regions to renderer state; absent stays default-suppressed. */
+export function hydrateBeatRepeats(
+  raw: readonly ProjectStateBeatRepeatRegion[] | undefined
+): BeatRepeatRegion[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  return raw.map((region) => ({
+    id: region.id,
+    startBeat: region.startBeat,
+    lengthBeats: region.lengthBeats,
+    division: region.division
   }))
 }
 

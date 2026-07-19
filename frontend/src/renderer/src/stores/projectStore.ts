@@ -50,6 +50,7 @@ import { trackActions } from './projectTrackActions'
 import { clipActions } from './projectClipActions'
 import { clipLibraryActions } from './projectClipLibraryActions'
 import { transitionActions } from './projectTransitionActions'
+import { beatRepeatActions } from './projectBeatRepeatActions'
 import { scratchPatternActions } from './scratchPatternActions'
 
 // Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
@@ -102,6 +103,8 @@ export const useProjectStore = defineStore('project', {
     targetSampleRate: null,
     exportSettingsJson: null,
     masterVolume: 1.0,
+    safetyLimiterEnabled: false,
+    mixGlueAmount: 0,
     barCounterStart: 1,
     mixdownStartBar: 1,
     metronomeEnabled: false,
@@ -159,6 +162,7 @@ export const useProjectStore = defineStore('project', {
     ...clipActions,
     ...clipLibraryActions,
     ...transitionActions,
+    ...beatRepeatActions,
     ...scratchPatternActions,
 
     selectClip(clipId: string | null): void {
@@ -358,6 +362,22 @@ export const useProjectStore = defineStore('project', {
       }
     },
 
+    /** Set project-bus compression; localOnly reconciles backend acknowledgements. */
+    setProjectMixGlueAmount(
+      amount: number,
+      opts?: { localOnly?: boolean; gestureId?: string; gestureEnd?: boolean }
+    ): void {
+      const next = Number.isFinite(amount) ? Math.max(0, Math.min(1, amount)) : 0
+      this.mixGlueAmount = next
+      if (!opts?.localOnly) {
+        sendBridge('PROJECT_SET_MIX_GLUE', {
+          amount: next,
+          gestureId: opts?.gestureId,
+          gestureEnd: opts?.gestureEnd
+        })
+      }
+    },
+
     /** Set visible project length, clamped to every track's latest clip end. */
     setProjectLengthMs(lengthMs: number): void {
       if (this.tracks.length === 0) return
@@ -422,6 +442,13 @@ export const useProjectStore = defineStore('project', {
       if (next === this.masterVolume) return
       this.masterVolume = next
       sendBridge('PROJECT_SET_MASTER_VOLUME', { gain: next })
+    },
+
+    /** Toggle the project-wide fixed-ceiling output protection. */
+    setSafetyLimiterEnabled(enabled: boolean): void {
+      if (enabled === this.safetyLimiterEnabled) return
+      this.safetyLimiterEnabled = enabled
+      sendBridge('PROJECT_SET_SAFETY_LIMITER', { enabled })
     },
 
     /** Set the first bar number shown on the ruler (default 1; 0 or lower adds lead-in bars). */

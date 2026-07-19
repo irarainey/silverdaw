@@ -11,6 +11,16 @@ void AudioEngine::setMasterGain(float gain)
     masterMeter.setTargetGain(clamped);
 }
 
+void AudioEngine::setSafetyLimiterEnabled(bool enabled, bool snap)
+{
+    masterMeter.setSafetyLimiterEnabled(enabled, snap);
+}
+
+void AudioEngine::setProjectMixGlue(float amount, bool snap)
+{
+    master.setMixGlueAmount(amount, snap);
+}
+
 void AudioEngine::setMetronomeEnabled(bool enabled)
 {
     metronome.setEnabled(enabled);
@@ -41,6 +51,23 @@ void AudioEngine::setTrackTone(const juce::String& trackId,
 void AudioEngine::setTrackLeveler(const juce::String& trackId, float amount, bool snap)
 {
     busGraph.setTrackLeveler(trackId, amount, snap);
+}
+
+void AudioEngine::setTrackPunch(const juce::String& trackId, float amount, bool snap)
+{
+    busGraph.setTrackPunch(trackId, amount, snap);
+}
+
+void AudioEngine::setTrackSaturation(const juce::String& trackId,
+                                     float drive, float mix, bool snap)
+{
+    busGraph.setTrackSaturation(trackId, drive, mix, snap);
+}
+
+void AudioEngine::setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                                     float boost, float mix, bool snap)
+{
+    busGraph.setTrackBitCrusher(trackId, rate, bits, boost, mix, snap);
 }
 
 void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)

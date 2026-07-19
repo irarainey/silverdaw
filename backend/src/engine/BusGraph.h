@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SharedFx.h"
+#include "BeatRepeatProcessor.h"
 #include "TrackAutomationSnapshot.h"
 #include "TrackChain.h"
 
@@ -41,9 +42,11 @@ public:
         std::atomic<bool> automationResetRequested{false};
         std::atomic<bool> bypassRequested{false};
         std::atomic<bool> bypassReady{false};
+        std::atomic<bool> beatRepeatResetRequested{false};
         bool renderEnabled = true;
         // Message-thread-owned pointer copied into each immutable RenderSnapshot.
         const TrackAutomationSnapshot* publishedAutomation = nullptr;
+        const BeatRepeatSnapshot* publishedBeatRepeat = nullptr;
         const TrackAutomationSnapshot* lastAutomationSnapshot = nullptr;
         std::size_t automationSegments[TrackAutomationSnapshot::kNumParams] = {};
         juce::int64 automationLastEndSamples = -1;
@@ -53,7 +56,9 @@ public:
         void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override;
 
         void renderClips(const std::vector<juce::AudioSource*>& sources,
-                         const juce::AudioSourceChannelInfo& info);
+                         const juce::AudioSourceChannelInfo& info,
+                         juce::int64 timelineStart,
+                         const BeatRepeatSnapshot* beatRepeat);
 
         void consumePeaks(float& outL, float& outR) noexcept
         {
@@ -63,6 +68,7 @@ public:
 
     private:
         juce::AudioBuffer<float> mixScratch;
+        BeatRepeatProcessor beatRepeatProcessor;
         int preparedBlockSize = 0;
         double preparedRate = 0.0;
 
@@ -81,6 +87,7 @@ private:
         TrackRuntime* runtime = nullptr;
         std::vector<juce::AudioSource*> clips;
         const TrackAutomationSnapshot* automation = nullptr;
+        const BeatRepeatSnapshot* beatRepeat = nullptr;
     };
 
     struct RenderSnapshot
@@ -123,6 +130,15 @@ public:
                     juce::AudioSource* clipTransport,
                     bool releaseSource = true);
 
+    struct ClipDetachment
+    {
+        juce::String clipId;
+        juce::AudioSource* clipTransport = nullptr;
+    };
+
+    void detachClips(const std::vector<ClipDetachment>& clips,
+                     bool releaseSources = true);
+
     bool consumeTrackPeaks(const juce::String& trackId,
                            float& outL, float& outR) noexcept;
 
@@ -140,6 +156,10 @@ public:
                       bool snap);
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
+    void setTrackPunch(const juce::String& trackId, float amount, bool snap);
+    void setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap);
+    void setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                            float boost, float mix, bool snap);
 
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
@@ -179,6 +199,10 @@ public:
      *  cursor when the pointer changes so the next block re-seeks cleanly. */
     void setTrackAutomationPtr(const juce::String& trackId, const TrackAutomationSnapshot* snap);
 
+    /** Publish a message-thread-owned immutable beat-repeat snapshot for one track. */
+    void setTrackBeatRepeatPtr(const juce::String& trackId, const BeatRepeatSnapshot* snap);
+    void resetBeatRepeats() noexcept;
+
     bool sharedFxTerminated()
     {
         // Lock-free: reads atomic done flags written by the audio-thread tail detectors.
@@ -214,11 +238,14 @@ private:
     std::unique_ptr<RenderSnapshot> buildRenderSnapshot() const;
 
     std::unique_ptr<RenderSnapshot> buildRenderSnapshotExcluding(
-        const juce::AudioSource* excluded) const;
+        const std::vector<const juce::AudioSource*>& excluded) const;
 
     void publishRenderSnapshot();
     void publishEmptyRenderSnapshot();
     void publishRenderSnapshot(std::unique_ptr<RenderSnapshot> next) noexcept;
+
+    void applyPendingTrackFx(TrackRuntime& runtime);
+    void clearPendingTrackFx();
 
     void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap,
                               juce::int64 subStartSamples, int numSamples, double rate) noexcept;
@@ -240,6 +267,23 @@ private:
     std::unordered_map<juce::String, ToneParams> pendingTone;
 
     std::unordered_map<juce::String, float> pendingLeveler;
+    std::unordered_map<juce::String, float> pendingPunch;
+
+    struct SaturationParams
+    {
+        float drive = 0.0F;
+        float mix = 1.0F;
+    };
+    std::unordered_map<juce::String, SaturationParams> pendingSaturation;
+
+    struct BitCrusherParams
+    {
+        float rate = 1.0F;
+        int bits = 16;
+        float boost = 0.0F;
+        float mix = 0.0F;
+    };
+    std::unordered_map<juce::String, BitCrusherParams> pendingBitCrusher;
 
     struct SendParams
     {
@@ -250,6 +294,7 @@ private:
 
     std::unordered_map<juce::String, float> pendingPans;
     std::unordered_map<juce::String, const TrackAutomationSnapshot*> pendingAutomation;
+    std::unordered_map<juce::String, const BeatRepeatSnapshot*> pendingBeatRepeats;
 
     SharedFx sharedFx;
     juce::AudioBuffer<float> reverbSendBuf;

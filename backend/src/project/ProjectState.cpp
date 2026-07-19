@@ -40,6 +40,8 @@ const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceNa
 const juce::Identifier ProjectState::kTargetSampleRate{"targetSampleRate"};
 const juce::Identifier ProjectState::kExportSettingsJson{"exportSettingsJson"};
 const juce::Identifier ProjectState::kMasterVolume{"masterVolume"};
+const juce::Identifier ProjectState::kSafetyLimiterEnabled{"safetyLimiterEnabled"};
+const juce::Identifier ProjectState::kMixGlueAmount{"mixGlueAmount"};
 const juce::Identifier ProjectState::kBarCounterStart{"barCounterStart"};
 const juce::Identifier ProjectState::kMixdownStartBar{"mixdownStartBar"};
 const juce::Identifier ProjectState::kMetronomeEnabled{"metronomeEnabled"};
@@ -83,6 +85,13 @@ const juce::Identifier ProjectState::kToneMidDb{"toneMidDb"};
 const juce::Identifier ProjectState::kToneTrebleDb{"toneTrebleDb"};
 const juce::Identifier ProjectState::kToneFilter{"toneFilter"};
 const juce::Identifier ProjectState::kLevelerAmount{"levelerAmount"};
+const juce::Identifier ProjectState::kPunchAmount{"punchAmount"};
+const juce::Identifier ProjectState::kSaturationDrive{"saturationDrive"};
+const juce::Identifier ProjectState::kSaturationMix{"saturationMix"};
+const juce::Identifier ProjectState::kBitCrusherRate{"bitCrusherRate"};
+const juce::Identifier ProjectState::kBitCrusherBits{"bitCrusherBits"};
+const juce::Identifier ProjectState::kBitCrusherBoost{"bitCrusherBoost"};
+const juce::Identifier ProjectState::kBitCrusherMix{"bitCrusherMix"};
 const juce::Identifier ProjectState::kEnvelopePoints{"envelopePoints"};
 const juce::Identifier ProjectState::kEnvelopeTimeMs{"timeMs"};
 const juce::Identifier ProjectState::kEnvelopeGain{"gain"};
@@ -106,6 +115,7 @@ ProjectState::ProjectState() : root(kProject)
 {
     // Initialise before listener attach so defaults don't count as user edits.
     root.setProperty(kName, kDefaultName, nullptr);
+    root.setProperty(kSafetyLimiterEnabled, true, nullptr);
     root.appendChild(juce::ValueTree(kLibrary), nullptr);
     root.appendChild(juce::ValueTree(kMarkers), nullptr);
     cleanSnapshot = root.createCopy();

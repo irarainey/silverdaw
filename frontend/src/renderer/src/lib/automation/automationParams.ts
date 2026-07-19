@@ -39,6 +39,13 @@ export const AUTOMATION_PARAMS: Record<AutomationParamId, AutomationParamDescrip
   reverbSend: { id: 'reverbSend', label: 'Reverb Send', min: 0, max: 1, defaultValue: 0, format: fmtPct },
   delaySend: { id: 'delaySend', label: 'Delay Send', min: 0, max: 1, defaultValue: 0, format: fmtPct },
   leveler: { id: 'leveler', label: 'Compressor', min: 0, max: 1, defaultValue: 0, format: fmtPct },
+  punch: { id: 'punch', label: 'Punch', min: 0, max: 1, defaultValue: 0, format: fmtPct },
+  saturationDrive: { id: 'saturationDrive', label: 'Saturation Drive', min: 0, max: 1, defaultValue: 0, format: fmtPct },
+  saturationMix: { id: 'saturationMix', label: 'Saturation Mix', min: 0, max: 1, defaultValue: 1, format: fmtPct },
+  bitCrusherRate: { id: 'bitCrusherRate', label: 'Crusher Rate', min: 0.01, max: 1, defaultValue: 1, format: fmtPct },
+  bitCrusherBits: { id: 'bitCrusherBits', label: 'Crusher Bits', min: 1, max: 16, defaultValue: 16, format: (value) => `${Math.round(value)}-bit` },
+  bitCrusherBoost: { id: 'bitCrusherBoost', label: 'Crusher Boost', min: 0, max: 1, defaultValue: 0, format: (value) => `+${Math.round(value * 12)} dB` },
+  bitCrusherMix: { id: 'bitCrusherMix', label: 'Crusher Mix', min: 0, max: 1, defaultValue: 0, format: fmtPct },
   level: { id: 'level', label: 'Gain', min: -60, max: 6, defaultValue: 0, format: fmtDb }
 }
 
@@ -53,6 +60,13 @@ export const AUTOMATABLE_PARAM_IDS: readonly AutomationParamId[] = [
   'reverbSend',
   'delaySend',
   'leveler',
+  'punch',
+  'saturationDrive',
+  'saturationMix',
+  'bitCrusherRate',
+  'bitCrusherBits',
+  'bitCrusherBoost',
+  'bitCrusherMix',
   'level'
 ]
 
@@ -66,6 +80,13 @@ export const ALL_AUTOMATION_PARAM_IDS: readonly AutomationParamId[] = [
   'reverbSend',
   'delaySend',
   'leveler',
+  'punch',
+  'saturationDrive',
+  'saturationMix',
+  'bitCrusherRate',
+  'bitCrusherBits',
+  'bitCrusherBoost',
+  'bitCrusherMix',
   'level'
 ]
 

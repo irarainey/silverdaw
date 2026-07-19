@@ -1,6 +1,7 @@
 #include "ProjectSession.h"
 
 #include "AudioEngine.h"
+#include "BeatRepeatCommands.h"
 #include "DecodedCache.h"
 #include "EnginePlaybackPath.h"
 #include "LibraryAnalysis.h"
@@ -196,6 +197,12 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
     }
+    if (projectState.getSafetyLimiterEnabled())
+        obj->setProperty("safetyLimiterEnabled", true);
+    {
+        const auto mixGlueAmount = projectState.getProjectMixGlueAmount();
+        if (mixGlueAmount > 1.0e-4F) obj->setProperty("mixGlueAmount", mixGlueAmount);
+    }
     // Omit default (one) bar settings so legacy projects round-trip byte-clean.
     {
         const auto barCounterStart = projectState.getBarCounterStart();
@@ -336,6 +343,18 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                                 projectState.getTrackToneFilter(toneTrackId), /*snap*/ true);
             engine.setTrackLeveler(toneTrackId, projectState.getTrackLevelerAmount(toneTrackId),
                                    /*snap*/ true);
+            engine.setTrackPunch(toneTrackId, projectState.getTrackPunchAmount(toneTrackId),
+                                 /*snap*/ true);
+            engine.setTrackSaturation(toneTrackId,
+                                      projectState.getTrackSaturationDrive(toneTrackId),
+                                      projectState.getTrackSaturationMix(toneTrackId),
+                                      /*snap*/ true);
+            engine.setTrackBitCrusher(toneTrackId,
+                                      projectState.getTrackBitCrusherRate(toneTrackId),
+                                      projectState.getTrackBitCrusherBits(toneTrackId),
+                                      projectState.getTrackBitCrusherBoost(toneTrackId),
+                                      projectState.getTrackBitCrusherMix(toneTrackId),
+                                      /*snap*/ true);
             engine.setTrackSends(toneTrackId, projectState.getTrackReverbSend(toneTrackId),
                                  projectState.getTrackDelaySend(toneTrackId));
             engine.setTrackPan(toneTrackId, projectState.getTrackPan(toneTrackId));
@@ -420,10 +439,13 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
 
     // Keep live master gain aligned with loaded, recovered, and undo/redo state.
     engine.setMasterGain(projectState.getMasterVolume());
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
 
     // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
     engine.setMetronomeBpm(projectState.getBpm());
     engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    syncBeatRepeatRegions(engine, projectState);
 
     // Always reset shared FX on new/load so projects never inherit prior settings.
     engine.setProjectReverb(projectState.getProjectReverbSize(),

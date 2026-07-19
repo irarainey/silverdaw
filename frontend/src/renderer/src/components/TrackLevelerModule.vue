@@ -13,7 +13,7 @@ import { useFxAutomation } from '@/lib/fx/useFxAutomation'
 import ClipEffectModule from '@/components/ClipEffectModule.vue'
 import FxRangeControl from '@/components/FxRangeControl.vue'
 
-const props = defineProps<{ trackId: string }>()
+const props = defineProps<{ trackId: string; gridArea?: string }>()
 
 const project = useProjectStore()
 const gesture = useFxGesture('leveler')
@@ -67,8 +67,10 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     :title="'Compressor'"
+    help-text="Evens out loud and quiet parts"
     :cols="1"
     :rows="1"
+    :grid-area="props.gridArea"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
       <FxRangeControl

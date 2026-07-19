@@ -28,6 +28,7 @@ import {
 } from './constants'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
+import { createBeatRepeatOverlayRenderer } from './beatRepeatOverlayRenderer'
 import type { GridGeometry } from './useGridGeometry'
 
 type PooledGraphics = InstanceType<NonNullable<typeof Graphics>>
@@ -46,6 +47,12 @@ export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps)
   const { pxPerSecond, headerWidth } = geometry
   const brakeSettings = useBrakeSettingsStore()
   const backspinSettings = useBackspinSettingsStore()
+  const { drawTrackBeatRepeats } = createBeatRepeatOverlayRenderer({
+    tracksLayer,
+    GraphicsCtor,
+    geometry,
+    acquireGraphics
+  })
 
   /** Diagonal hatch over any region where two clips on a track overlap. */
   function drawClipOverlaps(
@@ -331,5 +338,11 @@ export function createClipDecorationsRenderer(deps: ClipDecorationsRendererDeps)
     }
   }
 
-  return { drawClipOverlaps, drawTrackTransitions, drawClipBrakes, drawClipBackspins }
+  return {
+    drawClipOverlaps,
+    drawTrackTransitions,
+    drawTrackBeatRepeats,
+    drawClipBrakes,
+    drawClipBackspins
+  }
 }

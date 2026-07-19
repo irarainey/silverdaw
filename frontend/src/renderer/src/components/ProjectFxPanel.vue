@@ -7,6 +7,8 @@
 
 import ProjectRoomModule from '@/components/ProjectRoomModule.vue'
 import ProjectEchoModule from '@/components/ProjectEchoModule.vue'
+import ProjectMixGlueModule from '@/components/ProjectMixGlueModule.vue'
+import ProjectSafetyLimiterModule from '@/components/ProjectSafetyLimiterModule.vue'
 import FxRack from '@/components/FxRack.vue'
 </script>
 
@@ -14,5 +16,7 @@ import FxRack from '@/components/FxRack.vue'
   <FxRack assistive-label="Project effects">
     <ProjectRoomModule />
     <ProjectEchoModule />
+    <ProjectMixGlueModule />
+    <ProjectSafetyLimiterModule />
   </FxRack>
 </template>

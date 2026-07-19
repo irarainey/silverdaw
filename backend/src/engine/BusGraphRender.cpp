@@ -14,6 +14,7 @@ void BusGraph::TrackRuntime::prepareToPlay(int samplesPerBlockExpected, double s
     preparedRate = sampleRate;
     mixScratch.setSize(2, preparedBlockSize, false, true, false);
     mixScratch.clear();
+    beatRepeatProcessor.prepare(sampleRate);
     for (auto* source : clips)
         if (source != nullptr) source->prepareToPlay(preparedBlockSize, preparedRate);
     chain.prepare(sampleRate, samplesPerBlockExpected, /*numChannels*/ 2);
@@ -36,7 +37,9 @@ void BusGraph::TrackRuntime::getNextAudioBlock(const juce::AudioSourceChannelInf
 }
 
 void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& sources,
-                                         const juce::AudioSourceChannelInfo& info)
+                                         const juce::AudioSourceChannelInfo& info,
+                                         juce::int64 timelineStart,
+                                         const BeatRepeatSnapshot* beatRepeat)
 {
     if (info.buffer == nullptr || info.numSamples <= 0)
         return;
@@ -65,6 +68,9 @@ void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& 
                                  info.numSamples);
     }
 
+    if (beatRepeatResetRequested.exchange(false, std::memory_order_acq_rel))
+        beatRepeatProcessor.reset();
+    beatRepeatProcessor.process(*info.buffer, info.startSample, info.numSamples, timelineStart, beatRepeat);
     chain.process(*info.buffer, info.startSample, info.numSamples);
 
     const int numCh = info.buffer->getNumChannels();
@@ -116,7 +122,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
     {
         if (runtime == nullptr || runtime->clips.empty() || !runtime->renderEnabled) continue;
         snapshot->tracks.push_back(
-            {runtime.get(), runtime->clips, runtime->publishedAutomation});
+            {runtime.get(), runtime->clips, runtime->publishedAutomation, runtime->publishedBeatRepeat});
         snapshot->hasAutomation =
             snapshot->hasAutomation || runtime->publishedAutomation != nullptr;
     }
@@ -124,7 +130,7 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
 }
 
 std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding(
-    const juce::AudioSource* excluded) const
+    const std::vector<const juce::AudioSource*>& excluded) const
 {
     auto snapshot = std::make_unique<RenderSnapshot>();
     snapshot->tracks.reserve(runtimes.size());
@@ -135,9 +141,11 @@ std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshotExcluding
         RenderTrack track;
         track.runtime = runtime.get();
         track.automation = runtime->publishedAutomation;
+        track.beatRepeat = runtime->publishedBeatRepeat;
         track.clips.reserve(runtime->clips.size());
         for (auto* source : runtime->clips)
-            if (source != excluded) track.clips.push_back(source);
+            if (std::find(excluded.begin(), excluded.end(), source) == excluded.end())
+                track.clips.push_back(source);
         if (track.clips.empty()) continue;
 
         snapshot->hasAutomation =
@@ -228,7 +236,7 @@ void BusGraph::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
 
             scratch.clear(0, n);
             juce::AudioSourceChannelInfo sub(&scratch, 0, n);
-            runtime.renderClips(track.clips, sub);
+            runtime.renderClips(track.clips, sub, subStartSamples, track.beatRepeat);
 
             const float rSend = runtime.reverbSend.load(std::memory_order_relaxed);
             const float dSend = runtime.delaySend.load(std::memory_order_relaxed);
@@ -293,6 +301,13 @@ void BusGraph::applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnaps
     if (snap->hasParam(AutomationParam::toneMid)) rt.chain.setMidTarget(sample(AutomationParam::toneMid), discontinuity);
     if (snap->hasParam(AutomationParam::toneTreble)) rt.chain.setTrebleTarget(sample(AutomationParam::toneTreble), discontinuity);
     if (snap->hasParam(AutomationParam::leveler)) rt.chain.setLeveler(sample(AutomationParam::leveler), discontinuity);
+    if (snap->hasParam(AutomationParam::punch)) rt.chain.setPunchTarget(sample(AutomationParam::punch), discontinuity);
+    if (snap->hasParam(AutomationParam::saturationDrive)) rt.chain.setSaturationDriveTarget(sample(AutomationParam::saturationDrive), discontinuity);
+    if (snap->hasParam(AutomationParam::saturationMix)) rt.chain.setSaturationMixTarget(sample(AutomationParam::saturationMix), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherRate)) rt.chain.setBitCrusherRateTarget(sample(AutomationParam::bitCrusherRate), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherBits)) rt.chain.setBitCrusherBitsTarget(sample(AutomationParam::bitCrusherBits), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherBoost)) rt.chain.setBitCrusherBoostTarget(sample(AutomationParam::bitCrusherBoost), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherMix)) rt.chain.setBitCrusherMixTarget(sample(AutomationParam::bitCrusherMix), discontinuity);
     if (snap->hasParam(AutomationParam::level)) rt.chain.setLevelTarget(sample(AutomationParam::level), discontinuity);
     if (snap->hasParam(AutomationParam::reverbSend)) rt.reverbSend.store(sample(AutomationParam::reverbSend), std::memory_order_relaxed);
     if (snap->hasParam(AutomationParam::delaySend)) rt.delaySend.store(sample(AutomationParam::delaySend), std::memory_order_relaxed);

@@ -172,7 +172,13 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     transport,
     acquireGraphics
   })
-  const { drawClipOverlaps, drawTrackTransitions, drawClipBrakes, drawClipBackspins } = createClipDecorationsRenderer({
+  const {
+    drawClipOverlaps,
+    drawTrackTransitions,
+    drawTrackBeatRepeats,
+    drawClipBrakes,
+    drawClipBackspins
+  } = createClipDecorationsRenderer({
     tracksLayer,
     GraphicsCtor,
     geometry: ctx.geometry,
@@ -567,5 +573,14 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     drawClipHeader(clip, absX, innerY, w, palette, libItem, markerSourceBpm)
   }
 
-  return { drawClip, drawClipOverlaps, drawTrackTransitions, drawClipBrakes, drawClipBackspins, beginFrame, getFrameStats }
+  return {
+    drawClip,
+    drawClipOverlaps,
+    drawTrackTransitions,
+    drawTrackBeatRepeats,
+    drawClipBrakes,
+    drawClipBackspins,
+    beginFrame,
+    getFrameStats
+  }
 }

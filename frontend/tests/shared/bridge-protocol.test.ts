@@ -24,6 +24,7 @@ import {
   isProjectViewStateSavedPayload,
   isProjectStatePayload,
   isReadyPayload,
+  isTrackPunchAppliedPayload,
   isSampleSavedPayload,
   isStemProgressPayload,
   isStemPartialPayload,
@@ -87,11 +88,15 @@ const INBOUND_TYPES = {
   TRACK_SENDS_APPLIED: true,
   TRACK_TONE_APPLIED: true,
   TRACK_LEVELER_APPLIED: true,
+  TRACK_PUNCH_APPLIED: true,
+  TRACK_SATURATION_APPLIED: true,
+  TRACK_BIT_CRUSHER_APPLIED: true,
   TRACK_PAN_APPLIED: true,
   TRACK_AUTOMATION_APPLIED: true,
   CLIP_ENVELOPE_APPLIED: true,
   PROJECT_REVERB_APPLIED: true,
   PROJECT_DELAY_APPLIED: true,
+  PROJECT_MIX_GLUE_APPLIED: true,
   PONG: true,
   ENGINE_ERROR: true,
   ENGINE_AUDIO_STATUS: true,
@@ -120,6 +125,13 @@ describe('isBridgeInboundType', () => {
 describe('isReadyPayload', () => {
   it('accepts a well-shaped payload', () => {
     expect(isReadyPayload({ version: '0.1.0' })).toBe(true)
+  })
+
+  describe('isTrackPunchAppliedPayload', () => {
+    it('accepts only a clamped Punch acknowledgement', () => {
+      expect(isTrackPunchAppliedPayload({ trackId: 'track-1', amount: 0.6, ok: true })).toBe(true)
+      expect(isTrackPunchAppliedPayload({ trackId: 'track-1', amount: 1.1, ok: true })).toBe(false)
+    })
   })
 
   it('rejects missing or wrong-typed version', () => {
@@ -468,6 +480,38 @@ describe('isProjectStatePayload', () => {
     ).toBe(true)
   })
 
+  it('accepts beat repeat regions and rejects invalid timing or divisions', () => {
+    const track = { id: 't1', gain: 1.0, clips: [] }
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 4, division: '1/8' }]
+      }]
+    })).toBe(true)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: -1, lengthBeats: 4, division: '1/8' }]
+      }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 0, division: '1/8' }]
+      }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{
+        ...track,
+        beatRepeats: [{ id: 'repeat-1', startBeat: 4, lengthBeats: 4, division: '1/32' }]
+      }]
+    })).toBe(false)
+  })
+
   it('rejects missing name or wrong-typed filePath', () => {
     expect(isProjectStatePayload({ filePath: null, tracks: [] })).toBe(false)
     expect(isProjectStatePayload({ name: 'x', tracks: [] })).toBe(false)
@@ -481,6 +525,39 @@ describe('isProjectStatePayload', () => {
       isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: '1.0', clips: [] }] })
     ).toBe(false)
     expect(isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: 1.0 }] })).toBe(false)
+  })
+
+  it('rejects out-of-range Saturation and Bit Crusher track state', () => {
+    const track = { id: 't1', gain: 1.0, clips: [] }
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, saturationDrive: 2 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, saturationMix: -1 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherRate: 0 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherBits: 8.5 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherBoost: 2 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherMix: -1 }]
+    })).toBe(false)
+  })
+
+  it('accepts a bounded Glue Compressor amount and rejects an invalid amount', () => {
+    expect(isProjectStatePayload({ ...base, mixGlueAmount: 0.65, tracks: [] })).toBe(true)
+    expect(isProjectStatePayload({ ...base, mixGlueAmount: 1.01, tracks: [] })).toBe(false)
   })
 
   it('rejects malformed clip entries', () => {

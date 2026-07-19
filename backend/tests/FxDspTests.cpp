@@ -5,6 +5,7 @@
 
 #include "AudioEngine.h"
 #include "AudioConstants.h"
+#include "BitCrusher.h"
 #include "BridgeAuth.h"
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
@@ -12,8 +13,11 @@
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
 #include "PeaksCache.h"
+#include "Punch.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
+#include "SafetyLimiter.h"
+#include "Saturation.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
 #include "TrackAutomationSnapshot.h"
@@ -206,6 +210,7 @@ void testLevelerPassthroughAndCompression()
                 d[i] = amp * static_cast<float>(
                                  std::sin(2.0 * juce::MathConstants<double>::pi * freq * i / sr));
         }
+
     };
 
     // Amount 0 (snapped) must leave every sample untouched, bit-for-bit.
@@ -309,6 +314,74 @@ void testLevelerPassthroughAndCompression()
             for (int i = 0; i < n; ++i)
                 if (! std::isfinite(buf.getSample(ch, i))) { finite = false; break; }
         require(finite, "Leveler must recover to finite output after a NaN/Inf input sample");
+    }
+}
+
+void testPunchBypassAndStereoLinkedTransientShaping()
+{
+    constexpr int n = 512;
+    silverdaw::Punch punch;
+    punch.prepare(44100.0);
+
+    juce::AudioBuffer<float> bypass(2, n);
+    juce::AudioBuffer<float> reference(2, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            bypass.setSample(ch, i, static_cast<float>((i % 17) - 8) / 16.0F);
+    reference.makeCopyOf(bypass);
+    punch.setAmount(0.0F, /*snap*/ true);
+    punch.process(bypass, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(bypass.getSample(ch, i) == reference.getSample(ch, i),
+                    "Punch at Amount 0 must be bit-exact passthrough");
+
+    juce::AudioBuffer<float> shaped(2, n);
+    shaped.clear();
+    shaped.setSample(0, 128, 0.5F);
+    shaped.setSample(1, 128, 0.25F);
+    punch.reset();
+    punch.setAmount(1.0F, /*snap*/ true);
+    punch.process(shaped, 0, n);
+    require(shaped.getSample(0, 128) > 0.5F,
+            "Punch must boost a transient at full amount");
+    requireNear(shaped.getSample(0, 128) / shaped.getSample(1, 128), 2.0, 0.0001,
+                "Punch transient detection must preserve the stereo image");
+}
+
+void testMixGlueHasExactBypassAndStereoLinkedCompression()
+{
+    constexpr int n = 8192;
+    silverdaw::Leveler mixGlue;
+    mixGlue.prepare(44100.0, 2);
+
+    juce::AudioBuffer<float> bypass(2, n);
+    juce::AudioBuffer<float> reference(2, n);
+    for (int i = 0; i < n; ++i)
+    {
+        const float sample = (i % 13 == 0) ? 0.9F : -0.45F;
+        bypass.setSample(0, i, sample);
+        bypass.setSample(1, i, sample * 0.5F);
+        reference.setSample(0, i, sample);
+        reference.setSample(1, i, sample * 0.5F);
+    }
+    mixGlue.setParams(0.0F, /*snap*/ true);
+    mixGlue.process(bypass, 0, n);
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = 0; i < n; ++i)
+            require(bypass.getSample(ch, i) == reference.getSample(ch, i),
+                    "Glue Compressor Amount 0 must be a bit-exact bypass");
+
+    mixGlue.setParams(1.0F, /*snap*/ true);
+    mixGlue.process(reference, 0, n);
+    require(reference.getMagnitude(0, n / 2, n / 2) < 0.8F,
+            "Glue Compressor must reduce a hot project-bus signal");
+    for (int i = n / 2; i < n; ++i)
+    {
+        const float left = reference.getSample(0, i);
+        const float right = reference.getSample(1, i);
+        requireNear(right, left * 0.5F, 1.0e-5,
+                    "Glue Compressor must apply stereo-linked gain to both channels");
     }
 }
 
@@ -528,6 +601,42 @@ void testSharedFxEchoRepeatsAndTerminates()
             "a deferred delay target must not replace the active idle-published time");
 }
 
+void testSharedFxLongDelayPreservesFeedbackRepeat()
+{
+    constexpr double sr = 48000.0;
+    constexpr int n = 256;
+    constexpr double delayMs = 4000.0;
+    silverdaw::SharedFx fx;
+    fx.prepare(sr, n);
+    fx.setReverbParams(0.0F, 0.0F, 0.0F, 0.0F, /*snap*/ true);
+    fx.setDelayParams(delayMs, 0.5F, 1.0F, 1.0F, /*snap*/ true, /*applyTimeNow*/ true);
+
+    juce::AudioBuffer<float> sendR(2, n), sendD(2, n), out(2, n);
+    sendR.clear();
+    sendD.clear();
+    sendD.setSample(0, 0, 1.0F);
+    sendD.setSample(1, 0, 1.0F);
+    out.clear();
+    fx.process(sendR, sendD, out, 0, n);
+
+    sendD.clear();
+    const int secondRepeatBlock = static_cast<int>(
+        std::ceil(2.0 * delayMs * sr / (1000.0 * n)));
+    bool heardSecondRepeat = false;
+    for (int block = 0; block <= secondRepeatBlock; ++block)
+    {
+        out.clear();
+        fx.process(sendR, sendD, out, 0, n);
+        if (block >= secondRepeatBlock - 1 && out.getMagnitude(0, 0, n) > 0.1F)
+            heardSecondRepeat = true;
+    }
+
+    require(heardSecondRepeat,
+            "maximum-delay feedback must preserve the second repeat beyond four seconds");
+    require(! fx.echoTerminated(),
+            "maximum-delay feedback must not terminate before its analytic tail");
+}
+
 void testEqualPowerPanGains()
 {
         float gL = 0.0F;
@@ -687,6 +796,36 @@ void testBusGraphStructuralEditsDoNotDropAudio()
     bg.releaseResources();
 }
 
+void testBusGraphBatchDetachmentRemovesCompletedClips()
+{
+    constexpr int kBlock = 128;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, 48000.0);
+
+    ConstantSource first(0.1F);
+    ConstantSource second(0.2F);
+    ConstantSource retained(0.4F);
+    bg.attachClip("t1", "first", &first);
+    bg.attachClip("t1", "second", &second);
+    bg.attachClip("t2", "retained", &retained);
+
+    const std::vector<silverdaw::BusGraph::ClipDetachment> completed{
+        {"first", &first},
+        {"second", &second},
+    };
+    bg.detachClips(completed);
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    out.clear();
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    bg.getNextAudioBlock(info);
+    requireNear(out.getMagnitude(0, 0, kBlock), 0.4, 1.0e-5,
+                "batch detachment must remove every completed clip in one graph update");
+
+    bg.detachClip("retained", &retained);
+    bg.releaseResources();
+}
+
 // Stress the lock-free setters (pan/sends/peaks/tone)
 // concurrently with the audio callback: output must stay finite, no crash or
 // deadlock, and the final published state must take effect deterministically.
@@ -807,6 +946,60 @@ void testBusGraphFilterAndLevelAutomationResetToNeutral()
     double cleared = 0.0;
     for (int b = 0; b < 8; ++b) { out.clear(); bg.getNextAudioBlock(info); cleared = out.getMagnitude(0, 0, kBlock); }
     requireNear(cleared, 0.5, 0.05, "clearing a lane restores the track to unity, not the last automated value");
+
+    bg.releaseResources();
+}
+
+void testBusGraphSaturationAutomationRestoresStaticValues()
+{
+    constexpr int kBlock = 256;
+    constexpr double kRate = 44100.0;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, kRate);
+
+    std::atomic<juce::int64> pos{0};
+    bg.setTimelineSamplesSource(&pos);
+    ConstantSource src(0.25F);
+    bg.attachClip("t1", "c1", &src);
+    bg.setTrackSaturation("t1", 0.6F, 0.4F, /*snap*/ true);
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    const auto renderMagnitude = [&]() {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        return out.getMagnitude(0, 0, kBlock);
+    };
+
+    const float staticMagnitude = renderMagnitude();
+
+    const auto makeSnapshot = [](silverdaw::AutomationParam param, float value) {
+        auto snapshot = std::make_unique<silverdaw::TrackAutomationSnapshot>();
+        silverdaw::BreakpointCurve curve(silverdaw::InterpDomain::linear);
+        curve.addPoint(0.0, value);
+        curve.addPoint(1000.0, value);
+        curve.finalise();
+        const int index = static_cast<int>(param);
+        snapshot->has[index] = true;
+        snapshot->curves[index] = std::move(curve);
+        return snapshot;
+    };
+
+    auto driveAutomation = makeSnapshot(silverdaw::AutomationParam::saturationDrive, 1.0F);
+    bg.setTrackAutomationPtr("t1", driveAutomation.get());
+    renderMagnitude();
+    bg.setTrackAutomationPtr("t1", nullptr);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::saturationDrive);
+    requireNear(renderMagnitude(), staticMagnitude, 1.0e-5,
+                "clearing saturation Drive automation must restore its static value");
+
+    auto mixAutomation = makeSnapshot(silverdaw::AutomationParam::saturationMix, 0.0F);
+    bg.setTrackAutomationPtr("t1", mixAutomation.get());
+    renderMagnitude();
+    bg.setTrackAutomationPtr("t1", nullptr);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::saturationMix);
+    requireNear(renderMagnitude(), staticMagnitude, 1.0e-5,
+                "clearing saturation Mix automation must restore its static value");
 
     bg.releaseResources();
 }
@@ -1027,6 +1220,137 @@ void testLevelerSnapAppliesOnFirstBlock()
             "snap applies the Leveler makeup on the first block; glide ramps in slowly");
 }
 
+void testSafetyLimiterNeutralBypassAndCeiling()
+{
+    constexpr int n = 32;
+    silverdaw::SafetyLimiter limiter;
+    limiter.prepare(48000.0);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+        {
+            const float value = static_cast<float>((sample % 11) - 5) / 10.0F;
+            neutral.setSample(channel, sample, value);
+            expected.setSample(channel, sample, value);
+        }
+    limiter.process(neutral, 0, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            require(neutral.getSample(channel, sample) == expected.getSample(channel, sample),
+                    "disabled safety limiter must be a bit-identical bypass");
+
+    limiter.setEnabled(true, /*snap*/ true);
+    juce::AudioBuffer<float> hot(2, n);
+    hot.clear();
+    hot.setSample(0, 0, 1.2F);
+    hot.setSample(1, 0, 0.6F);
+    limiter.process(hot, 0, n);
+
+    const float ceiling = silverdaw::SafetyLimiter::ceilingGain();
+    require(hot.getMagnitude(0, 0, n) <= ceiling + 1.0e-6F,
+            "safety limiter must keep the hot channel below its ceiling");
+    require(hot.getMagnitude(1, 0, n) <= ceiling + 1.0e-6F,
+            "safety limiter must keep every channel below its ceiling");
+    requireNear(hot.getSample(1, 0) / hot.getSample(0, 0), 0.5, 0.0001,
+                "safety limiter must preserve the stereo balance");
+}
+
+void testSaturationNeutralBypassAndMix()
+{
+    constexpr int n = 64;
+    silverdaw::Saturation saturation;
+    saturation.prepare(48000.0);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+        {
+            const float value = static_cast<float>((sample % 17) - 8) / 10.0F;
+            neutral.setSample(channel, sample, value);
+            expected.setSample(channel, sample, value);
+        }
+
+    saturation.setParams(0.0F, 1.0F, /*snap*/ true);
+    saturation.process(neutral, 0, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            require(neutral.getSample(channel, sample) == expected.getSample(channel, sample),
+                    "zero-drive saturation must be a bit-identical bypass");
+
+    saturation.setParams(1.0F, 0.0F, /*snap*/ true);
+    saturation.process(neutral, 0, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            require(neutral.getSample(channel, sample) == expected.getSample(channel, sample),
+                    "zero-mix saturation must be a bit-identical bypass");
+
+    juce::AudioBuffer<float> driven(2, 1);
+    driven.setSample(0, 0, 0.25F);
+    driven.setSample(1, 0, -0.25F);
+    saturation.setParams(1.0F, 1.0F, /*snap*/ true);
+    saturation.process(driven, 0, 1);
+    require(driven.getSample(0, 0) > 0.25F && driven.getSample(0, 0) < 1.0F,
+            "full-drive saturation should increase a quiet positive sample without clipping");
+    requireNear(driven.getSample(1, 0), -driven.getSample(0, 0), 1.0e-6,
+                "saturation should preserve an odd-symmetric transfer curve");
+}
+
+void testBitCrusherNeutralBypassAndReduction()
+{
+    constexpr int n = 4;
+    silverdaw::BitCrusher crusher;
+    crusher.prepare(48000.0, 2);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+        {
+            const float value = static_cast<float>(sample - 2) / 10.0F;
+            neutral.setSample(channel, sample, value);
+            expected.setSample(channel, sample, value);
+        }
+    crusher.setParams(1.0F, 16, 0.0F, 0.0F, /*snap*/ true);
+    crusher.process(neutral, 0, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            require(neutral.getSample(channel, sample) == expected.getSample(channel, sample),
+                    "zero-mix bit crusher must be a bit-identical bypass");
+
+    juce::AudioBuffer<float> reduced(2, n);
+    reduced.clear();
+    reduced.setSample(0, 0, 0.23F);
+    reduced.setSample(0, 1, -0.23F);
+    reduced.setSample(1, 0, -0.23F);
+    reduced.setSample(1, 1, 0.23F);
+    crusher.setParams(0.5F, 4, 0.0F, 1.0F, /*snap*/ true);
+    crusher.reset();
+    crusher.process(reduced, 0, n);
+    requireNear(reduced.getSample(0, 0), 0.25, 1.0e-6,
+                "bit crusher should quantize the captured sample");
+    requireNear(reduced.getSample(0, 1), 0.25, 1.0e-6,
+                "rate reduction should hold the captured sample for two frames");
+    requireNear(reduced.getSample(1, 1), -0.25, 1.0e-6,
+                "rate reduction should preserve each channel's captured value");
+
+    juce::AudioBuffer<float> fractionalRate(2, n);
+    fractionalRate.clear();
+    fractionalRate.setSample(0, 0, 0.10F);
+    fractionalRate.setSample(0, 1, 0.20F);
+    fractionalRate.setSample(0, 2, 0.20F);
+    fractionalRate.setSample(0, 3, 0.30F);
+    crusher.setParams(0.75F, 4, 0.0F, 1.0F, /*snap*/ true);
+    crusher.reset();
+    crusher.process(fractionalRate, 0, n);
+    requireNear(fractionalRate.getSample(0, 1), 0.125, 1.0e-6,
+                "75% rate should hold a sample rather than collapsing to full rate");
+    requireNear(fractionalRate.getSample(0, 3), 0.3125, 1.0e-6,
+                "75% rate should retain fractional sample-capture timing");
+}
+
 } // namespace
 
 void addFxDspTests(std::vector<TestCase>& tests)
@@ -1034,21 +1358,29 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
     tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
+    tests.push_back({"Punch is bit-exact at Amount 0 and stereo-links transient shaping", testPunchBypassAndStereoLinkedTransientShaping});
+    tests.push_back({"Glue Compressor has exact bypass and stereo-linked compression", testMixGlueHasExactBypassAndStereoLinkedCompression});
     tests.push_back({"SharedFx delayNoteToMs resolves note values per BPM", testSharedFxDelayNoteResolution});
     tests.push_back({"SharedFx is bit-exact transparent when inactive (mix=0)", testSharedFxUntouchedParityIsExactZero});
     tests.push_back({"SharedFx Room rings a tail after input stops and terminates", testSharedFxRoomTailRingsAndTerminates});
     tests.push_back({"SharedFx Echo reproduces a delayed copy and terminates", testSharedFxEchoRepeatsAndTerminates});
+    tests.push_back({"SharedFx maximum delay preserves feedback repeats beyond four seconds", testSharedFxLongDelayPreservesFeedbackRepeat});
     tests.push_back({"BusGraph equal-power pan gains (unity centre, constant power)", testEqualPowerPanGains});
     tests.push_back({"BusGraph lock-free pan publishes equal-power gains through the mix", testBusGraphPanAppliedThroughMix});
     tests.push_back({"BusGraph excludes bypassed tracks from processing", testBusGraphExcludesBypassedTrackProcessing});
     tests.push_back({"BusGraph structural edits do not drop callback audio", testBusGraphStructuralEditsDoNotDropAudio});
+    tests.push_back({"BusGraph batch detachment removes all completed clips", testBusGraphBatchDetachmentRemovesCompletedClips});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
+    tests.push_back({"BusGraph saturation automation restores static track values", testBusGraphSaturationAutomationRestoresStaticValues});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});
     tests.push_back({"BusGraph stays safe under concurrent lock-free project-FX updates", testBusGraphLockFreeProjectFxUpdatesAreSafe});
     tests.push_back({"SharedFx requestReset cuts the tail on the next audio block", testSharedFxRequestResetCutsTailNextBlock});
     tests.push_back({"ToneEq snap applies the full boost on the first block", testToneEqSnapAppliesOnFirstBlock});
     tests.push_back({"Leveler snap applies the makeup on the first block", testLevelerSnapAppliesOnFirstBlock});
+    tests.push_back({"Safety limiter is transparent when off and caps linked peaks", testSafetyLimiterNeutralBypassAndCeiling});
+    tests.push_back({"Saturation is transparent at zero drive or mix and shapes when driven", testSaturationNeutralBypassAndMix});
+    tests.push_back({"Bit crusher is transparent at zero mix and reduces rate and bits", testBitCrusherNeutralBypassAndReduction});
 }
 
 } // namespace silverdaw::tests

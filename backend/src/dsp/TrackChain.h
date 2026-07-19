@@ -1,6 +1,9 @@
 #pragma once
 
+#include "BitCrusher.h"
 #include "Leveler.h"
+#include "Punch.h"
+#include "Saturation.h"
 #include "ToneEq.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -22,6 +25,9 @@ public:
         juce::ignoreUnused(maxBlockSize);
         tone.prepare(sampleRate, numChannels);
         leveler.prepare(sampleRate, numChannels);
+        punch.prepare(sampleRate);
+        saturation.prepare(sampleRate);
+        bitCrusher.prepare(sampleRate, numChannels);
         levelGain = 1.0F;
         targetLevelGain = 1.0F;
     }
@@ -31,6 +37,9 @@ public:
     {
         tone.reset();
         leveler.reset();
+        punch.reset();
+        saturation.reset();
+        bitCrusher.reset();
         levelGain = targetLevelGain;
     }
 
@@ -43,12 +52,46 @@ public:
 
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity. */
     void setLeveler(float amount, bool snap) noexcept { leveler.setParams(amount, snap); }
+    void setPunch(float amount, bool snap) noexcept { punch.setAmount(amount, snap); }
+    void setSaturation(float drive, float mix, bool snap) noexcept
+    {
+        saturation.setParams(drive, mix, snap);
+    }
+    void setBitCrusher(float rate, int bits, float boost, float mix, bool snap) noexcept
+    {
+        bitCrusher.setParams(rate, bits, boost, mix, snap);
+    }
 
     /** Audio-thread filter-only automation update (see `ToneEq::setFilterTarget`). */
     void setFilterTarget(float filter, bool snap) noexcept { tone.setFilterTarget(filter, snap); }
     void setBassTarget(float db, bool snap) noexcept { tone.setBassTarget(db, snap); }
     void setMidTarget(float db, bool snap) noexcept { tone.setMidTarget(db, snap); }
     void setTrebleTarget(float db, bool snap) noexcept { tone.setTrebleTarget(db, snap); }
+    void setSaturationDriveTarget(float drive, bool snap) noexcept
+    {
+        saturation.setDriveTarget(drive, snap);
+    }
+    void setPunchTarget(float amount, bool snap) noexcept { punch.setAmount(amount, snap); }
+    void setSaturationMixTarget(float mix, bool snap) noexcept
+    {
+        saturation.setMixTarget(mix, snap);
+    }
+    void setBitCrusherRateTarget(float rate, bool snap) noexcept
+    {
+        bitCrusher.setRateTarget(rate, snap);
+    }
+    void setBitCrusherBitsTarget(float bits, bool snap) noexcept
+    {
+        bitCrusher.setBitsTarget(bits, snap);
+    }
+    void setBitCrusherBoostTarget(float boost, bool snap) noexcept
+    {
+        bitCrusher.setBoostTarget(boost, snap);
+    }
+    void setBitCrusherMixTarget(float mix, bool snap) noexcept
+    {
+        bitCrusher.setMixTarget(mix, snap);
+    }
 
     /** Automatable post-chain track level in dB. Ramped per block to avoid clicks;
      *  `snap` lands immediately on seek/loop. 0 dB is unity. */
@@ -63,6 +106,9 @@ public:
     {
         tone.process(buffer, startSample, numSamples);
         leveler.process(buffer, startSample, numSamples);
+        punch.process(buffer, startSample, numSamples);
+        saturation.process(buffer, startSample, numSamples);
+        bitCrusher.process(buffer, startSample, numSamples);
         if (levelGain != targetLevelGain)
         {
             buffer.applyGainRamp(startSample, numSamples, levelGain, targetLevelGain);
@@ -83,6 +129,9 @@ public:
 private:
     ToneEq tone;
     Leveler leveler;
+    Punch punch;
+    Saturation saturation;
+    BitCrusher bitCrusher;
     float levelGain = 1.0F;
     float targetLevelGain = 1.0F;
 };

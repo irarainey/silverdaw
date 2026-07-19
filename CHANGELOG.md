@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.0
+
+### Added
+
+- Beat Repeat adds tempo-aligned per-track repeat regions from the timeline Effects menu.
+- Bit Crusher track effect adds per-track lo-fi digital reduction controls.
+- Punch track effect adds per-track transient enhancement controls.
+- Saturation track effect adds Drive and Mix controls for per-track soft clipping.
+- Glue Compressor project effect adds one-control project-bus compression before the master output.
+- Safety Limiter project effect adds a fixed -1 dBFS final-output guard.
+
+### Changed
+
+- Project Delay Time now uses direct beat-division buttons.
+- Effect racks now provide hover explanations for each effect.
+- Project FX racks now wrap within the effects panel, keeping overflow vertical instead of adding a horizontal scrollbar.
+- Track FX keeps its five responsive effect columns within the effects panel.
+
+### Fixed
+
+- Long Delay feedback tails now preserve audible repeats in playback and mixdown.
+- Mixdown now reuses output buffers to avoid repeated allocations during resampling.
+- Mixdown now retires completed clips in batches for faster exports with many clips.
+
 ## 1.2.0
 
 ### Added

@@ -113,6 +113,12 @@ export function applyProjectSettings(target: SnapshotTarget, snapshot: ProjectSt
     typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
       ? Math.min(1, Math.max(0, incomingMasterVolume))
       : 1.0
+  // Absent means off so projects created before the safety limiter retain their sound.
+  target.safetyLimiterEnabled = snapshot.safetyLimiterEnabled === true
+  target.mixGlueAmount =
+    typeof snapshot.mixGlueAmount === 'number' && Number.isFinite(snapshot.mixGlueAmount)
+      ? Math.min(1, Math.max(0, snapshot.mixGlueAmount))
+      : 0
   // Missing means default 1; the backend omits default bar settings.
   const incomingBarCounterStart = snapshot.barCounterStart
   target.barCounterStart =

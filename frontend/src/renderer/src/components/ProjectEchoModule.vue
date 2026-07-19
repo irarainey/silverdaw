@@ -5,7 +5,7 @@
 // percentage. Project-level, so always reachable regardless of selection.
 // Editing is live: slider drags push `setProjectDelay` on every `input`
 // (coalesced into one undo step via a per-control `gestureId`) and commit
-// with `gestureEnd` on `change`; the Time select pushes a single
+// with `gestureEnd` on `change`; a Time button pushes a single
 // non-coalesced update. With Mix at 0 the Delay is silent and exports stay
 // bit-identical to a project with no delay.
 
@@ -39,9 +39,7 @@ function percent(control: Control): string {
   return `${Math.round(value(control) * 100)}%`
 }
 
-function onNoteChange(raw: string): void {
-  const next = raw as DelayNoteValue
-  if (!NOTE_VALUES.includes(next)) return
+function onNoteChange(next: DelayNoteValue): void {
   project.setProjectDelay({ noteValue: next }, { gestureEnd: true })
 }
 
@@ -84,27 +82,36 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Delay"
+    help-text="Repeat sound in time with the beat"
     :cols="1"
     :rows="2"
   >
     <div class="flex w-full flex-col gap-3 text-xs">
-      <label class="flex flex-col gap-1">
-        <span class="text-[10px] uppercase tracking-wider text-zinc-500">Time</span>
-        <select
-          class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs font-mono tabular-nums text-zinc-100 outline-none focus:border-sky-500"
-          :value="noteValue"
+      <fieldset class="flex flex-col gap-1">
+        <legend class="text-[10px] uppercase tracking-wider text-zinc-500">
+          Time
+        </legend>
+        <div
+          class="grid grid-cols-4 gap-1"
+          role="group"
           aria-label="Delay time, in beats"
-          @change="onNoteChange(($event.target as HTMLSelectElement).value)"
         >
-          <option
+          <button
             v-for="note in NOTE_VALUES"
             :key="note"
-            :value="note"
+            type="button"
+            class="rounded border px-1 py-1 font-mono text-[11px] tabular-nums outline-none focus:border-sky-500"
+            :class="note === noteValue
+              ? 'border-sky-500 bg-sky-500/15 text-sky-200'
+              : 'border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-800'"
+            :aria-pressed="note === noteValue"
+            :aria-label="`Set delay time to ${note}`"
+            @click="onNoteChange(note)"
           >
             {{ note }}
-          </option>
-        </select>
-      </label>
+          </button>
+        </div>
+      </fieldset>
 
       <FxRangeControl
         v-for="control in CONTROLS"

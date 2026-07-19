@@ -4,6 +4,7 @@ import type {
   AutomationPoint,
   ClipEnvelopePoint,
   ClipWarpMode,
+  BeatRepeatDivision,
   DelayNoteValue,
   ScratchPattern,
   TransitionRecipe
@@ -86,6 +87,25 @@ export interface Transition {
   recipe: TransitionRecipe
 }
 
+/** A beat-aligned, per-track captured-loop region. */
+export interface BeatRepeatRegion {
+  readonly id: string
+  startBeat: number
+  lengthBeats: number
+  division: BeatRepeatDivision
+}
+
+export function beatRepeatDivisionBeats(division: BeatRepeatDivision): number {
+  switch (division) {
+    case '1/4':
+      return 1
+    case '1/8':
+      return 0.5
+    case '1/16':
+      return 0.25
+  }
+}
+
 export interface Track {
   readonly id: string
   name: string
@@ -113,8 +133,20 @@ export interface Track {
   pan?: number
   /** Leveler (soft-knee compressor) amount, linear [0,1] (0 = off). Suppressed-when-default. */
   levelerAmount?: number
+  /** Stereo-linked transient enhancement amount, linear [0,1] (0 = off). */
+  punchAmount?: number
+  /** Saturation drive and wet mix, linear [0,1]. Mix defaults to 1 when absent. */
+  saturationDrive?: number
+  saturationMix?: number
+  /** Bit crusher settings. Rate defaults to 1, Bits to 16, and Boost/Mix to 0. */
+  bitCrusherRate?: number
+  bitCrusherBits?: number
+  bitCrusherBoost?: number
+  bitCrusherMix?: number
   /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
   transitions?: Transition[]
+  /** Persisted beat-aligned stutter regions for this track. */
+  beatRepeats?: BeatRepeatRegion[]
   /** Per-track effect automation curves, keyed by parameter id. A lane is present
    *  only when it has a drawn curve (>= 2 breakpoints). */
   automation?: Partial<Record<AutomationParamId, AutomationPoint[]>>
@@ -297,6 +329,10 @@ export interface ProjectState {
   exportSettingsJson: string | null
   /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
   masterVolume: number
+  /** Fixed-ceiling final-output protection. */
+  safetyLimiterEnabled: boolean
+  /** One-control project-bus compressor amount. Zero is an exact bypass. */
+  mixGlueAmount: number
   /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower
    *  adds lead-in bars before bar one. Persisted with the project. */
   barCounterStart: number
