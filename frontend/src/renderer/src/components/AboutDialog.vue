@@ -51,7 +51,8 @@ watch(
       // Focus the dialog so the Escape handler picks up keys reliably.
       requestAnimationFrame(() => dialogEl.value?.focus())
     }
-  }
+  },
+  { immediate: true }
 )
 
 function openExternal(url: string): void {
