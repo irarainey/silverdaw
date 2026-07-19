@@ -164,10 +164,12 @@ out of monolithic implementation files.
 
 Silverdaw currently supports the core arrangement workflow:
 
-- Import audio into a project-scoped library (the panel's Import button, or **File ▸ Import to
-  Library…** / `Ctrl+I`) and drag it onto the timeline. Dropping onto an existing track places the
-  clip there; dropping onto the empty area below the tracks shows a "new track" drop lane and
-  creates a fresh track for the clip (one undo step).
+- Import audio into a project-scoped library by dropping files onto the Library,
+  using the panel's Import button, or choosing **File ▸ Import to Library…** /
+  `Ctrl+I`; then drag library items onto the timeline. You can also drop an
+  Explorer file directly onto an existing timeline track to import and place it.
+  Dropping one file onto empty timeline space creates a fresh track for it, and
+  dropping several files creates one new track per file at the drop position.
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.
@@ -1996,6 +1998,10 @@ The bottom library panel stores source, stem, sample, and clip items as draggabl
 Tiles wrap to the available width and the panel scrolls vertically when there are more
 tiles than fit; it does not expose a horizontal scrollbar. Each source tile shows
 duration, detected key and detected BPM when those fields are available.
+Use the filter field beside **Import** to narrow items by their displayed name,
+artist, or BPM. The circled **X** clears the filter. A matching saved clip keeps
+its source group visible and expands it for the duration of the filter. Press
+**Escape** while the filter field is focused to clear it.
 
 **Saved clips** — choose **Library ▸ Save Clip to Library** on a timeline clip to
 turn its trim window into a reusable library entry. Saved clips are non-destructive

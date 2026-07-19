@@ -14,6 +14,7 @@ import { effectiveTempoRatio } from '@/lib/warp'
 import { useLibraryDropZone } from '@/lib/library/useLibraryDropZone'
 import { useLibraryItemRename } from '@/lib/library/useLibraryItemRename'
 import { useLibraryItemActions } from '@/lib/library/useLibraryItemActions'
+import { libraryItemMatchesFilter } from '@/lib/library/libraryFilter'
 
 export type LibraryPanelProps = {
   /** Panel height in CSS pixels, excluding the resize handle. */
@@ -85,6 +86,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   } = useLibraryItemActions({ startRename })
 
   const itemCount = computed(() => library.items.length)
+  const filterQuery = ref('')
 
   const LIBRARY_CLIP_PILL_CLASS = LIBRARY_PILL_BASE_CLASS
   const LIBRARY_CLIP_BPM_PILL_CLASS = LIBRARY_BPM_PILL_CLASS
@@ -93,15 +95,43 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   // top-level items like imported sources — not nested under the original. The
   // link to the original survives via `derivedFrom` (badge + info-dialog note +
   // inherited cover art), not via tree nesting.
+  function matchesFilter(item: LibraryItem): boolean {
+    return libraryItemMatchesFilter(item, filterQuery.value, library.byId)
+  }
+
+  const filteredChildrenBySourceId = computed(() => {
+    const childrenBySourceId = new Map<string, LibraryItem[]>()
+    for (const item of library.items) {
+      const sourceId = item.derivedFrom?.sourceItemId
+      if (!sourceId || item.kind === 'stem' || !matchesFilter(item)) continue
+
+      const children = childrenBySourceId.get(sourceId)
+      if (children) children.push(item)
+      else childrenBySourceId.set(sourceId, [item])
+    }
+    return childrenBySourceId
+  })
+
+  function filteredChildItems(source: LibraryItem): LibraryItem[] {
+    return filteredChildrenBySourceId.value.get(source.id) ?? []
+  }
+
   const sourceItems = computed(() =>
-    library.items.filter((item) => item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem')
+    library.items.filter((item) => {
+      const isTopLevel = item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem'
+      return isTopLevel && (matchesFilter(item) || filteredChildItems(item).length > 0)
+    })
   )
   const orphanLibraryClipItems = computed(() =>
     library.items.filter(
       (item) =>
         item.kind === 'clip' &&
-        !library.items.some((source) => source.id === item.derivedFrom?.sourceItemId)
+        !library.items.some((source) => source.id === item.derivedFrom?.sourceItemId) &&
+        matchesFilter(item)
     )
+  )
+  const filteredItemCount = computed(
+    () => sourceItems.value.length + orphanLibraryClipItems.value.length
   )
 
   async function onImportClick(): Promise<void> {
@@ -158,13 +188,6 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     // stem card reads like the file it came from.
     const originId = item.derivedFrom?.sourceItemId
     return (originId ? library.byId[originId]?.metadata?.artist : undefined) ?? ''
-  }
-
-  function childItems(source: LibraryItem): LibraryItem[] {
-    // Stems are top-level items, so only saved clips nest under their source.
-    return library.items.filter(
-      (item) => item.derivedFrom?.sourceItemId === source.id && item.kind !== 'stem'
-    )
   }
 
   /**
@@ -273,6 +296,8 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     closeItemContextMenu,
     onContextMenuCommand,
     itemCount,
+    filterQuery,
+    filteredItemCount,
     LIBRARY_CLIP_PILL_CLASS,
     LIBRARY_CLIP_BPM_PILL_CLASS,
     SAMPLE_PILL_CLASS,
@@ -285,7 +310,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
     formatClipDuration,
     displayTitle,
     displayArtist,
-    childItems,
+    filteredChildItems,
     groupCoverArtUrl,
     libraryClipEffectiveBpm,
     keyBadgeClass,

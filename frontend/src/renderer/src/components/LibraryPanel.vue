@@ -35,6 +35,8 @@ const {
   closeItemContextMenu,
   onContextMenuCommand,
   itemCount,
+  filterQuery,
+  filteredItemCount,
   LIBRARY_CLIP_PILL_CLASS,
   LIBRARY_CLIP_BPM_PILL_CLASS,
   SAMPLE_PILL_CLASS,
@@ -47,7 +49,7 @@ const {
   formatClipDuration,
   displayTitle,
   displayArtist,
-  childItems,
+  filteredChildItems,
   groupCoverArtUrl,
   libraryClipEffectiveBpm,
   keyBadgeClass,
@@ -79,6 +81,7 @@ const {
 
     <LibraryPanelHeader
       v-model:active-tab="activeTab"
+      v-model:filter-query="filterQuery"
       :collapsed="ui.libraryPanelCollapsed"
       :item-count="itemCount"
       @toggle-collapsed="ui.toggleLibraryPanelCollapsed()"
@@ -93,6 +96,8 @@ const {
         v-if="activeTab === 'library'"
         v-model:editing-value="editingValue"
         :item-count="library.items.length"
+        :filtered-item-count="filteredItemCount"
+        :filter-query="filterQuery"
         :source-items="sourceItems"
         :orphan-library-clip-items="orphanLibraryClipItems"
         :is-drag-over="isDragOver"
@@ -105,7 +110,7 @@ const {
         :format-clip-duration="formatClipDuration"
         :display-title="displayTitle"
         :display-artist="displayArtist"
-        :child-items="childItems"
+        :child-items="filteredChildItems"
         :group-cover-art-url="groupCoverArtUrl"
         :library-clip-effective-bpm="libraryClipEffectiveBpm"
         :key-badge-class="keyBadgeClass"

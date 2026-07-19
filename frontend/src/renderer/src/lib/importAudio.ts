@@ -29,6 +29,52 @@ function withRedetectedKey(metadata: AudioMetadata | null, detectedKey: string |
   return next
 }
 
+/** True when a drag event carries filesystem files rather than an in-app payload. */
+export function hasDroppedFiles(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types
+  if (!types) return false
+  for (let i = 0; i < types.length; i++) {
+    if (types[i] === 'Files') return true
+  }
+  return false
+}
+
+/** Import Explorer-dropped files through the same preflight and decode path as Library import. */
+export async function importDroppedAudioFiles(files: readonly File[]): Promise<LibraryItem[]> {
+  const library = useLibraryStore()
+  const paths: string[] = []
+
+  for (const file of files) {
+    const path = window.silverdaw.getPathForFile(file)
+    if (!path) {
+      log.warn('import', `dropped file has no path: ${file.name}`)
+      continue
+    }
+    paths.push(path)
+  }
+
+  if (paths.length === 0) return []
+  if (await preflightSampleRates(paths) === 'cancel') {
+    log.info('import', 'drag/drop import cancelled at sample-rate prompt')
+    return []
+  }
+
+  library.beginImportBatch(paths.length)
+  const imported = new Map<string, LibraryItem>()
+  for (const path of paths) {
+    const opened = await window.silverdaw.readAudioFile(path)
+    if (!opened) {
+      library.noteImportFinished()
+      continue
+    }
+    const itemId = await importAudioIntoLibrary(opened)
+    const item = itemId ? library.getItem(itemId) : undefined
+    if (item) imported.set(item.id, item)
+  }
+
+  return Array.from(imported.values())
+}
+
 /** Probe true sample rates before batched import; prompt only when buckets mismatch. */
 export async function preflightSampleRates(filePaths: readonly string[]): Promise<'proceed' | 'cancel'> {
   if (filePaths.length === 0) return 'proceed'

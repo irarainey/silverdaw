@@ -12,13 +12,13 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="flex h-full items-stretch"
+    class="flex h-full shrink-0 items-stretch"
     style="-webkit-app-region: no-drag"
   >
     <button
       type="button"
       data-borderless-button="true"
-      class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
+      class="flex h-full w-11 shrink-0 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
       :disabled="props.disabled"
       aria-label="Minimise"
       title="Minimise"
@@ -40,7 +40,7 @@ const emit = defineEmits<{
     <button
       type="button"
       data-borderless-button="true"
-      class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-0"
+      class="flex h-full w-11 shrink-0 items-center justify-center text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
       :disabled="props.disabled"
       aria-label="Maximise or restore"
       title="Maximise / Restore"
@@ -66,7 +66,7 @@ const emit = defineEmits<{
     <button
       type="button"
       data-borderless-button="true"
-      class="flex h-full w-11 items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white disabled:pointer-events-none disabled:opacity-0"
+      class="flex h-full w-11 shrink-0 items-center justify-center text-zinc-400 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
       :disabled="props.disabled"
       aria-label="Close"
       title="Close"

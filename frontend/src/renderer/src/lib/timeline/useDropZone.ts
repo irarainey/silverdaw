@@ -34,7 +34,15 @@ export interface DropPreview {
 export interface DropZone {
   /** Current ghost preview (null when no library drag is over the canvas). */
   dropPreview: Ref<DropPreview | null>
+  /** Resolve a pointer position before an external file is imported. */
+  resolveDropTarget: (clientX: number, clientY: number) => TimelineDropTarget | null
+  /** Convert a raw timeline position to a beat-aware clip start for an imported item. */
+  startMsForItem: (rawMs: number, item: LibraryItem) => number
 }
+
+export type TimelineDropTarget =
+  | { createNewTrack: false; trackIndex: number; rawMs: number }
+  | { createNewTrack: true; rawMs: number }
 
 export interface DropZoneOptions {
   host: Ref<HTMLElement | null>
@@ -88,13 +96,8 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
   /** Map a pointer to either a valid track drop or, when it is in the empty area below the
    *  tracks (or the project has no tracks), a new-track drop. Returns null when the pointer
-   *  is outside the droppable content area or in an inter-row gap. `startMs` is beat-aware
-   *  snapped for both. */
-  type ResolvedDrop =
-    | { createNewTrack: false; trackIndex: number; startMs: number }
-    | { createNewTrack: true; startMs: number }
-
-  function resolveDrop(clientX: number, clientY: number, item: LibraryItem): ResolvedDrop | null {
+   *  is outside the droppable content area or in an inter-row gap. */
+  function resolveDropTarget(clientX: number, clientY: number): TimelineDropTarget | null {
     const a = app.value
     if (!host.value || !a) return null
     const rect = host.value.getBoundingClientRect()
@@ -109,22 +112,37 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000
-    const snap = geometry.msPerSubBeat()
-    const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
-    const startMs =
-      referenceBeatOffsetMs !== null
-        ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
-        : Math.max(0, Math.round(rawMs / snap) * snap)
 
     const worldY = y + scrollY.value
     const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
-    if (hit) return { createNewTrack: false, trackIndex: hit.index, startMs }
+    if (hit) return { createNewTrack: false, trackIndex: hit.index, rawMs }
 
     // No track under the pointer. If it sits below the last row (or the project has no tracks
     // yet), offer to make a new track; an inter-row gap resolves to nothing.
     const tracksBottom = RULER_HEIGHT + tracksContentHeight(project.tracks, makeLaneHeightOf())
-    if (worldY >= tracksBottom) return { createNewTrack: true, startMs }
+    if (worldY >= tracksBottom) return { createNewTrack: true, rawMs }
     return null
+  }
+
+  function startMsForItem(rawMs: number, item: LibraryItem): number {
+    const snap = geometry.msPerSubBeat()
+    const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
+    return referenceBeatOffsetMs !== null
+      ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
+      : Math.max(0, Math.round(rawMs / snap) * snap)
+  }
+
+  type ResolvedDrop =
+    | { createNewTrack: false; trackIndex: number; startMs: number }
+    | { createNewTrack: true; startMs: number }
+
+  function resolveDrop(clientX: number, clientY: number, item: LibraryItem): ResolvedDrop | null {
+    const target = resolveDropTarget(clientX, clientY)
+    if (!target) return null
+    const startMs = startMsForItem(target.rawMs, item)
+    return target.createNewTrack
+      ? { createNewTrack: true, startMs }
+      : { createNewTrack: false, trackIndex: target.trackIndex, startMs }
   }
 
   function firstSourceBeatOffsetMs(item: LibraryItem): number | null {
@@ -385,5 +403,5 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     }
   })
 
-  return { dropPreview }
+  return { dropPreview, resolveDropTarget, startMsForItem }
 }

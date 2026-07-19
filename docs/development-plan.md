@@ -1363,6 +1363,9 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 
 ### 7.12 Sample Browser & Library
 - Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
+- **Library filter:** a field beside **Import** filters displayed names, artists,
+  and BPM values; its circled clear button or **Escape** while focused restores
+  the full Library.
 - Preview playback through the Clip Editor preview voice is implemented for any library tile; preview-at-project-BPM is deferred to Phase 8
 - Displays duration, detected key, stable/variable BPM badges and coloured key badges per file
 - **Drag-to-timeline** creates a clip at the drop position; default-on auto-warp
@@ -1373,7 +1376,8 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
 - **Vertical scroll:** virtualised list once item count exceeds visible height; library never overflows the panel.
 - **Tags:** Phase 8 chip-input on each card, stored on library items.
-- **Search & filter:** Phase 8 debounced text search across filename / tags / detected key. Quick filters by tag chip; sort by name / BPM / duration / date added.
+- **Future library browsing:** Phase 8 adds tag filtering and sorting by name,
+  BPM, duration, or date added.
 - **Library item information dialog:** pick **Show information** from a library tile's right-click context menu (double-clicking the tile opens the Clip Editor instead) → opens a non-blocking dialog with file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata (artist / title / cover art), the item type (source / stem / sample / clip), provenance labels (**Separated from** for stems, **Saved from** for samples, **Source** for clips / other items), and a list of every track on the timeline where this file is currently placed. Tag editing and jump-to-clip links are Phase 8 polish.
 - Rendered in Vue (panel) + Pixi (waveform thumbnails); no Pixi for the list cards.
 
@@ -1721,7 +1725,11 @@ remain **deprioritised**. Final ordering is still under review.
 
 **Goal:** Import a file, see it on the timeline, drag it around, hear it play.
 
-- [x] File drop onto timeline: sends `CLIP_ADD`, renders clip on `CLIP_ADDED`
+- [x] Explorer file drop onto timeline: imports through the Library pipeline,
+  places one file on the target track, or creates one new track per file when
+  dropped onto empty timeline space or as a multi-file drop
+- [x] File drop onto Library: imports dropped audio through the same preflight
+  and import pipeline as the Import button
 - [x] Clip drag-and-drop in PixiJS: move along timeline and between tracks
 - [x] Beat grid snapping in frontend (quantise position before sending command)
 - [x] Project-scoped library panel: imported-item tiles with duration, detected key and BPM display *(tags / list view / search are deferred to Phase 8 unless needed sooner)*
