@@ -185,11 +185,11 @@ Silverdaw currently supports the core arrangement workflow:
   the resulting fade to choose the **Smooth** or **Fade out/in** recipe, or
   remove it; every change is undoable.
 - Split a stereo clip's **Left** and/or **Right** channel onto its own new track
-  (right-click ▸ **Split Stereo Channels…**); each channel becomes a stereo clip carrying
+  (**Transform ▸ Split Stereo Channels…**); each channel becomes a stereo clip carrying
   only that side, inheriting the source's grid and warping like a stem.
 - Move clips across tracks with grid snapping, source-beat snapping and `Alt` bypass.
-- Loop-slice a timeline clip into adjacent clips or saved samples: right-click ▸
-  **Chop to Grid** (whole bar down to 1/32) for a quick grid chop, or open the Clip
+- Loop-slice a timeline clip into adjacent clips or saved samples:
+  **Transform ▸ Chop to Grid** (whole bar down to 1/32) for a quick grid chop, or open the Clip
   Editor's **Slice** mode for grid plus hand-placed markers.
 - Analyse imported audio for key, BPM, beat positions and variable-tempo status.
 - Non-destructive per-clip warp and pitch settings via Rubber Band. Dropped
@@ -238,7 +238,8 @@ Silverdaw currently supports the core arrangement workflow:
   **Delay** (tempo-locked), plus a **Safety Limiter** switch. The limiter is a
   fixed -1 dBFS, stereo-linked sample-peak guard on final output; it is not a
   true-peak or mastering limiter. All are edited live (slider drags coalesce into one undo
-  step) and applied to both playback and mixdown. The DSP lives in
+  step) and applied to both playback and mixdown. FX racks wrap to the available
+  panel width and the panel scrolls vertically rather than horizontally. The DSP lives in
   [`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
   [`Saturation`](../backend/src/dsp/Saturation.h) /
   [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
@@ -254,7 +255,8 @@ Silverdaw currently supports the core arrangement workflow:
   Beat Repeat**, choose a `1/2`-beat, 1-beat, 2-beat, or 1-bar duration, then
   `1/4`, `1/8`, or `1/16`, to add a region at the beat-snapped playhead.
   Its first division of the mixed track is captured and repeated until the
-  region ends. The same context menu removes a region under the pointer.
+  region ends. The same **Effects ▸ Beat Repeat** submenu removes a region under
+  the pointer.
   Regions show as a sky overlay and affected clips carry a **REPEAT** badge.
   Playback and mixdown use the same processor. A seek, timeline discontinuity,
   or region edit clears the capture so playback begins from fresh track audio
@@ -276,7 +278,7 @@ Silverdaw currently supports the core arrangement workflow:
   editing a breakpoint in either lane edits the one shared shape (the engine
   applies that shape equally to both channels).
 - **Reverse clip.** A clip can be played back-to-front non-destructively. The
-  flag is set from the timeline clip's right-click ▸ **Reverse** entry (a
+  flag is set from the timeline clip's **Effects ▸ Reverse** entry (a
   checkmarked toggle) or from the **Reverse** toggle in the Clip Editor toolbar,
   where it is part of the transactional draft and previewed live. Reversal is a
   per-clip `reversed` flag — the source file is never rewritten; the audio engine
@@ -292,7 +294,7 @@ Silverdaw currently supports the core arrangement workflow:
   then slows to a stop). A clip can have a **Brake or a Backspin, never both** —
   the two are mutually exclusive at the data level (setting one clears the other in
   the store, `ProjectState`, and the engine). The UI extends this to a three-way
-  group with **Reverse**: in **both** the timeline right-click menu and the Clip
+  group with **Reverse**: in **both** the timeline **Effects** menu and the Clip
   Editor toolbar, each of Reverse / Brake / Backspin stays visible but is
   **disabled while another in the group is set** (and the engine only applies a tail
   to forward clips). Stored as suppressed-when-off per-clip booleans `brake` /
@@ -319,7 +321,7 @@ Silverdaw currently supports the core arrangement workflow:
   **individual library samples**. The Clip Editor's **Slice** toolbar toggle
   (mutually exclusive with Volume mode) opens an on-waveform marker overlay plus a
   **Slice** panel (subdivision picker, **Generate to grid**, marker count, **Slice
-  to timeline** / **Slice to samples**); a timeline right-click ▸ **Chop to Grid**
+  to timeline** / **Slice to samples**); a timeline **Transform ▸ Chop to Grid**
   submenu is the no-editor quick path. Slice-to-timeline reuses the client-side
   split (right→left, one **Slice clip** undo step, warp-aware) and inherits split's
   locked/linked guards; slice markers are transient Clip-Editor draft state and are
@@ -345,7 +347,7 @@ Silverdaw currently supports the core arrangement workflow:
   brake / backspin tails all bake into the mixdown identically (the offline
   graph builds the same `OffsetSource` snapshots), so what you hear is what you
   export.
-- **Clip lock** (Ctrl+L or right-click ▸ Lock / Unlock) freezes a single
+- **Clip lock** (Ctrl+L or **Edit ▸ Lock / Unlock**) freezes a single
   timeline clip against accidental move / trim / split. Locked clips show a
   padlock badge in their title strip, refuse drag-move and edge-trim gestures
   silently, and surface a toast if the user tries Split-at-playhead on them.
@@ -368,8 +370,8 @@ Silverdaw currently supports the core arrangement workflow:
   linked timeline instance in lockstep, unless a collision would result (in which
   case the user is prompted and the edit is rejected). Linked clips show a small
   chain badge in their title strip and are locked against edge-resize on the timeline
-  — to free a single instance for per-clip trim use right-click ▸ **Unlink from
-  library**. Removing a saved clip from the library is always allowed: every
+  — to free a single instance for per-clip trim use **Library ▸ Unlink from
+  Library**. Removing a saved clip from the library is always allowed: every
   dependent timeline clip is silently unlinked first so the audio plays on as an
   independent clip referencing the underlying source file.
 - Bake timeline clips or library clip items into new WAV samples. Timeline clips
@@ -384,8 +386,9 @@ Silverdaw currently supports the core arrangement workflow:
   to samples** (one WAV per slice, default **simple** one-shots, named per slice).
   The backend writes them in a single batch via `CLIP_SLICE_TO_SAMPLES`, and the
   renderer shows one summary toast for the whole run.
-- **Split Stereo Channels…** on a stereo timeline clip (right-click; hidden when
-  the source isn't 2-channel) opens a Left/Right picker. Each chosen channel is
+- **Split Stereo Channels…** on a stereo timeline clip (**Transform ▸ Split
+  Stereo Channels…**; hidden when the source isn't 2-channel) opens a Left/Right
+  picker. Each chosen channel is
   exported via `CLIP_SPLIT_CHANNELS` — the backend reuses the sample-export writer
   (`SampleExport.cpp`) with a channel-duplicate step (`ChannelSplitDsp.h`) to write
   a raw source-window WAV whose L and R both carry that one channel, under a
@@ -478,8 +481,8 @@ play seamlessly.
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain
-beyond the per-track Tone EQ + Filter, Compressor, and Saturation, the
-project-wide Reverb and Delay sends,
+beyond the per-track Tone EQ + Filter, Compressor, Saturation, and Bit Crusher,
+the project-wide Reverb and Delay sends, Safety Limiter, and Beat Repeat,
 the track effect automation lanes, the per-clip Volume Shape, and the per-clip
 turntable Brake / Backspin tails that already ship).
 
@@ -880,6 +883,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         metronomeEnabled?, clipEditorMetronomeEnabled?,
+        safetyLimiterEnabled?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
         delayNoteValue?, delayFeedback?, delayTone?, delayMix?,
         scratchPatterns?]
@@ -888,6 +892,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         sendReverb?, sendDelay?, pan?, levelerAmount?, saturationDrive?, saturationMix?,
         bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?, automation?,
         transitions?]
+    BEAT_REPEAT[id, startBeat, lengthBeats, division]*
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
@@ -982,7 +987,7 @@ save when off, and round-trips through `PROJECT_STATE` and the `.silverdaw` file
 effects; they are toggled from the timeline via `CLIP_SET_BRAKE` /
 `CLIP_SET_BACKSPIN` and from the Clip Editor's Brake / Backspin toolbar toggles.
 Like reverse, they **propagate across linked saved clip siblings** — toggling one
-on a linked clip (timeline right-click or Clip-Editor Save) routes through
+on a linked clip (timeline **Effects** menu or Clip-Editor Save) routes through
 `library.updateLibraryClipBrake` / `updateLibraryClipBackspin`, which fans the flag
 out to every linked timeline instance; an unlinked clip is set directly. Their
 global duration / curve / intensity defaults are
@@ -1010,7 +1015,10 @@ save at their defaults. `bitCrusherRate` is a `[0.01, 1]` sample-rate ratio,
 `0`, and Mix `0`. The shared buses themselves live on the `PROJECT` node:
 `reverbSize` / `reverbDecay` / `reverbTone` / `reverbMix` describe the single
 project **Reverb**, and `delayNoteValue` / `delayFeedback` / `delayTone` /
-`delayMix` the project **Delay** (tempo-locked). `CLIP.envelopePoints` is
+`delayMix` the project **Delay** (tempo-locked). `safetyLimiterEnabled` enables
+the final fixed `-1 dBFS` sample-peak guard. Each `TRACK` can also have optional
+`BEAT_REPEAT` children: `{ id, startBeat, lengthBeats, division }` regions stored
+in beat space; older projects simply have none. `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
@@ -1270,8 +1278,9 @@ per-track Tone EQ + bipolar Filter, the per-track Leveler, Saturation, and Bit C
 [`BitCrusher`](../backend/src/dsp/BitCrusher.h) /
 [`TrackChain`](../backend/src/dsp/TrackChain.h)),
 the per-track Reverb / Delay sends into the project-wide shared-FX buses,
-track gain and mute / solo, equal-power panning, the master mix and metering,
-and the `MasterClockSource` that gates playback and feeds the device. The
+track gain and mute / solo, equal-power panning, the master mix, master gain,
+Safety Limiter, metering, and the `MasterClockSource` that gates playback and
+feeds the device. The
 `AudioSourcePlayer` hands 32-bit float to the OS audio driver, which converts
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
@@ -1961,7 +1970,7 @@ Tiles wrap to the available width and the panel scrolls vertically when there ar
 tiles than fit; it does not expose a horizontal scrollbar. Each source tile shows
 duration, detected key and detected BPM when those fields are available.
 
-**Saved clips** — right-click a timeline clip and choose **Save Clip to Library** to
+**Saved clips** — choose **Library ▸ Save Clip to Library** on a timeline clip to
 turn its trim window into a reusable library entry. Saved clips are non-destructive
 references back into their source file (same audio, same WAV cache, same BPM / key)
 and are grouped underneath the source they came from. Each source group has a
@@ -1971,7 +1980,7 @@ the group so the new clip is immediately visible. Dragging a saved clip tile ont
 timeline clip with the same source window and non-destructive warp defaults the
 saved clip describes.
 
-**Samples** — right-click a timeline clip and choose **Save as Sample…** to open
+**Samples** — choose **Library ▸ Save as Sample…** on a timeline clip to open
 the **Save as Sample** dialog, or right-click a library clip and choose
 **Save as Sample (Music)** or **Save as Sample (Simple)** to bake a new WAV.
 Silverdaw writes the file to
@@ -2039,12 +2048,12 @@ first and continues playing from the underlying source).
 **Clip Editor** — the same dialog opens from four entry surfaces:
 
 - Double-click a **library tile**, or pick **Preview** / **Open in editor** from
-  its right-click menu: source, stem, and sample items open a **read-only
+  its **Open** menu: source, stem, and sample items open a **read-only
   preview** (select a section there to **Save Selection to Library**), while a
   saved **clip** item opens the editable editor.
 - Double-click a **timeline clip body** (anywhere other than the title strip,
-  which still inline-renames), or pick **Open in editor** from the clip's
-  right-click menu, to edit that timeline clip — its window, warp and pitch.
+  which still inline-renames), or pick **Open ▸ Clip Editor** from the clip
+  menu, to edit that timeline clip — its window, warp and pitch.
 
 The dialog renders the source waveform with an adaptive time ruler, faint
 beat lines extrapolated from the detected BPM, and zoom + horizontal scroll
@@ -2157,8 +2166,8 @@ less expressive fallback for creating a simple pattern, which the notation
 editor can refine into a more complex scratch.
 
 **Opening.** A single reused dialog instance is hosted in `App.vue` and driven by
-`useScratchEditorStore`. It opens either from a **timeline clip** (right-click ▸
-*Open in Scratch Editor*, enabled only for a resolved clip that has a library
+`useScratchEditorStore`. It opens either from a **timeline clip** (**Open ▸
+Scratch Editor**, enabled only for a resolved clip that has a library
 item) or from a **library item** (the library-tile context menu, any kind —
 including a previously saved scratch-origin item, which prepares its session
 from the self-contained `scratchSourcePath` snapshot written at save time — the
@@ -2685,6 +2694,15 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 
 ### Timeline commands
 
+**Nested clip context menu.** On a single clip, commands are grouped under
+**Open** (Clip Editor, Scratch Editor, information), **Edit** (cut, copy, paste,
+duplicate, lock, split), **Transform** (Chop to Grid, Warp, Pitch, Separate
+Stems, Split Stereo Channels), **Effects** (Beat Repeat, Reverse, Brake,
+Backspin), **Crossfade** (recipes and removal when applicable), and **Library**
+(save, unlink, bake a sample). The **Colour** picker and **Delete** remain direct
+entries; **Relink** is also direct when a clip is unresolved. The dedicated
+multi-selection and empty-track menus show only actions relevant to that target.
+
 | Input | Effect |
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
@@ -2696,7 +2714,7 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `Ctrl` + click on **clip** | Toggle that clip in/out of the multi-selection, across tracks. Right-clicking any selected clip opens a dedicated menu (Copy, Cut, Lock, Colour, Duplicate, Delete) that acts on the whole selection; **Delete**, **Ctrl+L** and **Duplicate** also apply to every selected clip as one undo step. **Copy / Cut / Paste** (Ctrl+C/X/V) carry the whole selection — paste drops it at the playhead starting on the selected track, keeping each clip's relative timing and track offset, and is rejected wholesale if any clip wouldn't fit. Dragging any selected clip moves the whole group by a uniform delta (preserving relative offsets, across tracks), applied atomically — the move is refused wholesale if any clip wouldn't fit or one is locked. **Shift + ←/→** (and **Shift+Alt+←/→** for 1 ms) nudge the whole group. A plain click on a selected clip (no drag) collapses back to just that clip. |
 | Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
-| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (right-click ▸ Unlink first, or use the Clip Editor) and on **locked** clips (Ctrl+L or right-click ▸ Unlock to free). |
+| Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (**Library ▸ Unlink from Library** first, or use the Clip Editor) and on **locked** clips (Ctrl+L or **Edit ▸ Unlock** to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
 | Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
@@ -2704,7 +2722,7 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | Double-click the **master volume readout** in the transport bar | Type a master gain in dB directly (range `-∞..0 dB` — no boost above unity). Same parser as the track readout. |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip, and move the playhead to the click position (drag to scrub). |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track, and move the playhead to the click position. |
-| **Right-click on an empty track lane** | Open a **Paste** menu that drops the clipboard clip onto that track at the playhead (disabled when the clipboard is empty). Click first to place the playhead where the paste should land. |
+| **Right-click on an empty track lane** | Open a menu with **Paste** and **Effects ▸ Beat Repeat**. Paste drops the clipboard clip onto that track at the playhead (disabled when the clipboard is empty); Beat Repeat acts at the beat-snapped playhead. Click first to place the playhead where the action should land. |
 | `←` / `→` | Step the playhead one grid line (sub-beat). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
 | `Shift` + `←` / `→` | Move the **selected** clip one beat-grid step, snapping its first in-window source beat to the project sub-beat grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
@@ -2733,7 +2751,7 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `Ctrl + V` | Paste the clipboard clip to the selected track at the playhead. A toast appears if the selected track has no space at that position. |
 | `Ctrl + Z` / `Ctrl + Y` | Undo / redo any project-mutating edit (clip / track / library / marker / BPM / length / rename / master volume). Drag streams coalesce within 500 ms into one step, and compound ops (split / duplicate / paste) fold into a single undo step. |
 | `Ctrl + L` | Toggle the **lock** flag on the selected clip. Locked clips refuse drag-move, edge-trim and Split-at-playhead, and show a padlock badge in their title strip. Per-clip — linked saved clip siblings stay independently lockable. |
-| **Right-click on a clip** | Open the context menu: **Open in editor**, **Show information**, **Cut** / **Copy** / **Paste** (Cut and Copy act on the right-clicked clip — selecting it and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit-menu / Ctrl+X·C·V behaviour), **Lock** / **Unlock** (Ctrl+L), **Delete**, **Duplicate**, **Split at playhead** (label changes to "Split at playhead (clip is locked)" on a locked clip; the entry stays clickable so the store guard can surface a toast), **Chop to Grid** (a submenu — whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 — that slices the whole clip onto the beat grid in one undo step; shown only for an unlocked, unlinked clip with a known tempo), an inline 16-swatch **Colour** picker, **Reverse** (a checkmarked toggle that plays the clip back-to-front; propagates to every linked saved clip sibling), **Brake** / **Backspin** (checkmarked toggles for the turntable record-stop / reverse-rewind tail effects, also propagated across linked siblings — Reverse, Brake and Backspin form a mutually-exclusive group, so each entry stays visible but is **disabled** while any other in the group is set), **Save Clip to Library**, **Save as Sample…** (opens the **Save as Sample** dialog with **Music** and **Simple** choices), **Split Stereo Channels…** (stereo clips only — splits the Left and/or Right channel onto its own new track), **Warp** for BPM/time-stretch controls, and **Pitch** for semitone/cents tuning. The Warp and Pitch context-menu entries open lightweight transactional dialogs (**Save** applies, **Cancel** / close discards); for richer multi-setting editing use **Open in editor** instead. **Warp and Pitch work on linked clips too** — the dialog detects that the parent library item is a saved clip and routes the save through `library.updateLibraryClipWarp`, which updates the library entry and propagates to every linked timeline instance in lockstep (the dialog footer surfaces a small "Saving updates the library entry and every linked timeline clip" notice when that path is active). Shows **Relink** at the top when the clip is unresolved. |
+| **Right-click on a clip** | Open the nested context menu described above. Cut and Copy select the right-clicked clip and its track first; Paste needs a clip on the clipboard and lands on this clip's track at the playhead, mirroring the Edit menu / Ctrl+X·C·V behaviour. **Edit ▸ Split at Playhead** changes label when the clip is locked but stays clickable so the store guard can surface a toast. **Transform ▸ Chop to Grid** offers whole bar / 1/2 bar / 1/4 / 1/8 / 1/16 for eligible unlocked, unlinked clips with a known tempo. **Effects** keeps Reverse, Brake, and Backspin mutually exclusive and checkmarks the active one. **Transform ▸ Warp / Pitch** open transactional dialogs; **Library ▸ Save as Sample…** opens the Music / Simple choice. Shows direct **Relink** at the top when the clip is unresolved. |
 | Double-click on a **clip body** (off the title strip) | Open the **Clip Editor** for that timeline clip. Trim, warp and pitch are held as a draft until **Save**; **Cancel** discards. Save scope follows the linked/unlinked state of the clip — see the [Clip Editor](#clip-editor) section. |
 | Double-click on a **clip title strip** (top of the clip block) | Inline-rename the clip. Enter commits, Escape cancels, clicking outside also commits. The name is shown on the clip and used as the default name when the clip is saved to the library. |
 | Double-click a **library tile name** | Inline-rename the library item (same gesture as the project title). |

@@ -525,7 +525,7 @@ the backend and driven from the shared master transport clock.
 Users turn a timeline clip or a library clip item into a reusable sample in one
 action (region-to-sample arrives with the selection primitive in §7.2.1):
 
-- Select a timeline clip → right-click → **Save as Sample…**, then choose
+- Select a timeline clip → **Library ▸ Save as Sample…**, then choose
   **Music** or **Simple** in the **Save as Sample** dialog
 - Select a library clip tile → right-click → **Save as Sample (Music)** or
   **Save as Sample (Simple)**
@@ -582,12 +582,37 @@ Runs automatically on every import, in the background:
 ### 7.5 Clip Editing Primitives
 Non-destructive clip operations on the timeline. Each operation mutates the `ValueTree` (so undoable) but never touches the underlying audio file — they're just changes to in/out points and clip references.
 
+**Nested clip context menu.** The single-clip menu groups commands under
+**Open** (Clip Editor, Scratch Editor, information), **Edit** (cut, copy, paste,
+duplicate, lock, split), **Transform** (Chop to Grid, Warp, Pitch, Separate
+Stems, Split Stereo Channels), **Effects** (Beat Repeat, Reverse, Brake,
+Backspin), **Crossfade** (recipes and removal when applicable), and **Library**
+(save, unlink, bake a sample). The **Colour** picker and **Delete** remain direct
+entries; **Relink** is also direct when the clip is unresolved. Multi-selection
+and empty-track menus intentionally show only the actions that apply to them.
+
 - **Crop** — trim a clip's `inMs` / `outMs` to a selected region. Underlying file untouched.
 - **Split** — slice a clip at the playhead (or at every selected mark) into N adjacent clips that together reference the same file. Cheap: O(1) ValueTree edits, zero audio I/O.
-- **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or right-click → "Duplicate to Beat Grid"). Both clips reference the same file; the duplicate gets its own clip id so it can be edited independently.
+- **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or
+  **Edit ▸ Duplicate**). Both clips reference the same file; the duplicate gets
+  its own clip id so it can be edited independently.
 - **Repeat-to-loop** — a special-case duplicate that fills a region with N copies of a clip at clip-length spacing; ideal for looping a short sample across a section.
-- **Lock / Unlock** — `Ctrl+L` or right-click ▸ Lock freezes a single clip against accidental move / trim / split. Locked clips show a padlock badge on the title strip, refuse drag-move and edge-trim gestures silently, and surface a toast if Split-at-playhead is invoked on them. Double-click still opens the Clip Editor so warp / pitch / crop remain editable via that surface. The lock is per-clip — linked saved clip siblings stay independently lockable — and persisted on the clip's `locked` ValueTree property (absent == unlocked).
-- **Reverse** — right-click ▸ Reverse (a checkmarked toggle) or the **Reverse** toggle in the Clip Editor toolbar plays the clip's source window back-to-front. It is non-destructive: the source file is never rewritten — the audio engine reads the clip window in reverse. From the context menu the toggle propagates to every linked saved clip sibling; in the Clip Editor it is part of the transactional draft, previewed live, and committed on **Save** following the same scope as the other draft edits. Persisted on the clip's `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` / `PREVIEW_SET_REVERSED`.
+- **Lock / Unlock** — `Ctrl+L` or **Edit ▸ Lock** freezes a single clip against
+  accidental move / trim / split. Locked clips show a padlock badge on the title
+  strip, refuse drag-move and edge-trim gestures silently, and surface a toast if
+  Split-at-playhead is invoked on them. Double-click still opens the Clip Editor
+  so warp / pitch / crop remain editable via that surface. The lock is per-clip —
+  linked saved clip siblings stay independently lockable — and persisted on the
+  clip's `locked` ValueTree property (absent == unlocked).
+- **Reverse** — **Effects ▸ Reverse** (a checkmarked toggle) or the
+  **Reverse** toggle in the Clip Editor toolbar plays the clip's source window
+  back-to-front. It is non-destructive: the source file is never rewritten —
+  the audio engine reads the clip window in reverse. From the context menu the
+  toggle propagates to every linked saved clip sibling; in the Clip Editor it is
+  part of the transactional draft, previewed live, and committed on **Save**
+  following the same scope as the other draft edits. Persisted on the clip's
+  `reversed` ValueTree property (absent == forward) via `CLIP_SET_REVERSED` /
+  `PREVIEW_SET_REVERSED`.
 
 ### 7.6 Loop Slicing
 
@@ -599,8 +624,8 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
 
 - **Surface.** The primary home is the **Clip Editor** as a **Slice** mode toggle
   (mirroring the Volume Shape overlay): full-source waveform, zoom, and looped
-  audition. A thin timeline context-menu **Chop to Grid** submenu (1 bar · 1/2 bar
-  · 1/4 · 1/8 · 1/16) is a cheap wrapper over the same commit path for the common
+  audition. A thin **Transform ▸ Chop to Grid** submenu (1 bar · 1/2 bar ·
+  1/4 · 1/8 · 1/16) is a cheap wrapper over the same commit path for the common
   "chop a loop" case.
 - **Slice points (source-absolute draft).** Markers are held in **source-time ms**
   — the Clip Editor's native coordinate space — and only converted to timeline
@@ -637,7 +662,7 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
   the musical grid; butted slices are sample-continuous until rearranged.
 
 ### 7.7 Stem Separation
-- Triggered from the clip context menu (**Separate Stems**) or from a source or
+- Triggered from the clip context menu (**Transform ▸ Separate Stems**) or from a source or
   sample library item's context menu; it is hidden for stems, and a one-time
   model download is offered on first use
 - When the required models are missing, the one-time download prompt is shown **first**; the stem picker (vocals / drums / bass / other, nothing ticked by default so you pick only what you need) opens once the download completes — or immediately when the models are already installed. Only the chosen stems are separated, which proportionally shortens the run. The picker also carries an optional per-run **Remove Reverb & Echo** tick nested under Vocals (Light / Medium / Strong), a fresh choice each run rather than a saved preference
@@ -651,7 +676,8 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
 
 ### 7.8 Harmonic Matching
 - Detected key displayed on every clip in the timeline
-- Clip-level pitch shift via Rubber Band, applied non-destructively (controlled from the clip inspector / context menu — semitone field + cents trim)
+- Clip-level pitch shift via Rubber Band, applied non-destructively (controlled
+  from the clip inspector or **Transform ▸ Pitch** — semitone field + cents trim)
 - Phase 8 visual indicators can flag harmonically compatible clip pairs once
   the core key display and pitch controls are stable
 
@@ -666,11 +692,13 @@ how a beginner actually thinks about the work:
 - **Per clip** — "fix this one bit" → the Volume Shape envelope on the clip
   itself, which also covers fade-in / fade-out (see §7.11).
 - **Per track** — "shape this instrument" → a small set of always-the-same
-  controls (Tone, Compressor, Reverb amount, Delay amount) in the **Track FX**
-  tab of the bottom panel (see §7.12). These same parameters — plus a post-FX
-  **Gain** — can also be automated over the timeline (see §7.11.1).
+  controls (Tone, Filter, Compressor, Saturation, Bit Crusher, Reverb amount,
+  Delay amount) in the **Track FX** tab of the bottom panel (see §7.12). These
+  same parameters — plus a post-FX **Gain** — can also be automated over the
+  timeline (see §7.11.1).
 - **Per project** — "the song's space" → one shared Reverb and one shared
-  Delay for the whole project, with character set once.
+  Delay for the whole project, with character set once, plus a fixed-ceiling
+  Safety Limiter on the final output.
 
 User-facing language favours familiar, DAW-standard terms — **Reverb**,
 **Delay**, **Pan**, **Bass / Mid / Treble**, **Compressor** — so the app reads
@@ -697,7 +725,8 @@ The engine topology uses two runtime objects:
 - **`TrackRuntime`** — one per UI track, **independent of clip count**.
   Owns a stable per-track output buffer at the engine's nominal block
   size + channel count, the per-track **`TrackChain`** of DSP processors
-  (Tone, Leveler, gain/mute/solo, pan), and the per-track send scalars
+  (Tone, Leveler, Saturation, Bit Crusher, gain/mute/solo, pan), and the
+  per-track send scalars
   (`reverbSend`, `delaySend`). Clips on this track feed their pre-FX
   audio into this buffer. Defined as `BusGraph::TrackRuntime` in
   `backend/src/engine/BusGraph.h`.
@@ -772,6 +801,8 @@ clips[clipId]
       Tone (3-band EQ)
       Filter (bipolar LPF↔HPF sweep)
       Leveler (Compressor)
+      Saturation (soft clipping)
+      Bit Crusher (sample-rate and bit-depth reduction)
       gain
       mute / solo gate
   → SEND TAP (pre-pan, post everything above)
@@ -818,6 +849,10 @@ which is what users expect.
 - **Leveler** — single "Amount" knob (0..100 %) driving a curated path
   through a hand-rolled stereo-linked soft-knee compressor, with a
   deterministic static makeup-gain map (no live loudness analysis — see §7.10).
+- **Saturation** — Drive and Mix controls for per-track soft clipping. Drive
+  `0` is an exact bypass.
+- **Bit Crusher** — Rate, Bits, Boost, and Mix controls for per-track
+  sample-rate and bit-depth reduction. Mix `0` is an exact bypass.
 - **Reverb amount** — send into the one shared project reverb (0..100 %).
 - **Delay amount** — send into the one shared project delay (0..100 %).
 - **mute** / **solo** — surfaced on the track header.
@@ -844,6 +879,9 @@ which is what users expect.
   is worth the implementation cost for a Phase 5 effect that's almost
   always set once per project. If real usage shows users sweeping BPM
   during playback we'll revisit in Phase 8.
+- **Safety Limiter** — a final, stereo-linked sample-peak guard with a fixed
+  `-1 dBFS` ceiling. It protects playback and mixdown output but is not a
+  true-peak or mastering limiter.
 
 Putting reverb/delay on a **shared instance with per-track send amounts**
 (rather than per-track inserts) is a deliberate ethos call:
@@ -1081,11 +1119,14 @@ silence.
   **Volume** button (see §7.11). There is no separate fade control, no
   timeline drag handles, and no standalone dialog; on the timeline the
   envelope is reflected in the waveform's height rather than as an overlay.
-- **Per-track Tone / Compressor / Saturation / Reverb amount / Delay amount** — surfaced
-  in a **Track FX** tab of the bottom panel (shares its space with
-  the Library; one-at-a-time tab switch — see §7.12).
-- **Project Reverb / Delay** — a **Project FX** subtab within the
-  same bottom panel area, clearly separated from the per-track controls.
+- **Per-track Tone / Filter / Compressor / Saturation / Bit Crusher /
+  Reverb amount / Delay amount** — surfaced in a **Track FX** tab of the
+  bottom panel (shares its space with the Library; one-at-a-time tab switch —
+  see §7.12).
+- **Project Reverb / Delay / Safety Limiter** — a **Project FX** subtab within
+  the same bottom panel area, clearly separated from the per-track controls.
+- **Beat Repeat** — per-track, tempo-aligned regions added from the timeline
+  **Effects** menu rather than a continuous Track FX control.
 
 **Deferred to Phase 8** (and explicitly NOT in Phase 5):
 
@@ -1290,7 +1331,7 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_AP
 - **Drag-to-timeline** creates a clip at the drop position; default-on auto-warp
   matches eligible music to the project BPM, including variable-tempo sources
   via their representative detected BPM. The Timeline preference can disable it.
-- **Saved clips** — right-click a timeline clip → **Save Clip to Library** turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). Right-click ▸ **Unlink from library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
+- **Saved clips** — **Library ▸ Save Clip to Library** on a timeline clip turns its trim window into a reusable library entry. Saved clips are non-destructive references back into their source file (same audio, same WAV cache, same BPM/key) and preserve the clip's warp defaults, grouped underneath the source they came from with a disclosure chevron whose tooltip is **Show saved clips** or **Hide saved clips**. Dragging a saved clip tile onto a track creates a **linked timeline clip**: it stores the saved clip's library id, shows a small chain badge in its title strip and is blocked from edge-resize on the timeline. The Clip Editor's **Apply trim** propagates the new window to every linked timeline instance atomically (collision-checked per track). **Library ▸ Unlink from Library** rebinds the instance to the underlying source item, preserving its current window. Saved clip removal silently unlinks every dependent timeline clip first — the audio plays on as an independent clip referencing the underlying source file. The Clip Editor's **Save Selection to Library** is the second producer of saved clips.
 - **Tile images:** library tiles can show embedded cover art or a fallback icon; this is toggleable via the persisted `uiStore.showLibraryTileImages` preference. The fallback is styled **per kind** when no cover shows (an original source: sky music-note on a sky tint; a stem: teal layers icon on a teal tint; a saved sample: indigo bars icon on an indigo tint), plus the persistent stem / sample corner badge. A tile's right-click menu manages its cover art: **Update Image…** (pick a new image, copied into the project's `covers/` dir as a per-item `coverArtOverride` shown on that tile only), **Remove Image** / **Restore Image** (a per-item `coverArtHidden` display flag that suppresses the cover without deleting the shared media-store image). Both are per-item, persisted in the project, and never mutate the GUID-keyed shared media store. List view is deferred to Phase 8.
 - **Inline rename:** single-click the name on any library tile (or pick **Rename…** from the right-click menu) edits it inline. Saved clips inherit a sensible default name from their source + offset.
 - **Vertical scroll:** virtualised list once item count exceeds visible height; library never overflows the panel.
@@ -1527,7 +1568,7 @@ and grinds to a halt.
   on Preferences Save and on every (re)connect — the keep-awake pattern. Changing it
   re-applies live to all braked clips and to mixdown export; the backend keeps the
   built-in `kPlatterStopSeconds` / `kDefaultCurvePower` as the fallback default.
-- **UI**: a **Brake** toggle in both the timeline right-click menu and the Clip
+- **UI**: an **Effects ▸ Brake** toggle in the timeline menu and the Clip
   Editor toolbar (the latter auditions it live on the preview voice via
   `PREVIEW_SET_BRAKE` and draws the same tail overlay on the editor waveform).
   Reverse, Brake and Backspin form a **mutually-exclusive group** — in both surfaces
@@ -1565,7 +1606,7 @@ and on disk; the UI additionally makes reverse part of the exclusive group).
 - **Preference** (Effects tab): **Duration** short/medium/long + **Intensity**
   gentle/medium/wild (peak reverse speed 4×/6×/8×), pushed as `BACKSPIN_SETTINGS_SET`
   exactly like the brake settings.
-- **UI**: a **Backspin** toggle in both the timeline right-click menu and the Clip
+- **UI**: an **Effects ▸ Backspin** toggle in the timeline menu and the Clip
   Editor toolbar (same live-preview + editor-overlay treatment as the brake, and the
   same linked-sibling propagation via `library.updateLibraryClipBackspin`), a violet
   `SPIN` clip-header badge, and a
@@ -1732,7 +1773,7 @@ library, transport, UI layout and per-clip edits — from a single
   silent playback)
 - [x] Auto-popping `RelinkDialog` listing every missing file with a
   *Locate file…* button per row; single info toast summarises the
-  count. Right-click **Relink…** entry on unresolved clips re-enters
+  count. The direct **Relink** entry on unresolved clips re-enters
   the flow later.
 - [x] `CLIP_RELINK { clipId, filePath }` envelope; backend updates the
   path in the `ValueTree`, re-creates the engine source, rebroadcasts
@@ -1765,9 +1806,12 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Mark-points selection (`[` / `]` at playhead)
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)
-- [x] Split clip at playhead (`S` key + Edit menu + clip context menu — splits every clip whose timeline window straddles the playhead)
-- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + clip context menu + right-click — lands immediately after the source, toast when no space)
-- [x] Delete clip (`Delete` or `Backspace` + Edit menu + clip context menu)
+- [x] Split clip at playhead (`S` key + Edit menu + **Edit ▸ Split at
+  Playhead** — splits every clip whose timeline window straddles the playhead)
+- [x] Duplicate clip (`D` or `Ctrl + D` + Edit menu + **Edit ▸ Duplicate** —
+  lands immediately after the source, toast when no space)
+- [x] Delete clip (`Delete` or `Backspace` + Edit menu + the direct **Delete**
+  clip-menu entry)
 - [x] Cut / Copy / Paste clips (`Ctrl + X` / `Ctrl + C` / `Ctrl + V`); paste lands after the source clip on its track, or at the playhead when pasting onto a different (selected) track; toast when the destination slot is occupied
 - [x] Clip selection (thicker outline) + track selection (highlighted row border) — drives the Cut/Copy/Paste/Duplicate/Delete target
 - [x] Deselect with `Escape` — stepped: clears the clip(s) / automation point first (keeping the track selected), then the track on a second press
@@ -2081,9 +2125,10 @@ playable at every point):
     `saveWindowAsSampleAsync`; `SAMPLE_SAVED` carries optional `batchIndex` /
     `batchTotal` so the renderer shows one summary toast. Vitest coverage of the
     envelope construction.
-  - [x] **L5 — Timeline "Chop to Grid" context submenu.** Thin wrapper over the L3
-    commit (1 bar · 1/2 bar · 1/4 · 1/8 · 1/16) for the common case, no editor
-    round-trip. Added hover-flyout submenu support to the clip context menu.
+  - [x] **L5 — Timeline "Transform ▸ Chop to Grid" submenu.** Thin wrapper over
+    the L3 commit (1 bar · 1/2 bar · 1/4 · 1/8 · 1/16) for the common case, no
+    editor round-trip. The recursive hover-flyout menu supports the nested
+    action groups and deeper subdivision choices.
 - [x] Fine-clip editor — shipped as the in-app **Clip Editor** dialog (§7.14): full-source waveform, sample-accurate selection, looped audition through a backend preview voice, Save-as-new-clip and Apply-trim with linked-clip propagation, hi-res peaks on demand. A dedicated BrowserWindow surface remains a future option.
 
 ### Phase 7 — Polish, Performance & Packaging
