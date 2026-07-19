@@ -244,6 +244,9 @@ private:
     void publishEmptyRenderSnapshot();
     void publishRenderSnapshot(std::unique_ptr<RenderSnapshot> next) noexcept;
 
+    void applyPendingTrackFx(TrackRuntime& runtime);
+    void clearPendingTrackFx();
+
     void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap,
                               juce::int64 subStartSamples, int numSamples, double rate) noexcept;
 

@@ -1,42 +1,13 @@
 #pragma once
 
-#include "BusGraph.h"
-#include "AudioConstants.h"
-#include "EdgeFadeSnapshot.h"
-#include "BrakeSnapshot.h"
-#include "BackspinSnapshot.h"
-#include "EnvelopeSnapshot.h"
-#include "Log.h"
-#include "OutputKeepAlive.h"
-#include "TrackChain.h"
-#include "BeatRepeatSnapshot.h"
+#include "AudioEngineGraphState.h"
+#include "AudioEnginePlaybackState.h"
+#include "AudioEngineScratchState.h"
 #include "ProjectStateTypes.h"
-#include "WarpProcessor.h"
-#include "MasterClockSource.h"
-#include "MeteringSource.h"
-#include "Metronome.h"
-#include "OffsetSource.h"
-#include "PreviewMetronomeSource.h"
-#include "scratch/ScratchSessionController.h"
-#include "scratch/ScratchAudioSource.h"
-#include "scratch/BackingMonitorSource.h"
 #include "scratch/ScratchProtocol.h"
-#include "scratch/ScratchPatternEvaluator.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cstdint>
 #include <functional>
-#include <limits>
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_audio_devices/juce_audio_devices.h>
-#include <juce_audio_formats/juce_audio_formats.h>
-#include <juce_audio_utils/juce_audio_utils.h>
-#include <juce_core/juce_core.h>
-#include <juce_events/juce_events.h>
-#include <memory>
 #include <optional>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -46,7 +17,9 @@ namespace silverdaw
 
 class ProjectState;
 
-class AudioEngine
+class AudioEngine : private AudioEngineGraphState,
+                    private AudioEnginePlaybackState,
+                    private AudioEngineScratchState
 {
   public:
     AudioEngine();
@@ -424,37 +397,6 @@ class AudioEngine
     }
 
   private:
-    struct Track
-    {
-        juce::String trackId;
-        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-        std::unique_ptr<OffsetSource> offsetSource;
-        std::unique_ptr<juce::BufferingAudioSource> bufferingSource;
-        std::unique_ptr<juce::AudioTransportSource> transportSource;
-        std::unique_ptr<WarpProcessor> warp;
-        // Current Rubber Band time-stretch mode for `warp`. Lets setClipWarp skip rebuilding the
-        // stretcher (a heavy alloc + history reset) when only the ratio/pitch changed or the same
-        // state is re-applied (e.g. replaying effects on an incremental undo). Empty when no warp.
-        juce::String warpMode;
-        std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
-        std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
-        // Retire replaced snapshots/processors until the audio thread is quiescent.
-        std::vector<std::unique_ptr<EnvelopeSnapshot>> retiredEnvelopes;
-        std::unique_ptr<EdgeFadeSnapshot> edgeFadeSnapshot;
-        std::vector<std::unique_ptr<EdgeFadeSnapshot>> retiredEdgeFades;
-        std::unique_ptr<BrakeSnapshot> brakeSnapshot;
-        std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
-        std::unique_ptr<BackspinSnapshot> backspinSnapshot;
-        std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
-        // Immutable pattern replay snapshot published to OffsetSource for audio-thread reads.
-        std::shared_ptr<const scratch::PatternReplaySnapshot> patternSnapshot;
-        double sampleRate = 44100.0;
-        int numChannels = 2;
-        juce::int64 latencySamples = 0;
-
-        bool prefetchDirty = false;
-    };
-
     double trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const;
 
     void recreateTrackPrefetch(Track& track, double positionSeconds);
@@ -523,30 +465,7 @@ class AudioEngine
     double backspinDefaultSeconds = BackspinSnapshot::kDefaultSpinSeconds;
     double backspinDefaultSpeed = BackspinSnapshot::kDefaultSpinSpeed;
     double backspinDefaultCurve = BackspinSnapshot::kDefaultCurvePower;
-
     bool pendingSeekPrewarm = false;
-
-    juce::AudioDeviceManager deviceManager;
-    juce::AudioSourcePlayer sourcePlayer;
-    BusGraph busGraph;
-
-    // Set true (on the message thread) once the device is open and finalised; read from any
-    // thread. Signals audio readiness to the bridge (ENGINE_AUDIO_STATUS).
-    std::atomic<bool> audioReady{false};
-
-    // Per-track automation snapshots owned here (message thread). `current` holds
-    // the live snapshot per track; `retired` holds superseded ones until a stop
-    // reclaims them, so the audio thread never frees. See setTrackAutomation.
-    std::unordered_map<juce::String, std::unique_ptr<TrackAutomationSnapshot>> automationCurrent;
-    std::vector<std::unique_ptr<TrackAutomationSnapshot>> retiredAutomation;
-    struct BeatRepeatDefinition
-    {
-        std::vector<BeatRepeatRegion> regions;
-        double bpm = 120.0;
-    };
-    std::unordered_map<juce::String, BeatRepeatDefinition> beatRepeatDefinitions;
-    std::unordered_map<juce::String, std::unique_ptr<BeatRepeatSnapshot>> beatRepeatCurrent;
-    std::vector<std::unique_ptr<BeatRepeatSnapshot>> retiredBeatRepeats;
 
     void rebuildBeatRepeatSnapshotsForCurrentSampleRate();
     void rebuildDevicesSnapshot(bool rescan);
@@ -588,64 +507,6 @@ class AudioEngine
     };
     DeviceChangeListener deviceChangeListener{*this};
 
-    OutputKeepAlive outputKeepAlive;
-    MasterClockSource master{busGraph, outputKeepAlive};
-    juce::MixerAudioSource topMixer;
-    Metronome metronome;
-    MeteringSource masterMeter{topMixer, outputKeepAlive, master, metronome};
-    juce::AudioFormatManager formatManager;
-
-    juce::TimeSliceThread readAheadThread{"silverdaw-readahead"};
-
-    std::unordered_map<juce::String, std::unique_ptr<Track>> tracks; // keyed by clipId
-
-
-    struct Preview
-    {
-        std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
-        std::unique_ptr<OffsetSource> offsetSource;
-        std::unique_ptr<juce::AudioTransportSource> transportSource;
-        std::unique_ptr<WarpProcessor> warp;
-        std::vector<std::unique_ptr<WarpProcessor>> retiredWarps;
-        std::unique_ptr<EnvelopeSnapshot> envelopeSnapshot;
-        std::vector<std::unique_ptr<EnvelopeSnapshot>> retiredEnvelopes;
-        std::unique_ptr<BrakeSnapshot> brakeSnapshot;
-        std::vector<std::unique_ptr<BrakeSnapshot>> retiredBrakes;
-        std::unique_ptr<BackspinSnapshot> backspinSnapshot;
-        std::vector<std::unique_ptr<BackspinSnapshot>> retiredBackspins;
-        juce::String warpMode{"rhythmic"};
-        double sampleRate = 44100.0;
-        double inMs = 0.0;
-        double durationMs = 0.0;
-        double sourceDurationMs = 0.0;
-        // Absolute path of the file currently loaded into the preview voice, so the
-        // engine can release this reader before that file is deleted from disk (an
-        // open JUCE reader keeps the WAV delete-pending on Windows, which would block
-        // removing its now-empty per-source folder).
-        juce::File sourceFile;
-    };
-    Preview preview;
-    // Wraps the preview transport to mix the Clip Editor metronome click; added to topMixer in
-    // place of the bare transport while a preview is loaded. Its enabled state persists across
-    // reloads so toggling the click doesn't require a live preview.
-    std::unique_ptr<PreviewMetronomeSource> previewMetronomeSource;
-    bool previewMetronomeEnabled = false;
-    double previewMetronomeBpm = 0.0;
-    double previewMetronomeAnchorSec = 0.0;
-    std::atomic<juce::int64> previewGeneration{0};
-
-    // Persistent scratch audio source — always wired into topMixer (fixed topology).
-    // Session open/close activates/deactivates via atomics; no callback allocation.
-    scratch::ScratchAudioSource scratchSource;
-    // Backing accompaniment bed (ADR 0021, Amendment 1) — also fixed topology in
-    // topMixer; activated only when a backing window is prepared.
-    scratch::BackingMonitorSource backingSource;
-    scratch::ScratchSessionController scratchController{scratchSource, backingSource};
-
-    // Pattern replay state (audition of a saved pattern through the scratch source).
-    std::shared_ptr<const scratch::PatternReplaySnapshot> patternReplaySnapshot;
-    std::atomic<bool> patternReplayActive{false};
-    std::atomic<std::int64_t> patternReplayPositionUs{0};
 };
 
 } // namespace silverdaw

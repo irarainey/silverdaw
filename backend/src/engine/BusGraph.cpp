@@ -83,48 +83,7 @@ void BusGraph::attachClip(const juce::String& trackId,
         if (createdRuntime && beatRepeatIt != pendingBeatRepeats.end())
             rt->publishedBeatRepeat = beatRepeatIt->second;
 
-        auto toneIt = pendingTone.find(trackId);
-        if (toneIt != pendingTone.end())
-        {
-            const auto& t = toneIt->second;
-            rt->chain.setTone(t.bassDb, t.midDb, t.trebleDb, t.filter, /*snap*/ true);
-        }
-
-        auto levelerIt = pendingLeveler.find(trackId);
-        if (levelerIt != pendingLeveler.end())
-            rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
-        auto punchIt = pendingPunch.find(trackId);
-        if (punchIt != pendingPunch.end())
-            rt->chain.setPunch(punchIt->second, /*snap*/ true);
-
-        auto saturationIt = pendingSaturation.find(trackId);
-        if (saturationIt != pendingSaturation.end())
-            rt->chain.setSaturation(saturationIt->second.drive, saturationIt->second.mix,
-                                    /*snap*/ true);
-
-        auto bitCrusherIt = pendingBitCrusher.find(trackId);
-        if (bitCrusherIt != pendingBitCrusher.end())
-            rt->chain.setBitCrusher(bitCrusherIt->second.rate, bitCrusherIt->second.bits,
-                                    bitCrusherIt->second.boost, bitCrusherIt->second.mix,
-                                    /*snap*/ true);
-
-        auto sendIt = pendingSends.find(trackId);
-        if (sendIt != pendingSends.end())
-        {
-            rt->reverbSend.store(sendIt->second.reverbSend, std::memory_order_relaxed);
-            rt->delaySend.store(sendIt->second.delaySend, std::memory_order_relaxed);
-        }
-
-        auto panIt = pendingPans.find(trackId);
-        if (panIt != pendingPans.end())
-        {
-            float gL = 1.0F;
-            float gR = 1.0F;
-            equalPowerPanGains(panIt->second, gL, gR);
-            rt->pan.store(panIt->second, std::memory_order_relaxed);
-            rt->panGainL.store(gL, std::memory_order_relaxed);
-            rt->panGainR.store(gR, std::memory_order_relaxed);
-        }
+        applyPendingTrackFx(*rt);
 
         publishRenderSnapshot();
     }
@@ -291,103 +250,6 @@ void BusGraph::setTrackRenderingEnabled(const juce::String& trackId, bool enable
     }
 }
 
-void BusGraph::setTrackTone(const juce::String& trackId,
-                            float bassDb, float midDb, float trebleDb, float filter,
-                            bool snap)
-{
-    if (trackId.isEmpty()) return;
-    // Lock-free: `pendingTone` and the runtime map are message-thread-only (serialised vs
-    // attach/detach/clear), and `ToneEq` publishes its params atomically, so the audio
-    // thread's read-only map iteration is never raced.
-    pendingTone[trackId] = {bassDb, midDb, trebleDb, filter};
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-        it->second->chain.setTone(bassDb, midDb, trebleDb, filter, snap);
-}
-
-void BusGraph::setTrackLeveler(const juce::String& trackId, float amount, bool snap)
-{
-    if (trackId.isEmpty()) return;
-    const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
-    // Lock-free: see `setTrackTone`; `Leveler` publishes its param atomically.
-    pendingLeveler[trackId] = a;
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-        it->second->chain.setLeveler(a, snap);
-}
-
-void BusGraph::setTrackPunch(const juce::String& trackId, float amount, bool snap)
-{
-    if (trackId.isEmpty()) return;
-    const float a = juce::jlimit(0.0F, 1.0F, std::isfinite(amount) ? amount : 0.0F);
-    pendingPunch[trackId] = a;
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-        it->second->chain.setPunch(a, snap);
-}
-
-void BusGraph::setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap)
-{
-    if (trackId.isEmpty()) return;
-    const float d = juce::jlimit(0.0F, 1.0F, std::isfinite(drive) ? drive : 0.0F);
-    const float m = juce::jlimit(0.0F, 1.0F, std::isfinite(mix) ? mix : 1.0F);
-    pendingSaturation[trackId] = {d, m};
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-        it->second->chain.setSaturation(d, m, snap);
-}
-
-void BusGraph::setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
-                                  float boost, float mix, bool snap)
-{
-    if (trackId.isEmpty()) return;
-    BitCrusherParams params;
-    params.rate = juce::jlimit(0.01F, 1.0F, std::isfinite(rate) ? rate : 1.0F);
-    params.bits = juce::jlimit(1, 16, bits);
-    params.boost = juce::jlimit(0.0F, 1.0F, std::isfinite(boost) ? boost : 0.0F);
-    params.mix = juce::jlimit(0.0F, 1.0F, std::isfinite(mix) ? mix : 0.0F);
-    pendingBitCrusher[trackId] = params;
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-        it->second->chain.setBitCrusher(params.rate, params.bits, params.boost, params.mix, snap);
-}
-
-void BusGraph::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
-{
-    if (trackId.isEmpty()) return;
-    const float r = juce::jlimit(0.0F, 1.0F, std::isfinite(reverbSend) ? reverbSend : 0.0F);
-    const float d = juce::jlimit(0.0F, 1.0F, std::isfinite(delaySend) ? delaySend : 0.0F);
-    // Lock-free: publishes atomic scalars; pending* and the map are
-    // message-thread-only, so this never contends the audio callback.
-    pendingSends[trackId] = {r, d};
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-    {
-        it->second->reverbSend.store(r, std::memory_order_relaxed);
-        it->second->delaySend.store(d, std::memory_order_relaxed);
-    }
-}
-
-void BusGraph::setTrackPan(const juce::String& trackId, float pan)
-{
-    if (trackId.isEmpty()) return;
-    const float p = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
-    float gL = 1.0F;
-    float gR = 1.0F;
-    equalPowerPanGains(p, gL, gR);
-    // Lock-free: publishes atomic scalars. Map/pending* are message-thread-only.
-    // A concurrent audio read may briefly see a mismatched pan/gain pair; each
-    // value is individually valid so the worst case is a one-block transient.
-    pendingPans[trackId] = p;
-    auto it = runtimes.find(trackId);
-    if (it != runtimes.end())
-    {
-        it->second->panGainL.store(gL, std::memory_order_relaxed);
-        it->second->panGainR.store(gR, std::memory_order_relaxed);
-        it->second->pan.store(p, std::memory_order_relaxed);
-    }
-}
-
 void BusGraph::setProjectReverb(float size, float decay, float tone, float mix, bool snap)
 {
     // Lock-free: `SharedFx` publishes targets + a deferred snap flag atomically; the
@@ -414,80 +276,6 @@ void BusGraph::snapAutomationCursors() noexcept
     const juce::ScopedLock sl(lock);
     for (auto& kv : runtimes)
         kv.second->automationResetRequested.store(true, std::memory_order_release);
-}
-
-void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p) noexcept
-{
-    const juce::ScopedLock sl(lock);
-    auto it = runtimes.find(trackId);
-    if (it == runtimes.end()) return;
-    auto& rt = *it->second;
-    switch (p)
-    {
-        case AutomationParam::filter: rt.chain.setFilterTarget(0.0F, true); break;
-        case AutomationParam::toneBass: rt.chain.setBassTarget(0.0F, true); break;
-        case AutomationParam::toneMid: rt.chain.setMidTarget(0.0F, true); break;
-        case AutomationParam::toneTreble: rt.chain.setTrebleTarget(0.0F, true); break;
-        case AutomationParam::leveler: rt.chain.setLeveler(0.0F, true); break;
-        case AutomationParam::punch:
-        {
-            const auto punch = pendingPunch.find(trackId);
-            rt.chain.setPunchTarget(punch != pendingPunch.end() ? punch->second : 0.0F, true);
-            break;
-        }
-        case AutomationParam::saturationDrive:
-        {
-            const auto saturation = pendingSaturation.find(trackId);
-            rt.chain.setSaturationDriveTarget(
-                saturation != pendingSaturation.end() ? saturation->second.drive : 0.0F, true);
-            break;
-        }
-        case AutomationParam::saturationMix:
-        {
-            const auto saturation = pendingSaturation.find(trackId);
-            rt.chain.setSaturationMixTarget(
-                saturation != pendingSaturation.end() ? saturation->second.mix : 1.0F, true);
-            break;
-        }
-        case AutomationParam::bitCrusherRate:
-        {
-            const auto crusher = pendingBitCrusher.find(trackId);
-            rt.chain.setBitCrusherRateTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.rate : 1.0F, true);
-            break;
-        }
-        case AutomationParam::bitCrusherBits:
-        {
-            const auto crusher = pendingBitCrusher.find(trackId);
-            rt.chain.setBitCrusherBitsTarget(
-                crusher != pendingBitCrusher.end() ? static_cast<float>(crusher->second.bits) : 16.0F,
-                true);
-            break;
-        }
-        case AutomationParam::bitCrusherBoost:
-        {
-            const auto crusher = pendingBitCrusher.find(trackId);
-            rt.chain.setBitCrusherBoostTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.boost : 0.0F, true);
-            break;
-        }
-        case AutomationParam::bitCrusherMix:
-        {
-            const auto crusher = pendingBitCrusher.find(trackId);
-            rt.chain.setBitCrusherMixTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.mix : 0.0F, true);
-            break;
-        }
-        case AutomationParam::level: rt.chain.setLevelTarget(0.0F, true); break;
-        case AutomationParam::reverbSend: rt.reverbSend.store(0.0F, std::memory_order_relaxed); break;
-        case AutomationParam::delaySend: rt.delaySend.store(0.0F, std::memory_order_relaxed); break;
-        case AutomationParam::pan:
-            rt.pan.store(0.0F, std::memory_order_relaxed);
-            rt.panGainL.store(1.0F, std::memory_order_relaxed);
-            rt.panGainR.store(1.0F, std::memory_order_relaxed);
-            break;
-        case AutomationParam::count_: break;
-    }
 }
 
 void BusGraph::setTrackAutomationPtr(const juce::String& trackId,
@@ -568,13 +356,7 @@ void BusGraph::clear()
         kv.second->releaseResources();
     runtimes.clear();
     clipToTrack.clear();
-    pendingTone.clear();
-    pendingLeveler.clear();
-    pendingPunch.clear();
-    pendingSaturation.clear();
-    pendingBitCrusher.clear();
-    pendingSends.clear();
-    pendingPans.clear();
+    clearPendingTrackFx();
     pendingAutomation.clear();
     pendingBeatRepeats.clear();
     sharedFx.reset();

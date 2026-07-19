@@ -478,6 +478,7 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineScratch.cpp
     src/engine/AudioEnginePatternReplay.cpp
     src/engine/BusGraph.cpp
+    src/engine/BusGraphTrackFx.cpp
     src/engine/BusGraphRender.cpp
     src/engine/BeatRepeatProcessor.cpp
     src/engine/BeatRepeatSnapshot.cpp
