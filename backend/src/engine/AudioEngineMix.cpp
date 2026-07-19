@@ -11,6 +11,11 @@ void AudioEngine::setMasterGain(float gain)
     masterMeter.setTargetGain(clamped);
 }
 
+void AudioEngine::setSafetyLimiterEnabled(bool enabled, bool snap)
+{
+    masterMeter.setSafetyLimiterEnabled(enabled, snap);
+}
+
 void AudioEngine::setMetronomeEnabled(bool enabled)
 {
     metronome.setEnabled(enabled);

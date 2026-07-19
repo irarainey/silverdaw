@@ -112,6 +112,7 @@ class AudioEngine
     void stop();
 
     void setMasterGain(float gain);
+    void setSafetyLimiterEnabled(bool enabled, bool snap);
 
     // Metronome monitoring click (post master gain). Enable/disable and keep the click in time with
     // the project tempo. Both publish to the audio thread via atomics.

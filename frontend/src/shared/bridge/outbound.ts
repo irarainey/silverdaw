@@ -550,6 +550,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_TARGET_SAMPLE_RATE: ProjectSetTargetSampleRatePayload
   PROJECT_SET_EXPORT_SETTINGS: ProjectSetExportSettingsPayload
   PROJECT_SET_MASTER_VOLUME: ProjectSetMasterVolumePayload
+  PROJECT_SET_SAFETY_LIMITER: ProjectSetSafetyLimiterPayload
   PROJECT_SET_BAR_COUNTER_START: ProjectSetBarCounterStartPayload
   PROJECT_SET_MIXDOWN_START_BAR: ProjectSetMixdownStartBarPayload
   PROJECT_SET_METRONOME: ProjectSetMetronomePayload
@@ -718,6 +719,11 @@ export interface ProjectSetExportSettingsPayload {
  */
 export interface ProjectSetMasterVolumePayload {
   gain: number
+}
+
+/** Project-wide fixed-ceiling output protection. */
+export interface ProjectSetSafetyLimiterPayload {
+  enabled: boolean
 }
 
 /**
@@ -1144,6 +1150,7 @@ export const bridgeOutboundPayloadKinds: {
   TRANSITION_SET_RECIPE: 'payload',
   PROJECT_SET_REVERB: 'payload',
   PROJECT_SET_DELAY: 'payload',
+  PROJECT_SET_SAFETY_LIMITER: 'payload',
   TRANSPORT_PLAY: 'none',
   TRANSPORT_PAUSE: 'none',
   TRANSPORT_STOP: 'none',

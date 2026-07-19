@@ -19,6 +19,8 @@ void handleProjectSetAudioOutput(const juce::var& payload, ProjectState& project
 void handleProjectSetTargetSampleRate(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetExportSettings(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetMasterVolume(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);
+void handleProjectSetSafetyLimiter(const juce::var& payload, AudioEngine& engine,
+                                   ProjectState& projectState);
 void handleProjectSetBarCounterStart(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetMixdownStartBar(const juce::var& payload, ProjectState& projectState);
 void handleProjectSetMetronome(const juce::var& payload, AudioEngine& engine, ProjectState& projectState);

@@ -196,6 +196,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
     }
+    if (projectState.getSafetyLimiterEnabled())
+        obj->setProperty("safetyLimiterEnabled", true);
     // Omit default (one) bar settings so legacy projects round-trip byte-clean.
     {
         const auto barCounterStart = projectState.getBarCounterStart();
@@ -420,6 +422,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
 
     // Keep live master gain aligned with loaded, recovered, and undo/redo state.
     engine.setMasterGain(projectState.getMasterVolume());
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
 
     // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
     engine.setMetronomeBpm(projectState.getBpm());

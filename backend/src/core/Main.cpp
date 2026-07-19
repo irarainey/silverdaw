@@ -337,6 +337,7 @@ int runBackend(int argc, char* argv[])
     // formats and wires the source graph; it needs no open device.
     silverdaw::crash::setPhase("audio-graph-init");
     engine.initialiseGraph();
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
     silverdaw::log::info("perf", "graph-initialised @ " + elapsedSinceStart());
 
     const auto preferredAudioTypeName =

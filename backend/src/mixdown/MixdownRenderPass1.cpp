@@ -3,6 +3,7 @@
 #include "BusGraph.h"
 #include "Log.h"
 #include "MixdownBroadcast.h"
+#include "SafetyLimiter.h"
 #include "SharedFx.h"  // delayNoteToMs
 #include "TrackAutomationSnapshot.h"
 
@@ -164,6 +165,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     juce::String writerError;
 
     juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
+    silverdaw::SafetyLimiter safetyLimiter;
+    safetyLimiter.prepare(static_cast<double>(snapshot.projectSampleRate));
+    safetyLimiter.setEnabled(snapshot.safetyLimiterEnabled, /*snap*/ true);
     std::vector<float> mixInterleaved(static_cast<size_t>(kBlockFrames) * 2);
 
     // Shared TPDF dither keeps 16-bit output identical across render paths.
@@ -253,6 +257,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         {
             mixBus.applyGain(0, blockFrames, snapshot.masterGain);
         }
+        safetyLimiter.process(mixBus, 0, blockFrames);
 
         double blockPeakL = 0.0;
         double blockPeakR = 0.0;

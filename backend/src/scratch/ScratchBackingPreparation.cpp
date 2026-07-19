@@ -1,6 +1,7 @@
 #include "ScratchBackingPreparation.h"
 
 #include "MixdownGraph.h"
+#include "SafetyLimiter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -71,6 +72,9 @@ bool prepareBackingToBuffer(const MixdownSnapshot& snapshot,
 
     juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
     juce::AudioBuffer<float> clipBuffer(kOutputChannels, kBlockFrames);
+    silverdaw::SafetyLimiter safetyLimiter;
+    safetyLimiter.prepare(static_cast<double>(projectSampleRate));
+    safetyLimiter.setEnabled(snapshot.safetyLimiterEnabled, /*snap*/ true);
 
     juce::int64 renderedFrames = 0;
     while (renderedFrames < endFrames)
@@ -103,6 +107,7 @@ bool prepareBackingToBuffer(const MixdownSnapshot& snapshot,
 
         if (!juce::approximatelyEqual(snapshot.masterGain, 1.0F))
             mixBus.applyGain(0, blockFrames, snapshot.masterGain);
+        safetyLimiter.process(mixBus, 0, blockFrames);
 
         // Retain only frames within the requested window.
         const juce::int64 blockStart = renderedFrames;

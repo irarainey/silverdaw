@@ -102,6 +102,7 @@ export const useProjectStore = defineStore('project', {
     targetSampleRate: null,
     exportSettingsJson: null,
     masterVolume: 1.0,
+    safetyLimiterEnabled: false,
     barCounterStart: 1,
     mixdownStartBar: 1,
     metronomeEnabled: false,
@@ -422,6 +423,13 @@ export const useProjectStore = defineStore('project', {
       if (next === this.masterVolume) return
       this.masterVolume = next
       sendBridge('PROJECT_SET_MASTER_VOLUME', { gain: next })
+    },
+
+    /** Toggle the project-wide fixed-ceiling output protection. */
+    setSafetyLimiterEnabled(enabled: boolean): void {
+      if (enabled === this.safetyLimiterEnabled) return
+      this.safetyLimiterEnabled = enabled
+      sendBridge('PROJECT_SET_SAFETY_LIMITER', { enabled })
     },
 
     /** Set the first bar number shown on the ruler (default 1; 0 or lower adds lead-in bars). */

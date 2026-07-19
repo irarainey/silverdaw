@@ -371,6 +371,10 @@ class ProjectState : public juce::ValueTree::Listener
     // Unity is suppressed so legacy projects round-trip without an extra property.
     void setMasterVolume(float volume);
 
+    // New projects opt in explicitly; absent remains off for older project files.
+    bool getSafetyLimiterEnabled() const;
+    void setSafetyLimiterEnabled(bool enabled);
+
     // Bar-label offset for the timeline ruler. 0 (default) labels the first bar "1";
     // -1 labels it "0" so a lead-in bar can sit before bar one. Marks dirty.
     int getBarCounterStart() const;
@@ -700,6 +704,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kTargetSampleRate;
     static const juce::Identifier kExportSettingsJson;
     static const juce::Identifier kMasterVolume;
+    static const juce::Identifier kSafetyLimiterEnabled;
     static const juce::Identifier kBarCounterStart;
     static const juce::Identifier kMixdownStartBar;
     static const juce::Identifier kMetronomeEnabled;

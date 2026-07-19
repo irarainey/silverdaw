@@ -40,6 +40,7 @@ const juce::Identifier ProjectState::kAudioOutputDeviceName{"audioOutputDeviceNa
 const juce::Identifier ProjectState::kTargetSampleRate{"targetSampleRate"};
 const juce::Identifier ProjectState::kExportSettingsJson{"exportSettingsJson"};
 const juce::Identifier ProjectState::kMasterVolume{"masterVolume"};
+const juce::Identifier ProjectState::kSafetyLimiterEnabled{"safetyLimiterEnabled"};
 const juce::Identifier ProjectState::kBarCounterStart{"barCounterStart"};
 const juce::Identifier ProjectState::kMixdownStartBar{"mixdownStartBar"};
 const juce::Identifier ProjectState::kMetronomeEnabled{"metronomeEnabled"};
@@ -106,6 +107,7 @@ ProjectState::ProjectState() : root(kProject)
 {
     // Initialise before listener attach so defaults don't count as user edits.
     root.setProperty(kName, kDefaultName, nullptr);
+    root.setProperty(kSafetyLimiterEnabled, true, nullptr);
     root.appendChild(juce::ValueTree(kLibrary), nullptr);
     root.appendChild(juce::ValueTree(kMarkers), nullptr);
     cleanSnapshot = root.createCopy();

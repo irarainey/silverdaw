@@ -14,6 +14,7 @@
 #include "PeaksCache.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
+#include "SafetyLimiter.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
 #include "TrackAutomationSnapshot.h"
@@ -1027,6 +1028,43 @@ void testLevelerSnapAppliesOnFirstBlock()
             "snap applies the Leveler makeup on the first block; glide ramps in slowly");
 }
 
+void testSafetyLimiterNeutralBypassAndCeiling()
+{
+    constexpr int n = 32;
+    silverdaw::SafetyLimiter limiter;
+    limiter.prepare(48000.0);
+
+    juce::AudioBuffer<float> neutral(2, n);
+    juce::AudioBuffer<float> expected(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+        {
+            const float value = static_cast<float>((sample % 11) - 5) / 10.0F;
+            neutral.setSample(channel, sample, value);
+            expected.setSample(channel, sample, value);
+        }
+    limiter.process(neutral, 0, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            require(neutral.getSample(channel, sample) == expected.getSample(channel, sample),
+                    "disabled safety limiter must be a bit-identical bypass");
+
+    limiter.setEnabled(true, /*snap*/ true);
+    juce::AudioBuffer<float> hot(2, n);
+    hot.clear();
+    hot.setSample(0, 0, 1.2F);
+    hot.setSample(1, 0, 0.6F);
+    limiter.process(hot, 0, n);
+
+    const float ceiling = silverdaw::SafetyLimiter::ceilingGain();
+    require(hot.getMagnitude(0, 0, n) <= ceiling + 1.0e-6F,
+            "safety limiter must keep the hot channel below its ceiling");
+    require(hot.getMagnitude(1, 0, n) <= ceiling + 1.0e-6F,
+            "safety limiter must keep every channel below its ceiling");
+    requireNear(hot.getSample(1, 0) / hot.getSample(0, 0), 0.5, 0.0001,
+                "safety limiter must preserve the stereo balance");
+}
+
 } // namespace
 
 void addFxDspTests(std::vector<TestCase>& tests)
@@ -1049,6 +1087,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"SharedFx requestReset cuts the tail on the next audio block", testSharedFxRequestResetCutsTailNextBlock});
     tests.push_back({"ToneEq snap applies the full boost on the first block", testToneEqSnapAppliesOnFirstBlock});
     tests.push_back({"Leveler snap applies the makeup on the first block", testLevelerSnapAppliesOnFirstBlock});
+    tests.push_back({"Safety limiter is transparent when off and caps linked peaks", testSafetyLimiterNeutralBypassAndCeiling});
 }
 
 } // namespace silverdaw::tests

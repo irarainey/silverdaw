@@ -153,6 +153,16 @@ void handleProjectSetMasterVolume(const juce::var& payload, silverdaw::AudioEngi
     }
 }
 
+void handleProjectSetSafetyLimiter(const juce::var& payload, silverdaw::AudioEngine& engine,
+                                   silverdaw::ProjectState& projectState)
+{
+    const auto enabledOpt = readOptionalBool(payload, "enabled");
+    if (!enabledOpt.has_value()) return;
+
+    projectState.setSafetyLimiterEnabled(*enabledOpt);
+    engine.setSafetyLimiterEnabled(*enabledOpt, /*snap*/ *enabledOpt);
+}
+
 void handleProjectSetBarCounterStart(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
     // Bar-label offset for the ruler; bounded so a stray value can't shift labels absurdly.

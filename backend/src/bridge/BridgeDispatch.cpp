@@ -664,6 +664,10 @@ bool dispatchProject(const DispatchContext& ctx)
     {
         silverdaw::handleProjectSetMasterVolume(payload, engine, projectState);
     }
+    else if (type == "PROJECT_SET_SAFETY_LIMITER")
+    {
+        silverdaw::handleProjectSetSafetyLimiter(payload, engine, projectState);
+    }
     else if (type == "PROJECT_SET_BAR_COUNTER_START")
     {
         silverdaw::handleProjectSetBarCounterStart(payload, projectState);

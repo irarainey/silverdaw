@@ -24,6 +24,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
                                      ? explicitRate
                                      : kDefaultSampleRate;
     snapshot.masterGain = juce::jlimit(0.0F, 1.0F, project.getMasterVolume());
+    snapshot.safetyLimiterEnabled = project.getSafetyLimiterEnabled();
 
     snapshot.reverbSize = project.getProjectReverbSize();
     snapshot.reverbDecay = project.getProjectReverbDecay();

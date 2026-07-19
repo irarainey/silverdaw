@@ -160,6 +160,31 @@ void testProjectStateDelayNoteValueGuard()
                      "rejected writes must leave noteValue untouched");
 }
 
+void testProjectStateSafetyLimiterDefaultsAndRoundTrip()
+{
+    silverdaw::ProjectState fresh;
+    require(fresh.getSafetyLimiterEnabled(),
+            "a newly created project should enable the safety limiter");
+
+    fresh.setSafetyLimiterEnabled(false);
+    require(!fresh.getSafetyLimiterEnabled(),
+            "disabling the safety limiter should clear the enabled state");
+    require(!fresh.getTree().hasProperty(juce::Identifier{"safetyLimiterEnabled"}),
+            "the disabled safety limiter should use default suppression");
+
+    juce::ValueTree legacyProject(juce::Identifier{"PROJECT"});
+    legacyProject.setProperty(juce::Identifier{"name"}, "Legacy", nullptr);
+    fresh.replaceTree(legacyProject);
+    require(!fresh.getSafetyLimiterEnabled(),
+            "an older project without the property must retain its original output behaviour");
+
+    fresh.setSafetyLimiterEnabled(true);
+    require(fresh.getSafetyLimiterEnabled(), "enabling the safety limiter should persist");
+    require(static_cast<bool>(fresh.getTree().getProperty(
+                juce::Identifier{"safetyLimiterEnabled"}, false)),
+            "enabled safety limiter must be stored in project state");
+}
+
 void testProjectStateTrackToneJsonRoundTrip()
 {
         silverdaw::ProjectState state;
@@ -377,6 +402,7 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState per-track sends round-trip + default suppression", testProjectStateTrackSendsRoundTrip});
     tests.push_back({"ProjectState clip envelope sort / dedupe / clear", testProjectStateClipEnvelopeNormalisation});
     tests.push_back({"ProjectState project delay noteValue guard", testProjectStateDelayNoteValueGuard});
+    tests.push_back({"ProjectState safety limiter defaults and legacy round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
     tests.push_back({"ProjectState per-track tone round-trips through tracksAsJson", testProjectStateTrackToneJsonRoundTrip});
     tests.push_back({"ProjectState per-track leveler round-trips through tracksAsJson", testProjectStateLevelerJsonRoundTrip});
     tests.push_back({"ProjectState per-track sends round-trip through tracksAsJson", testProjectStateSendsJsonRoundTrip});

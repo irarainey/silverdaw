@@ -197,6 +197,21 @@ void ProjectState::setMasterVolume(float volume)
     }
 }
 
+bool ProjectState::getSafetyLimiterEnabled() const
+{
+    return static_cast<bool>(root.getProperty(kSafetyLimiterEnabled, false));
+}
+
+void ProjectState::setSafetyLimiterEnabled(bool enabled)
+{
+    if (getSafetyLimiterEnabled() == enabled) return;
+
+    if (enabled)
+        root.setProperty(kSafetyLimiterEnabled, true, &undoManager);
+    else
+        root.removeProperty(kSafetyLimiterEnabled, &undoManager);
+}
+
 int ProjectState::getBarCounterStart() const
 {
     return static_cast<int>(root.getProperty(kBarCounterStart, 1));

@@ -231,7 +231,9 @@ Silverdaw currently supports the core arrangement workflow:
   bit-exact passthrough; internal class `Leveler`), and a **Reverb & Delay** rack setting how much the
   track feeds the project-wide Reverb and Delay buses. **Project FX** hosts the
   shared, song-wide returns those amounts route into: a **Reverb** and a
-  **Delay** (tempo-locked). All are edited live (slider drags coalesce into one undo
+  **Delay** (tempo-locked), plus a **Safety Limiter** switch. The limiter is a
+  fixed -1 dBFS, stereo-linked sample-peak guard on final output; it is not a
+  true-peak or mastering limiter. All are edited live (slider drags coalesce into one undo
   step) and applied to both playback and mixdown. The DSP lives in
   [`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
   [`TrackChain`](../backend/src/dsp/TrackChain.h)

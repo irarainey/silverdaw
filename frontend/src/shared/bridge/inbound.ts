@@ -408,6 +408,8 @@ export const ProjectStatePayloadSchema = z.object({
   /** Renderer-owned export settings JSON; backend round-trips it opaque. */
   exportSettingsJson: z.string().optional().nullable(),
   masterVolume: z.number().min(0).max(1).optional(),
+  /** Fixed -1 dBFS output protection; absent means off for older projects. */
+  safetyLimiterEnabled: z.boolean().optional(),
   /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower for lead-in. */
   barCounterStart: z.number().optional(),
   /** Displayed bar number a mixdown begins from; 1 (default) is the first bar. */

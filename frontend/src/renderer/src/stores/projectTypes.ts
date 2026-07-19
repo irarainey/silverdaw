@@ -297,6 +297,8 @@ export interface ProjectState {
   exportSettingsJson: string | null
   /** Master output volume (0..1 linear), applied to live mix and exports. Persisted. */
   masterVolume: number
+  /** Fixed-ceiling final-output protection. */
+  safetyLimiterEnabled: boolean
   /** First bar number shown on the ruler: 1 (default) labels the first bar "1"; 0 or lower
    *  adds lead-in bars before bar one. Persisted with the project. */
   barCounterStart: number

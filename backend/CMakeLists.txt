@@ -450,6 +450,7 @@ add_library(silverdaw_backend_core STATIC
     src/dsp/BpmAnalysisHelpers.cpp
     src/dsp/LoudnessAnalyzer.cpp
     src/dsp/EnhancerDsp.cpp
+    src/dsp/SafetyLimiter.cpp
     src/dsp/SharedFx.cpp
     src/dsp/ToneEq.cpp
     src/dsp/VinylScratchProcessor.cpp

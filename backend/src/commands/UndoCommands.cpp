@@ -38,6 +38,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "PROJECT_SET_AUDIO_OUTPUT" ||
            type == "PROJECT_SET_TARGET_SAMPLE_RATE" ||
            type == "PROJECT_SET_MASTER_VOLUME" ||
+           type == "PROJECT_SET_SAFETY_LIMITER" ||
            type == "PROJECT_SET_BAR_COUNTER_START" ||
            type == "PROJECT_SET_MIXDOWN_START_BAR" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
@@ -92,6 +93,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "PROJECT_SET_AUDIO_OUTPUT") return "Change audio output";
     if (type == "PROJECT_SET_TARGET_SAMPLE_RATE") return "Change project sample rate";
     if (type == "PROJECT_SET_MASTER_VOLUME") return "Change master volume";
+    if (type == "PROJECT_SET_SAFETY_LIMITER") return "Toggle safety limiter";
     if (type == "PROJECT_SET_BAR_COUNTER_START") return "Change bar counter start";
     if (type == "PROJECT_SET_MIXDOWN_START_BAR") return "Change mixdown start bar";
     if (type == "PROJECT_MARKER_ADD") return "Add marker";
@@ -161,7 +163,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
         idPart = readOptionalString(payload, "trackId").value_or(juce::String{}) + "/" +
                  readOptionalString(payload, "paramId").value_or(juce::String{});
     }
-    else if (type == "PROJECT_SET_MASTER_VOLUME" ||
+    else if (type == "PROJECT_SET_MASTER_VOLUME" || type == "PROJECT_SET_SAFETY_LIMITER" ||
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY")
     {
         idPart = "_";
