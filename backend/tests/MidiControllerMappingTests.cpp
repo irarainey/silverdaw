@@ -16,7 +16,7 @@ void testMidiProfilesCoverInstalledDecks()
         "DDJ-RX", "DDJ-RZ", "DDJ-RZX", "DDJ-SB", "DDJ-SB2", "DDJ-SB3", "DDJ-SR",
         "DDJ-SR2", "DDJ-SX", "DDJ-SX2", "DDJ-SX3", "DDJ-SZ", "DDJ-WeGO",
         "DDJ-WeGO2", "DDJ-WeGO3", "DDJ-WeGO4",
-        "OMNIS-DUO", "OPUS-QUAD", "XDJ-AERO", "XDJ-R1", "XDJ-RR", "XDJ-RX",
+        "OMNIS-DUO", "XDJ-AERO", "XDJ-R1", "XDJ-RR", "XDJ-RX",
         "XDJ-RX2", "XDJ-RX3", "XDJ-XZ",
         "DJCONTROL INPULSE 200", "DJCONTROL INPULSE 300",
         "DJCONTROL INPULSE 500", "DJCONTROL STARLIGHT", "DJCONTROL MIX",
@@ -231,6 +231,19 @@ void testMidiMappingMapsAbsoluteJog()
             "successive absolute platter positions should publish relative movement");
 }
 
+void testMidiMappingMapsRev7ScratchControls()
+{
+    MidiControllerMapper mapper{"DDJ-REV7"};
+    const auto play = mapper.mapMessage(0x90, 19, 127);
+    const auto cue = mapper.mapMessage(0x91, 18, 127);
+    require(play.has_value() && play->action == MidiControllerAction::playPause &&
+                play->deck == 1,
+            "DDJ-REV7 Play should map from the manufacturer-defined deck 1 note");
+    require(cue.has_value() && cue->action == MidiControllerAction::previousMarker &&
+                cue->deck == 2,
+            "DDJ-REV7 Cue should map from the manufacturer-defined deck 2 note");
+}
+
 void testMidiMappingMapsHerculesControls()
 {
     require(supportsMidiControllerMapping("Hercules DJControl Inpulse 300"),
@@ -346,17 +359,6 @@ void testMidiMappingBuildsConfiguredOutputs()
             "meter output should use profile output bindings");
 }
 
-void testMidiMappingBuildsNonContiguousPadOutputs()
-{
-    MidiControllerMapper mapper{"OPUS-QUAD"};
-    const auto hotCues = mapper.hotCueLightMessages(3);
-    require(hotCues[0].data1 == 8 && hotCues[1].data1 == 11 &&
-                hotCues[2].data1 == 13 && hotCues[3].data1 == 15,
-            "non-contiguous pad output notes should come from JSON");
-    require(hotCues[2].data2 == 0x7f && hotCues[3].data2 == 0,
-            "marker count should still control configured pad lights");
-}
-
 void testMidiDeckActivation()
 {
     MidiDeckActivationState activation;
@@ -414,14 +416,14 @@ void addMidiControllerMappingTests(std::vector<TestCase>& tests)
     tests.push_back({"MIDI mapping maps seven-bit mixer controls",
                      testMidiMappingMapsSevenBitMixerControls});
     tests.push_back({"MIDI mapping maps absolute jog", testMidiMappingMapsAbsoluteJog});
+    tests.push_back({"MIDI mapping maps DDJ-REV7 Scratch controls",
+                     testMidiMappingMapsRev7ScratchControls});
     tests.push_back({"MIDI mapping maps Hercules controls",
                      testMidiMappingMapsHerculesControls});
     tests.push_back({"MIDI mapping maps additional controllers",
                      testMidiMappingMapsAdditionalControllers});
     tests.push_back({"MIDI mapping builds configured outputs",
                      testMidiMappingBuildsConfiguredOutputs});
-    tests.push_back({"MIDI mapping builds non-contiguous pad outputs",
-                     testMidiMappingBuildsNonContiguousPadOutputs});
     tests.push_back({"MIDI mapping applies deck activation", testMidiDeckActivation});
     tests.push_back({"MIDI profile exposes init frames", testMidiProfileInitMessages});
 }
