@@ -117,19 +117,25 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
   and a collapsible bottom panel with **Track FX**, **Project FX**, and
-  **Library** tabs. Track FX gives each track a Tone EQ (Bass / Mid / Treble),
-  a bipolar **Filter** (a single DJ-style sweep from low-pass through off to
-  high-pass), a single-knob **Compressor** (gentle dynamics control), **Punch**
-  (transient enhancement), **Saturation** (soft clipping), a **Bit Crusher**
-  (lo-fi digital reduction), and Reverb and Delay sends. Project FX hosts the
-  song-wide Reverb and Delay those sends feed, a one-control **Glue Compressor**
-  compressor after their returns and before master gain, plus a fixed-ceiling
-  **Safety Limiter** for the final output. Delay Time uses direct 1/4, 1/8,
-  1/8T, and 1/16 beat-division buttons, while each Track FX and Project FX
-  header offers a hover explanation. Track FX keeps five responsive columns:
-  Tone; Filter above Reverb & Delay; Compressor above Punch; Saturation; and
-  Bit Crusher. Plus
-  drag-to-resize and reorder tracks, and a master output with live metering.
+  **Library** tabs.
+  - **Track FX**
+    - **Tone:** Bass, Mid, and Treble controls.
+    - **Filter:** a single DJ-style sweep from low-pass through off to high-pass.
+    - **Compressor:** single-knob gentle dynamics control.
+    - **Punch:** transient enhancement.
+    - **Saturation:** soft clipping.
+    - **Bit Crusher:** lo-fi digital reduction.
+    - **Reverb and Delay sends:** feed the shared Project FX effects.
+  - **Project FX**
+    - **Reverb and Delay:** song-wide effects fed by each track's sends. Delay
+      Time uses direct 1/4, 1/8, 1/8T, and 1/16 beat-division buttons.
+    - **Glue Compressor:** one-control compression after the shared effect
+      returns and before master gain.
+    - **Safety Limiter:** fixed-ceiling protection for the final output.
+  - **FX layout and guidance:** each Track FX and Project FX header offers a
+    hover explanation. Track FX keeps five responsive columns: Tone; Filter
+    above Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.
+  - Drag to resize and reorder tracks, and use the master output's live metering.
 - **Track effect automation.** Open a collapsible lane under any track to draw
   breakpoint curves that automate a parameter over the timeline — Filter, Pan,
   Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, Punch,
@@ -148,14 +154,16 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Reverse a clip.** Play any clip back-to-front from **Effects ▸ Reverse** or
   a toggle in the Clip Editor (with live preview) — non-destructive, so the
   source file is never altered.
-- **DJ turntable effects.** Add a **Brake** (a vinyl record-stop that slows the
-  clip to a halt) or a **Backspin** (a reverse rewind, like pulling the record
-  back) at the end of a clip from **Effects ▸ Brake / Backspin** or the Clip
-  Editor toolbar (with live preview) — non-destructive, one or the other per
-  clip, applied to every linked copy, working on warped clips too and carried
-  through to export. Reverse, Brake, and Backspin are mutually exclusive — set
-  one and the others stay visible but disabled until you turn it off. Tune how
-  long they take and how they feel in **Preferences ▸ Effects**.
+- **DJ turntable effects.** Add one of these at the end of a clip from
+  **Effects ▸ Brake / Backspin** or the Clip Editor toolbar:
+  - **Brake:** a vinyl record-stop that slows the clip to a halt.
+  - **Backspin:** a reverse rewind, like pulling the record back.
+
+  Both have live preview, are non-destructive, apply to every linked copy, work
+  on warped clips, and carry through to export. Reverse, Brake, and Backspin
+  are mutually exclusive — set one and the others stay visible but disabled
+  until you turn it off. Tune how long Brake and Backspin take and how they
+  feel in **Preferences ▸ Effects**.
 - **Vinyl-style scratch authoring.** Open a clip or library item in the Scratch
   Editor and use a supported MIDI DJ deck to record platter and crossfader
   moves. Deck control is the primary workflow; the on-screen deck offers an
