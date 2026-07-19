@@ -128,6 +128,9 @@ class AudioEngine
                       bool snap);
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
+    void setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap);
+    void setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                            float boost, float mix, bool snap);
 
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 

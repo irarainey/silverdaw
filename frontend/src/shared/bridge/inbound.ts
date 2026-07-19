@@ -139,6 +139,26 @@ export const TrackLevelerAppliedPayloadSchema = z.object({
 })
 export type TrackLevelerAppliedPayload = z.infer<typeof TrackLevelerAppliedPayloadSchema>
 
+/** Ack for `TRACK_SET_SATURATION`; echoes the full clamped state. */
+export const TrackSaturationAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  drive: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type TrackSaturationAppliedPayload = z.infer<typeof TrackSaturationAppliedPayloadSchema>
+
+/** Ack for `TRACK_SET_BIT_CRUSHER`; echoes the full clamped state. */
+export const TrackBitCrusherAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  rate: z.number().min(0.01).max(1),
+  bits: z.number().int().min(1).max(16),
+  boost: z.number().min(0).max(1),
+  mix: z.number().min(0).max(1),
+  ok: z.boolean()
+})
+export type TrackBitCrusherAppliedPayload = z.infer<typeof TrackBitCrusherAppliedPayloadSchema>
+
 /** Ack for `TRACK_SET_PAN`; delta ack avoids full snapshots during pan drags. */
 export const TrackPanAppliedPayloadSchema = z.object({
   trackId: z.string(),
@@ -292,6 +312,12 @@ export const ProjectStateTrackSchema = z.object({
   /** Bipolar DJ-style Filter sweep, `[-1, +1]` (0 = off; <0 High Cut, >0 Low Cut). */
   toneFilter: z.number().optional(),
   levelerAmount: z.number().optional(),
+  saturationDrive: z.number().min(0).max(1).optional(),
+  saturationMix: z.number().min(0).max(1).optional(),
+  bitCrusherRate: z.number().min(0.01).max(1).optional(),
+  bitCrusherBits: z.number().int().min(1).max(16).optional(),
+  bitCrusherBoost: z.number().min(0).max(1).optional(),
+  bitCrusherMix: z.number().min(0).max(1).optional(),
   /** Equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),
   /** Per-track effect automation lanes: `{ paramId, points: [{ timeMs, value }] }`. */
@@ -828,6 +854,8 @@ export interface BridgeInboundMap {
   TRACK_SENDS_APPLIED: TrackSendsAppliedPayload
   TRACK_TONE_APPLIED: TrackToneAppliedPayload
   TRACK_LEVELER_APPLIED: TrackLevelerAppliedPayload
+  TRACK_SATURATION_APPLIED: TrackSaturationAppliedPayload
+  TRACK_BIT_CRUSHER_APPLIED: TrackBitCrusherAppliedPayload
   TRACK_PAN_APPLIED: TrackPanAppliedPayload
   TRACK_AUTOMATION_APPLIED: TrackAutomationAppliedPayload
   CLIP_ENVELOPE_APPLIED: ClipEnvelopeAppliedPayload
@@ -899,6 +927,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_SENDS_APPLIED',
   'TRACK_TONE_APPLIED',
   'TRACK_LEVELER_APPLIED',
+  'TRACK_SATURATION_APPLIED',
+  'TRACK_BIT_CRUSHER_APPLIED',
   'TRACK_PAN_APPLIED',
   'TRACK_AUTOMATION_APPLIED',
   'CLIP_ENVELOPE_APPLIED',
@@ -1051,6 +1081,14 @@ export function isTrackToneAppliedPayload(value: unknown): value is TrackToneApp
 
 export function isTrackLevelerAppliedPayload(value: unknown): value is TrackLevelerAppliedPayload {
   return TrackLevelerAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isTrackSaturationAppliedPayload(value: unknown): value is TrackSaturationAppliedPayload {
+  return TrackSaturationAppliedPayloadSchema.safeParse(value).success
+}
+
+export function isTrackBitCrusherAppliedPayload(value: unknown): value is TrackBitCrusherAppliedPayload {
+  return TrackBitCrusherAppliedPayloadSchema.safeParse(value).success
 }
 
 export function isTrackPanAppliedPayload(value: unknown): value is TrackPanAppliedPayload {

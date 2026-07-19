@@ -1,4 +1,6 @@
 #include "ProjectState.h"
+#include "dsp/BitCrusherParameters.h"
+#include "dsp/SaturationParameters.h"
 
 #include <algorithm>
 #include <cmath>
@@ -59,6 +61,21 @@ bool lanesSemanticallyEqual(const juce::Array<juce::var>& a, const juce::Array<j
     return true;
 }
 
+double normalizeAutomationValue(const juce::String& paramId, double value)
+{
+    if (paramId == "saturationDrive")
+        return saturation::sanitizeDrive(value);
+    if (paramId == "saturationMix")
+        return saturation::sanitizeMix(value);
+    if (paramId == "bitCrusherRate")
+        return bit_crusher::sanitizeRate(value);
+    if (paramId == "bitCrusherBits")
+        return bit_crusher::sanitizeBits(value);
+    if (paramId == "bitCrusherBoost" || paramId == "bitCrusherMix")
+        return bit_crusher::sanitizeUnit(value);
+    return value;
+}
+
 } // namespace
 
 bool ProjectState::setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
@@ -79,7 +96,7 @@ bool ProjectState::setTrackAutomation(const juce::String& trackId, const juce::S
         if (!std::isfinite(t) || !std::isfinite(val)) return false;
         auto* obj = new juce::DynamicObject();
         obj->setProperty(kAutomationTimeMs, juce::jmax(0.0, t));
-        obj->setProperty(kAutomationValue, val);
+        obj->setProperty(kAutomationValue, normalizeAutomationValue(paramId, val));
         normalised.add(juce::var(obj));
     }
     std::sort(normalised.begin(), normalised.end(), [this](const juce::var& a, const juce::var& b) {

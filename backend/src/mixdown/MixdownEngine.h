@@ -66,6 +66,12 @@ struct MixdownSnapshot
         float toneTrebleDb{0.0F};
         float toneFilter{0.0F};
         float levelerAmount{0.0F};
+        float saturationDrive{0.0F};
+        float saturationMix{1.0F};
+        float bitCrusherRate{1.0F};
+        int bitCrusherBits{16};
+        float bitCrusherBoost{0.0F};
+        float bitCrusherMix{0.0F};
         float reverbSend{0.0F};
         float delaySend{0.0F};
         float pan{0.0F};

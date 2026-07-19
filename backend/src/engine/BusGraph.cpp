@@ -91,6 +91,17 @@ void BusGraph::attachClip(const juce::String& trackId,
         if (levelerIt != pendingLeveler.end())
             rt->chain.setLeveler(levelerIt->second, /*snap*/ true);
 
+        auto saturationIt = pendingSaturation.find(trackId);
+        if (saturationIt != pendingSaturation.end())
+            rt->chain.setSaturation(saturationIt->second.drive, saturationIt->second.mix,
+                                    /*snap*/ true);
+
+        auto bitCrusherIt = pendingBitCrusher.find(trackId);
+        if (bitCrusherIt != pendingBitCrusher.end())
+            rt->chain.setBitCrusher(bitCrusherIt->second.rate, bitCrusherIt->second.bits,
+                                    bitCrusherIt->second.boost, bitCrusherIt->second.mix,
+                                    /*snap*/ true);
+
         auto sendIt = pendingSends.find(trackId);
         if (sendIt != pendingSends.end())
         {
@@ -241,6 +252,32 @@ void BusGraph::setTrackLeveler(const juce::String& trackId, float amount, bool s
         it->second->chain.setLeveler(a, snap);
 }
 
+void BusGraph::setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap)
+{
+    if (trackId.isEmpty()) return;
+    const float d = juce::jlimit(0.0F, 1.0F, std::isfinite(drive) ? drive : 0.0F);
+    const float m = juce::jlimit(0.0F, 1.0F, std::isfinite(mix) ? mix : 1.0F);
+    pendingSaturation[trackId] = {d, m};
+    auto it = runtimes.find(trackId);
+    if (it != runtimes.end())
+        it->second->chain.setSaturation(d, m, snap);
+}
+
+void BusGraph::setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                                  float boost, float mix, bool snap)
+{
+    if (trackId.isEmpty()) return;
+    BitCrusherParams params;
+    params.rate = juce::jlimit(0.01F, 1.0F, std::isfinite(rate) ? rate : 1.0F);
+    params.bits = juce::jlimit(1, 16, bits);
+    params.boost = juce::jlimit(0.0F, 1.0F, std::isfinite(boost) ? boost : 0.0F);
+    params.mix = juce::jlimit(0.0F, 1.0F, std::isfinite(mix) ? mix : 0.0F);
+    pendingBitCrusher[trackId] = params;
+    auto it = runtimes.find(trackId);
+    if (it != runtimes.end())
+        it->second->chain.setBitCrusher(params.rate, params.bits, params.boost, params.mix, snap);
+}
+
 void BusGraph::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
 {
     if (trackId.isEmpty()) return;
@@ -318,6 +355,49 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
         case AutomationParam::toneMid: rt.chain.setMidTarget(0.0F, true); break;
         case AutomationParam::toneTreble: rt.chain.setTrebleTarget(0.0F, true); break;
         case AutomationParam::leveler: rt.chain.setLeveler(0.0F, true); break;
+        case AutomationParam::saturationDrive:
+        {
+            const auto saturation = pendingSaturation.find(trackId);
+            rt.chain.setSaturationDriveTarget(
+                saturation != pendingSaturation.end() ? saturation->second.drive : 0.0F, true);
+            break;
+        }
+        case AutomationParam::saturationMix:
+        {
+            const auto saturation = pendingSaturation.find(trackId);
+            rt.chain.setSaturationMixTarget(
+                saturation != pendingSaturation.end() ? saturation->second.mix : 1.0F, true);
+            break;
+        }
+        case AutomationParam::bitCrusherRate:
+        {
+            const auto crusher = pendingBitCrusher.find(trackId);
+            rt.chain.setBitCrusherRateTarget(
+                crusher != pendingBitCrusher.end() ? crusher->second.rate : 1.0F, true);
+            break;
+        }
+        case AutomationParam::bitCrusherBits:
+        {
+            const auto crusher = pendingBitCrusher.find(trackId);
+            rt.chain.setBitCrusherBitsTarget(
+                crusher != pendingBitCrusher.end() ? static_cast<float>(crusher->second.bits) : 16.0F,
+                true);
+            break;
+        }
+        case AutomationParam::bitCrusherBoost:
+        {
+            const auto crusher = pendingBitCrusher.find(trackId);
+            rt.chain.setBitCrusherBoostTarget(
+                crusher != pendingBitCrusher.end() ? crusher->second.boost : 0.0F, true);
+            break;
+        }
+        case AutomationParam::bitCrusherMix:
+        {
+            const auto crusher = pendingBitCrusher.find(trackId);
+            rt.chain.setBitCrusherMixTarget(
+                crusher != pendingBitCrusher.end() ? crusher->second.mix : 0.0F, true);
+            break;
+        }
         case AutomationParam::level: rt.chain.setLevelTarget(0.0F, true); break;
         case AutomationParam::reverbSend: rt.reverbSend.store(0.0F, std::memory_order_relaxed); break;
         case AutomationParam::delaySend: rt.delaySend.store(0.0F, std::memory_order_relaxed); break;
@@ -384,6 +464,8 @@ void BusGraph::clear()
     clipToTrack.clear();
     pendingTone.clear();
     pendingLeveler.clear();
+    pendingSaturation.clear();
+    pendingBitCrusher.clear();
     pendingSends.clear();
     pendingPans.clear();
     pendingAutomation.clear();

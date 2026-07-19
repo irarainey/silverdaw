@@ -1,7 +1,11 @@
 #include "ProjectState.h"
+#include "dsp/BitCrusherParameters.h"
+#include "dsp/SaturationParameters.h"
 #include "ScratchPatternState.h"
 
 #include "scratch/ScratchProtocol.h"
+
+#include <cmath>
 
 #include <juce_core/juce_core.h>
 
@@ -137,6 +141,33 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("levelerAmount",
                                   static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
         }
+        if (track.hasProperty(kSaturationDrive))
+        {
+            trackObj->setProperty("saturationDrive",
+                                  static_cast<double>(
+                                      getTrackSaturationDrive(track.getProperty(kId).toString())));
+        }
+        if (track.hasProperty(kSaturationMix))
+        {
+            trackObj->setProperty("saturationMix",
+                                  static_cast<double>(
+                                      getTrackSaturationMix(track.getProperty(kId).toString())));
+        }
+        if (track.hasProperty(kBitCrusherRate))
+            trackObj->setProperty("bitCrusherRate",
+                                  static_cast<double>(
+                                      getTrackBitCrusherRate(track.getProperty(kId).toString())));
+        if (track.hasProperty(kBitCrusherBits))
+            trackObj->setProperty("bitCrusherBits",
+                                  getTrackBitCrusherBits(track.getProperty(kId).toString()));
+        if (track.hasProperty(kBitCrusherBoost))
+            trackObj->setProperty("bitCrusherBoost",
+                                  static_cast<double>(
+                                      getTrackBitCrusherBoost(track.getProperty(kId).toString())));
+        if (track.hasProperty(kBitCrusherMix))
+            trackObj->setProperty("bitCrusherMix",
+                                  static_cast<double>(
+                                      getTrackBitCrusherMix(track.getProperty(kId).toString())));
         // Emit sends only when non-default; renderer maps sendReverb/sendDelay names.
         if (track.hasProperty(kSendReverb))
         {
@@ -362,6 +393,63 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         removeLegacyClipFadeProperties(root);
         migrateLegacyAudioType(root);
         migrateLegacyLibraryKind(root);
+        for (int i = 0; i < root.getNumChildren(); ++i)
+        {
+            auto track = root.getChild(i);
+            if (!track.hasType(kTrack)) continue;
+
+            const auto normalize = [&track](const juce::Identifier& id, double value,
+                                            double defaultValue) {
+                if (std::abs(value - defaultValue) < 1.0e-4)
+                    track.removeProperty(id, nullptr);
+                else
+                    track.setProperty(id, value, nullptr);
+            };
+
+            if (track.hasProperty(kSaturationDrive))
+                normalize(kSaturationDrive,
+                          saturation::sanitizeDrive(
+                              static_cast<double>(track.getProperty(kSaturationDrive, 0.0))),
+                          0.0);
+            if (track.hasProperty(kSaturationMix))
+                normalize(kSaturationMix,
+                          saturation::sanitizeMix(
+                              static_cast<double>(track.getProperty(kSaturationMix, 1.0))),
+                          1.0);
+            if (track.hasProperty(kBitCrusherRate))
+                normalize(kBitCrusherRate,
+                          bit_crusher::sanitizeRate(
+                              static_cast<double>(track.getProperty(kBitCrusherRate, 1.0))),
+                          1.0);
+            if (track.hasProperty(kBitCrusherBits))
+                normalize(kBitCrusherBits,
+                          bit_crusher::sanitizeBits(
+                              static_cast<double>(track.getProperty(kBitCrusherBits, 16))),
+                          bit_crusher::kMaxBits);
+            if (track.hasProperty(kBitCrusherBoost))
+                normalize(kBitCrusherBoost,
+                          bit_crusher::sanitizeUnit(
+                              static_cast<double>(track.getProperty(kBitCrusherBoost, 0.0))),
+                          0.0);
+            if (track.hasProperty(kBitCrusherMix))
+                normalize(kBitCrusherMix,
+                          bit_crusher::sanitizeUnit(
+                              static_cast<double>(track.getProperty(kBitCrusherMix, 0.0))),
+                          0.0);
+
+            const auto trackId = track.getProperty(kId).toString();
+            for (const auto& paramId : {juce::String{"saturationDrive"},
+                                        juce::String{"saturationMix"},
+                                        juce::String{"bitCrusherRate"},
+                                        juce::String{"bitCrusherBits"},
+                                        juce::String{"bitCrusherBoost"},
+                                        juce::String{"bitCrusherMix"}})
+            {
+                const auto points = getTrackAutomation(trackId, paramId);
+                if (!points.isEmpty())
+                    setTrackAutomation(trackId, paramId, points);
+            }
+        }
         // Backfill a stable per-track colour for legacy projects so inherited
         // clip colours stop shifting with track order across reloads. The ordinal
         // mirrors the renderer's positional fallback, so the first load is

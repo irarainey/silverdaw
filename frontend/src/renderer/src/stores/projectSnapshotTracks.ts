@@ -73,6 +73,30 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         levelerAmount:
           typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
             ? t.levelerAmount
+            : undefined,
+        saturationDrive:
+          typeof t.saturationDrive === 'number' && t.saturationDrive !== 0
+            ? t.saturationDrive
+            : undefined,
+        saturationMix:
+          typeof t.saturationMix === 'number' && t.saturationMix !== 1
+            ? t.saturationMix
+            : undefined,
+        bitCrusherRate:
+          typeof t.bitCrusherRate === 'number' && t.bitCrusherRate !== 1
+            ? t.bitCrusherRate
+            : undefined,
+        bitCrusherBits:
+          typeof t.bitCrusherBits === 'number' && t.bitCrusherBits !== 16
+            ? t.bitCrusherBits
+            : undefined,
+        bitCrusherBoost:
+          typeof t.bitCrusherBoost === 'number' && t.bitCrusherBoost !== 0
+            ? t.bitCrusherBoost
+            : undefined,
+        bitCrusherMix:
+          typeof t.bitCrusherMix === 'number' && t.bitCrusherMix !== 0
+            ? t.bitCrusherMix
             : undefined
       }
       target.tracks.push(track)
@@ -109,6 +133,30 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
       track.levelerAmount =
         typeof t.levelerAmount === 'number' && t.levelerAmount !== 0
           ? t.levelerAmount
+          : undefined
+      track.saturationDrive =
+        typeof t.saturationDrive === 'number' && t.saturationDrive !== 0
+          ? t.saturationDrive
+          : undefined
+      track.saturationMix =
+        typeof t.saturationMix === 'number' && t.saturationMix !== 1
+          ? t.saturationMix
+          : undefined
+      track.bitCrusherRate =
+        typeof t.bitCrusherRate === 'number' && t.bitCrusherRate !== 1
+          ? t.bitCrusherRate
+          : undefined
+      track.bitCrusherBits =
+        typeof t.bitCrusherBits === 'number' && t.bitCrusherBits !== 16
+          ? t.bitCrusherBits
+          : undefined
+      track.bitCrusherBoost =
+        typeof t.bitCrusherBoost === 'number' && t.bitCrusherBoost !== 0
+          ? t.bitCrusherBoost
+          : undefined
+      track.bitCrusherMix =
+        typeof t.bitCrusherMix === 'number' && t.bitCrusherMix !== 0
+          ? t.bitCrusherMix
           : undefined
     }
     // Transitions are backend-authoritative and cleared by absent snapshot data.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Track FX surface in the bottom panel beside the Library and Project FX tabs.
-// Hosts the selected track's rack: Tone (3-band EQ), Filter (DJ-style LPF↔HPF
-// sweep), Leveler, and Reverb/Delay send amounts into the project buses. (Pan
+// Hosts the selected track's rack: Tone (3-band EQ), Saturation, Bit Crusher,
+// Filter (DJ-style LPF↔HPF sweep), Leveler, and Reverb/Delay sends. (Pan
 // lives in the track header, under the gain fader.)
 //
 // Modules are keyed by track id so changing selection remounts them (fresh
@@ -14,6 +14,8 @@ import TrackToneModule from '@/components/TrackToneModule.vue'
 import TrackFilterModule from '@/components/TrackFilterModule.vue'
 import TrackSendsModule from '@/components/TrackSendsModule.vue'
 import TrackLevelerModule from '@/components/TrackLevelerModule.vue'
+import TrackSaturationModule from '@/components/TrackSaturationModule.vue'
+import TrackBitCrusherModule from '@/components/TrackBitCrusherModule.vue'
 import FxRack from '@/components/FxRack.vue'
 
 const project = useProjectStore()
@@ -34,6 +36,14 @@ const selectedTrackId = computed(() =>
       :key="`tone-${selectedTrackId}`"
       :track-id="selectedTrackId"
     />
+    <TrackSaturationModule
+      :key="`saturation-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
+    <TrackBitCrusherModule
+      :key="`bit-crusher-${selectedTrackId}`"
+      :track-id="selectedTrackId"
+    />
     <TrackFilterModule
       :key="`filter-${selectedTrackId}`"
       :track-id="selectedTrackId"
@@ -51,6 +61,6 @@ const selectedTrackId = computed(() =>
     v-else
     class="flex h-full min-h-0 w-full items-center justify-center px-4 text-center text-xs text-zinc-500"
   >
-    Select a track to edit its Tone, Filter, Compressor, and Reverb &amp; Delay.
+    Select a track to edit its Tone, Saturation, Bit Crusher, Filter, Compressor, and Reverb &amp; Delay.
   </div>
 </template>

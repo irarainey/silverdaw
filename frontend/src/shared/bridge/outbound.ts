@@ -360,6 +360,22 @@ export interface TrackSetLevelerPayload extends GestureHints {
   amount: number
 }
 
+/** Per-track soft saturation. Drive and Mix are linear `[0,1]`; Mix defaults to fully wet. */
+export interface TrackSetSaturationPayload extends GestureHints {
+  trackId: string
+  drive?: number
+  mix?: number
+}
+
+/** Per-track bit crusher. Rate is a reduced-sample-rate ratio `[0.01,1]`; Bits is `[1,16]`. */
+export interface TrackSetBitCrusherPayload extends GestureHints {
+  trackId: string
+  rate?: number
+  bits?: number
+  boost?: number
+  mix?: number
+}
+
 /** One breakpoint on a track automation curve. */
 export interface AutomationPoint {
   /** Timeline-absolute ms (>= 0). */
@@ -378,6 +394,12 @@ export type AutomationParamId =
   | 'reverbSend'
   | 'delaySend'
   | 'leveler'
+  | 'saturationDrive'
+  | 'saturationMix'
+  | 'bitCrusherRate'
+  | 'bitCrusherBits'
+  | 'bitCrusherBoost'
+  | 'bitCrusherMix'
   | 'level'
 
 /** Per-track effect automation curve for one parameter (one atomic mutation per
@@ -521,6 +543,8 @@ export interface BridgeOutboundMap {
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
   TRACK_SET_LEVELER: TrackSetLevelerPayload
+  TRACK_SET_SATURATION: TrackSetSaturationPayload
+  TRACK_SET_BIT_CRUSHER: TrackSetBitCrusherPayload
   TRACK_SET_PAN: TrackSetPanPayload
   TRACK_SET_AUTOMATION: TrackSetAutomationPayload
   CLIP_SET_ENVELOPE: ClipSetEnvelopePayload
@@ -1142,6 +1166,8 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_SET_SENDS: 'payload',
   TRACK_SET_TONE: 'payload',
   TRACK_SET_LEVELER: 'payload',
+  TRACK_SET_SATURATION: 'payload',
+  TRACK_SET_BIT_CRUSHER: 'payload',
   TRACK_SET_PAN: 'payload',
   TRACK_SET_AUTOMATION: 'payload',
   CLIP_SET_ENVELOPE: 'payload',

@@ -87,6 +87,8 @@ const INBOUND_TYPES = {
   TRACK_SENDS_APPLIED: true,
   TRACK_TONE_APPLIED: true,
   TRACK_LEVELER_APPLIED: true,
+  TRACK_SATURATION_APPLIED: true,
+  TRACK_BIT_CRUSHER_APPLIED: true,
   TRACK_PAN_APPLIED: true,
   TRACK_AUTOMATION_APPLIED: true,
   CLIP_ENVELOPE_APPLIED: true,
@@ -481,6 +483,34 @@ describe('isProjectStatePayload', () => {
       isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: '1.0', clips: [] }] })
     ).toBe(false)
     expect(isProjectStatePayload({ ...base, tracks: [{ id: 't1', gain: 1.0 }] })).toBe(false)
+  })
+
+  it('rejects out-of-range Saturation and Bit Crusher track state', () => {
+    const track = { id: 't1', gain: 1.0, clips: [] }
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, saturationDrive: 2 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, saturationMix: -1 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherRate: 0 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherBits: 8.5 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherBoost: 2 }]
+    })).toBe(false)
+    expect(isProjectStatePayload({
+      ...base,
+      tracks: [{ ...track, bitCrusherMix: -1 }]
+    })).toBe(false)
   })
 
   it('rejects malformed clip entries', () => {

@@ -33,4 +33,27 @@ inline bool applyUnitFloat(juce::ValueTree& tree,
     return true;
 }
 
+inline bool applyUnitFloatWithDefault(juce::ValueTree& tree,
+                                      const juce::Identifier& id,
+                                      float value,
+                                      float defaultValue,
+                                      float epsilon,
+                                      juce::UndoManager* undo)
+{
+    const auto clamped = juce::jlimit(0.0f, 1.0f, value);
+    const bool hadProperty = tree.hasProperty(id);
+    const auto previous = hadProperty
+        ? static_cast<float>(static_cast<double>(tree.getProperty(id)))
+        : defaultValue;
+    if (std::abs(clamped - defaultValue) < epsilon)
+    {
+        if (!hadProperty) return false;
+        tree.removeProperty(id, undo);
+        return true;
+    }
+    if (hadProperty && std::abs(previous - clamped) < epsilon) return false;
+    tree.setProperty(id, clamped, undo);
+    return true;
+}
+
 } // namespace silverdaw

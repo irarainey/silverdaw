@@ -48,6 +48,18 @@ void AudioEngine::setTrackLeveler(const juce::String& trackId, float amount, boo
     busGraph.setTrackLeveler(trackId, amount, snap);
 }
 
+void AudioEngine::setTrackSaturation(const juce::String& trackId,
+                                     float drive, float mix, bool snap)
+{
+    busGraph.setTrackSaturation(trackId, drive, mix, snap);
+}
+
+void AudioEngine::setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                                     float boost, float mix, bool snap)
+{
+    busGraph.setTrackBitCrusher(trackId, rate, bits, boost, mix, snap);
+}
+
 void AudioEngine::setTrackSends(const juce::String& trackId, float reverbSend, float delaySend)
 {
     busGraph.setTrackSends(trackId, reverbSend, delaySend);

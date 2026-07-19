@@ -88,6 +88,11 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
                               trackSnap.toneTrebleDb, trackSnap.toneFilter, /*snap*/ true);
         busGraph.setTrackLeveler(trackSnap.id, trackSnap.levelerAmount, /*snap*/ true);
+        busGraph.setTrackSaturation(trackSnap.id, trackSnap.saturationDrive,
+                                    trackSnap.saturationMix, /*snap*/ true);
+        busGraph.setTrackBitCrusher(trackSnap.id, trackSnap.bitCrusherRate,
+                                    trackSnap.bitCrusherBits, trackSnap.bitCrusherBoost,
+                                    trackSnap.bitCrusherMix, /*snap*/ true);
         busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
         busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
     }

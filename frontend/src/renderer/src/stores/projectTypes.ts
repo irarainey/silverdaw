@@ -113,6 +113,14 @@ export interface Track {
   pan?: number
   /** Leveler (soft-knee compressor) amount, linear [0,1] (0 = off). Suppressed-when-default. */
   levelerAmount?: number
+  /** Saturation drive and wet mix, linear [0,1]. Mix defaults to 1 when absent. */
+  saturationDrive?: number
+  saturationMix?: number
+  /** Bit crusher settings. Rate defaults to 1, Bits to 16, and Boost/Mix to 0. */
+  bitCrusherRate?: number
+  bitCrusherBits?: number
+  bitCrusherBoost?: number
+  bitCrusherMix?: number
   /** Clip-to-clip crossfades on this track (§12.1); hydrated from PROJECT_STATE. */
   transitions?: Transition[]
   /** Per-track effect automation curves, keyed by parameter id. A lane is present

@@ -931,7 +931,7 @@ diverges from mixdown in real conditions.
 - Per-track insert reverb / delay (alternative to the shared sends above).
 - VST3 plugin hosting via JUCE `AudioPluginHost` — track-vs-clip scope
   decided in Phase 8 once we've lived with the per-track model.
-- Saturator and Utility (gain / phase / mono) effects — only added if real
+- Utility (gain / phase / mono) effects — only added if real
   usage shows the need; the simple ethos is to ship fewer, well-explained
   effects.
 - Master Limiter + LUFS / RMS readouts.
@@ -1081,7 +1081,7 @@ silence.
   **Volume** button (see §7.11). There is no separate fade control, no
   timeline drag handles, and no standalone dialog; on the timeline the
   envelope is reflected in the waveform's height rather than as an overlay.
-- **Per-track Tone / Compressor / Reverb amount / Delay amount** — surfaced
+- **Per-track Tone / Compressor / Saturation / Reverb amount / Delay amount** — surfaced
   in a **Track FX** tab of the bottom panel (shares its space with
   the Library; one-at-a-time tab switch — see §7.12).
 - **Project Reverb / Delay** — a **Project FX** subtab within the
@@ -1095,7 +1095,7 @@ silence.
 - Per-track insert reverb / delay (so a single track can have its own
   unique room without the shared one).
 - Sidechain compression.
-- Saturator and Utility (gain / phase / mono).
+- Utility (gain / phase / mono).
 - Master Limiter.
 
 ### 7.11 Clip Volume Shape
@@ -1830,7 +1830,7 @@ playable at every point):
   the last bit of float math, so byte-identical is too strict; the
   parity harness tolerance is `< 0.5 LSB at 32-bit float`).
 - [x] **1b. Canonical `TrackChain` (empty).** Define the
-  `TrackChain` abstraction (Tone → Leveler → gain → mute/solo, all
+  `TrackChain` abstraction (Tone → Leveler → Saturation → Bit Crusher → gain → mute/solo, all
   no-op for now) and run it inside `TrackRuntime` for every block.
   `MixdownEngine` is refactored to consume the same `TrackChain`.
   Acceptance: parity harness (§7.9.6 conditions a–d) passes — first
@@ -1966,7 +1966,7 @@ playable at every point):
   Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
   across the track's lifetime and resets on transport stop / seek,
   **never** at clip boundaries. Runs in `TrackChain` after Tone
-  (Tone → Leveler) and is mirrored in the offline `MixdownEngine` for
+  (Tone → Leveler → Saturation → Bit Crusher) and is mirrored in the offline `MixdownEngine` for
   export parity. Bridge: `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
   activated end-to-end (engine push + persistence + renderer snapshot).
   The **Advanced** disclosure (threshold / ratio / attack / release /
@@ -2000,7 +2000,7 @@ playable at every point):
   dirty-mark). Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
-  TrackRuntime → TrackChain (Tone → Leveler → gain → mute/solo) →
+  TrackRuntime → TrackChain (Tone → Leveler → Saturation → Bit Crusher → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
   master meter → final-stage libsamplerate`) so warped / pitch-
   shifted / effected output is **sample-equivalent to live
@@ -2030,7 +2030,7 @@ playable at every point):
 - Bus / send routing UI beyond the two shared sends in §7.9.
 - Sidechain Leveler routing.
 - Per-track insert reverb / delay.
-- Saturator and Utility effects.
+- Utility effects.
 - VST3 hosting (scope decided then — per-track or per-clip).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).

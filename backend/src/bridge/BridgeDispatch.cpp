@@ -501,6 +501,18 @@ bool dispatchTrack(const DispatchContext& ctx)
                                             " amount=" + payload.getProperty("amount", "").toString());
         silverdaw::handleTrackSetLeveler(payload, engine, projectState, bridge);
     }
+    else if (type == "TRACK_SET_SATURATION")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_SATURATION trackId=" +
+                                            payload.getProperty("trackId", "").toString());
+        silverdaw::handleTrackSetSaturation(payload, engine, projectState, bridge);
+    }
+    else if (type == "TRACK_SET_BIT_CRUSHER")
+    {
+        silverdaw::log::debug("bridge", "recv TRACK_SET_BIT_CRUSHER trackId=" +
+                                            payload.getProperty("trackId", "").toString());
+        silverdaw::handleTrackSetBitCrusher(payload, engine, projectState, bridge);
+    }
     else if (type == "TRACK_SET_PAN")
     {
         silverdaw::log::debug("bridge", "recv TRACK_SET_PAN trackId=" +

@@ -289,6 +289,196 @@ void testProjectStateLevelerJsonRoundTrip()
         }
 }
 
+void testProjectStateSaturationJsonRoundTrip()
+{
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-sat"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-sat");
+            require(json.isObject(), "fresh track should appear in tracksAsJson");
+            require(!json.hasProperty("saturationDrive"), "default saturation drive must be omitted");
+            require(!json.hasProperty("saturationMix"), "default saturation mix must be omitted");
+            requireNear(state.getTrackSaturationMix("t-sat"), 1.0, 0.0001,
+                        "absent saturation mix should default to fully wet");
+        }
+
+        require(state.setTrackSaturation("t-sat", 0.6F, 0.4F),
+                "non-default saturation should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-sat");
+            requireNear(static_cast<double>(json.getProperty("saturationDrive", 0.0)), 0.6, 0.0001,
+                        "saturation drive should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("saturationMix", 1.0)), 0.4, 0.0001,
+                        "saturation mix should round-trip through tracksAsJson");
+        }
+
+        require(state.setTrackSaturation("t-sat", 0.0F, 1.0F),
+                "reset saturation should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-sat");
+            require(!json.hasProperty("saturationDrive"), "reset saturation drive must be omitted");
+            require(!json.hasProperty("saturationMix"), "reset saturation mix must be omitted");
+        }
+}
+
+void testProjectStateSaturationCanonicalizesLoadedValues()
+{
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    juce::ValueTree track(juce::Identifier{"TRACK"});
+    track.setProperty("id", "t-sat", nullptr);
+    track.setProperty("saturationDrive", 2.0, nullptr);
+    track.setProperty("saturationMix", -1.0, nullptr);
+    project.appendChild(track, nullptr);
+
+    silverdaw::ProjectState state;
+    require(state.replaceTree(project).wasOk(), "project replacement should succeed");
+    requireNear(state.getTrackSaturationDrive("t-sat"), 1.0, 0.0001,
+                "loaded saturation drive should clamp to the unit range");
+    requireNear(state.getTrackSaturationMix("t-sat"), 0.0, 0.0001,
+                "loaded saturation mix should clamp to the unit range");
+
+    const auto tracksJson = state.tracksAsJson();
+    const auto* tracks = tracksJson.getArray();
+    require(tracks != nullptr && tracks->size() == 1,
+            "canonicalized project should serialize its track");
+    const auto& serialized = tracks->getReference(0);
+    requireNear(static_cast<double>(serialized.getProperty("saturationDrive", 0.0)),
+                1.0, 0.0001, "serialized drive should match the canonical loaded value");
+    requireNear(static_cast<double>(serialized.getProperty("saturationMix", 1.0)),
+                0.0, 0.0001, "serialized mix should match the canonical loaded value");
+}
+
+void testProjectStateBitCrusherJsonRoundTrip()
+{
+        silverdaw::ProjectState state;
+        require(state.addTrack("t-crush"), "addTrack should succeed");
+
+        const auto findTrackJson = [](const juce::var& tracks,
+                                      const juce::String& id) -> juce::var {
+            if (auto* arr = tracks.getArray())
+            {
+                for (const auto& tv : *arr)
+                {
+                    if (tv.getProperty("id", {}).toString() == id) return tv;
+                }
+            }
+            return {};
+        };
+
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-crush");
+            require(!json.hasProperty("bitCrusherRate"), "default crusher rate must be omitted");
+            require(!json.hasProperty("bitCrusherBits"), "default crusher bits must be omitted");
+            require(!json.hasProperty("bitCrusherBoost"), "default crusher boost must be omitted");
+            require(!json.hasProperty("bitCrusherMix"), "default crusher mix must be omitted");
+        }
+
+        require(state.setTrackBitCrusher("t-crush", 0.5F, 8, 0.4F, 0.7F),
+                "non-default bit crusher should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-crush");
+            requireNear(static_cast<double>(json.getProperty("bitCrusherRate", 1.0)), 0.5, 0.0001,
+                        "crusher rate should round-trip through tracksAsJson");
+            require(static_cast<int>(json.getProperty("bitCrusherBits", 16)) == 8,
+                    "crusher bits should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("bitCrusherBoost", 0.0)), 0.4, 0.0001,
+                        "crusher boost should round-trip through tracksAsJson");
+            requireNear(static_cast<double>(json.getProperty("bitCrusherMix", 0.0)), 0.7, 0.0001,
+                        "crusher mix should round-trip through tracksAsJson");
+        }
+
+        require(state.setTrackBitCrusher("t-crush", 1.0F, 16, 0.0F, 0.0F),
+                "reset bit crusher should report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-crush");
+            require(!json.hasProperty("bitCrusherRate"), "reset crusher rate must be omitted");
+            require(!json.hasProperty("bitCrusherBits"), "reset crusher bits must be omitted");
+            require(!json.hasProperty("bitCrusherBoost"), "reset crusher boost must be omitted");
+            require(!json.hasProperty("bitCrusherMix"), "reset crusher mix must be omitted");
+        }
+
+        require(state.setTrackBitCrusher("t-crush", 0.0F, 16, 0.0F, 0.0F),
+                "out-of-range crusher rate should clamp and report changed");
+        {
+            const auto json = findTrackJson(state.tracksAsJson(), "t-crush");
+            requireNear(state.getTrackBitCrusherRate("t-crush"), 0.01, 0.0001,
+                        "crusher rate must clamp to its supported minimum");
+            requireNear(static_cast<double>(json.getProperty("bitCrusherRate", 1.0)), 0.01, 0.0001,
+                        "crusher snapshot must match the clamped rate");
+        }
+}
+
+void testProjectStateBitCrusherCanonicalizesLoadedValues()
+{
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    juce::ValueTree track(juce::Identifier{"TRACK"});
+    track.setProperty("id", "t-crush", nullptr);
+    track.setProperty("bitCrusherRate", -2.0, nullptr);
+    track.setProperty("bitCrusherBits", 8.6, nullptr);
+    track.setProperty("bitCrusherBoost", 2.0, nullptr);
+    track.setProperty("bitCrusherMix", -1.0, nullptr);
+    auto* automationLane = new juce::DynamicObject();
+    automationLane->setProperty("paramId", "bitCrusherRate");
+    const auto makeAutomationPoint = [](double timeMs, double value) {
+        auto* point = new juce::DynamicObject();
+        point->setProperty("timeMs", timeMs);
+        point->setProperty("value", value);
+        return juce::var(point);
+    };
+    juce::Array<juce::var> automationPoints;
+    automationPoints.add(makeAutomationPoint(0.0, 0.0));
+    automationPoints.add(makeAutomationPoint(1000.0, 2.0));
+    automationLane->setProperty("points", juce::var(automationPoints));
+    juce::Array<juce::var> automationLanes;
+    automationLanes.add(juce::var(automationLane));
+    track.setProperty("automation", juce::var(automationLanes), nullptr);
+    project.appendChild(track, nullptr);
+
+    silverdaw::ProjectState state;
+    require(state.replaceTree(project).wasOk(), "project replacement should succeed");
+    requireNear(state.getTrackBitCrusherRate("t-crush"), 0.01, 0.0001,
+                "loaded crusher rate should clamp to the supported minimum");
+    require(state.getTrackBitCrusherBits("t-crush") == 9,
+            "loaded fractional crusher bits should round to an integer");
+    requireNear(state.getTrackBitCrusherBoost("t-crush"), 1.0, 0.0001,
+                "loaded crusher boost should clamp to the unit range");
+    requireNear(state.getTrackBitCrusherMix("t-crush"), 0.0, 0.0001,
+                "loaded crusher mix should clamp to the unit range");
+    const auto automation = state.getTrackAutomation("t-crush", "bitCrusherRate");
+    require(automation.size() == 2, "loaded crusher automation should retain both points");
+    requireNear(static_cast<double>(automation.getReference(0).getProperty("value", 0.0)),
+                0.01, 0.0001, "loaded crusher automation should clamp its lower rate");
+    requireNear(static_cast<double>(automation.getReference(1).getProperty("value", 0.0)),
+                1.0, 0.0001, "loaded crusher automation should clamp its upper rate");
+
+    const auto tracksJson = state.tracksAsJson();
+    const auto* tracks = tracksJson.getArray();
+    require(tracks != nullptr && tracks->size() == 1,
+            "canonicalized project should serialize its track");
+    const auto& serialized = tracks->getReference(0);
+    requireNear(static_cast<double>(serialized.getProperty("bitCrusherRate", 1.0)), 0.01, 0.0001,
+                "serialized rate should match the canonical loaded value");
+    require(static_cast<int>(serialized.getProperty("bitCrusherBits", 16)) == 9,
+            "serialized bits should match the canonical loaded value");
+    requireNear(static_cast<double>(serialized.getProperty("bitCrusherBoost", 0.0)), 1.0, 0.0001,
+                "serialized boost should match the canonical loaded value");
+    require(!serialized.hasProperty("bitCrusherMix"),
+            "canonical default mix should remain default-suppressed");
+}
+
 void testProjectStateSendsJsonRoundTrip()
 {
         silverdaw::ProjectState state;
@@ -405,6 +595,10 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState safety limiter defaults and legacy round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
     tests.push_back({"ProjectState per-track tone round-trips through tracksAsJson", testProjectStateTrackToneJsonRoundTrip});
     tests.push_back({"ProjectState per-track leveler round-trips through tracksAsJson", testProjectStateLevelerJsonRoundTrip});
+    tests.push_back({"ProjectState per-track saturation round-trips through tracksAsJson", testProjectStateSaturationJsonRoundTrip});
+    tests.push_back({"ProjectState canonicalizes loaded per-track saturation values", testProjectStateSaturationCanonicalizesLoadedValues});
+    tests.push_back({"ProjectState per-track bit crusher round-trips through tracksAsJson", testProjectStateBitCrusherJsonRoundTrip});
+    tests.push_back({"ProjectState canonicalizes loaded per-track bit crusher values", testProjectStateBitCrusherCanonicalizesLoadedValues});
     tests.push_back({"ProjectState per-track sends round-trip through tracksAsJson", testProjectStateSendsJsonRoundTrip});
     tests.push_back({"ProjectState per-track pan round-trips through tracksAsJson", testProjectStatePanJsonRoundTrip});
 }

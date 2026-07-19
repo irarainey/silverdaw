@@ -127,6 +127,35 @@ void testProjectStateAutomationRejectsDuplicateTimes()
     require(!state.setTrackAutomation("t1", "filter", pts), "duplicate-time points should be rejected");
 }
 
+void testProjectStateEffectAutomationCanonicalization()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+
+    const auto verify = [&state](const char* paramId, double firstInput, double secondInput,
+                                 double firstExpected, double secondExpected) {
+        juce::Array<juce::var> points;
+        points.add(automationPoint(0.0, firstInput));
+        points.add(automationPoint(1000.0, secondInput));
+        require(state.setTrackAutomation("t1", paramId, points),
+                "effect automation should store after canonicalization");
+
+        const auto stored = state.getTrackAutomation("t1", paramId);
+        require(stored.size() == 2, "effect automation should retain both points");
+        requireNear(static_cast<double>(stored.getReference(0).getProperty("value", 0.0)),
+                    firstExpected, 1.0e-6, "first automation value should be canonical");
+        requireNear(static_cast<double>(stored.getReference(1).getProperty("value", 0.0)),
+                    secondExpected, 1.0e-6, "second automation value should be canonical");
+    };
+
+    verify("saturationDrive", -1.0, 2.0, 0.0, 1.0);
+    verify("saturationMix", -1.0, 2.0, 0.0, 1.0);
+    verify("bitCrusherRate", 0.0, 2.0, 0.01, 1.0);
+    verify("bitCrusherBits", 0.0, 8.6, 1.0, 9.0);
+    verify("bitCrusherBoost", -1.0, 2.0, 0.0, 1.0);
+    verify("bitCrusherMix", -1.0, 2.0, 0.0, 1.0);
+}
+
 void testTracksAsJsonCarriesAutomation()
 {
     silverdaw::ProjectState state;
@@ -162,6 +191,7 @@ void addAutomationTests(std::vector<TestCase>& tests)
     tests.push_back({"BreakpointCurve degenerate (empty / single-point) curves", testBreakpointCurveDegenerate});
     tests.push_back({"ProjectState track automation store/normalise/clear round-trip", testProjectStateAutomationRoundTrip});
     tests.push_back({"ProjectState track automation rejects duplicate breakpoint times", testProjectStateAutomationRejectsDuplicateTimes});
+    tests.push_back({"ProjectState canonicalizes Saturation and Bit Crusher automation values", testProjectStateEffectAutomationCanonicalization});
     tests.push_back({"tracksAsJson carries per-track automation into PROJECT_STATE", testTracksAsJsonCarriesAutomation});
 }
 

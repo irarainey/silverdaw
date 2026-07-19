@@ -114,6 +114,18 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackLevelerAmount(const juce::String& trackId, float amount);
     float getTrackLevelerAmount(const juce::String& trackId) const;
 
+    // Drive defaults to off; Mix defaults to fully wet once Drive is raised.
+    bool setTrackSaturation(const juce::String& trackId, float drive, float mix);
+    float getTrackSaturationDrive(const juce::String& trackId) const;
+    float getTrackSaturationMix(const juce::String& trackId) const;
+
+    bool setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                            float boost, float mix);
+    float getTrackBitCrusherRate(const juce::String& trackId) const;
+    int getTrackBitCrusherBits(const juce::String& trackId) const;
+    float getTrackBitCrusherBoost(const juce::String& trackId) const;
+    float getTrackBitCrusherMix(const juce::String& trackId) const;
+
     // One array property keeps envelope drags atomic and default suppression simple.
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
@@ -756,6 +768,12 @@ class ProjectState : public juce::ValueTree::Listener
 
     // Leveler is currently persisted as the user-facing amount knob.
     static const juce::Identifier kLevelerAmount;
+    static const juce::Identifier kSaturationDrive;
+    static const juce::Identifier kSaturationMix;
+    static const juce::Identifier kBitCrusherRate;
+    static const juce::Identifier kBitCrusherBits;
+    static const juce::Identifier kBitCrusherBoost;
+    static const juce::Identifier kBitCrusherMix;
 
     // Envelope stays one array property for atomic edits.
     static const juce::Identifier kEnvelopePoints;

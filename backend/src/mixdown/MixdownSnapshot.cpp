@@ -70,6 +70,12 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
         track.toneTrebleDb = project.getTrackToneTrebleDb(track.id);
         track.toneFilter = project.getTrackToneFilter(track.id);
         track.levelerAmount = project.getTrackLevelerAmount(track.id);
+        track.saturationDrive = project.getTrackSaturationDrive(track.id);
+        track.saturationMix = project.getTrackSaturationMix(track.id);
+        track.bitCrusherRate = project.getTrackBitCrusherRate(track.id);
+        track.bitCrusherBits = project.getTrackBitCrusherBits(track.id);
+        track.bitCrusherBoost = project.getTrackBitCrusherBoost(track.id);
+        track.bitCrusherMix = project.getTrackBitCrusherMix(track.id);
         track.reverbSend = project.getTrackReverbSend(track.id);
         track.delaySend = project.getTrackDelaySend(track.id);
         track.pan = project.getTrackPan(track.id);

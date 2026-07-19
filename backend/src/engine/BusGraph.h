@@ -140,6 +140,9 @@ public:
                       bool snap);
 
     void setTrackLeveler(const juce::String& trackId, float amount, bool snap);
+    void setTrackSaturation(const juce::String& trackId, float drive, float mix, bool snap);
+    void setTrackBitCrusher(const juce::String& trackId, float rate, int bits,
+                            float boost, float mix, bool snap);
 
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
@@ -240,6 +243,22 @@ private:
     std::unordered_map<juce::String, ToneParams> pendingTone;
 
     std::unordered_map<juce::String, float> pendingLeveler;
+
+    struct SaturationParams
+    {
+        float drive = 0.0F;
+        float mix = 1.0F;
+    };
+    std::unordered_map<juce::String, SaturationParams> pendingSaturation;
+
+    struct BitCrusherParams
+    {
+        float rate = 1.0F;
+        int bits = 16;
+        float boost = 0.0F;
+        float mix = 0.0F;
+    };
+    std::unordered_map<juce::String, BitCrusherParams> pendingBitCrusher;
 
     struct SendParams
     {

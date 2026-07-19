@@ -1,5 +1,6 @@
 #include "ProjectState.h"
 #include "ProjectStatePropertyHelpers.h"
+#include "dsp/SaturationParameters.h"
 
 #include <cmath>
 
@@ -452,6 +453,35 @@ float ProjectState::getTrackLevelerAmount(const juce::String& trackId) const
     const auto track = findTrack(trackId);
     if (!track.isValid()) return 0.0f;
     return static_cast<float>(static_cast<double>(track.getProperty(kLevelerAmount, 0.0)));
+}
+
+bool ProjectState::setTrackSaturation(const juce::String& trackId, float drive, float mix)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+
+    constexpr float epsilon = 1.0e-4F;
+    const float safeDrive = saturation::sanitizeDrive(drive);
+    const float safeMix = saturation::sanitizeMix(mix);
+    bool changed = applyUnitFloat(track, kSaturationDrive, safeDrive, epsilon, &undoManager);
+    changed |= applyUnitFloatWithDefault(track, kSaturationMix, safeMix, 1.0F, epsilon, &undoManager);
+    return changed;
+}
+
+float ProjectState::getTrackSaturationDrive(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 0.0F;
+    return saturation::sanitizeDrive(
+        static_cast<double>(track.getProperty(kSaturationDrive, 0.0)));
+}
+
+float ProjectState::getTrackSaturationMix(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return 1.0F;
+    return saturation::sanitizeMix(
+        static_cast<double>(track.getProperty(kSaturationMix, 1.0)));
 }
 
 juce::StringArray ProjectState::getTrackClipIds(const juce::String& trackId) const

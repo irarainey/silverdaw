@@ -338,6 +338,16 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
                                 projectState.getTrackToneFilter(toneTrackId), /*snap*/ true);
             engine.setTrackLeveler(toneTrackId, projectState.getTrackLevelerAmount(toneTrackId),
                                    /*snap*/ true);
+            engine.setTrackSaturation(toneTrackId,
+                                      projectState.getTrackSaturationDrive(toneTrackId),
+                                      projectState.getTrackSaturationMix(toneTrackId),
+                                      /*snap*/ true);
+            engine.setTrackBitCrusher(toneTrackId,
+                                      projectState.getTrackBitCrusherRate(toneTrackId),
+                                      projectState.getTrackBitCrusherBits(toneTrackId),
+                                      projectState.getTrackBitCrusherBoost(toneTrackId),
+                                      projectState.getTrackBitCrusherMix(toneTrackId),
+                                      /*snap*/ true);
             engine.setTrackSends(toneTrackId, projectState.getTrackReverbSend(toneTrackId),
                                  projectState.getTrackDelaySend(toneTrackId));
             engine.setTrackPan(toneTrackId, projectState.getTrackPan(toneTrackId));

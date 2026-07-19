@@ -507,6 +507,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectStateProjectFx.cpp
     src/project/ProjectStateSerialization.cpp
     src/project/ProjectStateSettings.cpp
+    src/project/ProjectStateTrackBitCrusher.cpp
     src/project/ProjectStateTracks.cpp
     src/project/ProjectTransitions.cpp
     src/project/SampleExport.cpp

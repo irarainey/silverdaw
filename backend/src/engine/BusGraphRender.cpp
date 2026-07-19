@@ -293,6 +293,12 @@ void BusGraph::applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnaps
     if (snap->hasParam(AutomationParam::toneMid)) rt.chain.setMidTarget(sample(AutomationParam::toneMid), discontinuity);
     if (snap->hasParam(AutomationParam::toneTreble)) rt.chain.setTrebleTarget(sample(AutomationParam::toneTreble), discontinuity);
     if (snap->hasParam(AutomationParam::leveler)) rt.chain.setLeveler(sample(AutomationParam::leveler), discontinuity);
+    if (snap->hasParam(AutomationParam::saturationDrive)) rt.chain.setSaturationDriveTarget(sample(AutomationParam::saturationDrive), discontinuity);
+    if (snap->hasParam(AutomationParam::saturationMix)) rt.chain.setSaturationMixTarget(sample(AutomationParam::saturationMix), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherRate)) rt.chain.setBitCrusherRateTarget(sample(AutomationParam::bitCrusherRate), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherBits)) rt.chain.setBitCrusherBitsTarget(sample(AutomationParam::bitCrusherBits), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherBoost)) rt.chain.setBitCrusherBoostTarget(sample(AutomationParam::bitCrusherBoost), discontinuity);
+    if (snap->hasParam(AutomationParam::bitCrusherMix)) rt.chain.setBitCrusherMixTarget(sample(AutomationParam::bitCrusherMix), discontinuity);
     if (snap->hasParam(AutomationParam::level)) rt.chain.setLevelTarget(sample(AutomationParam::level), discontinuity);
     if (snap->hasParam(AutomationParam::reverbSend)) rt.reverbSend.store(sample(AutomationParam::reverbSend), std::memory_order_relaxed);
     if (snap->hasParam(AutomationParam::delaySend)) rt.delaySend.store(sample(AutomationParam::delaySend), std::memory_order_relaxed);

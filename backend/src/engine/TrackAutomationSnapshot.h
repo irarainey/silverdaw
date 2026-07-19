@@ -18,6 +18,12 @@ enum class AutomationParam
     reverbSend,
     delaySend,
     leveler,
+    saturationDrive,
+    saturationMix,
+    bitCrusherRate,
+    bitCrusherBits,
+    bitCrusherBoost,
+    bitCrusherMix,
     level,
     count_
 };
@@ -32,6 +38,12 @@ inline bool automationParamFromString(const juce::String& id, AutomationParam& o
     if (id == "reverbSend") { out = AutomationParam::reverbSend; return true; }
     if (id == "delaySend") { out = AutomationParam::delaySend; return true; }
     if (id == "leveler") { out = AutomationParam::leveler; return true; }
+    if (id == "saturationDrive") { out = AutomationParam::saturationDrive; return true; }
+    if (id == "saturationMix") { out = AutomationParam::saturationMix; return true; }
+    if (id == "bitCrusherRate") { out = AutomationParam::bitCrusherRate; return true; }
+    if (id == "bitCrusherBits") { out = AutomationParam::bitCrusherBits; return true; }
+    if (id == "bitCrusherBoost") { out = AutomationParam::bitCrusherBoost; return true; }
+    if (id == "bitCrusherMix") { out = AutomationParam::bitCrusherMix; return true; }
     if (id == "level") { out = AutomationParam::level; return true; }
     return false;
 }

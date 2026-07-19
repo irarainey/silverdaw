@@ -1334,6 +1334,70 @@ describe('projectStore', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
+  it('updates and forwards per-track Saturation, suppressing neutral defaults', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    project.setTrackSaturation(trackId, { drive: 0.7, mix: 0.4 }, { gestureEnd: true })
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.saturationDrive).toBe(0.7)
+    expect(track?.saturationMix).toBe(0.4)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_SATURATION', {
+      trackId,
+      drive: 0.7,
+      mix: 0.4,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    sendMock.mockClear()
+    project.setTrackSaturation(trackId, { drive: 0, mix: 1 }, { localOnly: true })
+    expect(track?.saturationDrive).toBeUndefined()
+    expect(track?.saturationMix).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('updates and forwards per-track Bit Crusher, suppressing neutral defaults', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    sendMock.mockClear()
+
+    project.setTrackBitCrusher(
+      trackId,
+      { rate: 0.5, bits: 8, boost: 0.25, mix: 0.7 },
+      { gestureEnd: true }
+    )
+
+    const track = project.tracks.find((t) => t.id === trackId)
+    expect(track?.bitCrusherRate).toBe(0.5)
+    expect(track?.bitCrusherBits).toBe(8)
+    expect(track?.bitCrusherBoost).toBe(0.25)
+    expect(track?.bitCrusherMix).toBe(0.7)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_BIT_CRUSHER', {
+      trackId,
+      rate: 0.5,
+      bits: 8,
+      boost: 0.25,
+      mix: 0.7,
+      gestureId: undefined,
+      gestureEnd: true
+    })
+
+    sendMock.mockClear()
+    project.setTrackBitCrusher(
+      trackId,
+      { rate: 1, bits: 16, boost: 0, mix: 0 },
+      { localOnly: true }
+    )
+    expect(track?.bitCrusherRate).toBeUndefined()
+    expect(track?.bitCrusherBits).toBeUndefined()
+    expect(track?.bitCrusherBoost).toBeUndefined()
+    expect(track?.bitCrusherMix).toBeUndefined()
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
   it('updates and forwards the project Reverb and Delay, clamping to [0, 1]', () => {
     const project = useProjectStore()
     sendMock.mockClear()
