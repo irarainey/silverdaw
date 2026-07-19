@@ -23,7 +23,8 @@ void broadcastDone(BridgeServer& bridge,
                    bool limitedByTruePeak,
                    double appliedGainDb,
                    int64_t pass2PostGainClipCount,
-                   double pass2PostGainPeakAmp)
+                   double pass2PostGainPeakAmp,
+                   const juce::String& warning)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("filePath", outputFile.getFullPathName());
@@ -50,6 +51,10 @@ void broadcastDone(BridgeServer& bridge,
             std::numeric_limits<int>::max(), pass2PostGainClipCount)));
         l->setProperty("pass2PostGainPeak", pass2PostGainPeakAmp);
         obj->setProperty("loudness", juce::var(l));
+    }
+    if (warning.isNotEmpty())
+    {
+        obj->setProperty("warning", warning);
     }
     bridge.broadcast("MIXDOWN_DONE", juce::var(obj));
 }

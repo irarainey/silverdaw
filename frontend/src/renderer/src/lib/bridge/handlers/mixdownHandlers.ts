@@ -16,7 +16,12 @@ export const mixdownBridgeHandlers: BridgeInboundHandlers<
     const tracked = snapshotMixdownState()
     clearMixdownState()
     const fileName = payload.filePath.replace(/^.*[\\/]/, '')
-    useNotificationsStore().pushInfo(`Exported ${fileName}`)
+    const notifications = useNotificationsStore()
+    if (payload.warning) {
+      notifications.pushError(`Exported ${fileName}, but ${payload.warning}`)
+    } else {
+      notifications.pushInfo(`Exported ${fileName}`)
+    }
     log.info(
       'mixdown',
       `done filePath=${payload.filePath} durationMs=${payload.durationMs} (tracked format=${tracked?.format ?? 'unknown'})`

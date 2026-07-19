@@ -196,12 +196,17 @@ void testAudioEngineReclaimsRetiredPlaybackSnapshots()
     juce::String previewError;
     require(engine.loadPreview(wav, 0.0, 500.0, &previewError),
             "snapshot reclamation preview should load");
+    engine.playPreview();
     require(engine.setPreviewBrake(0.2), "first preview brake should apply");
     require(engine.setPreviewBrake(0.3), "replacement preview brake should apply");
     require(engine.setPreviewBackspin(0.2), "preview backspin should replace the brake");
     require(engine.setPreviewBackspin(0.3), "replacement preview backspin should apply");
     require(engine.retiredPlaybackSnapshotCount() > 0,
             "preview effect replacements should enter retirement");
+
+    engine.pausePreview();
+    require(engine.retiredPlaybackSnapshotCount() == 0,
+            "pausing the preview should reclaim its retired effect snapshots");
 
     engine.unloadPreview();
     require(engine.retiredPlaybackSnapshotCount() == 0,

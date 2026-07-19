@@ -743,6 +743,7 @@ export type MixdownProgressPayload = z.infer<typeof MixdownProgressPayloadSchema
 export const MixdownDonePayloadSchema = z.object({
   filePath: z.string(),
   durationMs: z.number(),
+  warning: z.string().optional(),
   loudness: z.optional(z.object({
     integratedLufs: z.union([z.number(), z.null()]),
     truePeakDbtp: z.union([z.number(), z.null()]),

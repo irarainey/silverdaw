@@ -52,7 +52,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                      LoudnessAnalyzer* analyzer,
                      bool normalizing,
                      bool analyzing,
-                     const juce::File& pass1File,
                      mixdown_dither::Xorshift32& rngL,
                      mixdown_dither::Xorshift32& rngR,
                      BridgeServer& bridge,
@@ -262,7 +261,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         const juce::ScopedNoDenormals scopedNoDenormals;
         if (cancelFlag.load())
         {
-            pass1File.deleteFile();
             return fail(MixdownFailureCode::Cancelled, "Cancelled.");
         }
         const int blockFrames = static_cast<int>(
@@ -334,7 +332,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
             if (!finalResampler.push(mixInterleaved.data() + static_cast<size_t>(keepOffset) * 2,
                                      keepFrames, /*endOfInput*/ false, writeStereo))
             {
-                pass1File.deleteFile();
                 if (writerError.isNotEmpty())
                     return fail(MixdownFailureCode::Io, writerError);
                 return fail(MixdownFailureCode::Invalid,
@@ -367,7 +364,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     // libsamplerate may leave input unconsumed; preserve leftovers to avoid render drift.
     if (!finalResampler.push(mixInterleaved.data(), 0, /*endOfInput*/ true, writeStereo))
     {
-        pass1File.deleteFile();
         if (writerError.isNotEmpty())
             return fail(MixdownFailureCode::Io, writerError);
         return fail(MixdownFailureCode::Invalid,

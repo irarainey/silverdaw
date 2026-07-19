@@ -20,7 +20,8 @@ void broadcastDone(BridgeServer& bridge,
                    bool limitedByTruePeak,
                    double appliedGainDb,
                    int64_t pass2PostGainClipCount,
-                   double pass2PostGainPeakAmp);
+                   double pass2PostGainPeakAmp,
+                   const juce::String& warning = {});
 
 void broadcastFailed(BridgeServer& bridge, MixdownFailureCode code, const juce::String& error);
 

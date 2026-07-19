@@ -7,6 +7,7 @@ import {
   isEngineErrorPayload,
   isEngineAudioStatusPayload,
   isLibraryItemAnalysisPayload,
+  isMixdownDonePayload,
   isMidiDevicesListPayload,
   isMidiMessagePayload,
   isMidiControlPayload,
@@ -137,6 +138,25 @@ describe('isReadyPayload', () => {
   it('rejects missing or wrong-typed version', () => {
     expect(isReadyPayload({})).toBe(false)
     expect(isReadyPayload({ version: 1 })).toBe(false)
+  })
+})
+
+describe('isMixdownDonePayload', () => {
+  const basePayload = {
+    filePath: 'C:\\exports\\mix.wav',
+    durationMs: 12_000
+  }
+
+  it('accepts an optional export warning', () => {
+    expect(isMixdownDonePayload(basePayload)).toBe(true)
+    expect(isMixdownDonePayload({
+      ...basePayload,
+      warning: 'Metadata could not be applied; the audio was exported without tags.'
+    })).toBe(true)
+  })
+
+  it('rejects a non-string export warning', () => {
+    expect(isMixdownDonePayload({ ...basePayload, warning: true })).toBe(false)
   })
 })
 
