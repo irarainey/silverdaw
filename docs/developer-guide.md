@@ -240,9 +240,11 @@ Silverdaw currently supports the core arrangement workflow:
   **Safety Limiter** switch. Glue Compressor processes the completed project bus after
   the shared Reverb and Delay returns and before master gain; Amount 0 is a
   bit-exact bypass. The limiter is a fixed -1 dBFS, stereo-linked sample-peak
-  guard on final output; it is not a true-peak or mastering limiter. All are
-  edited live (slider drags coalesce into one undo step) and applied to both
-  playback and mixdown. **Track FX** keeps five effect columns side-by-side:
+  guard on final output; it is not a true-peak or mastering limiter. Delay Time
+  uses direct 1/4, 1/8, 1/8T, and 1/16 beat-division buttons, and every Track
+  FX and Project FX header offers a short hover explanation. All are edited
+  live (slider drags coalesce into one undo step) and applied to both playback
+  and mixdown. **Track FX** keeps five effect columns side-by-side:
   Tone, Saturation, and Bit Crusher occupy full-height columns; Filter sits
   above Reverb & Delay, and Compressor sits above Punch. Each retains the
   same share of the available panel width. The grid stops growing after
@@ -1037,6 +1039,9 @@ project **Reverb**, and `delayNoteValue` / `delayFeedback` / `delayTone` /
 `delayMix` the project **Delay** (tempo-locked). `mixGlueAmount` controls the
 project-bus compressor (`0..1`; absent or zero is a bit-exact bypass).
 `safetyLimiterEnabled` enables the final fixed `-1 dBFS` sample-peak guard.
+When persisted, `delayNoteValue` is one of `1/4`, `1/8`, `1/8T`, or `1/16`;
+these values map directly to the Delay Time buttons, and an absent legacy value
+defaults to `1/8`.
 Each `TRACK` can also have optional `BEAT_REPEAT` children: `{ id, startBeat,
 lengthBeats, division }` regions stored
 in beat space; older projects simply have none. `CLIP.envelopePoints` is

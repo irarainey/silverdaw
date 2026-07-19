@@ -119,9 +119,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   (lo-fi digital reduction), and Reverb and Delay sends. Project FX hosts the
   song-wide Reverb and Delay those sends feed, a one-control **Glue Compressor**
   compressor after their returns and before master gain, plus a fixed-ceiling
-  **Safety Limiter** for the final output. Track FX keeps five responsive
-  columns: Tone; Filter above Reverb & Delay; Compressor above Punch;
-  Saturation; and Bit Crusher. Plus
+  **Safety Limiter** for the final output. Delay Time uses direct 1/4, 1/8,
+  1/8T, and 1/16 beat-division buttons, while each Track FX and Project FX
+  header offers a hover explanation. Track FX keeps five responsive columns:
+  Tone; Filter above Reverb & Delay; Compressor above Punch; Saturation; and
+  Bit Crusher. Plus
   drag-to-resize and reorder tracks, and a master output with live metering.
 - **Track effect automation.** Open a collapsible lane under any track to draw
   breakpoint curves that automate a parameter over the timeline — Filter, Pan,

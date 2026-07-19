@@ -1045,8 +1045,8 @@ DSP class in `code`.
 - **Reverb** — `juce::Reverb` (Freeverb, `juce_audio_basics`). Parameters: Size,
   Decay, Tone, Mix. Each track contributes via its **Reverb amount** send (§7.9).
 - **Delay** — hand-rolled integer-sample stereo delay (independent L/R lines +
-  feedback + one-pole tone filter). Time is a note value (1/4, 1/8, 1/8T, 1/16);
-  feedback,
+  feedback + one-pole tone filter). Time uses direct 1/4, 1/8, 1/8T, and 1/16
+  beat-division buttons, backed by the same persisted note values; feedback,
   tone, and overall mix are independent. Each track contributes via its
   **Delay amount** send (§7.9).
 - **Glue Compressor** — a one-control stereo-linked compressor for the completed
@@ -1160,7 +1160,8 @@ silence.
   without horizontal scrolling.
 - **Project Reverb / Delay / Glue Compressor / Safety Limiter** — a **Project FX**
   tab within the same bottom panel area, clearly separated from the per-track
-  controls.
+  controls. Each Track FX and Project FX module header has an info icon with a
+  short hover explanation.
 - **Beat Repeat** — per-track, tempo-aligned regions added from the timeline
   **Effects** menu rather than a continuous Track FX control.
 
