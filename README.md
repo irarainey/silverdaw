@@ -46,7 +46,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 
 ## Key features
 
-- **Project library.** Import audio into a per-project library and drag it
+- **Project library.** Drop audio files onto the Library to import them, or use
+  the Import button and **File ▸ Import to Library…**. Then drag library items
   straight onto the timeline. Files are grouped and easy to reuse. Tiles show a
   track's cover art (or a per-kind icon when there's none); right-click a tile to
   **Update Image…** with your own picture, or **Remove** / **Restore** the image —
@@ -169,12 +170,12 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   bar to start the render from.
 - **Autosave and crash recovery.** Work is snapshotted in the background and
   offered back to you after an unexpected exit.
-- **Stay in flow.** Import files from **File ▸ Import to Library…** (`Ctrl`+`I`),
-  toggle the bottom panel with `Ctrl`+`J`, jump to zoom presets with
-  `Ctrl`+`1`–`8`, and navigate with Home / End. Choose any audio output device
-  and hot-swap it without leaving the timeline, relink moved source files in one
-  step, and undo or redo any edit. **Help ▸ Keyboard Shortcuts** opens the full
-  shortcut reference.
+- **Stay in flow.** Drop files onto the Library, or import them from
+  **File ▸ Import to Library…** (`Ctrl`+`I`), toggle the bottom panel with
+  `Ctrl`+`J`, jump to zoom presets with `Ctrl`+`1`–`8`, and navigate with Home /
+  End. Choose any audio output device and hot-swap it without leaving the
+  timeline, relink moved source files in one step, and undo or redo any edit.
+  **Help ▸ Keyboard Shortcuts** opens the full shortcut reference.
 - **Supported MIDI deck control.** Use a recognised deck controller for
   transport, timeline and marker navigation, clip browsing, selected-track
   mixer controls, platter holding and scratching, plus supported lights and
