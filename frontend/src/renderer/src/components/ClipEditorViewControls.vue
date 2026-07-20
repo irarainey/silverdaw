@@ -166,7 +166,7 @@ defineEmits<{
           : !brakeActive && backspinActive
             ? 'Turn off Backspin first — a clip can have a brake or a backspin, not both'
             : brakeActive
-              ? 'Brake on — the clip decelerates to a stop at its end (non-destructive)'
+              ? 'Brake is on — the clip slows to a stop at its end'
               : 'Decelerate the clip to a stop at its end, like a turntable record-stop'
       "
       @click="$emit('toggle-brake')"
@@ -192,7 +192,7 @@ defineEmits<{
           : !backspinActive && brakeActive
             ? 'Turn off Brake first — a clip can have a brake or a backspin, not both'
             : backspinActive
-              ? 'Backspin on — the clip rewinds backwards at its end (non-destructive)'
+              ? 'Backspin is on — the clip rewinds at its end'
               : 'Rewind the clip backwards at its end, like a DJ pulling the vinyl back'
       "
       @click="$emit('toggle-backspin')"

@@ -83,7 +83,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     :title="'Reverb & Delay'"
-    help-text="Send sound to the shared effects"
+    help-text="Set how much goes to the shared reverb and delay"
     :cols="1"
     :rows="1"
     :grid-area="props.gridArea"

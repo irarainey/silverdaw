@@ -39,7 +39,7 @@ onBeforeUnmount(gesture.endGesture)
 <template>
   <ClipEffectModule
     title="Glue Compressor"
-    help-text="Gently bring the mix together"
+    help-text="Gently evens out the whole mix"
     :cols="1"
     :rows="1"
   >

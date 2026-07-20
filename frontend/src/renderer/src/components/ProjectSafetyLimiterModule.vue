@@ -13,7 +13,7 @@ function onChange(event: Event): void {
 <template>
   <ClipEffectModule
     title="Safety Limiter"
-    help-text="Protect the final output from clipping"
+    help-text="Prevents final peaks exceeding -1 dBFS when the mix gets too loud; normal playback stays unchanged."
     :cols="1"
     :rows="1"
   >
