@@ -106,9 +106,9 @@ public:
     {
         tone.process(buffer, startSample, numSamples);
         leveler.process(buffer, startSample, numSamples);
-        punch.process(buffer, startSample, numSamples);
         saturation.process(buffer, startSample, numSamples);
         bitCrusher.process(buffer, startSample, numSamples);
+        punch.process(buffer, startSample, numSamples);
         if (levelGain != targetLevelGain)
         {
             buffer.applyGainRamp(startSample, numSamples, levelGain, targetLevelGain);

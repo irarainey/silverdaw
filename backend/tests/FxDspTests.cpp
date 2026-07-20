@@ -344,9 +344,56 @@ void testPunchBypassAndStereoLinkedTransientShaping()
     punch.setAmount(1.0F, /*snap*/ true);
     punch.process(shaped, 0, n);
     require(shaped.getSample(0, 128) > 0.5F,
-            "Punch must boost a transient at full amount");
+            "Punch must lift a fresh transient");
     requireNear(shaped.getSample(0, 128) / shaped.getSample(1, 128), 2.0, 0.0001,
                 "Punch transient detection must preserve the stereo image");
+
+    silverdaw::Punch transientPunch;
+    transientPunch.prepare(48000.0);
+    transientPunch.setAmount(1.0F, /*snap*/ true);
+    juce::AudioBuffer<float> transient(2, n);
+    transient.clear();
+    for (int sample = 128; sample < 256; ++sample)
+    {
+        transient.setSample(0, sample, 0.4F);
+        transient.setSample(1, sample, 0.2F);
+    }
+    transientPunch.process(transient, 0, n);
+    require(transient.getSample(0, 192) > 0.5F,
+            "Punch must audibly lift the body of a fresh transient");
+    requireNear(transient.getSample(0, 192) / transient.getSample(1, 192), 2.0, 0.0001,
+                "Punch transient gain must preserve the stereo image");
+
+    constexpr int spectralSamples = 48000;
+    silverdaw::Punch spectralPunch;
+    spectralPunch.prepare(48000.0);
+    spectralPunch.setAmount(1.0F, /*snap*/ true);
+    juce::AudioBuffer<float> spectralSource(1, spectralSamples);
+    for (int sample = 0; sample < spectralSamples; ++sample)
+    {
+        spectralSource.setSample(0, sample, 0.4F * static_cast<float>(
+            std::sin(2.0 * juce::MathConstants<double>::pi * 1000.0 * sample / 48000.0)));
+    }
+    spectralPunch.process(spectralSource, 0, spectralSamples);
+    const auto magnitudeAt = [&spectralSource, spectralSamples](double frequency) {
+        const int startSample = spectralSamples / 2;
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (int sample = startSample; sample < spectralSamples; ++sample)
+        {
+            const double phase = 2.0 * juce::MathConstants<double>::pi * frequency * sample / 48000.0;
+            const double value = spectralSource.getSample(0, sample);
+            real += value * std::cos(phase);
+            imaginary -= value * std::sin(phase);
+        }
+        return std::sqrt(real * real + imaginary * imaginary)
+               / static_cast<double>(spectralSamples - startSample);
+    };
+    const double fundamental = magnitudeAt(1000.0);
+    const double thirdHarmonic = magnitudeAt(3000.0);
+    require(fundamental > 1.0e-6, "Punch must preserve the fundamental");
+    require(thirdHarmonic / fundamental < 0.01,
+            "Punch must not add audible harmonic grit to a sustained tone");
 }
 
 void testMixGlueHasExactBypassAndStereoLinkedCompression()
@@ -1004,6 +1051,68 @@ void testBusGraphSaturationAutomationRestoresStaticValues()
     bg.releaseResources();
 }
 
+void testBusGraphPunchChangesTrackOutput()
+{
+    class SineSource final : public juce::PositionableAudioSource
+    {
+    public:
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            for (int sample = 0; sample < info.numSamples; ++sample)
+            {
+                const auto sourceSample = position + sample;
+                const float amplitude = (sourceSample % 1024) < 128 ? 0.4F : 0.0F;
+                const float value = amplitude * static_cast<float>(
+                    std::sin(2.0 * juce::MathConstants<double>::pi * 3000.0
+                             * static_cast<double>(sourceSample) / 44100.0));
+                for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel)
+                    info.buffer->setSample(channel, info.startSample + sample, value);
+            }
+            position += info.numSamples;
+        }
+        void setNextReadPosition(juce::int64 value) override { position = value; }
+        juce::int64 getNextReadPosition() const override { return position; }
+        juce::int64 getTotalLength() const override { return std::numeric_limits<juce::int64>::max(); }
+        bool isLooping() const override { return false; }
+
+    private:
+        juce::int64 position = 0;
+    };
+
+    constexpr int kBlock = 256;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, 44100.0);
+
+    std::atomic<juce::int64> pos{0};
+    bg.setTimelineSamplesSource(&pos);
+    SineSource src;
+    bg.attachClip("t1", "c1", &src);
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    const auto renderPeak = [&]() {
+        float peak = 0.0F;
+        for (int block = 0; block < 32; ++block)
+        {
+            out.clear();
+            bg.getNextAudioBlock(info);
+            peak = juce::jmax(peak, static_cast<float>(toneRms(out, 0, kBlock)));
+        }
+        return peak;
+    };
+
+    const float dryMagnitude = renderPeak();
+
+    bg.setTrackPunch("t1", 1.0F, /*snap*/ true);
+    const float punchedMagnitude = renderPeak();
+
+    require(punchedMagnitude > dryMagnitude * 1.1F,
+            "full Punch must boost the rendered track output through BusGraph");
+    bg.releaseResources();
+}
+
 // M-auto: discontinuity matrix — a level lane must snap (not glide) when the
 // transport seeks backwards, when cursors are force-snapped on play, and when the
 // snapshot pointer swaps mid-stream. Each jump must land on the curve value in one
@@ -1296,6 +1405,65 @@ void testSaturationNeutralBypassAndMix()
             "full-drive saturation should increase a quiet positive sample without clipping");
     requireNear(driven.getSample(1, 0), -driven.getSample(0, 0), 1.0e-6,
                 "saturation should preserve an odd-symmetric transfer curve");
+
+    saturation.reset();
+    saturation.setParams(0.5F, 1.0F, /*snap*/ true);
+    juce::AudioBuffer<float> mediumDrive(2, n);
+    for (int sample = 0; sample < n; ++sample)
+    {
+        mediumDrive.setSample(0, sample, 0.25F);
+        mediumDrive.setSample(1, sample, -0.25F);
+    }
+    saturation.process(mediumDrive, 0, n);
+    require(mediumDrive.getSample(0, n - 1) > 0.25F
+                && mediumDrive.getSample(0, n - 1) < 0.5F,
+            "mid-drive saturation should add warmth without strong grit");
+    requireNear(mediumDrive.getSample(1, n - 1), -mediumDrive.getSample(0, n - 1), 1.0e-6,
+                "mid-drive saturation should preserve the stereo image");
+}
+
+void testSaturationSuppressesHighFrequencyAliases()
+{
+    constexpr int sampleRate = 44100;
+    constexpr int samples = 44100;
+    constexpr int inputHz = 12000;
+    constexpr int aliasHz = 8100;
+    constexpr int warmupSamples = 147; // One whole 12 kHz waveform cycle at 44.1 kHz.
+
+    silverdaw::Saturation saturation;
+    saturation.prepare(static_cast<double>(sampleRate));
+    saturation.setParams(1.0F, 1.0F, /*snap*/ true);
+
+    juce::AudioBuffer<float> buffer(1, samples);
+    for (int sample = 0; sample < samples; ++sample)
+    {
+        const float phase = static_cast<float>(2.0 * juce::MathConstants<double>::pi
+                                               * inputHz * sample / sampleRate);
+        buffer.setSample(0, sample, 0.5F * std::sin(phase));
+    }
+    saturation.process(buffer, 0, samples);
+
+    const auto magnitudeAt = [&buffer, samples, warmupSamples, sampleRate](int frequency) {
+        double real = 0.0;
+        double imaginary = 0.0;
+        const int evaluatedSamples = samples - warmupSamples;
+        for (int sample = warmupSamples; sample < samples; ++sample)
+        {
+            const double phase = 2.0 * juce::MathConstants<double>::pi * frequency * sample
+                                 / sampleRate;
+            const double value = buffer.getSample(0, sample);
+            real += value * std::cos(phase);
+            imaginary -= value * std::sin(phase);
+        }
+        return std::sqrt(real * real + imaginary * imaginary)
+               / static_cast<double>(evaluatedSamples);
+    };
+
+    const double fundamental = magnitudeAt(inputHz);
+    const double alias = magnitudeAt(aliasHz);
+    require(fundamental > 1.0e-6, "saturation must preserve the input fundamental");
+    require(alias / fundamental < 0.04,
+            "saturation must suppress the 12 kHz waveshaper alias below -28 dB");
 }
 
 void testBitCrusherNeutralBypassAndReduction()
@@ -1372,6 +1540,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"BusGraph batch detachment removes all completed clips", testBusGraphBatchDetachmentRemovesCompletedClips});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph saturation automation restores static track values", testBusGraphSaturationAutomationRestoresStaticValues});
+    tests.push_back({"BusGraph Punch changes the rendered track output", testBusGraphPunchChangesTrackOutput});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});
     tests.push_back({"BusGraph stays safe under concurrent lock-free project-FX updates", testBusGraphLockFreeProjectFxUpdatesAreSafe});
@@ -1380,6 +1549,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"Leveler snap applies the makeup on the first block", testLevelerSnapAppliesOnFirstBlock});
     tests.push_back({"Safety limiter is transparent when off and caps linked peaks", testSafetyLimiterNeutralBypassAndCeiling});
     tests.push_back({"Saturation is transparent at zero drive or mix and shapes when driven", testSaturationNeutralBypassAndMix});
+    tests.push_back({"Saturation suppresses high-frequency waveshaper aliases", testSaturationSuppressesHighFrequencyAliases});
     tests.push_back({"Bit crusher is transparent at zero mix and reduces rate and bits", testBitCrusherNeutralBypassAndReduction});
 }
 

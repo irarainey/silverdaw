@@ -25,7 +25,9 @@ public:
     void reset() noexcept
     {
         currentAmount = targetAmount.load(std::memory_order_relaxed);
-        envelope = 0.0F;
+        fastEnvelope = 0.0F;
+        slowEnvelope = 0.0F;
+        currentGain = 1.0F;
     }
 
     void setAmount(float amount, bool snap) noexcept
@@ -43,12 +45,6 @@ public:
         else
             smoothAmount(numSamples);
 
-        if (currentAmount <= kBypassEpsilon)
-        {
-            reset();
-            return;
-        }
-
         const int channels = buffer.getNumChannels();
         for (int sample = startSample; sample < startSample + numSamples; ++sample)
         {
@@ -60,17 +56,27 @@ public:
                                         std::isfinite(input) ? std::abs(input) : 0.0F);
             }
 
-            const float transient = juce::jmax(0.0F, linkedPeak - envelope);
-            const float coefficient = linkedPeak > envelope ? attackCoefficient : releaseCoefficient;
-            envelope += coefficient * (linkedPeak - envelope);
+            const float fastCoefficient = linkedPeak > fastEnvelope
+                ? fastAttackCoefficient : fastReleaseCoefficient;
+            fastEnvelope += fastCoefficient * (linkedPeak - fastEnvelope);
+            const float slowCoefficient = linkedPeak > slowEnvelope
+                ? slowAttackCoefficient : slowReleaseCoefficient;
+            slowEnvelope += slowCoefficient * (linkedPeak - slowEnvelope);
+            const float normalizedTransient = (fastEnvelope - slowEnvelope)
+                / (fastEnvelope + kDetectorFloor);
+            const float transientStrength = juce::jlimit(0.0F, 1.0F, normalizedTransient);
+            const float targetGain = 1.0F + currentAmount * kMaxBoost * transientStrength;
+            const float gainCoefficient = targetGain > currentGain
+                ? gainAttackCoefficient : gainReleaseCoefficient;
+            currentGain += gainCoefficient * (targetGain - currentGain);
 
-            const float normalizedTransient = transient / (envelope + kDetectorFloor);
-            const float gain = 1.0F + currentAmount * kMaxBoost
-                * juce::jlimit(0.0F, 1.0F, normalizedTransient);
-            for (int channel = 0; channel < channels; ++channel)
+            if (currentAmount > kBypassEpsilon)
             {
-                const float input = buffer.getSample(channel, sample);
-                buffer.setSample(channel, sample, std::isfinite(input) ? input * gain : 0.0F);
+                for (int channel = 0; channel < channels; ++channel)
+                {
+                    const float input = buffer.getSample(channel, sample);
+                    buffer.setSample(channel, sample, std::isfinite(input) ? input * currentGain : 0.0F);
+                }
             }
         }
     }
@@ -78,10 +84,14 @@ public:
 private:
     static constexpr float kBypassEpsilon = 1.0e-5F;
     static constexpr float kSmoothTauSeconds = 0.02F;
-    static constexpr float kAttackSeconds = 0.0015F;
-    static constexpr float kReleaseSeconds = 0.060F;
+    static constexpr float kFastAttackSeconds = 0.0005F;
+    static constexpr float kFastReleaseSeconds = 0.010F;
+    static constexpr float kSlowAttackSeconds = 0.005F;
+    static constexpr float kSlowReleaseSeconds = 0.100F;
+    static constexpr float kGainAttackSeconds = 0.002F;
+    static constexpr float kGainReleaseSeconds = 0.050F;
     static constexpr float kDetectorFloor = 0.01F;
-    static constexpr float kMaxBoost = 2.0F;
+    static constexpr float kMaxBoost = 0.99526231F; // +6 dB
 
     static float sanitizeAmount(float value) noexcept
     {
@@ -90,8 +100,17 @@ private:
 
     void updateCoefficients() noexcept
     {
-        attackCoefficient = 1.0F - static_cast<float>(std::exp(-1.0 / (kAttackSeconds * sr)));
-        releaseCoefficient = 1.0F - static_cast<float>(std::exp(-1.0 / (kReleaseSeconds * sr)));
+        fastAttackCoefficient = onePoleCoefficient(kFastAttackSeconds);
+        fastReleaseCoefficient = onePoleCoefficient(kFastReleaseSeconds);
+        slowAttackCoefficient = onePoleCoefficient(kSlowAttackSeconds);
+        slowReleaseCoefficient = onePoleCoefficient(kSlowReleaseSeconds);
+        gainAttackCoefficient = onePoleCoefficient(kGainAttackSeconds);
+        gainReleaseCoefficient = onePoleCoefficient(kGainReleaseSeconds);
+    }
+
+    float onePoleCoefficient(float timeSeconds) const noexcept
+    {
+        return 1.0F - static_cast<float>(std::exp(-1.0 / (timeSeconds * sr)));
     }
 
     void smoothAmount(int numSamples) noexcept
@@ -113,9 +132,15 @@ private:
     std::atomic<float> targetAmount{0.0F};
     std::atomic<bool> snapRequested{false};
     float currentAmount = 0.0F;
-    float envelope = 0.0F;
-    float attackCoefficient = 0.0F;
-    float releaseCoefficient = 0.0F;
+    float fastEnvelope = 0.0F;
+    float slowEnvelope = 0.0F;
+    float currentGain = 1.0F;
+    float fastAttackCoefficient = 0.0F;
+    float fastReleaseCoefficient = 0.0F;
+    float slowAttackCoefficient = 0.0F;
+    float slowReleaseCoefficient = 0.0F;
+    float gainAttackCoefficient = 0.0F;
+    float gainReleaseCoefficient = 0.0F;
 
     static_assert(std::atomic<float>::is_always_lock_free,
                   "Punch publishes its amount through a lock-free atomic");

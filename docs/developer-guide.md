@@ -231,8 +231,10 @@ Silverdaw currently supports the core arrangement workflow:
   to high-pass at the right), a **Compressor** (a single **Amount** knob `0..1`
   driving a hand-rolled stereo-linked soft-knee compressor; Amount 0 is a
   bit-exact passthrough; internal class `Leveler`), **Punch** (a stereo-linked
-  transient boost with one Amount control; Amount 0 is a bit-exact bypass), **Saturation** (Drive and
-  Mix controls for soft clipping; Drive 0 is a bit-exact bypass), and a
+  transient shaper with one Amount control that smoothly lifts attacks; Amount 0 is a bit-exact
+  bypass), **Saturation** (Drive and
+  Mix controls for soft clipping; lower Drive settings add warmth, while the strongest effect is near
+  100%; Drive 0 is a bit-exact bypass), and a
   **Bit Crusher** (Rate, Bits, Boost, and Mix controls for lo-fi digital
   reduction; Mix 0 is a bit-exact bypass), and a
   **Reverb & Delay** rack setting how much the track feeds the project-wide

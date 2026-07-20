@@ -2,6 +2,7 @@
 
 #include "SaturationParameters.h"
 
+#include <array>
 #include <atomic>
 #include <cmath>
 
@@ -10,7 +11,7 @@
 namespace silverdaw
 {
 
-// Per-track soft saturation. Zero Drive is an exact bypass regardless of Mix.
+// Per-track soft saturation. First-order ADAA suppresses waveshaper aliases without latency.
 class Saturation
 {
 public:
@@ -20,11 +21,12 @@ public:
         currentDrive = targetDrive.load(std::memory_order_relaxed);
         currentMix = targetMix.load(std::memory_order_relaxed);
         recomputeDerived();
+        reset();
         prepared = true;
         snapRequested.store(false, std::memory_order_relaxed);
     }
 
-    void reset() noexcept {}
+    void reset() noexcept { previousInputs.fill(0.0F); }
 
     void setParams(float drive, float mix, bool snap) noexcept
     {
@@ -62,16 +64,23 @@ public:
 
         if (currentDrive <= kBypassEpsilon || currentMix <= kBypassEpsilon) return;
 
-        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        const int channels = juce::jmin(buffer.getNumChannels(), kMaxChannels);
+        jassert(buffer.getNumChannels() <= kMaxChannels);
+        for (int channel = 0; channel < channels; ++channel)
         {
             float* samples = buffer.getWritePointer(channel);
+            float previous = previousInputs[static_cast<size_t>(channel)];
             for (int sample = startSample; sample < startSample + numSamples; ++sample)
             {
-                const float dry = samples[sample];
-                const float clipped = std::tanh(dry * driveGain) * normalization;
+                const float dry = std::isfinite(samples[sample]) ? samples[sample] : 0.0F;
+                const float drivenInput = dry * driveGain;
+                const float previousDrivenInput = previous * driveGain;
+                const float clipped = antialiasedTanh(drivenInput, previousDrivenInput) * normalization;
+                previous = dry;
                 const float driven = dry + currentDrive * (clipped - dry);
                 samples[sample] = dry + currentMix * (driven - dry);
             }
+            previousInputs[static_cast<size_t>(channel)] = previous;
         }
     }
 
@@ -79,6 +88,25 @@ private:
     static constexpr float kBypassEpsilon = 1.0e-5F;
     static constexpr float kMaxDriveGain = 10.0F;
     static constexpr float kSmoothTauSeconds = 0.02F;
+    static constexpr float kAdaaDeltaEpsilon = 1.0e-5F;
+    static constexpr float kLogTwo = 0.69314718F;
+    static constexpr int kMaxChannels = 2;
+
+    static float logCosh(float value) noexcept
+    {
+        const float magnitude = std::abs(value);
+        return magnitude + std::log1p(std::exp(-2.0F * magnitude)) - kLogTwo;
+    }
+
+    static float antialiasedTanh(float current, float previous) noexcept
+    {
+        const float delta = current - previous;
+        if (std::abs(delta) <= kAdaaDeltaEpsilon)
+            return std::tanh((current + previous) * 0.5F);
+        return (logCosh(current) - logCosh(previous)) / delta;
+    }
+
+    static float shapeDrive(float drive) noexcept { return drive * drive; }
 
     bool smoothParams(int numSamples) noexcept
     {
@@ -100,7 +128,7 @@ private:
 
     void recomputeDerived() noexcept
     {
-        driveGain = 1.0F + (kMaxDriveGain - 1.0F) * currentDrive;
+        driveGain = 1.0F + (kMaxDriveGain - 1.0F) * shapeDrive(currentDrive);
         normalization = 1.0F / std::tanh(driveGain);
     }
 
@@ -113,6 +141,7 @@ private:
     float currentMix = 1.0F;
     float driveGain = 1.0F;
     float normalization = 1.0F;
+    std::array<float, kMaxChannels> previousInputs{};
 
     static_assert(std::atomic<float>::is_always_lock_free,
                   "Saturation publishes params via lock-free atomics on the audio thread");
