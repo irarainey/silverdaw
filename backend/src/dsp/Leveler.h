@@ -15,7 +15,16 @@ namespace silverdaw
 class Leveler
 {
 public:
+    static constexpr float kMaximumMakeupDb = 10.0F;
+    static constexpr float kProjectMixGlueMaximumMakeupDb = 3.0F;
+
     Leveler() = default;
+    explicit Leveler(float maximumMakeupDb) noexcept
+        : maximumMakeupDb(juce::jlimit(
+              0.0F, kMaximumMakeupDb,
+              std::isfinite(maximumMakeupDb) ? maximumMakeupDb : kMaximumMakeupDb))
+    {
+    }
 
     /** Recalled on sample-rate or channel-count changes. */
     void prepare(double sampleRate, int numChannels) noexcept
@@ -112,8 +121,6 @@ private:
     static constexpr float kReleaseSeconds = 0.250F; // 250 ms
     static constexpr float kKneeDb = 6.0F;           // soft-knee full width
     static constexpr float kReferenceDb = -12.0F;    // auto-makeup reference level
-    static constexpr float kMaxMakeupDb = 10.0F;     // cap so it can't become a pure loudness knob
-
     static constexpr float kSmoothTauSeconds = 0.02F; // 20 ms Amount glide
     static constexpr float kTinyLevel = 1.0e-9F;      // log-domain floor
     static constexpr float kGrSilenceDb = 1.0e-4F;    // GR below this counts as none
@@ -159,7 +166,7 @@ private:
         ratio = 1.0F + (kMaxRatio - 1.0F) * amt;       // 1:1 → kMaxRatio
         slope = 1.0F - 1.0F / juce::jmax(1.0F, ratio); // 0 at ratio 1
         // Fixed-reference makeup boosts quieter material while preserving the zero-amount identity.
-        const float makeupDb = juce::jlimit(0.0F, kMaxMakeupDb, gainReductionDb(kReferenceDb));
+        const float makeupDb = juce::jlimit(0.0F, maximumMakeupDb, gainReductionDb(kReferenceDb));
         makeupLin = (makeupDb <= 0.0F) ? 1.0F : dbToGain(makeupDb);
         kneeLowerLin = dbToGain(thresholdDb - kKneeDb * 0.5F);
     }
@@ -187,6 +194,7 @@ private:
     float thresholdDb = 0.0F;
     float ratio = 1.0F;
     float slope = 0.0F;       // 1 - 1/ratio
+    float maximumMakeupDb = kMaximumMakeupDb;
     float makeupLin = 1.0F;
     float kneeLowerLin = 1.0F;
 

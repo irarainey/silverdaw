@@ -86,7 +86,14 @@ public:
             recomputeDerived();
         }
 
-        if (currentMix <= kBypassEpsilon) return;
+        if (currentMix <= kBypassEpsilon)
+        {
+            // A later re-entry must capture its first current sample rather than
+            // reuse the held sample from before bypass.
+            capturePhase = 0.0F;
+            hasHeldSample = false;
+            return;
+        }
 
         const int nCh = juce::jmin(buffer.getNumChannels(), channels);
         for (int sample = startSample; sample < startSample + numSamples; ++sample)

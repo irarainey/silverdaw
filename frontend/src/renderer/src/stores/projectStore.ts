@@ -103,7 +103,7 @@ export const useProjectStore = defineStore('project', {
     targetSampleRate: null,
     exportSettingsJson: null,
     masterVolume: 1.0,
-    safetyLimiterEnabled: false,
+    safetyLimiterEnabled: true,
     mixGlueAmount: 0,
     barCounterStart: 1,
     mixdownStartBar: 1,

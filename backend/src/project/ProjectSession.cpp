@@ -197,8 +197,8 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         if (! juce::approximatelyEqual(masterVolume, 1.0F))
             obj->setProperty("masterVolume", masterVolume);
     }
-    if (projectState.getSafetyLimiterEnabled())
-        obj->setProperty("safetyLimiterEnabled", true);
+    if (! projectState.getSafetyLimiterEnabled())
+        obj->setProperty("safetyLimiterEnabled", false);
     {
         const auto mixGlueAmount = projectState.getProjectMixGlueAmount();
         if (mixGlueAmount > 1.0e-4F) obj->setProperty("mixGlueAmount", mixGlueAmount);

@@ -348,6 +348,33 @@ void testPunchBypassAndStereoLinkedTransientShaping()
     requireNear(shaped.getSample(0, 128) / shaped.getSample(1, 128), 2.0, 0.0001,
                 "Punch transient detection must preserve the stereo image");
 
+    punch.setAmount(0.0F, /*snap*/ true);
+    juce::AudioBuffer<float> release(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            release.setSample(channel, sample, 0.25F);
+    punch.process(release, 0, n);
+    require(release.getSample(0, 0) > 0.25F,
+            "Punch must decay its active gain instead of jumping to dry bypass");
+    for (int block = 0; block < 80; ++block)
+    {
+        release.clear();
+        for (int channel = 0; channel < 2; ++channel)
+            for (int sample = 0; sample < n; ++sample)
+                release.setSample(channel, sample, 0.25F);
+        punch.process(release, 0, n);
+    }
+    require(release.getSample(0, n - 1) == 0.25F,
+            "settled Punch bypass must become bit-exact again");
+
+    release.clear();
+    release.setSample(0, 128, 0.5F);
+    release.setSample(1, 128, 0.25F);
+    punch.setAmount(1.0F, /*snap*/ true);
+    punch.process(release, 0, n);
+    require(release.getSample(0, 128) > 0.5F,
+            "Punch must re-enter from a settled bypass with a fresh transient detector");
+
     silverdaw::Punch transientPunch;
     transientPunch.prepare(48000.0);
     transientPunch.setAmount(1.0F, /*snap*/ true);
@@ -399,7 +426,7 @@ void testPunchBypassAndStereoLinkedTransientShaping()
 void testMixGlueHasExactBypassAndStereoLinkedCompression()
 {
     constexpr int n = 8192;
-    silverdaw::Leveler mixGlue;
+    silverdaw::Leveler mixGlue{silverdaw::Leveler::kProjectMixGlueMaximumMakeupDb};
     mixGlue.prepare(44100.0, 2);
 
     juce::AudioBuffer<float> bypass(2, n);
@@ -430,6 +457,18 @@ void testMixGlueHasExactBypassAndStereoLinkedCompression()
         requireNear(right, left * 0.5F, 1.0e-5,
                     "Glue Compressor must apply stereo-linked gain to both channels");
     }
+
+    juce::AudioBuffer<float> quiet(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            quiet.setSample(channel, sample, 0.02F);
+    mixGlue.reset();
+    mixGlue.setParams(1.0F, /*snap*/ true);
+    mixGlue.process(quiet, 0, n);
+    require(quiet.getMagnitude(0, n / 2, n / 2)
+                <= 0.02F * juce::Decibels::decibelsToGain(
+                    silverdaw::Leveler::kProjectMixGlueMaximumMakeupDb) + 1.0e-5F,
+            "Glue Compressor must cap quiet-mix makeup gain at 3 dB");
 }
 
 void testSharedFxDelayNoteResolution()
@@ -855,6 +894,7 @@ void testBusGraphBatchDetachmentRemovesCompletedClips()
     bg.attachClip("t1", "first", &first);
     bg.attachClip("t1", "second", &second);
     bg.attachClip("t2", "retained", &retained);
+    bg.setTrackPan("t1", -1.0F);
 
     const std::vector<silverdaw::BusGraph::ClipDetachment> completed{
         {"first", &first},
@@ -869,6 +909,16 @@ void testBusGraphBatchDetachmentRemovesCompletedClips()
     requireNear(out.getMagnitude(0, 0, kBlock), 0.4, 1.0e-5,
                 "batch detachment must remove every completed clip in one graph update");
 
+    bg.retireTrackFxState("t1");
+    bg.attachClip("t1", "replacement", &first);
+    out.clear();
+    bg.getNextAudioBlock(info);
+    requireNear(out.getMagnitude(0, 0, kBlock), 0.5, 1.0e-5,
+                "a replacement track must not restore its deleted track's cached pan");
+    requireNear(out.getMagnitude(1, 0, kBlock), 0.5, 1.0e-5,
+                "a replacement track must use neutral pan after cache retirement");
+
+    bg.detachClip("replacement", &first);
     bg.detachClip("retained", &retained);
     bg.releaseResources();
 }
@@ -1047,6 +1097,66 @@ void testBusGraphSaturationAutomationRestoresStaticValues()
     bg.snapParamToDefault("t1", silverdaw::AutomationParam::saturationMix);
     requireNear(renderMagnitude(), staticMagnitude, 1.0e-5,
                 "clearing saturation Mix automation must restore its static value");
+
+    bg.releaseResources();
+}
+
+void testBusGraphAutomationRestoresNonNeutralStaticValues()
+{
+    constexpr int kBlock = 256;
+    silverdaw::BusGraph bg;
+    bg.prepareToPlay(kBlock, 44100.0);
+
+    std::atomic<juce::int64> pos{0};
+    bg.setTimelineSamplesSource(&pos);
+    ConstantSource src(0.25F);
+    bg.attachClip("t1", "c1", &src);
+    bg.setTrackTone("t1", 6.0F, -2.0F, 3.0F, 0.0F, /*snap*/ true);
+    bg.setTrackLeveler("t1", 0.5F, /*snap*/ true);
+    bg.setTrackPan("t1", -0.5F);
+
+    juce::AudioBuffer<float> out(2, kBlock);
+    juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    const auto render = [&]() {
+        out.clear();
+        bg.getNextAudioBlock(info);
+        return std::array<float, 2>{out.getMagnitude(0, 0, kBlock),
+                                    out.getMagnitude(1, 0, kBlock)};
+    };
+    const auto renderSettled = [&]() {
+        std::array<float, 2> result{};
+        for (int block = 0; block < 256; ++block) result = render();
+        return result;
+    };
+    const auto staticOutput = renderSettled();
+
+    auto snapshot = std::make_unique<silverdaw::TrackAutomationSnapshot>();
+    const auto addCurve = [&snapshot](silverdaw::AutomationParam param, float value) {
+        silverdaw::BreakpointCurve curve(silverdaw::InterpDomain::linear);
+        curve.addPoint(0.0, value);
+        curve.addPoint(1000.0, value);
+        curve.finalise();
+        const int index = static_cast<int>(param);
+        snapshot->has[index] = true;
+        snapshot->curves[index] = std::move(curve);
+    };
+    addCurve(silverdaw::AutomationParam::toneBass, -12.0F);
+    addCurve(silverdaw::AutomationParam::leveler, 1.0F);
+    addCurve(silverdaw::AutomationParam::pan, 1.0F);
+    bg.setTrackAutomationPtr("t1", snapshot.get());
+    render();
+
+    bg.setTrackAutomationPtr("t1", nullptr);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::toneBass);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::leveler);
+    bg.snapParamToDefault("t1", silverdaw::AutomationParam::pan);
+    const auto restoredOutput = renderSettled();
+    requireNear(restoredOutput[0], staticOutput[0], 1.0e-4,
+                "clearing Tone automation must restore the saved static value");
+    requireNear(restoredOutput[1], staticOutput[1], 1.0e-4,
+                "clearing Pan automation must restore the saved static value");
+    require(restoredOutput[0] > restoredOutput[1],
+            "clearing Pan automation must restore the saved leftward balance");
 
     bg.releaseResources();
 }
@@ -1517,6 +1627,26 @@ void testBitCrusherNeutralBypassAndReduction()
                 "75% rate should hold a sample rather than collapsing to full rate");
     requireNear(fractionalRate.getSample(0, 3), 0.3125, 1.0e-6,
                 "75% rate should retain fractional sample-capture timing");
+
+    juce::AudioBuffer<float> heldBeforeBypass(2, n);
+    juce::AudioBuffer<float> bypassed(2, n);
+    juce::AudioBuffer<float> reentered(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+        {
+            heldBeforeBypass.setSample(channel, sample, 0.75F);
+            bypassed.setSample(channel, sample, -0.5F);
+            reentered.setSample(channel, sample, -0.25F);
+        }
+    crusher.setParams(0.01F, 16, 0.0F, 1.0F, /*snap*/ true);
+    crusher.reset();
+    crusher.process(heldBeforeBypass, 0, n);
+    crusher.setMixTarget(0.0F, /*snap*/ true);
+    crusher.process(bypassed, 0, n);
+    crusher.setMixTarget(1.0F, /*snap*/ true);
+    crusher.process(reentered, 0, n);
+    requireNear(reentered.getSample(0, 0), -0.25, 1.0e-6,
+                "Bit Crusher must capture the current sample when Mix re-enters from bypass");
 }
 
 } // namespace
@@ -1540,6 +1670,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"BusGraph batch detachment removes all completed clips", testBusGraphBatchDetachmentRemovesCompletedClips});
     tests.push_back({"BusGraph filter+level automation resets to neutral after a sweep", testBusGraphFilterAndLevelAutomationResetToNeutral});
     tests.push_back({"BusGraph saturation automation restores static track values", testBusGraphSaturationAutomationRestoresStaticValues});
+    tests.push_back({"BusGraph automation restores non-neutral static track values", testBusGraphAutomationRestoresNonNeutralStaticValues});
     tests.push_back({"BusGraph Punch changes the rendered track output", testBusGraphPunchChangesTrackOutput});
     tests.push_back({"BusGraph automation snaps across seek/snapshot discontinuities", testBusGraphAutomationSnapsAcrossDiscontinuities});
     tests.push_back({"BusGraph stays safe under concurrent lock-free param updates", testBusGraphConcurrentParamUpdatesAreSafe});

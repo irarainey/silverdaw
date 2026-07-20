@@ -112,6 +112,7 @@ class AudioEngine : private AudioEngineGraphState,
     void setTrackSends(const juce::String& trackId, float reverbSend, float delaySend);
 
     void setTrackPan(const juce::String& trackId, float pan);
+    void retireTrackFxState(const juce::String& trackId);
 
     // Per-track effect automation: builds an immutable snapshot for `trackId`
     // (merging this param's curve with the track's other lanes), publishes it to

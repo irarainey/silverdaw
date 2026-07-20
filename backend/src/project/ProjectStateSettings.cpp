@@ -199,7 +199,7 @@ void ProjectState::setMasterVolume(float volume)
 
 bool ProjectState::getSafetyLimiterEnabled() const
 {
-    return static_cast<bool>(root.getProperty(kSafetyLimiterEnabled, false));
+    return static_cast<bool>(root.getProperty(kSafetyLimiterEnabled, true));
 }
 
 void ProjectState::setSafetyLimiterEnabled(bool enabled)
@@ -207,9 +207,9 @@ void ProjectState::setSafetyLimiterEnabled(bool enabled)
     if (getSafetyLimiterEnabled() == enabled) return;
 
     if (enabled)
-        root.setProperty(kSafetyLimiterEnabled, true, &undoManager);
-    else
         root.removeProperty(kSafetyLimiterEnabled, &undoManager);
+    else
+        root.setProperty(kSafetyLimiterEnabled, false, &undoManager);
 }
 
 float ProjectState::getProjectMixGlueAmount() const

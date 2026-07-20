@@ -92,7 +92,7 @@ struct MixdownSnapshot
     // Loudness normalization uses a measured pass before final gain, limiting, dither, and
     // encode.
     float masterGain{1.0F};
-    bool safetyLimiterEnabled{false};
+    bool safetyLimiterEnabled{true};
     float mixGlueAmount{0.0F};
     // Offline render uses the same SharedFx settings as playback for export parity.
     float reverbSize{0.0F};

@@ -36,7 +36,6 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // headroom; opened/loaded projects keep their own stored master volume.
     fresh.setProperty(juce::Identifier{"masterVolume"},
                       silverdaw::ProjectState::kDefaultMasterVolume, nullptr);
-    fresh.setProperty(juce::Identifier{"safetyLimiterEnabled"}, true, nullptr);
     projectState.replaceTree(fresh);
     session.currentPath.clear();
 

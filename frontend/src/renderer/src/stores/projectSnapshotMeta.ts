@@ -113,8 +113,8 @@ export function applyProjectSettings(target: SnapshotTarget, snapshot: ProjectSt
     typeof incomingMasterVolume === 'number' && Number.isFinite(incomingMasterVolume)
       ? Math.min(1, Math.max(0, incomingMasterVolume))
       : 1.0
-  // Absent means off so projects created before the safety limiter retain their sound.
-  target.safetyLimiterEnabled = snapshot.safetyLimiterEnabled === true
+  // Safety Limiter is enabled unless a project explicitly turns it off.
+  target.safetyLimiterEnabled = snapshot.safetyLimiterEnabled !== false
   target.mixGlueAmount =
     typeof snapshot.mixGlueAmount === 'number' && Number.isFinite(snapshot.mixGlueAmount)
       ? Math.min(1, Math.max(0, snapshot.mixGlueAmount))

@@ -115,7 +115,6 @@ ProjectState::ProjectState() : root(kProject)
 {
     // Initialise before listener attach so defaults don't count as user edits.
     root.setProperty(kName, kDefaultName, nullptr);
-    root.setProperty(kSafetyLimiterEnabled, true, nullptr);
     root.appendChild(juce::ValueTree(kLibrary), nullptr);
     root.appendChild(juce::ValueTree(kMarkers), nullptr);
     cleanSnapshot = root.createCopy();

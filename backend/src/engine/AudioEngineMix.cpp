@@ -80,6 +80,11 @@ void AudioEngine::setTrackPan(const juce::String& trackId, float pan)
     busGraph.setTrackPan(trackId, pan);
 }
 
+void AudioEngine::retireTrackFxState(const juce::String& trackId)
+{
+    busGraph.retireTrackFxState(trackId);
+}
+
 void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::String& paramId,
                                      const juce::Array<juce::var>& points)
 {

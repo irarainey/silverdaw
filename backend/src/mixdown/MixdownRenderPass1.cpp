@@ -194,7 +194,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     completedClips.reserve(clips.size());
 
     juce::AudioBuffer<float> mixBus(kOutputChannels, kBlockFrames);
-    silverdaw::Leveler mixGlue;
+    silverdaw::Leveler mixGlue{silverdaw::Leveler::kProjectMixGlueMaximumMakeupDb};
     mixGlue.prepare(static_cast<double>(snapshot.projectSampleRate), kOutputChannels);
     mixGlue.setParams(snapshot.mixGlueAmount, /*snap*/ true);
     silverdaw::SafetyLimiter safetyLimiter;

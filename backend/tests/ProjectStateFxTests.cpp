@@ -170,20 +170,25 @@ void testProjectStateSafetyLimiterDefaultsAndRoundTrip()
     fresh.setSafetyLimiterEnabled(false);
     require(!fresh.getSafetyLimiterEnabled(),
             "disabling the safety limiter should clear the enabled state");
-    require(!fresh.getTree().hasProperty(juce::Identifier{"safetyLimiterEnabled"}),
-            "the disabled safety limiter should use default suppression");
+    require(!static_cast<bool>(fresh.getTree().getProperty(
+                juce::Identifier{"safetyLimiterEnabled"}, true)),
+            "the disabled safety limiter must be stored in project state");
+    silverdaw::ProjectSession session;
+    const auto disabledEnvelope = silverdaw::buildProjectStateEnvelope(session, fresh, false);
+    require(disabledEnvelope.hasProperty("safetyLimiterEnabled")
+                && !static_cast<bool>(disabledEnvelope.getProperty("safetyLimiterEnabled", true)),
+            "a disabled safety limiter must be sent in PROJECT_STATE");
 
     juce::ValueTree legacyProject(juce::Identifier{"PROJECT"});
     legacyProject.setProperty(juce::Identifier{"name"}, "Legacy", nullptr);
     fresh.replaceTree(legacyProject);
-    require(!fresh.getSafetyLimiterEnabled(),
-            "an older project without the property must retain its original output behaviour");
+    require(fresh.getSafetyLimiterEnabled(),
+            "a project without the property should use the default enabled limiter");
 
     fresh.setSafetyLimiterEnabled(true);
-    require(fresh.getSafetyLimiterEnabled(), "enabling the safety limiter should persist");
-    require(static_cast<bool>(fresh.getTree().getProperty(
-                juce::Identifier{"safetyLimiterEnabled"}, false)),
-            "enabled safety limiter must be stored in project state");
+    require(fresh.getSafetyLimiterEnabled(), "enabling the safety limiter should restore the default");
+    require(!fresh.getTree().hasProperty(juce::Identifier{"safetyLimiterEnabled"}),
+            "the enabled safety limiter should use default suppression");
 }
 
 void testProjectStateMixGlueDefaultsAndRoundTrip()
@@ -650,7 +655,7 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState per-track sends round-trip + default suppression", testProjectStateTrackSendsRoundTrip});
     tests.push_back({"ProjectState clip envelope sort / dedupe / clear", testProjectStateClipEnvelopeNormalisation});
     tests.push_back({"ProjectState project delay noteValue guard", testProjectStateDelayNoteValueGuard});
-    tests.push_back({"ProjectState safety limiter defaults and legacy round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
+    tests.push_back({"ProjectState safety limiter default and round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
     tests.push_back({"ProjectState Glue Compressor defaults, persistence, and legacy round-trip", testProjectStateMixGlueDefaultsAndRoundTrip});
     tests.push_back({"ProjectState per-track Punch persists and legacy load bypasses", testProjectStateTrackPunchPersistenceAndLegacyLoad});
     tests.push_back({"ProjectState per-track tone round-trips through tracksAsJson", testProjectStateTrackToneJsonRoundTrip});

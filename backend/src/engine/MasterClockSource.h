@@ -252,7 +252,7 @@ class MasterClockSource : public juce::AudioSource
 
     juce::AudioSource& child;
     OutputKeepAlive& keepAlive;
-    Leveler mixGlue;
+    Leveler mixGlue{Leveler::kProjectMixGlueMaximumMakeupDb};
     std::atomic<juce::int64> positionSamples{0};
     std::atomic<double> sampleRate{0.0};
     std::atomic<std::uint64_t> callbackCount{0};

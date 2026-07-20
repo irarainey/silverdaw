@@ -173,6 +173,9 @@ public:
 
     void setTrackPan(const juce::String& trackId, float pan);
 
+    /** Permanently discard static FX state after its ProjectState track is removed. */
+    void retireTrackFxState(const juce::String& trackId);
+
     void setProjectReverb(float size, float decay, float tone, float mix, bool snap);
 
     void setProjectDelay(double delayMs, float feedback, float tone, float mix, bool snap,

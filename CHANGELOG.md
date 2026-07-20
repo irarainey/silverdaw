@@ -30,6 +30,8 @@
 - Long Delay feedback tails now preserve audible repeats in playback and mixdown.
 - Mixdown now reuses output buffers to avoid repeated allocations during resampling.
 - Mixdown now retires completed clips in batches for faster exports with many clips.
+- Clearing track automation now restores saved effect and mixer settings.
+- Deleted tracks now release cached effect settings.
 
 ## 1.2.0
 

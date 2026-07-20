@@ -243,8 +243,9 @@ Silverdaw currently supports the core arrangement workflow:
   **Delay** (tempo-locked), a one-control **Glue Compressor**, plus a
   **Safety Limiter** switch. Glue Compressor processes the completed project bus after
   the shared Reverb and Delay returns and before master gain; Amount 0 is a
-  bit-exact bypass. The limiter is a fixed -1 dBFS, stereo-linked sample-peak
-  guard on final output; it is not a true-peak or mastering limiter. Delay Time
+  bit-exact bypass and its automatic makeup gain is capped at 3 dB. The limiter
+  is enabled by default and is a fixed -1 dBFS, stereo-linked sample-peak guard
+  on final output; it is not a true-peak or mastering limiter. Delay Time
   uses direct 1/4, 1/8, 1/8T, and 1/16 beat-division buttons, and every Track
   FX and Project FX header offers a short hover explanation. All are edited
   live (slider drags coalesce into one undo step) and applied to both playback

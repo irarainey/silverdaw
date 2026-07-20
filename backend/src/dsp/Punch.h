@@ -45,6 +45,13 @@ public:
         else
             smoothAmount(numSamples);
 
+        if (currentAmount <= kBypassEpsilon && currentGain == 1.0F)
+        {
+            fastEnvelope = 0.0F;
+            slowEnvelope = 0.0F;
+            return;
+        }
+
         const int channels = buffer.getNumChannels();
         for (int sample = startSample; sample < startSample + numSamples; ++sample)
         {
@@ -69,20 +76,21 @@ public:
             const float gainCoefficient = targetGain > currentGain
                 ? gainAttackCoefficient : gainReleaseCoefficient;
             currentGain += gainCoefficient * (targetGain - currentGain);
+            if (currentAmount <= kBypassEpsilon
+                && std::abs(currentGain - 1.0F) <= kGainSettleEpsilon)
+                currentGain = 1.0F;
 
-            if (currentAmount > kBypassEpsilon)
+            for (int channel = 0; channel < channels; ++channel)
             {
-                for (int channel = 0; channel < channels; ++channel)
-                {
-                    const float input = buffer.getSample(channel, sample);
-                    buffer.setSample(channel, sample, std::isfinite(input) ? input * currentGain : 0.0F);
-                }
+                const float input = buffer.getSample(channel, sample);
+                buffer.setSample(channel, sample, std::isfinite(input) ? input * currentGain : 0.0F);
             }
         }
     }
 
 private:
     static constexpr float kBypassEpsilon = 1.0e-5F;
+    static constexpr float kGainSettleEpsilon = 2.0e-4F;
     static constexpr float kSmoothTauSeconds = 0.02F;
     static constexpr float kFastAttackSeconds = 0.0005F;
     static constexpr float kFastReleaseSeconds = 0.010F;

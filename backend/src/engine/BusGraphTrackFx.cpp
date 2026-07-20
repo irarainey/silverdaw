@@ -135,6 +135,20 @@ void BusGraph::setTrackPan(const juce::String& trackId, float pan)
     }
 }
 
+void BusGraph::retireTrackFxState(const juce::String& trackId)
+{
+    if (trackId.isEmpty()) return;
+
+    const juce::ScopedLock sl(lock);
+    pendingTone.erase(trackId);
+    pendingLeveler.erase(trackId);
+    pendingPunch.erase(trackId);
+    pendingSaturation.erase(trackId);
+    pendingBitCrusher.erase(trackId);
+    pendingSends.erase(trackId);
+    pendingPans.erase(trackId);
+}
+
 void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam param) noexcept
 {
     const juce::ScopedLock sl(lock);
@@ -143,11 +157,36 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
     auto& track = *runtime->second;
     switch (param)
     {
-        case AutomationParam::filter: track.chain.setFilterTarget(0.0F, true); break;
-        case AutomationParam::toneBass: track.chain.setBassTarget(0.0F, true); break;
-        case AutomationParam::toneMid: track.chain.setMidTarget(0.0F, true); break;
-        case AutomationParam::toneTreble: track.chain.setTrebleTarget(0.0F, true); break;
-        case AutomationParam::leveler: track.chain.setLeveler(0.0F, true); break;
+        case AutomationParam::filter:
+        {
+            const auto tone = pendingTone.find(trackId);
+            track.chain.setFilterTarget(tone != pendingTone.end() ? tone->second.filter : 0.0F, true);
+            break;
+        }
+        case AutomationParam::toneBass:
+        {
+            const auto tone = pendingTone.find(trackId);
+            track.chain.setBassTarget(tone != pendingTone.end() ? tone->second.bassDb : 0.0F, true);
+            break;
+        }
+        case AutomationParam::toneMid:
+        {
+            const auto tone = pendingTone.find(trackId);
+            track.chain.setMidTarget(tone != pendingTone.end() ? tone->second.midDb : 0.0F, true);
+            break;
+        }
+        case AutomationParam::toneTreble:
+        {
+            const auto tone = pendingTone.find(trackId);
+            track.chain.setTrebleTarget(tone != pendingTone.end() ? tone->second.trebleDb : 0.0F, true);
+            break;
+        }
+        case AutomationParam::leveler:
+        {
+            const auto leveler = pendingLeveler.find(trackId);
+            track.chain.setLeveler(leveler != pendingLeveler.end() ? leveler->second : 0.0F, true);
+            break;
+        }
         case AutomationParam::punch:
         {
             const auto punch = pendingPunch.find(trackId);
@@ -199,16 +238,31 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
         }
         case AutomationParam::level: track.chain.setLevelTarget(0.0F, true); break;
         case AutomationParam::reverbSend:
-            track.reverbSend.store(0.0F, std::memory_order_relaxed);
+        {
+            const auto sends = pendingSends.find(trackId);
+            track.reverbSend.store(sends != pendingSends.end() ? sends->second.reverbSend : 0.0F,
+                                   std::memory_order_relaxed);
             break;
+        }
         case AutomationParam::delaySend:
-            track.delaySend.store(0.0F, std::memory_order_relaxed);
+        {
+            const auto sends = pendingSends.find(trackId);
+            track.delaySend.store(sends != pendingSends.end() ? sends->second.delaySend : 0.0F,
+                                  std::memory_order_relaxed);
             break;
+        }
         case AutomationParam::pan:
-            track.pan.store(0.0F, std::memory_order_relaxed);
-            track.panGainL.store(1.0F, std::memory_order_relaxed);
-            track.panGainR.store(1.0F, std::memory_order_relaxed);
+        {
+            const auto pan = pendingPans.find(trackId);
+            const float value = pan != pendingPans.end() ? pan->second : 0.0F;
+            float gainL = 1.0F;
+            float gainR = 1.0F;
+            equalPowerPanGains(value, gainL, gainR);
+            track.pan.store(value, std::memory_order_relaxed);
+            track.panGainL.store(gainL, std::memory_order_relaxed);
+            track.panGainR.store(gainR, std::memory_order_relaxed);
             break;
+        }
         case AutomationParam::count_: break;
     }
 }
