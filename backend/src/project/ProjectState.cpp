@@ -240,7 +240,6 @@ void ProjectState::recordUndoChange(const juce::ValueTree& tree, const juce::Ide
         // A relink/rebind swaps the clip's audio source, which needs a reader re-open the
         // incremental path can't do — force a full rebuild. `filePath` is defensive: it is not
         // currently written per-clip, but if it ever is it must take the same source-change path.
-        static const juce::Identifier kLibraryItemId{"libraryItemId"};
         static const juce::Identifier kClipFilePath{"filePath"};
         if (property != nullptr && (*property == kLibraryItemId || *property == kClipFilePath))
         {

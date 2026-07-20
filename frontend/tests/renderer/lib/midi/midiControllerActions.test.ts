@@ -75,6 +75,7 @@ describe('MIDI controller actions', () => {
 
   it('toggles playback from either deck Play button', () => {
     seedProject()
+    useTransportStore().setAudioState('ready')
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
       timestampMs: 1,
@@ -281,6 +282,7 @@ describe('MIDI controller actions', () => {
   it('can re-arm playback while held and resume on release', () => {
     seedProject()
     const transport = useTransportStore()
+    transport.setAudioState('ready')
     transport.setPlaybackState(true)
     const control = (controlName: 'jogTouch' | 'playPause', pressed: boolean, timestampMs: number): void => {
       handleMidiControl({

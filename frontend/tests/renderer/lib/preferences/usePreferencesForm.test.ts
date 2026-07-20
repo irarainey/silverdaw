@@ -51,6 +51,7 @@ function stubSilverdaw(): void {
       getMidiDevicePreferences: vi.fn(async () => ({})),
       getBrakeSettings: vi.fn(async () => ({ duration: 'medium', curve: 'curved' })),
       getBackspinSettings: vi.fn(async () => ({ duration: 'long', intensity: 'medium' })),
+      getScratchRealismSettings: vi.fn(async () => ({ level: 'medium' as const })),
       getScratchSettings: vi.fn(async () => ({ crossfaderCutKey: 'KeyZ' })),
       getStemPrefs: vi.fn(async () => ({ ...DEFAULTS.stems })),
       setQolPrefs: vi.fn(),

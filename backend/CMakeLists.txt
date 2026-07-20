@@ -641,23 +641,26 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION AND MSVC)
 endif()
 
 # ─── ONNX Runtime DLL (bundled, MIT) ─────────────────────────────────────
-# ONNX Runtime is a shared library. Copy onnxruntime.dll next to the backend
-# executable so it resolves at runtime, and so the electron-builder
-# extraResources step ships it inside the installer next to SilverdawBackend.exe.
+# ONNX Runtime is a shared library. Every executable that invokes it needs the
+# pinned runtime beside itself so Windows does not resolve a system-installed version.
 if(SILVERDAW_ENABLE_STEM_SEPARATION)
-    add_custom_command(TARGET SilverdawBackend POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${SILVERDAW_ONNXRUNTIME_DLL}"
-            "$<TARGET_FILE_DIR:SilverdawBackend>/onnxruntime.dll"
-        COMMENT "Copying onnxruntime.dll next to backend executable")
-    # The DirectML build's EP depends on DirectML.dll at runtime; ship it too.
-    if(SILVERDAW_ONNXRUNTIME_DIRECTML AND SILVERDAW_DIRECTML_DLL)
-        add_custom_command(TARGET SilverdawBackend POST_BUILD
+    function(copy_onnx_runtime_dependencies target)
+        add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${SILVERDAW_DIRECTML_DLL}"
-                "$<TARGET_FILE_DIR:SilverdawBackend>/DirectML.dll"
-            COMMENT "Copying DirectML.dll next to backend executable")
-    endif()
+                "${SILVERDAW_ONNXRUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${target}>/onnxruntime.dll"
+            COMMENT "Copying onnxruntime.dll next to ${target}")
+        # The DirectML build's EP depends on DirectML.dll at runtime; ship it too.
+        if(SILVERDAW_ONNXRUNTIME_DIRECTML AND SILVERDAW_DIRECTML_DLL)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${SILVERDAW_DIRECTML_DLL}"
+                    "$<TARGET_FILE_DIR:${target}>/DirectML.dll"
+                COMMENT "Copying DirectML.dll next to ${target}")
+        endif()
+    endfunction()
+
+    copy_onnx_runtime_dependencies(SilverdawBackend)
 
     # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime
     # (MSVCP140 / MSVCP140_1 / VCRUNTIME140 / VCRUNTIME140_1). The backend exe
@@ -764,6 +767,9 @@ tests/MixdownRenderTests.cpp
         tests/LibraryCleanupTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
+    if(SILVERDAW_ENABLE_STEM_SEPARATION)
+        copy_onnx_runtime_dependencies(SilverdawBackendTests)
+    endif()
 
     # Offline BPM/beat accuracy harness (dev tool, not shipped, not a CTest test).
     # Run: SilverdawBpmEval <manifest>  (manifest lines: <path>|<referenceBpm>)
