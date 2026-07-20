@@ -132,7 +132,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.0.0" } }
+{ "type": "READY", "payload": { "version": "1.3.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -801,9 +801,9 @@ clips[clipId]
       Tone (3-band EQ)
       Filter (bipolar LPF↔HPF sweep)
       Leveler (Compressor)
-      Punch (transient boost)
       Saturation (soft clipping)
       Bit Crusher (sample-rate and bit-depth reduction)
+      Punch (transient boost)
       gain
       mute / solo gate
   → SEND TAP (pre-pan, post everything above)
@@ -1920,7 +1920,7 @@ playable at every point):
   the last bit of float math, so byte-identical is too strict; the
   parity harness tolerance is `< 0.5 LSB at 32-bit float`).
 - [x] **1b. Canonical `TrackChain` (initially empty).** Define the
-  `TrackChain` abstraction (Tone → Leveler → Punch → Saturation → Bit Crusher
+  `TrackChain` abstraction (Tone → Leveler → Saturation → Bit Crusher → Punch
   → gain → mute/solo, initially all no-op) and run it inside `TrackRuntime` for
   every block.
   `MixdownEngine` is refactored to consume the same `TrackChain`.
@@ -2060,7 +2060,7 @@ playable at every point):
   Amount 0 is a bit-exact passthrough (§7.9.6 parity); the detector lives
   across the track's lifetime and resets on transport stop / seek,
   **never** at clip boundaries. Runs in `TrackChain` after Tone
-  (Tone → Leveler → Punch → Saturation → Bit Crusher) and is mirrored in the
+  (Tone → Leveler → Saturation → Bit Crusher → Punch) and is mirrored in the
   offline `MixdownEngine` for export parity. Bridge:
   `TRACK_SET_LEVELER` / `TRACK_LEVELER_APPLIED`
   activated end-to-end (engine push + persistence + renderer snapshot).
@@ -2097,7 +2097,7 @@ playable at every point):
   dirty-mark). Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
-  TrackRuntime → TrackChain (Tone → Leveler → Punch → Saturation → Bit Crusher → gain → mute/solo) →
+  TrackRuntime → TrackChain (Tone → Leveler → Saturation → Bit Crusher → Punch → gain → mute/solo) →
   pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
   Glue Compressor → master gain → Safety Limiter → master meter →
   final-stage libsamplerate`) so warped / pitch-

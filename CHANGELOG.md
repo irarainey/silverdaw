@@ -11,7 +11,7 @@
 - Punch track effect adds per-track transient enhancement controls.
 - Saturation track effect adds Drive and Mix controls for per-track soft clipping.
 - Glue Compressor project effect adds one-control project-bus compression before the master output.
-- Safety Limiter project effect adds a fixed -1 dBFS final-output guard.
+- Safety Limiter project effect adds an enabled-by-default fixed -1 dBFS final-output guard.
 
 ### Changed
 
@@ -31,6 +31,8 @@
 - Mixdown now reuses output buffers to avoid repeated allocations during resampling.
 - Mixdown now retires completed clips in batches for faster exports with many clips.
 - Clearing track automation now restores saved effect and mixer settings.
+- Punch no longer clicks when automated to off.
+- Glue Compressor now limits automatic makeup gain for safer master output.
 - Deleted tracks now release cached effect settings.
 
 ## 1.2.0

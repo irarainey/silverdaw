@@ -1317,7 +1317,7 @@ playback and feeds the device. The
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
 final master is back in range. (`TrackChain` is the canonical per-track DSP
-seam shared by live playback and mixdown, running Tone → Leveler → Punch → Saturation → Bit Crusher → gain →
+seam shared by live playback and mixdown, running Tone → Leveler → Saturation → Bit Crusher → Punch → gain →
 mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 

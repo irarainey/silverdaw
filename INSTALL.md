@@ -7,7 +7,7 @@ is the easiest and recommended option.
 | Option | Best for | Effort | Updates | Windows integration\* |
 | ------ | -------- | ------ | ------------ | --------------------- |
 | **[Microsoft Store][store]** | Everyone | One click | Automatic | Full |
-| **Portable download** (zip) | Trying it quickly, no install | Unzip & run | Manual | None
+| **Portable download** (zip) | Trying it quickly, no install | Unzip & run | Manual | None |
 
 \* *Windows integration* = a Start-menu entry, the `.silverdaw` file association
 (double-click a project to open it), and an entry in **Settings ▸ Apps** for a

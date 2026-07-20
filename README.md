@@ -122,16 +122,18 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
     - **Tone:** Bass, Mid, and Treble controls.
     - **Filter:** a single DJ-style sweep from low-pass through off to high-pass.
     - **Compressor:** single-knob gentle dynamics control.
-    - **Punch:** transient enhancement.
-    - **Saturation:** soft clipping.
+    - **Punch:** clean transient lift.
+    - **Saturation:** warmth at lower Drive settings, with stronger grit near
+      the top.
     - **Bit Crusher:** lo-fi digital reduction.
     - **Reverb and Delay sends:** feed the shared Project FX effects.
   - **Project FX**
     - **Reverb and Delay:** song-wide effects fed by each track's sends. Delay
       Time uses direct 1/4, 1/8, 1/8T, and 1/16 beat-division buttons.
     - **Glue Compressor:** one-control compression after the shared effect
-      returns and before master gain.
-    - **Safety Limiter:** fixed-ceiling protection for the final output.
+      returns and before master gain, with automatic makeup capped at 3 dB.
+    - **Safety Limiter:** enabled-by-default fixed -1 dBFS protection for the
+      final output.
   - **FX layout and guidance:** each Track FX and Project FX header offers a
     hover explanation. Track FX keeps five responsive columns: Tone; Filter
     above Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.

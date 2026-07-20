@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-12 · Owner: @irarainey_
+_Last reviewed: 2026-07-20 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -16,12 +16,16 @@ audio engine, linked by a per-session-authenticated loopback WebSocket.
 ## Current state
 
 Core arrangement, mixing, analysis, stem separation, supported MIDI deck
-control, and out-of-process engine recovery are all shipped. Silverdaw is
-**publicly released** — installable from the **Microsoft Store**
-(auto-updating), so existing installs, saved preferences, and saved projects
-must keep working across every update (see ADR 0019). See
-`docs/developer-guide.md#current-status-and-roadmap` for the current feature set
-and roadmap.
+control, Scratch Editor, and out-of-process engine recovery are all shipped in
+the current **1.2.0** release. Silverdaw is **publicly released** — installable
+from the **Microsoft Store** (auto-updating), so existing installs, saved
+preferences, and saved projects must keep working across every update (see ADR
+0019).
+
+**1.3.0 is unreleased work.** It adds direct Explorer-to-timeline import,
+Library filtering, Beat Repeat, Track and Project FX, and Track FX automation.
+See `docs/developer-guide.md#current-status-and-roadmap` for the current
+feature set and roadmap.
 
 ## Goals and non-goals
 
@@ -49,7 +53,9 @@ and roadmap.
   additive with safe defaults; never remove/repurpose a persisted key or make an
   older project or prefs file fail to open. Bump a version only on a semantic
   change and migrate it explicitly; code around changed features must degrade
-  gracefully for older state. See ADR 0019 (and ADR 0015).
+  gracefully for older state. This applies to state produced by a released
+  build; unreleased features may evolve until release, when their persisted
+  semantics become binding. See ADR 0019 (and ADR 0015).
 - `CRITICAL` — **Bridge is text-only `{ type, payload }`.** Bulk data (peaks,
   stems, mixdowns) goes via disk + a small `*_READY` envelope, never the socket.
   See ADR 0003.
