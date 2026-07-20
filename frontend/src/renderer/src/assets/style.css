@@ -39,7 +39,7 @@
    * read as a distinct layer, so we lean on the blur and the dialog's
    * own shadow/hairline for separation rather than a heavy overlay. */
   .dialog-backdrop {
-    @apply fixed inset-0 z-[1100] flex items-center justify-center bg-black/35 backdrop-blur-[2px];
+    @apply fixed inset-0 z-1100 flex items-center justify-center bg-black/35 backdrop-blur-[2px];
   }
   /* Card frame. Background matches the library panel (`bg-zinc-900`,
    * one step lighter than the main app shell) so the dialog reads as
