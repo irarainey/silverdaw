@@ -17,15 +17,10 @@ audio engine, linked by a per-session-authenticated loopback WebSocket.
 
 Core arrangement, mixing, analysis, stem separation, supported MIDI deck
 control, Scratch Editor, and out-of-process engine recovery are all shipped in
-the current **1.2.0** release. Silverdaw is **publicly released** — installable
+the current **1.3.0** release. Silverdaw is **publicly released** — installable
 from the **Microsoft Store** (auto-updating), so existing installs, saved
 preferences, and saved projects must keep working across every update (see ADR
 0019).
-
-**1.3.0 is unreleased work.** It adds direct Explorer-to-timeline import,
-Library filtering, Beat Repeat, Track and Project FX, and Track FX automation.
-See `docs/developer-guide.md#current-status-and-roadmap` for the current
-feature set and roadmap.
 
 ## Goals and non-goals
 
