@@ -5,6 +5,7 @@
 ### Added
 
 - Track automation can now show multiple distinct parameter lanes on the same track.
+- Dragging the timeline ruler now creates a playable and loopable range selection that persists with projects.
 
 ### Changed
 

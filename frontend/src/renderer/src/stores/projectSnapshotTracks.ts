@@ -308,6 +308,7 @@ export function finalizeProjectSnapshot(
   pendingProjectLengthMs: number | null
 ): void {
   const library = useLibraryStore()
+  const ui = useUiStore()
   // Additive snapshots must not drop optimistic local tracks/clips.
   // Missing peaks are requested after reconciliation and arrive as WAVEFORM_DATA.
   for (const clipId of clipsNeedingPeaks) {
@@ -332,6 +333,18 @@ export function finalizeProjectSnapshot(
     target.fxPanelOpen = snapshot.viewFxPanelOpen === true
     target.fxTab = 'track'
     target.timelineRevision++
+    ui.applyTimelineSelectionView(
+      snapshot.timelineSelection ?? null,
+      snapshot.loopTimelineSelection ?? false
+    )
+  } else if (
+    snapshot.timelineSelection !== undefined ||
+    snapshot.loopTimelineSelection !== undefined
+  ) {
+    ui.applyTimelineSelectionView(
+      snapshot.timelineSelection ?? null,
+      snapshot.loopTimelineSelection ?? false
+    )
   }
 
   // Migration (project LOAD only): rebind pre-existing library-clip windows to their saved

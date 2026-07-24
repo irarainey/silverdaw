@@ -52,6 +52,9 @@ interface FakeStores {
     requestTimelineZoomTo: ReturnType<typeof vi.fn>
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
+    timelineSelection: { startMs: number; endMs: number } | null
+    setTimelineSelection: ReturnType<typeof vi.fn>
+    persistTimelineSelectionView: ReturnType<typeof vi.fn>
     selectedAutomationPoint: unknown
     setSelectedAutomationPoint: ReturnType<typeof vi.fn>
   }
@@ -104,6 +107,9 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       requestTimelineZoomTo: vi.fn(),
       requestTimelineScroll: vi.fn(),
       requestTimelineScrollToPosition: vi.fn(),
+      timelineSelection: null,
+      setTimelineSelection: vi.fn(),
+      persistTimelineSelectionView: vi.fn(),
       selectedAutomationPoint: null,
       setSelectedAutomationPoint: vi.fn()
     },
@@ -332,6 +338,20 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
     expect(h.stores.project.selectTrack).toHaveBeenCalledWith(null)
     expect(h.stores.project.clearClipSelection).not.toHaveBeenCalled()
+  })
+
+  it('Escape clears and persists the timeline range before other selections', () => {
+    h.stores.ui.timelineSelection = { startMs: 1_000, endMs: 2_500 }
+    h.stores.project.selectedTrackId = 't1'
+    h.stores.project.selectedClipId = 'c1'
+    h.stores.project.selectedClipIds = new Set(['c1'])
+
+    kb.onGlobalShortcutKey(makeKey({ key: 'Escape' }).e)
+
+    expect(h.stores.ui.setTimelineSelection).toHaveBeenCalledWith(null)
+    expect(h.stores.ui.persistTimelineSelectionView).toHaveBeenCalledTimes(1)
+    expect(h.stores.project.clearClipSelection).not.toHaveBeenCalled()
+    expect(h.stores.project.selectTrack).not.toHaveBeenCalled()
   })
 
   it('Escape steps: first clears clip(s) keeping the track, then clears the track', () => {

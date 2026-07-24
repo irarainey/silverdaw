@@ -43,6 +43,7 @@ const {
   onPlay,
   onSkipForward,
   onToggleFollow,
+  onToggleLoopSelection,
   onMasterVolumeInput
 } = useTransportBarController()
 </script>
@@ -69,6 +70,8 @@ const {
       :is-playing="transport.isPlaying"
       :is-playback-held="transport.isPlaybackHeld"
       :follow-playback="ui.followPlayback"
+      :has-timeline-selection="ui.timelineSelection !== null"
+      :loop-timeline-selection="ui.loopTimelineSelection"
       :skip-back-title="skipBackTitle"
       :play-button-title="playButtonTitle"
       :play-disabled="playDisabled"
@@ -77,6 +80,7 @@ const {
       @play="onPlay"
       @skip-forward="onSkipForward"
       @toggle-follow="onToggleFollow"
+      @toggle-loop-selection="onToggleLoopSelection"
     />
 
     <TransportTimingDisplay

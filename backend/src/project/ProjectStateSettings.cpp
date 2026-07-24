@@ -67,6 +67,49 @@ void ProjectState::setViewFxPanelOpen(bool open)
     setNonDirtyRootProperty(kViewFxPanelOpen, open);
 }
 
+std::optional<ProjectState::TimelineSelectionView> ProjectState::getViewTimelineSelection() const
+{
+    const auto start = root.getProperty(kViewTimelineSelectionStartMs, juce::var());
+    const auto end = root.getProperty(kViewTimelineSelectionEndMs, juce::var());
+    if ((! start.isDouble() && ! start.isInt() && ! start.isInt64())
+        || (! end.isDouble() && ! end.isInt() && ! end.isInt64()))
+    {
+        return std::nullopt;
+    }
+
+    const double startMs = static_cast<double>(start);
+    const double endMs = static_cast<double>(end);
+    if (! std::isfinite(startMs) || ! std::isfinite(endMs) || startMs < 0.0 || endMs <= startMs)
+    {
+        return std::nullopt;
+    }
+
+    return TimelineSelectionView{
+        startMs,
+        endMs,
+        static_cast<bool>(root.getProperty(kViewTimelineSelectionLoop, false))
+    };
+}
+
+void ProjectState::setViewTimelineSelection(std::optional<TimelineSelectionView> selection)
+{
+    if (! selection.has_value()
+        || ! std::isfinite(selection->startMs)
+        || ! std::isfinite(selection->endMs)
+        || selection->startMs < 0.0
+        || selection->endMs <= selection->startMs)
+    {
+        setNonDirtyRootProperty(kViewTimelineSelectionStartMs, juce::var());
+        setNonDirtyRootProperty(kViewTimelineSelectionEndMs, juce::var());
+        setNonDirtyRootProperty(kViewTimelineSelectionLoop, false);
+        return;
+    }
+
+    setNonDirtyRootProperty(kViewTimelineSelectionStartMs, selection->startMs);
+    setNonDirtyRootProperty(kViewTimelineSelectionEndMs, selection->endMs);
+    setNonDirtyRootProperty(kViewTimelineSelectionLoop, selection->loop);
+}
+
 double ProjectState::getPlayheadMs() const
 {
     return static_cast<double>(root.getProperty(kPlayheadMs, 0.0));

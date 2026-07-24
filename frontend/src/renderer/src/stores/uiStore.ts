@@ -6,6 +6,10 @@ import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 import {
+  normaliseTimelineSelection,
+  type TimelineSelection
+} from '@/lib/timeline/timelineSelection'
+import {
   clampAutomationLaneHeight,
   createAutomationLane,
   type AutomationLane
@@ -17,7 +21,7 @@ export type { AutomationLane }
 export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
   | { edge: TimelineScrollEdge; id: number }
-  | { positionMs: number; id: number }
+  | { positionMs: number; smooth: boolean; id: number }
 export type TimelineZoomAction = 'in' | 'out' | 'reset' | 'fit'
 /** One-shot TimelineView zoom request; `absolute` is px/sec. */
 export type TimelineZoomRequest =
@@ -25,6 +29,7 @@ export type TimelineZoomRequest =
   | { kind: 'absolute'; pxPerSecond: number; id: number }
 /** One-shot request to scroll a track row into the visible vertical band. */
 export type TimelineRevealTrackRequest = { trackId: string; id: number }
+export type { TimelineSelection } from '@/lib/timeline/timelineSelection'
 
 interface UiState {
   trackHeaderWidth: number
@@ -49,6 +54,10 @@ interface UiState {
   timelineScrollRequest: TimelineScrollRequest | null
   timelineZoomRequest: TimelineZoomRequest | null
   timelineRevealTrackRequest: TimelineRevealTrackRequest | null
+  /** Project-scoped ruler range restored from authoritative project snapshots. */
+  timelineSelection: TimelineSelection | null
+  /** Whether transport wraps at the active timeline selection's exclusive end. */
+  loopTimelineSelection: boolean
   /** Per-track visible automation lanes, persisted independently from their curves. */
   automationLanes: Record<string, AutomationLane[]>
   /** Bumped for every lane-layout mutation so the timeline can repaint reliably. */
@@ -168,6 +177,8 @@ export const useUiStore = defineStore('ui', {
     timelineScrollRequest: null,
     timelineZoomRequest: null,
     timelineRevealTrackRequest: null,
+    timelineSelection: null,
+    loopTimelineSelection: false,
     automationLanes: {},
     automationLaneRevision: 0,
     automationClipboard: null,
@@ -330,10 +341,11 @@ export const useUiStore = defineStore('ui', {
       }
     },
 
-    requestTimelineScrollToPosition(positionMs: number): void {
+    requestTimelineScrollToPosition(positionMs: number, smooth = false): void {
       if (!Number.isFinite(positionMs) || positionMs < 0) return
       this.timelineScrollRequest = {
         positionMs,
+        smooth,
         id: nextTimelineScrollRequestId++
       }
     },
@@ -345,6 +357,32 @@ export const useUiStore = defineStore('ui', {
         trackId,
         id: nextTimelineRevealTrackRequestId++
       }
+    },
+
+    setTimelineSelection(selection: TimelineSelection | null): void {
+      this.timelineSelection = selection
+      if (selection === null) this.loopTimelineSelection = false
+    },
+    /** Apply snapshot state locally without echoing a PROJECT_SET_VIEW command. */
+    applyTimelineSelectionView(
+      selection: TimelineSelection | null,
+      loopTimelineSelection: boolean
+    ): void {
+      this.timelineSelection =
+        selection === null
+          ? null
+          : normaliseTimelineSelection(selection.startMs, selection.endMs)
+      this.loopTimelineSelection =
+        this.timelineSelection !== null && loopTimelineSelection
+    },
+    persistTimelineSelectionView(): void {
+      sendBridge('PROJECT_SET_VIEW', {
+        timelineSelection: this.timelineSelection,
+        loopTimelineSelection: this.loopTimelineSelection
+      })
+    },
+    setLoopTimelineSelection(loop: boolean): void {
+      this.loopTimelineSelection = this.timelineSelection !== null && loop
     },
 
     /** Show another distinct parameter lane without changing its stored curve. */

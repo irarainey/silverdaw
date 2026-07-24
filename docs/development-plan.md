@@ -1703,14 +1703,15 @@ editor. The release is deliberately limited to the following four features.
    introduced because the engine already evaluates multiple parameter curves per
    track.
 3. **Timeline range selection, playback, and looping.** Dragging across the
-   timeline ruler creates one project-wide time range. The region is visibly
-   shaded across all tracks and has start/end handles; its boundaries follow the
-   selected Snap interval, with `Alt` for 1 ms precision. **Play selection**
-   starts at the range start and pauses at its exclusive end. **Loop selection**
-   starts at the same point and returns to the start at each end boundary.
-   Ordinary project playback stays unchanged, so a visible range never silently
-   constrains the normal Play command. There is one range only; it is distinct
-   from clip selection, transient, not undoable, and never saved in a project.
+   timeline ruler away from the playhead creates one project-wide time range;
+   dragging the playhead keeps its normal repositioning behavior. The region is
+   visibly shaded across all tracks with ruler boundary lines; its boundaries
+   snap to the timeline grid, with `Alt` for 1 ms precision. Play starts at the
+   range start and pauses at its exclusive end. The transport's **Loop
+   Selection** control returns to the start at that boundary while preserving
+   shared FX tails. `Escape` clears the range and loop state. There is one range
+   only; it is distinct from clip selection and is saved as non-undoable project
+   view state.
 4. **Import assets from another project.** **Import from Project...** opens a
    `.silverdaw` project for read-only inspection, then lists its **Stems**,
    **Samples**, and reusable **Scratch patterns** for explicit selection.
@@ -2601,18 +2602,19 @@ Implementation increments (foundations first; each keeps build + tests green):
   marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
   Vitest coverage for the linear law, recipe→curve derivation, and the menu.
 
-### 11.2 Arrangement & editing workflow - *range auditioning planned*
+### 11.2 Arrangement & editing workflow
 
 - [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
   same-track range or Ctrl-click across tracks selects several clips; the whole
   group moves/nudges together and can be locked, coloured, duplicated, deleted,
   and cut/copied/pasted in one undo step. Renderer-only selection (not
   serialised). Grouped *trim/stretch* is still deferred.
-- [ ] **Timeline range auditioning** - *planned for 1.4.0; see Section 8.* One
-  transient project-wide time range is created from the timeline ruler and can
-  be played once or looped. Range playback is distinct from the existing Clip
-  Editor audition loop and from clip-group selection. Reverb and Delay tails
-  continue through a loop wrap; the range is not serialised or undoable.
+- [x] **Timeline range auditioning** — *shipped in 1.4.0; see Section 8.* One
+  project-wide time range is created from the ruler away from the playhead and
+  can be played once or looped. Range playback is distinct from the existing
+  Clip Editor audition loop and from clip-group selection. Reverb and Delay
+  tails continue through a loop wrap; `Escape` clears the range, and the range
+  and loop state are serialised as non-undoable project view state.
 
 ### 11.3 Tempo, beat-grid & harmonic — *manual beat-grid shipped; mode-aware model remains (Phase 8)*
 

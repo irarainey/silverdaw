@@ -504,6 +504,8 @@ export interface LibraryItemSaveAsSamplePayload {
 
 export interface TransportSeekPayload {
   positionMs: number
+  /** Range-loop seeks retain shared Reverb and Delay tails. */
+  preserveEffects?: boolean
 }
 
 export interface TransportScrubPayload {
@@ -725,6 +727,10 @@ export interface ProjectSetViewPayload {
   selectedTrackId?: string | null
   /** Bottom panel shows Track FX. Persisted as non-dirty view state. */
   fxPanelOpen?: boolean
+  /** Selected range, or null to clear. Persisted as non-dirty view state. */
+  timelineSelection?: { startMs: number; endMs: number } | null
+  /** Whether transport loops the persisted selected range. */
+  loopTimelineSelection?: boolean
 }
 
 /** Tempo edit. Marks the project dirty on the backend. */

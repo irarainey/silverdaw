@@ -26,6 +26,7 @@ import { useTimelineZoom } from '@/lib/timeline/useTimelineZoom'
 import { createRedrawScheduler } from '@/lib/timeline/useRedrawScheduler'
 import { useTimelineRepaintWatches } from '@/lib/timeline/useTimelineRepaintWatches'
 import { useTimelineHeaderResize } from '@/lib/timeline/useTimelineHeaderResize'
+import { useTimelineRangeSelection } from '@/lib/timeline/useTimelineRangeSelection'
 
 
 export function useTimelineViewController(
@@ -46,6 +47,7 @@ export function useTimelineViewController(
   let redrawNow: () => void = () => { }
   let updatePlayhead: () => void = () => { }
   let disposeTimelineFileDrop = (): void => {}
+  let timelineScrollAnimationFrame: number | null = null
 
   // ─── Composables ──────────────────────────────────────────────────────────
   const geometry = useGridGeometry()
@@ -69,12 +71,25 @@ export function useTimelineViewController(
     onReady: () => { redrawNow(); updatePlayhead() }
   })
 
+  const rangeSelection = useTimelineRangeSelection({
+    host,
+    app: pixi.app,
+    scrollX,
+    geometry,
+    onSeek: (positionMs) => {
+      transport.setPosition(positionMs)
+      sendBridge('TRANSPORT_SEEK', { positionMs })
+      updatePlayhead()
+    }
+  })
+
   const { isDraggingPlayhead, hoverCursor, removeAutomationPointAt } = useDragHandlers({
     host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
     getClipHitRegions: () => clipHitRegions,
     onClipMoved: () => { redraw(); updatePlayhead() },
     onMarkerMoved: () => { redraw(); updatePlayhead() },
-    onPlayheadMoved: () => { updatePlayhead() }
+    onPlayheadMoved: () => { updatePlayhead() },
+    tryBeginRangeSelection: rangeSelection.tryBegin
   })
 
   const { dropPreview, resolveDropTarget, startMsForItem } = useDropZone({
@@ -159,6 +174,7 @@ export function useTimelineViewController(
     document.removeEventListener('pointerdown', onRenameDocumentPointerDown, { capture: true })
     disposeTimelineFileDrop()
     stopPlayheadRaf()
+    cancelTimelineScrollAnimation()
     redrawScheduler.cancel()
   })
 
@@ -302,6 +318,11 @@ export function useTimelineViewController(
     headerWidthRef
   })
 
+  watch(
+    () => ui.timelineSelection,
+    () => redraw()
+  )
+
   // Project length changes only need scroll re-clamping.
   watch([maxScrollX, maxScrollY], () => {
     if (pendingSavedScrollX !== null) {
@@ -375,10 +396,42 @@ export function useTimelineViewController(
         next = Math.max(0, Math.min(maxScrollX.value, next))
       }
       if (Math.abs(next - scrollX.value) < 0.5) return
-      scrollX.value = next
-      applyScroll()
+      if ('smooth' in request && request.smooth) {
+        startTimelineScrollAnimation(next)
+      } else {
+        cancelTimelineScrollAnimation()
+        scrollX.value = next
+        applyScroll()
+      }
     }
   )
+
+  function cancelTimelineScrollAnimation(): void {
+    if (timelineScrollAnimationFrame !== null) {
+      cancelAnimationFrame(timelineScrollAnimationFrame)
+      timelineScrollAnimationFrame = null
+    }
+  }
+
+  function startTimelineScrollAnimation(targetX: number): void {
+    cancelTimelineScrollAnimation()
+    const startX = scrollX.value
+    const distance = targetX - startX
+    const durationMs = Math.min(360, Math.max(180, Math.abs(distance) * 0.25))
+    const startedAt = performance.now()
+    const step = (now: number): void => {
+      const progress = Math.min(1, (now - startedAt) / durationMs)
+      const easedProgress = 1 - (1 - progress) ** 3
+      scrollX.value = startX + distance * easedProgress
+      applyScroll()
+      if (progress < 1) {
+        timelineScrollAnimationFrame = requestAnimationFrame(step)
+      } else {
+        timelineScrollAnimationFrame = null
+      }
+    }
+    timelineScrollAnimationFrame = requestAnimationFrame(step)
+  }
 
   // Scroll a freshly-added (or otherwise off-screen) track row into the
   // visible vertical band. Mirrors the horizontal scroll-into-view above.

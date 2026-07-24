@@ -109,4 +109,24 @@ describe('uiStore automation lanes', () => {
     ])
     expect(sendBridge).not.toHaveBeenCalled()
   })
+
+  it('persists and restores timeline selection view state without a snapshot echo', () => {
+    const ui = useUiStore()
+
+    ui.setTimelineSelection({ startMs: 1000, endMs: 2500 })
+    ui.setLoopTimelineSelection(true)
+    ui.persistTimelineSelectionView()
+
+    expect(sendBridge).toHaveBeenCalledWith('PROJECT_SET_VIEW', {
+      timelineSelection: { startMs: 1000, endMs: 2500 },
+      loopTimelineSelection: true
+    })
+
+    vi.clearAllMocks()
+    ui.applyTimelineSelectionView({ startMs: 3000, endMs: 4500 }, false)
+
+    expect(ui.timelineSelection).toEqual({ startMs: 3000, endMs: 4500 })
+    expect(ui.loopTimelineSelection).toBe(false)
+    expect(sendBridge).not.toHaveBeenCalled()
+  })
 })

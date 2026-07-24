@@ -7,7 +7,7 @@
 
 namespace silverdaw
 {
-void AudioEngine::setPositionMs(double ms)
+void AudioEngine::setPositionMs(double ms, bool resetEffects)
 {
     const double sr = master.getSampleRate();
     const double clampedMs = juce::jmax(0.0, ms);
@@ -16,7 +16,12 @@ void AudioEngine::setPositionMs(double ms)
                                    : static_cast<juce::int64>(0);
     master.setPositionSamples(masterSamples);
 
-    busGraph.resetSharedFx();
+    if (resetEffects)
+    {
+        busGraph.resetSharedFx();
+    }
+    // A loop keeps Reverb and Delay tails, but Beat Repeat captures timeline
+    // input and must restart at the new transport position.
     busGraph.resetBeatRepeats();
     // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play
     // start.

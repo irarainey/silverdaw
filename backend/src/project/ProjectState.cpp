@@ -31,6 +31,9 @@ const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kViewSelectedTrack{"viewSelectedTrack"};
 const juce::Identifier ProjectState::kViewFxPanelOpen{"viewFxPanelOpen"};
+const juce::Identifier ProjectState::kViewTimelineSelectionStartMs{"viewTimelineSelectionStartMs"};
+const juce::Identifier ProjectState::kViewTimelineSelectionEndMs{"viewTimelineSelectionEndMs"};
+const juce::Identifier ProjectState::kViewTimelineSelectionLoop{"viewTimelineSelectionLoop"};
 const juce::Identifier ProjectState::kPlayheadMs{"playheadMs"};
 const juce::Identifier ProjectState::kBpm{"bpm"};
 const juce::Identifier ProjectState::kBpmSeeded{"bpmSeeded"};
@@ -298,9 +301,17 @@ void ProjectState::setNonDirtyRootProperty(const juce::Identifier& id, const juc
 {
     // Mirror into cleanSnapshot so non-edit state cannot create phantom dirty deltas.
     const SuppressDirtyScope suppress(*this);
-    root.setProperty(id, value, nullptr);
+    if (value.isVoid())
+        root.removeProperty(id, nullptr);
+    else
+        root.setProperty(id, value, nullptr);
     if (cleanSnapshot.isValid())
-        cleanSnapshot.setProperty(id, value, nullptr);
+    {
+        if (value.isVoid())
+            cleanSnapshot.removeProperty(id, nullptr);
+        else
+            cleanSnapshot.setProperty(id, value, nullptr);
+    }
 }
 
 bool ProjectState::mutateDerivedLibraryItem(

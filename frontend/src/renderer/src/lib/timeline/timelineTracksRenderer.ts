@@ -188,6 +188,23 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
       visibleRows.push({ track, worldY, rowHeight, clipHeight: slot.clipHeight })
     }
 
+    const selection = useUiStore().timelineSelection
+    if (selection) {
+      const selectionX = headerWidth() + (selection.startMs / 1000) * pxPerSecond.value
+      const selectionWidth =
+        ((selection.endMs - selection.startMs) / 1000) * pxPerSecond.value
+      const selectionOverlay = new G()
+      selectionOverlay
+        .rect(
+          selectionX,
+          RULER_HEIGHT,
+          selectionWidth,
+          Math.max(trackAreaHeight.value, tracksContentHeight.value)
+        )
+        .fill({ color: 0x0ea5e9, alpha: 0.1 })
+      tracksL.addChild(selectionOverlay)
+    }
+
     drawGrid(width)
 
     let visibleClipCount = 0
