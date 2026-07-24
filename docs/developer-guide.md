@@ -908,12 +908,16 @@ especially on a machine we can't attach to (a clean install, a Store
 certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 **independent of the Preferences ▸ Developer diagnostic-logging toggle**:
 
+The verbose application-log directory is configured separately in
+**Preferences ▸ Developer**. When diagnostic logging is enabled, its default is
+`%USERPROFILE%\Silverdaw\Logs`.
+
 - **Diagnostics directory.** Electron main always creates a diagnostics
-  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`,
-  a discoverable non-virtualised location — under MSIX a `userData`/`%APPDATA%`
-  path is silently redirected into a hidden package container; dev builds:
-  `<userData>/diagnostics`) and passes it to the backend as `SILVERDAW_DIAG_DIR`
-  on every spawn — distinct from
+  directory on launch (packaged and development builds:
+  `%USERPROFILE%\Silverdaw\Diagnostics`, a discoverable non-virtualised
+  location — under MSIX a `userData`/`%APPDATA%` path is silently redirected
+  into a hidden package container) and passes it to the backend as
+  `SILVERDAW_DIAG_DIR` on every spawn — distinct from
   the opt-in verbose sink (`SILVERDAW_LOG_DIR`, only set when logging is enabled).
   Main writes `startup.log` there (truncated each launch): the launch banner and
   the backend lifecycle it observes (spawn path/port, exit code/signal, respawns,
@@ -1605,8 +1609,9 @@ we later seed lined up with the source's beats from the first beat to the last. 
 amber `~ BPM` warning badge.
 
 The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
-pair, so the anchor's phase matters as much as the period. After the period is
-final the detector runs a guarded **phase correction**: `estimateGridPhaseOffset`
+pair, so the anchor's phase matters as much as the period. Before the final
+ODF-peak refit, the detector runs a guarded **phase correction**:
+`estimateGridPhaseOffset`
 measures, for each grid beat across the whole track, the offset to the strongest nearby
 ODF peak and takes the **median**. The anchor is shifted by that median
 only when the offsets are *consistent* (IQR ≤ 30 ms — chosen over median-absolute-
@@ -2137,7 +2142,8 @@ first and continues playing from the underlying source).
   which still inline-renames), or pick **Open ▸ Clip Editor** from the clip
   menu, to edit that timeline clip — its window, warp and pitch.
 
-The dialog renders the source waveform with an adaptive time ruler, faint
+The dialog renders the source waveform with an adaptive time ruler that always
+uses minute-and-second labels, retaining fractional seconds at close zoom, faint
 beat lines extrapolated from the detected BPM, and zoom + horizontal scroll
 (`+` / `-` / `0`, mouse-wheel anchored at the pointer, `Shift+wheel` to pan;
 capped at **64× / 6400 %** so even narrow saved clips can be inspected
@@ -2384,8 +2390,9 @@ lane) over the source waveform. Recording preserves the scratch source's current
 position, so a take can begin at any phrase in the prepared source; only the
 backing bed restarts at its head. The notation starts at a real time scale of
 180 pixels per second rather than compressing a long take into the panel. It has
-time markers, zoom controls (100%–800%), a horizontal scrollbar when needed, and
-smoothly follows replay with the playhead held near the centre of the viewport.
+minute-and-second time markers, retaining fractional seconds at close zoom, zoom
+controls (100%–800%), a horizontal scrollbar when needed, and smoothly follows
+replay with the playhead held near the centre of the viewport.
 
 Click a notation point to select it, then drag it or use the keyboard controls
 listed below. Double-click a lane to add a point; right-click an editable point

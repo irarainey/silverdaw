@@ -113,7 +113,7 @@ watch(
   >
     <div
       tabindex="-1"
-      class="dialog-card h-[560px] w-[780px] max-h-[82vh] max-w-[92vw]"
+      class="dialog-card h-140 w-195 max-h-[82vh] max-w-[92vw]"
     >
       <div class="dialog-header">
         <h1

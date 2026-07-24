@@ -396,4 +396,3 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
 }
 </style>
 
-

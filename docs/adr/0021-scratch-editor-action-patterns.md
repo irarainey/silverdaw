@@ -228,9 +228,10 @@ live gesture, is the source of truth thereafter.
 The notation panel is a direct, editable view of the same lanes (platter
 motion segments, holds, and a crossfader automation lane). Its 100% scale is
 180 pixels per second, so long takes expand horizontally rather than
-compressing their points; time markers, zoom, and a horizontal scrollbar
-support navigation. Replay follows the playhead with a smooth, forward-only
-viewport scroll anchored at 50% of the visible width.
+compressing their points; minute-and-second time markers, retaining fractional
+seconds at close zoom, plus zoom and a horizontal scrollbar support navigation.
+Replay follows the playhead with a smooth, forward-only viewport scroll anchored
+at 50% of the visible width.
 
 Clicking a point selects it. Double-clicking a lane adds a point, and
 right-clicking an editable point removes it. `D` deselects;

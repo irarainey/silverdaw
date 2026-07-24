@@ -3,6 +3,7 @@ import {
   barPositionDisplay,
   DEFAULT_BEATS_PER_BAR,
   DEFAULT_SUBS_PER_BEAT,
+  formatRulerTime,
   formatTime,
   msPerSubBeat,
   parseTime
@@ -23,6 +24,21 @@ describe('formatTime', () => {
 
   it('clamps negative values to zero', () => {
     expect(formatTime(-1234)).toBe('00:00')
+  })
+})
+
+describe('formatRulerTime', () => {
+  it('keeps minute-and-second labels when sub-second precision is needed', () => {
+    expect(formatRulerTime(5_430, 100)).toBe('0:05.4')
+    expect(formatRulerTime(65_430, 50)).toBe('1:05.43')
+  })
+
+  it('rounds sub-second labels across a minute boundary', () => {
+    expect(formatRulerTime(59_999, 100)).toBe('1:00.0')
+  })
+
+  it('omits fractional seconds for coarse ruler ticks', () => {
+    expect(formatRulerTime(65_430, 1_000)).toBe('1:05')
   })
 })
 
