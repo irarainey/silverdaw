@@ -124,7 +124,7 @@ watch(
         </h1>
       </div>
 
-      <div class="dialog-body grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] gap-5 overflow-hidden">
+      <div class="dialog-body grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)] gap-4 overflow-hidden">
         <ProjectImportSourceList
           :sources="visibleSources"
           :selected-path="selectedSourcePath"
@@ -133,37 +133,51 @@ watch(
           @select="selectSource"
         />
 
-        <div class="min-h-0 flex flex-col border-l border-zinc-800 pl-5">
-          <h2 class="text-xs font-medium text-zinc-300">
-            Files
-          </h2>
+        <section
+          class="min-h-0 flex flex-col border-l border-zinc-800 pl-4"
+          aria-labelledby="project-import-files-title"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <h2
+              id="project-import-files-title"
+              class="text-[11px] font-medium uppercase tracking-wider text-zinc-400"
+            >
+              Files
+            </h2>
+            <span
+              v-if="manifest && selectionCount > 0"
+              class="text-xs tabular-nums text-sky-300"
+            >
+              {{ selectionCount }} selected
+            </span>
+          </div>
           <p
             v-if="sourcesError"
-            class="mt-3 rounded border border-red-700 bg-red-950/40 px-3 py-2 text-xs text-red-400"
+            class="mt-3 rounded border border-red-700 bg-red-950/40 px-3 py-2 text-xs leading-relaxed text-red-400"
           >
             {{ sourcesError }}
           </p>
           <p
             v-else-if="!sourcesLoading && visibleSources.length === 0"
-            class="mt-3 text-sm text-zinc-400"
+            class="mt-3 flex flex-1 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-900 px-6 text-center text-sm leading-relaxed text-zinc-400"
           >
             No other saved projects were found in the configured project folder.
           </p>
           <p
             v-else-if="!selectedSourcePath"
-            class="mt-3 text-sm text-zinc-400"
+            class="mt-3 flex flex-1 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-900 px-6 text-center text-sm leading-relaxed text-zinc-400"
           >
             Select a project to see its importable files.
           </p>
           <p
             v-else-if="!transport.bridgeReady"
-            class="mt-3 text-sm text-zinc-400"
+            class="mt-3 flex flex-1 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-900 px-6 text-center text-sm leading-relaxed text-zinc-400"
           >
             Waiting for the audio engine to read project assets…
           </p>
           <p
             v-else-if="inspecting"
-            class="mt-3 text-sm text-zinc-400"
+            class="mt-3 flex flex-1 items-center justify-center rounded border border-dashed border-zinc-700 bg-zinc-900 px-6 text-center text-sm leading-relaxed text-zinc-400"
           >
             Reading project assets…
           </p>
@@ -178,11 +192,11 @@ watch(
 
           <p
             v-if="error"
-            class="mt-3 rounded border border-red-700 bg-red-950/40 px-3 py-2 text-xs text-red-400"
+            class="mt-3 rounded border border-red-700 bg-red-950/40 px-3 py-2 text-xs leading-relaxed text-red-400"
           >
             {{ error }}
           </p>
-        </div>
+        </section>
       </div>
 
       <div class="dialog-footer">
