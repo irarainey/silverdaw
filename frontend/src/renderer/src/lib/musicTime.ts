@@ -42,6 +42,18 @@ export function formatTime(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
+/** Format ruler labels as elapsed minutes and seconds at the supplied tick precision. */
+export function formatRulerTime(ms: number, stepMs: number): string {
+  const decimals = stepMs < 100 ? 2 : stepMs < 1000 ? 1 : 0
+  const factor = 10 ** decimals
+  const sign = ms < 0 ? '-' : ''
+  const roundedSeconds = Math.round((Math.abs(ms) / 1000) * factor) / factor
+  const minutes = Math.floor(roundedSeconds / 60)
+  const seconds = roundedSeconds - minutes * 60
+  const secondWidth = decimals === 0 ? 2 : decimals + 3
+  return `${sign}${minutes}:${seconds.toFixed(decimals).padStart(secondWidth, '0')}`
+}
+
 /** Parse `ss`, `mm:ss` or `h:mm:ss` into milliseconds; malformed input returns `null`. */
 export function parseTime(text: string): number | null {
   const trimmed = text.trim()

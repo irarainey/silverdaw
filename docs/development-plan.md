@@ -1478,8 +1478,9 @@ sits in its own branch of `AudioEngine.topMixer`, independent of the
 project transport.
 
 - Full-source waveform at the renderer's px-per-second scale for
-  source, stem, and sample items, zoomed-to-fit for library clip items. Adaptive time
-  ruler with relative-to-clip labels.
+  source, stem, and sample items, zoomed-to-fit for library clip items. Adaptive
+  time ruler with relative-to-clip minute-and-second labels, retaining fractional
+  seconds at close zoom.
 - Beat lines extrapolated from the source's detected BPM + beat
   anchor across the whole view (so split / trim sub-clips stay in
   lockstep).
