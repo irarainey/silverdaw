@@ -38,4 +38,8 @@ juce::Result removeLibraryItems(const juce::File& file, const juce::StringArray&
 // Leaves `project` untouched on failure; unknown compatible keys are ignored.
 LoadResult load(const juce::File& file, ProjectState& project);
 
+// Decodes a project file without constructing or mutating ProjectState. Callers
+// that only need persisted records should use this to avoid load migrations.
+LoadResult loadTree(const juce::File& file, juce::ValueTree& projectTree);
+
 } // namespace silverdaw::ProjectFile

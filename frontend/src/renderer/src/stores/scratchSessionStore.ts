@@ -5,8 +5,17 @@ import { canonicalizeScratchPattern } from '@/lib/scratch/scratchPatternCanonica
 
 export type ScratchRecordingStatus = 'empty' | 'recording' | 'completed'
 
+export interface ScratchSourcePeaks {
+  sessionId: string
+  peaks: Float32Array
+  channels: readonly Float32Array[]
+  peaksPerSecond: number
+  sampleRate: number
+}
+
 interface ScratchSessionState {
   current: ScratchSessionStatePayload | null
+  sourcePeaks: ScratchSourcePeaks | null
   recordingStatus: ScratchRecordingStatus
   completedPattern: ScratchPattern | null
   /** Monotonically increasing revision for draft change detection. */
@@ -27,6 +36,7 @@ interface ScratchSessionState {
 export const useScratchSessionStore = defineStore('scratchSession', {
   state: (): ScratchSessionState => ({
     current: null,
+    sourcePeaks: null,
     recordingStatus: 'empty',
     completedPattern: null,
     draftRevision: 0,
@@ -95,6 +105,11 @@ export const useScratchSessionStore = defineStore('scratchSession', {
       this.completedPattern = payload.pattern
       this.recordingStatus = 'completed'
       this.draftRevision += 1
+    },
+
+    setSourcePeaks(sourcePeaks: ScratchSourcePeaks): void {
+      if (this.current?.sessionId !== sourcePeaks.sessionId) return
+      this.sourcePeaks = sourcePeaks
     },
 
     /**
@@ -166,6 +181,7 @@ export const useScratchSessionStore = defineStore('scratchSession', {
 
     clear(): void {
       this.current = null
+      this.sourcePeaks = null
       this.recordingStatus = 'empty'
       this.completedPattern = null
       this.savedPatternId = null

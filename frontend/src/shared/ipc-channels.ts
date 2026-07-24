@@ -79,6 +79,7 @@ export const IPC = {
     fileExists: 'project:fileExists',
     chooseOpen: 'project:chooseOpen',
     chooseSaveAs: 'project:chooseSaveAs',
+    listImportSources: 'project:listImportSources',
     prepareOpen: 'project:prepareOpen',
     prepareRecovery: 'project:prepareRecovery',
     consumePendingOpenPath: 'project:consumePendingOpenPath',

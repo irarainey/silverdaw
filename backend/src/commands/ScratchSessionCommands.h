@@ -12,6 +12,7 @@ namespace silverdaw
 
 class AudioEngine;
 class BridgeServer;
+class PeaksCache;
 class ProjectState;
 
 void handleScratchSessionOpen(const juce::var& payload,
@@ -19,6 +20,7 @@ void handleScratchSessionOpen(const juce::var& payload,
                               ProjectState& projectState,
                               BridgeServer& bridge,
                               juce::ThreadPool& workerPool,
+                              const PeaksCache& cache,
                               const juce::String& projectPath);
 void handleScratchSessionClose(const juce::var& payload,
                                AudioEngine& engine,

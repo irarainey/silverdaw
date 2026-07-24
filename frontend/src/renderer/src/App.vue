@@ -55,6 +55,7 @@ import {
   MidiMonitorDialog,
   MixdownProgressDialog,
   PreferencesDialog,
+  ProjectImportDialog,
   ProjectPropertiesDialog,
   RelinkDialog,
   SampleRateMismatchDialog,
@@ -78,6 +79,7 @@ useDialogInputCapture(renderedDialogOpen)
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
+const projectImportOpen = ref(false)
 const exportMixdownOpen = ref(false)
 const diagnosticsBusy = ref(false)
 const midiMonitorOpen = ref(false)
@@ -170,6 +172,7 @@ function isInteractionBlocked(): boolean {
     aboutOpen.value ||
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
+    projectImportOpen.value ||
     exportMixdownOpen.value ||
     diagnosticsBusy.value ||
     midiMonitorOpen.value ||
@@ -470,6 +473,7 @@ const { handleMenuAction } = useAppMenuActions({
   aboutOpen,
   preferencesOpen,
   projectPropertiesOpen,
+  projectImportOpen,
   exportMixdownOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
@@ -550,6 +554,12 @@ const { handleMenuAction } = useAppMenuActions({
       v-if="projectPropertiesOpen"
       :open="projectPropertiesOpen"
       @close="projectPropertiesOpen = false"
+    />
+
+    <ProjectImportDialog
+      v-if="projectImportOpen"
+      :open="projectImportOpen"
+      @close="projectImportOpen = false"
     />
 
     <ExportMixdownDialog

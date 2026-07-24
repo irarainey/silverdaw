@@ -304,7 +304,7 @@ juce::Result removeLibraryItems(const juce::File& file, const juce::StringArray&
     return writeProjectJsonAtomically(file, rootVar);
 }
 
-LoadResult load(const juce::File& file, ProjectState& project)
+LoadResult loadTree(const juce::File& file, juce::ValueTree& projectTree)
 {
     LoadResult result;
 
@@ -365,10 +365,24 @@ LoadResult load(const juce::File& file, ProjectState& project)
     juce::var resolvedVar = projectVar;
     rewritePortablePaths(resolvedVar, file.getParentDirectory(), /*forSave=*/false);
 
-    auto projectTree = ValueTreeJson::fromVar(resolvedVar);
-    if (!projectTree.isValid())
+    auto decodedTree = ValueTreeJson::fromVar(resolvedVar);
+    if (!decodedTree.isValid())
     {
         result.error = "Failed to decode \"project\" object as a ValueTree";
+        return result;
+    }
+
+    projectTree = std::move(decodedTree);
+    result.ok = true;
+    return result;
+}
+
+LoadResult load(const juce::File& file, ProjectState& project)
+{
+    juce::ValueTree projectTree;
+    auto result = loadTree(file, projectTree);
+    if (!result.ok)
+    {
         return result;
     }
 
@@ -376,10 +390,10 @@ LoadResult load(const juce::File& file, ProjectState& project)
     if (!replaceResult.wasOk())
     {
         result.error = replaceResult.getErrorMessage();
+        result.ok = false;
         return result;
     }
 
-    result.ok = true;
     return result;
 }
 

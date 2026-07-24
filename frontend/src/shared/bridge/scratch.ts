@@ -264,6 +264,15 @@ export const ScratchSessionStatePayloadSchema = z.object({
 })
 export type ScratchSessionStatePayload = z.infer<typeof ScratchSessionStatePayloadSchema>
 
+export const ScratchSourcePeaksReadyPayloadSchema = z.object({
+  sessionId: z.string().min(1),
+  cachePath: z.string().min(1),
+  peakCount: z.number().int().positive(),
+  peaksPerSecond: z.number().positive(),
+  sampleRate: z.number().positive()
+})
+export type ScratchSourcePeaksReadyPayload = z.infer<typeof ScratchSourcePeaksReadyPayloadSchema>
+
 export function isScratchSessionStatePayload(value: unknown): value is ScratchSessionStatePayload {
   return ScratchSessionStatePayloadSchema.safeParse(value).success
 }

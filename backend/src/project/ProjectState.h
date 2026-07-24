@@ -523,7 +523,8 @@ class ProjectState : public juce::ValueTree::Listener
     // metadata on a kind="sample" item; older builds ignore the unknown properties.
     bool setLibraryItemScratchMeta(const juce::String& itemId,
                                    const juce::String& scratchPatternId,
-                                   const juce::String& scratchSourcePath);
+                                   const juce::String& scratchSourcePath,
+                                   bool undoable = false);
 
     // Empty when the item is not a scratch-origin sample.
     juce::String getLibraryItemScratchPatternId(const juce::String& itemId) const;

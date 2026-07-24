@@ -591,6 +591,8 @@ export interface BridgeOutboundMap {
   PROJECT_SAVE_AS: ProjectSaveAsPayload
   PROJECT_SAVE_VIEW_STATE: ProjectSaveViewStatePayload
   PROJECT_LOAD: ProjectLoadPayload
+  PROJECT_IMPORT_SOURCE_INSPECT: ProjectImportSourceInspectPayload
+  PROJECT_IMPORT_ASSETS: ProjectImportAssetsPayload
   PROJECT_LOAD_RECOVERY: ProjectLoadRecoveryPayload
   PROJECT_AUTOSAVE: ProjectAutosavePayload
   PROJECT_RENAME: ProjectRenamePayload
@@ -695,6 +697,17 @@ export interface ProjectSaveViewStatePayload {
 
 export interface ProjectLoadPayload {
   filePath: string
+}
+
+/** Inspect a saved project's managed assets without modifying its state. */
+export interface ProjectImportSourceInspectPayload {
+  sourceProjectPath: string
+}
+
+/** Import selected source-managed assets as new, independent destination entries. */
+export interface ProjectImportAssetsPayload {
+  sourceProjectPath: string
+  libraryItemIds: string[]
 }
 
 /**
@@ -1224,6 +1237,8 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SAVE_AS: 'payload',
   PROJECT_SAVE_VIEW_STATE: 'payload',
   PROJECT_LOAD: 'payload',
+  PROJECT_IMPORT_SOURCE_INSPECT: 'payload',
+  PROJECT_IMPORT_ASSETS: 'payload',
   PROJECT_LOAD_RECOVERY: 'payload',
   PROJECT_AUTOSAVE: 'payload',
   PROJECT_RENAME: 'payload',

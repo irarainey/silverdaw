@@ -27,6 +27,7 @@ import { BridgeReconnectPolicy } from '@/lib/bridgeReconnectPolicy'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 import { transportBridgeHandlers } from '@/lib/bridge/handlers/transportHandlers'
 import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
+import { projectImportBridgeHandlers } from '@/lib/bridge/handlers/projectImportHandlers'
 import { trackClipBridgeHandlers } from '@/lib/bridge/handlers/trackClipHandlers'
 import { libraryBridgeHandlers } from '@/lib/bridge/handlers/libraryHandlers'
 import { previewBridgeHandlers } from '@/lib/bridge/handlers/previewHandlers'
@@ -419,6 +420,7 @@ const inboundHandlers = {
   // Domain subsets must stay disjoint: duplicate keys would silently last-win across spreads.
   ...transportBridgeHandlers,
   ...projectBridgeHandlers,
+  ...projectImportBridgeHandlers,
   ...trackClipBridgeHandlers,
   ...libraryBridgeHandlers,
   ...previewBridgeHandlers,
