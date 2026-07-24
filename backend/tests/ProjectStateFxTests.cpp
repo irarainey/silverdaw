@@ -648,6 +648,54 @@ void testProjectStatePanJsonRoundTrip()
                 "setTrackPan should reject unknown trackId");
 }
 
+void testProjectStateAutomationLaneViewPersistence()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t-lanes"), "addTrack should succeed");
+
+    const auto makeLane = [](const juce::String& paramId, double heightPx) {
+        auto* lane = new juce::DynamicObject();
+        lane->setProperty("paramId", paramId);
+        lane->setProperty("heightPx", heightPx);
+        return juce::var(lane);
+    };
+
+    juce::Array<juce::var> lanes;
+    lanes.add(makeLane("filter", 80.0));
+    lanes.add(makeLane("pan", 999.0));
+    require(state.setTrackAutomationLaneView("t-lanes", lanes),
+            "valid automation lane view should persist");
+
+    const auto stored = state.getTrackAutomationLaneView("t-lanes");
+    require(stored.size() == 2, "stored lane view should preserve both lanes");
+    requireEqual(stored.getReference(0).getProperty("paramId", {}).toString(), juce::String{"filter"},
+                 "stored lane order should be preserved");
+    requireNear(static_cast<double>(stored.getReference(1).getProperty("heightPx", 0.0)), 220.0,
+                0.0001, "stored lane height should clamp to the maximum");
+
+    const auto tracks = state.tracksAsJson();
+    const auto& track = tracks.getArray()->getReference(0);
+    const auto& snapshotView = track.getProperty("automationLaneView", juce::var{});
+    require(snapshotView.isArray() && snapshotView.getArray()->size() == 2,
+            "lane view should appear in the project-state snapshot");
+
+    silverdaw::ProjectState reopened;
+    require(reopened.replaceTree(state.getTree().createCopy()).wasOk(),
+            "project with lane view should load");
+    require(reopened.getTrackAutomationLaneView("t-lanes").size() == 2,
+            "lane view should survive project reload");
+
+    juce::Array<juce::var> duplicate;
+    duplicate.add(makeLane("filter", 100.0));
+    duplicate.add(makeLane("filter", 120.0));
+    require(!reopened.setTrackAutomationLaneView("t-lanes", duplicate),
+            "duplicate lane parameters should be rejected");
+    require(reopened.setTrackAutomationLaneView("t-lanes", {}),
+            "clearing a populated lane view should succeed");
+    require(reopened.getTrackAutomationLaneView("t-lanes").isEmpty(),
+            "clearing lane view should collapse the automation stack");
+}
+
 } // namespace
 
 void addProjectStateFxTests(std::vector<TestCase>& tests)
@@ -666,6 +714,7 @@ void addProjectStateFxTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState canonicalizes loaded per-track bit crusher values", testProjectStateBitCrusherCanonicalizesLoadedValues});
     tests.push_back({"ProjectState per-track sends round-trip through tracksAsJson", testProjectStateSendsJsonRoundTrip});
     tests.push_back({"ProjectState per-track pan round-trips through tracksAsJson", testProjectStatePanJsonRoundTrip});
+    tests.push_back({"ProjectState automation lane view persists and clamps", testProjectStateAutomationLaneViewPersistence});
 }
 
 } // namespace silverdaw::tests

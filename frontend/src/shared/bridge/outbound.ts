@@ -8,6 +8,8 @@
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
 import type {
+  AutomationLaneView,
+  AutomationParamId,
   BeatRepeatDivision,
   LibraryItemKind,
   StemName,
@@ -259,6 +261,12 @@ export interface TrackSetHeightPayload {
   heightPx: number
 }
 
+/** Persisted visible automation lanes. Curves remain independently stored in `automation`. */
+export interface TrackSetAutomationLaneViewPayload {
+  trackId: string
+  lanes: AutomationLaneView[]
+}
+
 /** Reorder a track; `newIndex` is the desired 0-based position (backend clamps). One undo step. */
 export interface TrackReorderPayload {
   trackId: string
@@ -394,25 +402,6 @@ export interface AutomationPoint {
   /** Value in the parameter's native unit (dB, signed position, 0..1, …). */
   value: number
 }
-
-/** Automatable track parameters (must match the backend `AutomationParam`). */
-export type AutomationParamId =
-  | 'filter'
-  | 'pan'
-  | 'toneBass'
-  | 'toneMid'
-  | 'toneTreble'
-  | 'reverbSend'
-  | 'delaySend'
-  | 'leveler'
-  | 'punch'
-  | 'saturationDrive'
-  | 'saturationMix'
-  | 'bitCrusherRate'
-  | 'bitCrusherBits'
-  | 'bitCrusherBoost'
-  | 'bitCrusherMix'
-  | 'level'
 
 /** Per-track effect automation curve for one parameter (one atomic mutation per
  *  drag); backend sorts/clamps/dedupes. Fewer than two points clears the lane. */
@@ -570,6 +559,7 @@ export interface BridgeOutboundMap {
   TRACK_MUTE: TrackMutePayload
   TRACK_SOLO: TrackSoloPayload
   TRACK_SET_HEIGHT: TrackSetHeightPayload
+  TRACK_SET_AUTOMATION_LANE_VIEW: TrackSetAutomationLaneViewPayload
   TRACK_REORDER: TrackReorderPayload
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
@@ -1197,6 +1187,7 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_MUTE: 'payload',
   TRACK_SOLO: 'payload',
   TRACK_SET_HEIGHT: 'payload',
+  TRACK_SET_AUTOMATION_LANE_VIEW: 'payload',
   TRACK_REORDER: 'payload',
   TRACK_SET_SENDS: 'payload',
   TRACK_SET_TONE: 'payload',

@@ -22,7 +22,8 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "CLIP_RELINK" ||
            type == "TRACK_ADD" || type == "TRACK_REMOVE" || type == "TRACK_RENAME" ||
            type == "TRACK_GAIN" || type == "TRACK_MUTE" || type == "TRACK_SOLO" ||
-           type == "TRACK_SET_HEIGHT" || type == "TRACK_REORDER" ||
+           type == "TRACK_SET_HEIGHT" || type == "TRACK_SET_AUTOMATION_LANE_VIEW" ||
+           type == "TRACK_REORDER" ||
            type == "TRACK_SET_SENDS" || type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
            type == "TRACK_SET_PUNCH" ||
            type == "TRACK_SET_SATURATION" ||
@@ -74,6 +75,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "TRACK_MUTE") return "Mute track";
     if (type == "TRACK_SOLO") return "Solo track";
     if (type == "TRACK_SET_HEIGHT") return "Resize track";
+    if (type == "TRACK_SET_AUTOMATION_LANE_VIEW") return "Change automation lane view";
     if (type == "TRACK_REORDER") return "Reorder track";
     if (type == "TRACK_SET_SENDS") return "Change track reverb/delay";
     if (type == "TRACK_SET_TONE") return "Change track tone";
@@ -162,7 +164,8 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     {
         idPart = readOptionalString(payload, "clipId").value_or(juce::String{});
     }
-    else if (type == "TRACK_GAIN" || type == "TRACK_SET_SENDS" ||
+    else if (type == "TRACK_GAIN" || type == "TRACK_SET_AUTOMATION_LANE_VIEW" ||
+             type == "TRACK_SET_SENDS" ||
              type == "TRACK_SET_TONE" || type == "TRACK_SET_LEVELER" ||
              type == "TRACK_SET_PUNCH" ||
              type == "TRACK_SET_SATURATION" || type == "TRACK_SET_BIT_CRUSHER" ||

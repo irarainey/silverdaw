@@ -4,9 +4,14 @@
 
 ### Added
 
+- Track automation can now show multiple distinct parameter lanes on the same track.
+
 ### Changed
 
 ### Fixed
+
+- Automation lane layouts now persist with their projects.
+- Copying automation between effects now preserves the curve shape.
 
 ## 1.3.0
 

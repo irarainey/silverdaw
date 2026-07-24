@@ -138,17 +138,19 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
     hover explanation. Track FX keeps five responsive columns: Tone; Filter
     above Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.
   - Drag to resize and reorder tracks, and use the master output's live metering.
-- **Track effect automation.** Open a collapsible lane under any track to draw
-  breakpoint curves that automate a parameter over the timeline — Filter, Pan,
-  Tone Bass / Mid / Treble, Reverb / Delay sends, Compressor, Punch,
-  Saturation, Bit Crusher, or **Gain** (a post-FX track level). Add, drag,
-  right-click or
-  Alt-click to delete, and arrow-key nudge points; raise/lower or copy/paste a
-  whole curve; values play live and render identically in the mixdown. Each
-  Track FX control has an **A** button to automate it: the slider sets the
-  resting value, and a drawn curve overlays it over time — and while a curve is
-  active its slider follows the automation, so you can watch each control move
-  as the track plays.
+- **Track effect automation.** Open a collapsible automation stack under any
+  track, then add distinct parameter lanes to view and edit several breakpoint
+  curves together. Lanes cover Filter, Pan, Tone Bass / Mid / Treble,
+  Reverb / Delay sends, Compressor, Punch, Saturation, Bit Crusher, and
+  **Gain** (a post-FX track level). Each lane has its own parameter picker and
+  height, and the open lanes persist with the project. Add, drag, right-click
+  or Alt-click to delete, and arrow-key nudge points; raise/lower or copy/paste
+  a whole curve. Pasting between effects maps values into the target range so
+  the curve keeps its shape. Values play live and render identically in the
+  mixdown. Each Track FX control has an **A** button to automate it: the slider
+  sets the resting value, and a drawn curve overlays it over time — and while a
+  curve is active its slider follows the automation, so you can watch each
+  control move as the track plays.
 - **Per-clip volume shaping.** Draw a volume envelope right on a clip's waveform
   in the Clip Editor to swell, duck, fade in, or fade out, or chop a selected
   range to silence or full volume with hard edges — all non-destructive

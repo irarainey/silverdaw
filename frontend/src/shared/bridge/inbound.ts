@@ -181,6 +181,34 @@ const AutomationPointSchema = z.object({
 })
 export type AutomationPointAck = z.infer<typeof AutomationPointSchema>
 
+/** Automatable track parameters. Keep this aligned with the backend model. */
+export const AutomationParamIdSchema = z.enum([
+  'filter',
+  'pan',
+  'toneBass',
+  'toneMid',
+  'toneTreble',
+  'reverbSend',
+  'delaySend',
+  'leveler',
+  'punch',
+  'saturationDrive',
+  'saturationMix',
+  'bitCrusherRate',
+  'bitCrusherBits',
+  'bitCrusherBoost',
+  'bitCrusherMix',
+  'level'
+])
+export type AutomationParamId = z.infer<typeof AutomationParamIdSchema>
+
+/** Persisted view descriptor for one visible automation lane. */
+export const AutomationLaneViewSchema = z.object({
+  paramId: AutomationParamIdSchema,
+  heightPx: z.number().int().min(80).max(220)
+})
+export type AutomationLaneView = z.infer<typeof AutomationLaneViewSchema>
+
 /** Ack for `TRACK_SET_AUTOMATION`; echoes the sorted/clamped points. Empty clears. */
 export const TrackAutomationAppliedPayloadSchema = z.object({
   trackId: z.string(),
@@ -349,7 +377,7 @@ export const ProjectStateTrackSchema = z.object({
   bitCrusherMix: z.number().min(0).max(1).optional(),
   /** Equal-power pan, signed `[-1, 1]` (0 = centre). */
   pan: z.number().optional(),
-  /** Per-track effect automation lanes: `{ paramId, points: [{ timeMs, value }] }`. */
+  /** Per-track effect automation curves: `{ paramId, points: [{ timeMs, value }] }`. */
   automation: z
     .array(
       z.object({
@@ -358,6 +386,8 @@ export const ProjectStateTrackSchema = z.object({
       })
     )
     .optional(),
+  /** Visible lane order and heights; absent means the track's automation stack is collapsed. */
+  automationLaneView: z.array(AutomationLaneViewSchema).optional(),
   clips: z.array(ProjectStateClipSchema),
   transitions: z.array(ProjectStateTransitionSchema).optional(),
   beatRepeats: z.array(ProjectStateBeatRepeatRegionSchema).optional()

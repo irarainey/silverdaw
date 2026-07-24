@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   valueToFraction,
   fractionToValue,
-  automationDescriptor
+  automationDescriptor,
+  translateAutomationCurve
 } from '@/lib/automation/automationParams'
 import { laneRegion, valueToLaneY, laneYToValue, LANE_PX } from '@/lib/timeline/automationLaneRenderer'
 
@@ -17,6 +18,42 @@ describe('automation descriptors', () => {
   it('format reads musically', () => {
     expect(automationDescriptor('filter').format(0)).toBe('Off')
     expect(automationDescriptor('pan').format(0)).toBe('C')
+  })
+
+  it('translates a copied curve into the target parameter range', () => {
+    expect(
+      translateAutomationCurve(
+        [
+          { timeMs: 0, value: -1 },
+          { timeMs: 500, value: 0 },
+          { timeMs: 1000, value: 1 }
+        ],
+        'filter',
+        'toneBass'
+      )
+    ).toEqual([
+      { timeMs: 0, value: -15 },
+      { timeMs: 500, value: 0 },
+      { timeMs: 1000, value: 15 }
+    ])
+  })
+
+  it('clamps a copied curve before translating it to a unit range', () => {
+    expect(
+      translateAutomationCurve(
+        [
+          { timeMs: 0, value: -2 },
+          { timeMs: 500, value: 0 },
+          { timeMs: 1000, value: 2 }
+        ],
+        'filter',
+        'reverbSend'
+      )
+    ).toEqual([
+      { timeMs: 0, value: 0 },
+      { timeMs: 500, value: 0.5 },
+      { timeMs: 1000, value: 1 }
+    ])
   })
 })
 

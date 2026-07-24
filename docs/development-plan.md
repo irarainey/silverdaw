@@ -122,6 +122,7 @@ type-checked list of every currently-defined envelope.
 { "type": "CLIP_REBIND", "payload": { "clipId": "c1", "libraryItemId": "l2" } }
 { "type": "LIBRARY_ITEM_RELINK", "payload": { "itemId": "l1", "filePath": "..." } }
 { "type": "TRACK_SET_HEIGHT", "payload": { "trackId": "t1", "heightPx": 180 } }
+{ "type": "TRACK_SET_AUTOMATION_LANE_VIEW", "payload": { "trackId": "t1", "lanes": [{ "paramId": "filter", "heightPx": 80 }] } }
 { "type": "TRACK_REORDER", "payload": { "trackId": "t1", "newIndex": 2 } }
 { "type": "LIBRARY_ADD", "payload": { "itemId": "l1", "filePath": "...", "key": "Bb minor" } }
 { "type": "LIBRARY_REANALYSE", "payload": { "itemId": "l1", "filePath": "..." } }
@@ -1322,23 +1323,28 @@ separate feature — see **§7.11.1**, distinct from this clip-relative Volume S
 
 ### 7.11.1 Track Effect Automation
 
-Each track has a collapsible **automation lane** (toggled by the **A** button in
-the track header) anchored to the timeline below its clips. A lane edits one
-parameter at a time, chosen in the lane header: **Filter**, **Pan**, **Bass /
-Mid / Treble**, **Reverb Send**, **Delay Send**, **Compressor**, or **Gain**
-(a post-FX track level in dB, distinct from the header volume fader and the
-per-clip Volume Shape). Curves are stored in real units per parameter and shown
-by descriptor; the data model holds several automated params per track even
-though one lane is visible.
+Each track has a collapsible **automation stack** (toggled by the **A** button
+in the track header) anchored to the timeline below its clips. Opening the
+stack shows one Filter lane by default; **Add automation lane** can show any
+other distinct parameter at the same time. Every lane has its own picker and
+height, and removing a lane hides it without deleting its curve. The ordered
+visible descriptors (`{ paramId, heightPx }`) persist as `automationLaneView`
+on the track, separate from the curves; old projects without the field remain
+collapsed. A lane edits **Filter**, **Pan**, **Bass / Mid / Treble**,
+**Reverb Send**, **Delay Send**, **Compressor**, **Punch**, **Saturation**,
+**Bit Crusher**, or **Gain** (a post-FX track level in dB, distinct from the
+header volume fader and per-clip Volume Shape). Curves are stored in real units
+per parameter and shown by descriptor.
 
 Editing reuses the clip-volume breakpoint primitives: click-add, drag-move,
 right-click or Alt-click to delete, Shift snap-to-beat; a selected point
 nudges with arrow keys (Up/Down value, Left/Right time, Alt = fine, snapping to
 the default so 0 / centre is reachable). Lane header controls raise/lower the
-whole curve, set the value at the playhead, copy/paste a curve between tracks,
-and reset to default; the value scale shows min / current / max with a hover
-tooltip on points. The A button reads muted-blue when a collapsed track still
-has automation.
+whole curve, set the value at the playhead, copy/paste a curve, and reset to
+default; pasting maps values to the target parameter range to preserve the
+curve shape. The value scale shows min / current / max with a hover tooltip on
+points. The A button reads muted-blue when a collapsed track still has
+automation.
 
 **Static control relationship (resting value + overlay).** Each parameter has a
 static Track FX value (the slider in the Track FX rack, or the header Pan). With
@@ -1359,7 +1365,9 @@ per param, published lock-free with a retire queue; `BusGraph` samples them at a
 fixed 256-frame control quantum and drives the runtime targets (filter, tone,
 sends, pan, Compressor, level), snapping on a seek/loop/play discontinuity and
 restoring neutral when a lane clears. Mixdown samples the same curves for parity.
-Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_APPLIED`.
+Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` +
+`TRACK_AUTOMATION_APPLIED`; `TRACK_SET_AUTOMATION_LANE_VIEW { trackId, lanes }`
+persists the open lane order and heights.
 
 ### 7.12 Sample Browser & Library
 - Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
@@ -1685,15 +1693,15 @@ editor. The release is deliberately limited to the following four features.
    first source beat, rather than merely their left edge, to the selected grid
    line. The interval is persisted as additive project view state; old projects
    default to Quarter beat.
-2. **Multiple visible automation lanes per track.** One lane remains the default.
+2. [x] **Multiple visible automation lanes per track.** One lane remains the default.
    An explicit **Add lane** action can reveal another lane for a different
    parameter on the same track, so multiple curves can be viewed and edited together.
    Each lane keeps its own parameter picker and height, and either can be
-   removed without changing its stored curve. Visibility and heights remain
-   renderer-only interaction state; existing per-track automation curves remain
-   the persisted source of truth. Duplicate parameter lanes are disallowed, and
-   no new DSP or mixdown behaviour is introduced because the engine already
-   evaluates multiple parameter curves per track.
+   removed without changing its stored curve. Visibility, order, and heights
+   persist with the project separately from the automation curves. Duplicate
+   parameter lanes are disallowed, and no new DSP or mixdown behaviour is
+   introduced because the engine already evaluates multiple parameter curves per
+   track.
 3. **Timeline range selection, playback, and looping.** Dragging across the
    timeline ruler creates one project-wide time range. The region is visibly
    shaded across all tracks and has start/end handles; its boundaries follow the
@@ -2274,7 +2282,7 @@ playable at every point):
   global shortcut handler owns the keys; `menuShortcuts` skips binding the
   display-only accelerators to avoid a double-fire.
 - [x] **Track row resize** — drag the bottom edge of any track
-  header to change just that track's row height (clamp 60..400 px).
+  header to change just that track's row height (clamp 80..400 px).
   Persisted with the project and undoable. `TRACK_SET_HEIGHT` bridge
   envelope; backend `setTrackHeightPx` clamps and writes to the
   Track ValueTree with `&undoManager` so each drag is one undo step.

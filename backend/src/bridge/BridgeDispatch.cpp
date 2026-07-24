@@ -469,6 +469,15 @@ bool dispatchTrack(const DispatchContext& ctx)
             projectState.setTrackHeightPx(trackId, *heightVar);
         }
     }
+    else if (type == "TRACK_SET_AUTOMATION_LANE_VIEW")
+    {
+        const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
+        const auto& lanes = payload.getProperty("lanes", juce::var{});
+        if (trackId.isNotEmpty() && lanes.isArray())
+        {
+            projectState.setTrackAutomationLaneView(trackId, *lanes.getArray());
+        }
+    }
     else if (type == "TRACK_REORDER")
     {
         const auto trackId = tryGetRequiredString(payload, "trackId").value_or(juce::String{});
