@@ -5,8 +5,14 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
+import {
+  clampAutomationLaneHeight,
+  createAutomationLane,
+  type AutomationLane
+} from '@/lib/automation/automationLanes'
 
 export type { SkipButtonTarget, WaveformDisplayMode }
+export type { AutomationLane }
 
 export type TimelineScrollEdge = 'start' | 'end'
 export type TimelineScrollRequest =
@@ -43,11 +49,10 @@ interface UiState {
   timelineScrollRequest: TimelineScrollRequest | null
   timelineZoomRequest: TimelineZoomRequest | null
   timelineRevealTrackRequest: TimelineRevealTrackRequest | null
-  /** Per-track automation lane: trackId -> shown parameter. Present = lane expanded.
-   *  Session UI state (not persisted with the project). */
-  automationLanes: Record<string, AutomationParamId>
-  /** Per-track automation-lane height (px); falls back to the default when absent. */
-  automationLaneHeights: Record<string, number>
+  /** Per-track visible automation lanes, persisted independently from their curves. */
+  automationLanes: Record<string, AutomationLane[]>
+  /** Bumped for every lane-layout mutation so the timeline can repaint reliably. */
+  automationLaneRevision: number
   /** Clipboard for an automation curve copied from a lane (paste into another). */
   automationClipboard: { paramId: AutomationParamId; points: { timeMs: number; value: number }[] } | null
   /** Selected automation breakpoint for keyboard nudging; null when none. */
@@ -164,7 +169,7 @@ export const useUiStore = defineStore('ui', {
     timelineZoomRequest: null,
     timelineRevealTrackRequest: null,
     automationLanes: {},
-    automationLaneHeights: {},
+    automationLaneRevision: 0,
     automationClipboard: null,
     selectedAutomationPoint: null,
     automationHoverTip: null,
@@ -342,19 +347,144 @@ export const useUiStore = defineStore('ui', {
       }
     },
 
-    /** Show a parameter's automation lane on a track (or collapse it with null). */
-    setTrackAutomationLane(trackId: string, paramId: AutomationParamId | null): void {
-      const next = { ...this.automationLanes }
-      if (paramId) next[trackId] = paramId
-      else delete next[trackId]
-      this.automationLanes = next
+    /** Show another distinct parameter lane without changing its stored curve. */
+    addTrackAutomationLane(trackId: string, paramId: AutomationParamId): void {
+      const lanes = this.automationLanes[trackId] ?? []
+      if (lanes.some((lane) => lane.paramId === paramId)) return
+      this.automationLanes = {
+        ...this.automationLanes,
+        [trackId]: [...lanes, createAutomationLane(paramId)]
+      }
+      this.automationLaneRevision += 1
+      this.persistTrackAutomationLaneView(trackId)
     },
 
-    /** Resize a track's automation lane (clamped so the readout always fits). */
-    setTrackAutomationLaneHeight(trackId: string, heightPx: number): void {
-      this.automationLaneHeights = {
-        ...this.automationLaneHeights,
-        [trackId]: Math.max(76, Math.min(220, Math.round(heightPx)))
+    /** Hide one visible lane while retaining the backend-stored curve. */
+    removeTrackAutomationLane(trackId: string, paramId: AutomationParamId): void {
+      const lanes = this.automationLanes[trackId]
+      if (!lanes) return
+      const nextLanes = lanes.filter((lane) => lane.paramId !== paramId)
+      const next = { ...this.automationLanes }
+      if (nextLanes.length > 0) next[trackId] = nextLanes
+      else delete next[trackId]
+      this.automationLanes = next
+      this.automationLaneRevision += 1
+      this.persistTrackAutomationLaneView(trackId)
+      if (
+        this.selectedAutomationPoint?.trackId === trackId &&
+        this.selectedAutomationPoint.paramId === paramId
+      ) {
+        this.selectedAutomationPoint = null
+      }
+    },
+
+    /** Show one default lane when collapsed, or collapse the whole lane stack. */
+    toggleTrackAutomationLanes(trackId: string): void {
+      if (this.automationLanes[trackId]?.length) {
+        const next = { ...this.automationLanes }
+        delete next[trackId]
+        this.automationLanes = next
+        this.automationLaneRevision += 1
+        this.persistTrackAutomationLaneView(trackId)
+      } else {
+        this.addTrackAutomationLane(trackId, 'filter')
+      }
+    },
+
+    /** Toggle one parameter lane without disturbing the other visible lanes. */
+    toggleTrackAutomationLane(trackId: string, paramId: AutomationParamId): void {
+      if (this.automationLanes[trackId]?.some((lane) => lane.paramId === paramId)) {
+        this.removeTrackAutomationLane(trackId, paramId)
+      } else {
+        this.addTrackAutomationLane(trackId, paramId)
+      }
+    },
+
+    /** Change a lane parameter while preventing duplicate visible curves. */
+    setTrackAutomationLaneParam(
+      trackId: string,
+      previousParamId: AutomationParamId,
+      nextParamId: AutomationParamId
+    ): void {
+      const lanes = this.automationLanes[trackId]
+      if (
+        !lanes ||
+        lanes.some(
+          (lane) => lane.paramId === nextParamId && lane.paramId !== previousParamId
+        )
+      ) {
+        return
+      }
+      this.automationLanes = {
+        ...this.automationLanes,
+        [trackId]: lanes.map((lane) =>
+          lane.paramId === previousParamId ? { ...lane, paramId: nextParamId } : lane
+        )
+      }
+      this.automationLaneRevision += 1
+      this.persistTrackAutomationLaneView(trackId)
+      if (
+        this.selectedAutomationPoint?.trackId === trackId &&
+        this.selectedAutomationPoint.paramId === previousParamId
+      ) {
+        this.selectedAutomationPoint = null
+      }
+    },
+
+    /** Resize one visible lane while retaining all other lane heights. */
+    setTrackAutomationLaneHeight(
+      trackId: string,
+      paramId: AutomationParamId,
+      heightPx: number
+    ): void {
+      const lanes = this.automationLanes[trackId]
+      if (!lanes) return
+      this.automationLanes = {
+        ...this.automationLanes,
+        [trackId]: lanes.map((lane) =>
+          lane.paramId === paramId
+            ? { ...lane, heightPx: clampAutomationLaneHeight(heightPx) }
+            : lane
+        )
+      }
+      this.automationLaneRevision += 1
+    },
+
+    /** Commit the current visible lanes after a resize gesture finishes. */
+    persistTrackAutomationLaneView(trackId: string): void {
+      const lanes = this.automationLanes[trackId] ?? []
+      sendBridge('TRACK_SET_AUTOMATION_LANE_VIEW', {
+        trackId,
+        lanes: lanes.map((lane) => ({ ...lane }))
+      })
+    },
+
+    /** Restore persisted lane view state without echoing it back to the backend. */
+    applyTrackAutomationLaneViews(views: Record<string, readonly AutomationLane[]>): void {
+      const next: Record<string, AutomationLane[]> = {}
+      for (const [trackId, lanes] of Object.entries(views)) {
+        if (!trackId || lanes.length === 0) continue
+        const seen = new Set<AutomationParamId>()
+        const hydrated: AutomationLane[] = []
+        for (const lane of lanes) {
+          if (seen.has(lane.paramId)) continue
+          seen.add(lane.paramId)
+          hydrated.push({
+            paramId: lane.paramId,
+            heightPx: clampAutomationLaneHeight(lane.heightPx)
+          })
+        }
+        if (hydrated.length > 0) next[trackId] = hydrated
+      }
+      this.automationLanes = next
+      this.automationLaneRevision += 1
+      if (
+        this.selectedAutomationPoint &&
+        !next[this.selectedAutomationPoint.trackId]?.some(
+          (lane) => lane.paramId === this.selectedAutomationPoint?.paramId
+        )
+      ) {
+        this.selectedAutomationPoint = null
       }
     },
 

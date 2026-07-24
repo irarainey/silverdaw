@@ -100,6 +100,8 @@ const juce::Identifier ProjectState::kAutomationParamId{"paramId"};
 const juce::Identifier ProjectState::kAutomationPoints{"points"};
 const juce::Identifier ProjectState::kAutomationTimeMs{"timeMs"};
 const juce::Identifier ProjectState::kAutomationValue{"value"};
+const juce::Identifier ProjectState::kAutomationLaneView{"automationLaneView"};
+const juce::Identifier ProjectState::kAutomationLaneHeightPx{"heightPx"};
 const juce::Identifier ProjectState::kReverbSize{"reverbSize"};
 const juce::Identifier ProjectState::kReverbDecay{"reverbDecay"};
 const juce::Identifier ProjectState::kReverbTone{"reverbTone"};

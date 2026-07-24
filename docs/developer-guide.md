@@ -201,7 +201,7 @@ Silverdaw currently supports the core arrangement workflow:
   or pending spinner on the timeline. The Timeline preference can disable
   automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
-  (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
+  (clamped 80..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
 - Edit track gain with the fader or double-click the dB readout to type a value
@@ -533,6 +533,11 @@ decoded-WAV cache) at the time it loads the clip's audio source.
   engine — a reconnected socket is not yet a recovered session, so the renderer re-loads the
   user's project and waits for its `reset=true` snapshot before treating the session as restored
   (see [Engine resilience and recovery](#engine-resilience-and-recovery)).
+
+Track automation curves use `TRACK_SET_AUTOMATION { trackId, paramId, points }`.
+Visible automation-lane layouts use
+`TRACK_SET_AUTOMATION_LANE_VIEW { trackId, lanes: [{ paramId, heightPx }] }`.
+Both are persisted in the project and returned in `PROJECT_STATE`.
 
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`
@@ -915,8 +920,8 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         colorIndex?, toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
         sendReverb?, sendDelay?, pan?, levelerAmount?, punchAmount?, saturationDrive?, saturationMix?,
-        bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?, automation?,
-        transitions?]
+        bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?,
+        automation?, automationLaneView?, transitions?]
     BEAT_REPEAT[id, startBeat, lengthBeats, division]*
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?,
@@ -1072,7 +1077,7 @@ monitoring aid never marks the project dirty or adds an undo step. It is omitted
 from save (and from the `PROJECT_STATE` broadcast) while at its default-off value.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
-Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 60..400) is
+Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400) is
 likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
 preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
@@ -1243,7 +1248,7 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
   reconstructed library items. Older projects that predate persisted library duration fall
   back to a renderer decode if metadata cannot provide a duration.
 - Restores persisted zoom, horizontal scroll, BPM, project length, playhead position, and
-  timeline markers from the snapshot.
+  timeline markers from the snapshot, along with each track's visible automation-lane layout.
 
 `PROJECT_STATE` is purely additive on the connect path — it never deletes optimistic state the
 user just created, so a race between an early user action and the snapshot arriving doesn't
@@ -2922,23 +2927,29 @@ renderer-only (never serialised), so it needs no migration.
 
 ### Track effect automation
 
-Each track header has an **A** toggle that opens an automation lane (a strip reserved at the
-bottom of the track row; clips compress above it, so a collapsed lane leaves the timeline
-layout untouched). A parameter picker chooses what the lane edits — **Filter**, **Pan**, the
-3-band **Tone**, **Reverb/Delay sends**, **Compressor**, **Punch**, **Saturation**,
-**Bit Crusher**, or
-**Gain** (a post-FX track level in
+Each track header has an **A** toggle that opens an automation stack below the clip area; the
+first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
+several curves can be viewed and edited together. Every lane has its own parameter picker and
+height; its lower edge resizes only that lane from 80 to 220 px. The track row's bottom edge
+still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
+does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
+as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through
+`PROJECT_STATE` and `.silverdaw`; absence keeps old projects collapsed.
+
+Lanes can edit **Filter**, **Pan**, the 3-band **Tone**, **Reverb/Delay sends**,
+**Compressor**, **Punch**, **Saturation**, **Bit Crusher**, or **Gain** (a post-FX track level in
 dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
 move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
 stream coalesces into one undo step. Lane-header controls raise/lower the whole curve, set the
-value at the playhead, copy/paste a curve between tracks, and reset to default. The picker marks
-already-automated params with a ● dot, and the value editor shows the sign convention (Filter:
-negative = LPF, positive = HPF). Curves are stored on
-each `TRACK` as one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs,
-value }] }`), round-tripped through `PROJECT_STATE` and `.silverdaw`. A lane with no curve shows a
-faint baseline line at the parameter's **static (resting) value**, so the line tracks the live
-Track FX control; the first point you draw starts from that value. A curve that settles flat at
-the static value is treated as a no-op and the lane auto-clears. Each static Track FX
+value at the playhead, copy/paste a curve, and reset to default. Pasting into a different
+parameter maps every value through its normalized range, preserving the copied curve's visual
+shape. The picker marks already-automated params with a ● dot, and the value editor shows the
+sign convention (Filter: negative = LPF, positive = HPF). Curves are stored on each `TRACK` as
+one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs, value }] }`), separately
+from `automationLaneView`. A lane with no curve shows a faint baseline line at the parameter's
+**static (resting) value**, so the line tracks the live Track FX control; the first point you draw
+starts from that value. A curve that settles flat at the static value is treated as a no-op and
+the lane auto-clears. Each static Track FX
 control (and the header **Pan**) carries a small **A** button that opens that parameter's lane
 (`useFxAutomation`); while a curve owns the value the static control is **disabled**, dimmed, and
 shows an **AUTO** tag, so it is clear the lane is in charge. While automated the control is
@@ -2946,10 +2957,7 @@ shows an **AUTO** tag, so it is clear the lane is in charge. While automated the
 (`useFxAutomation.displayValue` reading `transport.positionMs`), so during playback or scrub the
 Filter / Tone / Sends / Compressor / Punch / Saturation / Bit Crusher sliders and the header Pan animate to the current automated
 value (the static value remains the resting baseline the curve rides). The keyboard/value nudges
-snap to the parameter default so 0 / centre
-is always reachable. The lane resizes via a thin middle splitter (redistributes height between
-waveform and lane) and the row's bottom edge (grows both together), clamped to a minimum that
-keeps the readout visible. The backend publishes an
+snap to the parameter default so 0 / centre is always reachable. The backend publishes an
 immutable `TrackAutomationSnapshot` per track (lock-free + retire queue) and samples it on a
 fixed 256-frame control quantum at the block-start transport position, driving the existing
 smoothed targets and snapping on seek/loop/play discontinuities, restoring neutral when a lane

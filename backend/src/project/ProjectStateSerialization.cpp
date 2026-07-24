@@ -109,6 +109,12 @@ juce::var ProjectState::tracksAsJson() const
         {
             trackObj->setProperty("heightPx", static_cast<double>(track.getProperty(kHeightPx, 0.0)));
         }
+        const auto automationLaneView =
+            getTrackAutomationLaneView(track.getProperty(kId).toString());
+        if (!automationLaneView.isEmpty())
+        {
+            trackObj->setProperty("automationLaneView", juce::var(automationLaneView));
+        }
         // Persisted per-track colour; absent means the renderer's positional default.
         if (track.hasProperty(kColorIndex))
         {

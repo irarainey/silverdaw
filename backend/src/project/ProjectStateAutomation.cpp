@@ -173,4 +173,102 @@ juce::Array<juce::var> ProjectState::getTrackAutomationLanes(const juce::String&
     return readLanes(track, kAutomation);
 }
 
+namespace
+{
+
+constexpr double kMinAutomationLaneHeightPx = 80.0;
+constexpr double kMaxAutomationLaneHeightPx = 220.0;
+
+bool isKnownAutomationParamId(const juce::String& paramId)
+{
+    return paramId == "filter" || paramId == "pan" || paramId == "toneBass" ||
+           paramId == "toneMid" || paramId == "toneTreble" || paramId == "reverbSend" ||
+           paramId == "delaySend" || paramId == "leveler" || paramId == "punch" ||
+           paramId == "saturationDrive" || paramId == "saturationMix" ||
+           paramId == "bitCrusherRate" || paramId == "bitCrusherBits" ||
+           paramId == "bitCrusherBoost" || paramId == "bitCrusherMix" || paramId == "level";
+}
+
+juce::Array<juce::var> sanitizeAutomationLaneViews(const juce::Array<juce::var>& lanes,
+                                                    const juce::Identifier& paramIdKey,
+                                                    const juce::Identifier& heightKey)
+{
+    juce::Array<juce::var> sanitized;
+    juce::StringArray paramIds;
+    sanitized.ensureStorageAllocated(lanes.size());
+    for (const auto& lane : lanes)
+    {
+        if (!lane.isObject()) continue;
+        const auto paramId = lane.getProperty(paramIdKey, juce::var()).toString();
+        const auto heightPx = static_cast<double>(lane.getProperty(heightKey, 0.0));
+        if (!isKnownAutomationParamId(paramId) || !std::isfinite(heightPx) ||
+            paramIds.contains(paramId))
+        {
+            continue;
+        }
+        paramIds.add(paramId);
+        auto* sanitizedLane = new juce::DynamicObject();
+        sanitizedLane->setProperty(paramIdKey, paramId);
+        sanitizedLane->setProperty(heightKey, std::round(juce::jlimit(kMinAutomationLaneHeightPx,
+                                                                      kMaxAutomationLaneHeightPx, heightPx)));
+        sanitized.add(juce::var(sanitizedLane));
+    }
+    return sanitized;
+}
+
+bool laneViewsSemanticallyEqual(const juce::Array<juce::var>& a, const juce::Array<juce::var>& b,
+                                const juce::Identifier& paramIdKey,
+                                const juce::Identifier& heightKey)
+{
+    if (a.size() != b.size()) return false;
+    for (int i = 0; i < a.size(); ++i)
+    {
+        if (a.getReference(i).getProperty(paramIdKey, juce::var()).toString() !=
+            b.getReference(i).getProperty(paramIdKey, juce::var()).toString())
+        {
+            return false;
+        }
+        const auto aHeight = static_cast<double>(a.getReference(i).getProperty(heightKey, 0.0));
+        const auto bHeight = static_cast<double>(b.getReference(i).getProperty(heightKey, 0.0));
+        if (std::abs(aHeight - bHeight) > 1.0e-4) return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool ProjectState::setTrackAutomationLaneView(const juce::String& trackId,
+                                              const juce::Array<juce::var>& lanes)
+{
+    auto track = findTrack(trackId);
+    if (!track.isValid()) return false;
+
+    const auto normalized =
+        sanitizeAutomationLaneViews(lanes, kAutomationParamId, kAutomationLaneHeightPx);
+    if (normalized.size() != lanes.size()) return false;
+
+    const auto existing = readLanes(track, kAutomationLaneView);
+    if (laneViewsSemanticallyEqual(existing, normalized, kAutomationParamId,
+                                   kAutomationLaneHeightPx))
+    {
+        return false;
+    }
+    if (normalized.isEmpty())
+    {
+        if (!track.hasProperty(kAutomationLaneView)) return false;
+        track.removeProperty(kAutomationLaneView, &undoManager);
+        return true;
+    }
+    track.setProperty(kAutomationLaneView, juce::var(normalized), &undoManager);
+    return true;
+}
+
+juce::Array<juce::var> ProjectState::getTrackAutomationLaneView(const juce::String& trackId) const
+{
+    const auto track = findTrack(trackId);
+    if (!track.isValid()) return {};
+    return sanitizeAutomationLaneViews(readLanes(track, kAutomationLaneView),
+                                       kAutomationParamId, kAutomationLaneHeightPx);
+}
+
 } // namespace silverdaw

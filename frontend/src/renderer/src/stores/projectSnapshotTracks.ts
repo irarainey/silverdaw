@@ -9,6 +9,7 @@ import { sanitizeBreakpoints } from '@/lib/automation/breakpoints'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useUiStore } from '@/stores/uiStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import {
   DEFAULT_TRACK_LENGTH_MS,
@@ -286,6 +287,13 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
       return ai - bi
     })
   }
+  useUiStore().applyTrackAutomationLaneViews(
+    Object.fromEntries(
+      snapshot.tracks
+        .filter((track) => track.automationLaneView && track.automationLaneView.length > 0)
+        .map((track) => [track.id, track.automationLaneView!])
+    )
+  )
   return clipsNeedingPeaks
 }
 

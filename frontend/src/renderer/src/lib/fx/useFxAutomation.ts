@@ -41,15 +41,15 @@ export function useFxAutomation(trackId: Ref<string | null>) {
   /** True when the lane is currently showing this parameter. */
   function isLaneOpen(paramId: AutomationParamId): boolean {
     const id = trackId.value
-    return !!id && ui.automationLanes[id] === paramId
+    return !!id && ui.automationLanes[id]?.some((lane) => lane.paramId === paramId) === true
   }
 
-  /** Open the param's lane on the timeline (or collapse it if already shown). */
+  /** Toggle this parameter's lane without hiding the other visible curves. */
   function automate(paramId: AutomationParamId): void {
     const id = trackId.value
     if (!id) return
     project.selectTrack(id)
-    ui.setTrackAutomationLane(id, isLaneOpen(paramId) ? null : paramId)
+    ui.toggleTrackAutomationLane(id, paramId)
     ui.requestRevealTrack(id)
   }
 

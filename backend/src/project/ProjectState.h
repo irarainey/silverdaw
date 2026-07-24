@@ -153,6 +153,10 @@ class ProjectState : public juce::ValueTree::Listener
     /** The whole lanes array for a track (for snapshot/serialisation), or empty. */
     juce::Array<juce::var> getTrackAutomationLanes(const juce::String& trackId) const;
 
+    // Visible lane order and heights are persisted separately from automation curves.
+    bool setTrackAutomationLaneView(const juce::String& trackId, const juce::Array<juce::var>& lanes);
+    juce::Array<juce::var> getTrackAutomationLaneView(const juce::String& trackId) const;
+
     // Transitions store partners only; overlap is derived from live clip geometry.
 
     // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
@@ -804,6 +808,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kAutomationPoints;
     static const juce::Identifier kAutomationTimeMs;
     static const juce::Identifier kAutomationValue;
+    static const juce::Identifier kAutomationLaneView;
+    static const juce::Identifier kAutomationLaneHeightPx;
 
     // Transition overlap is derived, never stored.
     static const juce::Identifier kTransition;

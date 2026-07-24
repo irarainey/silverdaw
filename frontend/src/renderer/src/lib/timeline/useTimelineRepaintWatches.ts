@@ -91,10 +91,16 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () => redraw()
   )
 
-  // Automation lane expand/collapse + param switch.
+  // Automation lane mutations affect the canvas-rendered curve and may alter
+  // row geometry, so use the explicit view-state revision instead of serialising
+  // the nested descriptor map.
   watch(
-    () => Object.entries(ui.automationLanes).map(([k, v]) => `${k}:${v}`).join('|'),
-    () => redraw()
+    () => ui.automationLaneRevision,
+    () => {
+      clampScroll()
+      redraw()
+      updatePlayhead()
+    }
   )
 
   // Transition overlays can change without clip movement.
