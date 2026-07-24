@@ -27,6 +27,7 @@ import {
   isReadyPayload,
   isTrackPunchAppliedPayload,
   isSampleSavedPayload,
+  isScratchSourcePeaksReadyPayload,
   isStemProgressPayload,
   isStemPartialPayload,
   isStemReadyPayload,
@@ -55,6 +56,9 @@ const INBOUND_TYPES = {
   PROJECT_VIEW_STATE_SAVED: true,
   PROJECT_AUTOSAVED: true,
   PROJECT_LOAD_FAILED: true,
+  PROJECT_IMPORT_SOURCE_MANIFEST: true,
+  PROJECT_IMPORT_SOURCE_FAILED: true,
+  PROJECT_IMPORT_COMPLETED: true,
   PROJECT_RENAMED: true,
   PROJECT_DIRTY: true,
   WAVEFORM_READY: true,
@@ -102,7 +106,8 @@ const INBOUND_TYPES = {
   ENGINE_ERROR: true,
   ENGINE_AUDIO_STATUS: true,
   SCRATCH_SESSION_STATE: true,
-  SCRATCH_PATTERN_RECORDED: true
+  SCRATCH_PATTERN_RECORDED: true,
+  SCRATCH_SOURCE_PEAKS_READY: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {
@@ -126,6 +131,24 @@ describe('isBridgeInboundType', () => {
 describe('isReadyPayload', () => {
   it('accepts a well-shaped payload', () => {
     expect(isReadyPayload({ version: '0.1.0' })).toBe(true)
+  })
+
+  describe('isScratchSourcePeaksReadyPayload', () => {
+    const payload = {
+      sessionId: 'session-1',
+      cachePath: 'C:\\Users\\example\\AppData\\Roaming\\Silverdaw\\peaks\\source.peaks',
+      peakCount: 1_000,
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    }
+
+    it('accepts a disk-backed source-waveform envelope', () => {
+      expect(isScratchSourcePeaksReadyPayload(payload)).toBe(true)
+    })
+
+    it('rejects an incomplete envelope', () => {
+      expect(isScratchSourcePeaksReadyPayload({ ...payload, cachePath: '' })).toBe(false)
+    })
   })
 
   describe('isTrackPunchAppliedPayload', () => {

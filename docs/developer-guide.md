@@ -170,6 +170,13 @@ Silverdaw currently supports the core arrangement workflow:
   Explorer file directly onto an existing timeline track to import and place it.
   Dropping one file onto empty timeline space creates a fresh track for it, and
   dropping several files creates one new track per file at the drop position.
+- **File ▸ Import from Project…** lists saved projects from the configured
+  project folder, then lets you select their managed stems and samples. A
+  selected scratch sample also imports its linked Scratch pattern and original
+  source-audio snapshot. Its Scratch Editor playback and waveform use that
+  copied snapshot. The source project is read-only; imported items get
+  independent destination assets and one undo step. Tracks, timeline clips,
+  markers, automation, and settings are not imported.
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.
@@ -552,6 +559,13 @@ Visible automation-lane layouts use
 `TRACK_SET_AUTOMATION_LANE_VIEW { trackId, lanes: [{ paramId, heightPx }] }`.
 Both are persisted in the project and returned in `PROJECT_STATE`.
 
+Cross-project import uses `PROJECT_IMPORT_SOURCE_INSPECT` to request a compact
+`PROJECT_IMPORT_SOURCE_MANIFEST`, then `PROJECT_IMPORT_ASSETS` with only the
+selected managed-library item IDs. Selecting a scratch sample automatically
+includes its linked pattern and source snapshot. `PROJECT_IMPORT_COMPLETED`
+reports the result. Audio and metadata remain disk-resident; the source project
+is never written.
+
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`
 envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the peaks
@@ -561,6 +575,12 @@ project files, stems and mixdowns — the WebSocket carries the control plane, t
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
 it was designed for. `WAVEFORM_FAILED { clipId, error }` triggers renderer-side decoding as a
 recovery path when the backend cannot produce peaks.
+
+When a saved scratch reopens from its self-contained source snapshot, the
+backend also sends `SCRATCH_SOURCE_PEAKS_READY { sessionId, cachePath,
+peakCount, peaksPerSecond, sampleRate }`. Its peaks use the same cache-file
+format and IPC path as `WAVEFORM_READY`, but remain scoped to that Scratch
+Editor session so the rendered library sample keeps its own waveform.
 
 The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts),
@@ -670,6 +690,10 @@ Backend → renderer:
   `backingLoop`, `backingGain`, `scratchMonitorGain`). It never drives audio timing.
 - `SCRATCH_PATTERN_RECORDED { sessionId, pattern }` delivers the completed,
   possibly simplified action pattern after a recording stops.
+- `SCRATCH_SOURCE_PEAKS_READY { sessionId, cachePath, peakCount,
+  peaksPerSecond, sampleRate }` points a reopened saved scratch at the
+  disk-backed peaks for its prepared source snapshot. The renderer uses it only
+  for the matching Scratch Editor session.
 
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
@@ -2230,9 +2254,11 @@ item) or from a **library item** (the library-tile context menu, any kind —
 including a previously saved scratch-origin item, which prepares its session
 from the self-contained `scratchSourcePath` snapshot written at save time — the
 exact source window the scratch was performed over — rather than the baked WAV
-or a fresh crop of the current source). The editor never seeks, starts, or
-stops the arrangement transport; it runs its own audition session and blocks
-the global keyboard/MIDI gate while open.
+or a fresh crop of the current source). Imported scratches copy this snapshot
+with their notation. The editor draws and auditions the snapshot rather than
+the rendered scratch sample. It never seeks, starts, or stops the arrangement
+transport; it runs its own audition session and blocks the global keyboard/MIDI
+gate while open.
 
 **Session model.** The renderer opens and closes a backend session with
 `SCRATCH_SESSION_OPEN` / `SCRATCH_SESSION_CLOSE`; the open payload carries exactly

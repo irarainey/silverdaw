@@ -13,6 +13,9 @@ export const MidiMonitorDialog = defineAsyncComponent(
 export const ProjectPropertiesDialog = defineAsyncComponent(
   () => import('@/components/ProjectPropertiesDialog.vue')
 )
+export const ProjectImportDialog = defineAsyncComponent(
+  () => import('@/components/ProjectImportDialog.vue')
+)
 export const ExportMixdownDialog = defineAsyncComponent(
   () => import('@/components/ExportMixdownDialog.vue')
 )

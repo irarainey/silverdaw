@@ -101,4 +101,31 @@ inline std::optional<juce::String> readOptionalString(const juce::var& payload, 
     return std::nullopt;
 }
 
+// Required string-array read. The caller owns any domain-specific item limit;
+// this helper only rejects malformed array members before a command mutates state.
+inline std::optional<juce::StringArray> tryGetStringArray(const juce::var& payload, const char* key)
+{
+    const juce::var value = payload.getProperty(key, juce::var());
+    const auto* array = value.getArray();
+    if (array == nullptr)
+    {
+        silverdaw::log::warn("bridge", juce::String("field '") + key + "' missing or non-array; envelope ignored");
+        return std::nullopt;
+    }
+
+    juce::StringArray result;
+    for (const auto& entry : *array)
+    {
+        if (!entry.isString() || entry.toString().isEmpty())
+        {
+            silverdaw::log::warn("bridge", juce::String("field '") + key +
+                                             "' contains an empty or non-string item; envelope ignored");
+            return std::nullopt;
+        }
+        if (!result.contains(entry.toString()))
+            result.add(entry.toString());
+    }
+    return result;
+}
+
 } // namespace silverdaw::bridge

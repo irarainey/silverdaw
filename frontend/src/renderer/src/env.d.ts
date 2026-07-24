@@ -16,7 +16,8 @@ import type {
   ScratchRealismPrefsDto as SharedScratchRealismPrefsDto,
   ScratchPrefsDto as SharedScratchPrefsDto,
   LocateStemModelResult as SharedLocateStemModelResult,
-  RecentProject as SharedRecentProject
+  RecentProject as SharedRecentProject,
+  ProjectImportSource as SharedProjectImportSource
 } from '@shared/types'
 import type { BackendStatus } from '@shared/ipc-channels'
 
@@ -75,6 +76,7 @@ declare global {
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
+      listProjectImportSources(): Promise<SharedProjectImportSource[]>
       chooseMixdownSaveAs(defaultPath: string, format: 'wav' | 'mp3' | 'flac' | 'aiff'): Promise<string | null>
       resolveMixdownDefaultPath(projectFilePath: string | null, projectName: string, format: 'wav' | 'mp3' | 'flac' | 'aiff'): Promise<string>
       confirmMixdownOverwrite(filePath: string): Promise<'overwrite' | 'cancel' | 'not-found'>

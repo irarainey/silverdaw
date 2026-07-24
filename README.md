@@ -47,7 +47,10 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 ## Key features
 
 - **Project library.** Drop audio files onto the Library to import them, or use
-  the Import button and **File ▸ Import to Library…**. You can also drop a file
+  the Import button and **File ▸ Import to Library…**. **File ▸ Import from
+  Project…** copies selected stems and samples from another saved project in
+  your configured project folder. Importing a scratch sample also brings its
+  editable notation and original source audio. You can also drop a file
   directly onto a timeline track to import and place it, or onto empty timeline
   space to create a track for it. Dropping several files creates one new track
   per file. Filter the Library by track name, artist, or BPM with the field

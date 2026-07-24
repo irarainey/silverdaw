@@ -358,7 +358,7 @@ bool dispatchScratch(const DispatchContext& ctx)
     if (ctx.type == "SCRATCH_SESSION_OPEN")
     {
         handleScratchSessionOpen(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
-                                 ctx.peakPool, ctx.session.currentPath);
+                                 ctx.peakPool, ctx.cache, ctx.session.currentPath);
     }
     else if (ctx.type == "SCRATCH_SESSION_CLOSE")
     {
@@ -668,6 +668,14 @@ bool dispatchProject(const DispatchContext& ctx)
         silverdaw::log::info("bridge", "recv PROJECT_LOAD_RECOVERY autosavePath=" +
                                            payload.getProperty("autosavePath", "").toString());
         silverdaw::handleProjectLoadRecovery(payload, engine, projectState, bridge, session, peakPool, decodedCache);
+    }
+    else if (type == "PROJECT_IMPORT_SOURCE_INSPECT")
+    {
+        silverdaw::handleProjectImportSourceInspect(payload, projectState, bridge, session);
+    }
+    else if (type == "PROJECT_IMPORT_ASSETS")
+    {
+        silverdaw::handleProjectImportAssets(payload, projectState, bridge, session);
     }
     else if (type == "PROJECT_AUTOSAVE")
     {

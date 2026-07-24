@@ -1712,13 +1712,12 @@ editor. The release is deliberately limited to the following four features.
    shared FX tails. `Escape` clears the range and loop state. There is one range
    only; it is distinct from clip selection and is saved as non-undoable project
    view state.
-4. **Import assets from another project.** **Import from Project...** opens a
-   `.silverdaw` project for read-only inspection, then lists its **Stems**,
-   **Samples**, and reusable **Scratch patterns** for explicit selection.
-   Rendered scratches are imported as Samples; reusable scratch notation is
-   imported as a Scratch pattern. The source project's tracks, timeline clips,
-   markers, automation, transitions, settings, and other project state are not
-   imported.
+4. **Import assets from another project.** **Import from Project…** lists
+   saved projects in the configured project folder, then inspects the selected
+   `.silverdaw` project read-only. It lists only its **Stems** and **Samples**.
+   A selected scratch sample imports its linked Scratch pattern. The source
+   project's tracks, timeline clips, markers, automation, transitions, settings,
+   and other project state are not imported.
 
 **Range loop behaviour:** Reverb and Delay tails continue through a loop wrap;
 the transport seeks back to the range start without clearing shared-effect
@@ -1728,21 +1727,24 @@ looping the whole project.
 
 **Project asset import boundaries:** Import copies media rather than linking to
 the source project. Every selected stem or sample is copied into the destination
-project's managed artifact tree with a fresh library-item ID; the destination
-rebuilds its playback cache and waveform peaks. Its name, kind, duration, key,
-and tempo analysis are retained when valid, but foreign source-item and
-source-clip references are removed rather than left dangling. Each selected
-Scratch pattern is validated against the current protocol, receives a fresh
-pattern ID, and has foreign provenance removed. This makes the imported assets
-independent of the source project and prevents either project from changing the
-other.
+project's managed artifact tree with a fresh library-item ID. Valid name, kind,
+duration, key, and tempo analysis are retained, while foreign source-item,
+source-clip, and scratch-origin references are removed. Relevant project
+metadata and cover art are copied with their media IDs. Each selected Scratch
+pattern is validated against the current protocol, receives a fresh pattern ID,
+and has foreign provenance removed. A selected scratch sample also copies its
+source-audio snapshot and links it to the imported pattern, so the Scratch
+Editor draws and auditions the original source rather than the rendered sample.
+This makes imported assets independent of the source project and prevents either
+project from changing the other.
 
 The importer accepts only a project file the current backend can read and only
-media files confined to that project's managed `stems` or `samples` trees.
-Missing, unreadable, or out-of-tree media is shown as unavailable and cannot be
-selected. It preflights every selected item, stages copies in the destination,
-and commits the destination state only after the entire selection succeeds.
-The source project is never opened for write or modified.
+media files confined to that project's managed `stems`, `samples`, or scratch
+artifact trees. Missing, unreadable, or out-of-tree media is unavailable and
+cannot be selected. It stages copies in the destination and records the added
+library items and patterns in one undo transaction. Undo and redo remove and
+restore the imported project state while retaining the copied managed artifacts
+for redo. The source project is never opened for write or modified.
 
 **Implementation order and release gates:**
 
@@ -2637,7 +2639,7 @@ Implementation increments (foundations first; each keeps build + tests green):
   across clips crossing the project end. Implemented via §7.11 shapes, **not** a
   master automation lane.
 
-### 11.5 Fast import-to-arrangement - *largely delivered; asset import planned*
+### 11.5 Fast import-to-arrangement - *largely delivered*
 
 Most of this cluster either already shipped incrementally or has been
 deprioritised. **Conform-on-drop already happens today** — dropping a library
@@ -2647,11 +2649,12 @@ representative detected BPM, and anchors the source downbeat to the grid.
 In-context library audition was dropped (the
 Clip Editor already auditions a clip). The remaining work is:
 
-- [ ] **Import assets from another project** - *planned for 1.4.0; see
+- [x] **Import assets from another project** - *delivered in 1.4.0; see
   Section 8.*
   Read a source project without modifying it, then explicitly import selected
-  stems, samples, and reusable Scratch patterns as independent destination
-  assets. Timeline arrangement state is out of scope.
+  stems and samples as independent destination assets. Selecting a scratch
+  sample also imports its linked Scratch pattern and source-audio snapshot.
+  Timeline arrangement state is out of scope.
 - [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop
   to also suggest a key-shift. Deliberately deferred: a user may want to keep a
   clip's pitch different, and it can only ever transpose (never convert

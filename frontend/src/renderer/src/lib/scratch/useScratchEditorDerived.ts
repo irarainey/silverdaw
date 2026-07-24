@@ -64,27 +64,34 @@ export function useScratchEditorDerived(
     return meta
   })
   const sourceItemId = computed<string | null>(() => sourceItem.value?.id ?? null)
+  const scratchSourcePeaks = computed(() => {
+    const source = scratchStore.sourcePeaks
+    return source?.sessionId === session.state.value?.sessionId ? source : null
+  })
   const peaks = computed(
-    () => sourceItem.value?.peaks ?? clip.value?.peaks ?? new Float32Array()
+    () => scratchSourcePeaks.value?.peaks ?? sourceItem.value?.peaks ?? clip.value?.peaks ?? new Float32Array()
   )
   const peaksPerSecond = computed(
-    () => sourceItem.value?.peaksPerSecond ?? clip.value?.peaksPerSecond ?? 0
+    () => scratchSourcePeaks.value?.peaksPerSecond ?? sourceItem.value?.peaksPerSecond ?? clip.value?.peaksPerSecond ?? 0
   )
   const channelPeakEntry = computed(() => {
     const id = sourceItem.value?.id
     return id ? library.channelPeaksByItemId[id] : undefined
   })
   const channelPeaks = computed<readonly Float32Array[]>(() =>
-    channelPeakEntry.value?.channels.length === 2
+    scratchSourcePeaks.value?.channels.length === 2
+      ? scratchSourcePeaks.value.channels
+      : channelPeakEntry.value?.channels.length === 2
       ? channelPeakEntry.value.channels
       : []
   )
   const channelPeaksPerSecond = computed(
-    () => channelPeakEntry.value?.peaksPerSecond ?? 0
+    () => scratchSourcePeaks.value?.peaksPerSecond ?? channelPeakEntry.value?.peaksPerSecond ?? 0
   )
   // Window into the source: a timeline clip supplies its own in/duration; a
   // directly-opened saved clip its `derivedFrom` window; a raw source the whole file.
   const clipInMs = computed(() => {
+    if (scratchSourcePeaks.value) return 0
     if (clip.value) return clip.value.inMs
     const meta = metaItem.value
     return meta?.kind === 'clip' || meta?.scratchOrigin === true
@@ -99,6 +106,7 @@ export function useScratchEditorDerived(
   // Peak coordinates remain in source time; the session supplies the separate
   // prepared duration used for playback and playhead positioning.
   const waveformDurationMs = computed(() => {
+    if (scratchSourcePeaks.value) return (session.state.value?.durationUs ?? 0) / 1000
     if (clip.value) return clip.value.durationMs
     const meta = metaItem.value
     if (meta?.kind === 'clip' || meta?.scratchOrigin === true) {

@@ -16,9 +16,11 @@
 #include "WaveformCommands.h"
 #include "DecodedCache.h"
 #include "ProjectFile.h"
+#include "ProjectImportSource.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
+#include "ScratchTestFixtures.h"
 #include "ToneEq.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
@@ -93,6 +95,43 @@ void testProjectFileSaveLoadAndViewState()
                 == silverdaw::ProjectFile::kCurrentSchemaVersion,
             "saved project should include current schema");
     require(savedRoot.getProperty("savedAt", {}).isString(), "saved project should include savedAt");
+
+    juce::ValueTree sourceTree;
+    const auto sourceLoadResult = silverdaw::ProjectFile::loadTree(file, sourceTree);
+    require(sourceLoadResult.ok, "ProjectFile::loadTree should succeed");
+    require(sourceTree.getType().toString() == "PROJECT",
+            "ProjectFile::loadTree should return a PROJECT tree");
+
+    const auto sourceDir = dir.getChildFile("source");
+    const auto sourceFile = sourceDir.getChildFile("source.silverdaw");
+    const auto stemFile = sourceDir.getChildFile("stems").getChildFile("stem-1").getChildFile("audio.wav");
+    require(stemFile.getParentDirectory().createDirectory(), "source stem directory should be created");
+    require(stemFile.replaceWithText("test"), "source stem file should be created");
+    silverdaw::ProjectState sourceProject;
+    require(sourceProject.addLibraryItem("stem-1", stemFile.getFullPathName(), "audio.wav", 1000.0,
+                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem"),
+            "source stem should be added");
+    const auto scratchFile = sourceDir.getChildFile("scratches").getChildFile("sp-1")
+                                       .getChildFile("scratch.wav");
+    require(scratchFile.getParentDirectory().createDirectory(), "source scratch directory should be created");
+    require(scratchFile.replaceWithText("test"), "source scratch file should be created");
+    require(sourceProject.addLibraryItem("scratch-1", scratchFile.getFullPathName(), "scratch.wav", 1000.0,
+                                         44100, 2, scratchFile.getFullPathName(), {}, "sample", "Scratch Sample"),
+            "source scratch sample should be added");
+    auto sourceLibrary = sourceProject.getTree().getChildWithName("LIBRARY");
+    sourceLibrary.getChild(1).setProperty("scratchPatternId", "sp-1", nullptr);
+    require(sourceProject.addScratchPattern(makeValidPatternVar("sp-1", "Scratch Sample")),
+            "source scratch pattern should be added");
+    require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
+            "source project should be saved");
+    juce::String sourceError;
+    const auto importSource = silverdaw::loadSourceProjectImport(sourceFile, sourceError);
+    require(importSource.has_value(), "source import records should load");
+    require(importSource->library.count("stem-1") == 1, "source import should expose managed stems");
+    require(importSource->library.count("scratch-1") == 1,
+            "source import should expose scratch samples with a linked pattern");
+    require(importSource->scratchPatterns.count("sp-1") == 1,
+            "source import should retain the linked scratch pattern");
 
     silverdaw::ProjectState loaded;
     const auto loadResult = silverdaw::ProjectFile::load(file, loaded);

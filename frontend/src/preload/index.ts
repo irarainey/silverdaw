@@ -12,6 +12,7 @@ import type {
   EnsureStemModelResult,
   LocateStemModelResult,
   RecentProject,
+  ProjectImportSource,
   StemGpuStatus,
   StemModelDownloadProgress,
   StemModelInfo,
@@ -116,6 +117,8 @@ const api = {
   chooseProjectOpen: (): Promise<string | null> => ipcRenderer.invoke(IPC.project.chooseOpen),
   chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.chooseSaveAs, defaultName),
+  listProjectImportSources: (): Promise<ProjectImportSource[]> =>
+    ipcRenderer.invoke(IPC.project.listImportSources),
   chooseMixdownSaveAs: (
     defaultPath: string,
     format: 'wav' | 'mp3' | 'flac' | 'aiff'

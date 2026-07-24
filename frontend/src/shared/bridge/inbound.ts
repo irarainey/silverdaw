@@ -6,8 +6,12 @@
 // splitting is deferred to preserve the schema/guard boundary.
 
 import { z } from 'zod'
-import type { ScratchPatternRecordedPayload, ScratchSessionStatePayload } from './scratch'
-import { ScratchPatternSchema } from './scratch'
+import type {
+  ScratchPatternRecordedPayload,
+  ScratchSessionStatePayload,
+  ScratchSourcePeaksReadyPayload
+} from './scratch'
+import { ScratchPatternSchema, ScratchSourcePeaksReadyPayloadSchema } from './scratch'
 
 export * from './scratch'
 import type {
@@ -548,6 +552,29 @@ export const ProjectLoadFailedPayloadSchema = z.object({
 })
 export type ProjectLoadFailedPayload = z.infer<typeof ProjectLoadFailedPayloadSchema>
 
+const ProjectImportEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1)
+})
+export type ProjectImportEntry = z.infer<typeof ProjectImportEntrySchema>
+
+/** Top-level managed assets exposed by a source project for explicit import. */
+export const ProjectImportSourceManifestPayloadSchema = z.object({
+  sourceProjectPath: z.string().min(1),
+  name: z.string(),
+  stems: z.array(ProjectImportEntrySchema),
+  samples: z.array(ProjectImportEntrySchema)
+})
+export type ProjectImportSourceManifestPayload = z.infer<typeof ProjectImportSourceManifestPayloadSchema>
+
+/** Result shared by source inspection failures and completed imports. */
+export const ProjectImportResultPayloadSchema = z.object({
+  ok: z.boolean(),
+  sourceProjectPath: z.string().min(1),
+  error: z.string().optional()
+})
+export type ProjectImportResultPayload = z.infer<typeof ProjectImportResultPayloadSchema>
+
 export const ProjectRenamedPayloadSchema = z.object({
   name: z.string(),
   ok: z.boolean()
@@ -941,6 +968,9 @@ export interface BridgeInboundMap {
   PROJECT_VIEW_STATE_SAVED: ProjectViewStateSavedPayload
   PROJECT_AUTOSAVED: ProjectAutosavedPayload
   PROJECT_LOAD_FAILED: ProjectLoadFailedPayload
+  PROJECT_IMPORT_SOURCE_MANIFEST: ProjectImportSourceManifestPayload
+  PROJECT_IMPORT_SOURCE_FAILED: ProjectImportResultPayload
+  PROJECT_IMPORT_COMPLETED: ProjectImportResultPayload
   PROJECT_RENAMED: ProjectRenamedPayload
   PROJECT_DIRTY: ProjectDirtyPayload
   WAVEFORM_READY: WaveformReadyPayload
@@ -961,6 +991,7 @@ export interface BridgeInboundMap {
   MIDI_DECK_SELECTION: MidiDeckSelectionPayload
   SCRATCH_SESSION_STATE: ScratchSessionStatePayload
   SCRATCH_PATTERN_RECORDED: ScratchPatternRecordedPayload
+  SCRATCH_SOURCE_PEAKS_READY: ScratchSourcePeaksReadyPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -1016,6 +1047,9 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'PROJECT_VIEW_STATE_SAVED',
   'PROJECT_AUTOSAVED',
   'PROJECT_LOAD_FAILED',
+  'PROJECT_IMPORT_SOURCE_MANIFEST',
+  'PROJECT_IMPORT_SOURCE_FAILED',
+  'PROJECT_IMPORT_COMPLETED',
   'PROJECT_RENAMED',
   'PROJECT_DIRTY',
   'WAVEFORM_READY',
@@ -1036,6 +1070,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'MIDI_DECK_SELECTION',
   'SCRATCH_SESSION_STATE',
   'SCRATCH_PATTERN_RECORDED',
+  'SCRATCH_SOURCE_PEAKS_READY',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',
@@ -1105,6 +1140,16 @@ export function isProjectLoadFailedPayload(value: unknown): value is ProjectLoad
   return ProjectLoadFailedPayloadSchema.safeParse(value).success
 }
 
+export function isProjectImportSourceManifestPayload(
+  value: unknown
+): value is ProjectImportSourceManifestPayload {
+  return ProjectImportSourceManifestPayloadSchema.safeParse(value).success
+}
+
+export function isProjectImportResultPayload(value: unknown): value is ProjectImportResultPayload {
+  return ProjectImportResultPayloadSchema.safeParse(value).success
+}
+
 export function isProjectRenamedPayload(value: unknown): value is ProjectRenamedPayload {
   return ProjectRenamedPayloadSchema.safeParse(value).success
 }
@@ -1123,6 +1168,10 @@ export function isWaveformFailedPayload(value: unknown): value is WaveformFailed
 
 export function isClipEditorPeaksReadyPayload(value: unknown): value is ClipEditorPeaksReadyPayload {
   return ClipEditorPeaksReadyPayloadSchema.safeParse(value).success
+}
+
+export function isScratchSourcePeaksReadyPayload(value: unknown): value is ScratchSourcePeaksReadyPayload {
+  return ScratchSourcePeaksReadyPayloadSchema.safeParse(value).success
 }
 
 export function isSampleSavedPayload(value: unknown): value is SampleSavedPayload {

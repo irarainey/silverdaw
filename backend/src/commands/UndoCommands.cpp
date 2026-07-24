@@ -40,6 +40,7 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "LIBRARY_REANALYSE" || type == "LIBRARY_ITEM_RELINK" ||
            type == "LIBRARY_ITEM_SET_AUDIO_TYPE" ||
            type == "LIBRARY_ITEM_SET_MANUAL_TEMPO" ||
+           type == "PROJECT_IMPORT_ASSETS" ||
            type == "PROJECT_RENAME" || type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" ||
            type == "PROJECT_SET_AUDIO_OUTPUT" ||
            type == "PROJECT_SET_TARGET_SAMPLE_RATE" ||
@@ -100,6 +101,7 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "LIBRARY_ITEM_RELINK") return "Relink library item";
     if (type == "LIBRARY_ITEM_SET_AUDIO_TYPE") return "Change library item classification";
     if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO") return "Set manual tempo";
+    if (type == "PROJECT_IMPORT_ASSETS") return "Import project assets";
     if (type == "PROJECT_RENAME") return "Rename project";
     if (type == "PROJECT_SET_BPM") return "Change tempo";
     if (type == "PROJECT_SET_LENGTH") return "Change project length";

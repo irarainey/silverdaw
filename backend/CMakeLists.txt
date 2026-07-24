@@ -412,6 +412,8 @@ add_library(silverdaw_backend_core STATIC
     src/commands/PeakJobCoordinator.cpp
     src/commands/PreviewCommands.cpp
     src/commands/ProjectCommands.cpp
+    src/commands/ProjectImportCommands.cpp
+    src/commands/ProjectImportSource.cpp
     src/commands/ProjectFxCommands.cpp
     src/commands/ProjectSettingsCommands.cpp
     src/commands/ScratchSessionCommands.cpp
