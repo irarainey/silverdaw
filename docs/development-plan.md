@@ -1669,22 +1669,98 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-The next major focus is **under review** — the core remix workflow is complete and
-no single feature is committed as "next". Candidates, strongest first:
+### 1.4.0 - Timeline Precision & Range Auditioning *(planned)*
 
-1. **Transitions — FX-based recipes (§11.1)** — the crossfade engine and two
-   gain-law recipes (equal-power Smooth blend + linear Fade out/in) are shipped;
-   the remaining recipes (Bass swap, Filter fade, Delay out) and "Vocal Focus"
-   ducking need genuinely new per-clip FX automation tied to transition geometry.
-2. **Scratch authoring (§11.7)** — MIDI deck input shipped in 1.2.0; the Scratch
-   Editor records, edits, and replays authored scratch movements (see §11.7).
+**Goal:** make arrangement edits more deliberate and let a user quickly
+audition one part of a mix, without turning the timeline into a dense advanced
+editor. The release is deliberately limited to the following four features.
 
-**Deferred to future enhancements:** Fast import-to-arrangement (§11.5) — its
-useful halves (warp-to-BPM + downbeat anchor on drop) already ship, and the
-remaining auto-pitch-on-drop idea was kicked down the road (a user may want to
-keep a clip's pitch deliberately different; it also needs the §11.3 mode-aware
-key model first). Recording / live input (§11.6) and the Phase 8 hardening backlog
-remain **deprioritised**. Final ordering is still under review.
+1. **Selectable timeline snap grid.** A compact timeline **Snap** control
+   offers **Bar**, **Beat**, **Half beat**, **Quarter beat**, and **Free**.
+   Quarter beat remains the default, preserving the current behaviour. It drives
+   grid-line density and all timeline-time snapping: clip placement,
+   move, trim, marker movement, playhead movement, range boundaries, and
+   automation-point snap gestures. `Alt` remains a temporary 1 ms free-placement
+   override when snapping is enabled. Beat-aware clips continue to align their
+   first source beat, rather than merely their left edge, to the selected grid
+   line. The interval is persisted as additive project view state; old projects
+   default to Quarter beat.
+2. **Multiple visible automation lanes per track.** One lane remains the default.
+   An explicit **Add lane** action can reveal another lane for a different
+   parameter on the same track, so multiple curves can be viewed and edited together.
+   Each lane keeps its own parameter picker and height, and either can be
+   removed without changing its stored curve. Visibility and heights remain
+   renderer-only interaction state; existing per-track automation curves remain
+   the persisted source of truth. Duplicate parameter lanes are disallowed, and
+   no new DSP or mixdown behaviour is introduced because the engine already
+   evaluates multiple parameter curves per track.
+3. **Timeline range selection, playback, and looping.** Dragging across the
+   timeline ruler creates one project-wide time range. The region is visibly
+   shaded across all tracks and has start/end handles; its boundaries follow the
+   selected Snap interval, with `Alt` for 1 ms precision. **Play selection**
+   starts at the range start and pauses at its exclusive end. **Loop selection**
+   starts at the same point and returns to the start at each end boundary.
+   Ordinary project playback stays unchanged, so a visible range never silently
+   constrains the normal Play command. There is one range only; it is distinct
+   from clip selection, transient, not undoable, and never saved in a project.
+4. **Import assets from another project.** **Import from Project...** opens a
+   `.silverdaw` project for read-only inspection, then lists its **Stems**,
+   **Samples**, and reusable **Scratch patterns** for explicit selection.
+   Rendered scratches are imported as Samples; reusable scratch notation is
+   imported as a Scratch pattern. The source project's tracks, timeline clips,
+   markers, automation, transitions, settings, and other project state are not
+   imported.
+
+**Range loop behaviour:** Reverb and Delay tails continue through a loop wrap;
+the transport seeks back to the range start without clearing shared-effect
+state. This preserves a natural audition rather than cutting tails on every
+repeat. A cleared range disables the range commands; it does not fall back to
+looping the whole project.
+
+**Project asset import boundaries:** Import copies media rather than linking to
+the source project. Every selected stem or sample is copied into the destination
+project's managed artifact tree with a fresh library-item ID; the destination
+rebuilds its playback cache and waveform peaks. Its name, kind, duration, key,
+and tempo analysis are retained when valid, but foreign source-item and
+source-clip references are removed rather than left dangling. Each selected
+Scratch pattern is validated against the current protocol, receives a fresh
+pattern ID, and has foreign provenance removed. This makes the imported assets
+independent of the source project and prevents either project from changing the
+other.
+
+The importer accepts only a project file the current backend can read and only
+media files confined to that project's managed `stems` or `samples` trees.
+Missing, unreadable, or out-of-tree media is shown as unavailable and cannot be
+selected. It preflights every selected item, stages copies in the destination,
+and commits the destination state only after the entire selection succeeds.
+The source project is never opened for write or modified.
+
+**Implementation order and release gates:**
+
+1. Add the range control-plane messages to `bridge-protocol.ts`, then implement
+   validated transient range state on the backend message thread and lock-free
+   audio-thread publication. Loop wraps must respect the exact `[start, end)`
+   boundary, reset every affected clip transport correctly, and retain shared FX
+   state.
+2. Add ruler range-selection rendering, handles, clear behaviour, transport
+   commands, and keyboard/menu affordances. Test normal playback, one-shot range
+   playback, looping, seeking, end-of-project clamping, and engine recovery.
+3. Centralise the selected snap interval in the timeline geometry and route
+   every listed timeline gesture through it. Test every interval, the `Alt`
+   override, source-beat alignment, and old-project defaulting.
+4. Change the automation-lane view state from one parameter per track to multiple distinct lane descriptors. Update layout, drawing, hit-testing, resizing,
+   and keyboard focus together; test that editing either visible curve preserves
+   the other.
+5. Add the project-asset importer behind a versioned, read-only project reader.
+   Validate the source tree and every selected media path before copying, stage
+   destination artifacts atomically, generate fresh IDs, clear foreign
+   references, and add the library items and patterns in one destination undo
+   transaction. Test valid mixed imports, pattern-ID collisions, missing media,
+   invalid project data, copy failure, cancellation, undo/redo, and a source
+   project remaining byte-for-byte unchanged.
+
+Transitions, recording/live input, VST3 hosting, and Phase 8 hardening remain
+outside 1.4.0.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -2517,17 +2593,18 @@ Implementation increments (foundations first; each keeps build + tests green):
   marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
   Vitest coverage for the linear law, recipe→curve derivation, and the menu.
 
-### 11.2 Arrangement & editing workflow — *selection shipped (1.1.0); loop playback remains*
+### 11.2 Arrangement & editing workflow - *range auditioning planned*
 
 - [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
   same-track range or Ctrl-click across tracks selects several clips; the whole
   group moves/nudges together and can be locked, coloured, duplicated, deleted,
   and cut/copied/pasted in one undo step. Renderer-only selection (not
   serialised). Grouped *trim/stretch* is still deferred.
-- [ ] **Timeline loop / cycle playback** — loop a
-  selected timeline range for auditioning (distinct from the existing Clip Editor
-  audition loop). Decide FX-tail behaviour at loop wrap up front (flush vs let
-  Reverb/Delay tails ring) — pick one intentionally.
+- [ ] **Timeline range auditioning** - *planned for 1.4.0; see Section 8.* One
+  transient project-wide time range is created from the timeline ruler and can
+  be played once or looped. Range playback is distinct from the existing Clip
+  Editor audition loop and from clip-group selection. Reverb and Delay tails
+  continue through a loop wrap; the range is not serialised or undoable.
 
 ### 11.3 Tempo, beat-grid & harmonic — *manual beat-grid shipped; mode-aware model remains (Phase 8)*
 
@@ -2550,7 +2627,7 @@ Implementation increments (foundations first; each keeps build + tests green):
   across clips crossing the project end. Implemented via §7.11 shapes, **not** a
   master automation lane.
 
-### 11.5 Fast import-to-arrangement — *largely delivered / deferred to future enhancements*
+### 11.5 Fast import-to-arrangement - *largely delivered; asset import planned*
 
 Most of this cluster either already shipped incrementally or has been
 deprioritised. **Conform-on-drop already happens today** — dropping a library
@@ -2558,8 +2635,13 @@ item auto-warps to project BPM by default (gated by
 `matchProjectTempoOnDrop`), including variable-tempo music using its
 representative detected BPM, and anchors the source downbeat to the grid.
 In-context library audition was dropped (the
-Clip Editor already auditions a clip). What remains is parked for later:
+Clip Editor already auditions a clip). The remaining work is:
 
+- [ ] **Import assets from another project** - *planned for 1.4.0; see
+  Section 8.*
+  Read a source project without modifying it, then explicitly import selected
+  stems, samples, and reusable Scratch patterns as independent destination
+  assets. Timeline arrangement state is out of scope.
 - [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop
   to also suggest a key-shift. Deliberately deferred: a user may want to keep a
   clip's pitch different, and it can only ever transpose (never convert
