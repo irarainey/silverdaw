@@ -101,6 +101,22 @@ export function useTransportBarController() {
     (ms) => {
       if (!transport.isPlaying) return
       if (transport.midiPlaybackHoldActive) return
+      const selection = ui.timelineSelection
+      if (selection && ms >= selection.endMs) {
+        if (ui.loopTimelineSelection) {
+          transport.setPosition(selection.startMs)
+          ui.requestTimelineScrollToPosition(selection.startMs, true)
+          sendBridge('TRANSPORT_SEEK', {
+            positionMs: selection.startMs,
+            preserveEffects: true
+          })
+        } else {
+          sendBridge('TRANSPORT_PAUSE')
+          transport.setPlaybackState(false)
+          transport.setPosition(selection.endMs)
+        }
+        return
+      }
       const end = project.durationMs
       if (end <= 0) return
       if (ms < end) return
@@ -135,6 +151,7 @@ export function useTransportBarController() {
   const playDisabled = computed(() => {
     if (transport.isPlaying) return false
     if (!audioReady.value) return true
+    if (ui.timelineSelection) return false
     const end = project.durationMs
     return end > 0 && transport.positionMs >= end
   })
@@ -147,6 +164,9 @@ export function useTransportBarController() {
     }
     if (transport.audioState === 'failed') return 'Audio engine failed to start'
     if (!audioReady.value) return 'Starting audio engine…'
+    if (ui.timelineSelection) {
+      return ui.loopTimelineSelection ? 'Loop Selection' : 'Play Selection'
+    }
     if (playDisabled.value) return 'Playhead at end of project — skip back to play'
     return 'Play'
   })
@@ -250,6 +270,11 @@ export function useTransportBarController() {
     log.info('transport', `follow playback=${ui.followPlayback}`)
   }
 
+  function onToggleLoopSelection(): void {
+    ui.setLoopTimelineSelection(!ui.loopTimelineSelection)
+    ui.persistTimelineSelectionView()
+  }
+
   function onMasterVolumeInput(event: Event): void {
     // Send every drag tick; backend coalesces the stream into one undo step.
     const target = event.target as HTMLInputElement
@@ -297,6 +322,7 @@ export function useTransportBarController() {
     onPlay,
     onSkipForward,
     onToggleFollow,
+    onToggleLoopSelection,
     onMasterVolumeInput
   }
 }

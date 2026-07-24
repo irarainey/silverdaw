@@ -171,6 +171,19 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
     obj->setProperty("viewFxPanelOpen", projectState.getViewFxPanelOpen());
+    if (const auto selection = projectState.getViewTimelineSelection())
+    {
+        auto* selectionObj = new juce::DynamicObject();
+        selectionObj->setProperty("startMs", selection->startMs);
+        selectionObj->setProperty("endMs", selection->endMs);
+        obj->setProperty("timelineSelection", juce::var(selectionObj));
+        obj->setProperty("loopTimelineSelection", selection->loop);
+    }
+    else
+    {
+        obj->setProperty("timelineSelection", juce::var());
+        obj->setProperty("loopTimelineSelection", false);
+    }
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
     obj->setProperty("bpm", projectState.getBpm());
     obj->setProperty("projectLengthMs", projectState.getProjectLengthMs());

@@ -342,6 +342,18 @@ class ProjectState : public juce::ValueTree::Listener
 
     void setViewFxPanelOpen(bool open);
 
+    struct TimelineSelectionView
+    {
+        double startMs{0.0};
+        double endMs{0.0};
+        bool loop{false};
+    };
+
+    std::optional<TimelineSelectionView> getViewTimelineSelection() const;
+
+    /** Stores the range and loop mode as non-dirty project view state. */
+    void setViewTimelineSelection(std::optional<TimelineSelectionView> selection);
+
     /** Persisted playhead position in ms. Defaults to 0. */
     double getPlayheadMs() const;
 
@@ -726,6 +738,9 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;
     static const juce::Identifier kViewFxPanelOpen;
+    static const juce::Identifier kViewTimelineSelectionStartMs;
+    static const juce::Identifier kViewTimelineSelectionEndMs;
+    static const juce::Identifier kViewTimelineSelectionLoop;
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
     static const juce::Identifier kBpmSeeded;

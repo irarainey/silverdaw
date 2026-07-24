@@ -264,8 +264,9 @@ Silverdaw currently supports the core arrangement workflow:
   / [`BusGraph`](../backend/src/engine/BusGraph.h) (which applies pan to the dry path
   after the pre-pan send tap) / [`SharedFx`](../backend/src/dsp/SharedFx.h) (the
   project-wide Reverb and Delay return buses). The open
-  FX tab and the selected track are project **view state**, round-tripped through
-  `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
+  FX tab, selected track, timeline range, and its **Loop Selection** state are
+  project **view state**, round-tripped through `PROJECT_SET_VIEW` and saved in
+  the `.silverdaw` file alongside mute / solo.
 
   Beat Repeat regions are stored per track in beat space, so they follow project
   tempo changes. Right-click a clip or empty track lane and choose **Effects →
@@ -376,6 +377,18 @@ Silverdaw currently supports the core arrangement workflow:
   project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
   there. The Play button (and the Spacebar shortcut) is disabled while the
   playhead sits at the end — skip back to the start to re-arm playback.
+- **Timeline range playback** starts by dragging across the ruler away from the
+  playhead. The range is shown across the ruler and track rows, snaps to the
+  timeline grid by default, and supports `Alt` for exact pointer placement.
+  Dragging the playhead keeps its established repositioning behavior. Play starts
+  at the range beginning and pauses at its exclusive end. Enable **Loop
+  Selection** in the transport to return to the beginning at that boundary while
+  retaining shared Reverb and Delay tails. Starting selected playback smoothly
+  reveals its beginning when it is off-screen. The **Skip** buttons treat the
+  range start as a temporary jump point without creating a saved marker.
+  **Escape** clears the range and Loop Selection before stepping through clip,
+  automation-point, and track selection. The range and loop state are saved as
+  non-undoable project view state.
 - **Edit ▸ Trim Project to Last Clip** collapses the project length to the end of
   the latest clip on any track. Manual project-length edits are also clamped so
   the ruler cannot be shortened below the longest clip's effective end.
@@ -1059,7 +1072,10 @@ an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape*
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
 shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
-bottom-panel FX tabs, round-tripped through `PROJECT_SET_VIEW`.
+bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
+`viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
+timeline range and Loop Selection state. All are round-tripped through
+`PROJECT_SET_VIEW`.
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
@@ -1104,9 +1120,10 @@ field holds the entire `PROJECT` `ValueTree` mapped through
 `{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
 rename) and forward-compatible load (unknown keys are ignored). Normal Save / Save As writes
 the full project tree. Before leaving a clean project, the renderer sends
-`PROJECT_SAVE_VIEW_STATE`; the backend updates only `viewScrollX` and `playheadMs` in the
-existing `.silverdaw` file, so view state survives reopen without saving unrelated unsaved
-project edits or changing the dirty flag. Logic lives in
+`PROJECT_SAVE_VIEW_STATE`; the backend updates view state including scroll, zoom,
+playhead, selected track, FX panel, timeline range, and Loop Selection in the
+existing `.silverdaw` file, so it survives reopen without saving unrelated
+unsaved project edits or changing the dirty flag. Logic lives in
 [`backend/src/project/ProjectFile.cpp`](../backend/src/project/ProjectFile.cpp).
 
 **Portable project folder** — Save / Save As nests the project into its own folder
@@ -2748,7 +2765,8 @@ multi-selection and empty-track menus show only actions relevant to that target.
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** | Drag the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). Double-click has no effect — toggle markers at the playhead with `M`. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | `Shift` + click on **clip** | Extend the selection to a range of clips on the anchor's track, between the anchor and the clicked clip (ordered by start time). |
@@ -2781,7 +2799,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
-| `Escape` | Step down through the selection: when a track and clip(s) are selected, the first press clears the clip(s) (and any selected automation point) but keeps the track selected, and a second press clears the track. When only a track is selected, one press clears it. |
+| `Escape` | Clear the timeline range first, including Loop Selection. Then step down through the selection: when a track and clip(s) are selected, the next press clears the clip(s) (and any selected automation point) but keeps the track selected, and a further press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |

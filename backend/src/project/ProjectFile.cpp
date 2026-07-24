@@ -179,7 +179,8 @@ juce::Result save(const juce::File& file, const ProjectState& project)
 
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
-                           bool metronomeEnabled, bool clipEditorMetronomeEnabled)
+                           bool metronomeEnabled, bool clipEditorMetronomeEnabled,
+                           std::optional<ProjectState::TimelineSelectionView> timelineSelection)
 {
     if (!file.existsAsFile())
     {
@@ -212,6 +213,18 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
     projectObj->setProperty("viewSelectedTrack", selectedTrackId);
     projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);
+    if (timelineSelection.has_value())
+    {
+        projectObj->setProperty("viewTimelineSelectionStartMs", timelineSelection->startMs);
+        projectObj->setProperty("viewTimelineSelectionEndMs", timelineSelection->endMs);
+        projectObj->setProperty("viewTimelineSelectionLoop", timelineSelection->loop);
+    }
+    else
+    {
+        projectObj->removeProperty("viewTimelineSelectionStartMs");
+        projectObj->removeProperty("viewTimelineSelectionEndMs");
+        projectObj->removeProperty("viewTimelineSelectionLoop");
+    }
     // Persist the monitoring metronome toggle alongside view state (it's silent — never dirty —
     // so this targeted write is what keeps it consistent across open/close). Default-off omits the
     // field to match the project round-trip convention.

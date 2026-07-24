@@ -60,6 +60,8 @@ export interface DragHandlersOptions {
   onMarkerMoved: () => void
   /** Fires after the playhead position was updated. */
   onPlayheadMoved: () => void
+  /** Claims an unmodified ruler drag to create a timeline range selection. */
+  tryBeginRangeSelection: (e: PointerEvent) => boolean
 }
 
 interface ClipDragPointer {
@@ -84,7 +86,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     getClipHitRegions,
     onClipMoved,
     onMarkerMoved,
-    onPlayheadMoved
+    onPlayheadMoved,
+    tryBeginRangeSelection
   } = opts
 
   const {
@@ -394,6 +397,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const y = e.clientY - rect.top
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
+
+    // Preserve the established playhead grab gesture wherever its grab cursor is shown.
+    if (!hitTestPlayhead(e.clientX, e.clientY) && tryBeginRangeSelection(e)) return
 
     // Automation lane editing claims the bottom strip of an expanded track row.
     if (tryBeginAutomationEdit(e)) return

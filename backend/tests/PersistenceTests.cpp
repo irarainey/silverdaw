@@ -75,6 +75,8 @@ void testProjectFileSaveLoadAndViewState()
     state.setPlayheadMs(34.0);
     state.setViewSelectedTrack("t1");
     state.setViewFxPanelOpen(true);
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{1000.0, 2500.0, true});
     // Rename a clip and confirm the user-facing name survives the
     // ValueTree JSON round-trip — this is the persistence the timeline
     // inline-rename relies on.
@@ -102,8 +104,15 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(loaded.getClipName("c1"), "Verse chop", "clip name should persist through save/load");
     requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
     require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
+    const auto loadedSelection = loaded.getViewTimelineSelection();
+    require(loadedSelection.has_value(), "timeline selection should persist through save/load");
+    requireNear(loadedSelection->startMs, 1000.0, 0.0001, "saved selection start should round-trip");
+    requireNear(loadedSelection->endMs, 2500.0, 0.0001, "saved selection end should round-trip");
+    require(loadedSelection->loop, "saved selection loop state should round-trip");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 240.0, 99.0, "t1", true, true, true);
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(
+        file, -10.0, 240.0, 99.0, "t1", true, true, true,
+        silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false});
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
@@ -112,6 +121,13 @@ void testProjectFileSaveLoadAndViewState()
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
     requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
     require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");
+    const auto updatedSelection = reloaded.getViewTimelineSelection();
+    require(updatedSelection.has_value(), "saveViewState should persist a timeline selection");
+    requireNear(updatedSelection->startMs, 3000.0, 0.0001,
+                "saveViewState should update selection start");
+    requireNear(updatedSelection->endMs, 4500.0, 0.0001,
+                "saveViewState should update selection end");
+    require(! updatedSelection->loop, "saveViewState should update selection loop state");
     require(reloaded.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (on)");
     require(reloaded.getClipEditorMetronomeEnabled(),
             "saveViewState should persist the clip-editor metronome toggle (on)");
@@ -124,6 +140,8 @@ void testProjectFileSaveLoadAndViewState()
     require(! reloadedOff.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (off)");
     require(! reloadedOff.getClipEditorMetronomeEnabled(),
             "saveViewState should persist the clip-editor metronome toggle (off)");
+    require(! reloadedOff.getViewTimelineSelection().has_value(),
+            "saveViewState should clear an absent timeline selection");
 
     const auto missing = dir.getChildFile("missing.silverdaw");
     silverdaw::ProjectState untouched;

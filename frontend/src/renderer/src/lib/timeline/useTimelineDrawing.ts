@@ -217,6 +217,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
 
     const rulerStart = performance.now()
     rulerRenderer.drawRulerChrome(width)
+    rulerRenderer.drawTimelineSelection()
     rulerRenderer.drawRulerTicks(width)
     rulerRenderer.drawMarkers()
     const tracksStart = performance.now()

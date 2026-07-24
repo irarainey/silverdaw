@@ -483,6 +483,17 @@ export const ProjectStatePayloadSchema = z.object({
   viewScrollX: z.number().optional(),
   viewSelectedTrack: z.string().optional(),
   viewFxPanelOpen: z.boolean().optional(),
+  timelineSelection: z
+    .object({
+      startMs: z.number().finite().nonnegative(),
+      endMs: z.number().finite().nonnegative()
+    })
+    .refine((selection) => selection.endMs > selection.startMs, {
+      message: 'Timeline selection end must follow its start'
+    })
+    .nullable()
+    .optional(),
+  loopTimelineSelection: z.boolean().optional(),
   playheadMs: z.number().optional(),
   bpm: z.number().optional(),
   projectLengthMs: z.number().optional(),

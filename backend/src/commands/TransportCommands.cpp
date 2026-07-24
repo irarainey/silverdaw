@@ -37,10 +37,15 @@ void handleTransportStop(AudioEngine& engine, ProjectState& projectState)
 void handleTransportSeek(const juce::var& payload, AudioEngine& engine, ProjectState& projectState)
 {
     const auto positionMs = tryGetNumber(payload, "positionMs");
+    const auto* object = payload.getDynamicObject();
+    const juce::var preserveEffectsValue =
+        object != nullptr ? object->getProperty("preserveEffects") : juce::var();
+    const bool preserveEffects =
+        preserveEffectsValue.isBool() && static_cast<bool>(preserveEffectsValue);
     silverdaw::log::info("bridge", "recv TRANSPORT_SEEK pos=" + juce::String(positionMs.value_or(-1.0)));
     if (positionMs.has_value())
     {
-        engine.setPositionMs(*positionMs);
+        engine.setPositionMs(*positionMs, !preserveEffects);
         projectState.setPlayheadMs(juce::jmax(0.0, *positionMs));
     }
 }

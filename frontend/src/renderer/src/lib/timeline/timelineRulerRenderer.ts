@@ -5,6 +5,7 @@ import { type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Text } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 import {
   GRID_BAR,
   GRID_BEAT,
@@ -49,6 +50,26 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     transport
   } = deps
   const { pxPerSecond, headerWidth } = geometry
+  const ui = useUiStore()
+
+  function drawTimelineSelection(): void {
+    const rulerTicks = rulerTicksLayer.value
+    const G = GraphicsCtor.value
+    const selection = ui.timelineSelection
+    if (!rulerTicks || !G || !selection) return
+
+    const startX = headerWidth() + (selection.startMs / 1000) * pxPerSecond.value
+    const endX = headerWidth() + (selection.endMs / 1000) * pxPerSecond.value
+    const range = new G()
+    range.rect(startX, 0, endX - startX, RULER_HEIGHT).fill({ color: 0x0ea5e9, alpha: 0.2 })
+    range
+      .moveTo(startX + 0.5, 0)
+      .lineTo(startX + 0.5, RULER_HEIGHT)
+      .moveTo(endX - 0.5, 0)
+      .lineTo(endX - 0.5, RULER_HEIGHT)
+      .stroke({ color: 0x38bdf8, width: 1, alpha: 0.95 })
+    rulerTicks.addChild(range)
+  }
 
   function drawMarkers(): void {
     const rulerTicks = rulerTicksLayer.value
@@ -182,5 +203,5 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     }
   }
 
-  return { drawRulerChrome, drawRulerTicks, drawMarkers, drawHeaderDivider }
+  return { drawRulerChrome, drawRulerTicks, drawMarkers, drawTimelineSelection, drawHeaderDivider }
 }

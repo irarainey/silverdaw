@@ -149,7 +149,7 @@ class AudioEngine : private AudioEngineGraphState,
     // Drains audio-thread block-timing for non-RT perf logging.
     MasterClockSource::AudioPerfSnapshot drainAudioPerf() noexcept { return master.drainAudioPerf(); }
 
-    void setPositionMs(double ms);
+    void setPositionMs(double ms, bool resetEffects = true);
     bool scrubPositionMs(double positionMs, double deltaMs);
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
