@@ -12,7 +12,6 @@
 
 - Waveform rulers now keep minute-and-second labels at every zoom level.
 
-
 ### Fixed
 
 - Copying automation between effects now preserves the curve shape.
