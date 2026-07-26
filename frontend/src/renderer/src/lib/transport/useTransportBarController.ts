@@ -65,6 +65,9 @@ export function useTransportBarController() {
       )
     }
     project.setProjectLengthMs(nextMs)
+    if (ui.clampTimelineSelectionToDuration(project.durationMs)) {
+      ui.persistTimelineSelectionView()
+    }
     // Send the post-clamp length.
     sendBridge('PROJECT_SET_LENGTH', { lengthMs: project.durationMs })
   }

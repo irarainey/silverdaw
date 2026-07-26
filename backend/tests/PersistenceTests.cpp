@@ -112,16 +112,30 @@ void testProjectFileSaveLoadAndViewState()
                                          44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem"),
             "source stem should be added");
     const auto scratchFile = sourceDir.getChildFile("scratches").getChildFile("sp-1")
-                                       .getChildFile("scratch.wav");
+                                       .getChildFile("source.wav");
     require(scratchFile.getParentDirectory().createDirectory(), "source scratch directory should be created");
     require(scratchFile.replaceWithText("test"), "source scratch file should be created");
-    require(sourceProject.addLibraryItem("scratch-1", scratchFile.getFullPathName(), "scratch.wav", 1000.0,
+    require(sourceProject.addLibraryItem("scratch-1", scratchFile.getFullPathName(), "source.wav", 1000.0,
                                          44100, 2, scratchFile.getFullPathName(), {}, "sample", "Scratch Sample"),
             "source scratch sample should be added");
+    const auto missingSnapshotFile = sourceDir.getChildFile("scratches").getChildFile("sp-missing")
+                                              .getChildFile("rendered.wav");
+    require(missingSnapshotFile.getParentDirectory().createDirectory(),
+            "missing-snapshot scratch directory should be created");
+    require(missingSnapshotFile.replaceWithText("test"),
+            "missing-snapshot scratch render should be created");
+    require(sourceProject.addLibraryItem("scratch-missing", missingSnapshotFile.getFullPathName(),
+                                         "rendered.wav", 1000.0, 44100, 2,
+                                         missingSnapshotFile.getFullPathName(), {}, "sample",
+                                         "Incomplete Scratch Sample"),
+            "incomplete scratch sample should be added");
     auto sourceLibrary = sourceProject.getTree().getChildWithName("LIBRARY");
     sourceLibrary.getChild(1).setProperty("scratchPatternId", "sp-1", nullptr);
+    sourceLibrary.getChild(2).setProperty("scratchPatternId", "sp-missing", nullptr);
     require(sourceProject.addScratchPattern(makeValidPatternVar("sp-1", "Scratch Sample")),
             "source scratch pattern should be added");
+    require(sourceProject.addScratchPattern(makeValidPatternVar("sp-missing", "Incomplete Scratch Sample")),
+            "incomplete scratch pattern should be added");
     require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
             "source project should be saved");
     juce::String sourceError;
@@ -130,6 +144,8 @@ void testProjectFileSaveLoadAndViewState()
     require(importSource->library.count("stem-1") == 1, "source import should expose managed stems");
     require(importSource->library.count("scratch-1") == 1,
             "source import should expose scratch samples with a linked pattern");
+    require(importSource->library.count("scratch-missing") == 0,
+            "source import should reject scratch samples without a source snapshot");
     require(importSource->scratchPatterns.count("sp-1") == 1,
             "source import should retain the linked scratch pattern");
 

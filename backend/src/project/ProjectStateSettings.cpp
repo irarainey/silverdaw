@@ -152,6 +152,20 @@ void ProjectState::setProjectLengthMs(double lengthMs)
 {
     // User-chosen length edits belong in undo.
     root.setProperty(kProjectLengthMs, lengthMs, &undoManager);
+
+    const auto selection = getViewTimelineSelection();
+    if (!selection.has_value() || selection->endMs <= lengthMs)
+        return;
+
+    if (selection->startMs >= lengthMs)
+    {
+        setViewTimelineSelection(std::nullopt);
+        return;
+    }
+
+    auto clamped = *selection;
+    clamped.endMs = lengthMs;
+    setViewTimelineSelection(clamped);
 }
 
 juce::String ProjectState::getAudioOutputTypeName() const

@@ -6,6 +6,7 @@ import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 import {
+  clampTimelineSelectionToDuration,
   normaliseTimelineSelection,
   type TimelineSelection
 } from '@/lib/timeline/timelineSelection'
@@ -383,6 +384,13 @@ export const useUiStore = defineStore('ui', {
     },
     setLoopTimelineSelection(loop: boolean): void {
       this.loopTimelineSelection = this.timelineSelection !== null && loop
+    },
+    /** Repair an active range after reducing the project duration. */
+    clampTimelineSelectionToDuration(durationMs: number): boolean {
+      const nextSelection = clampTimelineSelectionToDuration(this.timelineSelection, durationMs)
+      if (nextSelection === this.timelineSelection) return false
+      this.setTimelineSelection(nextSelection)
+      return true
     },
 
     /** Show another distinct parameter lane without changing its stored curve. */

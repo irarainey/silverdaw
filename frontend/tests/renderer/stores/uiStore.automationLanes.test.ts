@@ -129,4 +129,18 @@ describe('uiStore automation lanes', () => {
     expect(ui.loopTimelineSelection).toBe(false)
     expect(sendBridge).not.toHaveBeenCalled()
   })
+
+  it('repairs a timeline selection when the project becomes shorter', () => {
+    const ui = useUiStore()
+    ui.setTimelineSelection({ startMs: 1000, endMs: 4000 })
+    ui.setLoopTimelineSelection(true)
+
+    expect(ui.clampTimelineSelectionToDuration(2500)).toBe(true)
+    expect(ui.timelineSelection).toEqual({ startMs: 1000, endMs: 2500 })
+    expect(ui.loopTimelineSelection).toBe(true)
+
+    expect(ui.clampTimelineSelectionToDuration(1000)).toBe(true)
+    expect(ui.timelineSelection).toBeNull()
+    expect(ui.loopTimelineSelection).toBe(false)
+  })
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Track-header overlay aligned to the PixiJS timeline rows.
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
@@ -11,17 +11,10 @@ import {
   MAX_TRACK_DB,
   taperPositionToLinear
 } from '@/lib/audio/db'
-import { RULER_HEIGHT, AUTOMATION_LANE_HEIGHT, MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT } from '@/lib/timeline/constants'
-import { buildTrackRowLayout, trackHeightOf } from '@/lib/timeline/trackLayout'
+import { RULER_HEIGHT } from '@/lib/timeline/constants'
+import { buildTrackRowLayout } from '@/lib/timeline/trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
-import { automationLaneOffset } from '@/lib/automation/automationLanes'
-import {
-  AUTOMATABLE_PARAM_IDS,
-  AUTOMATION_PARAMS,
-  translateAutomationCurve
-} from '@/lib/automation/automationParams'
 import { sampleBreakpoints } from '@/lib/automation/breakpoints'
-import { trackStaticAutomationValue } from '@/stores/projectTrackActions'
 import { TRACK_PALETTE, type Track } from '@/stores/projectTypes'
 import { useTransportStore } from '@/stores/transportStore'
 import type { AutomationParamId } from '@shared/bridge-protocol'
@@ -30,6 +23,7 @@ import { useTrackPan } from '@/lib/track/useTrackPan'
 import { useTrackResizeDrag } from '@/lib/track/useTrackResizeDrag'
 import { useTrackReorderDrag } from '@/lib/track/useTrackReorderDrag'
 import TrackMeter from '@/components/TrackMeter.vue'
+import TrackAutomationLaneHeaders from '@/components/TrackAutomationLaneHeaders.vue'
 
 withDefaults(defineProps<{ scrollY?: number; onWheel?: (e: WheelEvent) => void }>(), {
   scrollY: 0,
@@ -54,18 +48,6 @@ function selectionBorderStyle(
   const style: Record<string, string> = { borderColor: palette.cssHex, borderWidth: '2px' }
   if (drop === 'bottom' && hasVisibleAutomationLanes(track.id)) style.borderBottomWidth = '0px'
   if (drop === 'top') style.borderTopWidth = '0px'
-  return style
-}
-
-function laneSelectionBorderStyle(
-  track: Track,
-  laneIndex: number
-): Record<string, string> | undefined {
-  if (project.selectedTrackId !== track.id) return undefined
-  const palette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
-  const laneCount = visibleAutomationLanes(track.id).length
-  const style: Record<string, string> = { borderColor: palette.cssHex, borderWidth: '2px' }
-  if (laneIndex < laneCount - 1) style.borderBottomWidth = '0px'
   return style
 }
 
@@ -117,55 +99,6 @@ function panValue(track: { pan?: number; automation?: { pan?: { timeMs: number; 
 const rowLayout = computed(() => buildTrackRowLayout(project.tracks, makeLaneHeightOf()))
 const transport = useTransportStore()
 
-/** Min / current (at playhead) / max readout labels for a track's lane. */
-function laneScale(
-  trackId: string,
-  param: AutomationParamId
-): { min: string; cur: string; max: string; curVal: number } {
-  const d = AUTOMATION_PARAMS[param]
-  const track = project.tracks.find((t) => t.id === trackId)
-  const pts = track?.automation?.[param]
-  const v = pts && pts.length >= 2
-    ? sampleBreakpoints(pts, transport.positionMs)
-    : track ? trackStaticAutomationValue(track, param) : d.defaultValue
-  return { min: d.format(d.min), cur: d.format(v), max: d.format(d.max), curVal: v }
-}
-
-/** Nudge the whole curve up (+1) or down (-1) by 5% of the param range,
- *  snapping to the default value when a step would otherwise skip over it. */
-function nudgeLane(trackId: string, param: AutomationParamId, dir: 1 | -1): void {
-  const d = AUTOMATION_PARAMS[param]
-  const step = (d.max - d.min) * 0.05 * dir
-  const cur = laneScale(trackId, param).curVal
-  let delta = step
-  if ((cur - d.defaultValue) * (cur + step - d.defaultValue) < 0) delta = d.defaultValue - cur
-  project.shiftTrackAutomation(trackId, param, delta)
-}
-
-/** Hint for the editable value box, naming the sign convention per param. */
-function editHint(param: AutomationParamId): string {
-  if (param === 'filter') return 'Negative = LPF, positive = HPF, 0 = off (−1…1)'
-  const d = AUTOMATION_PARAMS[param]
-  return `${d.format(d.min)} … ${d.format(d.max)}`
-}
-
-/** Double-click the readout to type the value at the current playhead. */
-const editingLane = ref<{ trackId: string; paramId: AutomationParamId } | null>(null)
-const editValue = ref('')
-function startEditValue(trackId: string, paramId: AutomationParamId): void {
-  editingLane.value = { trackId, paramId }
-  editValue.value = String(Number(laneScale(trackId, paramId).curVal.toFixed(2)))
-}
-function commitEditValue(trackId: string, param: AutomationParamId): void {
-  const num = Number(editValue.value)
-  if (editValue.value.trim() !== '' && Number.isFinite(num)) {
-    const d = AUTOMATION_PARAMS[param]
-    const clamped = Math.min(d.max, Math.max(d.min, num))
-    project.setAutomationValueAt(trackId, param, transport.positionMs, clamped)
-  }
-  editingLane.value = null
-}
-
 function hasAutomation(trackId: string): boolean {
   const map = project.tracks.find((t) => t.id === trackId)?.automation
   if (!map) return false
@@ -190,120 +123,10 @@ function isVisibleAutomationLane(trackId: string, paramId: AutomationParamId): b
   return visibleAutomationLanes(trackId).some((lane) => lane.paramId === paramId)
 }
 
-function laneOffset(trackId: string, laneIndex: number): number {
-  return automationLaneOffset(visibleAutomationLanes(trackId), laneIndex)
-}
-
-function canAddAutomationLane(trackId: string): boolean {
-  return visibleAutomationLanes(trackId).length < AUTOMATABLE_PARAM_IDS.length
-}
-
-function addAutomationLane(trackId: string): void {
-  const visible = new Set(visibleAutomationLanes(trackId).map((lane) => lane.paramId))
-  const paramId = AUTOMATABLE_PARAM_IDS.find((id) => !visible.has(id))
-  if (paramId) ui.addTrackAutomationLane(trackId, paramId)
-}
-
 /** Open a param's automation lane from a static control (Option A link). */
 function automateParam(trackId: string, pid: AutomationParamId): void {
   project.selectTrack(trackId)
   ui.toggleTrackAutomationLane(trackId, pid)
-}
-
-/** Reset the visible param's curve to its default (clears all breakpoints). */
-function resetAutomation(trackId: string, param: AutomationParamId): void {
-  project.setTrackAutomation(trackId, param, [])
-}
-
-/** Copy the visible lane's curve; paste preserves its shape in the current parameter's range. */
-function copyAutomation(trackId: string, param: AutomationParamId): void {
-  const pts = project.tracks.find((t) => t.id === trackId)?.automation?.[param]
-  if (!pts || pts.length < 2) return
-  ui.copyAutomationCurve(param, pts)
-}
-function pasteAutomation(trackId: string, param: AutomationParamId): void {
-  const clip = ui.automationClipboard
-  if (!clip) return
-  project.setTrackAutomation(
-    trackId,
-    param,
-    translateAutomationCurve(clip.points, clip.paramId, param)
-  )
-}
-
-// ─── Lane resize: track-header and per-lane edges ──────────────────────────
-let laneResize:
-  | {
-      trackId: string
-      paramId: AutomationParamId
-      startY: number
-      startClip: number
-      startLane: number
-      mode: 'track' | 'lane'
-      moved: boolean
-    }
-  | null = null
-
-function laneHeightOfTrack(trackId: string, paramId: AutomationParamId): number {
-  return visibleAutomationLanes(trackId).find((lane) => lane.paramId === paramId)?.heightPx
-    ?? AUTOMATION_LANE_HEIGHT
-}
-
-function beginLaneResize(
-  trackId: string,
-  paramId: AutomationParamId,
-  mode: 'track' | 'lane',
-  ev: PointerEvent
-): void {
-  if (ev.button !== 0) return
-  ev.preventDefault()
-  ev.stopPropagation()
-  const track = project.tracks.find((t) => t.id === trackId)
-  if (!track) return
-  laneResize = {
-    trackId,
-    paramId,
-    startY: ev.clientY,
-    startClip: trackHeightOf(track),
-    startLane: laneHeightOfTrack(trackId, paramId),
-    mode,
-    moved: false
-  }
-  window.addEventListener('pointermove', onLaneResizeMove)
-  window.addEventListener('pointerup', onLaneResizeUp)
-  window.addEventListener('pointercancel', onLaneResizeUp)
-}
-
-function onLaneResizeMove(ev: PointerEvent): void {
-  if (!laneResize) return
-  const dy = ev.clientY - laneResize.startY
-  if (!laneResize.moved && Math.abs(dy) < 1) return
-  laneResize.moved = true
-  if (laneResize.mode === 'track') {
-    const clip = Math.max(MIN_TRACK_HEIGHT, Math.min(MAX_TRACK_HEIGHT, Math.round(laneResize.startClip + dy)))
-    project.setTrackHeightLocal(laneResize.trackId, clip)
-  } else {
-    ui.setTrackAutomationLaneHeight(
-      laneResize.trackId,
-      laneResize.paramId,
-      laneResize.startLane + dy
-    )
-  }
-}
-
-function onLaneResizeUp(): void {
-  window.removeEventListener('pointermove', onLaneResizeMove)
-  window.removeEventListener('pointerup', onLaneResizeUp)
-  window.removeEventListener('pointercancel', onLaneResizeUp)
-  const drag = laneResize
-  laneResize = null
-  if (!drag || !drag.moved) return
-  if (drag.mode === 'track') {
-    const track = project.tracks.find((candidate) => candidate.id === drag.trackId)
-    if (track) project.setTrackHeight(drag.trackId, trackHeightOf(track))
-  } else {
-    ui.persistTrackAutomationLaneView(drag.trackId)
-  }
 }
 
 // ─── Resize-handle drag ───────────────────────────────────────────────────
@@ -718,226 +541,18 @@ function isTrackFxShowing(trackId: string): boolean {
           </div>
         </div>
 
-        <!-- Full-width lane header: param picker, min/mid/max scale, live value. -->
-        <template
+        <TrackAutomationLaneHeaders
           v-for="(track, i) in project.tracks"
           :key="'lanes-' + track.id"
-        >
-          <div
-            v-for="(lane, laneIndex) in visibleAutomationLanes(track.id)"
-            :key="'lane-' + track.id + '-' + lane.paramId"
-            class="pointer-events-auto absolute left-0 flex flex-col border border-t-0 border-zinc-700 bg-zinc-900/40 px-2 py-1.5"
-            :class="{
-              'rounded-b': laneIndex === visibleAutomationLanes(track.id).length - 1,
-              'bg-zinc-800/40': project.selectedTrackId === track.id
-            }"
-            :style="[{
-              top: ((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.clipHeight ?? 0) + laneOffset(track.id, laneIndex) - RULER_HEIGHT) + 'px',
-              height: lane.heightPx + 'px',
-              width: headerWidth + 'px'
-            }, laneSelectionBorderStyle(track, laneIndex)]"
-            @click="onHeaderClick(track, $event)"
-          >
-            <div class="mb-1.5 flex items-center gap-1">
-              <select
-                class="h-5 min-w-0 flex-1 rounded border border-sky-700 bg-zinc-900 px-1 text-[10px] text-sky-200 outline-none focus:border-sky-400"
-                title="Automation parameter"
-                :value="lane.paramId"
-                @change="ui.setTrackAutomationLaneParam(track.id, lane.paramId, ($event.target as HTMLSelectElement).value as AutomationParamId); ($event.target as HTMLSelectElement).blur()"
-              >
-                <option
-                  v-for="pid in AUTOMATABLE_PARAM_IDS"
-                  :key="pid"
-                  :value="pid"
-                  :disabled="pid !== lane.paramId && isVisibleAutomationLane(track.id, pid)"
-                >
-                  {{ paramAutomated(track.id, pid) ? '● ' : '' }}{{ AUTOMATION_PARAMS[pid].label }}
-                </option>
-              </select>
-              <button
-                type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white"
-                title="Raise the whole curve"
-                aria-label="Raise automation"
-                @click="nudgeLane(track.id, lane.paramId, 1)"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="h-3 w-3"
-                >
-                  <path d="M6 15l6-6 6 6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white"
-                title="Lower the whole curve"
-                aria-label="Lower automation"
-                @click="nudgeLane(track.id, lane.paramId, -1)"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="h-3 w-3"
-                >
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white"
-                title="Copy this automation curve"
-                aria-label="Copy automation"
-                @click="copyAutomation(track.id, lane.paramId)"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="h-3 w-3"
-                >
-                  <rect
-                    x="9"
-                    y="9"
-                    width="11"
-                    height="11"
-                    rx="1"
-                  />
-                  <path d="M5 15V5a1 1 0 011-1h10" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                title="Paste automation curve"
-                aria-label="Paste automation"
-                :disabled="!ui.automationClipboard"
-                @click="pasteAutomation(track.id, lane.paramId)"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="h-3 w-3"
-                >
-                  <rect
-                    x="8"
-                    y="2"
-                    width="8"
-                    height="4"
-                    rx="1"
-                  />
-                  <path d="M16 4h2a1 1 0 011 1v15a1 1 0 01-1 1H6a1 1 0 01-1-1V5a1 1 0 011-1h2" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-red-500 hover:bg-red-600 hover:text-white"
-                title="Reset this automation to default"
-                aria-label="Reset automation"
-                @click="resetAutomation(track.id, lane.paramId)"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="h-3 w-3"
-                >
-                  <path d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8" />
-                  <path d="M3 3v5h5" />
-                </svg>
-              </button>
-            </div>
-            <div class="flex items-start justify-between text-[9px] leading-none text-zinc-400">
-              <div class="flex flex-col gap-1">
-                <span>{{ laneScale(track.id, lane.paramId).max }}</span>
-                <input
-                  v-if="editingLane?.trackId === track.id && editingLane.paramId === lane.paramId"
-                  v-model="editValue"
-                  type="text"
-                  inputmode="decimal"
-                  autofocus
-                  :title="editHint(lane.paramId)"
-                  :placeholder="editHint(lane.paramId)"
-                  class="relative top-px w-16 rounded border border-sky-500 bg-zinc-950 px-1 text-[10px] text-sky-200 outline-none"
-                  @keydown.enter.prevent="commitEditValue(track.id, lane.paramId)"
-                  @keydown.esc.prevent="editingLane = null"
-                  @blur="commitEditValue(track.id, lane.paramId)"
-                >
-                <span
-                  v-else
-                  class="relative top-px cursor-text text-sky-300"
-                  :title="'Double-click to set the value at the playhead. ' + editHint(lane.paramId)"
-                  @dblclick="startEditValue(track.id, lane.paramId)"
-                >{{ laneScale(track.id, lane.paramId).cur }}</span>
-                <span class="relative top-0.5">{{ laneScale(track.id, lane.paramId).min }}</span>
-              </div>
-              <div class="relative top-0.5 flex self-end gap-1">
-                <button
-                  type="button"
-                  class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-[14px] leading-none text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  title="Add automation lane"
-                  aria-label="Add automation lane"
-                  :disabled="!canAddAutomationLane(track.id)"
-                  @click="addAutomationLane(track.id)"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-[14px] leading-none text-zinc-400 transition-colors hover:border-red-500 hover:bg-red-600 hover:text-white"
-                  title="Remove this automation lane"
-                  aria-label="Remove automation lane"
-                  @click="ui.removeTrackAutomationLane(track.id, lane.paramId)"
-                >
-                  x
-                </button>
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <!-- Bottom edge of the track header resizes only the clip area. -->
-        <div
-          v-for="(track, i) in project.tracks"
-          v-show="hasVisibleAutomationLanes(track.id)"
-          :key="'lh-' + track.id"
-          class="track-resize-handle track-header-resize-handle pointer-events-auto absolute left-0"
-          :style="{
-            top: ((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.clipHeight ?? 0) - RULER_HEIGHT - Math.floor(HANDLE_PX / 2)) + 'px',
-            height: HANDLE_PX + 'px',
-            width: headerWidth + 'px'
-          }"
-          title="Drag to resize track header"
-          @pointerdown="beginLaneResize(track.id, visibleAutomationLanes(track.id)[0]!.paramId, 'track', $event)"
+          :track="track"
+          :row="rowLayout[i]"
+          :header-width="headerWidth"
         />
 
-        <!-- Bottom edge resizes the final lane when automation is open. -->
+        <!-- Bottom edge resizes the clip area when automation is closed. -->
         <div
           v-for="(track, i) in project.tracks"
+          v-show="!hasVisibleAutomationLanes(track.id)"
           :key="'rh-' + track.id"
           class="track-resize-handle pointer-events-auto absolute left-0"
           :style="{
@@ -945,30 +560,9 @@ function isTrackFxShowing(trackId: string): boolean {
             height: HANDLE_PX + 'px',
             width: headerWidth + 'px'
           }"
-          :title="'Drag to resize track \u2014 ' + Math.round(rowLayout[i]?.height ?? 0) + 'px'"
-          @pointerdown="hasVisibleAutomationLanes(track.id) ? beginLaneResize(track.id, visibleAutomationLanes(track.id).at(-1)!.paramId, 'lane', $event) : onHandlePointerDown(track, $event)"
+          :title="'Drag to resize track — ' + Math.round(rowLayout[i]?.height ?? 0) + 'px'"
+          @pointerdown="onHandlePointerDown(track, $event)"
         />
-
-        <!-- Lane edges resize their own lane without changing any stored curve. -->
-        <template
-          v-for="(track, i) in project.tracks"
-          :key="'lane-resize-' + track.id"
-        >
-          <div
-            v-for="(lane, laneIndex) in visibleAutomationLanes(track.id)"
-
-            :key="'lane-resize-' + track.id + '-' + lane.paramId"
-            class="track-resize-handle pointer-events-auto absolute left-0"
-            :style="{
-              top: ((rowLayout[i]?.top ?? 0) + (rowLayout[i]?.clipHeight ?? 0) + laneOffset(track.id, laneIndex) + lane.heightPx - RULER_HEIGHT - Math.floor(HANDLE_PX / 2)) + 'px',
-              height: HANDLE_PX + 'px',
-              width: headerWidth + 'px'
-            }"
-            title="Drag to resize this automation header"
-            @pointerdown="beginLaneResize(track.id, lane.paramId, 'lane', $event)"
-          />
-        </template>
-
         <!-- Drop indicator for the current reorder slot. -->
         <div
           v-if="dropIndicatorIndex !== null"

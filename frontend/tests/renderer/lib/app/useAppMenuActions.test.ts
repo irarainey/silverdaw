@@ -80,7 +80,9 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     ui: {
       requestTimelineZoom: vi.fn(),
       requestTimelineZoomTo: vi.fn(),
-      toggleLibraryPanelCollapsed: vi.fn()
+      toggleLibraryPanelCollapsed: vi.fn(),
+      clampTimelineSelectionToDuration: vi.fn(() => false),
+      persistTimelineSelectionView: vi.fn()
     },
     library: { byId: {} as Record<string, unknown> },
     notifications: { pushError: vi.fn(), pushInfo: vi.fn() },

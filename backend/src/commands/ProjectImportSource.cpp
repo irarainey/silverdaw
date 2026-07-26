@@ -111,10 +111,14 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
             source.scratchPatterns.emplace(parsed->id, data);
     }
 
+    const auto scratchesRoot = sourceProjectFile.getParentDirectory().getChildFile("scratches");
     for (auto it = source.library.begin(); it != source.library.end();)
     {
         const auto patternId = it->second.data.getProperty("scratchPatternId", {}).toString();
-        if (patternId.isNotEmpty() && source.scratchPatterns.find(patternId) == source.scratchPatterns.end())
+        const auto sourceSnapshot = scratchesRoot.getChildFile(patternId).getChildFile("source.wav");
+        if (patternId.isNotEmpty()
+            && (source.scratchPatterns.find(patternId) == source.scratchPatterns.end()
+                || !sourceSnapshot.existsAsFile()))
             it = source.library.erase(it);
         else
             ++it;

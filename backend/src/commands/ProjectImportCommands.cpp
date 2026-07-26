@@ -281,6 +281,7 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
     }
 
     const auto sourceFile = juce::File(sourcePath);
+    const auto sourceScratches = sourceFile.getParentDirectory().getChildFile("scratches");
     const auto& importableLibrary = source->library;
     const auto& importablePatterns = source->scratchPatterns;
     for (const auto& id : *libraryIds)
@@ -304,6 +305,13 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
                              makeResultPayload(false, sourcePath, "A selected scratch source is unavailable"));
             return;
         }
+        if (!sourceScratches.getChildFile(patternId).getChildFile("source.wav").existsAsFile())
+        {
+            bridge.broadcast(
+                "PROJECT_IMPORT_COMPLETED",
+                makeResultPayload(false, sourcePath, "A selected scratch source snapshot is unavailable"));
+            return;
+        }
         scratchIds.insert(patternId);
     }
 
@@ -312,9 +320,12 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
     std::vector<StagedLibraryItem> stagedLibrary;
     std::vector<StagedScratchPattern> stagedPatterns;
     std::vector<juce::File> movedDirectories;
+    bool projectStateMutated = false;
 
     auto fail = [&](const juce::String& message)
     {
+        if (projectStateMutated && !projectState.getUndoManager().undo())
+            log::warn("project-import", "Could not roll back a failed project asset import");
         stagingRoot.deleteRecursively();
         for (const auto& directory : movedDirectories)
             directory.deleteRecursively();
@@ -340,7 +351,6 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
                                                 .getChildFile(sourceItem.file.getFileName())});
     }
 
-    const auto sourceScratches = sourceFile.getParentDirectory().getChildFile("scratches");
     const auto destinationScratches = projectArtifactsBaseDir(session.currentPath, "scratches");
     for (const auto& id : scratchIds)
     {
@@ -402,6 +412,7 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
             fail("Could not add an imported library item");
             return;
         }
+        projectStateMutated = true;
         const auto sourcePatternId = item.source.data.getProperty("scratchPatternId", {}).toString();
         const auto pattern = importedPatternIds.find(sourcePatternId);
         const auto patternDirectory = importedPatternDirectories.find(sourcePatternId);

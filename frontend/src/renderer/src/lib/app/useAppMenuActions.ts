@@ -279,6 +279,9 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       const before = project.durationMs
       project.setProjectLengthMs(maxEndMs)
       const after = project.durationMs
+      if (ui.clampTimelineSelectionToDuration(after)) {
+        ui.persistTimelineSelectionView()
+      }
       if (after !== before) {
         sendBridge('PROJECT_SET_LENGTH', { lengthMs: after })
       }
