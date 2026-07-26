@@ -6,8 +6,9 @@
 
 `frontend/src/shared/bridge-protocol.ts` is the canonical wire-protocol
 contract — a stable **facade** that re-exports the real schema modules
-`shared/bridge/inbound.ts` and `shared/bridge/outbound.ts` (edit those, not the
-facade). Inbound (backend → renderer) payloads are defined as **zod** schemas;
+`shared/bridge/inbound.ts`, `shared/bridge/outbound.ts`, and the Scratch-domain
+schemas in `shared/bridge/scratch.ts` (edit those, not the facade). Inbound
+(backend → renderer) payloads are defined as **zod** schemas;
 their TypeScript types are derived via `z.infer<>`, and each `isXxxPayload` guard
 is a one-line `safeParse(value).success` wrapper. Outbound (renderer → backend)
 payloads are plain TS interfaces in the same file (compile-checked at every

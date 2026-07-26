@@ -1422,7 +1422,8 @@ state; user preferences such as panel sizes remain in `preferences.json`.
     schema-version guards. Edits don't enter the undo history (only
     mark dirty) so re-exports don't pollute it.
   - **Transport / view state** — playhead position, horizontal zoom and
-    horizontal scroll. View-state-only saves do not mark the project dirty.
+    horizontal scroll, plus optional timeline-range boundaries and Loop
+    Selection state. View-state-only saves do not mark the project dirty.
   - **Library catalogue** — every library item with id, kind
     (`source` / `stem` / `sample` / `clip`), name, source path, detected BPM/key,
     beat positions, beat anchor, variable-tempo flag, decoded playback
@@ -1435,8 +1436,8 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   - **Timeline markers** — marker id and absolute project position.
 - **What is NOT saved:** undo history (always empty on load),
   `PROJECT_STATE` reconnect tokens, audio engine caches (peaks cache lives
-  in `%APPDATA%`), cover art, in-flight import progress, selection state,
-  library search / sort state.
+  in `%APPDATA%`), cover art, in-flight import progress, clip-group selection
+  state, library search / sort state.
 - **File validity on load:** the backend walks every referenced file and
   `stat()`s it. Missing files mark their clips and library items as
   "unresolved" (rendered greyed-out, audio silent for that clip) and the
@@ -1678,11 +1679,11 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-### 1.4.0 - Timeline Precision & Range Auditioning *(planned)*
+### 1.4.0 - Timeline Precision & Range Auditioning *(implemented; unreleased)*
 
 **Goal:** make arrangement edits more deliberate and let a user quickly
 audition one part of a mix, without turning the timeline into a dense advanced
-editor. The release is deliberately limited to the following four features.
+editor. The implemented work and remaining planned snap-grid work are:
 
 1. **Selectable timeline snap grid.** A compact timeline **Snap** control
    offers **Bar**, **Beat**, **Half beat**, **Quarter beat**, and **Free**.
@@ -1703,7 +1704,7 @@ editor. The release is deliberately limited to the following four features.
    parameter lanes are disallowed, and no new DSP or mixdown behaviour is
    introduced because the engine already evaluates multiple parameter curves per
    track.
-3. **Timeline range selection, playback, and looping.** Dragging across the
+3. [x] **Timeline range selection, playback, and looping.** Dragging across the
    timeline ruler away from the playhead creates one project-wide time range;
    dragging the playhead keeps its normal repositioning behavior. The region is
    visibly shaded across all tracks with ruler boundary lines; its boundaries
@@ -1713,7 +1714,7 @@ editor. The release is deliberately limited to the following four features.
    shared FX tails. `Escape` clears the range and loop state. There is one range
    only; it is distinct from clip selection and is saved as non-undoable project
    view state.
-4. **Import assets from another project.** **Import from Project…** lists
+4. [x] **Import assets from another project.** **Import from Project…** lists
    saved projects in the configured project folder, then inspects the selected
    `.silverdaw` project read-only. It lists only its **Stems** and **Samples**.
    A selected scratch sample imports its linked Scratch pattern. The source
@@ -1724,7 +1725,9 @@ editor. The release is deliberately limited to the following four features.
 the transport seeks back to the range start without clearing shared-effect
 state. This preserves a natural audition rather than cutting tails on every
 repeat. A cleared range disables the range commands; it does not fall back to
-looping the whole project.
+looping the whole project. Range boundaries are clamped to project length;
+shortening the project truncates a crossing range or clears a range whose start
+is no longer within the project.
 
 **Project asset import boundaries:** Import copies media rather than linking to
 the source project. Every selected stem or sample is copied into the destination
@@ -1734,7 +1737,7 @@ source-clip, and scratch-origin references are removed. Relevant project
 metadata and cover art are copied with their media IDs. Each selected Scratch
 pattern is validated against the current protocol, receives a fresh pattern ID,
 and has foreign provenance removed. A selected scratch sample also copies its
-source-audio snapshot and links it to the imported pattern, so the Scratch
+required source-audio snapshot and links it to the imported pattern, so the Scratch
 Editor draws and auditions the original source rather than the rendered sample.
 This makes imported assets independent of the source project and prevents either
 project from changing the other.
@@ -1742,10 +1745,12 @@ project from changing the other.
 The importer accepts only a project file the current backend can read and only
 media files confined to that project's managed `stems`, `samples`, or scratch
 artifact trees. Missing, unreadable, or out-of-tree media is unavailable and
-cannot be selected. It stages copies in the destination and records the added
-library items and patterns in one undo transaction. Undo and redo remove and
-restore the imported project state while retaining the copied managed artifacts
-for redo. The source project is never opened for write or modified.
+cannot be selected; a scratch sample also requires its
+`scratches/<pattern-id>/source.wav` snapshot. It stages copies in the
+destination and records the added library items and patterns in one undo
+transaction. Undo and redo remove and restore the imported project state while
+retaining the copied managed artifacts for redo. The source project is never
+opened for write or modified.
 
 **Implementation order and release gates:**
 

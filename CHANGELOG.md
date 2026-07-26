@@ -8,12 +8,15 @@
 - Dragging the timeline ruler now creates a playable and loopable range selection that persists with projects.
 - Project stems, samples, and scratch samples can now be imported into another project.
 
+### Changed
+
+- Waveform rulers now keep minute-and-second labels at every zoom level.
+
+
 ### Fixed
 
-- Automation lane layouts now persist with their projects.
 - Copying automation between effects now preserves the curve shape.
-- Imported scratches now show their original source waveform in the Scratch Editor.
-- Waveform rulers now keep minute-and-second labels at every zoom level.
+- Automation lane layouts now persist with their projects.
 
 ## 1.3.0
 

@@ -398,7 +398,9 @@ Silverdaw currently supports the core arrangement workflow:
   non-undoable project view state.
 - **Edit ▸ Trim Project to Last Clip** collapses the project length to the end of
   the latest clip on any track. Manual project-length edits are also clamped so
-  the ruler cannot be shortened below the longest clip's effective end.
+  the ruler cannot be shortened below the longest clip's effective end. Reducing
+  project length truncates a crossing timeline range, or clears a range whose
+  start falls outside the new duration (also disabling Loop Selection).
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
   with the same source window. **Linked saved clips**: clips dropped from a saved clip

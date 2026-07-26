@@ -318,6 +318,21 @@ visually distinct in the library — a dedicated vinyl-record icon and a
 library-item kind was introduced, so older builds that predate this feature
 still open the item as a plain sample.
 
+### Cross-project import
+
+Importing a scratch-origin sample into another project copies the selected
+sample, its linked notation, and its required
+`scratches/<pattern-id>/source.wav` snapshot. The imported notation receives a
+fresh pattern ID and has source-project provenance removed, making the
+destination independent of the source project. The importer rejects a project
+as its own source and excludes scratch samples whose required snapshot is
+missing.
+
+All managed artifacts are staged in the destination before project state is
+mutated. If a later import step fails, the current undo transaction is rolled
+back so no library item or Scratch pattern refers to an incomplete import. The
+source project is inspected read-only and is never modified.
+
 ### Project lifecycle
 
 A new project, a successful project load, and a successful crash-recovery
