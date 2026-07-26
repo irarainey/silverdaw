@@ -183,7 +183,8 @@ class OffsetSource : public juce::PositionableAudioSource
   private:
     void applyClipGain(juce::AudioBuffer<float>& buffer,
                        int startSample, int count,
-                       juce::int64 audibleStart, juce::int64 clipStart) noexcept;
+                       juce::int64 audibleStart, juce::int64 clipStart,
+                       juce::int64 clipEnd) noexcept;
 
     juce::PositionableAudioSource* child = nullptr;
     std::atomic<juce::int64> position{0};
@@ -234,6 +235,7 @@ class OffsetSource : public juce::PositionableAudioSource
     // warp, brake, and backspin render in bounded chunks through these buffers.
     static constexpr int kMaxWarpChannels = 8;
     static constexpr int kRenderScratchSamples = 1024;
+    static constexpr int kDefaultEdgeFadeSamples = 32;
 
     juce::AudioBuffer<float> warpScratch;
     // Holds the mirrored forward read before it is reversed into the caller's planes.

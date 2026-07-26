@@ -228,9 +228,10 @@ live gesture, is the source of truth thereafter.
 The notation panel is a direct, editable view of the same lanes (platter
 motion segments, holds, and a crossfader automation lane). Its 100% scale is
 180 pixels per second, so long takes expand horizontally rather than
-compressing their points; time markers, zoom, and a horizontal scrollbar
-support navigation. Replay follows the playhead with a smooth, forward-only
-viewport scroll anchored at 50% of the visible width.
+compressing their points; minute-and-second time markers, retaining fractional
+seconds at close zoom, plus zoom and a horizontal scrollbar support navigation.
+Replay follows the playhead with a smooth, forward-only viewport scroll anchored
+at 50% of the visible width.
 
 Clicking a point selects it. Double-clicking a lane adds a point, and
 right-clicking an editable point removes it. `D` deselects;
@@ -316,6 +317,21 @@ visually distinct in the library — a dedicated vinyl-record icon and a
 "Scratch" type badge — rather than reusing the generic sample tile. No new
 library-item kind was introduced, so older builds that predate this feature
 still open the item as a plain sample.
+
+### Cross-project import
+
+Importing a scratch-origin sample into another project copies the selected
+sample, its linked notation, and its required
+`scratches/<pattern-id>/source.wav` snapshot. The imported notation receives a
+fresh pattern ID and has source-project provenance removed, making the
+destination independent of the source project. The importer rejects a project
+as its own source and excludes scratch samples whose required snapshot is
+missing.
+
+All managed artifacts are staged in the destination before project state is
+mutated. If a later import step fails, the current undo transaction is rolled
+back so no library item or Scratch pattern refers to an incomplete import. The
+source project is inspected read-only and is never modified.
 
 ### Project lifecycle
 

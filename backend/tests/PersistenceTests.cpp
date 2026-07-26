@@ -16,9 +16,11 @@
 #include "WaveformCommands.h"
 #include "DecodedCache.h"
 #include "ProjectFile.h"
+#include "ProjectImportSource.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
+#include "ScratchTestFixtures.h"
 #include "ToneEq.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
@@ -75,6 +77,8 @@ void testProjectFileSaveLoadAndViewState()
     state.setPlayheadMs(34.0);
     state.setViewSelectedTrack("t1");
     state.setViewFxPanelOpen(true);
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{1000.0, 2500.0, true});
     // Rename a clip and confirm the user-facing name survives the
     // ValueTree JSON round-trip — this is the persistence the timeline
     // inline-rename relies on.
@@ -92,6 +96,59 @@ void testProjectFileSaveLoadAndViewState()
             "saved project should include current schema");
     require(savedRoot.getProperty("savedAt", {}).isString(), "saved project should include savedAt");
 
+    juce::ValueTree sourceTree;
+    const auto sourceLoadResult = silverdaw::ProjectFile::loadTree(file, sourceTree);
+    require(sourceLoadResult.ok, "ProjectFile::loadTree should succeed");
+    require(sourceTree.getType().toString() == "PROJECT",
+            "ProjectFile::loadTree should return a PROJECT tree");
+
+    const auto sourceDir = dir.getChildFile("source");
+    const auto sourceFile = sourceDir.getChildFile("source.silverdaw");
+    const auto stemFile = sourceDir.getChildFile("stems").getChildFile("stem-1").getChildFile("audio.wav");
+    require(stemFile.getParentDirectory().createDirectory(), "source stem directory should be created");
+    require(stemFile.replaceWithText("test"), "source stem file should be created");
+    silverdaw::ProjectState sourceProject;
+    require(sourceProject.addLibraryItem("stem-1", stemFile.getFullPathName(), "audio.wav", 1000.0,
+                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem"),
+            "source stem should be added");
+    const auto scratchFile = sourceDir.getChildFile("scratches").getChildFile("sp-1")
+                                       .getChildFile("source.wav");
+    require(scratchFile.getParentDirectory().createDirectory(), "source scratch directory should be created");
+    require(scratchFile.replaceWithText("test"), "source scratch file should be created");
+    require(sourceProject.addLibraryItem("scratch-1", scratchFile.getFullPathName(), "source.wav", 1000.0,
+                                         44100, 2, scratchFile.getFullPathName(), {}, "sample", "Scratch Sample"),
+            "source scratch sample should be added");
+    const auto missingSnapshotFile = sourceDir.getChildFile("scratches").getChildFile("sp-missing")
+                                              .getChildFile("rendered.wav");
+    require(missingSnapshotFile.getParentDirectory().createDirectory(),
+            "missing-snapshot scratch directory should be created");
+    require(missingSnapshotFile.replaceWithText("test"),
+            "missing-snapshot scratch render should be created");
+    require(sourceProject.addLibraryItem("scratch-missing", missingSnapshotFile.getFullPathName(),
+                                         "rendered.wav", 1000.0, 44100, 2,
+                                         missingSnapshotFile.getFullPathName(), {}, "sample",
+                                         "Incomplete Scratch Sample"),
+            "incomplete scratch sample should be added");
+    auto sourceLibrary = sourceProject.getTree().getChildWithName("LIBRARY");
+    sourceLibrary.getChild(1).setProperty("scratchPatternId", "sp-1", nullptr);
+    sourceLibrary.getChild(2).setProperty("scratchPatternId", "sp-missing", nullptr);
+    require(sourceProject.addScratchPattern(makeValidPatternVar("sp-1", "Scratch Sample")),
+            "source scratch pattern should be added");
+    require(sourceProject.addScratchPattern(makeValidPatternVar("sp-missing", "Incomplete Scratch Sample")),
+            "incomplete scratch pattern should be added");
+    require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
+            "source project should be saved");
+    juce::String sourceError;
+    const auto importSource = silverdaw::loadSourceProjectImport(sourceFile, sourceError);
+    require(importSource.has_value(), "source import records should load");
+    require(importSource->library.count("stem-1") == 1, "source import should expose managed stems");
+    require(importSource->library.count("scratch-1") == 1,
+            "source import should expose scratch samples with a linked pattern");
+    require(importSource->library.count("scratch-missing") == 0,
+            "source import should reject scratch samples without a source snapshot");
+    require(importSource->scratchPatterns.count("sp-1") == 1,
+            "source import should retain the linked scratch pattern");
+
     silverdaw::ProjectState loaded;
     const auto loadResult = silverdaw::ProjectFile::load(file, loaded);
     require(loadResult.ok, "ProjectFile::load should succeed");
@@ -102,8 +159,15 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(loaded.getClipName("c1"), "Verse chop", "clip name should persist through save/load");
     requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
     require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
+    const auto loadedSelection = loaded.getViewTimelineSelection();
+    require(loadedSelection.has_value(), "timeline selection should persist through save/load");
+    requireNear(loadedSelection->startMs, 1000.0, 0.0001, "saved selection start should round-trip");
+    requireNear(loadedSelection->endMs, 2500.0, 0.0001, "saved selection end should round-trip");
+    require(loadedSelection->loop, "saved selection loop state should round-trip");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, -10.0, 240.0, 99.0, "t1", true, true, true);
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(
+        file, -10.0, 240.0, 99.0, "t1", true, true, true,
+        silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false});
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
@@ -112,6 +176,13 @@ void testProjectFileSaveLoadAndViewState()
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
     requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
     require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");
+    const auto updatedSelection = reloaded.getViewTimelineSelection();
+    require(updatedSelection.has_value(), "saveViewState should persist a timeline selection");
+    requireNear(updatedSelection->startMs, 3000.0, 0.0001,
+                "saveViewState should update selection start");
+    requireNear(updatedSelection->endMs, 4500.0, 0.0001,
+                "saveViewState should update selection end");
+    require(! updatedSelection->loop, "saveViewState should update selection loop state");
     require(reloaded.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (on)");
     require(reloaded.getClipEditorMetronomeEnabled(),
             "saveViewState should persist the clip-editor metronome toggle (on)");
@@ -124,6 +195,8 @@ void testProjectFileSaveLoadAndViewState()
     require(! reloadedOff.getMetronomeEnabled(), "saveViewState should persist the metronome toggle (off)");
     require(! reloadedOff.getClipEditorMetronomeEnabled(),
             "saveViewState should persist the clip-editor metronome toggle (off)");
+    require(! reloadedOff.getViewTimelineSelection().has_value(),
+            "saveViewState should clear an absent timeline selection");
 
     const auto missing = dir.getChildFile("missing.silverdaw");
     silverdaw::ProjectState untouched;

@@ -23,8 +23,12 @@ const MARKER_SKIP_EPSILON_MS = 1
 function previousMarkerMs(): number {
   const project = useProjectStore()
   const transport = useTransportStore()
+  const selection = useUiStore().timelineSelection
   const pos = transport.positionMs
   let target = 0
+  if (selection && selection.startMs < pos - MARKER_SKIP_EPSILON_MS) {
+    target = selection.startMs
+  }
   for (const marker of project.markers) {
     if (marker.positionMs < pos - MARKER_SKIP_EPSILON_MS && marker.positionMs > target) {
       target = marker.positionMs
@@ -36,8 +40,12 @@ function previousMarkerMs(): number {
 function nextMarkerMs(): number | null {
   const project = useProjectStore()
   const transport = useTransportStore()
+  const selection = useUiStore().timelineSelection
   const pos = transport.positionMs
   let target = Number.POSITIVE_INFINITY
+  if (selection && selection.startMs > pos + MARKER_SKIP_EPSILON_MS) {
+    target = selection.startMs
+  }
   for (const marker of project.markers) {
     if (marker.positionMs > pos + MARKER_SKIP_EPSILON_MS && marker.positionMs < target) {
       target = marker.positionMs
@@ -85,6 +93,7 @@ export function seekToMarkerIndex(index: number, source = 'marker shortcut'): vo
 export function toggleTransportPlayback(source = 'click'): void {
   const project = useProjectStore()
   const transport = useTransportStore()
+  const ui = useUiStore()
   if (!transport.isPlaying && transport.audioState !== 'ready') {
     log.info('transport', `${source} play ignored (audio output unavailable)`)
     return
@@ -111,6 +120,21 @@ export function toggleTransportPlayback(source = 'click'): void {
     return
   }
 
+  const selection = ui.timelineSelection
+  if (selection) {
+    log.info(
+      'transport',
+      `${source} ${ui.loopTimelineSelection ? 'loop selection' : 'play selection'} ` +
+      `${selection.startMs}..${selection.endMs}ms`
+    )
+    transport.setPosition(selection.startMs)
+    ui.requestTimelineScrollToPosition(selection.startMs, true)
+    sendBridge('TRANSPORT_SEEK', { positionMs: selection.startMs })
+    sendBridge('TRANSPORT_PLAY')
+    transport.setPlaybackState(true)
+    return
+  }
+
   const end = project.durationMs
   if (end > 0 && transport.positionMs >= end) {
     log.info('transport', `${source} play ignored (at end of project)`)
@@ -133,6 +157,15 @@ export function useTransportSkip(): TransportSkip {
       seekToPreviousMarker()
       return
     }
+    const selectionStartMs = ui.timelineSelection?.startMs
+    if (
+      selectionStartMs !== undefined &&
+      selectionStartMs < transport.positionMs - MARKER_SKIP_EPSILON_MS
+    ) {
+      log.info('transport', `click skip-back -> selection start ${selectionStartMs}ms`)
+      seekToSkipTarget(selectionStartMs)
+      return
+    }
     // Default: rewind to the start of the timeline and scroll the view there.
     log.info('transport', 'click skip-back')
     project.viewScrollX = 0
@@ -151,6 +184,15 @@ export function useTransportSkip(): TransportSkip {
     // we send the seek and let the backend's PLAYHEAD_UPDATE confirm.
     if (ui.skipButtonTarget === 'markers') {
       seekToNextMarker()
+      return
+    }
+    const selectionStartMs = ui.timelineSelection?.startMs
+    if (
+      selectionStartMs !== undefined &&
+      selectionStartMs > transport.positionMs + MARKER_SKIP_EPSILON_MS
+    ) {
+      log.info('transport', `click skip-forward -> selection start ${selectionStartMs}ms`)
+      seekToSkipTarget(selectionStartMs)
       return
     }
     const end = project.durationMs

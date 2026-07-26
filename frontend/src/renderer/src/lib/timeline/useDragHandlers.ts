@@ -13,7 +13,8 @@ import { log } from '@/lib/log'
 import { clipFirstBeatOffsetMs, effectiveClipDurationMs } from '@/lib/clip/clipTiming'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
-import { laneRegion, laneYToValue } from './automationLaneRenderer'
+import { laneYToValue } from './automationLaneRenderer'
+import { findAutomationLane, findAutomationLaneAt } from '@/lib/automation/automationLanes'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { flatCurve, insertBreakpoint, moveBreakpoint, removeBreakpoint } from '@/lib/automation/breakpoints'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT } from './constants'
@@ -59,6 +60,8 @@ export interface DragHandlersOptions {
   onMarkerMoved: () => void
   /** Fires after the playhead position was updated. */
   onPlayheadMoved: () => void
+  /** Claims an unmodified ruler drag to create a timeline range selection. */
+  tryBeginRangeSelection: (e: PointerEvent) => boolean
 }
 
 interface ClipDragPointer {
@@ -83,7 +86,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     getClipHitRegions,
     onClipMoved,
     onMarkerMoved,
-    onPlayheadMoved
+    onPlayheadMoved,
+    tryBeginRangeSelection
   } = opts
 
   const {
@@ -177,15 +181,20 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!host.value) return false
     const trackId = pointerToTrackId(e.clientY)
     if (!trackId) return false
-    const param = ui.automationLanes[trackId]
-    if (!param) return false
     const idx = project.tracks.findIndex((t) => t.id === trackId)
     const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
     if (!slot) return false
     const rect = host.value.getBoundingClientRect()
     const worldY = e.clientY - rect.top + scrollY.value
-    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
-    if (worldY < top || worldY > bottom) return false
+    const laneRegion = findAutomationLaneAt(
+      ui.automationLanes[trackId],
+      slot.top,
+      slot.clipHeight,
+      worldY
+    )
+    if (!laneRegion) return false
+    const { lane, top } = laneRegion
+    const param = lane.paramId
     const ms = pointerToRawMsClamped(e.clientX)
     if (ms === null) return false
 
@@ -209,7 +218,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       project.setTrackAutomation(trackId, param, points)
       return true
     }
-    const value = laneYToValue(param, worldY, top)
+    const value = laneYToValue(param, worldY, top, lane.heightPx)
     const d = AUTOMATION_PARAMS[param]
     autoTrackId = trackId
     autoParam = param
@@ -237,9 +246,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!slot) return
     const rect = host.value.getBoundingClientRect()
     const worldY = e.clientY - rect.top + scrollY.value
-    const { top } = laneRegion(slot.top, slot.clipHeight)
+    const laneRegion = findAutomationLane(
+      ui.automationLanes[autoTrackId],
+      autoParam,
+      slot.top,
+      slot.clipHeight
+    )
+    if (!laneRegion) return
     const ms = pointerToRawMsClamped(e.clientX) ?? 0
-    const value = laneYToValue(autoParam, worldY, top)
+    const value = laneYToValue(autoParam, worldY, laneRegion.top, laneRegion.lane.heightPx)
     const d = AUTOMATION_PARAMS[autoParam]
     const points = (project.tracks[idx]?.automation?.[autoParam] ?? []).map((p) => ({ ...p }))
     if (autoPointIndex < 0 || autoPointIndex >= points.length) return
@@ -270,15 +285,19 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!host.value) return false
     const trackId = pointerToTrackId(clientY)
     if (!trackId) return false
-    const param = ui.automationLanes[trackId]
-    if (!param) return false
     const idx = project.tracks.findIndex((t) => t.id === trackId)
     const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
     if (!slot) return false
     const rect = host.value.getBoundingClientRect()
     const worldY = clientY - rect.top + scrollY.value
-    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
-    if (worldY < top || worldY > bottom) return false
+    const laneRegion = findAutomationLaneAt(
+      ui.automationLanes[trackId],
+      slot.top,
+      slot.clipHeight,
+      worldY
+    )
+    if (!laneRegion) return false
+    const param = laneRegion.lane.paramId
     const ms = pointerToRawMsClamped(clientX)
     if (ms === null) return false
     const points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
@@ -378,6 +397,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const y = e.clientY - rect.top
     const bottomLimit = a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)
     if (y > bottomLimit) return
+
+    // Preserve the established playhead grab gesture wherever its grab cursor is shown.
+    if (!hitTestPlayhead(e.clientX, e.clientY) && tryBeginRangeSelection(e)) return
 
     // Automation lane editing claims the bottom strip of an expanded track row.
     if (tryBeginAutomationEdit(e)) return
@@ -923,16 +945,22 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   function updateAutomationHoverTip(clientX: number, clientY: number): void {
     if (!host.value) { ui.automationHoverTip = null; return }
     const trackId = pointerToTrackId(clientY)
-    const param = trackId ? ui.automationLanes[trackId] : undefined
-    if (!trackId || !param) { ui.automationHoverTip = null; return }
+    if (!trackId) { ui.automationHoverTip = null; return }
     const idx = project.tracks.findIndex((t) => t.id === trackId)
     const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[idx]
-    const pts = project.tracks[idx]?.automation?.[param]
-    if (!slot || !pts || pts.length < 2) { ui.automationHoverTip = null; return }
-    const { top, bottom } = laneRegion(slot.top, slot.clipHeight)
+    if (!slot) { ui.automationHoverTip = null; return }
     const rect = host.value.getBoundingClientRect()
     const worldY = clientY - rect.top + scrollY.value
-    if (worldY < top || worldY > bottom) { ui.automationHoverTip = null; return }
+    const laneRegion = findAutomationLaneAt(
+      ui.automationLanes[trackId],
+      slot.top,
+      slot.clipHeight,
+      worldY
+    )
+    if (!laneRegion) { ui.automationHoverTip = null; return }
+    const param = laneRegion.lane.paramId
+    const pts = project.tracks[idx]?.automation?.[param]
+    if (!pts || pts.length < 2) { ui.automationHoverTip = null; return }
     const ms = pointerToRawMsClamped(clientX) ?? 0
     const pps = geometry.pxPerSecond.value
     const hit = pts.find((p) => Math.abs(((p.timeMs - ms) / 1000) * pps) < 8)

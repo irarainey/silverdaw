@@ -3,8 +3,10 @@
 #include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "Log.h"
+#include "PeaksCache.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
+#include "Waveform.h"
 #include "scratch/ScratchProtocol.h"
 #include "scratch/ScratchSourcePreparation.h"
 #include "scratch/ScratchBackingPreparation.h"
@@ -30,6 +32,29 @@ void broadcastScratchPatternIfReady(AudioEngine& engine, BridgeServer& bridge,
     envelope->setProperty("sessionId", sessionId);
     envelope->setProperty("pattern", scratch::serializePattern(*pattern));
     bridge.broadcast("SCRATCH_PATTERN_RECORDED", juce::var(envelope));
+}
+
+double effectivePeaksPerSecond(const waveform::PeaksResult& result)
+{
+    if (result.sampleRate <= 0.0 || result.peaksPerSecond <= 0)
+        return static_cast<double>(result.peaksPerSecond);
+    const int samplesPerPeak =
+        juce::jmax(1, static_cast<int>(result.sampleRate / result.peaksPerSecond));
+    return result.sampleRate / static_cast<double>(samplesPerPeak);
+}
+
+void broadcastScratchSourcePeaksReady(const juce::String& sessionId,
+                                      const juce::File& cacheFile,
+                                      const waveform::PeaksResult& peaks,
+                                      BridgeServer& bridge)
+{
+    auto* payload = new juce::DynamicObject();
+    payload->setProperty("sessionId", sessionId);
+    payload->setProperty("cachePath", cacheFile.getFullPathName());
+    payload->setProperty("peakCount", peaks.bucketsPerLane());
+    payload->setProperty("peaksPerSecond", effectivePeaksPerSecond(peaks));
+    payload->setProperty("sampleRate", peaks.sampleRate);
+    bridge.broadcast("SCRATCH_SOURCE_PEAKS_READY", juce::var(payload));
 }
 } // namespace
 
@@ -97,6 +122,7 @@ void handleScratchSessionOpen(const juce::var& payload,
                               ProjectState& projectState,
                               BridgeServer& bridge,
                               juce::ThreadPool& workerPool,
+                              const PeaksCache& cache,
                               const juce::String& projectPath)
 {
     const auto request = scratch::parseSessionOpenPayload(payload);
@@ -132,6 +158,7 @@ void handleScratchSessionOpen(const juce::var& payload,
     // (the exact window the scratch was performed over) rather than the baked WAV,
     // which would otherwise be scratched a second time. The snapshot is already the
     // post-warp/reverse prepared audio, so it is fed back verbatim (identity window).
+    bool usesScratchSourceSnapshot = false;
     if (fromLibrary)
     {
         const auto scratchSource =
@@ -146,13 +173,14 @@ void handleScratchSessionOpen(const juce::var& payload,
             settings.tempoRatio = 1.0;
             settings.semitones = 0.0;
             settings.cents = 0.0;
+            usesScratchSourceSnapshot = true;
         }
     }
     const auto cacheDirectory = projectArtifactsBaseDir(projectPath, "scratch-cache");
     broadcastScratchSessionState(engine, bridge);
 
     workerPool.addJob(
-        [sessionId, settings, cacheDirectory, &engine, &bridge]
+        [sessionId, settings, cacheDirectory, usesScratchSourceSnapshot, &engine, &bridge, &cache]
         {
             scratch::PreparedSource prepared;
             juce::String error;
@@ -183,13 +211,37 @@ void handleScratchSessionOpen(const juce::var& payload,
                     ? engine.completeScratchSession(
                         sessionId, prepared.audio, prepared.sampleRate)
                     : engine.failScratchSession(sessionId, error);
+            waveform::PeaksResult peaks;
+            if (applied && usesScratchSourceSnapshot)
+            {
+                peaks = cache.tryLoad(prepared.cacheFile, waveform::kDefaultPeaksPerSecond);
+                if (peaks.peaks.empty())
+                {
+                    peaks = waveform::computePeaks(
+                        prepared.cacheFile, engine.getFormatManager(), waveform::kDefaultPeaksPerSecond);
+                    if (!peaks.peaks.empty())
+                        cache.store(prepared.cacheFile, peaks);
+                }
+            }
             juce::MessageManager::callAsync(
-                [applied, &engine, &bridge]
+                [applied, sessionId, peaks = std::move(peaks), preparedCache = prepared.cacheFile,
+                 &engine, &bridge, &cache]
                 {
                     if (!applied)
+                    {
                         silverdaw::log::debug(
                             "scratch", "ignored stale scratch preparation completion");
+                        return;
+                    }
                     broadcastScratchSessionState(engine, bridge);
+                    const auto current = engine.getScratchSessionSnapshot();
+                    if (peaks.peaks.empty() || !current || current->sessionId != sessionId)
+                        return;
+                    broadcastScratchSourcePeaksReady(
+                        sessionId,
+                        cache.getCacheFilePath(preparedCache, waveform::kDefaultPeaksPerSecond),
+                        peaks,
+                        bridge);
                 });
         });
 }

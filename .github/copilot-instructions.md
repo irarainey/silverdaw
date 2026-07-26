@@ -50,3 +50,7 @@ UI/UX styling, Markdown, and documentation. Defer to them.
 - Disable security controls, auth checks, or input validation as a shortcut, or
   use `--no-verify` / `--force` to bypass safety checks.
 - Reference or compare to any other DAW product in any document.
+- Commit code, create, modify, delete, or push tags, or build, publish, or
+  otherwise release distribution assets unless the user explicitly requests that
+  exact action in the current conversation. Do not infer permission from a
+  version bump, validation request, discussion, or a request to prepare assets.

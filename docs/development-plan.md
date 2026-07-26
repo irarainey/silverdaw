@@ -122,6 +122,7 @@ type-checked list of every currently-defined envelope.
 { "type": "CLIP_REBIND", "payload": { "clipId": "c1", "libraryItemId": "l2" } }
 { "type": "LIBRARY_ITEM_RELINK", "payload": { "itemId": "l1", "filePath": "..." } }
 { "type": "TRACK_SET_HEIGHT", "payload": { "trackId": "t1", "heightPx": 180 } }
+{ "type": "TRACK_SET_AUTOMATION_LANE_VIEW", "payload": { "trackId": "t1", "lanes": [{ "paramId": "filter", "heightPx": 80 }] } }
 { "type": "TRACK_REORDER", "payload": { "trackId": "t1", "newIndex": 2 } }
 { "type": "LIBRARY_ADD", "payload": { "itemId": "l1", "filePath": "...", "key": "Bb minor" } }
 { "type": "LIBRARY_REANALYSE", "payload": { "itemId": "l1", "filePath": "..." } }
@@ -132,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.3.0" } }
+{ "type": "READY", "payload": { "version": "1.4.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1322,23 +1323,28 @@ separate feature — see **§7.11.1**, distinct from this clip-relative Volume S
 
 ### 7.11.1 Track Effect Automation
 
-Each track has a collapsible **automation lane** (toggled by the **A** button in
-the track header) anchored to the timeline below its clips. A lane edits one
-parameter at a time, chosen in the lane header: **Filter**, **Pan**, **Bass /
-Mid / Treble**, **Reverb Send**, **Delay Send**, **Compressor**, or **Gain**
-(a post-FX track level in dB, distinct from the header volume fader and the
-per-clip Volume Shape). Curves are stored in real units per parameter and shown
-by descriptor; the data model holds several automated params per track even
-though one lane is visible.
+Each track has a collapsible **automation stack** (toggled by the **A** button
+in the track header) anchored to the timeline below its clips. Opening the
+stack shows one Filter lane by default; **Add automation lane** can show any
+other distinct parameter at the same time. Every lane has its own picker and
+height, and removing a lane hides it without deleting its curve. The ordered
+visible descriptors (`{ paramId, heightPx }`) persist as `automationLaneView`
+on the track, separate from the curves; old projects without the field remain
+collapsed. A lane edits **Filter**, **Pan**, **Bass / Mid / Treble**,
+**Reverb Send**, **Delay Send**, **Compressor**, **Punch**, **Saturation**,
+**Bit Crusher**, or **Gain** (a post-FX track level in dB, distinct from the
+header volume fader and per-clip Volume Shape). Curves are stored in real units
+per parameter and shown by descriptor.
 
 Editing reuses the clip-volume breakpoint primitives: click-add, drag-move,
 right-click or Alt-click to delete, Shift snap-to-beat; a selected point
 nudges with arrow keys (Up/Down value, Left/Right time, Alt = fine, snapping to
 the default so 0 / centre is reachable). Lane header controls raise/lower the
-whole curve, set the value at the playhead, copy/paste a curve between tracks,
-and reset to default; the value scale shows min / current / max with a hover
-tooltip on points. The A button reads muted-blue when a collapsed track still
-has automation.
+whole curve, set the value at the playhead, copy/paste a curve, and reset to
+default; pasting maps values to the target parameter range to preserve the
+curve shape. The value scale shows min / current / max with a hover tooltip on
+points. The A button reads muted-blue when a collapsed track still has
+automation.
 
 **Static control relationship (resting value + overlay).** Each parameter has a
 static Track FX value (the slider in the Track FX rack, or the header Pan). With
@@ -1359,7 +1365,9 @@ per param, published lock-free with a retire queue; `BusGraph` samples them at a
 fixed 256-frame control quantum and drives the runtime targets (filter, tone,
 sends, pan, Compressor, level), snapping on a seek/loop/play discontinuity and
 restoring neutral when a lane clears. Mixdown samples the same curves for parity.
-Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` + `TRACK_AUTOMATION_APPLIED`.
+Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` +
+`TRACK_AUTOMATION_APPLIED`; `TRACK_SET_AUTOMATION_LANE_VIEW { trackId, lanes }`
+persists the open lane order and heights.
 
 ### 7.12 Sample Browser & Library
 - Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
@@ -1414,7 +1422,8 @@ state; user preferences such as panel sizes remain in `preferences.json`.
     schema-version guards. Edits don't enter the undo history (only
     mark dirty) so re-exports don't pollute it.
   - **Transport / view state** — playhead position, horizontal zoom and
-    horizontal scroll. View-state-only saves do not mark the project dirty.
+    horizontal scroll, plus optional timeline-range boundaries and Loop
+    Selection state. View-state-only saves do not mark the project dirty.
   - **Library catalogue** — every library item with id, kind
     (`source` / `stem` / `sample` / `clip`), name, source path, detected BPM/key,
     beat positions, beat anchor, variable-tempo flag, decoded playback
@@ -1427,8 +1436,8 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   - **Timeline markers** — marker id and absolute project position.
 - **What is NOT saved:** undo history (always empty on load),
   `PROJECT_STATE` reconnect tokens, audio engine caches (peaks cache lives
-  in `%APPDATA%`), cover art, in-flight import progress, selection state,
-  library search / sort state.
+  in `%APPDATA%`), cover art, in-flight import progress, clip-group selection
+  state, library search / sort state.
 - **File validity on load:** the backend walks every referenced file and
   `stat()`s it. Missing files mark their clips and library items as
   "unresolved" (rendered greyed-out, audio silent for that clip) and the
@@ -1470,8 +1479,9 @@ sits in its own branch of `AudioEngine.topMixer`, independent of the
 project transport.
 
 - Full-source waveform at the renderer's px-per-second scale for
-  source, stem, and sample items, zoomed-to-fit for library clip items. Adaptive time
-  ruler with relative-to-clip labels.
+  source, stem, and sample items, zoomed-to-fit for library clip items. Adaptive
+  time ruler with relative-to-clip minute-and-second labels, retaining fractional
+  seconds at close zoom.
 - Beat lines extrapolated from the source's detected BPM + beat
   anchor across the whole view (so split / trim sub-clips stay in
   lockstep).
@@ -1669,11 +1679,11 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-### 1.4.0 - Timeline Precision & Range Auditioning *(planned)*
+### 1.4.0 - Timeline Precision & Range Auditioning *(implemented; unreleased)*
 
 **Goal:** make arrangement edits more deliberate and let a user quickly
 audition one part of a mix, without turning the timeline into a dense advanced
-editor. The release is deliberately limited to the following four features.
+editor. The implemented work and remaining planned snap-grid work are:
 
 1. **Selectable timeline snap grid.** A compact timeline **Snap** control
    offers **Bar**, **Beat**, **Half beat**, **Quarter beat**, and **Free**.
@@ -1685,55 +1695,62 @@ editor. The release is deliberately limited to the following four features.
    first source beat, rather than merely their left edge, to the selected grid
    line. The interval is persisted as additive project view state; old projects
    default to Quarter beat.
-2. **Multiple visible automation lanes per track.** One lane remains the default.
+2. [x] **Multiple visible automation lanes per track.** One lane remains the default.
    An explicit **Add lane** action can reveal another lane for a different
    parameter on the same track, so multiple curves can be viewed and edited together.
    Each lane keeps its own parameter picker and height, and either can be
-   removed without changing its stored curve. Visibility and heights remain
-   renderer-only interaction state; existing per-track automation curves remain
-   the persisted source of truth. Duplicate parameter lanes are disallowed, and
-   no new DSP or mixdown behaviour is introduced because the engine already
-   evaluates multiple parameter curves per track.
-3. **Timeline range selection, playback, and looping.** Dragging across the
-   timeline ruler creates one project-wide time range. The region is visibly
-   shaded across all tracks and has start/end handles; its boundaries follow the
-   selected Snap interval, with `Alt` for 1 ms precision. **Play selection**
-   starts at the range start and pauses at its exclusive end. **Loop selection**
-   starts at the same point and returns to the start at each end boundary.
-   Ordinary project playback stays unchanged, so a visible range never silently
-   constrains the normal Play command. There is one range only; it is distinct
-   from clip selection, transient, not undoable, and never saved in a project.
-4. **Import assets from another project.** **Import from Project...** opens a
-   `.silverdaw` project for read-only inspection, then lists its **Stems**,
-   **Samples**, and reusable **Scratch patterns** for explicit selection.
-   Rendered scratches are imported as Samples; reusable scratch notation is
-   imported as a Scratch pattern. The source project's tracks, timeline clips,
-   markers, automation, transitions, settings, and other project state are not
-   imported.
+   removed without changing its stored curve. Visibility, order, and heights
+   persist with the project separately from the automation curves. Duplicate
+   parameter lanes are disallowed, and no new DSP or mixdown behaviour is
+   introduced because the engine already evaluates multiple parameter curves per
+   track.
+3. [x] **Timeline range selection, playback, and looping.** Dragging across the
+   timeline ruler away from the playhead creates one project-wide time range;
+   dragging the playhead keeps its normal repositioning behavior. The region is
+   visibly shaded across all tracks with ruler boundary lines; its boundaries
+   snap to the timeline grid, with `Alt` for 1 ms precision. Play starts at the
+   range start and pauses at its exclusive end. The transport's **Loop
+   Selection** control returns to the start at that boundary while preserving
+   shared FX tails. `Escape` clears the range and loop state. There is one range
+   only; it is distinct from clip selection and is saved as non-undoable project
+   view state.
+4. [x] **Import assets from another project.** **Import from Project…** lists
+   saved projects in the configured project folder, then inspects the selected
+   `.silverdaw` project read-only. It lists only its **Stems** and **Samples**.
+   A selected scratch sample imports its linked Scratch pattern. The source
+   project's tracks, timeline clips, markers, automation, transitions, settings,
+   and other project state are not imported.
 
 **Range loop behaviour:** Reverb and Delay tails continue through a loop wrap;
 the transport seeks back to the range start without clearing shared-effect
 state. This preserves a natural audition rather than cutting tails on every
 repeat. A cleared range disables the range commands; it does not fall back to
-looping the whole project.
+looping the whole project. Range boundaries are clamped to project length;
+shortening the project truncates a crossing range or clears a range whose start
+is no longer within the project.
 
 **Project asset import boundaries:** Import copies media rather than linking to
 the source project. Every selected stem or sample is copied into the destination
-project's managed artifact tree with a fresh library-item ID; the destination
-rebuilds its playback cache and waveform peaks. Its name, kind, duration, key,
-and tempo analysis are retained when valid, but foreign source-item and
-source-clip references are removed rather than left dangling. Each selected
-Scratch pattern is validated against the current protocol, receives a fresh
-pattern ID, and has foreign provenance removed. This makes the imported assets
-independent of the source project and prevents either project from changing the
-other.
+project's managed artifact tree with a fresh library-item ID. Valid name, kind,
+duration, key, and tempo analysis are retained, while foreign source-item,
+source-clip, and scratch-origin references are removed. Relevant project
+metadata and cover art are copied with their media IDs. Each selected Scratch
+pattern is validated against the current protocol, receives a fresh pattern ID,
+and has foreign provenance removed. A selected scratch sample also copies its
+required source-audio snapshot and links it to the imported pattern, so the Scratch
+Editor draws and auditions the original source rather than the rendered sample.
+This makes imported assets independent of the source project and prevents either
+project from changing the other.
 
 The importer accepts only a project file the current backend can read and only
-media files confined to that project's managed `stems` or `samples` trees.
-Missing, unreadable, or out-of-tree media is shown as unavailable and cannot be
-selected. It preflights every selected item, stages copies in the destination,
-and commits the destination state only after the entire selection succeeds.
-The source project is never opened for write or modified.
+media files confined to that project's managed `stems`, `samples`, or scratch
+artifact trees. Missing, unreadable, or out-of-tree media is unavailable and
+cannot be selected; a scratch sample also requires its
+`scratches/<pattern-id>/source.wav` snapshot. It stages copies in the
+destination and records the added library items and patterns in one undo
+transaction. Undo and redo remove and restore the imported project state while
+retaining the copied managed artifacts for redo. The source project is never
+opened for write or modified.
 
 **Implementation order and release gates:**
 
@@ -2274,7 +2291,7 @@ playable at every point):
   global shortcut handler owns the keys; `menuShortcuts` skips binding the
   display-only accelerators to avoid a double-fire.
 - [x] **Track row resize** — drag the bottom edge of any track
-  header to change just that track's row height (clamp 60..400 px).
+  header to change just that track's row height (clamp 80..400 px).
   Persisted with the project and undoable. `TRACK_SET_HEIGHT` bridge
   envelope; backend `setTrackHeightPx` clamps and writes to the
   Track ValueTree with `&undoManager` so each drag is one undo step.
@@ -2593,18 +2610,19 @@ Implementation increments (foundations first; each keeps build + tests green):
   marked with a check) dispatching `setTransitionRecipe`. Custom-harness +
   Vitest coverage for the linear law, recipe→curve derivation, and the menu.
 
-### 11.2 Arrangement & editing workflow - *range auditioning planned*
+### 11.2 Arrangement & editing workflow
 
 - [x] **Selection group (move/edit)** — *shipped in 1.1.0.* Shift-click a
   same-track range or Ctrl-click across tracks selects several clips; the whole
   group moves/nudges together and can be locked, coloured, duplicated, deleted,
   and cut/copied/pasted in one undo step. Renderer-only selection (not
   serialised). Grouped *trim/stretch* is still deferred.
-- [ ] **Timeline range auditioning** - *planned for 1.4.0; see Section 8.* One
-  transient project-wide time range is created from the timeline ruler and can
-  be played once or looped. Range playback is distinct from the existing Clip
-  Editor audition loop and from clip-group selection. Reverb and Delay tails
-  continue through a loop wrap; the range is not serialised or undoable.
+- [x] **Timeline range auditioning** — *shipped in 1.4.0; see Section 8.* One
+  project-wide time range is created from the ruler away from the playhead and
+  can be played once or looped. Range playback is distinct from the existing
+  Clip Editor audition loop and from clip-group selection. Reverb and Delay
+  tails continue through a loop wrap; `Escape` clears the range, and the range
+  and loop state are serialised as non-undoable project view state.
 
 ### 11.3 Tempo, beat-grid & harmonic — *manual beat-grid shipped; mode-aware model remains (Phase 8)*
 
@@ -2627,7 +2645,7 @@ Implementation increments (foundations first; each keeps build + tests green):
   across clips crossing the project end. Implemented via §7.11 shapes, **not** a
   master automation lane.
 
-### 11.5 Fast import-to-arrangement - *largely delivered; asset import planned*
+### 11.5 Fast import-to-arrangement - *largely delivered*
 
 Most of this cluster either already shipped incrementally or has been
 deprioritised. **Conform-on-drop already happens today** — dropping a library
@@ -2637,11 +2655,12 @@ representative detected BPM, and anchors the source downbeat to the grid.
 In-context library audition was dropped (the
 Clip Editor already auditions a clip). The remaining work is:
 
-- [ ] **Import assets from another project** - *planned for 1.4.0; see
+- [x] **Import assets from another project** - *delivered in 1.4.0; see
   Section 8.*
   Read a source project without modifying it, then explicitly import selected
-  stems, samples, and reusable Scratch patterns as independent destination
-  assets. Timeline arrangement state is out of scope.
+  stems and samples as independent destination assets. Selecting a scratch
+  sample also imports its linked Scratch pattern and source-audio snapshot.
+  Timeline arrangement state is out of scope.
 - [ ] **Auto pitch-shift on drop** — *future, low priority.* Extend conform-on-drop
   to also suggest a key-shift. Deliberately deferred: a user may want to keep a
   clip's pitch different, and it can only ever transpose (never convert

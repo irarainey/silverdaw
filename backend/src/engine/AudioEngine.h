@@ -149,7 +149,7 @@ class AudioEngine : private AudioEngineGraphState,
     // Drains audio-thread block-timing for non-RT perf logging.
     MasterClockSource::AudioPerfSnapshot drainAudioPerf() noexcept { return master.drainAudioPerf(); }
 
-    void setPositionMs(double ms);
+    void setPositionMs(double ms, bool resetEffects = true);
     bool scrubPositionMs(double positionMs, double deltaMs);
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
@@ -409,6 +409,8 @@ class AudioEngine : private AudioEngineGraphState,
     void scheduleTrackPrefetchAfterEdit(Track& track);
 
     void reclaimRetiredPlaybackSnapshots();
+    void setPositionMsNow(double ms, bool resetEffects);
+    void completePendingTransportFade();
 
     // Rebuilds the preview transport's read-ahead buffer so a changed envelope/gain is heard from
     // the first played block. JUCE's BufferingAudioSource won't invalidate an already-cached region
@@ -450,6 +452,29 @@ class AudioEngine : private AudioEngineGraphState,
     };
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
+
+    enum class PendingTransportAction
+    {
+        none,
+        pause,
+        stop,
+        seek
+    };
+
+    class TransportFadeTimer : public juce::Timer
+    {
+      public:
+        explicit TransportFadeTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.completePendingTransportFade(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    TransportFadeTimer transportFadeTimer{*this};
+    PendingTransportAction pendingTransportAction = PendingTransportAction::none;
+    double pendingTransportPositionMs = 0.0;
+    bool pendingTransportResetEffects = true;
+    static constexpr int kTransportFadePollMs = 1;
 
     class TrackBypassTimer : public juce::Timer
     {

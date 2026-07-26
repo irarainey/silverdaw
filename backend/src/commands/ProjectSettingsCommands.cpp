@@ -47,6 +47,49 @@ void handleProjectSetView(const juce::var& payload, silverdaw::ProjectState& pro
     {
         projectState.setViewFxPanelOpen(static_cast<bool>(fxVar));
     }
+
+    auto timelineSelection = projectState.getViewTimelineSelection();
+    bool selectionChanged = false;
+    if (payload.hasProperty("timelineSelection"))
+    {
+        const auto selectionVar = payload.getProperty("timelineSelection", juce::var());
+        if (selectionVar.isVoid())
+        {
+            timelineSelection.reset();
+            selectionChanged = true;
+        }
+        else if (const auto* selectionObj = selectionVar.getDynamicObject())
+        {
+            const auto startVar = selectionObj->getProperty("startMs");
+            const auto endVar = selectionObj->getProperty("endMs");
+            if ((startVar.isDouble() || startVar.isInt() || startVar.isInt64())
+                && (endVar.isDouble() || endVar.isInt() || endVar.isInt64()))
+            {
+                const double startMs = static_cast<double>(startVar);
+                const double endMs = static_cast<double>(endVar);
+                if (std::isfinite(startMs) && std::isfinite(endMs)
+                    && startMs >= 0.0 && endMs > startMs)
+                {
+                    timelineSelection = ProjectState::TimelineSelectionView{
+                        startMs,
+                        endMs,
+                        timelineSelection.has_value() && timelineSelection->loop
+                    };
+                    selectionChanged = true;
+                }
+            }
+        }
+    }
+    const auto loopVar = payload.getProperty("loopTimelineSelection", juce::var());
+    if (loopVar.isBool() && timelineSelection.has_value())
+    {
+        timelineSelection->loop = static_cast<bool>(loopVar);
+        selectionChanged = true;
+    }
+    if (selectionChanged)
+    {
+        projectState.setViewTimelineSelection(timelineSelection);
+    }
 }
 
 void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engine,

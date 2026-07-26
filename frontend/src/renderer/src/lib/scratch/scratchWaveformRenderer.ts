@@ -13,6 +13,7 @@ import {
   COL_WAVE
 } from '@/lib/clipEditor/clipEditorWaveformTheme'
 import { drawScratchWaveformLane } from '@/lib/scratch/scratchWaveformLane'
+import { formatRulerTime } from '@/lib/musicTime'
 
 const RULER_HEIGHT = 20
 
@@ -83,9 +84,7 @@ function drawRuler(
     ctx.lineTo(x, RULER_HEIGHT)
     ctx.stroke()
     if (isMajor) {
-      const seconds = timeMs / 1000
-      const minutes = Math.floor(seconds / 60)
-      ctx.fillText(`${minutes}:${(seconds % 60).toFixed(1).padStart(4, '0')}`, x + 3, 10)
+      ctx.fillText(formatRulerTime(timeMs, majorMs), x + 3, 10)
     }
   }
 }

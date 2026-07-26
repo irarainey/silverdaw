@@ -16,6 +16,12 @@ export interface RecentProject {
   name: string
 }
 
+/** A saved project available to the cross-project asset importer. */
+export interface ProjectImportSource {
+  path: string
+  name: string
+}
+
 /** Normalised audio tag metadata; all fields are optional because tags vary by container. */
 export interface AudioMetadata {
   title?: string

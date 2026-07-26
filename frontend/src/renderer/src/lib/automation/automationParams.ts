@@ -2,7 +2,7 @@
 // default, display label and formatting. Shared by the lane renderer (value↔pixel
 // mapping) and the store (clamping). Values are stored/sent in native units.
 
-import type { AutomationParamId } from '@shared/bridge-protocol'
+import type { AutomationParamId, AutomationPoint } from '@shared/bridge-protocol'
 
 export interface AutomationParamDescriptor {
   readonly id: AutomationParamId
@@ -106,4 +106,16 @@ export function fractionToValue(paramId: AutomationParamId, fraction: number): n
   const d = AUTOMATION_PARAMS[paramId]
   const f = Math.min(1, Math.max(0, fraction))
   return d.min + f * (d.max - d.min)
+}
+
+/** Preserve a copied curve's visual shape while translating it into a new parameter's units. */
+export function translateAutomationCurve(
+  points: readonly AutomationPoint[],
+  sourceParamId: AutomationParamId,
+  targetParamId: AutomationParamId
+): AutomationPoint[] {
+  return points.map((point) => ({
+    timeMs: point.timeMs,
+    value: fractionToValue(targetParamId, valueToFraction(sourceParamId, point.value))
+  }))
 }

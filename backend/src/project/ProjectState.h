@@ -153,6 +153,10 @@ class ProjectState : public juce::ValueTree::Listener
     /** The whole lanes array for a track (for snapshot/serialisation), or empty. */
     juce::Array<juce::var> getTrackAutomationLanes(const juce::String& trackId) const;
 
+    // Visible lane order and heights are persisted separately from automation curves.
+    bool setTrackAutomationLaneView(const juce::String& trackId, const juce::Array<juce::var>& lanes);
+    juce::Array<juce::var> getTrackAutomationLaneView(const juce::String& trackId) const;
+
     // Transitions store partners only; overlap is derived from live clip geometry.
 
     // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
@@ -338,6 +342,18 @@ class ProjectState : public juce::ValueTree::Listener
 
     void setViewFxPanelOpen(bool open);
 
+    struct TimelineSelectionView
+    {
+        double startMs{0.0};
+        double endMs{0.0};
+        bool loop{false};
+    };
+
+    std::optional<TimelineSelectionView> getViewTimelineSelection() const;
+
+    /** Stores the range and loop mode as non-dirty project view state. */
+    void setViewTimelineSelection(std::optional<TimelineSelectionView> selection);
+
     /** Persisted playhead position in ms. Defaults to 0. */
     double getPlayheadMs() const;
 
@@ -507,7 +523,8 @@ class ProjectState : public juce::ValueTree::Listener
     // metadata on a kind="sample" item; older builds ignore the unknown properties.
     bool setLibraryItemScratchMeta(const juce::String& itemId,
                                    const juce::String& scratchPatternId,
-                                   const juce::String& scratchSourcePath);
+                                   const juce::String& scratchSourcePath,
+                                   bool undoable = false);
 
     // Empty when the item is not a scratch-origin sample.
     juce::String getLibraryItemScratchPatternId(const juce::String& itemId) const;
@@ -722,6 +739,9 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;
     static const juce::Identifier kViewFxPanelOpen;
+    static const juce::Identifier kViewTimelineSelectionStartMs;
+    static const juce::Identifier kViewTimelineSelectionEndMs;
+    static const juce::Identifier kViewTimelineSelectionLoop;
     static const juce::Identifier kPlayheadMs;
     static const juce::Identifier kBpm;
     static const juce::Identifier kBpmSeeded;
@@ -804,6 +824,8 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kAutomationPoints;
     static const juce::Identifier kAutomationTimeMs;
     static const juce::Identifier kAutomationValue;
+    static const juce::Identifier kAutomationLaneView;
+    static const juce::Identifier kAutomationLaneHeightPx;
 
     // Transition overlap is derived, never stored.
     static const juce::Identifier kTransition;

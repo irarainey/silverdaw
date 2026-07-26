@@ -249,6 +249,9 @@ export function useProjectPropertiesController(
     }
     if (hasDurationChange.value && nextDurationMs !== null) {
       project.setProjectLengthMs(nextDurationMs)
+      if (ui.clampTimelineSelectionToDuration(project.durationMs)) {
+        ui.persistTimelineSelectionView()
+      }
       sendBridge('PROJECT_SET_LENGTH', { lengthMs: project.durationMs })
     }
     if (hasAudioChange.value) {

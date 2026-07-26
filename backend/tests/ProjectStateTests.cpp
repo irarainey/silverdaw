@@ -258,10 +258,15 @@ void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
         std::function<void(silverdaw::ProjectState&)> driftSetter;
     };
 
-    const std::array<Case, 3> cases{{
+    const std::array<Case, 4> cases{{
         {"playhead", [](silverdaw::ProjectState& s) { s.setPlayheadMs(5000.0); }},
         {"viewScrollX", [](silverdaw::ProjectState& s) { s.setViewScrollX(640.0); }},
         {"viewPxPerSecond", [](silverdaw::ProjectState& s) { s.setViewPxPerSecond(180.0); }},
+        {"timelineSelection", [](silverdaw::ProjectState& s)
+            {
+                s.setViewTimelineSelection(
+                    silverdaw::ProjectState::TimelineSelectionView{1000.0, 2500.0, true});
+            }},
     }};
 
     for (const auto& c : cases)
@@ -309,6 +314,17 @@ void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
         require(!state.isDirty(), msgUndoClean.c_str());
         require(transitions == 2 && !lastDirty, msgUndoCb.c_str());
     }
+
+    silverdaw::ProjectState selectionState;
+    selectionState.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{1000.0, 2500.0, true});
+    selectionState.setViewTimelineSelection(std::nullopt);
+    require(! selectionState.getTree().hasProperty(
+                juce::Identifier{"viewTimelineSelectionStartMs"}),
+            "clearing timeline selection should remove its saved start");
+    require(! selectionState.getTree().hasProperty(
+                juce::Identifier{"viewTimelineSelectionEndMs"}),
+            "clearing timeline selection should remove its saved end");
 }
 
 void testProjectStateDerivedLibraryMetadataDoesNotMarkDirty()
@@ -373,6 +389,27 @@ void testProjectStateDerivedLibraryMetadataDoesNotMarkDirty()
             "clearLibraryItemAnalysis must not mark the project dirty");
     require(transitions == 0,
             "clearLibraryItemAnalysis must not fire the dirty callback");
+}
+
+void testProjectLengthRepairsTimelineSelection()
+{
+    silverdaw::ProjectState state;
+    state.setProjectLengthMs(10000.0);
+
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{6000.0, 9000.0, true});
+    state.setProjectLengthMs(8000.0);
+    const auto clamped = state.getViewTimelineSelection();
+    require(clamped.has_value(), "shortening across a selection should retain its valid prefix");
+    requireNear(clamped->startMs, 6000.0, 0.0001, "selection start should remain unchanged");
+    requireNear(clamped->endMs, 8000.0, 0.0001, "selection end should clamp to project length");
+    require(clamped->loop, "selection loop state should survive a valid clamp");
+
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{8000.0, 9000.0, true});
+    state.setProjectLengthMs(8000.0);
+    require(!state.getViewTimelineSelection().has_value(),
+            "shortening to a selection start should clear the empty selection");
 }
 
 void testProjectStateViewLibraryMarkersAndReplace()
@@ -1187,6 +1224,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
+    tests.push_back({"Project length repairs timeline selection", testProjectLengthRepairsTimelineSelection});
     tests.push_back({"ProjectState manual tempo is undoable and marks dirty", testProjectStateManualTempoIsUndoableAndDirtying});
     tests.push_back({"ProjectState performUndo/performRedo track dirty", testProjectStatePerformUndoRedoTracksDirty});
     tests.push_back({"ProjectState undo change set classifies fast path vs rebuild", testProjectStateUndoChangeSetClassification});

@@ -240,7 +240,8 @@ bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juc
 
 bool ProjectState::setLibraryItemScratchMeta(const juce::String& itemId,
                                              const juce::String& scratchPatternId,
-                                             const juce::String& scratchSourcePath)
+                                             const juce::String& scratchSourcePath,
+                                             bool undoable)
 {
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return false;
@@ -249,14 +250,15 @@ bool ProjectState::setLibraryItemScratchMeta(const juce::String& itemId,
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
+            auto* undo = undoable ? &undoManager : nullptr;
             if (scratchPatternId.isNotEmpty())
-                item.setProperty(kScratchPatternId, scratchPatternId, nullptr);
+                item.setProperty(kScratchPatternId, scratchPatternId, undo);
             else
-                item.removeProperty(kScratchPatternId, nullptr);
+                item.removeProperty(kScratchPatternId, undo);
             if (scratchSourcePath.isNotEmpty())
-                item.setProperty(kScratchSourcePath, scratchSourcePath, nullptr);
+                item.setProperty(kScratchSourcePath, scratchSourcePath, undo);
             else
-                item.removeProperty(kScratchSourcePath, nullptr);
+                item.removeProperty(kScratchSourcePath, undo);
             return true;
         }
     }

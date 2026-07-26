@@ -43,6 +43,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     aboutOpen: ReturnType<typeof ref<boolean>>
     preferencesOpen: ReturnType<typeof ref<boolean>>
     projectPropertiesOpen: ReturnType<typeof ref<boolean>>
+    projectImportOpen: ReturnType<typeof ref<boolean>>
     exportMixdownOpen: ReturnType<typeof ref<boolean>>
     diagnosticsBusy: ReturnType<typeof ref<boolean>>
   }
@@ -79,7 +80,9 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     ui: {
       requestTimelineZoom: vi.fn(),
       requestTimelineZoomTo: vi.fn(),
-      toggleLibraryPanelCollapsed: vi.fn()
+      toggleLibraryPanelCollapsed: vi.fn(),
+      clampTimelineSelectionToDuration: vi.fn(() => false),
+      persistTimelineSelectionView: vi.fn()
     },
     library: { byId: {} as Record<string, unknown> },
     notifications: { pushError: vi.fn(), pushInfo: vi.fn() },
@@ -93,6 +96,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     aboutOpen: ref(false),
     preferencesOpen: ref(false),
     projectPropertiesOpen: ref(false),
+    projectImportOpen: ref(false),
     exportMixdownOpen: ref(false),
     diagnosticsBusy: ref(false)
   }
@@ -109,6 +113,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     aboutOpen: refs.aboutOpen,
     preferencesOpen: refs.preferencesOpen,
     projectPropertiesOpen: refs.projectPropertiesOpen,
+    projectImportOpen: refs.projectImportOpen,
     exportMixdownOpen: refs.exportMixdownOpen,
     diagnosticsBusy: refs.diagnosticsBusy,
     guardAgainstUnsavedChanges: guard,
@@ -227,6 +232,13 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('file.importToLibrary')
     expect(openAndImportAudioFilesIntoLibrary).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the project import dialog', () => {
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('file.importFromProject')
+    expect(h.refs.projectImportOpen.value).toBe(true)
   })
 
   it('view.zoomIn is suppressed behind a modal', () => {

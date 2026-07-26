@@ -217,11 +217,18 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       return
     }
 
-    // Escape steps down through the selection hierarchy rather than clearing
-    // everything at once: a plain Escape first clears the clip(s) / automation
-    // point selection (leaving the track selected), and a second Escape then
-    // clears the track. Ctrl/Meta/Shift/Alt are left for other handlers.
+    // Escape clears the timeline range first, then steps through clip/automation
+    // and track selection. Ctrl/Meta/Shift/Alt are left for other handlers.
     if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      if (ui.timelineSelection !== null) {
+        e.preventDefault()
+        e.stopPropagation()
+        ui.setTimelineSelection(null)
+        ui.persistTimelineSelectionView()
+        log.debug('timeline', 'shortcut escape — cleared timeline selection')
+        return
+      }
+
       const hasClipSelection =
         project.selectedClipId !== null || project.selectedClipIds.size > 0
       const hasAutomationPoint = ui.selectedAutomationPoint !== null

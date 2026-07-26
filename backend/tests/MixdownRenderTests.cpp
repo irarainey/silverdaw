@@ -170,13 +170,12 @@ void testWav16RenderIsDeterministicAndCorrect()
     // Structural + golden expectations: 1000 ms (+ short fixed FX-tail) of a
     // 0.5-peak sine @ 44.1 kHz stereo. The exact fingerprint is captured so the
     // render-path refactors (writer-factory dedup, pass-2 extraction) are proven
-    // behaviour-neutral — any change to summing / resample / quantisation moves
-    // these numbers.
+    // behaviour-neutral after the canonical default clip-edge de-click fade.
     require(a.channels == 2, "output is stereo");
     requireNear(a.sampleRate, 44100.0, 1.0, "output sample rate is 44.1 kHz");
     require(a.frames == 45056, "output frame count matches the captured golden length");
     requireNear(a.peak, 0.5, 1.0e-4, "output peak matches the 0.5 input sine");
-    requireNear(a.sumAbs, 28074.9, 2.0, "output sumAbs matches the captured golden fingerprint");
+    requireNear(a.sumAbs, 28055.8, 2.0, "output sumAbs matches the captured golden fingerprint");
 
     // Dither off => two independent renders must be bit-identical.
     require(a.frames == b.frames, "deterministic: frame count stable across renders");

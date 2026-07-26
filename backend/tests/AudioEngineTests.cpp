@@ -616,6 +616,41 @@ void testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles()
     require(blockPeak(buf) > ditherPeak * 2.0F, "a later device restart must re-arm the wake burst");
 }
 
+void testMasterClockTransportFadeOutAndIn()
+{
+    constexpr int kBlock = 256;
+    silverdaw::OutputKeepAlive keepAlive;
+    ConstantSource source(0.5F);
+    silverdaw::MasterClockSource master(source, keepAlive);
+    master.prepareToPlay(kBlock, 48000.0);
+    master.setPlaying(true);
+
+    juce::AudioBuffer<float> output(2, kBlock);
+    juce::AudioSourceChannelInfo info(&output, 0, kBlock);
+    master.requestOutputFadeOut();
+    output.clear();
+    master.getNextAudioBlock(info);
+    require(output.getSample(0, 0) > 0.49F && output.getSample(0, 0) < 0.5F,
+            "transport fade-out must begin just below the current programme level");
+    requireNear(output.getSample(0, 239), 0.0, 1.0e-6,
+                "transport fade-out must reach silence before the block tail");
+    requireNear(output.getSample(0, 255), 0.0, 1.0e-6,
+                "transport fade-out must hold the post-fade block silent");
+    require(master.isOutputFadeOutComplete(),
+            "transport fade-out must publish completion to the message thread");
+
+    master.setPlaying(false);
+    master.setPlaying(true);
+    output.clear();
+    master.getNextAudioBlock(info);
+    require(output.getSample(0, 0) > 0.0F && output.getSample(0, 0) < 0.01F,
+            "transport fade-in must begin near silence after a discontinuity");
+    requireNear(output.getSample(0, 239), 0.5, 1.0e-6,
+                "transport fade-in must restore the programme level");
+    requireNear(output.getSample(0, 255), 0.5, 1.0e-6,
+                "transport fade-in must restore normal rendering after the ramp");
+}
+
 // MasterClockSource must publish block timing to atomics for off-thread logging
 // (the audio thread no longer builds strings or touches the file logger).
 void testMasterClockPublishesAudioPerfOffThread()
@@ -1273,6 +1308,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine reclaims retired playback snapshots", testAudioEngineReclaimsRetiredPlaybackSnapshots});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});
     tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
+    tests.push_back({"MasterClockSource fades transport discontinuities to and from silence", testMasterClockTransportFadeOutAndIn});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
     tests.push_back({"Master gain is settled at play-start (no first-block fade)", testMasterGainIsSettledAtPlayStart});
     tests.push_back({"MasterClockSource wake pre-roll rouses a USB endpoint then plays", testMasterClockWakePrerollRousesUsbThenPlays});

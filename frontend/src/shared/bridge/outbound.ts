@@ -8,6 +8,8 @@
 
 // Type-only imports of shared vocabulary whose canonical zod definition lives with inbound.
 import type {
+  AutomationLaneView,
+  AutomationParamId,
   BeatRepeatDivision,
   LibraryItemKind,
   StemName,
@@ -259,6 +261,12 @@ export interface TrackSetHeightPayload {
   heightPx: number
 }
 
+/** Persisted visible automation lanes. Curves remain independently stored in `automation`. */
+export interface TrackSetAutomationLaneViewPayload {
+  trackId: string
+  lanes: AutomationLaneView[]
+}
+
 /** Reorder a track; `newIndex` is the desired 0-based position (backend clamps). One undo step. */
 export interface TrackReorderPayload {
   trackId: string
@@ -395,25 +403,6 @@ export interface AutomationPoint {
   value: number
 }
 
-/** Automatable track parameters (must match the backend `AutomationParam`). */
-export type AutomationParamId =
-  | 'filter'
-  | 'pan'
-  | 'toneBass'
-  | 'toneMid'
-  | 'toneTreble'
-  | 'reverbSend'
-  | 'delaySend'
-  | 'leveler'
-  | 'punch'
-  | 'saturationDrive'
-  | 'saturationMix'
-  | 'bitCrusherRate'
-  | 'bitCrusherBits'
-  | 'bitCrusherBoost'
-  | 'bitCrusherMix'
-  | 'level'
-
 /** Per-track effect automation curve for one parameter (one atomic mutation per
  *  drag); backend sorts/clamps/dedupes. Fewer than two points clears the lane. */
 export interface TrackSetAutomationPayload extends GestureHints {
@@ -515,6 +504,8 @@ export interface LibraryItemSaveAsSamplePayload {
 
 export interface TransportSeekPayload {
   positionMs: number
+  /** Range-loop seeks retain shared Reverb and Delay tails. */
+  preserveEffects?: boolean
 }
 
 export interface TransportScrubPayload {
@@ -570,6 +561,7 @@ export interface BridgeOutboundMap {
   TRACK_MUTE: TrackMutePayload
   TRACK_SOLO: TrackSoloPayload
   TRACK_SET_HEIGHT: TrackSetHeightPayload
+  TRACK_SET_AUTOMATION_LANE_VIEW: TrackSetAutomationLaneViewPayload
   TRACK_REORDER: TrackReorderPayload
   TRACK_SET_SENDS: TrackSetSendsPayload
   TRACK_SET_TONE: TrackSetTonePayload
@@ -599,6 +591,8 @@ export interface BridgeOutboundMap {
   PROJECT_SAVE_AS: ProjectSaveAsPayload
   PROJECT_SAVE_VIEW_STATE: ProjectSaveViewStatePayload
   PROJECT_LOAD: ProjectLoadPayload
+  PROJECT_IMPORT_SOURCE_INSPECT: ProjectImportSourceInspectPayload
+  PROJECT_IMPORT_ASSETS: ProjectImportAssetsPayload
   PROJECT_LOAD_RECOVERY: ProjectLoadRecoveryPayload
   PROJECT_AUTOSAVE: ProjectAutosavePayload
   PROJECT_RENAME: ProjectRenamePayload
@@ -705,6 +699,17 @@ export interface ProjectLoadPayload {
   filePath: string
 }
 
+/** Inspect a saved project's managed assets without modifying its state. */
+export interface ProjectImportSourceInspectPayload {
+  sourceProjectPath: string
+}
+
+/** Import selected source-managed assets as new, independent destination entries. */
+export interface ProjectImportAssetsPayload {
+  sourceProjectPath: string
+  libraryItemIds: string[]
+}
+
 /**
  * Recover a project from an autosave. Unlike PROJECT_LOAD, the backend seeds the
  * current path to `originalPath` (empty when null) and leaves isDirty=true: with an
@@ -735,6 +740,10 @@ export interface ProjectSetViewPayload {
   selectedTrackId?: string | null
   /** Bottom panel shows Track FX. Persisted as non-dirty view state. */
   fxPanelOpen?: boolean
+  /** Selected range, or null to clear. Persisted as non-dirty view state. */
+  timelineSelection?: { startMs: number; endMs: number } | null
+  /** Whether transport loops the persisted selected range. */
+  loopTimelineSelection?: boolean
 }
 
 /** Tempo edit. Marks the project dirty on the backend. */
@@ -1197,6 +1206,7 @@ export const bridgeOutboundPayloadKinds: {
   TRACK_MUTE: 'payload',
   TRACK_SOLO: 'payload',
   TRACK_SET_HEIGHT: 'payload',
+  TRACK_SET_AUTOMATION_LANE_VIEW: 'payload',
   TRACK_REORDER: 'payload',
   TRACK_SET_SENDS: 'payload',
   TRACK_SET_TONE: 'payload',
@@ -1227,6 +1237,8 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SAVE_AS: 'payload',
   PROJECT_SAVE_VIEW_STATE: 'payload',
   PROJECT_LOAD: 'payload',
+  PROJECT_IMPORT_SOURCE_INSPECT: 'payload',
+  PROJECT_IMPORT_ASSETS: 'payload',
   PROJECT_LOAD_RECOVERY: 'payload',
   PROJECT_AUTOSAVE: 'payload',
   PROJECT_RENAME: 'payload',

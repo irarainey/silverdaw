@@ -140,7 +140,7 @@ void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::St
             {
                 for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
                     if (it->second->has[i])
-                        busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+                        busGraph.restoreAutomationParam(trackId, static_cast<AutomationParam>(i));
                 retiredAutomation.push_back(std::move(it->second));
             }
             automationCurrent.erase(it);
@@ -154,7 +154,7 @@ void AudioEngine::setTrackAutomation(const juce::String& trackId, const juce::St
     {
         for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
             if (it->second->has[i] && !next->has[i])
-                busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+                busGraph.restoreAutomationParam(trackId, static_cast<AutomationParam>(i));
     }
 
     busGraph.setTrackAutomationPtr(trackId, next.get());
@@ -181,7 +181,7 @@ void AudioEngine::clearAllTrackAutomation(const juce::String& trackId)
         // Snap each previously-automated param to neutral so the chain doesn't hold its last value.
         for (int i = 0; i < TrackAutomationSnapshot::kNumParams; ++i)
             if (it->second->has[i])
-                busGraph.snapParamToDefault(trackId, static_cast<AutomationParam>(i));
+                busGraph.restoreAutomationParam(trackId, static_cast<AutomationParam>(i));
         retiredAutomation.push_back(std::move(it->second));
     }
     automationCurrent.erase(it);

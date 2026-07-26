@@ -148,6 +148,30 @@ describe('scratchSessionStore editing actions', () => {
     expect(store.current?.status).toBe('ready')
   })
 
+  it('keeps source peaks scoped to the active scratch session', () => {
+    const store = useScratchSessionStore()
+    store.applyState(makeState({ sessionId: 'session-current' }))
+    const peaks = new Float32Array([-0.5, 0.75])
+    store.setSourcePeaks({
+      sessionId: 'session-current',
+      peaks,
+      channels: [],
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    })
+    store.setSourcePeaks({
+      sessionId: 'session-stale',
+      peaks: new Float32Array([0, 0]),
+      channels: [],
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    })
+
+    expect(store.sourcePeaks?.peaks).toBe(peaks)
+    store.clear()
+    expect(store.sourcePeaks).toBeNull()
+  })
+
   it('race: delayed closed session A does not replace active session B', () => {
     const store = useScratchSessionStore()
     // Session B is active

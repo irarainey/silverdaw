@@ -179,7 +179,8 @@ juce::Result save(const juce::File& file, const ProjectState& project)
 
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
-                           bool metronomeEnabled, bool clipEditorMetronomeEnabled)
+                           bool metronomeEnabled, bool clipEditorMetronomeEnabled,
+                           std::optional<ProjectState::TimelineSelectionView> timelineSelection)
 {
     if (!file.existsAsFile())
     {
@@ -212,6 +213,18 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
     projectObj->setProperty("viewSelectedTrack", selectedTrackId);
     projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);
+    if (timelineSelection.has_value())
+    {
+        projectObj->setProperty("viewTimelineSelectionStartMs", timelineSelection->startMs);
+        projectObj->setProperty("viewTimelineSelectionEndMs", timelineSelection->endMs);
+        projectObj->setProperty("viewTimelineSelectionLoop", timelineSelection->loop);
+    }
+    else
+    {
+        projectObj->removeProperty("viewTimelineSelectionStartMs");
+        projectObj->removeProperty("viewTimelineSelectionEndMs");
+        projectObj->removeProperty("viewTimelineSelectionLoop");
+    }
     // Persist the monitoring metronome toggle alongside view state (it's silent — never dirty —
     // so this targeted write is what keeps it consistent across open/close). Default-off omits the
     // field to match the project round-trip convention.
@@ -291,7 +304,7 @@ juce::Result removeLibraryItems(const juce::File& file, const juce::StringArray&
     return writeProjectJsonAtomically(file, rootVar);
 }
 
-LoadResult load(const juce::File& file, ProjectState& project)
+LoadResult loadTree(const juce::File& file, juce::ValueTree& projectTree)
 {
     LoadResult result;
 
@@ -352,10 +365,24 @@ LoadResult load(const juce::File& file, ProjectState& project)
     juce::var resolvedVar = projectVar;
     rewritePortablePaths(resolvedVar, file.getParentDirectory(), /*forSave=*/false);
 
-    auto projectTree = ValueTreeJson::fromVar(resolvedVar);
-    if (!projectTree.isValid())
+    auto decodedTree = ValueTreeJson::fromVar(resolvedVar);
+    if (!decodedTree.isValid())
     {
         result.error = "Failed to decode \"project\" object as a ValueTree";
+        return result;
+    }
+
+    projectTree = std::move(decodedTree);
+    result.ok = true;
+    return result;
+}
+
+LoadResult load(const juce::File& file, ProjectState& project)
+{
+    juce::ValueTree projectTree;
+    auto result = loadTree(file, projectTree);
+    if (!result.ok)
+    {
         return result;
     }
 
@@ -363,10 +390,10 @@ LoadResult load(const juce::File& file, ProjectState& project)
     if (!replaceResult.wasOk())
     {
         result.error = replaceResult.getErrorMessage();
+        result.ok = false;
         return result;
     }
 
-    result.ok = true;
     return result;
 }
 

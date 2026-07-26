@@ -188,13 +188,30 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
       visibleRows.push({ track, worldY, rowHeight, clipHeight: slot.clipHeight })
     }
 
+    const selection = useUiStore().timelineSelection
+    if (selection) {
+      const selectionX = headerWidth() + (selection.startMs / 1000) * pxPerSecond.value
+      const selectionWidth =
+        ((selection.endMs - selection.startMs) / 1000) * pxPerSecond.value
+      const selectionOverlay = new G()
+      selectionOverlay
+        .rect(
+          selectionX,
+          RULER_HEIGHT,
+          selectionWidth,
+          Math.max(trackAreaHeight.value, tracksContentHeight.value)
+        )
+        .fill({ color: 0x0ea5e9, alpha: 0.1 })
+      tracksL.addChild(selectionOverlay)
+    }
+
     drawGrid(width)
 
     let visibleClipCount = 0
     const ui = useUiStore()
     const headerW = headerWidth()
     for (const { track, worldY, rowHeight, clipHeight } of visibleRows) {
-      const laneParam = ui.automationLanes[track.id]
+      const lanes = ui.automationLanes[track.id] ?? []
       const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
@@ -216,14 +233,29 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
       clipRenderer.drawClipBrakes(track, worldY, clipHeight, worldLeft, worldRight)
       // Turntable-backspin tail overlay (reverse rewind) sits above the clip body.
       clipRenderer.drawClipBackspins(track, worldY, clipHeight, worldLeft, worldRight)
-      // Automation lane occupies the reserved strip below the clips when shown.
-      if (laneParam && rowHeight > clipHeight) {
+      // Automation lanes occupy the reserved strips below the clips when shown.
+      if (lanes.length > 0 && rowHeight > clipHeight) {
         const tracks = tracksLayer.value
         const G = GraphicsCtor.value
         if (tracks && G) {
-          drawAutomationLane(tracks, G, laneParam, track.automation?.[laneParam], worldY, clipHeight,
-                             headerW, pxPerSecond.value, worldRowRight,
-                             trackStaticAutomationValue(track, laneParam))
+          let laneOffset = 0
+          for (const lane of lanes) {
+            drawAutomationLane(
+              tracks,
+              G,
+              lane.paramId,
+              track.automation?.[lane.paramId],
+              worldY,
+              clipHeight,
+              laneOffset,
+              lane.heightPx,
+              headerW,
+              pxPerSecond.value,
+              worldRowRight,
+              trackStaticAutomationValue(track, lane.paramId)
+            )
+            laneOffset += lane.heightPx
+          }
         }
       }
     }

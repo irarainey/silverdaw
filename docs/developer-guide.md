@@ -170,6 +170,13 @@ Silverdaw currently supports the core arrangement workflow:
   Explorer file directly onto an existing timeline track to import and place it.
   Dropping one file onto empty timeline space creates a fresh track for it, and
   dropping several files creates one new track per file at the drop position.
+- **File ▸ Import from Project…** lists saved projects from the configured
+  project folder, then lets you select their managed stems and samples. A
+  selected scratch sample also imports its linked Scratch pattern and original
+  source-audio snapshot. Its Scratch Editor playback and waveform use that
+  copied snapshot. The source project is read-only; imported items get
+  independent destination assets and one undo step. Tracks, timeline clips,
+  markers, automation, and settings are not imported.
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.
@@ -201,7 +208,7 @@ Silverdaw currently supports the core arrangement workflow:
   or pending spinner on the timeline. The Timeline preference can disable
   automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
-  (clamped 60..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
+  (clamped 80..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
 - Edit track gain with the fader or double-click the dB readout to type a value
@@ -264,8 +271,9 @@ Silverdaw currently supports the core arrangement workflow:
   / [`BusGraph`](../backend/src/engine/BusGraph.h) (which applies pan to the dry path
   after the pre-pan send tap) / [`SharedFx`](../backend/src/dsp/SharedFx.h) (the
   project-wide Reverb and Delay return buses). The open
-  FX tab and the selected track are project **view state**, round-tripped through
-  `PROJECT_SET_VIEW` and saved in the `.silverdaw` file alongside mute / solo.
+  FX tab, selected track, timeline range, and its **Loop Selection** state are
+  project **view state**, round-tripped through `PROJECT_SET_VIEW` and saved in
+  the `.silverdaw` file alongside mute / solo.
 
   Beat Repeat regions are stored per track in beat space, so they follow project
   tempo changes. Right-click a clip or empty track lane and choose **Effects →
@@ -376,9 +384,23 @@ Silverdaw currently supports the core arrangement workflow:
   project ruler's end, the renderer sends `TRANSPORT_PAUSE` and parks the playhead
   there. The Play button (and the Spacebar shortcut) is disabled while the
   playhead sits at the end — skip back to the start to re-arm playback.
+- **Timeline range playback** starts by dragging across the ruler away from the
+  playhead. The range is shown across the ruler and track rows, snaps to the
+  timeline grid by default, and supports `Alt` for exact pointer placement.
+  Dragging the playhead keeps its established repositioning behavior. Play starts
+  at the range beginning and pauses at its exclusive end. Enable **Loop
+  Selection** in the transport to return to the beginning at that boundary while
+  retaining shared Reverb and Delay tails. Starting selected playback smoothly
+  reveals its beginning when it is off-screen. The **Skip** buttons treat the
+  range start as a temporary jump point without creating a saved marker.
+  **Escape** clears the range and Loop Selection before stepping through clip,
+  automation-point, and track selection. The range and loop state are saved as
+  non-undoable project view state.
 - **Edit ▸ Trim Project to Last Clip** collapses the project length to the end of
   the latest clip on any track. Manual project-length edits are also clamped so
-  the ruler cannot be shortened below the longest clip's effective end.
+  the ruler cannot be shortened below the longest clip's effective end. Reducing
+  project length truncates a crossing timeline range, or clears a range whose
+  start falls outside the new duration (also disabling Loop Selection).
 - Save reusable saved clips to the library from any timeline clip; saved clips are
   grouped under their source file and can be dragged back to the timeline as a clip
   with the same source window. **Linked saved clips**: clips dropped from a saved clip
@@ -534,6 +556,18 @@ decoded-WAV cache) at the time it loads the clip's audio source.
   user's project and waits for its `reset=true` snapshot before treating the session as restored
   (see [Engine resilience and recovery](#engine-resilience-and-recovery)).
 
+Track automation curves use `TRACK_SET_AUTOMATION { trackId, paramId, points }`.
+Visible automation-lane layouts use
+`TRACK_SET_AUTOMATION_LANE_VIEW { trackId, lanes: [{ paramId, heightPx }] }`.
+Both are persisted in the project and returned in `PROJECT_STATE`.
+
+Cross-project import uses `PROJECT_IMPORT_SOURCE_INSPECT` to request a compact
+`PROJECT_IMPORT_SOURCE_MANIFEST`, then `PROJECT_IMPORT_ASSETS` with only the
+selected managed-library item IDs. Selecting a scratch sample automatically
+includes its linked pattern and source snapshot. `PROJECT_IMPORT_COMPLETED`
+reports the result. Audio and metadata remain disk-resident; the source project
+is never written.
+
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`
 envelope. The cache file at `cachePath` (under `%APPDATA%/Silverdaw/peaks/`) holds the peaks
@@ -543,6 +577,12 @@ project files, stems and mixdowns — the WebSocket carries the control plane, t
 filesystem carries bulk data. Keeps the IXWebSocket I/O loop on the lightweight text-only path
 it was designed for. `WAVEFORM_FAILED { clipId, error }` triggers renderer-side decoding as a
 recovery path when the backend cannot produce peaks.
+
+When a saved scratch reopens from its self-contained source snapshot, the
+backend also sends `SCRATCH_SOURCE_PEAKS_READY { sessionId, cachePath,
+peakCount, peaksPerSecond, sampleRate }`. Its peaks use the same cache-file
+format and IPC path as `WAVEFORM_READY`, but remain scoped to that Scratch
+Editor session so the rendered library sample keeps its own waveform.
 
 The full envelope catalogue lives in
 [`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts),
@@ -652,6 +692,10 @@ Backend → renderer:
   `backingLoop`, `backingGain`, `scratchMonitorGain`). It never drives audio timing.
 - `SCRATCH_PATTERN_RECORDED { sessionId, pattern }` delivers the completed,
   possibly simplified action pattern after a recording stops.
+- `SCRATCH_SOURCE_PEAKS_READY { sessionId, cachePath, peakCount,
+  peaksPerSecond, sampleRate }` points a reopened saved scratch at the
+  disk-backed peaks for its prepared source snapshot. The renderer uses it only
+  for the matching Scratch Editor session.
 
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
@@ -866,12 +910,16 @@ especially on a machine we can't attach to (a clean install, a Store
 certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 **independent of the Preferences ▸ Developer diagnostic-logging toggle**:
 
+The verbose application-log directory is configured separately in
+**Preferences ▸ Developer**. When diagnostic logging is enabled, its default is
+`%USERPROFILE%\Silverdaw\Logs`.
+
 - **Diagnostics directory.** Electron main always creates a diagnostics
-  directory on launch (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`,
-  a discoverable non-virtualised location — under MSIX a `userData`/`%APPDATA%`
-  path is silently redirected into a hidden package container; dev builds:
-  `<userData>/diagnostics`) and passes it to the backend as `SILVERDAW_DIAG_DIR`
-  on every spawn — distinct from
+  directory on launch (packaged and development builds:
+  `%USERPROFILE%\Silverdaw\Diagnostics`, a discoverable non-virtualised
+  location — under MSIX a `userData`/`%APPDATA%` path is silently redirected
+  into a hidden package container) and passes it to the backend as
+  `SILVERDAW_DIAG_DIR` on every spawn — distinct from
   the opt-in verbose sink (`SILVERDAW_LOG_DIR`, only set when logging is enabled).
   Main writes `startup.log` there (truncated each launch): the launch banner and
   the backend lifecycle it observes (spawn path/port, exit code/signal, respawns,
@@ -915,8 +963,8 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         colorIndex?, toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
         sendReverb?, sendDelay?, pan?, levelerAmount?, punchAmount?, saturationDrive?, saturationMix?,
-        bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?, automation?,
-        transitions?]
+        bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?,
+        automation?, automationLaneView?, transitions?]
     BEAT_REPEAT[id, startBeat, lengthBeats, division]*
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?,
@@ -1054,7 +1102,10 @@ an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape*
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
 shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
-bottom-panel FX tabs, round-tripped through `PROJECT_SET_VIEW`.
+bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
+`viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
+timeline range and Loop Selection state. All are round-tripped through
+`PROJECT_SET_VIEW`.
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
@@ -1072,7 +1123,7 @@ monitoring aid never marks the project dirty or adds an undo step. It is omitted
 from save (and from the `PROJECT_STATE` broadcast) while at its default-off value.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
-Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 60..400) is
+Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400) is
 likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
 preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
@@ -1099,9 +1150,10 @@ field holds the entire `PROJECT` `ValueTree` mapped through
 `{ "$type": "TRACK", id: "...", $children: [ … ] }`). Atomic save (write `<file>.tmp` then
 rename) and forward-compatible load (unknown keys are ignored). Normal Save / Save As writes
 the full project tree. Before leaving a clean project, the renderer sends
-`PROJECT_SAVE_VIEW_STATE`; the backend updates only `viewScrollX` and `playheadMs` in the
-existing `.silverdaw` file, so view state survives reopen without saving unrelated unsaved
-project edits or changing the dirty flag. Logic lives in
+`PROJECT_SAVE_VIEW_STATE`; the backend updates view state including scroll, zoom,
+playhead, selected track, FX panel, timeline range, and Loop Selection in the
+existing `.silverdaw` file, so it survives reopen without saving unrelated
+unsaved project edits or changing the dirty flag. Logic lives in
 [`backend/src/project/ProjectFile.cpp`](../backend/src/project/ProjectFile.cpp).
 
 **Portable project folder** — Save / Save As nests the project into its own folder
@@ -1243,7 +1295,7 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
   reconstructed library items. Older projects that predate persisted library duration fall
   back to a renderer decode if metadata cannot provide a duration.
 - Restores persisted zoom, horizontal scroll, BPM, project length, playhead position, and
-  timeline markers from the snapshot.
+  timeline markers from the snapshot, along with each track's visible automation-lane layout.
 
 `PROJECT_STATE` is purely additive on the connect path — it never deletes optimistic state the
 user just created, so a race between an early user action and the snapshot arriving doesn't
@@ -1559,8 +1611,9 @@ we later seed lined up with the source's beats from the first beat to the last. 
 amber `~ BPM` warning badge.
 
 The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
-pair, so the anchor's phase matters as much as the period. After the period is
-final the detector runs a guarded **phase correction**: `estimateGridPhaseOffset`
+pair, so the anchor's phase matters as much as the period. Before the final
+ODF-peak refit, the detector runs a guarded **phase correction**:
+`estimateGridPhaseOffset`
 measures, for each grid beat across the whole track, the offset to the strongest nearby
 ODF peak and takes the **median**. The anchor is shifted by that median
 only when the offsets are *consistent* (IQR ≤ 30 ms — chosen over median-absolute-
@@ -2091,7 +2144,8 @@ first and continues playing from the underlying source).
   which still inline-renames), or pick **Open ▸ Clip Editor** from the clip
   menu, to edit that timeline clip — its window, warp and pitch.
 
-The dialog renders the source waveform with an adaptive time ruler, faint
+The dialog renders the source waveform with an adaptive time ruler that always
+uses minute-and-second labels, retaining fractional seconds at close zoom, faint
 beat lines extrapolated from the detected BPM, and zoom + horizontal scroll
 (`+` / `-` / `0`, mouse-wheel anchored at the pointer, `Shift+wheel` to pan;
 capped at **64× / 6400 %** so even narrow saved clips can be inspected
@@ -2208,9 +2262,11 @@ item) or from a **library item** (the library-tile context menu, any kind —
 including a previously saved scratch-origin item, which prepares its session
 from the self-contained `scratchSourcePath` snapshot written at save time — the
 exact source window the scratch was performed over — rather than the baked WAV
-or a fresh crop of the current source). The editor never seeks, starts, or
-stops the arrangement transport; it runs its own audition session and blocks
-the global keyboard/MIDI gate while open.
+or a fresh crop of the current source). Imported scratches copy this snapshot
+with their notation. The editor draws and auditions the snapshot rather than
+the rendered scratch sample. It never seeks, starts, or stops the arrangement
+transport; it runs its own audition session and blocks the global keyboard/MIDI
+gate while open.
 
 **Session model.** The renderer opens and closes a backend session with
 `SCRATCH_SESSION_OPEN` / `SCRATCH_SESSION_CLOSE`; the open payload carries exactly
@@ -2336,8 +2392,9 @@ lane) over the source waveform. Recording preserves the scratch source's current
 position, so a take can begin at any phrase in the prepared source; only the
 backing bed restarts at its head. The notation starts at a real time scale of
 180 pixels per second rather than compressing a long take into the panel. It has
-time markers, zoom controls (100%–800%), a horizontal scrollbar when needed, and
-smoothly follows replay with the playhead held near the centre of the viewport.
+minute-and-second time markers, retaining fractional seconds at close zoom, zoom
+controls (100%–800%), a horizontal scrollbar when needed, and smoothly follows
+replay with the playhead held near the centre of the viewport.
 
 Click a notation point to select it, then drag it or use the keyboard controls
 listed below. Double-click a lane to add a point; right-click an editable point
@@ -2743,7 +2800,8 @@ multi-selection and empty-track menus show only actions relevant to that target.
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** | Drag the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). Double-click has no effect — toggle markers at the playhead with `M`. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | `Shift` + click on **clip** | Extend the selection to a range of clips on the anchor's track, between the anchor and the clicked clip (ordered by start time). |
@@ -2776,7 +2834,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
-| `Escape` | Step down through the selection: when a track and clip(s) are selected, the first press clears the clip(s) (and any selected automation point) but keeps the track selected, and a second press clears the track. When only a track is selected, one press clears it. |
+| `Escape` | Clear the timeline range first, including Loop Selection. Then step down through the selection: when a track and clip(s) are selected, the next press clears the clip(s) (and any selected automation point) but keeps the track selected, and a further press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
@@ -2922,23 +2980,29 @@ renderer-only (never serialised), so it needs no migration.
 
 ### Track effect automation
 
-Each track header has an **A** toggle that opens an automation lane (a strip reserved at the
-bottom of the track row; clips compress above it, so a collapsed lane leaves the timeline
-layout untouched). A parameter picker chooses what the lane edits — **Filter**, **Pan**, the
-3-band **Tone**, **Reverb/Delay sends**, **Compressor**, **Punch**, **Saturation**,
-**Bit Crusher**, or
-**Gain** (a post-FX track level in
+Each track header has an **A** toggle that opens an automation stack below the clip area; the
+first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
+several curves can be viewed and edited together. Every lane has its own parameter picker and
+height; its lower edge resizes only that lane from 80 to 220 px. The track row's bottom edge
+still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
+does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
+as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through
+`PROJECT_STATE` and `.silverdaw`; absence keeps old projects collapsed.
+
+Lanes can edit **Filter**, **Pan**, the 3-band **Tone**, **Reverb/Delay sends**,
+**Compressor**, **Punch**, **Saturation**, **Bit Crusher**, or **Gain** (a post-FX track level in
 dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
 move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
 stream coalesces into one undo step. Lane-header controls raise/lower the whole curve, set the
-value at the playhead, copy/paste a curve between tracks, and reset to default. The picker marks
-already-automated params with a ● dot, and the value editor shows the sign convention (Filter:
-negative = LPF, positive = HPF). Curves are stored on
-each `TRACK` as one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs,
-value }] }`), round-tripped through `PROJECT_STATE` and `.silverdaw`. A lane with no curve shows a
-faint baseline line at the parameter's **static (resting) value**, so the line tracks the live
-Track FX control; the first point you draw starts from that value. A curve that settles flat at
-the static value is treated as a no-op and the lane auto-clears. Each static Track FX
+value at the playhead, copy/paste a curve, and reset to default. Pasting into a different
+parameter maps every value through its normalized range, preserving the copied curve's visual
+shape. The picker marks already-automated params with a ● dot, and the value editor shows the
+sign convention (Filter: negative = LPF, positive = HPF). Curves are stored on each `TRACK` as
+one `automation` array-of-lanes property (`{ paramId, points: [{ timeMs, value }] }`), separately
+from `automationLaneView`. A lane with no curve shows a faint baseline line at the parameter's
+**static (resting) value**, so the line tracks the live Track FX control; the first point you draw
+starts from that value. A curve that settles flat at the static value is treated as a no-op and
+the lane auto-clears. Each static Track FX
 control (and the header **Pan**) carries a small **A** button that opens that parameter's lane
 (`useFxAutomation`); while a curve owns the value the static control is **disabled**, dimmed, and
 shows an **AUTO** tag, so it is clear the lane is in charge. While automated the control is
@@ -2946,10 +3010,7 @@ shows an **AUTO** tag, so it is clear the lane is in charge. While automated the
 (`useFxAutomation.displayValue` reading `transport.positionMs`), so during playback or scrub the
 Filter / Tone / Sends / Compressor / Punch / Saturation / Bit Crusher sliders and the header Pan animate to the current automated
 value (the static value remains the resting baseline the curve rides). The keyboard/value nudges
-snap to the parameter default so 0 / centre
-is always reachable. The lane resizes via a thin middle splitter (redistributes height between
-waveform and lane) and the row's bottom edge (grows both together), clamped to a minimum that
-keeps the readout visible. The backend publishes an
+snap to the parameter default so 0 / centre is always reachable. The backend publishes an
 immutable `TrackAutomationSnapshot` per track (lock-free + retire queue) and samples it on a
 fixed 256-frame control quantum at the block-start transport position, driving the existing
 smoothed targets and snapping on seek/loop/play discontinuities, restoring neutral when a lane

@@ -15,7 +15,11 @@ import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import { clipHasCompleteWaveformData } from '@/stores/project-waveform-state'
-import type { SampleSavedPayload, WaveformReadyPayload } from '@shared/bridge-protocol'
+import type {
+  SampleSavedPayload,
+  ScratchSourcePeaksReadyPayload,
+  WaveformReadyPayload
+} from '@shared/bridge-protocol'
 
 /**
  * Cache-file binary layout (mirrors `backend/src/PeaksCache.cpp`):
@@ -148,6 +152,29 @@ export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise
   log.info(
     'bridge',
     `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
+  )
+}
+
+export async function loadScratchSourcePeaksFromCache(
+  payload: ScratchSourcePeaksReadyPayload
+): Promise<void> {
+  const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
+  const parsed = parsePeaksCacheBuffer(
+    buffer,
+    payload.peakCount,
+    `SCRATCH_SOURCE_PEAKS_READY sessionId=${payload.sessionId}`
+  )
+  if (!parsed) return
+  useScratchSessionStore().setSourcePeaks({
+    sessionId: payload.sessionId,
+    peaks: parsed.summary,
+    channels: parsed.channels,
+    peaksPerSecond: payload.peaksPerSecond,
+    sampleRate: payload.sampleRate
+  })
+  log.info(
+    'bridge',
+    `SCRATCH_SOURCE_PEAKS_READY sessionId=${payload.sessionId} peaks=${payload.peakCount} lanes=${parsed.laneCount}`
   )
 }
 

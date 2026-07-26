@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0
+
+### Added
+
+- Track automation can now show multiple distinct parameter lanes on the same track.
+- Dragging the timeline ruler now creates a playable and loopable range selection that persists with projects.
+- Project stems, samples, and scratch samples can now be imported into another project.
+
+### Changed
+
+- Waveform rulers now keep minute-and-second labels at every zoom level.
+
+
+### Fixed
+
+- Copying automation between effects now preserves the curve shape.
+- Automation lane layouts now persist with their projects.
+- Playback transitions and automated effects no longer introduce click artifacts.
+
 ## 1.3.0
 
 ### Added

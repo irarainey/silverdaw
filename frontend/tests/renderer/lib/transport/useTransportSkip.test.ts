@@ -54,6 +54,35 @@ describe('useTransportSkip', () => {
     expect(scrollTo).toHaveBeenCalledWith(3000)
   })
 
+  it('includes the selected range start among marker-mode back targets', () => {
+    const transport = useTransportStore()
+    const project = useProjectStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'markers'
+    project.markers = [{ positionMs: 1000 }, { positionMs: 3000 }] as typeof project.markers
+    ui.setTimelineSelection({ startMs: 3200, endMs: 4000 })
+    transport.positionMs = 3500
+    const { onSkipBack } = useTransportSkip()
+
+    onSkipBack()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 3200 })
+  })
+
+  it('uses the selected range start before rewinding in timeline mode', () => {
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
+    ui.setTimelineSelection({ startMs: 1000, endMs: 3000 })
+    transport.positionMs = 5000
+    const { onSkipBack } = useTransportSkip()
+
+    onSkipBack()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 1000 })
+    expect(sendMock).not.toHaveBeenCalledWith('PROJECT_SET_VIEW', { scrollX: 0 })
+  })
+
   it('play toggles to pause when already playing', () => {
     const transport = useTransportStore()
     transport.isPlaying = true
@@ -79,6 +108,24 @@ describe('useTransportSkip', () => {
 
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PLAY')
     expect(setState).toHaveBeenCalledWith(true)
+  })
+
+  it('plays the active timeline selection from its start', () => {
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.isPlaying = false
+    transport.audioState = 'ready'
+    transport.positionMs = 5000
+    ui.setTimelineSelection({ startMs: 1000, endMs: 3000 })
+    const scrollTo = vi.spyOn(ui, 'requestTimelineScrollToPosition')
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 1000 })
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(scrollTo).toHaveBeenCalledWith(1000, true)
+    expect(transport.positionMs).toBe(1000)
   })
 
   it('does not start playback while no output device is available', () => {
@@ -130,6 +177,34 @@ describe('useTransportSkip', () => {
     onSkipForward()
 
     expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
+  it('includes the selected range start among marker-mode forward targets', () => {
+    const transport = useTransportStore()
+    const project = useProjectStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'markers'
+    project.markers = [{ positionMs: 4000 }] as typeof project.markers
+    ui.setTimelineSelection({ startMs: 3000, endMs: 5000 })
+    transport.positionMs = 1000
+    const { onSkipForward } = useTransportSkip()
+
+    onSkipForward()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 3000 })
+  })
+
+  it('uses the selected range start before jumping to the timeline end', () => {
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
+    ui.setTimelineSelection({ startMs: 3000, endMs: 5000 })
+    transport.positionMs = 1000
+    const { onSkipForward } = useTransportSkip()
+
+    onSkipForward()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 3000 })
   })
 
   it('skip-forward (marker mode) is a no-op when there is nowhere to go', () => {

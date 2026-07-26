@@ -8,10 +8,13 @@ All project state — tracks, clips, library, markers, view state, identity —
 lives in a `juce::ValueTree` in the backend, with a `juce::UndoManager` for
 undo/redo. After AUTH the backend sends one full `PROJECT_STATE` snapshot; the
 renderer's Pinia stores **mirror** it and own only **ephemeral interaction
-state** (hover, in-flight drag, transient highlight). Persisted view state (zoom,
-scroll, selected track, open FX panel) is backend-authoritative and round-trips
-via `PROJECT_SET_VIEW`. A `reset=true` snapshot wipes optimistic local state; the
-connect path merges additively.
+state** (hover, in-flight drag, transient highlight). Persisted project view
+state (zoom, scroll, selected track, open FX panel, timeline range, and Loop
+Selection) is backend-authoritative and round-trips via `PROJECT_SET_VIEW`.
+Per-track automation-lane visibility, order, and heights are separate persisted
+track state and round-trip through `TRACK_SET_AUTOMATION_LANE_VIEW`. A
+`reset=true` snapshot wipes optimistic local state; the connect path merges
+additively.
 
 ## Why
 

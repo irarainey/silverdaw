@@ -44,6 +44,8 @@ import {
   isProjectAutosavedPayload,
   isProjectDirtyPayload,
   isProjectLoadFailedPayload,
+  isProjectImportSourceManifestPayload,
+  isProjectImportResultPayload,
   isProjectRenamedPayload,
   isProjectSavedPayload,
   isProjectStatePayload,
@@ -71,6 +73,7 @@ import {
   isEngineAudioStatusPayload,
   isScratchSessionStatePayload,
   isScratchPatternRecordedPayload,
+  isScratchSourcePeaksReadyPayload,
   type BridgeInboundMessage,
   type BridgeInboundType
 } from '@shared/bridge-protocol'
@@ -130,6 +133,11 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isProjectAutosavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_LOAD_FAILED':
       return isProjectLoadFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_IMPORT_SOURCE_MANIFEST':
+      return isProjectImportSourceManifestPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PROJECT_IMPORT_SOURCE_FAILED':
+    case 'PROJECT_IMPORT_COMPLETED':
+      return isProjectImportResultPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_RENAMED':
       return isProjectRenamedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_DIRTY':
@@ -140,6 +148,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isWaveformFailedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_EDITOR_PEAKS_READY':
       return isClipEditorPeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'SCRATCH_SOURCE_PEAKS_READY':
+      return isScratchSourcePeaksReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'SAMPLE_SAVED':
       return isSampleSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'LIBRARY_ITEM_ANALYSIS':

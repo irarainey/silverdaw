@@ -30,5 +30,9 @@ void handleProjectAutosave(const juce::var& payload, AudioEngine& engine, Projec
 void handleProjectLoadRecovery(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                                BridgeServer& bridge, ProjectSession& session, juce::ThreadPool& peakPool,
                                const DecodedCache& decodedCache);
+void handleProjectImportSourceInspect(const juce::var& payload, ProjectState& projectState,
+                                      BridgeServer& bridge, const ProjectSession& session);
+void handleProjectImportAssets(const juce::var& payload, ProjectState& projectState,
+                               BridgeServer& bridge, const ProjectSession& session);
 
 } // namespace silverdaw

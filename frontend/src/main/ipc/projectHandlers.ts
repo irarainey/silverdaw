@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
+import { listProjectImportSources } from '../projectImportSources'
 import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
 import { ensureWritableTargetDir } from '../writableTarget'
 import type { PrefsService } from '../prefsService'
@@ -79,6 +80,10 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
+
+  ipcMain.handle(IPC.project.listImportSources, async () =>
+    listProjectImportSources(prefs.get().paths.defaultProjectDir)
+  )
 
   ipcMain.handle(
     IPC.project.chooseSaveAs,

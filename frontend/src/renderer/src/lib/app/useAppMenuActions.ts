@@ -29,6 +29,7 @@ export interface AppMenuActionsDeps {
   aboutOpen: Ref<boolean>
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
+  projectImportOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
   /** True while the diagnostics bundle is being built — drives the wait spinner. */
   diagnosticsBusy: Ref<boolean>
@@ -122,6 +123,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'file.importToLibrary') {
       void openAndImportAudioFilesIntoLibrary()
+      return
+    }
+    if (action === 'file.importFromProject') {
+      deps.projectImportOpen.value = true
       return
     }
     if (action === 'file.projectProperties') {
@@ -274,6 +279,9 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       const before = project.durationMs
       project.setProjectLengthMs(maxEndMs)
       const after = project.durationMs
+      if (ui.clampTimelineSelectionToDuration(after)) {
+        ui.persistTimelineSelectionView()
+      }
       if (after !== before) {
         sendBridge('PROJECT_SET_LENGTH', { lengthMs: after })
       }

@@ -23,6 +23,8 @@ public:
         currentBits = targetBits.load(std::memory_order_relaxed);
         currentBoost = targetBoost.load(std::memory_order_relaxed);
         currentMix = targetMix.load(std::memory_order_relaxed);
+        bitTransitionTargetBits = currentBits;
+        bitTransitionRemaining = 0;
         recomputeDerived();
         reset();
         prepared = true;
@@ -33,7 +35,7 @@ public:
     {
         capturePhase = 0.0F;
         hasHeldSample = false;
-        heldSamples.fill(0.0F);
+        heldInputs.fill(0.0F);
     }
 
     void setParams(float rate, int bits, float boost, float mix, bool snap) noexcept
@@ -79,6 +81,8 @@ public:
             currentBits = targetBits.load(std::memory_order_relaxed);
             currentBoost = targetBoost.load(std::memory_order_relaxed);
             currentMix = targetMix.load(std::memory_order_relaxed);
+            bitTransitionTargetBits = currentBits;
+            bitTransitionRemaining = 0;
             recomputeDerived();
         }
         else if (smoothParams(numSamples))
@@ -104,18 +108,32 @@ public:
                 for (int channel = 0; channel < nCh; ++channel)
                 {
                     const float input = buffer.getSample(channel, sample);
-                    heldSamples[static_cast<size_t>(channel)] = quantize(input) * boostGain;
+                    heldInputs[static_cast<size_t>(channel)] = input;
                 }
                 hasHeldSample = true;
             }
 
+            const float bitTransitionMix = bitTransitionRemaining > 0
+                ? 1.0F - static_cast<float>(bitTransitionRemaining)
+                              / static_cast<float>(kBitTransitionSamples)
+                : 0.0F;
             for (int channel = 0; channel < nCh; ++channel)
             {
                 const float dry = buffer.getSample(channel, sample);
-                const float wet = heldSamples[static_cast<size_t>(channel)];
+                const float heldInput = heldInputs[static_cast<size_t>(channel)];
+                const float currentWet = quantize(heldInput, currentBits) * boostGain;
+                const float targetWet = bitTransitionRemaining > 0
+                    ? quantize(heldInput, bitTransitionTargetBits) * boostGain
+                    : currentWet;
+                const float wet = currentWet + (targetWet - currentWet) * bitTransitionMix;
                 buffer.setSample(channel, sample, dry + currentMix * (wet - dry));
             }
 
+            if (bitTransitionRemaining > 0 && --bitTransitionRemaining == 0)
+            {
+                currentBits = bitTransitionTargetBits;
+                recomputeDerived();
+            }
             capturePhase += currentRate;
         }
     }
@@ -126,6 +144,7 @@ private:
     static constexpr float kMaxBoostDb = 12.0F;
     static constexpr float kBypassEpsilon = 1.0e-5F;
     static constexpr float kSmoothTauSeconds = 0.02F;
+    static constexpr int kBitTransitionSamples = 240;
 
     static float sanitizeUnit(float value) noexcept
     {
@@ -161,10 +180,14 @@ private:
         const int nextBits = targetBits.load(std::memory_order_relaxed);
         const float nextBoost = smooth(currentBoost, targetBoost.load(std::memory_order_relaxed));
         const float nextMix = smooth(currentMix, targetMix.load(std::memory_order_relaxed));
-        const bool changed = nextRate != currentRate || nextBits != currentBits
-            || nextBoost != currentBoost || nextMix != currentMix;
+        if (bitTransitionRemaining == 0 && nextBits != currentBits)
+        {
+            bitTransitionTargetBits = nextBits;
+            bitTransitionRemaining = kBitTransitionSamples;
+        }
+        const bool changed = nextRate != currentRate || nextBoost != currentBoost
+            || nextMix != currentMix;
         currentRate = nextRate;
-        currentBits = nextBits;
         currentBoost = nextBoost;
         currentMix = nextMix;
         return changed;
@@ -172,13 +195,13 @@ private:
 
     void recomputeDerived() noexcept
     {
-        quantizationSteps = static_cast<float>(1 << currentBits);
         boostGain = juce::Decibels::decibelsToGain(kMaxBoostDb * currentBoost);
     }
 
-    float quantize(float sample) const noexcept
+    static float quantize(float sample, int bits) noexcept
     {
-        return std::round(sample * quantizationSteps) / quantizationSteps;
+        const float steps = static_cast<float>(1 << bits);
+        return std::round(sample * steps) / steps;
     }
 
     double sr = 44100.0;
@@ -191,13 +214,14 @@ private:
     std::atomic<bool> snapRequested{false};
     float currentRate = 1.0F;
     int currentBits = kMaxBits;
+    int bitTransitionTargetBits = kMaxBits;
+    int bitTransitionRemaining = 0;
     float currentBoost = 0.0F;
     float currentMix = 0.0F;
     float capturePhase = 0.0F;
     bool hasHeldSample = false;
-    float quantizationSteps = static_cast<float>(1 << kMaxBits);
     float boostGain = 1.0F;
-    std::array<float, kMaxChannels> heldSamples{};
+    std::array<float, kMaxChannels> heldInputs{};
 
     static_assert(std::atomic<float>::is_always_lock_free,
                   "BitCrusher publishes scalar params via lock-free atomics on the audio thread");

@@ -2,6 +2,7 @@
 // shared by the composable and its draw passes.
 
 import { horizontalOverscanPx } from '@/lib/timeline/timelineWindow'
+import { formatRulerTime } from '@/lib/musicTime'
 import type { SceneGeometry } from './clipEditorWaveformTypes'
 
 /** Ruler band height in CSS pixels. */
@@ -22,15 +23,4 @@ export function bandMsRange(g: SceneGeometry): { fromMs: number; toMs: number } 
   return { fromMs: g.viewIn + fromPx * msPerWorldPx, toMs: g.viewIn + toPx * msPerWorldPx }
 }
 
-export function formatRulerTime(ms: number, stepMs: number): string {
-  const totalSec = ms / 1000
-  if (stepMs < 1000) {
-    const decimals = stepMs < 100 ? 2 : 1
-    return totalSec.toFixed(decimals) + 's'
-  }
-  const sign = totalSec < 0 ? '-' : ''
-  const t = Math.abs(totalSec)
-  const m = Math.floor(t / 60)
-  const s = Math.floor(t % 60)
-  return `${sign}${m}:${s.toString().padStart(2, '0')}`
-}
+export { formatRulerTime }

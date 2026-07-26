@@ -70,9 +70,13 @@ void testBeatRepeatProcessorCaptureRepeatAndDiscontinuity()
         buffer.setSample(0, i, static_cast<float>(i + 1));
     buffer.copyFrom(1, 0, buffer, 0, 0, 8);
     processor.process(buffer, 0, 8, 0, &snapshot);
-    const float expected[] = {1, 2, 3, 4, 1, 2, 3, 4};
+    const float expected[] = {1, 2, 2, 2, 2, 2, 2, 2};
     for (int i = 0; i < 8; ++i)
-        requireNear(buffer.getSample(0, i), expected[i], 1.0e-6, "captured slice should repeat");
+        requireNear(buffer.getSample(0, i), expected[i], 1.0e-6,
+                    "repeat boundaries should crossfade captured audio");
+    for (int i = 1; i < 8; ++i)
+        require(std::abs(buffer.getSample(0, i) - buffer.getSample(0, i - 1)) <= 1.0F,
+                "repeat boundaries must not introduce a discontinuous jump");
 
     juce::AudioBuffer<float> inactive(2, 3);
     inactive.setSample(0, 0, 7.0F);
@@ -84,9 +88,10 @@ void testBeatRepeatProcessorCaptureRepeatAndDiscontinuity()
     juce::AudioBuffer<float> seeked(2, 4);
     for (int i = 0; i < 4; ++i) seeked.setSample(0, i, static_cast<float>(20 + i));
     processor.process(seeked, 0, 4, 2, &snapshot);
-    for (int i = 0; i < 4; ++i)
-        requireNear(seeked.getSample(0, i), 20.0 + i, 1.0e-6,
-                    "discontinuity must capture fresh audio rather than stale replay");
+    requireNear(seeked.getSample(0, 0), 20.0, 1.0e-6,
+                "discontinuity must capture fresh audio rather than stale replay");
+    requireNear(seeked.getSample(0, 1), 21.0, 1.0e-6,
+                "discontinuity must continue with freshly captured audio before its boundary fade");
 }
 
 } // namespace

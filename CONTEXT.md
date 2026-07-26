@@ -140,6 +140,11 @@ detail: ADR 0014 (`docs/adr/0014-testing-strategy.md`).
   `scripts/Invoke-DevShell.ps1 "<command>"`, which enters the latest VS x64 dev
   shell first (the same wrapper `.vscode/tasks.json` uses).
 
+## Application logs
+
+- The verbose application-log directory is configured in **Preferences ▸
+  Developer**. Its default is `%USERPROFILE%\Silverdaw\Logs`.
+
 ## Load on demand
 
 _Read these only when the task touches them — not by default._
