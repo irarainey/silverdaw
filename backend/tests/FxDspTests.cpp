@@ -768,8 +768,10 @@ void testBusGraphPanAppliedThroughMix()
     bg.setTrackPan("t1", -1.0F); // hard left
 
     juce::AudioBuffer<float> out(2, kBlock);
-    out.clear();
     juce::AudioSourceChannelInfo info(&out, 0, kBlock);
+    out.clear();
+    bg.getNextAudioBlock(info);
+    out.clear();
     bg.getNextAudioBlock(info);
 
     requireNear(out.getMagnitude(0, 0, kBlock), 0.5 * std::sqrt(2.0), 1.0e-4,
@@ -831,7 +833,9 @@ void testBusGraphExcludesBypassedTrackProcessing()
     graph.setTrackPan("track", -1.0F);
     graph.setTrackRenderingEnabled("track", true);
     graph.getNextAudioBlock(info);
-    require(source.calls == 2,
+    output.clear();
+    graph.getNextAudioBlock(info);
+    require(source.calls == 3,
             "reenabled track must return to the render snapshot");
     require(output.getMagnitude(1, 0, kBlock) == 0.0F,
             "effect and mixer edits made while bypassed must apply when reenabled");
@@ -972,6 +976,8 @@ void testBusGraphConcurrentParamUpdatesAreSafe()
     bg.setTrackPan("t1", -1.0F);
     out.clear();
     bg.getNextAudioBlock(info);
+    out.clear();
+    bg.getNextAudioBlock(info);
     requireNear(out.getMagnitude(1, 0, kBlock), 0.0, 1.0e-4,
                 "settled hard-left pan silences the right channel");
     require(out.getMagnitude(0, 0, kBlock) > 0.01F,
@@ -1038,8 +1044,8 @@ void testBusGraphFilterAndLevelAutomationResetToNeutral()
     // Clearing the lane mid-dip must restore neutral, not freeze the last value.
     runTo(7000.0);
     bg.setTrackAutomationPtr("t1", nullptr);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::filter);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::level);
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::filter);
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::level);
     double cleared = 0.0;
     for (int b = 0; b < 8; ++b) { out.clear(); bg.getNextAudioBlock(info); cleared = out.getMagnitude(0, 0, kBlock); }
     requireNear(cleared, 0.5, 0.05, "clearing a lane restores the track to unity, not the last automated value");
@@ -1069,6 +1075,12 @@ void testBusGraphSaturationAutomationRestoresStaticValues()
     };
 
     const float staticMagnitude = renderMagnitude();
+    const auto renderSettledMagnitude = [&]() {
+        float magnitude = 0.0F;
+        for (int block = 0; block < 256; ++block)
+            magnitude = renderMagnitude();
+        return magnitude;
+    };
 
     const auto makeSnapshot = [](silverdaw::AutomationParam param, float value) {
         auto snapshot = std::make_unique<silverdaw::TrackAutomationSnapshot>();
@@ -1086,16 +1098,16 @@ void testBusGraphSaturationAutomationRestoresStaticValues()
     bg.setTrackAutomationPtr("t1", driveAutomation.get());
     renderMagnitude();
     bg.setTrackAutomationPtr("t1", nullptr);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::saturationDrive);
-    requireNear(renderMagnitude(), staticMagnitude, 1.0e-5,
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::saturationDrive);
+    requireNear(renderSettledMagnitude(), staticMagnitude, 1.0e-5,
                 "clearing saturation Drive automation must restore its static value");
 
     auto mixAutomation = makeSnapshot(silverdaw::AutomationParam::saturationMix, 0.0F);
     bg.setTrackAutomationPtr("t1", mixAutomation.get());
     renderMagnitude();
     bg.setTrackAutomationPtr("t1", nullptr);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::saturationMix);
-    requireNear(renderMagnitude(), staticMagnitude, 1.0e-5,
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::saturationMix);
+    requireNear(renderSettledMagnitude(), staticMagnitude, 1.0e-5,
                 "clearing saturation Mix automation must restore its static value");
 
     bg.releaseResources();
@@ -1147,9 +1159,9 @@ void testBusGraphAutomationRestoresNonNeutralStaticValues()
     render();
 
     bg.setTrackAutomationPtr("t1", nullptr);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::toneBass);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::leveler);
-    bg.snapParamToDefault("t1", silverdaw::AutomationParam::pan);
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::toneBass);
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::leveler);
+    bg.restoreAutomationParam("t1", silverdaw::AutomationParam::pan);
     const auto restoredOutput = renderSettled();
     requireNear(restoredOutput[0], staticOutput[0], 1.0e-4,
                 "clearing Tone automation must restore the saved static value");
@@ -1476,6 +1488,31 @@ void testSafetyLimiterNeutralBypassAndCeiling()
                 "safety limiter must preserve the stereo balance");
 }
 
+void testSafetyLimiterLiveDisableRamps()
+{
+    constexpr int n = 256;
+    silverdaw::SafetyLimiter limiter;
+    limiter.prepare(48000.0);
+    limiter.setEnabled(true, /*snap*/ true);
+
+    juce::AudioBuffer<float> hot(2, n);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            hot.setSample(channel, sample, 1.2F);
+    limiter.process(hot, 0, n);
+
+    const float ceiling = silverdaw::SafetyLimiter::ceilingGain();
+    limiter.setEnabled(false, /*snap*/ false);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < n; ++sample)
+            hot.setSample(channel, sample, 1.2F);
+    limiter.process(hot, 0, n);
+    require(hot.getSample(0, 0) <= ceiling + 1.0e-6F,
+            "a live limiter disable must retain limiting while its blend starts");
+    require(hot.getSample(0, n - 1) > ceiling + 0.1F,
+            "a live limiter disable must finish its short dry blend");
+}
+
 void testSaturationNeutralBypassAndMix()
 {
     constexpr int n = 64;
@@ -1647,6 +1684,26 @@ void testBitCrusherNeutralBypassAndReduction()
     crusher.process(reentered, 0, n);
     requireNear(reentered.getSample(0, 0), -0.25, 1.0e-6,
                 "Bit Crusher must capture the current sample when Mix re-enters from bypass");
+
+    juce::AudioBuffer<float> bitDepthTransition(2, 241);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < bitDepthTransition.getNumSamples(); ++sample)
+            bitDepthTransition.setSample(channel, sample, 0.30F);
+    crusher.setParams(1.0F, 16, 0.0F, 1.0F, /*snap*/ true);
+    crusher.reset();
+    crusher.process(bitDepthTransition, 0, 1);
+    for (int channel = 0; channel < 2; ++channel)
+        for (int sample = 0; sample < bitDepthTransition.getNumSamples(); ++sample)
+            bitDepthTransition.setSample(channel, sample, 0.30F);
+    crusher.setBitsTarget(1.0F, /*snap*/ false);
+    crusher.process(bitDepthTransition, 0, bitDepthTransition.getNumSamples());
+    require(std::abs(bitDepthTransition.getSample(0, 0) - 0.30F) < 0.01F,
+            "bit-depth automation must begin from the previous quantizer");
+    require(bitDepthTransition.getSample(0, 120) > 0.35F
+            && bitDepthTransition.getSample(0, 120) < 0.45F,
+            "bit-depth automation must blend between the old and new quantizers");
+    requireNear(bitDepthTransition.getSample(0, 240), 0.5, 1.0e-6,
+                "bit-depth automation must complete at the requested quantizer");
 }
 
 } // namespace
@@ -1679,6 +1736,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
     tests.push_back({"ToneEq snap applies the full boost on the first block", testToneEqSnapAppliesOnFirstBlock});
     tests.push_back({"Leveler snap applies the makeup on the first block", testLevelerSnapAppliesOnFirstBlock});
     tests.push_back({"Safety limiter is transparent when off and caps linked peaks", testSafetyLimiterNeutralBypassAndCeiling});
+    tests.push_back({"Safety limiter live disable uses a short blend", testSafetyLimiterLiveDisableRamps});
     tests.push_back({"Saturation is transparent at zero drive or mix and shapes when driven", testSaturationNeutralBypassAndMix});
     tests.push_back({"Saturation suppresses high-frequency waveshaper aliases", testSaturationSuppressesHighFrequencyAliases});
     tests.push_back({"Bit crusher is transparent at zero mix and reduces rate and bits", testBitCrusherNeutralBypassAndReduction});

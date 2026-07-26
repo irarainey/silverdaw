@@ -277,6 +277,8 @@ void AudioEngine::recreateTrackPrefetch(Track& track, double positionSeconds)
                                      0, nullptr,
                                      track.sampleRate, track.numChannels);
     track.transportSource->setPosition(positionSeconds);
+    if (master.isPlaying())
+        track.transportSource->start();
     track.prefetchDirty = false;
 }
 
@@ -294,7 +296,7 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
     const double pos = trackSeekSecondsFor(track, master.getPositionSamples());
     silverdaw::log::info("engine", "invalidate prefetch (pos=" + juce::String(pos) + ")");
 
-    if (! master.isPlaying())
+    if (! master.isPlaying() || master.isOutputFadeOutComplete())
     {
         // Stopped edits (move / trim / envelope / reverse / edge-fade / brake / backspin / warp)
         // change the OffsetSource UPSTREAM of the read-ahead buffer, but juce::BufferingAudioSource

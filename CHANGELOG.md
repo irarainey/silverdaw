@@ -17,6 +17,7 @@
 
 - Copying automation between effects now preserves the curve shape.
 - Automation lane layouts now persist with their projects.
+- Playback transitions and automated effects no longer introduce click artifacts.
 
 ## 1.3.0
 

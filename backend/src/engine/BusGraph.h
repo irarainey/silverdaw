@@ -35,8 +35,6 @@ public:
         std::atomic<float> reverbSend{0.0F};
         std::atomic<float> delaySend{0.0F};
         std::atomic<float> pan{0.0F};
-        std::atomic<float> panGainL{1.0F};
-        std::atomic<float> panGainR{1.0F};
         std::atomic<float> peakL{0.0F};
         std::atomic<float> peakR{0.0F};
         std::atomic<bool> automationResetRequested{false};
@@ -50,6 +48,8 @@ public:
         const TrackAutomationSnapshot* lastAutomationSnapshot = nullptr;
         std::size_t automationSegments[TrackAutomationSnapshot::kNumParams] = {};
         juce::int64 automationLastEndSamples = -1;
+        float currentPanGainL = 1.0F;
+        float currentPanGainR = 1.0F;
 
         void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
         void releaseResources() override;
@@ -193,9 +193,8 @@ public:
      *  so playback lands exactly on the curve value at the playhead. */
     void snapAutomationCursors() noexcept;
 
-    /** Snap one param's DSP target back to its neutral default — used when a lane is
-     *  cleared so the chain stops holding the last automated value. */
-    void snapParamToDefault(const juce::String& trackId, AutomationParam p) noexcept;
+    /** Restore a removed lane's DSP target without discontinuously changing audio. */
+    void restoreAutomationParam(const juce::String& trackId, AutomationParam p) noexcept;
 
     /** Publish a track's automation snapshot (or nullptr to clear). The snapshot
      *  memory is owned + retired by the caller (AudioEngine). Resets the sampling

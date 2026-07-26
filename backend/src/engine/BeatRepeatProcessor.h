@@ -26,6 +26,9 @@ class BeatRepeatProcessor
     int captureLength{0};
     int capturedSamples{0};
     int repeatPosition{0};
+    int boundaryFadeSamples{0};
+
+    static constexpr int kMaximumBoundaryFadeSamples = 32;
 };
 
 } // namespace silverdaw

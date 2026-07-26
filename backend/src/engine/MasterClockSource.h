@@ -5,10 +5,8 @@
 #include "Log.h"
 #include "OutputKeepAlive.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <limits>
 #include <juce_audio_basics/juce_audio_basics.h>
 
 namespace silverdaw
@@ -46,107 +44,7 @@ class MasterClockSource : public juce::AudioSource
         child.releaseResources();
     }
 
-    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
-    {
-        const juce::ScopedNoDenormals scopedNoDenormals;
-        const auto startTicks = juce::Time::getHighResolutionTicks();
-        callbackCount.fetch_add(1, std::memory_order_relaxed);
-        const bool playing = keepAlive.isPlaying();
-        const auto requestedGeneration = scrubGeneration.load(std::memory_order_acquire);
-        if (requestedGeneration != activeScrubGeneration)
-        {
-            activeScrubGeneration = requestedGeneration;
-            scrubRendered = scrubRemaining > 0 ? kScrubEdgeFadeSamples : 0;
-            scrubRemaining = scrubRequestedSamples.load(std::memory_order_relaxed);
-        }
-        if (! playing && scrubRemaining <= 0)
-        {
-            // Keep-alive only wakes sleep-prone endpoints; idle output remains true digital
-            // silence. Drop any half-run wake pre-roll so the next play re-arms cleanly.
-            wakePrerollRemaining = 0;
-            info.clearActiveBufferRegion();
-            publishAudioPerf(startTicks, info.numSamples);
-            return;
-        }
-
-        if (! playing)
-        {
-            info.clearActiveBufferRegion();
-            const int renderSamples = juce::jmin(info.numSamples, scrubRemaining);
-            if (renderSamples <= 0)
-            {
-                publishAudioPerf(startTicks, info.numSamples);
-                return;
-            }
-
-            juce::AudioSourceChannelInfo scrubInfo(info.buffer, info.startSample, renderSamples);
-            child.getNextAudioBlock(scrubInfo);
-            mixGlue.process(*info.buffer, info.startSample, renderSamples);
-            if (scrubDirection.load(std::memory_order_relaxed) < 0)
-            {
-                for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
-                {
-                    auto* samples = info.buffer->getWritePointer(ch, info.startSample);
-                    std::reverse(samples, samples + renderSamples);
-                }
-            }
-
-            for (int i = 0; i < renderSamples; ++i)
-            {
-                const float fadeIn = juce::jlimit(
-                    0.0F, 1.0F,
-                    static_cast<float>(scrubRendered + i + 1) /
-                        static_cast<float>(kScrubEdgeFadeSamples));
-                const float fadeOut = juce::jlimit(
-                    0.0F, 1.0F,
-                    static_cast<float>(scrubRemaining - i) /
-                        static_cast<float>(kScrubEdgeFadeSamples));
-                const float gain = juce::jmin(fadeIn, fadeOut);
-                for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
-                    info.buffer->getWritePointer(ch, info.startSample)[i] *= gain;
-            }
-            scrubRendered += renderSamples;
-            scrubRemaining -= renderSamples;
-            publishAudioPerf(startTicks, info.numSamples);
-            return;
-        }
-
-        // First block of a new play: on a sleep-prone (USB) endpoint, arm a short wake pre-roll so
-        // the DAC's auto-mute amp is roused before the downbeat. Non-sleep-prone devices skip it and
-        // play instantly. The pre-roll runs entirely here on the audio thread — the message thread
-        // never blocks.
-        if (playStartPending.exchange(false, std::memory_order_acq_rel))
-        {
-            if (keepAlive.isKeepAwakeEnabled())
-            {
-                wakePrerollRemaining = prerollSamples;
-                keepAlive.armWakeBurst();
-            }
-            else
-            {
-                wakePrerollRemaining = 0;
-            }
-        }
-
-        if (wakePrerollRemaining > 0)
-        {
-            // Emit silence (which MeteringSource fills with the armed, decaying wake burst) without
-            // pulling the source or advancing the transport, so the downbeat is preserved and plays
-            // at full level the instant the amp is awake.
-            info.clearActiveBufferRegion();
-            wakePrerollRemaining = juce::jmax(0, wakePrerollRemaining - info.numSamples);
-            publishAudioPerf(startTicks, info.numSamples);
-            return;
-        }
-
-        // Playing: deliver the source to the output verbatim. We do NOT apply a master declick
-        // fade-in, so opening transients (e.g. a drum hit on beat 1) are preserved exactly.
-        child.getNextAudioBlock(info);
-        mixGlue.process(*info.buffer, info.startSample, info.numSamples);
-
-        positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
-        publishAudioPerf(startTicks, info.numSamples);
-    }
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override;
 
     void setPlaying(bool p) noexcept
     {
@@ -155,7 +53,32 @@ class MasterClockSource : public juce::AudioSource
         const bool wasPlaying = keepAlive.isPlaying();
         keepAlive.setPlaying(p);
         if (p && ! wasPlaying)
+        {
             playStartPending.store(true, std::memory_order_release);
+            if (outputFadeOutComplete.load(std::memory_order_acquire))
+                transportGainTarget.store(1.0F, std::memory_order_release);
+        }
+    }
+
+    void requestOutputFadeOut() noexcept
+    {
+        transportGainTarget.store(0.0F, std::memory_order_release);
+    }
+
+    bool isOutputFadeOutComplete() const noexcept
+    {
+        return outputFadeOutComplete.load(std::memory_order_acquire);
+    }
+
+    void requestOutputFadeIn() noexcept
+    {
+        transportGainTarget.store(1.0F, std::memory_order_release);
+    }
+
+    void cancelOutputFade() noexcept
+    {
+        transportGainTarget.store(1.0F, std::memory_order_release);
+        outputFadeOutComplete.store(false, std::memory_order_release);
     }
 
     void requestScrub(int direction, int samples) noexcept
@@ -234,6 +157,9 @@ class MasterClockSource : public juce::AudioSource
     }
 
   private:
+    void applyTransportFade(juce::AudioBuffer<float>& buffer, int startSample,
+                            int numSamples, float target) noexcept;
+
     // Audio-thread hot path: allocation/lock/IO free. Publishes raw block timing
     // to atomics for a non-RT timer to format and log; the real-time invariant
     // forbids building strings or touching the file logger here.
@@ -270,6 +196,12 @@ class MasterClockSource : public juce::AudioSource
     int scrubRemaining{0};
     int scrubRendered{0};
     static constexpr int kScrubEdgeFadeSamples = 32;
+    static constexpr int kTransportFadeSamples = 240;
+    static constexpr float kTransportFadeStep = 1.0F / static_cast<float>(kTransportFadeSamples);
+    std::atomic<float> transportGainTarget{1.0F};
+    std::atomic<bool> outputFadeOutComplete{false};
+    float transportGain = 1.0F;
+    bool holdOutputSilence{false};
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};
     std::atomic<int> lastNumSamples{0};
@@ -278,6 +210,8 @@ class MasterClockSource : public juce::AudioSource
                   "MasterClockSource requires a lock-free 64-bit atomic counter on the audio thread");
     static_assert(std::atomic<double>::is_always_lock_free,
                   "MasterClockSource publishes timing doubles lock-free on the audio thread");
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "MasterClockSource transport gain target must be lock-free on the audio thread");
 };
 
 } // namespace silverdaw

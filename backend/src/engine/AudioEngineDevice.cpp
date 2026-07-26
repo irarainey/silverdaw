@@ -137,6 +137,10 @@ void AudioEngine::shutdown()
 {
     rebuildTimer.stopTimer();
     trackBypassTimer.stopTimer();
+    transportFadeTimer.stopTimer();
+    pendingTransportAction = PendingTransportAction::none;
+    master.cancelOutputFade();
+    master.setPlaying(false);
     pendingTrackBypasses.clear();
     stop();
     unloadPreview();

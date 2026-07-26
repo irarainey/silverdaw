@@ -67,8 +67,6 @@ void SafetyLimiter::process(juce::AudioBuffer<float>& buffer, int startSample,
     for (int sample = startSample; sample < startSample + numSamples; ++sample)
     {
         const float targetMix = enabled ? 1.0F : 0.0F;
-        mix += juce::jlimit(-mixStep, mixStep, targetMix - mix);
-
         float peak = 0.0F;
         for (int channel = 0; channel < channels; ++channel)
             peak = juce::jmax(peak, std::abs(buffer.getSample(channel, sample)));
@@ -80,6 +78,7 @@ void SafetyLimiter::process(juce::AudioBuffer<float>& buffer, int startSample,
             const float dry = buffer.getSample(channel, sample);
             buffer.setSample(channel, sample, dry + (dry * gain - dry) * mix);
         }
+        mix += juce::jlimit(-mixStep, mixStep, targetMix - mix);
     }
 }
 

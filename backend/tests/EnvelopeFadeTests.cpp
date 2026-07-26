@@ -116,6 +116,30 @@ void testOffsetSourceComposesEdgeFadeWithEnvelope()
     }
 }
 
+void testOffsetSourceAppliesDefaultDeClickEdges()
+{
+    using silverdaw::OffsetSource;
+
+    ConstantSource child(1.0F);
+    OffsetSource os(&child);
+    constexpr int kClipSamples = 64;
+    os.prepareToPlay(kClipSamples, 48000.0);
+    os.setClipWindowAtomic(0, 0, kClipSamples);
+
+    juce::AudioBuffer<float> buffer(2, kClipSamples);
+    juce::AudioSourceChannelInfo info(&buffer, 0, kClipSamples);
+    os.getNextAudioBlock(info);
+
+    requireNear(buffer.getSample(0, 0), 0.0, 1.0e-6,
+                "an unfaded clip must start from silence");
+    requireNear(buffer.getSample(0, 31), 31.0 / 32.0, 1.0e-6,
+                "the default fade-in must reach unity before the clip midpoint");
+    requireNear(buffer.getSample(0, 32), 1.0, 1.0e-6,
+                "the default fade-out must begin from unity after the clip midpoint");
+    requireNear(buffer.getSample(0, 63), 0.0, 1.0e-6,
+                "an unfaded clip must reach silence at its final sample");
+}
+
 void testOffsetSourceReversesClipWindow()
 {
     using silverdaw::OffsetSource;
@@ -144,14 +168,14 @@ void testOffsetSourceReversesClipWindow()
     // Forward: the audible block reads the window in ascending source order.
     os.setReversed(false);
     render(0, static_cast<int>(dur));
-    for (int i = 0; i < dur; ++i)
+    for (int i = 32; i < dur - 32; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-3,
                     "forward playback reads the clip window in source order");
 
     // Reversed in a single block: source order is mirrored within the window.
     os.setReversed(true);
     render(0, static_cast<int>(dur));
-    for (int i = 0; i < dur; ++i)
+    for (int i = 32; i < dur - 32; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - i)), 1.0e-3,
                     "reversed playback mirrors the clip window");
 
@@ -160,18 +184,18 @@ void testOffsetSourceReversesClipWindow()
     const int firstBlock = 73;
     os.setReversed(true);
     render(0, firstBlock);
-    for (int i = 0; i < firstBlock; ++i)
+    for (int i = 32; i < firstBlock; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - i)), 1.0e-3,
                     "reversed first block mirrors the head of the window");
     render(firstBlock, static_cast<int>(dur) - firstBlock);
-    for (int i = 0; i < static_cast<int>(dur) - firstBlock; ++i)
+    for (int i = 0; i < static_cast<int>(dur) - firstBlock - 32; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + (dur - 1 - (firstBlock + i))),
                     1.0e-3, "reversed second block continues the mirrored stream seamlessly");
 
     // Clearing the flag restores forward reads (toggling is non-destructive and stateless).
     os.setReversed(false);
     render(0, static_cast<int>(dur));
-    for (int i = 0; i < dur; ++i)
+    for (int i = 32; i < dur - 32; ++i)
         requireNear(buf.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-3,
                     "clearing the reverse flag restores forward source order");
 
@@ -182,7 +206,7 @@ void testOffsetSourceReversesClipWindow()
     juce::AudioSourceChannelInfo largeInfo(&large, 0, largeRequest);
     os.setNextReadPosition(0);
     os.getNextAudioBlock(largeInfo);
-    for (int i = 0; i < largeRequest; ++i)
+    for (int i = 32; i < largeRequest - 32; ++i)
         requireNear(large.getSample(0, i),
                     static_cast<float>(inSrc + (largeRequest - 1 - i)),
                     1.0e-3,
@@ -572,7 +596,7 @@ void testOffsetSourceBrakeDeceleratesAndIsBlockInvariant()
     renderWhole(whole);
 
     // Pre-brake region plays at 1x in source order.
-    for (int i = 0; i < brakeStart; ++i)
+    for (int i = 32; i < brakeStart; ++i)
         requireNear(whole.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
                     "pre-brake region plays at 1x in source order");
 
@@ -629,7 +653,7 @@ void testOffsetSourceBrakeDeceleratesAndIsBlockInvariant()
         os.setNextReadPosition(0);
         os.getNextAudioBlock(info);
     }
-    requireNear(revBuf.getSample(0, 0), static_cast<float>(inSrc + dur - 1), 1.0e-2,
+    requireNear(revBuf.getSample(0, 32), static_cast<float>(inSrc + dur - 1 - 32), 1.0e-2,
                 "reversed clip ignores the brake in v1 (plain mirror)");
     os.setReversed(false);
 
@@ -637,7 +661,7 @@ void testOffsetSourceBrakeDeceleratesAndIsBlockInvariant()
     os.setBrakeSnapshot(nullptr);
     juce::AudioBuffer<float> cleared;
     renderWhole(cleared);
-    for (int i = 0; i < static_cast<int>(dur); ++i)
+    for (int i = 32; i < static_cast<int>(dur) - 32; ++i)
         requireNear(cleared.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
                     "clearing the brake restores 1x forward playback");
 }
@@ -786,7 +810,7 @@ void testOffsetSourceBackspinRewindsAndIsBlockInvariant()
     renderWhole(whole);
 
     // Pre-spin region plays at 1x forward in source order.
-    for (int i = 0; i < tailStart; ++i)
+    for (int i = 32; i < tailStart; ++i)
         requireNear(whole.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
                     "pre-spin region plays forward at 1x");
 
@@ -839,7 +863,7 @@ void testOffsetSourceBackspinRewindsAndIsBlockInvariant()
         os.setNextReadPosition(0);
         os.getNextAudioBlock(info);
     }
-    requireNear(revBuf.getSample(0, 0), static_cast<float>(inSrc + dur - 1), 1.0e-2,
+    requireNear(revBuf.getSample(0, 32), static_cast<float>(inSrc + dur - 1 - 32), 1.0e-2,
                 "reversed clip ignores the backspin in v1 (plain mirror)");
     os.setReversed(false);
 
@@ -847,7 +871,7 @@ void testOffsetSourceBackspinRewindsAndIsBlockInvariant()
     os.setBackspinSnapshot(nullptr);
     juce::AudioBuffer<float> cleared;
     renderWhole(cleared);
-    for (int i = 0; i < static_cast<int>(dur); ++i)
+    for (int i = 32; i < static_cast<int>(dur) - 32; ++i)
         requireNear(cleared.getSample(0, i), static_cast<float>(inSrc + i), 1.0e-2,
                     "clearing the backspin restores 1x forward playback");
 }
@@ -924,6 +948,7 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching", testEdgeFadeSnapshotEqualPower});
     tests.push_back({"EdgeFadeSnapshot linear curve law and independent per-leg curves", testEdgeFadeSnapshotLinear});
     tests.push_back({"OffsetSource composes edge fade with volume envelope (B2 audio wiring)", testOffsetSourceComposesEdgeFadeWithEnvelope});
+    tests.push_back({"OffsetSource adds de-click fades to unfaded clip boundaries", testOffsetSourceAppliesDefaultDeClickEdges});
     tests.push_back({"OffsetSource reverses the clip window non-destructively across block boundaries", testOffsetSourceReversesClipWindow});
     tests.push_back({"BrakeSnapshot consumed-source endpoints and monotonicity", testBrakeSnapshotConsumedSourceEndpointsAndMonotonic});
     tests.push_back({"BrakeSnapshot rate curve and click-guard", testBrakeSnapshotRateAndClickGuard});

@@ -51,12 +51,18 @@ void OffsetSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
     const juce::int64 endPos = startPos + info.numSamples;
     const ClipWindow window = readClipWindow();
     const juce::int64 clipStart = window.offsetSamples;
+    const juce::int64 inSrc = window.inSourceSamples;
     auto* currentWarp = warp.load(std::memory_order_acquire);
-    const juce::int64 sourceDur = window.clipDurationSamples;
+    juce::int64 sourceDur = window.clipDurationSamples;
+    if (sourceDur <= 0)
+    {
+        const juce::int64 childLength = child->getTotalLength();
+        if (childLength > inSrc && childLength < std::numeric_limits<juce::int64>::max())
+            sourceDur = childLength - inSrc;
+    }
     const juce::int64 dur = timelineSamplesForSourceSamples(sourceDur, currentWarp);
     const juce::int64 clipEnd =
         dur > 0 ? clipStart + dur : std::numeric_limits<juce::int64>::max();
-    const juce::int64 inSrc = window.inSourceSamples;
 
     if (endPos <= clipStart || startPos >= clipEnd)
     {
@@ -180,7 +186,7 @@ void OffsetSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
 
         applyClipGain(*audible.buffer,
                       audible.startSample, audibleSamples,
-                      audibleStart, clipStart);
+                      audibleStart, clipStart, clipEnd);
     }
     else
     {
@@ -244,15 +250,23 @@ void OffsetSource::setNextReadPosition(juce::int64 newPosition)
 
 void OffsetSource::applyClipGain(juce::AudioBuffer<float>& buffer,
                                   int startSample, int count,
-                                  juce::int64 audibleStart, juce::int64 clipStart) noexcept
+                                  juce::int64 audibleStart, juce::int64 clipStart,
+                                  juce::int64 clipEnd) noexcept
 {
     if (count <= 0) return;
     const EnvelopeSnapshot* env = envelope.load(std::memory_order_acquire);
     const EdgeFadeSnapshot* fade = edgeFade.load(std::memory_order_acquire);
     const bool haveFade = fade != nullptr && !fade->isEmpty();
+    const bool haveFadeIn = haveFade && fade->getHasFadeIn();
+    const bool haveFadeOut = haveFade && fade->getHasFadeOut();
+    const bool hasFiniteClipEnd = clipEnd != std::numeric_limits<juce::int64>::max();
+    const int defaultFadeSamples = hasFiniteClipEnd && clipEnd > clipStart
+        ? juce::jmin(kDefaultEdgeFadeSamples,
+                     juce::jmax(1, static_cast<int>((clipEnd - clipStart) / 2)))
+        : 0;
     const double sr = cachedSampleRate.load(std::memory_order_relaxed);
     const bool haveEnv = env != nullptr && !env->isEmpty() && sr > 0.0;
-    if (!haveEnv && !haveFade) return;
+    if (!haveEnv && !haveFade && defaultFadeSamples <= 0) return;
 
     const double msPerSample = sr > 0.0 ? 1000.0 / sr : 0.0;
     const int numCh = buffer.getNumChannels();
@@ -270,6 +284,17 @@ void OffsetSource::applyClipGain(juce::AudioBuffer<float>& buffer,
         if (haveFade)
         {
             gain *= fade->gainAtSample(timelineSample);
+        }
+        if (!haveFadeIn && timelineSample < clipStart + defaultFadeSamples)
+        {
+            gain *= static_cast<float>(timelineSample - clipStart)
+                    / static_cast<float>(defaultFadeSamples);
+        }
+        if (!haveFadeOut && timelineSample >= clipEnd - defaultFadeSamples)
+        {
+            const int fadeDenominator = juce::jmax(1, defaultFadeSamples - 1);
+            gain *= static_cast<float>(clipEnd - timelineSample - 1)
+                    / static_cast<float>(fadeDenominator);
         }
         if (gain == 1.0F) continue;
         for (int ch = 0; ch < numCh; ++ch)

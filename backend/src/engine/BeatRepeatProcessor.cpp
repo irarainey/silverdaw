@@ -21,6 +21,7 @@ void BeatRepeatProcessor::reset() noexcept
     captureLength = 0;
     capturedSamples = 0;
     repeatPosition = 0;
+    boundaryFadeSamples = 0;
 }
 
 void BeatRepeatProcessor::process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
@@ -42,6 +43,7 @@ void BeatRepeatProcessor::process(juce::AudioBuffer<float>& buffer, int startSam
         captureLength = 0;
         capturedSamples = 0;
         repeatPosition = 0;
+        boundaryFadeSamples = 0;
     }
 
     const int channels = buffer.getNumChannels();
@@ -66,6 +68,7 @@ void BeatRepeatProcessor::process(juce::AudioBuffer<float>& buffer, int startSam
             captureLength = region != nullptr
                                 ? juce::jlimit(1, capture.getNumSamples(), region->divisionSamples)
                                 : 0;
+            boundaryFadeSamples = juce::jmin(kMaximumBoundaryFadeSamples, captureLength / 2);
         }
 
         if (region == nullptr)
@@ -73,17 +76,48 @@ void BeatRepeatProcessor::process(juce::AudioBuffer<float>& buffer, int startSam
 
         if (capturedSamples < captureLength)
         {
+            const int capturePosition = capturedSamples;
             for (int ch = 0; ch < juce::jmin(2, channels); ++ch)
-                capture.setSample(ch, capturedSamples, buffer.getSample(ch, startSample + i));
+                capture.setSample(ch, capturePosition, buffer.getSample(ch, startSample + i));
             ++capturedSamples;
+
+            if (boundaryFadeSamples > 0 && capturePosition >= captureLength - boundaryFadeSamples)
+            {
+                const int fadePosition = capturePosition - (captureLength - boundaryFadeSamples);
+                const float mix = static_cast<float>(fadePosition + 1)
+                                  / static_cast<float>(boundaryFadeSamples);
+                for (int ch = 0; ch < juce::jmin(2, channels); ++ch)
+                {
+                    const float tail = buffer.getSample(ch, startSample + i);
+                    const float head = capture.getSample(ch, fadePosition);
+                    buffer.setSample(ch, startSample + i, tail + (head - tail) * mix);
+                }
+            }
+
+            if (capturedSamples == captureLength)
+                repeatPosition = boundaryFadeSamples;
         }
         else
         {
             for (int ch = 0; ch < juce::jmin(2, channels); ++ch)
-                buffer.setSample(ch, startSample + i, capture.getSample(ch, repeatPosition));
+            {
+                const float tail = capture.getSample(ch, repeatPosition);
+                if (boundaryFadeSamples > 0 && repeatPosition >= captureLength - boundaryFadeSamples)
+                {
+                    const int fadePosition = repeatPosition - (captureLength - boundaryFadeSamples);
+                    const float mix = static_cast<float>(fadePosition + 1)
+                                      / static_cast<float>(boundaryFadeSamples);
+                    const float head = capture.getSample(ch, fadePosition);
+                    buffer.setSample(ch, startSample + i, tail + (head - tail) * mix);
+                }
+                else
+                {
+                    buffer.setSample(ch, startSample + i, tail);
+                }
+            }
             ++repeatPosition;
             if (repeatPosition >= captureLength)
-                repeatPosition = 0;
+                repeatPosition = boundaryFadeSamples;
         }
     }
     expectedTimelineSample = timelineStart + numSamples;

@@ -39,12 +39,7 @@ void BusGraph::applyPendingTrackFx(TrackRuntime& runtime)
 
     if (const auto pan = pendingPans.find(trackId); pan != pendingPans.end())
     {
-        float gainL = 1.0F;
-        float gainR = 1.0F;
-        equalPowerPanGains(pan->second, gainL, gainR);
         runtime.pan.store(pan->second, std::memory_order_relaxed);
-        runtime.panGainL.store(gainL, std::memory_order_relaxed);
-        runtime.panGainR.store(gainR, std::memory_order_relaxed);
     }
 }
 
@@ -123,14 +118,9 @@ void BusGraph::setTrackPan(const juce::String& trackId, float pan)
 {
     if (trackId.isEmpty()) return;
     const float clamped = juce::jlimit(-1.0F, 1.0F, std::isfinite(pan) ? pan : 0.0F);
-    float gainL = 1.0F;
-    float gainR = 1.0F;
-    equalPowerPanGains(clamped, gainL, gainR);
     pendingPans[trackId] = clamped;
     if (const auto runtime = runtimes.find(trackId); runtime != runtimes.end())
     {
-        runtime->second->panGainL.store(gainL, std::memory_order_relaxed);
-        runtime->second->panGainR.store(gainR, std::memory_order_relaxed);
         runtime->second->pan.store(clamped, std::memory_order_relaxed);
     }
 }
@@ -149,7 +139,7 @@ void BusGraph::retireTrackFxState(const juce::String& trackId)
     pendingPans.erase(trackId);
 }
 
-void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam param) noexcept
+void BusGraph::restoreAutomationParam(const juce::String& trackId, AutomationParam param) noexcept
 {
     const juce::ScopedLock sl(lock);
     const auto runtime = runtimes.find(trackId);
@@ -160,58 +150,58 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
         case AutomationParam::filter:
         {
             const auto tone = pendingTone.find(trackId);
-            track.chain.setFilterTarget(tone != pendingTone.end() ? tone->second.filter : 0.0F, true);
+            track.chain.setFilterTarget(tone != pendingTone.end() ? tone->second.filter : 0.0F, false);
             break;
         }
         case AutomationParam::toneBass:
         {
             const auto tone = pendingTone.find(trackId);
-            track.chain.setBassTarget(tone != pendingTone.end() ? tone->second.bassDb : 0.0F, true);
+            track.chain.setBassTarget(tone != pendingTone.end() ? tone->second.bassDb : 0.0F, false);
             break;
         }
         case AutomationParam::toneMid:
         {
             const auto tone = pendingTone.find(trackId);
-            track.chain.setMidTarget(tone != pendingTone.end() ? tone->second.midDb : 0.0F, true);
+            track.chain.setMidTarget(tone != pendingTone.end() ? tone->second.midDb : 0.0F, false);
             break;
         }
         case AutomationParam::toneTreble:
         {
             const auto tone = pendingTone.find(trackId);
-            track.chain.setTrebleTarget(tone != pendingTone.end() ? tone->second.trebleDb : 0.0F, true);
+            track.chain.setTrebleTarget(tone != pendingTone.end() ? tone->second.trebleDb : 0.0F, false);
             break;
         }
         case AutomationParam::leveler:
         {
             const auto leveler = pendingLeveler.find(trackId);
-            track.chain.setLeveler(leveler != pendingLeveler.end() ? leveler->second : 0.0F, true);
+            track.chain.setLeveler(leveler != pendingLeveler.end() ? leveler->second : 0.0F, false);
             break;
         }
         case AutomationParam::punch:
         {
             const auto punch = pendingPunch.find(trackId);
-            track.chain.setPunchTarget(punch != pendingPunch.end() ? punch->second : 0.0F, true);
+            track.chain.setPunchTarget(punch != pendingPunch.end() ? punch->second : 0.0F, false);
             break;
         }
         case AutomationParam::saturationDrive:
         {
             const auto saturation = pendingSaturation.find(trackId);
             track.chain.setSaturationDriveTarget(
-                saturation != pendingSaturation.end() ? saturation->second.drive : 0.0F, true);
+                saturation != pendingSaturation.end() ? saturation->second.drive : 0.0F, false);
             break;
         }
         case AutomationParam::saturationMix:
         {
             const auto saturation = pendingSaturation.find(trackId);
             track.chain.setSaturationMixTarget(
-                saturation != pendingSaturation.end() ? saturation->second.mix : 1.0F, true);
+                saturation != pendingSaturation.end() ? saturation->second.mix : 1.0F, false);
             break;
         }
         case AutomationParam::bitCrusherRate:
         {
             const auto crusher = pendingBitCrusher.find(trackId);
             track.chain.setBitCrusherRateTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.rate : 1.0F, true);
+                crusher != pendingBitCrusher.end() ? crusher->second.rate : 1.0F, false);
             break;
         }
         case AutomationParam::bitCrusherBits:
@@ -219,24 +209,24 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
             const auto crusher = pendingBitCrusher.find(trackId);
             track.chain.setBitCrusherBitsTarget(
                 crusher != pendingBitCrusher.end() ? static_cast<float>(crusher->second.bits) : 16.0F,
-                true);
+                false);
             break;
         }
         case AutomationParam::bitCrusherBoost:
         {
             const auto crusher = pendingBitCrusher.find(trackId);
             track.chain.setBitCrusherBoostTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.boost : 0.0F, true);
+                crusher != pendingBitCrusher.end() ? crusher->second.boost : 0.0F, false);
             break;
         }
         case AutomationParam::bitCrusherMix:
         {
             const auto crusher = pendingBitCrusher.find(trackId);
             track.chain.setBitCrusherMixTarget(
-                crusher != pendingBitCrusher.end() ? crusher->second.mix : 0.0F, true);
+                crusher != pendingBitCrusher.end() ? crusher->second.mix : 0.0F, false);
             break;
         }
-        case AutomationParam::level: track.chain.setLevelTarget(0.0F, true); break;
+        case AutomationParam::level: track.chain.setLevelTarget(0.0F, false); break;
         case AutomationParam::reverbSend:
         {
             const auto sends = pendingSends.find(trackId);
@@ -255,12 +245,7 @@ void BusGraph::snapParamToDefault(const juce::String& trackId, AutomationParam p
         {
             const auto pan = pendingPans.find(trackId);
             const float value = pan != pendingPans.end() ? pan->second : 0.0F;
-            float gainL = 1.0F;
-            float gainR = 1.0F;
-            equalPowerPanGains(value, gainL, gainR);
             track.pan.store(value, std::memory_order_relaxed);
-            track.panGainL.store(gainL, std::memory_order_relaxed);
-            track.panGainR.store(gainR, std::memory_order_relaxed);
             break;
         }
         case AutomationParam::count_: break;

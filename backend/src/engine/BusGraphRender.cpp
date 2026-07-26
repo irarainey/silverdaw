@@ -14,6 +14,8 @@ void BusGraph::TrackRuntime::prepareToPlay(int samplesPerBlockExpected, double s
     preparedRate = sampleRate;
     mixScratch.setSize(2, preparedBlockSize, false, true, false);
     mixScratch.clear();
+    BusGraph::equalPowerPanGains(pan.load(std::memory_order_relaxed),
+                                 currentPanGainL, currentPanGainR);
     beatRepeatProcessor.prepare(sampleRate);
     for (auto* source : clips)
         if (source != nullptr) source->prepareToPlay(preparedBlockSize, preparedRate);
@@ -247,17 +249,23 @@ void BusGraph::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
                 if (dSend != 0.0F)
                     delaySendBuf.addFrom(ch, 0, scratch, ch, 0, n, dSend);
             }
-            if (runtime.pan.load(std::memory_order_relaxed) == 0.0F || outChannels < 2)
+            if (outChannels < 2)
             {
                 for (int ch = 0; ch < outChannels; ++ch)
                     info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
             }
             else
             {
-                info.buffer->addFrom(0, dst, scratch, 0, 0, n,
-                                     runtime.panGainL.load(std::memory_order_relaxed));
-                info.buffer->addFrom(1, dst, scratch, 1, 0, n,
-                                     runtime.panGainR.load(std::memory_order_relaxed));
+                float targetPanGainL = 1.0F;
+                float targetPanGainR = 1.0F;
+                equalPowerPanGains(runtime.pan.load(std::memory_order_relaxed),
+                                   targetPanGainL, targetPanGainR);
+                info.buffer->addFromWithRamp(0, dst, scratch.getReadPointer(0), n,
+                                              runtime.currentPanGainL, targetPanGainL);
+                info.buffer->addFromWithRamp(1, dst, scratch.getReadPointer(1), n,
+                                              runtime.currentPanGainR, targetPanGainR);
+                runtime.currentPanGainL = targetPanGainL;
+                runtime.currentPanGainR = targetPanGainR;
                 for (int ch = 2; ch < outChannels; ++ch)
                     info.buffer->addFrom(ch, dst, scratch, ch, 0, n);
             }
@@ -314,11 +322,7 @@ void BusGraph::applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnaps
     if (snap->hasParam(AutomationParam::pan))
     {
         const float p = sample(AutomationParam::pan);
-        float gL = 1.0F, gR = 1.0F;
-        equalPowerPanGains(p, gL, gR);
         rt.pan.store(p, std::memory_order_relaxed);
-        rt.panGainL.store(gL, std::memory_order_relaxed);
-        rt.panGainR.store(gR, std::memory_order_relaxed);
     }
 
     rt.automationLastEndSamples = subStartSamples + numSamples;

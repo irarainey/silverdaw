@@ -29,7 +29,8 @@ public:
         saturation.prepare(sampleRate);
         bitCrusher.prepare(sampleRate, numChannels);
         levelGain = 1.0F;
-        targetLevelGain = 1.0F;
+        targetLevelGain.store(1.0F, std::memory_order_relaxed);
+        levelSnapRequested.store(false, std::memory_order_relaxed);
     }
 
     /** Clears DSP state on stop/seek; pause deliberately does not reset. */
@@ -40,7 +41,8 @@ public:
         punch.reset();
         saturation.reset();
         bitCrusher.reset();
-        levelGain = targetLevelGain;
+        levelGain = targetLevelGain.load(std::memory_order_relaxed);
+        levelSnapRequested.store(false, std::memory_order_relaxed);
     }
 
     /** Message-thread setter under the `BusGraph` lock; `snap` preserves setup parity.
@@ -94,11 +96,12 @@ public:
     }
 
     /** Automatable post-chain track level in dB. Ramped per block to avoid clicks;
-     *  `snap` lands immediately on seek/loop. 0 dB is unity. */
+     *  `snap` is consumed by the audio thread on a seek/loop discontinuity. 0 dB is unity. */
     void setLevelTarget(float db, bool snap) noexcept
     {
-        targetLevelGain = juce::Decibels::decibelsToGain(db, -120.0F);
-        if (snap) levelGain = targetLevelGain;
+        targetLevelGain.store(juce::Decibels::decibelsToGain(db, -120.0F),
+                              std::memory_order_relaxed);
+        if (snap) levelSnapRequested.store(true, std::memory_order_release);
     }
 
     /** Processes only the active buffer region; identity params remain sample-transparent. */
@@ -109,10 +112,13 @@ public:
         saturation.process(buffer, startSample, numSamples);
         bitCrusher.process(buffer, startSample, numSamples);
         punch.process(buffer, startSample, numSamples);
-        if (levelGain != targetLevelGain)
+        const float target = targetLevelGain.load(std::memory_order_relaxed);
+        if (levelSnapRequested.exchange(false, std::memory_order_acquire))
+            levelGain = target;
+        if (levelGain != target)
         {
-            buffer.applyGainRamp(startSample, numSamples, levelGain, targetLevelGain);
-            levelGain = targetLevelGain;
+            buffer.applyGainRamp(startSample, numSamples, levelGain, target);
+            levelGain = target;
         }
         else if (levelGain != 1.0F)
         {
@@ -133,7 +139,11 @@ private:
     Saturation saturation;
     BitCrusher bitCrusher;
     float levelGain = 1.0F;
-    float targetLevelGain = 1.0F;
+    std::atomic<float> targetLevelGain{1.0F};
+    std::atomic<bool> levelSnapRequested{false};
+
+    static_assert(std::atomic<float>::is_always_lock_free,
+                  "TrackChain level target must be lock-free on the audio thread");
 };
 
 } // namespace silverdaw

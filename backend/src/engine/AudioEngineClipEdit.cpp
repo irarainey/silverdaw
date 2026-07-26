@@ -9,6 +9,21 @@ namespace silverdaw
 {
 void AudioEngine::setPositionMs(double ms, bool resetEffects)
 {
+    if (master.isPlaying())
+    {
+        pendingTransportAction = PendingTransportAction::seek;
+        pendingTransportPositionMs = ms;
+        pendingTransportResetEffects = resetEffects;
+        master.requestOutputFadeOut();
+        transportFadeTimer.startTimer(kTransportFadePollMs);
+        return;
+    }
+
+    setPositionMsNow(ms, resetEffects);
+}
+
+void AudioEngine::setPositionMsNow(double ms, bool resetEffects)
+{
     const double sr = master.getSampleRate();
     const double clampedMs = juce::jmax(0.0, ms);
     const auto masterSamples = sr > 0.0

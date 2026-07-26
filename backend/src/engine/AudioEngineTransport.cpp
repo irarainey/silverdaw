@@ -9,6 +9,14 @@ namespace silverdaw
 
 void AudioEngine::play()
 {
+    if (pendingTransportAction != PendingTransportAction::none)
+    {
+        pendingTransportAction = PendingTransportAction::none;
+        transportFadeTimer.stopTimer();
+        master.requestOutputFadeIn();
+        master.cancelScrub();
+        return;
+    }
     master.cancelScrub();
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
@@ -169,27 +177,78 @@ bool AudioEngine::waitForTrackPrefetch(Track& track, double deadlineMs,
 void AudioEngine::pause()
 {
     master.cancelScrub();
-    master.setPlaying(false);
-    reclaimRetiredPlaybackSnapshots();
-    silverdaw::log::info("engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
+    if (!master.isPlaying())
+    {
+        reclaimRetiredPlaybackSnapshots();
+        return;
+    }
+
+    pendingTransportAction = PendingTransportAction::pause;
+    master.requestOutputFadeOut();
+    transportFadeTimer.startTimer(kTransportFadePollMs);
 }
 
 void AudioEngine::stop()
 {
     master.cancelScrub();
-    master.setPlaying(false);
+    if (master.isPlaying())
+    {
+        pendingTransportAction = PendingTransportAction::stop;
+        master.requestOutputFadeOut();
+        transportFadeTimer.startTimer(kTransportFadePollMs);
+        return;
+    }
+
     master.setPositionSamples(0);
     busGraph.resetSharedFx();
     busGraph.resetBeatRepeats();
     for (auto& [id, track] : tracks)
-    {
         if (track->transportSource != nullptr)
-        {
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
-        }
-    }
     reclaimRetiredPlaybackSnapshots();
     silverdaw::log::info("engine", "stop");
+}
+
+void AudioEngine::completePendingTransportFade()
+{
+    if (pendingTransportAction == PendingTransportAction::none
+        || !master.isOutputFadeOutComplete())
+        return;
+
+    const auto action = pendingTransportAction;
+    pendingTransportAction = PendingTransportAction::none;
+    transportFadeTimer.stopTimer();
+
+    switch (action)
+    {
+        case PendingTransportAction::pause:
+            master.setPlaying(false);
+            reclaimRetiredPlaybackSnapshots();
+            silverdaw::log::info(
+                "engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
+            break;
+
+        case PendingTransportAction::stop:
+            master.setPlaying(false);
+            master.setPositionSamples(0);
+            busGraph.resetSharedFx();
+            busGraph.resetBeatRepeats();
+            for (auto& [id, track] : tracks)
+                if (track->transportSource != nullptr)
+                    track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
+            reclaimRetiredPlaybackSnapshots();
+            silverdaw::log::info("engine", "stop");
+            break;
+
+        case PendingTransportAction::seek:
+            setPositionMsNow(pendingTransportPositionMs, pendingTransportResetEffects);
+            flushAllDirtyRebuildsSync();
+            rebuildTimer.stopTimer();
+            master.requestOutputFadeIn();
+            break;
+
+        case PendingTransportAction::none: break;
+    }
 }
 
 void AudioEngine::reclaimRetiredPlaybackSnapshots()

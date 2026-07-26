@@ -473,6 +473,7 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineAudibility.cpp
     src/engine/AudioEngineDevice.cpp
     src/engine/AudioEngineTransport.cpp
+    src/engine/MasterClockSource.cpp
     src/engine/AudioEngineMix.cpp
     src/engine/AudioEngineClipEdit.cpp
     src/engine/AudioEngineClips.cpp
