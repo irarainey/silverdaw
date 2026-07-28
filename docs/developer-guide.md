@@ -299,7 +299,9 @@ Silverdaw currently supports the core arrangement workflow:
   breakpoints. A fade-in or fade-out is just the envelope's end breakpoints
   dragged down to silence (there is no separate fade control). Points are stored
   on the clip as `envelopePoints`, applied non-destructively to both live
-  playback and mixdown export. In the stereo waveform display the single
+  playback and mixdown export. A clip edge with no explicit fade still gets a
+  32-sample de-click ramp in `OffsetSource`, so a hard boundary never clicks.
+  In the stereo waveform display the single
   envelope line is mirrored and kept in sync across both channel lanes —
   editing a breakpoint in either lane edits the one shared shape (the engine
   applies that shape equally to both channels).
@@ -390,10 +392,13 @@ Silverdaw currently supports the core arrangement workflow:
   timeline grid by default, and supports `Alt` for exact pointer placement.
   Dragging the playhead keeps its established repositioning behavior. Play starts
   at the range beginning and pauses at its exclusive end. Enable **Loop
-  Selection** in the transport to return to the beginning at that boundary while
-  retaining shared Reverb and Delay tails. Starting selected playback smoothly
-  reveals its beginning when it is off-screen. The **Skip** buttons treat the
-  range start as a temporary jump point without creating a saved marker.
+  Selection** in the transport (or the `L` shortcut) to return to the beginning
+  at that boundary while retaining shared Reverb and Delay tails; the engine owns
+  that wrap, so the restart is seamless. Starting selected playback smoothly
+  reveals its beginning when it is off-screen. Dragging to either viewport edge
+  auto-scrolls the timeline, so a range can be longer than the visible area. The
+  **Skip** buttons, the `Ctrl + ←/→` shortcuts, and the MIDI cue buttons treat
+  the range start as a temporary jump point without creating a saved marker.
   **Escape** clears the range and Loop Selection before stepping through clip,
   automation-point, and track selection. The range and loop state are saved as
   non-undoable project view state.
@@ -1326,9 +1331,11 @@ available.
 
 When a timeline range has **Loop Selection** enabled, the **engine** owns the wrap, not
 the renderer. `PROJECT_SET_VIEW` (and a project load) call `syncTimelineLoop`, which arms
-`AudioEngine::setTimelineLoop` with the range; a 1 ms message-thread poll wraps playback
-the moment the engine's own position reaches the loop end, via the immediate
-`setPositionMsNow` seek path — the same one the Clip Editor preview uses.
+`AudioEngine::setTimelineLoop` with the range; a 2 ms message-thread poll
+(`kTimelineLoopPollMs`) wraps playback the moment the engine's own position reaches the
+loop end, via the immediate `setPositionMsNow` seek path — the same one the Clip Editor
+preview uses, and it deliberately does not reset shared-FX state, so Reverb and Delay
+tails carry across the wrap.
 
 Two properties make the restart seamless, and both are the reason this cannot live in the
 renderer:
@@ -1345,6 +1352,9 @@ renderer:
 The renderer keeps only the view follow: auto-follow eases forward and never scrolls back,
 so the transport controller watches for the position jumping back near the range start and
 scrolls there. Pausing at the end of a **non**-looped range stays renderer-side.
+
+See [ADR 0023](adr/0023-engine-owned-timeline-loop.md) for the full rationale and the
+rejected alternatives.
 
 ## Audio formats
 
@@ -2550,7 +2560,8 @@ names, mapped behavior, controller feedback, and troubleshooting.
 Persisted fields:
 
 - Window bounds + maximised state.
-- Panel sizes (track-header column width, library panel height).
+- Panel sizes (track-header column width, clamped to 180–480 px so the header's
+  own button row never squashes; library panel height).
 - **Bottom panel minimised state** — `ui.libraryPanelCollapsed`. When on, the
   bottom tabbed panel is collapsed to its tab strip; expanding it (or clicking a
   tab) restores the last height. Persisted independently of the project so it
@@ -3012,7 +3023,10 @@ renderer-only (never serialised), so it needs no migration.
 Each track header has an **A** toggle that opens an automation stack below the clip area; the
 first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
 several curves can be viewed and edited together. Every lane has its own parameter picker and
-height; its lower edge resizes only that lane from 80 to 220 px. The track row's bottom edge
+height; its lower edge resizes only that lane from 80 to 220 px. The picker truncates a name
+too long for the header and names the parameter in its tooltip, and it hands focus back to the
+timeline on change or `Escape`, so the global shortcuts keep working after a lane is
+retargeted. The track row's bottom edge
 still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
 does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
 as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through

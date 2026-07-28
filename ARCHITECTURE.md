@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-07-20 · Owner: @irarainey_
+_Last reviewed: 2026-07-28 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -32,13 +32,14 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
   rendering, key detection (Web Audio chroma). Mirrors backend state and owns
   only **ephemeral interaction state** (hover, in-flight drag, transient
   selection highlight). Persisted view state (zoom, scroll, selected track, open
-  FX panel) is backend-authoritative and round-trips via `PROJECT_SET_VIEW` /
-  `PROJECT_STATE`.
+  FX panel, timeline range and its Loop Selection flag) is backend-authoritative
+  and round-trips via `PROJECT_SET_VIEW` / `PROJECT_STATE`.
 - **Backend bridge** — IXWebSocket loopback server; AUTH gate; marshals every
   envelope onto the JUCE message thread.
 - **Backend engine** — `AudioEngine` (mixer/bus graph, per-track sources, master
   transport clock, device manager), DSP, stems, mixdown, and `ProjectState`
-  (`ValueTree` + `UndoManager`).
+  (`ValueTree` + `UndoManager`). The engine owns the Loop Selection wrap, so a
+  looped range restarts without a bridge round trip. See ADR 0023.
 
 ## Threading rules (backend)
 
