@@ -19,7 +19,17 @@ using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 using silverdaw::bridge::readOptionalBool;
 
-void handleProjectSetView(const juce::var& payload, silverdaw::ProjectState& projectState)
+void syncTimelineLoop(AudioEngine& engine, const ProjectState& projectState)
+{
+    const auto selection = projectState.getViewTimelineSelection();
+    if (selection.has_value() && selection->loop)
+        engine.setTimelineLoop(AudioEngine::LoopRange{selection->startMs, selection->endMs});
+    else
+        engine.setTimelineLoop(std::nullopt);
+}
+
+void handleProjectSetView(const juce::var& payload, silverdaw::AudioEngine& engine,
+                          silverdaw::ProjectState& projectState)
 {
     // View preferences are saved but dirty-suppressed.
     const auto pxVar = payload.getProperty("pxPerSecond", juce::var());
@@ -89,6 +99,7 @@ void handleProjectSetView(const juce::var& payload, silverdaw::ProjectState& pro
     if (selectionChanged)
     {
         projectState.setViewTimelineSelection(timelineSelection);
+        syncTimelineLoop(engine, projectState);
     }
 }
 

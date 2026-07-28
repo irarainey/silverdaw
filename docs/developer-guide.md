@@ -14,6 +14,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
+  - [Loop Selection playback](#loop-selection-playback)
 - [Audio formats](#audio-formats)
   - [Internal signal format and bit depth](#internal-signal-format-and-bit-depth)
 - [Peaks cache](#peaks-cache)
@@ -1105,7 +1106,8 @@ shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
 bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
 `viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
 timeline range and Loop Selection state. All are round-tripped through
-`PROJECT_SET_VIEW`.
+`PROJECT_SET_VIEW`, which also arms the engine's transport loop (see
+[Loop Selection playback](#loop-selection-playback)).
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
@@ -1319,6 +1321,30 @@ autosaves as soon as it mounts. These main-process IPC calls run in parallel wit
 backend startup, but their results are applied only after the bridge handshake. The
 `RecoveryDialog` then stacks above the `StartupScreen` when recoverable autosaves are
 available.
+
+### Loop Selection playback
+
+When a timeline range has **Loop Selection** enabled, the **engine** owns the wrap, not
+the renderer. `PROJECT_SET_VIEW` (and a project load) call `syncTimelineLoop`, which arms
+`AudioEngine::setTimelineLoop` with the range; a 1 ms message-thread poll wraps playback
+the moment the engine's own position reaches the loop end, via the immediate
+`setPositionMsNow` seek path — the same one the Clip Editor preview uses.
+
+Two properties make the restart seamless, and both are the reason this cannot live in the
+renderer:
+
+- **No round trip.** A renderer-driven wrap had to wait for a `PLAYHEAD_UPDATE`, then send
+  `TRANSPORT_SEEK` back.
+- **No fade and no latency skew.** `setPositionMs` while playing deliberately fades the
+  output out, polls for the ramp to finish, seeks, then fades in — correct for a user seek,
+  audible as a gap on every loop. The engine also wraps on its **uncompensated** position,
+  so the restart lands at the loop end in the rendered stream; the renderer's playhead is
+  latency-compensated, so it could only ever ask after audio past the end was already
+  rendered and queued.
+
+The renderer keeps only the view follow: auto-follow eases forward and never scrolls back,
+so the transport controller watches for the position jumping back near the range start and
+scrolls there. Pausing at the end of a **non**-looped range stays renderer-side.
 
 ## Audio formats
 
@@ -2800,7 +2826,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area. Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
 | Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
@@ -2895,9 +2921,11 @@ button target** preference (`ui.skipButtonTarget`). With the default
 returns the timeline's horizontal scroll to the start) while **next** seeks the
 project end and jumps the viewport to the right edge. With `markers`, they step
 to the previous / next timeline marker instead, falling back to the start / end
-past the last marker. The `Ctrl + ←/→` and `Ctrl + Shift + ←/→` keyboard
-shortcuts keep their fixed marker / project-end behaviour regardless of this
-setting.
+past the last marker. The `Ctrl + ←/→` shortcut and the MIDI cue buttons always
+step between markers regardless of this setting, and `Ctrl + Shift + ←/→` always
+jumps to the project start / end. Every marker-stepping affordance treats the
+start of an active timeline selection as a temporary marker, so a selection is
+always reachable in one step.
 
 The status bar shows the current zoom level (e.g. `🔍 150%`). It deliberately does
 **not** show backend / audio-engine connection status: the front-end/back-end

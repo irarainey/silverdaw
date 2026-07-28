@@ -13,6 +13,10 @@ import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
+import {
+  nextMarkerCandidateMs,
+  previousMarkerCandidateMs
+} from '@/lib/transport/useTransportSkip'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -391,19 +395,23 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault()
       e.stopPropagation()
-      const direction = e.key === 'ArrowLeft' ? -1 : 1
-      if (project.markers.length === 0) return
-      const current = transport.positionMs
-      const targetMarker =
-        direction < 0
-          ? [...project.markers].reverse().find((marker) => marker.positionMs < current - 1)
-          : project.markers.find((marker) => marker.positionMs > current + 1)
-      if (!targetMarker) return
-      lastArrowSeekMs = targetMarker.positionMs
-      ui.requestTimelineScrollToPosition(targetMarker.positionMs)
-      transport.setPosition(targetMarker.positionMs)
-      sendBridge('TRANSPORT_SEEK', { positionMs: targetMarker.positionMs })
-      log.debug('transport', `marker-seek to ${targetMarker.positionMs}ms`)
+      // The start of an active timeline selection acts as a temporary marker
+      // here, matching the transport skip buttons and the MIDI cue actions.
+      const context = {
+        positionMs: transport.positionMs,
+        markers: project.markers,
+        selectionStartMs: ui.timelineSelection?.startMs ?? null
+      }
+      const targetMs =
+        e.key === 'ArrowLeft'
+          ? previousMarkerCandidateMs(context)
+          : nextMarkerCandidateMs(context)
+      if (targetMs === null) return
+      lastArrowSeekMs = targetMs
+      ui.requestTimelineScrollToPosition(targetMs)
+      transport.setPosition(targetMs)
+      sendBridge('TRANSPORT_SEEK', { positionMs: targetMs })
+      log.debug('transport', `marker-seek to ${targetMs}ms`)
       return
     }
 

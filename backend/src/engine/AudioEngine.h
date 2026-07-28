@@ -152,6 +152,18 @@ class AudioEngine : private AudioEngineGraphState,
     void setPositionMs(double ms, bool resetEffects = true);
     bool scrubPositionMs(double positionMs, double deltaMs);
 
+    struct LoopRange
+    {
+        double startMs{0.0};
+        double endMs{0.0};
+    };
+
+    /** Arms (or, with nullopt, disarms) a timeline range the transport loops while playing.
+     *  Owning the wrap here — rather than having the renderer watch the playhead and send a
+     *  seek — is what makes the restart seamless: the engine reacts on its own uncompensated
+     *  clock and reuses the immediate seek path, so there is no round trip and no output fade. */
+    void setTimelineLoop(std::optional<LoopRange> range);
+
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
     bool commitClipOffset(const juce::String& clipId);
 
@@ -475,6 +487,26 @@ class AudioEngine : private AudioEngineGraphState,
     double pendingTransportPositionMs = 0.0;
     bool pendingTransportResetEffects = true;
     static constexpr int kTransportFadePollMs = 1;
+
+    void wrapTimelineLoopIfDue();
+    /** Runs the loop poll only while a range is armed and the transport is moving. */
+    void updateTimelineLoopTimer();
+
+    class TimelineLoopTimer : public juce::Timer
+    {
+      public:
+        explicit TimelineLoopTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.wrapTimelineLoopIfDue(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    TimelineLoopTimer timelineLoopTimer{*this};
+    std::optional<LoopRange> timelineLoop;
+    // Overshoot past the loop end is this poll plus the block still being rendered, so a
+    // tighter poll than a block period (~10 ms at 512 frames) would only add message-thread
+    // wakeups for no audible gain.
+    static constexpr int kTimelineLoopPollMs = 2;
 
     class TrackBypassTimer : public juce::Timer
     {

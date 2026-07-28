@@ -11,6 +11,9 @@
 - An automation lane's parameter dropdown no longer swallows the Space transport shortcut after being used.
 - Long automation parameter names now show an ellipsis and a hover tooltip when the track header is too narrow for them.
 - Track headers can no longer be resized narrower than their own controls, which previously squashed the header buttons.
+- Looping a timeline range now restarts seamlessly instead of gapping at the loop point.
+- The `Ctrl + ←/→` marker shortcuts now step to the start of a timeline range selection, matching the transport skip buttons.
+- Dragging a timeline range to the edge of the view now scrolls the timeline, so a range can be longer than the visible area.
 
 ## 1.4.0
 

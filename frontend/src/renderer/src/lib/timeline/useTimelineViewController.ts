@@ -75,6 +75,7 @@ export function useTimelineViewController(
     host,
     app: pixi.app,
     scrollX,
+    maxScrollX,
     geometry,
     onSeek: (positionMs) => {
       transport.setPosition(positionMs)

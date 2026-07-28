@@ -456,6 +456,33 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
   })
 
+  it('Ctrl+ArrowRight treats the selection start as a temporary marker', () => {
+    h.stores.project.markers = [{ positionMs: 4000 }]
+    h.stores.ui.timelineSelection = { startMs: 2000, endMs: 3000 }
+    h.stores.transport.positionMs = 1000
+    const { e } = makeKey({ key: 'ArrowRight', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
+  it('Ctrl+ArrowLeft treats the selection start as a temporary marker', () => {
+    h.stores.project.markers = [{ positionMs: 500 }]
+    h.stores.ui.timelineSelection = { startMs: 2000, endMs: 3000 }
+    h.stores.transport.positionMs = 3000
+    const { e } = makeKey({ key: 'ArrowLeft', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
+  it('Ctrl+Arrow with no markers still steps to the selection start', () => {
+    h.stores.project.markers = []
+    h.stores.ui.timelineSelection = { startMs: 2000, endMs: 3000 }
+    h.stores.transport.positionMs = 0
+    const { e } = makeKey({ key: 'ArrowRight', ctrlKey: true })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
   it('bare ArrowRight steps forward to the next sub-beat grid line', () => {
     // 120 bpm -> 500 ms/beat -> 125 ms/sub-beat.
     h.stores.transport.positionMs = 0

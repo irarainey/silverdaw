@@ -690,7 +690,7 @@ bool dispatchProject(const DispatchContext& ctx)
     }
     else if (type == "PROJECT_SET_VIEW")
     {
-        silverdaw::handleProjectSetView(payload, projectState);
+        silverdaw::handleProjectSetView(payload, engine, projectState);
     }
     else if (type == "PROJECT_SET_BPM")
     {

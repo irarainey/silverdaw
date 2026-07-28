@@ -12,6 +12,12 @@ import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 import { useAudioQuickSwitch } from '@/lib/transport/useAudioQuickSwitch'
 import { useTransportSkip } from '@/lib/transport/useTransportSkip'
 
+// The engine wraps a looped range on its own clock, so the renderer sees the reported
+// position jump back to near the range start. Anything further back than this is a user
+// seek, which must not drag the view to the loop start. Wide enough to absorb the
+// playhead's output-latency compensation plus one emit interval.
+const LOOP_WRAP_TOLERANCE_MS = 250
+
 export function useTransportBarController() {
   const project = useProjectStore()
   const library = useLibraryStore()
@@ -98,26 +104,26 @@ export function useTransportBarController() {
     }
   )
 
-  // Renderer pauses at project end because the audio engine streams past it.
+  // Renderer pauses at project end because the audio engine streams past it. A looped
+  // range is wrapped by the engine itself (on its own clock, so the restart is seamless),
+  // so looping here only has to follow the wrap with the view — auto-follow eases forward
+  // only and never scrolls back on its own.
   watch(
     () => transport.positionMs,
-    (ms) => {
+    (ms, prevMs) => {
       if (!transport.isPlaying) return
       if (transport.midiPlaybackHoldActive) return
       const selection = ui.timelineSelection
+      if (selection && ui.loopTimelineSelection) {
+        const wrapped =
+          ms < prevMs && Math.abs(ms - selection.startMs) <= LOOP_WRAP_TOLERANCE_MS
+        if (wrapped) ui.requestTimelineScrollToPosition(selection.startMs, true)
+        return
+      }
       if (selection && ms >= selection.endMs) {
-        if (ui.loopTimelineSelection) {
-          transport.setPosition(selection.startMs)
-          ui.requestTimelineScrollToPosition(selection.startMs, true)
-          sendBridge('TRANSPORT_SEEK', {
-            positionMs: selection.startMs,
-            preserveEffects: true
-          })
-        } else {
-          sendBridge('TRANSPORT_PAUSE')
-          transport.setPlaybackState(false)
-          transport.setPosition(selection.endMs)
-        }
+        sendBridge('TRANSPORT_PAUSE')
+        transport.setPlaybackState(false)
+        transport.setPosition(selection.endMs)
         return
       }
       const end = project.durationMs
