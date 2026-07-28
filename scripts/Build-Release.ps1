@@ -144,6 +144,51 @@ runtime, exclude it deliberately and note why).
     Write-Host "Bundling guard OK — all $($shipped.Count) backend binaries are covered by the installer filter ($shippedNames)." -ForegroundColor Green
 }
 
+# Guard against version drift across the app. `frontend/package.json` drives the
+# package/installer version; `project(... VERSION)` in `backend/CMakeLists.txt`
+# drives the backend's generated `kBackendVersion` and its Windows VERSIONINFO
+# resource. Compare all three: the declared frontend version, the declared
+# backend version, and what the built exe actually reports. The last of these
+# matters because JUCE generates the VERSIONINFO `.rc` with a custom command
+# that has no dependency on its input, so a stale resource can survive a
+# version bump and ship the wrong metadata.
+function Assert-VersionsMatch([string]$ArtefactsDir, [string]$FrontendDir, [string]$BackendDir) {
+    $pkgPath = Join-Path $FrontendDir 'package.json'
+    if (-not (Test-Path $pkgPath)) { throw "Version guard: $pkgPath not found." }
+    $appVersion = (Get-Content -Raw $pkgPath | ConvertFrom-Json).version
+    if (-not $appVersion) { throw "Version guard: no 'version' field in $pkgPath." }
+
+    $cmakePath = Join-Path $BackendDir 'CMakeLists.txt'
+    if (-not (Test-Path $cmakePath)) { throw "Version guard: $cmakePath not found." }
+    $cmakeMatch = Select-String -Path $cmakePath -Pattern '^\s*VERSION\s+(\d+\.\d+\.\d+)' |
+        Select-Object -First 1
+    if (-not $cmakeMatch) { throw "Version guard: no project() VERSION found in $cmakePath." }
+    $backendDeclared = $cmakeMatch.Matches[0].Groups[1].Value
+
+    $exePath = Join-Path $ArtefactsDir 'SilverdawBackend.exe'
+    if (-not (Test-Path $exePath)) { throw "Version guard: backend exe not found at $exePath." }
+    $backendBuilt = (Get-Item $exePath).VersionInfo.FileVersion
+
+    $mismatches = @()
+    if ($backendDeclared -ne $appVersion) {
+        $mismatches += "backend CMakeLists.txt declares $backendDeclared but frontend/package.json declares $appVersion"
+    }
+    if ($backendBuilt -ne $backendDeclared) {
+        $mismatches += "the built SilverdawBackend.exe reports $backendBuilt but backend CMakeLists.txt declares $backendDeclared (stale generated VERSIONINFO — reconfigure the backend)"
+    }
+    if ($mismatches) {
+        throw @"
+Version guard FAILED — the release would ship inconsistent versions.
+
+$(($mismatches | ForEach-Object { "    - $_" }) -join "`n")
+
+Every version in the app must match. Fix the source that is behind, then
+rebuild the backend so its embedded metadata is regenerated.
+"@
+    }
+    Write-Host "Version guard OK — app, backend, and built backend exe all report $appVersion." -ForegroundColor Green
+}
+
 # Ensure a self-signed code-signing certificate with Subject `CN=Silverdaw`
 # exists in the current user's `My` store, creating it on first run. The
 # private key lives only in the certificate store and is marked
@@ -222,6 +267,15 @@ if (-not $SkipBackend) {
 # the installer's extraResources allowlist before we spend time packaging.
 Write-Section 'Verify: backend binaries covered by installer filter'
 Assert-BackendArtefactsBundled $backendArtefactsDir (Join-Path $frontendDir 'electron-builder.yml')
+
+# 1c. Version guard --------------------------------------------------------
+# The app version everything is packaged under comes from frontend/package.json;
+# the backend stamps its own from project() in backend/CMakeLists.txt. Those are
+# separate sources, so they can drift silently — and a stale generated
+# VERSIONINFO resource can make the built exe disagree with its own CMake
+# version. Catch both here rather than shipping mismatched metadata.
+Write-Section 'Verify: backend and app versions match'
+Assert-VersionsMatch $backendArtefactsDir $frontendDir $backendDir
 
 # 2. Frontend deps + bundles ----------------------------------------------
 Push-Location $frontendDir
