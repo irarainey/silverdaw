@@ -15,7 +15,8 @@ import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import {
   nextMarkerCandidateMs,
-  previousMarkerCandidateMs
+  previousMarkerCandidateMs,
+  toggleTransportPlayback
 } from '@/lib/transport/useTransportSkip'
 import { log } from '@/lib/log'
 
@@ -152,43 +153,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.stopPropagation()
       if (e.repeat) return
       lastArrowSeekMs = null
-      if (transport.midiPlaybackHoldActive) {
-        const nextPlaying = !transport.isPlaying
-        if (nextPlaying) {
-          const end = project.durationMs
-          if (end > 0 && transport.positionMs >= end) {
-            log.info('transport', 'shortcut play ignored (at end of project)')
-            return
-          }
-        }
-        transport.setPlaybackState(nextPlaying)
-        log.info(
-          'transport',
-          `shortcut ${nextPlaying ? 'play armed' : 'pause'} while MIDI playback is held`
-        )
-        return
-      }
-      if (transport.isPlaying) {
-        sendBridge('TRANSPORT_PAUSE')
-        transport.setPlaybackState(false)
-        log.info('transport', 'shortcut pause')
-      } else {
-        if (transport.audioState !== 'ready') {
-          log.info('transport', 'shortcut play ignored (audio output unavailable)')
-          return
-        }
-        // Playhead parked at the end → Spacebar Play is a no-op.
-        // Mirrors `TransportBar.onPlay`'s guard so the keyboard
-        // shortcut can't bypass the disabled Play button.
-        const end = project.durationMs
-        if (end > 0 && transport.positionMs >= end) {
-          log.info('transport', 'shortcut play ignored (at end of project)')
-          return
-        }
-        sendBridge('TRANSPORT_PLAY')
-        transport.setPlaybackState(true)
-        log.info('transport', 'shortcut play')
-      }
+      // Shared with the transport bar's Play button and MIDI so Space agrees on
+      // everything they handle — notably restarting an armed timeline range from
+      // its start (and scrolling it into view) rather than resuming in place.
+      toggleTransportPlayback('shortcut', { project, transport, ui })
       return
     }
 

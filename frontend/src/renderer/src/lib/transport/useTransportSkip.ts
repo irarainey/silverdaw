@@ -15,6 +15,16 @@ export interface TransportSkip {
   onSkipForward: () => void
 }
 
+// Play/pause is shared by the transport bar, the Space shortcut and MIDI, so it
+// takes optional store handles: callers that already hold their own (the
+// keyboard composable injects them for testing) pass them in rather than
+// resolving a second set from Pinia.
+export interface TransportPlaybackStores {
+  project: ReturnType<typeof useProjectStore>
+  transport: ReturnType<typeof useTransportStore>
+  ui: ReturnType<typeof useUiStore>
+}
+
 // Everything the marker-stepping lookups need, so they stay pure and usable
 // from callers that hold their own store handles.
 export interface MarkerSeekContext {
@@ -124,10 +134,10 @@ export function seekToMarkerIndex(index: number, source = 'marker shortcut'): vo
   seekToSkipTarget(marker.positionMs)
 }
 
-export function toggleTransportPlayback(source = 'click'): void {
-  const project = useProjectStore()
-  const transport = useTransportStore()
-  const ui = useUiStore()
+export function toggleTransportPlayback(source = 'click', stores?: TransportPlaybackStores): void {
+  const project = stores?.project ?? useProjectStore()
+  const transport = stores?.transport ?? useTransportStore()
+  const ui = stores?.ui ?? useUiStore()
   if (!transport.isPlaying && transport.audioState !== 'ready') {
     log.info('transport', `${source} play ignored (audio output unavailable)`)
     return

@@ -486,6 +486,10 @@ class AudioEngine : private AudioEngineGraphState,
     PendingTransportAction pendingTransportAction = PendingTransportAction::none;
     double pendingTransportPositionMs = 0.0;
     bool pendingTransportResetEffects = true;
+    // A seek asked for while a pause fade is still in flight. It cannot be applied as a
+    // normal pending seek: that would replace the pause and fade the transport back in,
+    // resurrecting playback the caller just stopped. Applied once the pause lands instead.
+    std::optional<double> pendingSeekAfterPauseMs;
     static constexpr int kTransportFadePollMs = 1;
 
     void wrapTimelineLoopIfDue();

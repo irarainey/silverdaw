@@ -391,12 +391,16 @@ Silverdaw currently supports the core arrangement workflow:
   playhead. The range is shown across the ruler and track rows, snaps to the
   timeline grid by default, and supports `Alt` for exact pointer placement.
   Dragging the playhead keeps its established repositioning behavior. Play starts
-  at the range beginning and pauses at its exclusive end. Enable **Loop
+  at the range beginning and pauses at its exclusive end, parking the playhead
+  exactly on that end so the next Play replays the range from its start rather
+  than resuming beyond it. Enable **Loop
   Selection** in the transport (or the `L` shortcut) to return to the beginning
   at that boundary while retaining shared Reverb and Delay tails; the engine owns
   that wrap, so the restart is seamless. Starting selected playback smoothly
-  reveals its beginning when it is off-screen. Dragging to either viewport edge
-  auto-scrolls the timeline, so a range can be longer than the visible area. The
+  reveals its beginning when it is off-screen, from the Play button, the
+  Spacebar, and MIDI alike. Dragging to either viewport edge
+  auto-scrolls the timeline, so a range can be longer than the visible area, and
+  completing that drag scrolls the playhead back into view. The
   **Skip** buttons, the `Ctrl + ←/→` shortcuts, and the MIDI cue buttons treat
   the range start as a temporary jump point without creating a saved marker.
   **Escape** clears the range and Loop Selection before stepping through clip,
@@ -1352,6 +1356,16 @@ renderer:
 The renderer keeps only the view follow: auto-follow eases forward and never scrolls back,
 so the transport controller watches for the position jumping back near the range start and
 scrolls there. Pausing at the end of a **non**-looped range stays renderer-side.
+
+Those boundary rules — follow a wrap, stop on a one-shot range end, stop at the project end
+— live in [`playbackBoundary.ts`](../frontend/src/renderer/src/lib/transport/playbackBoundary.ts)
+as a pure function, so the transport bar's position watcher only dispatches the result. A
+one-shot stop pauses **and** seeks back to the boundary: the engine streams on until the
+pause fade lands, so without the seek it parks past the range end and the next plain Play
+resumes from outside the range. `AudioEngine::setPositionMs` holds a seek that arrives
+while a pause fade is in flight and applies it once the pause lands — turning it into a
+normal pending seek would fade the output back in and resurrect the playback that was just
+stopped.
 
 See [ADR 0023](adr/0023-engine-owned-timeline-loop.md) for the full rationale and the
 rejected alternatives.
@@ -2837,7 +2851,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area. Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
 | Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
@@ -2870,7 +2884,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
-| `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
+| `Space` | Play / pause globally unless a text field or modal dialog is active. With a timeline range armed, playback starts from the range start. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
 | `Escape` | Clear the timeline range first, including Loop Selection. Then step down through the selection: when a track and clip(s) are selected, the next press clears the clip(s) (and any selected automation point) but keeps the track selected, and a further press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
 | `L` | Toggle **Loop Selection** for the active timeline range (the keyboard twin of the transport loop button). No-op when no range is selected. |

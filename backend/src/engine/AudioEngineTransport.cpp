@@ -258,6 +258,11 @@ void AudioEngine::completePendingTransportFade()
         case PendingTransportAction::pause:
             master.setPlaying(false);
             updateTimelineLoopTimer();
+            // Now that the transport is genuinely stopped, a seek that arrived during the
+            // fade can be applied on the immediate path without restarting playback.
+            if (pendingSeekAfterPauseMs.has_value())
+                setPositionMsNow(*pendingSeekAfterPauseMs, /*resetEffects*/ false);
+            pendingSeekAfterPauseMs.reset();
             reclaimRetiredPlaybackSnapshots();
             silverdaw::log::info(
                 "engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
@@ -266,6 +271,7 @@ void AudioEngine::completePendingTransportFade()
         case PendingTransportAction::stop:
             master.setPlaying(false);
             updateTimelineLoopTimer();
+            pendingSeekAfterPauseMs.reset();
             master.setPositionSamples(0);
             busGraph.resetSharedFx();
             busGraph.resetBeatRepeats();

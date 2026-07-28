@@ -220,6 +220,36 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(sendBridge).not.toHaveBeenCalled()
   })
 
+  // Space shares the transport bar's play path, so an armed range replays from its
+  // start rather than resuming wherever the previous pass stopped.
+  it('Space replays an armed timeline range from its start', () => {
+    h.stores.transport.positionMs = 6_000
+    h.stores.ui.timelineSelection = { startMs: 2_000, endMs: 5_000 }
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.transport.setPosition).toHaveBeenCalledWith(2_000)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2_000 })
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(true)
+  })
+
+  it('Space scrolls an armed timeline range back into view before playing it', () => {
+    h.stores.ui.timelineSelection = { startMs: 2_000, endMs: 5_000 }
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(h.stores.ui.requestTimelineScrollToPosition).toHaveBeenCalledWith(2_000, true)
+  })
+
+  // The end-of-project guard must not block replaying a range that ends there.
+  it('Space plays an armed timeline range from the end of the project', () => {
+    h.stores.transport.positionMs = 10_000
+    h.stores.ui.timelineSelection = { startMs: 8_000, endMs: 10_000 }
+    const { e } = makeKey({ code: 'Space' })
+    kb.onGlobalShortcutKey(e)
+    expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(h.stores.transport.setPosition).toHaveBeenCalledWith(8_000)
+  })
+
   it('Space cannot arm held playback at end-of-project', () => {
     h.stores.transport.midiPlaybackHoldActive = true
     h.stores.transport.positionMs = 10_000
