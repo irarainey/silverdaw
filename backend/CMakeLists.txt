@@ -609,6 +609,23 @@ juce_add_console_app(SilverdawBackend
     PRODUCT_NAME "Silverdaw Backend"
     COMPANY_NAME "Silverdaw")
 
+# JUCE generates the Windows VERSIONINFO resource with
+# `add_custom_command(OUTPUT ..._resources.rc COMMAND juceaide rcfile Info.txt ...)`
+# but declares no DEPENDS on Info.txt, so once the .rc exists it is never
+# regenerated. A version bump then leaves the built exe reporting the old
+# FileVersion/ProductVersion even though Info.txt and kBackendVersion are
+# current. Drop a stale .rc at configure time so the version the exe reports
+# always matches project() above.
+get_target_property(SILVERDAW_RC_DIR SilverdawBackend JUCE_GENERATED_SOURCES_DIRECTORY)
+set(SILVERDAW_RC_FILE "${SILVERDAW_RC_DIR}/SilverdawBackend_resources.rc")
+if(EXISTS "${SILVERDAW_RC_FILE}")
+    file(READ "${SILVERDAW_RC_FILE}" SILVERDAW_RC_CONTENTS)
+    if(NOT SILVERDAW_RC_CONTENTS MATCHES "\"ProductVersion\",[ \t]+\"${PROJECT_VERSION}")
+        message(STATUS "Removing stale VERSIONINFO resource so it regenerates as ${PROJECT_VERSION}")
+        file(REMOVE "${SILVERDAW_RC_FILE}")
+    endif()
+endif()
+
 target_sources(SilverdawBackend PRIVATE
     src/core/Main.cpp)
 
