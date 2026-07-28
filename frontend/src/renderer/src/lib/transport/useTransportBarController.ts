@@ -274,8 +274,7 @@ export function useTransportBarController() {
   }
 
   function onToggleLoopSelection(): void {
-    ui.setLoopTimelineSelection(!ui.loopTimelineSelection)
-    ui.persistTimelineSelectionView()
+    ui.toggleLoopTimelineSelection()
   }
 
   function onMasterVolumeInput(event: Event): void {

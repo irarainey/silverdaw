@@ -501,7 +501,7 @@ export function sanitiseStemModelDir(input: unknown): string | undefined {
 
 // Defensive UI-layout clamps; mirror the renderer's uiStore bounds so a corrupt
 // prefs file or a hostile renderer message cannot poison the persisted layout.
-export const UI_TRACK_HEADER_WIDTH_MIN = 120
+export const UI_TRACK_HEADER_WIDTH_MIN = 180
 export const UI_TRACK_HEADER_WIDTH_MAX = 480
 export const UI_LIBRARY_PANEL_HEIGHT_MIN = 80
 export const UI_LIBRARY_PANEL_HEIGHT_MAX = 2000

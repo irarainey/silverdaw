@@ -2836,6 +2836,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
 | `Escape` | Clear the timeline range first, including Loop Selection. Then step down through the selection: when a track and clip(s) are selected, the next press clears the clip(s) (and any selected automation point) but keeps the track selected, and a further press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
+| `L` | Toggle **Loop Selection** for the active timeline range (the keyboard twin of the transport loop button). No-op when no range is selected. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |

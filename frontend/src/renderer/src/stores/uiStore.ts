@@ -102,8 +102,10 @@ function sanitiseProjectSampleRate(n: unknown): number {
     : DEFAULTS.defaultProjectSampleRate
 }
 
-// Defensive clamps protect against corrupt persisted layout values.
-const MIN_TRACK_HEADER_WIDTH = 120
+// Defensive clamps protect against corrupt persisted layout values. The header
+// floor is the width of its own bottom button row (six 24px buttons, five 4px
+// gaps, 16px padding) — narrower and those controls start squashing.
+const MIN_TRACK_HEADER_WIDTH = 180
 const MAX_TRACK_HEADER_WIDTH = 480
 const MIN_LIBRARY_PANEL_HEIGHT = 80
 const MAX_LIBRARY_PANEL_HEIGHT = 2000
@@ -384,6 +386,12 @@ export const useUiStore = defineStore('ui', {
     },
     setLoopTimelineSelection(loop: boolean): void {
       this.loopTimelineSelection = this.timelineSelection !== null && loop
+    },
+    /** Flip Loop Selection and persist it; no-op without an active range. */
+    toggleLoopTimelineSelection(): void {
+      if (this.timelineSelection === null) return
+      this.setLoopTimelineSelection(!this.loopTimelineSelection)
+      this.persistTimelineSelectionView()
     },
     /** Repair an active range after reducing the project duration. */
     clampTimelineSelectionToDuration(durationMs: number): boolean {

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1
+
+### Added
+
+- The timeline range's Loop Selection can now be toggled with the `L` shortcut key.
+
+### Fixed
+
+- An automation lane's parameter dropdown no longer swallows the Space transport shortcut after being used.
+- Long automation parameter names now show an ellipsis and a hover tooltip when the track header is too narrow for them.
+- Track headers can no longer be resized narrower than their own controls, which previously squashed the header buttons.
+
 ## 1.4.0
 
 ### Added
