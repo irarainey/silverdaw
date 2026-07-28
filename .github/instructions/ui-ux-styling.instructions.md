@@ -55,11 +55,12 @@ Rules:
   recolouring the `.dialog-card` border.
 - Reserve `red` for genuinely destructive/irreversible choices and real errors.
   A plain Cancel/Close is `.dialog-btn-cancel` (neutral zinc), never red.
-- **One deliberate exception — categorical data-viz.** The musical key-badge
-  palette (`lib/keyBadge.ts`) intentionally maps the 12 keys onto a full colour
-  wheel (including otherwise-forbidden families) so each key is distinguishable.
-  This is categorical encoding, not chrome — the "one accent" rule does not apply
-  to it. Do not fold these into `sky`.
+- **One deliberate exception — categorical data-viz.** Two palettes
+  intentionally span the full colour wheel (including otherwise-forbidden
+  families) so that each entry is distinguishable: the musical key badges
+  (`lib/keyBadge.ts`) and the user-selectable track colours (`TRACK_PALETTE` in
+  `stores/projectTypes.ts`). This is categorical encoding, not chrome — the "one
+  accent" rule does not apply to either. Do not fold them into `sky`.
 
 ## 2. Surfaces & elevation
 
@@ -160,16 +161,15 @@ ever see that on a control, the control is wrong and must be fixed.
 
 - Every focusable element pairs `outline-none` (or `focus:outline-none`).
   Indicate focus by **recolouring the border to the accent**:
-  `focus:border-sky-500` (inputs) or `focus:border-cyan-500` (some library
-  fields — keep consistent within a component). Wrapper groups may use
-  `focus-within:border-sky-500`.
+  `focus:border-sky-500`. Wrapper groups may use `focus-within:border-sky-500`.
 - **Native `<select>` is the most common offender** — it does NOT inherit a
   global reset, so it must carry `outline-none focus:border-sky-500` explicitly
   (do not tint it with `accent-*`; `accent` only applies to checkbox/radio/range).
   A `<select>` without `outline-none` shows the white/orange ring and is a bug.
 - Custom range sliders strip the outline entirely
   (`outline-none focus:outline-none focus-visible:outline-none`) and style the
-  thumb directly (see `TrackFxPanel.vue` `.tone-range-input`).
+  thumb directly (see `FxRangeControl.vue` `.fx-range-input`, and
+  `ClipEditorPitchPanel.vue` `.pitch-range-input`).
 - **Narrow exception:** a deliberate `focus:ring-2 focus:ring-sky-400`
   (or `ring-red-400` on a destructive button) is allowed **only** on prominent
   keyboard-navigable action buttons in full-screen overlays (e.g.
@@ -245,25 +245,17 @@ Wording rules:
 - Keep terminology identical across menu, context menu, panel, dialog, and
   toast for the same concept.
 
-## 11. Checklist for new/changed UI
+## 11. Before you finish
 
-- [ ] Only `zinc` neutrals + `sky` accent; severity limited to
-      `emerald`/`amber`/`red`; no other palettes.
-- [ ] Dialogs built from the `.dialog-*` primitives; footer is Cancel then
-      primary, right-aligned `gap-2`.
-- [ ] Buttons use the shared classes (in dialogs) or the established standalone
-      pattern; every interactive element has a `hover:` state.
-- [ ] Inputs follow the canonical field class; numbers are `font-mono`
-      `text-right` `tabular-nums`; disabled state styled, not hidden.
-- [ ] No default browser focus ring anywhere (no white/orange ring — native
-      `<select>` needs `outline-none focus:border-sky-500`); focus shown via
-      accent border; `focus:ring` only on prominent overlay action buttons.
-- [ ] Small fixed option sets in settings/preferences use the shared radio-card
-      list pattern (`rounded-md`, `px-3 py-2.5`), not a native `<select>`; each
-      card keeps its `Label — short description` on **one line** (no stacked
-      description, description trimmed to fit).
-- [ ] Tailwind spacing scale; `rounded` controls / `rounded-lg` cards.
-- [ ] `font-mono` for all numeric readouts; correct size from the ladder.
-- [ ] Friendly terminology from the table; Title Case controls, sentence-case
-      body; `…` on actions that need more input.
-- [ ] No modal dialog for an action that could be inline / contextual.
+Most of this file is reference — consult the section you need. These are the
+failures that actually recur, so check them explicitly:
+
+- [ ] **No default browser focus ring.** If you can see a white/orange ring, it
+      is a bug. Native `<select>` is the usual culprit (§6).
+- [ ] **Palette discipline** — `zinc` + `sky` only, severity limited to
+      `emerald`/`amber`/`red`, no second blue (§1).
+- [ ] **Shared primitives reused,** not re-hand-rolled — `.dialog-*` and the
+      button classes (§0, §3).
+- [ ] **Wording** follows the terminology table and case rules, consistently
+      across menu, panel, dialog, and toast (§10).
+- [ ] **No modal dialog** for an action that could be inline or contextual (§3).

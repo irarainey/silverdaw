@@ -42,7 +42,7 @@ micro-optimisation. Maintainability is a first-class, blocking-class gate.
 
 Path-specific instruction files under `.github/instructions/` (auto-applied by
 glob) cover C++/JUCE audio, TypeScript 5 / ES2022, audio/waveform TS, Vue 3,
-UI/UX styling, Markdown, and documentation. Defer to them.
+UI/UX styling, and Markdown/documentation. Defer to them.
 
 ## Never
 

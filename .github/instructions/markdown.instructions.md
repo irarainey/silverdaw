@@ -1,51 +1,81 @@
 ---
-description: "Documentation and content creation standards"
+description: "Markdown and documentation conventions for Silverdaw — file shape, the durable context files, ADRs, and CHANGELOG entries"
 applyTo: "**/*.md"
 ---
 
-## Markdown Content Rules
+# Markdown & Documentation — Silverdaw
 
-The following markdown content rules are enforced in the validators:
+Documentation here is a durable engineering asset, not decoration. It is read by
+the next contributor and by AI assistants working from a finite context window,
+so the cost of a document is real: stale or bloated prose is worse than none.
 
-1. **Headings**: Use appropriate heading levels (H2, H3, etc.) to structure your content. Do not use an H1 heading, as this will be generated based on the title.
-2. **Lists**: Use bullet points or numbered lists for lists. Ensure proper indentation and spacing.
-3. **Code Blocks**: Use fenced code blocks for code snippets. Specify the language for syntax highlighting.
-4. **Links**: Use proper markdown syntax for links. Ensure that links are valid and accessible.
-5. **Images**: Use proper markdown syntax for images. Include alt text for accessibility.
-6. **Tables**: Use markdown tables for tabular data. Ensure proper formatting and alignment.
-7. **Line Length**: Limit line length to 400 characters for readability.
-8. **Whitespace**: Use appropriate whitespace to separate sections and improve readability.
-9. **Front Matter**: Include YAML front matter at the beginning of the file with required metadata fields.
+## Document only what exists
 
-## Formatting and Structure
+Every statement must be traceable to something actually in the repository —
+real functions, parameters, behaviours, paths, and commands. Do not describe
+planned, inferred, or aspirational behaviour unless the document explicitly
+covers unreleased work (`docs/development-plan.md`). Where the code is
+ambiguous, document what is certain and say the rest is unclear rather than
+filling the gap. When you change a document, verify any command, path, or link
+you touched.
 
-Follow these guidelines for formatting and structuring your markdown content:
+## File shape
 
-- **Headings**: Use `##` for H2 and `###` for H3. Ensure that headings are used in a hierarchical manner. Recommend restructuring if content includes H4, and more strongly recommend for H5.
-- **Lists**: Use `-` for bullet points and `1.` for numbered lists. Indent nested lists with two spaces.
-- **Code Blocks**: Use triple backticks (`) to create fenced code blocks. Specify the language after the opening backticks for syntax highlighting (e.g., `csharp).
-- **Links**: Use `[link text](URL)` for links. Ensure that the link text is descriptive and the URL is valid.
-- **Images**: Use `![alt text](image URL)` for images. Include a brief description of the image in the alt text.
-- **Tables**: Use `|` to create tables. Ensure that columns are properly aligned and headers are included.
-- **Line Length**: Break lines at 80 characters to improve readability. Use soft line breaks for long paragraphs.
-- **Whitespace**: Use blank lines to separate sections and improve readability. Avoid excessive whitespace.
+- One `#` H1 title per file, then content under `##` / `###`. `####` and deeper
+  usually means the section wants splitting.
+- **No YAML front matter** in project documentation. Front matter appears only
+  in `.github/` tooling files: `description` + `applyTo` for
+  `*.instructions.md`, `mode` + `description` for `*.prompt.md`, `name` +
+  `description` for agents.
+- Wrap prose at roughly 80 columns. Tables, links, and code may overflow —
+  never reflow them to hit a column count.
+- Fenced code blocks carry a language identifier; `text` for diagrams and
+  console output.
+- LF endings and a trailing newline (`.editorconfig`). There is no markdownlint
+  configuration — these conventions are the standard.
 
-## Validation Requirements
+## The durable context files
 
-Ensure compliance with the following validation requirements:
+`CONTEXT.md` is the small, always-on core; `ARCHITECTURE.md`, `DECISIONS.md`,
+and the deeper guides are opened only when a task touches them. Protect that
+split when editing them:
 
-- **Front Matter**: Include the following fields in the YAML front matter:
-    - `post_title`: The title of the post.
-    - `author1`: The primary author of the post.
-    - `post_slug`: The URL slug for the post.
-    - `microsoft_alias`: The Microsoft alias of the author.
-    - `featured_image`: The URL of the featured image.
-    - `categories`: The categories for the post. These categories must be from the list in /categories.txt.
-    - `tags`: The tags for the post.
-    - `ai_note`: Indicate if AI was used in the creation of the post.
-    - `summary`: A brief summary of the post. Recommend a summary based on the content when possible.
-    - `post_date`: The publication date of the post.
+- **Link, don't inline.** Detail belongs in the linked document. Adding
+  reference material to `CONTEXT.md` or `ARCHITECTURE.md` costs every future
+  session tokens whether or not it is relevant.
+- Tag durable constraints `CRITICAL`, `IMPORTANT`, or `REFERENCE` — the tag
+  doubles as a load level, so only `CRITICAL` material earns a place inline in
+  the core.
+- `CONTEXT.md` and `ARCHITECTURE.md` carry a `_Last reviewed: YYYY-MM-DD ·
+  Owner: @handle_` line. Update the date when you revise them.
+- Prefer pointing at the most faithful source — code, a zod schema, a test —
+  over paraphrasing it. Prose carries intent, constraints, and rejected
+  alternatives, which code cannot.
 
-- **Content Rules**: Ensure that the content follows the markdown content rules specified above.
-- **Formatting**: Ensure that the content is properly formatted and structured according to the guidelines.
-- **Validation**: Run the validation tools to check for compliance with the rules and guidelines.
+## ADRs
+
+One decision per file at `docs/adr/NNNN-kebab-slug.md`, written at the moment of
+decision:
+
+```text
+# ADR NNNN — Short decision statement
+
+- **Date:** YYYY-MM-DD · **Status:** Accepted · **Owner:** @handle · **Importance:** `CRITICAL`
+
+## Decision
+## Why
+## Rejected alternatives
+```
+
+`Rejected alternatives` is the section that earns the ADR its keep — it is the
+reasoning that compaction and time destroy first. Add the matching one-line row
+to `DECISIONS.md` in the same change.
+
+## CHANGELOG entries
+
+- One short, high-level sentence per entry describing the **user-facing**
+  change — not its cause, mechanism, or implementation.
+- No trailing explanations, parentheticals, em-dash clauses, or "because…"
+  detail. If a reader needs the why, it belongs in a code comment, `docs/`, or
+  an ADR.
+- One bullet per change, grouped under `Added` / `Changed` / `Fixed`.

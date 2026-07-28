@@ -103,51 +103,25 @@ and the real-time-path exception — is ADR 0016
 
 ## Testing & coverage
 
-Match the existing harness/framework — never introduce a new one. Rationale and
-detail: ADR 0014 (`docs/adr/0014-testing-strategy.md`).
+Match the existing harness — **never introduce a new test framework**. The
+backend uses a custom `SilverdawBackendTests` harness wired into **CTest** (no
+Catch2/GoogleTest); the frontend uses **Vitest** with Vue Test Utils.
 
-- **Backend** — a custom `SilverdawBackendTests` harness wired into **CTest** (no
-  Catch2/GoogleTest). Configure with `-DSILVERDAW_BUILD_TESTS=ON`, build the
-  `SilverdawBackendTests` target, then run in an MSVC Developer environment
-  (e.g. via `scripts/Invoke-DevShell.ps1`):
-  `ctest --test-dir backend/build --build-config Debug --output-on-failure`.
-  Each case is a separate CTest test (discovered at build time via the harness's
-  `--list` / `--run` flags), so cases show individually in `ctest` and the VS
-  Code Testing panel. Keep test-case names ASCII. **When you add or remove a
-  backend test, update the registry-count assertion in `backend/tests/BackendTests.cpp`
-  (`tests.size() == N`) to match — otherwise build-time test discovery (`--list`)
-  aborts and the build fails.**
-- **Frontend** — **Vitest** (`pnpm test`; `pnpm test:watch`), Vue Test Utils for
-  components; Playwright e2e planned.
-- **Coverage** — `scripts/Coverage.ps1 [-Target All|Frontend|Backend]` runs
-  either/both and collects the HTML reports into a single gitignored root
-  `coverage/` folder (`coverage/index.html` links both). Frontend uses Vitest v8
-  (`pnpm test:coverage`); backend uses **OpenCppCoverage** over the Debug binary
-  on MSVC via the `SilverdawBackendCoverage` target
-  (`-DSILVERDAW_ENABLE_COVERAGE=ON`; `winget install
-  OpenCppCoverage.OpenCppCoverage`). OpenCppCoverage ends on a benign breakpoint
-  stop code on Debug JUCE builds — expected; the report is still written.
+Rationale: ADR 0014. Commands, coverage tooling, and the backend test-registry
+gotcha: `docs/developer-guide.md#quality-gates`.
 
 ## Versioning & builds
 
-- **Two version numbers — bump both together on every release:**
-  - `backend/CMakeLists.txt` → `project(SilverdawBackend VERSION x.y.z)` is the
-    **single source of truth for the backend**. CMake generates `Version.h`
-    (`silverdaw::kBackendVersion`) from it (template: `backend/src/core/Version.h.in`),
-    feeding the startup log banner, the project-file `appVersion`, and the bridge
-    `READY` version — no source file hardcodes the number.
-  - `frontend/package.json` → `"version"` is the Electron app version and drives
-    the electron-builder artifact names (`Silverdaw-<version>.*`).
 - `CRITICAL` — **All native (C++) builds and `ctest` need the MSVC Developer
   environment.** Never run `cmake` / `ninja` / `ctest` from a bare shell
   (standard headers like `<algorithm>` fail to resolve). Wrap the command in
   `scripts/Invoke-DevShell.ps1 "<command>"`, which enters the latest VS x64 dev
   shell first (the same wrapper `.vscode/tasks.json` uses).
-
-## Application logs
-
-- The verbose application-log directory is configured in **Preferences ▸
-  Developer**. Its default is `%USERPROFILE%\Silverdaw\Logs`.
+- **Two version numbers — bump both together on every release:**
+  `backend/CMakeLists.txt` `project(... VERSION x.y.z)` is the backend source of
+  truth (CMake generates `Version.h`; no source file hardcodes the number), and
+  `frontend/package.json` `"version"` is the Electron app version. Setup,
+  packaging, and release detail: `docs/developer-guide.md`.
 
 ## Load on demand
 

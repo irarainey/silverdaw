@@ -25,8 +25,8 @@ review of a single change, subsystem, or PR, use the **Code Reviewer** agent
 - `.github/copilot-instructions.md` — review priorities and how-to-help; points
   at the durable assets above.
 - `.github/instructions/*.instructions.md` — the path-specific C++/JUCE,
-  TypeScript, audio-waveform TS, Vue 3, UI/UX styling, Markdown, and
-  documentation contracts.
+  TypeScript, audio-waveform TS, Vue 3, UI/UX styling, and
+  Markdown/documentation contracts.
 - Where these are silent, defer to ISO C++17 / C++ Core Guidelines / CERT C++,
   the Vue Style Guide, the Electron security checklist, and OWASP Top 10.
 

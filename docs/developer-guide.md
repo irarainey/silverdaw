@@ -3436,6 +3436,13 @@ pnpm dist:dir    # win-unpacked only, no packaging
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
     "ctest --test-dir backend/build --output-on-failure"
   ```
+  Each case is a separate CTest test, discovered at build time via the harness's
+  `--list` / `--run` flags, so cases appear individually in `ctest` and the VS
+  Code Testing panel. Keep test-case names ASCII. **When you add or remove a
+  backend test, update the registry-count assertion in
+  `backend/tests/BackendTests.cpp` (`tests.size() == N`) to match — otherwise
+  build-time test discovery (`--list`) aborts and the build fails.**
+
   Backend coverage is available with `-DSILVERDAW_ENABLE_COVERAGE=ON`, which
   adds a `SilverdawBackendCoverage` target that runs the backend unit tests and
   writes reports under `backend/build-coverage/` (a dedicated, non-hidden
