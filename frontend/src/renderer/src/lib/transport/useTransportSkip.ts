@@ -15,44 +15,88 @@ export interface TransportSkip {
   onSkipForward: () => void
 }
 
+// Play/pause is shared by the transport bar, the Space shortcut and MIDI, so it
+// takes optional store handles: callers that already hold their own (the
+// keyboard composable injects them for testing) pass them in rather than
+// resolving a second set from Pinia.
+export interface TransportPlaybackStores {
+  project: ReturnType<typeof useProjectStore>
+  transport: ReturnType<typeof useTransportStore>
+  ui: ReturnType<typeof useUiStore>
+}
+
+// Everything the marker-stepping lookups need, so they stay pure and usable
+// from callers that hold their own store handles.
+export interface MarkerSeekContext {
+  positionMs: number
+  markers: readonly { positionMs: number }[]
+  selectionStartMs: number | null
+}
+
 // Markers sit on whole-millisecond positions but the playhead is a float, so
 // we exclude any marker within this slop of the current position to stop a
 // button press snapping back onto the marker we're parked on.
 const MARKER_SKIP_EPSILON_MS = 1
 
-function previousMarkerMs(): number {
-  const project = useProjectStore()
-  const transport = useTransportStore()
-  const selection = useUiStore().timelineSelection
-  const pos = transport.positionMs
-  let target = 0
-  if (selection && selection.startMs < pos - MARKER_SKIP_EPSILON_MS) {
-    target = selection.startMs
+// Nearest marker strictly before the playhead, or null when there is none. The
+// start of an active timeline selection counts as a temporary marker so every
+// marker-stepping affordance (buttons, MIDI cue, Ctrl+Arrow) agrees on targets.
+// Pure so callers that own their own store handles can reuse it.
+export function previousMarkerCandidateMs(context: MarkerSeekContext): number | null {
+  const { positionMs, markers, selectionStartMs } = context
+  let target: number | null = null
+  if (selectionStartMs !== null && selectionStartMs < positionMs - MARKER_SKIP_EPSILON_MS) {
+    target = selectionStartMs
   }
-  for (const marker of project.markers) {
-    if (marker.positionMs < pos - MARKER_SKIP_EPSILON_MS && marker.positionMs > target) {
+  for (const marker of markers) {
+    if (
+      marker.positionMs < positionMs - MARKER_SKIP_EPSILON_MS &&
+      (target === null || marker.positionMs > target)
+    ) {
       target = marker.positionMs
     }
   }
   return target
 }
 
-function nextMarkerMs(): number | null {
-  const project = useProjectStore()
-  const transport = useTransportStore()
-  const selection = useUiStore().timelineSelection
-  const pos = transport.positionMs
-  let target = Number.POSITIVE_INFINITY
-  if (selection && selection.startMs > pos + MARKER_SKIP_EPSILON_MS) {
-    target = selection.startMs
+// Nearest marker strictly after the playhead, or null when there is none.
+export function nextMarkerCandidateMs(context: MarkerSeekContext): number | null {
+  const { positionMs, markers, selectionStartMs } = context
+  let target: number | null = null
+  if (selectionStartMs !== null && selectionStartMs > positionMs + MARKER_SKIP_EPSILON_MS) {
+    target = selectionStartMs
   }
-  for (const marker of project.markers) {
-    if (marker.positionMs > pos + MARKER_SKIP_EPSILON_MS && marker.positionMs < target) {
+  for (const marker of markers) {
+    if (
+      marker.positionMs > positionMs + MARKER_SKIP_EPSILON_MS &&
+      (target === null || marker.positionMs < target)
+    ) {
       target = marker.positionMs
     }
   }
-  if (Number.isFinite(target)) return target
-  const end = project.durationMs
+  return target
+}
+
+function markerSeekContext(): MarkerSeekContext {
+  const selection = useUiStore().timelineSelection
+  return {
+    positionMs: useTransportStore().positionMs,
+    markers: useProjectStore().markers,
+    selectionStartMs: selection ? selection.startMs : null
+  }
+}
+
+// Skip-button targets: as above, but falling back to the timeline start / end
+// once there is nothing left to step to.
+function previousMarkerMs(): number {
+  return previousMarkerCandidateMs(markerSeekContext()) ?? 0
+}
+
+function nextMarkerMs(): number | null {
+  const target = nextMarkerCandidateMs(markerSeekContext())
+  if (target !== null) return target
+  const pos = useTransportStore().positionMs
+  const end = useProjectStore().durationMs
   return Number.isFinite(end) && end > pos + MARKER_SKIP_EPSILON_MS ? end : null
 }
 
@@ -90,10 +134,10 @@ export function seekToMarkerIndex(index: number, source = 'marker shortcut'): vo
   seekToSkipTarget(marker.positionMs)
 }
 
-export function toggleTransportPlayback(source = 'click'): void {
-  const project = useProjectStore()
-  const transport = useTransportStore()
-  const ui = useUiStore()
+export function toggleTransportPlayback(source = 'click', stores?: TransportPlaybackStores): void {
+  const project = stores?.project ?? useProjectStore()
+  const transport = stores?.transport ?? useTransportStore()
+  const ui = stores?.ui ?? useUiStore()
   if (!transport.isPlaying && transport.audioState !== 'ready') {
     log.info('transport', `${source} play ignored (audio output unavailable)`)
     return

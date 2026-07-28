@@ -9,6 +9,17 @@ namespace silverdaw
 {
 void AudioEngine::setPositionMs(double ms, bool resetEffects)
 {
+    // A pause or stop fade already owns the transport. Turning that into a seek would
+    // fade the output back in and leave the transport playing, so hold the position and
+    // apply it the moment the pause lands. Ordering matters to callers that pause and
+    // immediately park the playhead, such as stopping at the end of a timeline range.
+    if (pendingTransportAction == PendingTransportAction::pause)
+    {
+        pendingSeekAfterPauseMs = ms;
+        return;
+    }
+    if (pendingTransportAction == PendingTransportAction::stop) return;
+
     if (master.isPlaying())
     {
         pendingTransportAction = PendingTransportAction::seek;

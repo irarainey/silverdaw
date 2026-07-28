@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useTransportSkip } from '@/lib/transport/useTransportSkip'
+import { useTransportSkip, seekToNextMarker, seekToPreviousMarker } from '@/lib/transport/useTransportSkip'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -83,8 +83,37 @@ describe('useTransportSkip', () => {
     expect(sendMock).not.toHaveBeenCalledWith('PROJECT_SET_VIEW', { scrollX: 0 })
   })
 
-  it('play toggles to pause when already playing', () => {
+  // The MIDI cue buttons call these directly, bypassing the skip-target
+  // preference — they must still honour the selection-as-temporary-marker rule.
+  it('the MIDI cue back target includes the selected range start', () => {
     const transport = useTransportStore()
+    const project = useProjectStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
+    project.markers = [{ positionMs: 1000 }] as typeof project.markers
+    ui.setTimelineSelection({ startMs: 3200, endMs: 4000 })
+    transport.positionMs = 3500
+
+    seekToPreviousMarker('MIDI Cue')
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 3200 })
+  })
+
+  it('the MIDI cue forward target includes the selected range start', () => {
+    const transport = useTransportStore()
+    const project = useProjectStore()
+    const ui = useUiStore()
+    ui.skipButtonTarget = 'timelineEnds'
+    project.markers = [{ positionMs: 5000 }] as typeof project.markers
+    ui.setTimelineSelection({ startMs: 2000, endMs: 4000 })
+    transport.positionMs = 1000
+
+    seekToNextMarker('MIDI Shift+Cue')
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 2000 })
+  })
+
+  it('play toggles to pause when already playing', () => {    const transport = useTransportStore()
     transport.isPlaying = true
     const setState = vi.spyOn(transport, 'setPlaybackState')
     const { onPlay } = useTransportSkip()

@@ -13,6 +13,11 @@ import { clipFirstBeatOffsetMs } from '@/lib/clip/clipTiming'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
+import {
+  nextMarkerCandidateMs,
+  previousMarkerCandidateMs,
+  toggleTransportPlayback
+} from '@/lib/transport/useTransportSkip'
 import { log } from '@/lib/log'
 
 type TransportStore = ReturnType<typeof useTransportStore>
@@ -37,10 +42,18 @@ export interface AppKeyboardShortcuts {
 
 const SUB_BEATS_PER_BEAT = 4
 
-function isEditableTarget(target: EventTarget | null): boolean {
+function isEditableTarget(target: EventTarget | null, e: KeyboardEvent): boolean {
   if (!(target instanceof HTMLElement)) return false
   const tag = target.tagName
-  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (tag === 'TEXTAREA') return true
+  if (tag === 'SELECT') {
+    // A focused <select> (e.g. an automation lane's parameter dropdown) only
+    // uses Space to re-open its own popup — which the pointer gesture that gave
+    // it focus already does — so Space stays with the global transport rather
+    // than being swallowed. Arrows, Enter, Escape and type-ahead remain the
+    // select's own.
+    return e.code !== 'Space'
+  }
   if (tag === 'INPUT') {
     // <input type="range"> sliders (master volume, future faders)
     // should not swallow global shortcuts. Space does nothing on a
@@ -128,7 +141,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
   function onGlobalShortcutKey(e: KeyboardEvent): void {
     // Don't fight text fields, and don't trigger before the bridge is up
     // (no point sending TRANSPORT_SEEK that the backend would just drop).
-    if (isEditableTarget(e.target)) return
+    if (isEditableTarget(e.target, e)) return
     if (deps.isModalOpen()) return
     if (!transport.bridgeReady) return
     // Mid-session engine recovery gates all transport/zoom shortcuts behind
@@ -140,43 +153,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.stopPropagation()
       if (e.repeat) return
       lastArrowSeekMs = null
-      if (transport.midiPlaybackHoldActive) {
-        const nextPlaying = !transport.isPlaying
-        if (nextPlaying) {
-          const end = project.durationMs
-          if (end > 0 && transport.positionMs >= end) {
-            log.info('transport', 'shortcut play ignored (at end of project)')
-            return
-          }
-        }
-        transport.setPlaybackState(nextPlaying)
-        log.info(
-          'transport',
-          `shortcut ${nextPlaying ? 'play armed' : 'pause'} while MIDI playback is held`
-        )
-        return
-      }
-      if (transport.isPlaying) {
-        sendBridge('TRANSPORT_PAUSE')
-        transport.setPlaybackState(false)
-        log.info('transport', 'shortcut pause')
-      } else {
-        if (transport.audioState !== 'ready') {
-          log.info('transport', 'shortcut play ignored (audio output unavailable)')
-          return
-        }
-        // Playhead parked at the end → Spacebar Play is a no-op.
-        // Mirrors `TransportBar.onPlay`'s guard so the keyboard
-        // shortcut can't bypass the disabled Play button.
-        const end = project.durationMs
-        if (end > 0 && transport.positionMs >= end) {
-          log.info('transport', 'shortcut play ignored (at end of project)')
-          return
-        }
-        sendBridge('TRANSPORT_PLAY')
-        transport.setPlaybackState(true)
-        log.info('transport', 'shortcut play')
-      }
+      // Shared with the transport bar's Play button and MIDI so Space agrees on
+      // everything they handle — notably restarting an armed timeline range from
+      // its start (and scrolling it into view) rather than resuming in place.
+      toggleTransportPlayback('shortcut', { project, transport, ui })
       return
     }
 
@@ -263,6 +243,21 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       if (e.repeat) return
       project.setMetronomeEnabled(!project.metronomeEnabled)
       log.info('transport', `shortcut metronome ${project.metronomeEnabled ? 'on' : 'off'}`)
+      return
+    }
+
+    // L: toggle Loop Selection for the active timeline range (the keyboard twin
+    // of the transport's loop button, which is disabled without a range).
+    if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.repeat) return
+      if (ui.timelineSelection === null) {
+        log.info('timeline', 'shortcut loop selection ignored — no timeline selection')
+        return
+      }
+      ui.toggleLoopTimelineSelection()
+      log.info('timeline', `shortcut loop selection ${ui.loopTimelineSelection ? 'on' : 'off'}`)
       return
     }
 
@@ -368,19 +363,23 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault()
       e.stopPropagation()
-      const direction = e.key === 'ArrowLeft' ? -1 : 1
-      if (project.markers.length === 0) return
-      const current = transport.positionMs
-      const targetMarker =
-        direction < 0
-          ? [...project.markers].reverse().find((marker) => marker.positionMs < current - 1)
-          : project.markers.find((marker) => marker.positionMs > current + 1)
-      if (!targetMarker) return
-      lastArrowSeekMs = targetMarker.positionMs
-      ui.requestTimelineScrollToPosition(targetMarker.positionMs)
-      transport.setPosition(targetMarker.positionMs)
-      sendBridge('TRANSPORT_SEEK', { positionMs: targetMarker.positionMs })
-      log.debug('transport', `marker-seek to ${targetMarker.positionMs}ms`)
+      // The start of an active timeline selection acts as a temporary marker
+      // here, matching the transport skip buttons and the MIDI cue actions.
+      const context = {
+        positionMs: transport.positionMs,
+        markers: project.markers,
+        selectionStartMs: ui.timelineSelection?.startMs ?? null
+      }
+      const targetMs =
+        e.key === 'ArrowLeft'
+          ? previousMarkerCandidateMs(context)
+          : nextMarkerCandidateMs(context)
+      if (targetMs === null) return
+      lastArrowSeekMs = targetMs
+      ui.requestTimelineScrollToPosition(targetMs)
+      transport.setPosition(targetMs)
+      sendBridge('TRANSPORT_SEEK', { positionMs: targetMs })
+      log.debug('transport', `marker-seek to ${targetMs}ms`)
       return
     }
 

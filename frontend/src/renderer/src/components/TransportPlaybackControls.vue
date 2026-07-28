@@ -94,7 +94,7 @@ const emit = defineEmits<{
       data-borderless-button="true"
       class="rounded p-2 outline-none disabled:cursor-not-allowed disabled:opacity-40"
       :class="loopTimelineSelection ? 'bg-sky-600/30 text-sky-200 hover:bg-sky-600/40' : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'"
-      :title="loopTimelineSelection ? 'Loop Selection (on)' : 'Loop Selection (off)'"
+      :title="loopTimelineSelection ? 'Loop Selection (on) (L)' : 'Loop Selection (off) (L)'"
       :disabled="!hasTimelineSelection"
       @click="emit('toggleLoopSelection')"
     >

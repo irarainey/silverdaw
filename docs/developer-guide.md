@@ -14,6 +14,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
+  - [Loop Selection playback](#loop-selection-playback)
 - [Audio formats](#audio-formats)
   - [Internal signal format and bit depth](#internal-signal-format-and-bit-depth)
 - [Peaks cache](#peaks-cache)
@@ -298,7 +299,9 @@ Silverdaw currently supports the core arrangement workflow:
   breakpoints. A fade-in or fade-out is just the envelope's end breakpoints
   dragged down to silence (there is no separate fade control). Points are stored
   on the clip as `envelopePoints`, applied non-destructively to both live
-  playback and mixdown export. In the stereo waveform display the single
+  playback and mixdown export. A clip edge with no explicit fade still gets a
+  32-sample de-click ramp in `OffsetSource`, so a hard boundary never clicks.
+  In the stereo waveform display the single
   envelope line is mirrored and kept in sync across both channel lanes —
   editing a breakpoint in either lane edits the one shared shape (the engine
   applies that shape equally to both channels).
@@ -388,11 +391,18 @@ Silverdaw currently supports the core arrangement workflow:
   playhead. The range is shown across the ruler and track rows, snaps to the
   timeline grid by default, and supports `Alt` for exact pointer placement.
   Dragging the playhead keeps its established repositioning behavior. Play starts
-  at the range beginning and pauses at its exclusive end. Enable **Loop
-  Selection** in the transport to return to the beginning at that boundary while
-  retaining shared Reverb and Delay tails. Starting selected playback smoothly
-  reveals its beginning when it is off-screen. The **Skip** buttons treat the
-  range start as a temporary jump point without creating a saved marker.
+  at the range beginning and pauses at its exclusive end, parking the playhead
+  exactly on that end so the next Play replays the range from its start rather
+  than resuming beyond it. Enable **Loop
+  Selection** in the transport (or the `L` shortcut) to return to the beginning
+  at that boundary while retaining shared Reverb and Delay tails; the engine owns
+  that wrap, so the restart is seamless. Starting selected playback smoothly
+  reveals its beginning when it is off-screen, from the Play button, the
+  Spacebar, and MIDI alike. Dragging to either viewport edge
+  auto-scrolls the timeline, so a range can be longer than the visible area, and
+  completing that drag scrolls the playhead back into view. The
+  **Skip** buttons, the `Ctrl + ←/→` shortcuts, and the MIDI cue buttons treat
+  the range start as a temporary jump point without creating a saved marker.
   **Escape** clears the range and Loop Selection before stepping through clip,
   automation-point, and track selection. The range and loop state are saved as
   non-undoable project view state.
@@ -1105,7 +1115,8 @@ shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
 bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
 `viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
 timeline range and Loop Selection state. All are round-tripped through
-`PROJECT_SET_VIEW`.
+`PROJECT_SET_VIEW`, which also arms the engine's transport loop (see
+[Loop Selection playback](#loop-selection-playback)).
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
@@ -1319,6 +1330,45 @@ autosaves as soon as it mounts. These main-process IPC calls run in parallel wit
 backend startup, but their results are applied only after the bridge handshake. The
 `RecoveryDialog` then stacks above the `StartupScreen` when recoverable autosaves are
 available.
+
+### Loop Selection playback
+
+When a timeline range has **Loop Selection** enabled, the **engine** owns the wrap, not
+the renderer. `PROJECT_SET_VIEW` (and a project load) call `syncTimelineLoop`, which arms
+`AudioEngine::setTimelineLoop` with the range; a 2 ms message-thread poll
+(`kTimelineLoopPollMs`) wraps playback the moment the engine's own position reaches the
+loop end, via the immediate `setPositionMsNow` seek path — the same one the Clip Editor
+preview uses, and it deliberately does not reset shared-FX state, so Reverb and Delay
+tails carry across the wrap.
+
+Two properties make the restart seamless, and both are the reason this cannot live in the
+renderer:
+
+- **No round trip.** A renderer-driven wrap had to wait for a `PLAYHEAD_UPDATE`, then send
+  `TRANSPORT_SEEK` back.
+- **No fade and no latency skew.** `setPositionMs` while playing deliberately fades the
+  output out, polls for the ramp to finish, seeks, then fades in — correct for a user seek,
+  audible as a gap on every loop. The engine also wraps on its **uncompensated** position,
+  so the restart lands at the loop end in the rendered stream; the renderer's playhead is
+  latency-compensated, so it could only ever ask after audio past the end was already
+  rendered and queued.
+
+The renderer keeps only the view follow: auto-follow eases forward and never scrolls back,
+so the transport controller watches for the position jumping back near the range start and
+scrolls there. Pausing at the end of a **non**-looped range stays renderer-side.
+
+Those boundary rules — follow a wrap, stop on a one-shot range end, stop at the project end
+— live in [`playbackBoundary.ts`](../frontend/src/renderer/src/lib/transport/playbackBoundary.ts)
+as a pure function, so the transport bar's position watcher only dispatches the result. A
+one-shot stop pauses **and** seeks back to the boundary: the engine streams on until the
+pause fade lands, so without the seek it parks past the range end and the next plain Play
+resumes from outside the range. `AudioEngine::setPositionMs` holds a seek that arrives
+while a pause fade is in flight and applies it once the pause lands — turning it into a
+normal pending seek would fade the output back in and resurrect the playback that was just
+stopped.
+
+See [ADR 0023](adr/0023-engine-owned-timeline-loop.md) for the full rationale and the
+rejected alternatives.
 
 ## Audio formats
 
@@ -2524,7 +2574,8 @@ names, mapped behavior, controller feedback, and troubleshooting.
 Persisted fields:
 
 - Window bounds + maximised state.
-- Panel sizes (track-header column width, library panel height).
+- Panel sizes (track-header column width, clamped to 180–480 px so the header's
+  own button row never squashes; library panel height).
 - **Bottom panel minimised state** — `ui.libraryPanelCollapsed`. When on, the
   bottom tabbed panel is collapsed to its tab strip; expanding it (or clicking a
   tab) restores the last height. Persisted independently of the project so it
@@ -2800,7 +2851,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 |---|---|
 | Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Play starts at its beginning and pauses at its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
 | Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
@@ -2833,9 +2884,10 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Ctrl -` | Zoom out 10%. |
 | `Ctrl 0` | Reset zoom to 100% (100 px/s). |
 | `Ctrl + F` | Zoom to fit — size the whole project to the timeline width and jump the view to the start. |
-| `Space` | Play / pause globally unless a text field or modal dialog is active. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
+| `Space` | Play / pause globally unless a text field or modal dialog is active. With a timeline range armed, playback starts from the range start. Disabled when the playhead is at the end of the project (skip back to start to re-arm). |
 | `Escape` | Clear the timeline range first, including Loop Selection. Then step down through the selection: when a track and clip(s) are selected, the next press clears the clip(s) (and any selected automation point) but keeps the track selected, and a further press clears the track. When only a track is selected, one press clears it. |
 | `K` | Toggle the project metronome. |
+| `L` | Toggle **Loop Selection** for the active timeline range (the keyboard twin of the transport loop button). No-op when no range is selected. |
 | `Shift + M` / `Shift + S` | Mute / solo the selected track (bare `M` / `S` are Marker / Split, so the track-mix twins take `Shift`). No-op when no track is selected. **Ctrl-clicking** a track's on-screen **Solo** button while another track is soloed switches the solo straight to that track (solos it and unsolos the other) in one undo step — no need to unsolo first. |
 | `S` | Split every clip whose timeline window straddles the playhead into two at that position. |
 | `D` / `Ctrl + D` | Duplicate the selected clip. Repeated duplicates from the same source append after the last duplicate in that track until there is no free slot, then a toast is shown. |
@@ -2894,9 +2946,11 @@ button target** preference (`ui.skipButtonTarget`). With the default
 returns the timeline's horizontal scroll to the start) while **next** seeks the
 project end and jumps the viewport to the right edge. With `markers`, they step
 to the previous / next timeline marker instead, falling back to the start / end
-past the last marker. The `Ctrl + ←/→` and `Ctrl + Shift + ←/→` keyboard
-shortcuts keep their fixed marker / project-end behaviour regardless of this
-setting.
+past the last marker. The `Ctrl + ←/→` shortcut and the MIDI cue buttons always
+step between markers regardless of this setting, and `Ctrl + Shift + ←/→` always
+jumps to the project start / end. Every marker-stepping affordance treats the
+start of an active timeline selection as a temporary marker, so a selection is
+always reachable in one step.
 
 The status bar shows the current zoom level (e.g. `🔍 150%`). It deliberately does
 **not** show backend / audio-engine connection status: the front-end/back-end
@@ -2983,7 +3037,10 @@ renderer-only (never serialised), so it needs no migration.
 Each track header has an **A** toggle that opens an automation stack below the clip area; the
 first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
 several curves can be viewed and edited together. Every lane has its own parameter picker and
-height; its lower edge resizes only that lane from 80 to 220 px. The track row's bottom edge
+height; its lower edge resizes only that lane from 80 to 220 px. The picker truncates a name
+too long for the header and names the parameter in its tooltip, and it hands focus back to the
+timeline on change or `Escape`, so the global shortcuts keep working after a lane is
+retargeted. The track row's bottom edge
 still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
 does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
 as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through
@@ -3229,12 +3286,21 @@ root it runs the whole pipeline end-to-end:
 2. Runs a **bundling guard** that fails early if any runtime binary the backend
    drops next to `SilverdawBackend.exe` is missing from the `extraResources`
    allowlist in `electron-builder.yml`.
-3. Ensures a self-signed **`CN=Silverdaw`** code-signing certificate exists in
+3. Runs a **version guard** that fails if `frontend/package.json`, the
+   `project()` version in `backend/CMakeLists.txt`, and the version the built
+   `SilverdawBackend.exe` actually reports are not all identical.
+4. Ensures a self-signed **`CN=Silverdaw`** code-signing certificate exists in
    `Cert:\CurrentUser\My` (created on first run; the private key stays in the
    store and is **never** exported to the repo) and locates the Windows SDK
    `signtool.exe` (electron-builder's bundled signtool cannot sign AppX).
-4. Compiles the Electron bundles and packages **three artefacts** from them.
-5. Exports the **public** certificate so users can trust the sideload package.
+5. Compiles the Electron bundles and packages **three artefacts** from them.
+6. Exports the **public** certificate so users can trust the sideload package.
+
+Bumping a release version means editing **both** `frontend/package.json` and the
+`project(... VERSION ...)` line in `backend/CMakeLists.txt`; the backend's
+`kBackendVersion` (reported over the bridge and written into saved projects) and
+its Windows VERSIONINFO resource are both generated from the latter. The version
+guard is what stops those two drifting apart unnoticed.
 
 ```powershell
 pwsh -NoProfile -File scripts/Build-Release.ps1

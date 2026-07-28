@@ -6,6 +6,7 @@
 #include "EnginePlaybackPath.h"
 #include "LibraryAnalysis.h"
 #include "Log.h"
+#include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
 
@@ -459,6 +460,8 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     engine.setMetronomeBpm(projectState.getBpm());
     engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
     syncBeatRepeatRegions(engine, projectState);
+    // A loaded/undone project brings its own saved loop range with it.
+    syncTimelineLoop(engine, projectState);
 
     // Always reset shared FX on new/load so projects never inherit prior settings.
     engine.setProjectReverb(projectState.getProjectReverbSize(),

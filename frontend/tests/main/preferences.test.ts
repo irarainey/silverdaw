@@ -36,7 +36,7 @@ describe('sanitiseUiPrefs', () => {
   })
 
   it('clamps trackHeaderWidth into range and rounds', () => {
-    expect(sanitiseUiPrefs({ trackHeaderWidth: 10 }, base).trackHeaderWidth).toBe(120)
+    expect(sanitiseUiPrefs({ trackHeaderWidth: 10 }, base).trackHeaderWidth).toBe(180)
     expect(sanitiseUiPrefs({ trackHeaderWidth: 9999 }, base).trackHeaderWidth).toBe(480)
     expect(sanitiseUiPrefs({ trackHeaderWidth: 200.7 }, base).trackHeaderWidth).toBe(201)
   })

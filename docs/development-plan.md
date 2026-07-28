@@ -1679,7 +1679,7 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-### 1.4.0 - Timeline Precision & Range Auditioning *(implemented; unreleased)*
+### 1.4.0 - Timeline Precision & Range Auditioning *(released; snap grid outstanding)*
 
 **Goal:** make arrangement edits more deliberate and let a user quickly
 audition one part of a mix, without turning the timeline into a dense advanced
@@ -1778,6 +1778,35 @@ opened for write or modified.
 
 Transitions, recording/live input, VST3 hosting, and Phase 8 hardening remain
 outside 1.4.0.
+
+### 1.4.1 - Range Auditioning Polish *(released)*
+
+**Goal:** make the 1.4.0 timeline range comfortable to live with. No new
+concepts — every item sharpens an affordance that already shipped. The
+selectable snap grid (1.4.0, item 1) is still outstanding and is not part of
+this release.
+
+1. [x] **Loop Selection keyboard toggle.** `L` flips Loop Selection for the
+   active range, the keyboard twin of the transport loop button, and is a no-op
+   without a range. The button tooltip names the shortcut.
+2. [x] **Seamless loop restart.** The **engine** owns the wrap: `PROJECT_SET_VIEW`
+   and project load arm `AudioEngine::setTimelineLoop` through `syncTimelineLoop`,
+   and a message-thread poll wraps on the engine's own uncompensated position via
+   the immediate seek path. This removes both the bridge round trip and the
+   fade-out / fade-in a normal user seek performs, so a loop no longer gaps at
+   the boundary. The renderer keeps only the view follow.
+3. [x] **The range start behaves like a temporary marker.** The `Ctrl + ←/→`
+   marker shortcuts and the MIDI cue buttons step to it, matching the transport
+   skip buttons, so an active range is always one step away.
+4. [x] **Edge auto-scroll while selecting a range.** Dragging to either viewport
+   edge scrolls the timeline and keeps extending the range, so a selection can be
+   longer than the visible area. It reuses the same edge-pressure ramp as clip
+   dragging and library drops.
+5. [x] **Track header and automation lane fixes.** The track-header column can no
+   longer be dragged narrower than its own button row (a 180 px floor, clamped in
+   both the renderer store and the main-process preference sanitiser); a lane's
+   parameter picker truncates long names with a tooltip and returns focus to the
+   timeline on change or `Escape`, so the transport shortcuts keep working.
 
 ### Phase 1 — Backend Foundation & Bridge
 

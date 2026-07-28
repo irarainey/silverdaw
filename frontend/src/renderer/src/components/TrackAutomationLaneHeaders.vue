@@ -47,6 +47,15 @@ function onHeaderClick(ev: MouseEvent): void {
   project.selectTrack(track.id)
 }
 
+// Swap a lane's parameter, then hand focus back to the shell so the timeline
+// keyboard shortcuts keep working instead of going to the dropdown. Escape does
+// the same for a popup dismissed without a change.
+function onLaneParamChange(fromParamId: AutomationParamId, ev: Event): void {
+  const select = ev.target as HTMLSelectElement
+  ui.setTrackAutomationLaneParam(track.id, fromParamId, select.value as AutomationParamId)
+  select.blur()
+}
+
 function laneScale(param: AutomationParamId): { min: string; cur: string; max: string; curVal: number } {
   const d = AUTOMATION_PARAMS[param]
   const points = track.automation?.[param]
@@ -220,10 +229,11 @@ const HANDLE_PX = 5
     >
       <div class="mb-1.5 flex items-center gap-1">
         <select
-          class="h-5 min-w-0 flex-1 rounded border border-sky-700 bg-zinc-900 px-1 text-[10px] text-sky-200 outline-none focus:border-sky-400"
-          title="Automation parameter"
+          class="h-5 min-w-0 flex-1 truncate rounded border border-sky-700 bg-zinc-900 px-1 text-[10px] text-sky-200 outline-none focus:border-sky-400"
+          :title="'Automation parameter — ' + AUTOMATION_PARAMS[lane.paramId].label"
           :value="lane.paramId"
-          @change="ui.setTrackAutomationLaneParam(track.id, lane.paramId, ($event.target as HTMLSelectElement).value as AutomationParamId); ($event.target as HTMLSelectElement).blur()"
+          @change="onLaneParamChange(lane.paramId, $event)"
+          @keyup.esc="($event.target as HTMLSelectElement).blur()"
         >
           <option
             v-for="paramId in AUTOMATABLE_PARAM_IDS"

@@ -40,6 +40,7 @@ void AudioEngine::play()
     // position; non-sleep-prone endpoints skip it and play instantly.
     master.setPlaying(true);
     busGraph.snapAutomationCursors();
+    updateTimelineLoopTimer();
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) +
                                        " wakePreroll=" +
@@ -174,6 +175,39 @@ bool AudioEngine::waitForTrackPrefetch(Track& track, double deadlineMs,
     return track.bufferingSource->waitForNextAudioBlockReady(info, timeout);
 }
 
+void AudioEngine::setTimelineLoop(std::optional<LoopRange> range)
+{
+    timelineLoop = range;
+    updateTimelineLoopTimer();
+}
+
+void AudioEngine::updateTimelineLoopTimer()
+{
+    if (timelineLoop.has_value() && master.isPlaying())
+        timelineLoopTimer.startTimer(kTimelineLoopPollMs);
+    else
+        timelineLoopTimer.stopTimer();
+}
+
+// Wrapping on the engine's own uncompensated position lands the restart at the loop end in
+// the rendered stream. The renderer's playhead is latency-compensated, so a renderer-driven
+// wrap could only ever ask for the seek after the engine had already rendered (and queued)
+// audio past the end. setPositionMsNow is the immediate seek path — no output fade-out /
+// fade-in ramp, and reverb and delay tails carry across the wrap.
+void AudioEngine::wrapTimelineLoopIfDue()
+{
+    if (! timelineLoop.has_value() || ! master.isPlaying())
+    {
+        updateTimelineLoopTimer();
+        return;
+    }
+    // A pending pause / stop / seek fade owns the transport until it completes.
+    if (pendingTransportAction != PendingTransportAction::none) return;
+    if (getPositionMs() < timelineLoop->endMs) return;
+
+    setPositionMsNow(timelineLoop->startMs, /*resetEffects*/ false);
+}
+
 void AudioEngine::pause()
 {
     master.cancelScrub();
@@ -223,6 +257,12 @@ void AudioEngine::completePendingTransportFade()
     {
         case PendingTransportAction::pause:
             master.setPlaying(false);
+            updateTimelineLoopTimer();
+            // Now that the transport is genuinely stopped, a seek that arrived during the
+            // fade can be applied on the immediate path without restarting playback.
+            if (pendingSeekAfterPauseMs.has_value())
+                setPositionMsNow(*pendingSeekAfterPauseMs, /*resetEffects*/ false);
+            pendingSeekAfterPauseMs.reset();
             reclaimRetiredPlaybackSnapshots();
             silverdaw::log::info(
                 "engine", "pause (pos=" + juce::String(master.getPositionSamples()) + ")");
@@ -230,6 +270,8 @@ void AudioEngine::completePendingTransportFade()
 
         case PendingTransportAction::stop:
             master.setPlaying(false);
+            updateTimelineLoopTimer();
+            pendingSeekAfterPauseMs.reset();
             master.setPositionSamples(0);
             busGraph.resetSharedFx();
             busGraph.resetBeatRepeats();

@@ -75,10 +75,15 @@ export function useTimelineViewController(
     host,
     app: pixi.app,
     scrollX,
+    maxScrollX,
     geometry,
     onSeek: (positionMs) => {
       transport.setPosition(positionMs)
       sendBridge('TRANSPORT_SEEK', { positionMs })
+      // A drag that edge-scrolled leaves the range start off-screen behind the view.
+      // Playback follow only ever eases forward, so nothing would bring the playhead
+      // back; scroll it into view now. A no-op when it is already visible.
+      ui.requestTimelineScrollToPosition(positionMs, true)
       updatePlayhead()
     }
   })

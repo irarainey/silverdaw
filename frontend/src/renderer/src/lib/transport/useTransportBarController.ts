@@ -11,6 +11,7 @@ import { MAX_MASTER_DB, taperPositionToLinear } from '@/lib/audio/db'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 import { useAudioQuickSwitch } from '@/lib/transport/useAudioQuickSwitch'
 import { useTransportSkip } from '@/lib/transport/useTransportSkip'
+import { playbackBoundaryAction } from '@/lib/transport/playbackBoundary'
 
 export function useTransportBarController() {
   const project = useProjectStore()
@@ -98,35 +99,37 @@ export function useTransportBarController() {
     }
   )
 
-  // Renderer pauses at project end because the audio engine streams past it.
+  // Playback stops itself at a boundary: the renderer pauses at the project end (the
+  // engine streams past it) and at the end of a one-shot range. A looped range is
+  // wrapped by the engine on its own clock, so looping here only has to follow the wrap
+  // with the view — auto-follow eases forward only and never scrolls back on its own.
   watch(
     () => transport.positionMs,
-    (ms) => {
+    (ms, prevMs) => {
       if (!transport.isPlaying) return
       if (transport.midiPlaybackHoldActive) return
-      const selection = ui.timelineSelection
-      if (selection && ms >= selection.endMs) {
-        if (ui.loopTimelineSelection) {
-          transport.setPosition(selection.startMs)
-          ui.requestTimelineScrollToPosition(selection.startMs, true)
-          sendBridge('TRANSPORT_SEEK', {
-            positionMs: selection.startMs,
-            preserveEffects: true
-          })
-        } else {
-          sendBridge('TRANSPORT_PAUSE')
-          transport.setPlaybackState(false)
-          transport.setPosition(selection.endMs)
-        }
+      const action = playbackBoundaryAction({
+        positionMs: ms,
+        previousPositionMs: prevMs,
+        selection: ui.timelineSelection,
+        loopSelection: ui.loopTimelineSelection,
+        projectDurationMs: project.durationMs
+      })
+      if (action.kind === 'none') return
+      if (action.kind === 'followLoopWrap') {
+        ui.requestTimelineScrollToPosition(action.positionMs, true)
         return
       }
-      const end = project.durationMs
-      if (end <= 0) return
-      if (ms < end) return
       sendBridge('TRANSPORT_PAUSE')
       // Flip the play button without waiting for backend ack.
       transport.setPlaybackState(false)
-      transport.setPosition(end)
+      transport.setPosition(action.positionMs)
+      // The engine streams on until the pause fade lands, so it stops a little past the
+      // boundary. Park it exactly on the boundary, or the next plain Play resumes from
+      // wherever it stopped — past the end of a range, that is outside the clip, where
+      // playback halts again immediately. The engine holds this seek until the pause has
+      // landed, so it cannot resurrect playback.
+      sendBridge('TRANSPORT_SEEK', { positionMs: action.positionMs })
     }
   )
 
@@ -274,8 +277,7 @@ export function useTransportBarController() {
   }
 
   function onToggleLoopSelection(): void {
-    ui.setLoopTimelineSelection(!ui.loopTimelineSelection)
-    ui.persistTimelineSelectionView()
+    ui.toggleLoopTimelineSelection()
   }
 
   function onMasterVolumeInput(event: Event): void {
