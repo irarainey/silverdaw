@@ -14,6 +14,7 @@
 - Looping a timeline range now restarts seamlessly instead of gapping at the loop point.
 - The `Ctrl + ←/→` marker shortcuts now step to the start of a timeline range selection, matching the transport skip buttons.
 - Dragging a timeline range to the edge of the view now scrolls the timeline, so a range can be longer than the visible area.
+- The installed audio engine now reports the correct Silverdaw version in its file details.
 
 ## 1.4.0
 

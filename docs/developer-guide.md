@@ -3272,12 +3272,21 @@ root it runs the whole pipeline end-to-end:
 2. Runs a **bundling guard** that fails early if any runtime binary the backend
    drops next to `SilverdawBackend.exe` is missing from the `extraResources`
    allowlist in `electron-builder.yml`.
-3. Ensures a self-signed **`CN=Silverdaw`** code-signing certificate exists in
+3. Runs a **version guard** that fails if `frontend/package.json`, the
+   `project()` version in `backend/CMakeLists.txt`, and the version the built
+   `SilverdawBackend.exe` actually reports are not all identical.
+4. Ensures a self-signed **`CN=Silverdaw`** code-signing certificate exists in
    `Cert:\CurrentUser\My` (created on first run; the private key stays in the
    store and is **never** exported to the repo) and locates the Windows SDK
    `signtool.exe` (electron-builder's bundled signtool cannot sign AppX).
-4. Compiles the Electron bundles and packages **three artefacts** from them.
-5. Exports the **public** certificate so users can trust the sideload package.
+5. Compiles the Electron bundles and packages **three artefacts** from them.
+6. Exports the **public** certificate so users can trust the sideload package.
+
+Bumping a release version means editing **both** `frontend/package.json` and the
+`project(... VERSION ...)` line in `backend/CMakeLists.txt`; the backend's
+`kBackendVersion` (reported over the bridge and written into saved projects) and
+its Windows VERSIONINFO resource are both generated from the latter. The version
+guard is what stops those two drifting apart unnoticed.
 
 ```powershell
 pwsh -NoProfile -File scripts/Build-Release.ps1

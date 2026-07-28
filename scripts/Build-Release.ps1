@@ -29,13 +29,16 @@
       5. Export the PUBLIC certificate (dist/Silverdaw-PublicCert.cer) so end
          users can trust it before sideloading, and print install instructions.
 
-    Between phases 1 and 2 a bundling guard verifies that every runtime
-    binary (*.dll / *.exe) the Release backend drops next to
+    Between phases 1 and 2 two guards run. A bundling guard verifies that
+    every runtime binary (*.dll / *.exe) the Release backend drops next to
     SilverdawBackend.exe is listed in the extraResources filter in
     frontend/electron-builder.yml. That filter is an allowlist, so a new
     dependency DLL would otherwise be silently dropped from the package
     and only fail at runtime on a clean machine — the guard turns that into
-    a loud, early build failure.
+    a loud, early build failure. A version guard then checks that
+    frontend/package.json, the project() version in backend/CMakeLists.txt,
+    and the version the built backend exe reports are all the same, so a
+    release can never ship mismatched version metadata.
 
     Run from the repository root (or any directory — paths resolve relative
     to this script).
