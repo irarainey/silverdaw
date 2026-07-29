@@ -4,7 +4,7 @@
 
 ### Added
 
-- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, and opening an existing project from disk or the recent list.
+- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, opening an existing project from disk or the recent list, recovering unsaved work from an autosave, importing onto a track without altering the source audio, and upgrading a preferences file written by an earlier release.
 
 ### Fixed
 

@@ -29,6 +29,12 @@ keeps the tier honest: it cannot pass by agreeing with the implementation.
 
 The timeline is a PixiJS canvas with no DOM, so clip-level state is verified
 indirectly through the saved `.silverdaw` file instead of by reading pixels.
+Placing a clip is reachable without touching the canvas: the track header's
+import button imports and places in one click, and it disables itself once its
+track holds a clip, which gives a DOM-observable signal that the clip landed.
+Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
+which a test can only fake by synthesising the events a browser would otherwise
+generate — that asserts the implementation, so specs take the button instead.
 
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
@@ -84,6 +90,18 @@ place would dirty the working tree and leave later runs testing a mutated artefa
 
 The MRU list lives in `preferences.json`, so `launchApp({ recentProjects: [...] })`
 seeds the start screen's recent list — an isolated profile starts empty by design.
+
+`launchApp` seeds two other pieces of profile state for the same reason, because
+each is read from disk at startup and cannot be reached from the UI beforehand:
+
+- `preferences: { ... }` plants extra `preferences.json` keys, so a spec can stand
+  up a legacy or partial document and prove the real loader still reads it. The
+  merge rules themselves are pure functions covered in `tests/main/preferences.test.ts`;
+  reach for this only when the round trip through the file is the point.
+- `autosaveBuckets: [...]` plants crash-recovery buckets under `<userData>/autosave/`
+  (`helpers/autosaveFixtures.ts`). Startup decides purely from what it finds there,
+  so seeding a bucket is both sufficient and far more controllable than staging a
+  real crash — the spec chooses the exact recovery state under test.
 
 ## Native dialogs
 

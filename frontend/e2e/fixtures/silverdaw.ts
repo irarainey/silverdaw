@@ -23,10 +23,15 @@
 // (an env override for the user-folder root), which is a separate proposal.
 
 import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  AUTOSAVE_FILENAME,
+  AUTOSAVE_MANIFEST_FILENAME,
+  type AutosaveBucketSeed
+} from '../helpers/autosaveFixtures'
 import { forgetTrackedTempDirs, makeTrackedTempDir, removeTrackedTempDirs } from '../helpers/tempDirs'
 
 /** Repository `frontend/` directory, derived from this file's location. */
@@ -54,6 +59,51 @@ export interface LaunchOptions {
    * profile starts empty by design.
    */
   recentProjects?: { path: string; name: string }[]
+  /**
+   * Crash-recovery buckets to plant under `<userData>/autosave/`. Startup scans
+   * that root and decides purely from what it finds, so seeding is how a spec
+   * chooses the exact recovery state under test. See helpers/autosaveFixtures.ts.
+   */
+  autosaveBuckets?: AutosaveBucketSeed[]
+  /**
+   * Extra `preferences.json` keys to plant before launch, merged over the
+   * harness defaults. Use this to stand up a legacy or partial document and
+   * prove the real loader reads it — the merge rules themselves are pure
+   * functions covered by tests/main/preferences.test.ts, so only reach for
+   * this when the round trip through the file is the point.
+   */
+  preferences?: Record<string, unknown>
+}
+
+/** Writes the seeded autosave buckets into a profile before the app reads them. */
+function seedAutosaveBuckets(userDataDir: string, buckets: AutosaveBucketSeed[]): void {
+  for (const bucket of buckets) {
+    const dir = join(userDataDir, 'autosave', bucket.projectId)
+    mkdirSync(dir, { recursive: true })
+
+    const autosavePath = join(dir, AUTOSAVE_FILENAME)
+    writeFileSync(autosavePath, bucket.projectJson, 'utf8')
+    if (bucket.autosaveMtime) {
+      utimesSync(autosavePath, bucket.autosaveMtime, bucket.autosaveMtime)
+    }
+
+    writeFileSync(
+      join(dir, AUTOSAVE_MANIFEST_FILENAME),
+      JSON.stringify(
+        {
+          projectId: bucket.projectId,
+          originalPath: bucket.originalPath,
+          projectName: bucket.projectName,
+          savedAtIso: bucket.savedAtIso ?? new Date().toISOString(),
+          pending: bucket.pending ?? false,
+          appVersion: 'e2e'
+        },
+        null,
+        2
+      ),
+      'utf8'
+    )
+  }
 }
 
 /**
@@ -75,10 +125,15 @@ export async function launchSilverdaw(options: LaunchOptions = {}): Promise<Silv
     join(userDataDir, 'preferences.json'),
     JSON.stringify({
       debug: { loggingEnabled: true },
-      ...(options.recentProjects ? { recentProjects: options.recentProjects } : {})
+      ...(options.recentProjects ? { recentProjects: options.recentProjects } : {}),
+      ...(options.preferences ?? {})
     }),
     'utf8'
   )
+
+  if (options.autosaveBuckets?.length) {
+    seedAutosaveBuckets(userDataDir, options.autosaveBuckets)
+  }
 
   // `ELECTRON_RENDERER_URL` is set only by `electron-vite dev`. A value
   // inherited from an interactive shell would point the window at a dev server
