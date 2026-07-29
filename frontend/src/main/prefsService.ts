@@ -4,7 +4,7 @@
 // state exclusively through this service so save scheduling never drifts.
 
 import { app, screen, type BrowserWindow } from 'electron'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import { readFile, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -167,7 +167,26 @@ export class PrefsService {
     try {
       const path = this.getPrefsPath()
       mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, JSON.stringify(this.prefs, null, 2), 'utf8')
+      // Written to a sibling and renamed over the target rather than straight to
+      // it: a crash or power loss part-way through a direct write leaves
+      // truncated JSON, the next launch fails to parse it and silently falls
+      // back to defaults, and the first save after that overwrites everything
+      // the user had configured. `renameSync` within a directory is atomic on
+      // NTFS, so a reader only ever sees the old file or the whole new one.
+      const tempPath = `${path}.tmp`
+      writeFileSync(tempPath, JSON.stringify(this.prefs, null, 2), 'utf8')
+      try {
+        renameSync(tempPath, path)
+      } catch (err) {
+        // Leaving the temp file behind would strand a copy of the preferences
+        // next to the real one, so clear it before surfacing the failure.
+        try {
+          unlinkSync(tempPath)
+        } catch {
+          // Nothing more to try; the outer handler logs the original failure.
+        }
+        throw err
+      }
     } catch (err) {
       logMain('WARN ', 'prefs', 'save failed:', err)
     }

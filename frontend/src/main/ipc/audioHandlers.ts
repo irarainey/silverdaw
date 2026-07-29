@@ -130,6 +130,10 @@ async function writeProjectMediaFiles(
   metadata: AudioMetadata,
   cover?: SidecarCover
 ): Promise<boolean> {
+  // Enforced here as well as at the IPC boundary: this is the function that
+  // joins the GUID into a path, so it should not depend on every caller
+  // remembering to validate first.
+  if (!isSafeMediaGuid(guid)) return false
   await mkdir(metadataDir, { recursive: true })
   const { coverArt: _omitCover, ...rest } = metadata
   const record: MediaSidecar = { version: 1, metadata: rest }
@@ -148,6 +152,9 @@ async function readProjectMediaFiles(
   coversDir: string,
   guid: string
 ): Promise<AudioMetadata | null> {
+  // See writeProjectMediaFiles: validated here too because this is where the
+  // GUID becomes a path.
+  if (!isSafeMediaGuid(guid)) return null
   let raw: string
   try {
     raw = await readFile(join(metadataDir, `${guid}.json`), 'utf8')
@@ -350,7 +357,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   ipcMain.handle(IPC.media.save, async (_evt, payload: unknown) => {
     if (!payload || typeof payload !== 'object') return false
     const p = payload as { mediaId?: unknown; sourceFilePath?: unknown }
-    if (typeof p.mediaId !== 'string' || p.mediaId === '' || typeof p.sourceFilePath !== 'string') return false
+    if (!isSafeMediaGuid(p.mediaId) || typeof p.sourceFilePath !== 'string') return false
     if (!isAllowedAudioPath(p.sourceFilePath)) {
       logMain('WARN ', 'media:save', 'rejected source not on allow-list:', p.sourceFilePath)
       return false
@@ -373,7 +380,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   // Read a source's media back as AudioMetadata (cover bytes attached) by GUID, for
   // any imported file / stem / sample that shares it. Returns null when absent.
   ipcMain.handle(IPC.media.get, async (_evt, mediaId: unknown) => {
-    if (typeof mediaId !== 'string' || mediaId === '') return null
+    if (!isSafeMediaGuid(mediaId)) return null
     const dirs = getProjectMediaDirs()
     if (!dirs) return null
     try {

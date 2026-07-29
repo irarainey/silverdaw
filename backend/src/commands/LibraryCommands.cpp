@@ -20,6 +20,7 @@ namespace silverdaw
 {
 
 using silverdaw::bridge::readOptionalString;
+using silverdaw::bridge::readOptionalWarpMode;
 using silverdaw::bridge::tryGetRequiredString;
 
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
@@ -58,9 +59,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
         std::optional<bool> warpEnabled;
         if (payload.hasProperty("warpEnabled"))
             warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
-        std::optional<juce::String> warpMode;
-        if (payload.hasProperty("warpMode"))
-            warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
+        std::optional<juce::String> warpMode = readOptionalWarpMode(payload, "warpMode");
         std::optional<double> tempoRatio;
         bool tempoRatioClear = false;
         if (payload.hasProperty("tempoRatio"))

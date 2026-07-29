@@ -195,6 +195,38 @@ void testBridgeOptionalReadersRejectWrongType()
         require(!readOptionalBool(v, "gestureEnd").has_value(),
                 "string value should not be coerced into an optional bool");
     }
+
+    // Warp mode is a closed set on the wire ('rhythmic' | 'tonal' | 'complex').
+    // An engaged optional holding "" is the dangerous case: ProjectState skips an
+    // empty mode but AudioEngine does not, so the engine would rebuild its stretcher
+    // against "" and store it, leaving engine and project tree permanently
+    // disagreeing — the user sees "tonal" selected but hears rhythmic.
+    {
+        using silverdaw::bridge::readOptionalWarpMode;
+
+        const auto absent = makeBridgePayload({});
+        require(!readOptionalWarpMode(absent, "warpMode").has_value(),
+                "absent warp mode should yield nullopt");
+
+        for (const auto* valid : {"rhythmic", "tonal", "complex"})
+        {
+            const auto v2 = makeBridgePayload({{"warpMode", juce::var(valid)}});
+            const auto got = readOptionalWarpMode(v2, "warpMode");
+            require(got.has_value() && *got == valid, "a known warp mode should be accepted");
+        }
+
+        const auto empty = makeBridgePayload({{"warpMode", juce::var("")}});
+        require(!readOptionalWarpMode(empty, "warpMode").has_value(),
+                "an empty warp mode must not produce an engaged optional");
+
+        const auto unknown = makeBridgePayload({{"warpMode", juce::var("bogus")}});
+        require(!readOptionalWarpMode(unknown, "warpMode").has_value(),
+                "an unknown warp mode should be rejected");
+
+        const auto wrongType = makeBridgePayload({{"warpMode", juce::var(7)}});
+        require(!readOptionalWarpMode(wrongType, "warpMode").has_value(),
+                "a non-string warp mode should be rejected");
+    }
 }
 
 // MIDI enumeration is host-dependent (a CI box may have zero devices), so the

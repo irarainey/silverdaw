@@ -13,7 +13,10 @@
 namespace silverdaw
 {
 
+using silverdaw::bridge::readOptionalBool;
+using silverdaw::bridge::readOptionalNumber;
 using silverdaw::bridge::readOptionalString;
+using silverdaw::bridge::readOptionalWarpMode;
 using silverdaw::bridge::tryGetNumber;
 using silverdaw::bridge::tryGetRequiredString;
 
@@ -212,13 +215,13 @@ void handleClipSetWarp(const juce::var& payload, silverdaw::AudioEngine& engine,
         return;
     }
 
-    std::optional<bool> warpEnabled;
-    if (payload.hasProperty("warpEnabled"))
-        warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
-    std::optional<juce::String> warpMode;
-    if (payload.hasProperty("warpMode"))
-        warpMode = tryGetRequiredString(payload, "warpMode").value_or(juce::String{});
-    // `tempoRatio: null` restores project-BPM tracking.
+    std::optional<bool> warpEnabled = readOptionalBool(payload, "warpEnabled");
+    std::optional<juce::String> warpMode = readOptionalWarpMode(payload, "warpMode");
+    // `tempoRatio: null` restores project-BPM tracking, so a void/undefined value
+    // is a deliberate clear and must be told apart from a malformed one. Anything
+    // else goes through the strict reader: a raw cast turns a wrong-typed value
+    // into 0.0, which `ProjectState::setClipWarp` then clamps to 0.25 and
+    // persists — baking a 4x time-stretch into the saved project.
     std::optional<double> tempoRatio;
     bool tempoRatioClear = false;
     if (payload.hasProperty("tempoRatio"))
@@ -227,17 +230,11 @@ void handleClipSetWarp(const juce::var& payload, silverdaw::AudioEngine& engine,
         if (v.isVoid() || v.isUndefined())
             tempoRatioClear = true;
         else
-            tempoRatio = static_cast<double>(v);
+            tempoRatio = readOptionalNumber(payload, "tempoRatio");
     }
-    std::optional<double> semitones;
-    if (payload.hasProperty("semitones"))
-        semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
-    std::optional<double> cents;
-    if (payload.hasProperty("cents"))
-        cents = static_cast<double>(payload.getProperty("cents", 0.0));
-    std::optional<bool> pendingAutoWarp;
-    if (payload.hasProperty("pendingAutoWarp"))
-        pendingAutoWarp = static_cast<bool>(payload.getProperty("pendingAutoWarp", false));
+    std::optional<double> semitones = readOptionalNumber(payload, "semitones");
+    std::optional<double> cents = readOptionalNumber(payload, "cents");
+    std::optional<bool> pendingAutoWarp = readOptionalBool(payload, "pendingAutoWarp");
     if (warpEnabled.value_or(false) && !engine.canWarpClip(clipId))
     {
         silverdaw::log::warn(

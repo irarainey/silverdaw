@@ -13,6 +13,9 @@
 - Saving a new project now stores the name it was saved under, so it reopens with that name instead of "Untitled".
 - The Import from Project picker now always lists projects by their file name.
 - Importing audio is now a single undo step. Importing onto a track previously recorded the library item and the clip as separate steps, so the first Undo appeared to do nothing, and importing several files at once needed one Undo per file.
+- Saving a clip to the library is now a single undo step instead of three.
+- Exporting a mixdown or separating stems while the audio engine is unavailable now reports the problem, instead of leaving a progress dialog stuck at 0% that could only be cleared by restarting.
+- Preferences are no longer lost if Silverdaw stops unexpectedly while saving them.
 
 ## 1.4.1
 

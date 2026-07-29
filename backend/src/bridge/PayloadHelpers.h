@@ -101,6 +101,33 @@ inline std::optional<juce::String> readOptionalString(const juce::var& payload, 
     return std::nullopt;
 }
 
+// Optional warp-mode read. The wire contract is the closed set
+// 'rhythmic' | 'tonal' | 'complex', so a wrong type, an empty string or an
+// unknown mode is dropped with a warning rather than passed downstream.
+//
+// Returning an *engaged* optional holding "" is the specific trap this exists to
+// avoid: ProjectState skips empty modes but AudioEngine does not, so the engine
+// would rebuild its stretcher against "" and store it, leaving the engine and the
+// project tree permanently disagreeing about the clip's warp mode. (WarpProcessor
+// maps an unknown mode onto the rhythmic option set, so the mismatch is silent —
+// the user sees "tonal" selected but hears rhythmic.)
+inline std::optional<juce::String> readOptionalWarpMode(const juce::var& payload, const char* key)
+{
+    const auto mode = readOptionalString(payload, key);
+    if (!mode.has_value())
+    {
+        return std::nullopt;
+    }
+    if (*mode == "rhythmic" || *mode == "tonal" || *mode == "complex")
+    {
+        return mode;
+    }
+    silverdaw::log::warn("bridge",
+                         juce::String("optional field '") + key + "' is not a known warp mode ('"
+                             + *mode + "'); ignored");
+    return std::nullopt;
+}
+
 // Required string-array read. The caller owns any domain-specific item limit;
 // this helper only rejects malformed array members before a command mutates state.
 inline std::optional<juce::StringArray> tryGetStringArray(const juce::var& payload, const char* key)

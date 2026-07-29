@@ -150,6 +150,54 @@ describe('compound clip actions are one undo group', () => {
       expect.objectContaining({ requestWaveform: false })
     )
   })
+  it('saveClipToLibrary brackets LIBRARY_ADD + CLIP_REBIND in a single group', () => {
+    // Regression: the library add, the inner metadata group and the rebind used to be
+    // three separate transactions, so one context-menu command cost three Ctrl+Z presses.
+    const project = useProjectStore()
+    project.tracks = [
+      { id: 't1', name: 'Track 1', clipIds: ['c1'], volume: 1, lengthMs: 1000 } as never
+    ]
+    project.clips = {
+      c1: makeClip({
+        name: 'My Clip',
+        channelCount: 1,
+        peaks: new Float32Array([-0.5, 0.5]),
+        peaksPerSecond: 500
+      })
+    }
+    const library = useLibraryStore()
+    library.items = [
+      {
+        id: 'lib1',
+        kind: 'audio',
+        fileName: 'x.wav',
+        filePath: 'C:\\x.wav',
+        durationMs: 1000,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array()
+      } as never
+    ]
+    sendMock.mockClear()
+
+    const itemId = project.saveClipToLibrary('c1')
+    expect(itemId).toBeTruthy()
+
+    const types = sentTypes()
+    expect(types[0]).toBe('EDIT_GROUP_BEGIN')
+    expect(types[types.length - 1]).toBe('EDIT_GROUP_END')
+    // Exactly one transaction reaches the UndoManager, however many groups nest inside.
+    expect(types.filter((t) => t === 'EDIT_GROUP_BEGIN')).toHaveLength(
+      types.filter((t) => t === 'EDIT_GROUP_END').length
+    )
+    expect(sendMock.mock.calls[0]).toEqual(['EDIT_GROUP_BEGIN', { label: 'Save clip to library' }])
+    const begin = types.indexOf('EDIT_GROUP_BEGIN')
+    const end = types.lastIndexOf('EDIT_GROUP_END')
+    expect(types.indexOf('LIBRARY_ADD')).toBeGreaterThan(begin)
+    expect(types.indexOf('LIBRARY_ADD')).toBeLessThan(end)
+    expect(types.indexOf('CLIP_REBIND')).toBeGreaterThan(begin)
+    expect(types.indexOf('CLIP_REBIND')).toBeLessThan(end)
+  })
 })
 
 describe('library-clip edits propagate inside one undo group', () => {

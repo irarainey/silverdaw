@@ -24,16 +24,23 @@ export const clipLibraryActions = {
     saveClipToLibrary(clipId: string): string | null {
       const clip = this.clips[clipId]
       if (!clip) return null
-      const itemId = useLibraryStore().addLibraryClipFromTimelineClip(clip)
-      if (itemId) {
-        // Rebind so library-clip usage views see the originating timeline clip.
-        if (clip.libraryItemId !== itemId) {
-          clip.libraryItemId = itemId
-          sendBridge('CLIP_REBIND', { clipId, libraryItemId: itemId })
+      // One context-menu command, so one undo step. Without the group this emits
+      // three separate transactions — the library add, the metadata/un-collapse
+      // group inside `addLibraryClipFromTimelineClip`, and the rebind below — so
+      // the user needs three Ctrl+Z presses to get back. Nesting is safe: the
+      // backend tracks group depth with a counter.
+      return runInUndoGroup('Save clip to library', () => {
+        const itemId = useLibraryStore().addLibraryClipFromTimelineClip(clip)
+        if (itemId) {
+          // Rebind so library-clip usage views see the originating timeline clip.
+          if (clip.libraryItemId !== itemId) {
+            clip.libraryItemId = itemId
+            sendBridge('CLIP_REBIND', { clipId, libraryItemId: itemId })
+          }
+          log.info('project', `saveClipToLibrary clip=${clipId} item=${itemId}`)
         }
-        log.info('project', `saveClipToLibrary clip=${clipId} item=${itemId}`)
-      }
-      return itemId
+        return itemId
+      })
     },
 
     saveClipAsSample(clipId: string, audioType: 'simple' | 'music'): void {

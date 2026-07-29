@@ -6,7 +6,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
-import { beginMixdown } from '@/lib/mixdownState'
+import { beginMixdown, clearMixdownState } from '@/lib/mixdownState'
 import { formatTime, parseTime, msPerSubBeat, DEFAULT_SUBS_PER_BEAT, DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { log } from '@/lib/log'
@@ -499,7 +499,14 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       // Persist the chosen start bar as a first-class project property (independent of the
       // ruler's bar-counter offset) so it round-trips and prefills next time.
       project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
-      sendBridge('MIXDOWN_START', payload)
+      if (!sendBridge('MIXDOWN_START', payload)) {
+        // Progress state was opened by `beginMixdown` above. Without this the
+        // export dialog closes over a progress dialog stuck at 0% that only a
+        // backend DONE/FAILED envelope could clear — and none will arrive.
+        clearMixdownState()
+        notifications.pushError('Could not start the export — the audio engine is not connected.')
+        return
+      }
       deps.requestClose()
     } finally {
       submitting.value = false
