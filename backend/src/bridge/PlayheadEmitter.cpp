@@ -22,7 +22,10 @@ PlayheadEmitter::PlayheadEmitter(AudioEngine& e, BridgeServer& b, ProjectState& 
 void PlayheadEmitter::timerCallback()
 {
     const bool playing = engine.isPlaying();
-    engine.reconcileScratchSessionSourceEnd();
+    // Reconcile once per tick and keep the result: this consumes the end-stop trigger,
+    // so calling it again later in the tick would always report false and the immediate
+    // scratch-state emit below would never fire.
+    const bool scratchReconciled = engine.reconcileScratchSessionSourceEnd();
     const auto scratchState = engine.getScratchSessionSnapshot();
     const bool scratchPlaying = scratchState
         && (scratchState->status == "playing" || scratchState->status == "recording");
@@ -83,8 +86,7 @@ void PlayheadEmitter::timerCallback()
 
     // ── Scratch session state emission (~15 Hz + end-stop reconciliation) ────
     {
-        const bool reconciled = engine.reconcileScratchSessionSourceEnd();
-        if (reconciled || ++scratchStateTick >= 2)
+        if (scratchReconciled || ++scratchStateTick >= 2)
         {
             scratchStateTick = 0;
             const auto emittedScratchState = engine.getScratchSessionSnapshot();

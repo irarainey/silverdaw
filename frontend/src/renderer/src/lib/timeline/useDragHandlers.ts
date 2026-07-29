@@ -1001,6 +1001,15 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   )
 
   onBeforeUnmount(() => {
+    // A group drag opens EDIT_GROUP_BEGIN on pointerdown and only closes it in
+    // onGroupPointerUp. If the timeline unmounts mid-drag that pointerup never
+    // arrives, so the backend's group-depth counter stays above zero and every
+    // later edit is folded into the same open transaction — one Undo would then
+    // revert an unbounded amount of work. Close it here instead.
+    if (groupDragActive) {
+      groupDragActive = false
+      sendBridge('EDIT_GROUP_END')
+    }
     stopHostWatch()
     host.value?.removeEventListener('pointerdown', onPointerDown)
     host.value?.removeEventListener('pointermove', onHostPointerMove)

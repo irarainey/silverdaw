@@ -68,6 +68,14 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
 
   let app: Application | null = null
   let resizeObserver: ResizeObserver | null = null
+  // Bumped by every mount and unmount. An in-flight async build compares its own
+  // generation after each await and discards its work if it no longer matches.
+  // Without this, closing the editor while Pixi was still initialising left an
+  // orphaned app assigned to `app`, so every later mount() hit the `if (app)`
+  // early-return and the Clip Editor stayed blank until Silverdaw was restarted.
+  // Unlike the timeline this scene is mounted and unmounted repeatedly, so a
+  // one-shot `destroyed` flag would only work for the first close.
+  let generation = 0
   let building = false
 
   function getCanvas(): HTMLCanvasElement | null {
@@ -91,9 +99,11 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
 
   async function mount(host: HTMLElement): Promise<void> {
     if (app || building) return
+    const myGeneration = ++generation
     building = true
     try {
       const pixi = await loadPixi()
+      if (myGeneration !== generation) return
       GraphicsCtor.value = pixi.Graphics
       TextCtor.value = pixi.Text
       MeshCtor.value = pixi.Mesh
@@ -108,6 +118,15 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
         autoDensity: true,
         resolution: window.devicePixelRatio || 1
       })
+
+      // The editor may have been closed (or reopened) while init was awaiting.
+      // `{ removeView: true }` and `texture: false` for the same shared-global
+      // reasons as in `unmount` — never release the process-global batch pool or
+      // destroy the shared white texture singleton.
+      if (myGeneration !== generation) {
+        instance.destroy({ removeView: true }, { children: true, texture: false })
+        return
+      }
 
       app = instance
       host.appendChild(instance.canvas)
@@ -147,11 +166,18 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
         `Clip editor Pixi build failed: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
-      building = false
+      // A newer mount owns `building` now; clearing it here would let a third
+      // mount start alongside the one still in flight.
+      if (myGeneration === generation) building = false
     }
   }
 
   function unmount(): void {
+    // Invalidate any build still in flight and release the guard, so reopening the
+    // editor immediately can start a fresh build instead of being blocked by the
+    // abandoned one (which discards itself on its next generation check).
+    generation++
+    building = false
     resizeObserver?.disconnect()
     resizeObserver = null
     const instance = app

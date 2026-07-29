@@ -181,6 +181,17 @@ export function useTimelineViewController(
     stopPlayheadRaf()
     cancelTimelineScrollAnimation()
     redrawScheduler.cancel()
+    // Debounced view-state writes must not outlive the timeline: a pending timer
+    // fires up to 200 ms after unmount and would persist scroll/zoom for a project
+    // that is already closed, landing on whatever project opens next.
+    if (zoomEmitTimer) {
+      clearTimeout(zoomEmitTimer)
+      zoomEmitTimer = null
+    }
+    if (scrollEmitTimer) {
+      clearTimeout(scrollEmitTimer)
+      scrollEmitTimer = null
+    }
   })
 
   // ─── Clip context menu + dialogs ──────────────────────────────────────────
