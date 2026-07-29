@@ -50,6 +50,19 @@ Launches seed `preferences.json` with `debug.loggingEnabled`, so a failing run
 leaves a full session log under `~/Silverdaw/Logs` — usually the fastest route
 to the cause of a silent cross-process failure.
 
+## Temporary artefacts
+
+Journeys synthesise real files — imported WAVs, saved project folders, copies of
+the frozen fixture — because that is the only way to exercise the engine's own
+decode and write paths. Create them with `makeTrackedTempDir()` from
+`helpers/tempDirs.ts` rather than `mkdtemp` directly, and an auto fixture deletes
+them once the test passes.
+
+Artefacts from a **failing** test are deliberately left on disk, the same bargain
+as `trace: 'retain-on-failure'`: the project file that broke a round-trip is
+usually the most direct evidence available, and the run that produced it is the
+run you want to inspect.
+
 ## Fixtures
 
 `fixtures/projects/E2E Fixture/` is a real project saved by Silverdaw 1.4.1 and then

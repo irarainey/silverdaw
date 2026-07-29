@@ -9,9 +9,9 @@
 // codec, so an import journey exercises Silverdaw's own path rather than a
 // third-party decoder's.
 
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { makeTrackedTempDir } from './tempDirs'
 
 export interface ToneOptions {
   /** File name including the `.wav` extension. */
@@ -67,7 +67,7 @@ export function createToneWav(options: ToneOptions = {}): string {
     }
   }
 
-  const dir = mkdtempSync(join(tmpdir(), 'silverdaw-e2e-audio-'))
+  const dir = makeTrackedTempDir('audio')
   const filePath = join(dir, fileName)
   writeFileSync(filePath, buffer)
   return filePath

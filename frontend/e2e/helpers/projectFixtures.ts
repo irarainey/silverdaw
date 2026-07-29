@@ -14,10 +14,10 @@
 // stores its path relative to that folder (ProjectFile.cpp `kPortablePathKeys`) and
 // the fixture carries no machine-specific absolute path.
 
-import { cpSync, mkdtempSync } from 'node:fs'
+import { cpSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tmpdir } from 'node:os'
+import { makeTrackedTempDir } from './tempDirs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -44,7 +44,7 @@ export const FIXTURE_MASTER_VOLUME = 'Master volume: -10.0 dB'
  * tree and leave later runs testing a mutated artefact rather than the frozen one.
  */
 export function copyProjectFixture(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'silverdaw-e2e-fixture-'))
+  const dir = makeTrackedTempDir('fixture')
   const projectDir = join(dir, FIXTURE_PROJECT_NAME)
   cpSync(join(HERE, '..', 'fixtures', 'projects', FIXTURE_PROJECT_NAME), projectDir, {
     recursive: true

@@ -23,11 +23,11 @@
 // (an env override for the user-folder root), which is a separate proposal.
 
 import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tmpdir } from 'node:os'
+import { forgetTrackedTempDirs, makeTrackedTempDir, removeTrackedTempDirs } from '../helpers/tempDirs'
 
 /** Repository `frontend/` directory, derived from this file's location. */
 const FRONTEND_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -62,7 +62,9 @@ export interface LaunchOptions {
  * engine becomes ready is itself under test, so a spec asserts that.
  */
 export async function launchSilverdaw(options: LaunchOptions = {}): Promise<SilverdawApp> {
-  const userDataDir = mkdtempSync(join(tmpdir(), 'silverdaw-e2e-profile-'))
+  // Tracked as well as removed in `closeSilverdaw`, so a run that crashes before
+  // teardown still gets swept up rather than leaving a profile behind.
+  const userDataDir = makeTrackedTempDir('profile')
 
   // Seed the throwaway profile with diagnostic logging on. The renderer mirrors
   // its logger to the console only when this is enabled, and that narrative is
@@ -182,7 +184,29 @@ export async function closeSilverdaw(app: SilverdawApp): Promise<void> {
 export const test = base.extend<{
   launchApp: (options?: LaunchOptions) => Promise<SilverdawApp>
   silverdaw: SilverdawApp
+  tempArtifacts: void
 }>({
+  // Sweeps up the temp directories the helpers synthesise (imported audio, saved
+  // projects, fixture copies). Auto, so a journey cannot forget, and declared
+  // before `launchApp` so it tears down last — after the app has exited and
+  // released its handles on the project folder.
+  //
+  // Kept on failure, the same bargain as `trace: 'retain-on-failure'`: the saved
+  // project that broke a round-trip is usually the most direct evidence there is,
+  // and deleting it would throw that away at exactly the wrong moment.
+  tempArtifacts: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use, testInfo) => {
+      await use()
+      if (testInfo.status === testInfo.expectedStatus) {
+        removeTrackedTempDirs()
+      } else {
+        forgetTrackedTempDirs()
+      }
+    },
+    { auto: true }
+  ],
+
   // Empty destructuring is Playwright's required form for a fixture with no
   // dependencies. It also matters here: naming a built-in such as `page` would
   // opt this tier into the browser fixtures, which need a downloaded browser.

@@ -16,15 +16,16 @@ import { createToneWav } from '../helpers/audioFixtures'
 import { libraryItem, libraryItems } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
 import { startNewProject, waitForStartupReady } from '../helpers/startup'
-import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
+import { makeTrackedTempDir } from '../helpers/tempDirs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 const PROJECT_NAME = 'E2E Round Trip'
 const AUDIO_FILE = 'e2e-round-trip.wav'
 
 test('a saved project reopens with its library intact after a restart', async ({ launchApp }) => {
-  const projectsDir = mkdtempSync(join(tmpdir(), 'silverdaw-e2e-projects-'))
+  // Tracked, so the project this journey saves is removed once it passes.
+  const projectsDir = makeTrackedTempDir('projects')
   // A project saves as `<Name>/<Name>.silverdaw`, so the folder the user picks
   // is not the folder the file lands in (main/projectPaths.ts).
   const chosenPath = join(projectsDir, `${PROJECT_NAME}.silverdaw`)
