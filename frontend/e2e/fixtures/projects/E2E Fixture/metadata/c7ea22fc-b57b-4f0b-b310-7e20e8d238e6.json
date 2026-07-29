@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "metadata": {
+    "codec": "PCM",
+    "container": "WAVE",
+    "bitrate": 1411200,
+    "durationMs": 2000,
+    "sampleRate": 44100,
+    "channelCount": 2,
+    "lossless": true
+  }
+}

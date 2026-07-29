@@ -20,7 +20,7 @@ decision and add its line here.
 | D-0011 | `IMPORTANT` | Product ethos: radical beginner-first simplicity | `docs/adr/0011-product-ethos-simplicity.md` |
 | D-0012 | `CRITICAL` | UI/UX design-system conventions | `docs/adr/0012-ui-ux-design-system.md` |
 | D-0013 | `IMPORTANT` | Frontend stack: Vue 3 + Pinia + PixiJS + Tailwind | `docs/adr/0013-frontend-stack.md` |
-| D-0014 | `IMPORTANT` | Testing strategy (custom backend harness + Vitest) | `docs/adr/0014-testing-strategy.md` |
+| D-0014 | `IMPORTANT` | Testing strategy (custom backend harness + Vitest + Playwright e2e) | `docs/adr/0014-testing-strategy.md` |
 | D-0015 | `IMPORTANT` | Project file format: versioned JSON | `docs/adr/0015-project-file-format.md` |
 | D-0016 | `CRITICAL` | Maintainability & file-size policy | `docs/adr/0016-maintainability-file-size.md` |
 | D-0017 | `IMPORTANT` | Performance priorities: audio playback is first-class | `docs/adr/0017-performance-priorities.md` |

@@ -40,6 +40,10 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     // Authoritative snapshot after AUTH reconciles optimistic state.
     useProjectStore().applyProjectStateSnapshot(payload)
     useAppStore().finishRecentProjectOpen()
+    // Only a replacement snapshot means the requested new/opened project has landed.
+    // The initial boot snapshot arrives in the same tick that releases a deferred
+    // start-screen action, so clearing on it would unlock the buttons mid-flight.
+    if (payload.reset === true) useAppStore().finishProjectAction()
     const transport = useTransportStore()
     const isInitialBridgeSnapshot = !transport.bridgeReady
     transport.setPlaybackState(false)
@@ -103,6 +107,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   PROJECT_LOAD_FAILED: (payload) => {
     log.warn('bridge', `PROJECT_LOAD_FAILED ${payload.filePath}: ${payload.error}`)
     useAppStore().finishRecentProjectOpen()
+    useAppStore().finishProjectAction()
     useProjectStore().notifyProjectLoadFailed(payload.error)
     useNotificationsStore().pushError(
       `Could not open project: ${payload.error || payload.filePath}`

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "1.4.1",
+  "savedAt": "2026-07-29T10:54:20.231+01:00",
+  "project": {
+    "$type": "PROJECT",
+    "name": "Untitled",
+    "masterVolume": 0.31622776389122,
+    "viewScrollX": 0.0,
+    "viewPxPerSecond": 100.0,
+    "playheadMs": 0.0,
+    "$children": [
+      {
+        "$type": "LIBRARY",
+        "$children": [
+          {
+            "$type": "ITEM",
+            "id": "l1",
+            "filePath": "fixture-tone.wav",
+            "kind": "source",
+            "name": "fixture-tone.wav",
+            "durationMs": 2000.0,
+            "sampleRate": 44100,
+            "channelCount": 2,
+            "playbackFilePath": "fixture-tone.wav",
+            "mediaId": "c7ea22fc-b57b-4f0b-b310-7e20e8d238e6",
+            "bpm": 95.703125,
+            "beats": [
+              0.470204081632653,
+              1.102947845804989,
+              1.596371882086168
+            ],
+            "beatAnchorSec": 0.432772664334553
+          }
+        ]
+      },
+      {
+        "$type": "MARKERS"
+      }
+    ]
+  }
+}

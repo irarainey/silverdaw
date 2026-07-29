@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.2
+
+### Added
+
+- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, and opening an existing project from disk or the recent list.
+
+### Fixed
+
+- Choosing Open Project on the start screen now works even when clicked the instant the buttons appear, instead of doing nothing.
+- Starting a new project the instant the start screen appears now applies the correct default master volume instead of leaving it at full.
+- Saving a new project now stores the name it was saved under, so it reopens with that name instead of "Untitled".
+
 ## 1.4.1
 
 ### Added

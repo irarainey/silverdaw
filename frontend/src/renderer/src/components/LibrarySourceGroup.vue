@@ -84,6 +84,8 @@ const childSummary = computed(() => {
   >
     <div
       draggable="true"
+      data-testid="library-item"
+      :data-library-item-name="props.displayTitle(props.source)"
       class="library-item group relative flex cursor-grab select-none items-stretch overflow-hidden bg-zinc-950/60 text-left transition-colors hover:bg-zinc-900 active:cursor-grabbing"
       title="Drag onto a track to use it. Double-click to preview."
       @dragstart="(e) => emit('dragStart', e, props.source)"

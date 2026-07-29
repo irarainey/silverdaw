@@ -75,3 +75,7 @@ backend/tools/bpm_eval/manifest.csv
 
 # Local dev scratch (Roformer validation: model weights, audition wavs)
 .tmp_roformer/
+
+# Playwright Electron e2e artefacts (traces, HTML report)
+frontend/test-results/
+frontend/playwright-report/

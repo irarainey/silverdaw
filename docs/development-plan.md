@@ -1808,6 +1808,38 @@ this release.
    parameter picker truncates long names with a tooltip and returns focus to the
    timeline on change or `Escape`, so the transport shortcuts keep working.
 
+### 1.4.2 - Startup Race Fixes & End-to-End Test Tier *(released)*
+
+**Goal:** close three defects around the moment the app becomes interactive, and
+add the automated end-to-end tier that found them. No new user-facing concepts.
+
+1. [x] **Project actions survive an early click.** `file.openProject` and
+   `file.newProject` are handled above the bridge-ready drop gate in
+   `useAppMenuActions`, and App.vue's `whenBridgeReady` defers them until the
+   handshake lands rather than discarding them. Clicking either button the
+   instant the start screen painted previously did nothing at all — for New
+   Project, silently, leaving the master at unity instead of the −10 dB default,
+   because `ProjectState` has no `masterVolume` until `handleProjectNew` sets it.
+2. [x] **First click wins.** `appStore.projectActionPending` locks the start
+   screen's project buttons for the whole deferred window, so a second click
+   cannot retarget a pending action. `PROJECT_STATE` clears the flag only when
+   `reset` is true, since the boot snapshot arrives in the same tick as the
+   deferral.
+3. [x] **A saved project keeps its name.** On a first save or an explicit Save As,
+   `handleProjectSave` adopts the chosen file's basename *before* serialising
+   (restoring the previous name if the write fails). It previously renamed after
+   the write and then marked the project clean, so the name never reached disk
+   and the project reopened as "Untitled". A plain Ctrl+S deliberately does not
+   rename: every project saved before 1.4.2 carries the default name, and
+   renaming on an ordinary save would relabel a user's existing work.
+4. [x] **Playwright end-to-end tier** (`frontend/e2e/`, ADR 0014). Nine journeys
+   drive the packaged Electron build against the real backend: cold launch,
+   dialog stubbing, audio import, save/reopen round trip, new-project defaults,
+   opening an existing project, and the recent-projects list. It asserts on DOM,
+   the filesystem, and saved project files rather than production test hooks, and
+   carries a frozen 1.4.1 project fixture as the backward-compatibility canary.
+   It supplements, and does not replace, the Vitest and ctest tiers.
+
 ### Phase 1 — Backend Foundation & Bridge
 
 **Goal:** JUCE backend plays audio. Electron connects, controls transport, sees the playhead move.
