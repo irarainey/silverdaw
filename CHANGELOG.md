@@ -4,13 +4,15 @@
 
 ### Added
 
-- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, opening an existing project from disk or the recent list, recovering unsaved work from an autosave, importing onto a track without altering the source audio, and upgrading a preferences file written by an earlier release.
+- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, opening an existing project from disk or the recent list, recovering unsaved work from an autosave, importing onto a track without altering the source audio, exporting a mixdown, the unsaved-changes prompt, upgrading a preferences file written by an earlier release, importing assets from another saved project, undoing and redoing an edit across a restart, and recovering after the audio engine is killed mid-session.
 
 ### Fixed
 
 - Choosing Open Project on the start screen now works even when clicked the instant the buttons appear, instead of doing nothing.
 - Starting a new project the instant the start screen appears now applies the correct default master volume instead of leaving it at full.
 - Saving a new project now stores the name it was saved under, so it reopens with that name instead of "Untitled".
+- The Import from Project picker now always lists projects by their file name.
+- Importing audio is now a single undo step. Importing onto a track previously recorded the library item and the clip as separate steps, so the first Undo appeared to do nothing, and importing several files at once needed one Undo per file.
 
 ## 1.4.1
 

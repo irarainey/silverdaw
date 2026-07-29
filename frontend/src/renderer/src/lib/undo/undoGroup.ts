@@ -22,3 +22,23 @@ export function runInUndoGroup<T>(label: string, body: () => T): T {
     sendBridge('EDIT_GROUP_END')
   }
 }
+
+/**
+ * Async counterpart for a single user action whose undoable sends straddle an `await` —
+ * an import has to decode before it can add, so its library item and its clip cannot be
+ * sent in one synchronous run.
+ *
+ * Prefer the synchronous form. The backend's depth counter is global, so the group
+ * captures every undoable command sent while `body` is in flight, not just the ones
+ * `body` issues itself. Keep the awaited work short and self-contained, and never open a
+ * group around a dialog or prompt: it would stay open for as long as the user takes to
+ * answer, folding anything they did meanwhile into this transaction.
+ */
+export async function runInUndoGroupAsync<T>(label: string, body: () => Promise<T>): Promise<T> {
+  sendBridge('EDIT_GROUP_BEGIN', { label })
+  try {
+    return await body()
+  } finally {
+    sendBridge('EDIT_GROUP_END')
+  }
+}

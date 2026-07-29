@@ -13,13 +13,18 @@ rather than a broad grid.
 ## Running
 
 ```text
-pnpm build         # required — the specs launch out/, never the dev server
-pnpm test:e2e
+pnpm test:e2e         # builds out/, then runs the suite
+pnpm test:e2e:only    # skips the build — only when out/ is known current
 pnpm test:e2e:report
 ```
 
-`pnpm build` is not automatic. A stale `out/` will happily pass while testing
-code you have already changed, so rebuild before trusting a green run.
+`test:e2e` builds first on purpose. A stale `out/` passes happily while testing
+code you have already changed, which has now happened more than once; the few
+seconds of build are cheaper than trusting a green run that meant nothing. Use
+`test:e2e:only` for a tight loop when you have not touched `src/`.
+
+The e2e tier does not build or check the C++ backend. A backend change needs its
+own rebuild before these specs can see it.
 
 ## What the specs assert
 
@@ -35,6 +40,12 @@ track holds a clip, which gives a DOM-observable signal that the clip landed.
 Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
 which a test can only fake by synthesising the events a browser would otherwise
 generate — that asserts the implementation, so specs take the button instead.
+
+One journey does drive the mouse over a canvas: creating a library sample
+requires selecting a region in the clip editor, and no button reaches it. That
+is real pointer input over the waveform host, and the assertions either side are
+DOM state (the save button is disabled until a selection exists) — nothing is
+read back from the canvas itself.
 
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
@@ -52,9 +63,20 @@ redirected from a test. Accepted as a known gap: these directories are
 append-only diagnostics, and the tier is a local pre-release gate rather than a
 shared-CI one.
 
+Because that directory is shared, the diagnostics attached to a failure are
+filtered by modification time: a log untouched since the app launched is named
+but not quoted. Attaching it wholesale would be worse than attaching nothing,
+since it presents an unrelated session as evidence for this failure.
+
 Launches seed `preferences.json` with `debug.loggingEnabled`, so a failing run
 leaves a full session log under `~/Silverdaw/Logs` — usually the fastest route
 to the cause of a silent cross-process failure.
+
+One journey kills the audio engine on purpose. It resolves the PID through
+`helpers/backendProcess.ts`, which only ever matches a `SilverdawBackend.exe`
+whose parent is *that test's own* Electron main process. Never match the engine
+by name alone: it would find a developer's separately running Silverdaw and kill
+their work.
 
 ## Temporary artefacts
 

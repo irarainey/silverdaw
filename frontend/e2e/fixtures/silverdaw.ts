@@ -24,7 +24,7 @@
 
 import { test as base, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -47,6 +47,8 @@ export interface SilverdawApp {
   readonly userDataDir: string
   /** Always-on diagnostics directory, as resolved by the running app. */
   readonly diagnosticsDir: string
+  /** When this app was launched, used to tell its diagnostics from an older session's. */
+  readonly launchedAtMs: number
   /** Renderer console output, captured from launch for failure diagnosis. */
   readonly consoleLog: string[]
 }
@@ -112,6 +114,11 @@ function seedAutosaveBuckets(userDataDir: string, buckets: AutosaveBucketSeed[])
  * engine becomes ready is itself under test, so a spec asserts that.
  */
 export async function launchSilverdaw(options: LaunchOptions = {}): Promise<SilverdawApp> {
+  // Anchors the diagnostics attachment. `~/Silverdaw/Diagnostics` is shared with
+  // every other Silverdaw on the machine and cannot be redirected, so a log left
+  // by an unrelated session is otherwise indistinguishable from this run's.
+  const launchedAtMs = Date.now()
+
   // Tracked as well as removed in `closeSilverdaw`, so a run that crashes before
   // teardown still gets swept up rather than leaving a profile behind.
   const userDataDir = makeTrackedTempDir('profile')
@@ -174,6 +181,7 @@ export async function launchSilverdaw(options: LaunchOptions = {}): Promise<Silv
     page,
     userDataDir,
     diagnosticsDir: join(home, 'Silverdaw', 'Diagnostics'),
+    launchedAtMs,
     consoleLog
   }
 }
@@ -184,7 +192,20 @@ export async function launchSilverdaw(options: LaunchOptions = {}): Promise<Silv
  * backend's own piped stdout/stderr — so attaching it to a failure explains
  * both processes at once.
  */
-export async function readDiagnosticsLogs(diagnosticsDir: string): Promise<string> {
+/**
+ * Collects the always-on diagnostics logs for a failure attachment.
+ *
+ * `sinceMs` is the point the app under test launched. Logs untouched since then
+ * belong to some earlier session — `~/Silverdaw/Diagnostics` is shared with every
+ * Silverdaw on the machine and cannot be redirected from a test — and they are
+ * named but not quoted. Attaching them wholesale is worse than attaching nothing:
+ * it presents an unrelated session as the evidence for this failure, which is
+ * exactly what happened while this tier was being built.
+ */
+export async function readDiagnosticsLogs(
+  diagnosticsDir: string,
+  sinceMs = 0
+): Promise<string> {
   let entries: string[]
   try {
     entries = await readdir(diagnosticsDir)
@@ -197,7 +218,19 @@ export async function readDiagnosticsLogs(diagnosticsDir: string): Promise<strin
 
   const sections = await Promise.all(
     logs.map(async (name) => {
-      const body = await readFile(join(diagnosticsDir, name), 'utf8').catch(
+      const path = join(diagnosticsDir, name)
+
+      // A log the run never touched is stale by definition. Some logs also close
+      // themselves once startup completes, so "not written recently" is normal
+      // rather than a fault — hence a note instead of a warning.
+      const modifiedMs = await stat(path)
+        .then((info) => info.mtimeMs)
+        .catch(() => Number.POSITIVE_INFINITY)
+      if (modifiedMs < sinceMs) {
+        return `───── ${name} ─────\n(unchanged since this test launched; left by an earlier session, omitted)`
+      }
+
+      const body = await readFile(path, 'utf8').catch(
         (err: unknown) => `(unreadable: ${err instanceof Error ? err.message : String(err)})`
       )
       return `───── ${name} ─────\n${body}`
@@ -277,7 +310,7 @@ export const test = base.extend<{
 
     if (launched.length > 0 && testInfo.status !== testInfo.expectedStatus) {
       await testInfo.attach('silverdaw-diagnostics.log', {
-        body: await readDiagnosticsLogs(launched[0]!.diagnosticsDir),
+        body: await readDiagnosticsLogs(launched[0]!.diagnosticsDir, launched[0]!.launchedAtMs),
         contentType: 'text/plain'
       })
       // One attachment per launch, because a round-trip failure usually needs

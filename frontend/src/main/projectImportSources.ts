@@ -8,10 +8,28 @@ function isProjectFile(fileName: string): boolean {
   return extname(fileName).slice(1).toLowerCase() === PROJECT_FILE_EXTENSION
 }
 
+/**
+ * The name every project carries until it is explicitly named. Releases before
+ * 1.4.2 adopted the chosen filename *after* serialising, so every project saved
+ * by them stores this literal — which is why an empty-string check is not enough
+ * to spot "this project has no meaningful name of its own".
+ */
+const DEFAULT_PROJECT_NAME = 'Untitled'
+
 function fallbackProjectName(filePath: string): string {
   return basename(filePath, extname(filePath))
 }
 
+/**
+ * Best display name for a project, for a read-only picker.
+ *
+ * Falling back to the filename when the stored name is the default matters here:
+ * without it every pre-1.4.2 project renders as an identical "Untitled" row and
+ * the list becomes unusable. This is deliberately a *display* fallback only —
+ * nothing is written back. Substituting the name into loaded project state would
+ * be a different and unsafe change, because the next save or autosave would then
+ * persist a name the user never chose.
+ */
 async function readProjectName(filePath: string): Promise<string> {
   try {
     const parsed = JSON.parse(await readFile(filePath, 'utf8')) as {
@@ -23,7 +41,7 @@ async function readProjectName(filePath: string): Promise<string> {
       : typeof parsed.name === 'string'
         ? parsed.name.trim()
         : ''
-    return name || fallbackProjectName(filePath)
+    return name && name !== DEFAULT_PROJECT_NAME ? name : fallbackProjectName(filePath)
   } catch {
     return fallbackProjectName(filePath)
   }
