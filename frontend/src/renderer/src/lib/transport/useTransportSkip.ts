@@ -38,6 +38,12 @@ export interface MarkerSeekContext {
 // button press snapping back onto the marker we're parked on.
 const MARKER_SKIP_EPSILON_MS = 1
 
+// The engine quantises every seek to a whole sample and reports that value back via
+// PLAYHEAD_UPDATE, so a playhead parked exactly where we asked still reads back up to
+// half a sample out (~0.011 ms at 44.1 kHz). Anything within this slop counts as
+// "already there", which is far below both the snap grid and audibility.
+const SEEK_REDUNDANT_EPSILON_MS = 0.05
+
 // Nearest marker strictly before the playhead, or null when there is none. The
 // start of an active timeline selection counts as a temporary marker so every
 // marker-stepping affordance (buttons, MIDI cue, Ctrl+Arrow) agrees on targets.
@@ -171,9 +177,23 @@ export function toggleTransportPlayback(source = 'click', stores?: TransportPlay
       `${source} ${ui.loopTimelineSelection ? 'loop selection' : 'play selection'} ` +
       `${selection.startMs}..${selection.endMs}ms`
     )
+    // Captured before setPosition below overwrites the store's mirror of the engine position.
+    const alreadyAtStart =
+      Math.abs(transport.positionMs - selection.startMs) <= SEEK_REDUNDANT_EPSILON_MS
     transport.setPosition(selection.startMs)
     ui.requestTimelineScrollToPosition(selection.startMs, true)
-    sendBridge('TRANSPORT_SEEK', { positionMs: selection.startMs })
+    // Only seek when the playhead is not already on the range start. Finishing a range
+    // drag already parks it there, and a seek is far from free: the engine flags every
+    // track's read-ahead dirty, so the settle that follows recreates each
+    // BufferingAudioSource and refills it from disk. Done here, that warm-up is thrown
+    // away and redone inline by the play that follows in the same tick — play() cancels
+    // the pending prewarm, then rebuilds and blocks the message thread waiting for the
+    // refill. That is a stall on the first beat, and how long it lasts depends on how
+    // quickly the machine schedules the buffering thread and serves the reads, so it can
+    // show on one machine and not another of the same spec.
+    if (!alreadyAtStart) {
+      sendBridge('TRANSPORT_SEEK', { positionMs: selection.startMs })
+    }
     sendBridge('TRANSPORT_PLAY')
     transport.setPlaybackState(true)
     return

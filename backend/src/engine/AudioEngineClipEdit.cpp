@@ -40,7 +40,9 @@ void AudioEngine::setPositionMsNow(double ms, bool resetEffects)
     const auto masterSamples = sr > 0.0
                                    ? static_cast<juce::int64>(clampedMs * sr / 1000.0)
                                    : static_cast<juce::int64>(0);
+    const auto previousSamples = master.getPositionSamples();
     master.setPositionSamples(masterSamples);
+    const bool movedPosition = masterSamples != previousSamples;
 
     if (resetEffects)
     {
@@ -64,7 +66,19 @@ void AudioEngine::setPositionMsNow(double ms, bool resetEffects)
         // start() is idempotent for an already-playing transport. While paused the master gates
         // all output and the next play() re-primes, so only the playing case needs this.
         if (playing) track->transportSource->start();
-        track->prefetchDirty = true;
+        // `prefetchDirty` means "the audio at this position has changed", which forces the
+        // settle to *recreate* the BufferingAudioSource — an allocation plus a cold refill
+        // that play() then blocks the message thread on, heard as a stall on the first beat.
+        // A seek does not change any audio; it only means the read-ahead now holds the wrong
+        // region, and the setPosition above already fixes that: BufferingAudioSource measures
+        // readiness relative to the new read position, so the prime can never mistake the old
+        // region for the new one. Edits still flag their own tracks via
+        // scheduleTrackPrefetchAfterEdit, and a seek never clears an existing flag.
+        //
+        // While playing the flag is kept: completePendingTransportFade's seek case relies on
+        // it to force the flush before fading back in, and the loop wrap seeks on this path
+        // every time round.
+        if (playing && movedPosition) track->prefetchDirty = true;
     }
     rebuildTimer.startTimer(playing ? 1 : kRebuildDebounceMs);
     if (! playing)

@@ -327,6 +327,59 @@ void testStoppedClipMoveRecreatesReadAheadSafely()
     dir.deleteRecursively();
 }
 
+// Regression guard: a *seek* is not a content change, so it must not force the read-ahead to be
+// recreated. Doing so made play() rebuild every BufferingAudioSource and then block the message
+// thread refilling it, heard as a stall on the first beat when starting a timeline selection.
+// The seek must still leave a pending *edit* invalidation intact, which is the property this
+// exercises: edit while stopped (schedules a rebuild), seek away, then play. Audio content can't
+// be asserted offline (no device on CI), so this guards that the path stays crash-free, bounded,
+// and keeps play()'s fail-closed gate contract.
+void testStoppedSeekKeepsReadAheadAndPendingEditRebuild()
+{
+    const auto dir = makeTempDir("stopped-seek-prefetch");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr);
+
+    const auto a = writeTestWav(dir, "a.wav", 4.0);
+    const auto b = writeTestWav(dir, "b.wav", 4.0);
+    require(engine.addClip("t1", "c1", a, 0.0), "addClip c1 should build the owned-buffer chain");
+    require(engine.addClip("t1", "c2", b, 1000.0), "addClip c2 should build the owned-buffer chain");
+    engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
+
+    // Plain stopped seek: no buffer recreation, so this must be quick and safe.
+    const auto tSeek = juce::Time::getMillisecondCounterHiRes();
+    engine.setPositionMs(2000.0);
+    require(juce::Time::getMillisecondCounterHiRes() - tSeek < 1000.0,
+            "a stopped seek must stay bounded (never hang)");
+
+    // Re-seeking to the sample already occupied must also be safe.
+    engine.setPositionMs(2000.0);
+
+    const bool ready = engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    engine.play();
+    require(engine.isPlaying() == ready,
+            "play() after a stopped seek must open the gate iff priming reports ready");
+    engine.stop();
+
+    // An edit schedules a rebuild; a seek landing between the edit and the play must not
+    // discard it, or the play would stream the clip's pre-edit audio.
+    require(engine.setClipOffsetMs("c1", 30000.0), "editing a stopped clip should succeed");
+    engine.setPositionMs(0.0);
+    const auto tPlay = juce::Time::getMillisecondCounterHiRes();
+    const bool readyAfterEdit = engine.primeTracksForPlayback(silverdaw::kPlayPrimeBudgetMs);
+    engine.play();
+    require(juce::Time::getMillisecondCounterHiRes() - tPlay < 3000.0,
+            "play() after an edit and a seek must stay bounded");
+    require(engine.isPlaying() == readyAfterEdit,
+            "play() must stay fail-closed after an edit followed by a seek");
+    engine.stop();
+
+    require(engine.removeClip("c1"), "removeClip c1 should succeed");
+    require(engine.removeClip("c2"), "removeClip c2 should succeed");
+    engine.shutdown();
+    dir.deleteRecursively();
+}
+
 void testOutputKeepAliveFloorIsPostGainAndGated()
 {
     const float threshold = static_cast<float>(silverdaw::kKeepAliveSilenceThreshold);
@@ -1304,6 +1357,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
+    tests.push_back({"Stopped seek keeps the read-ahead and any pending edit rebuild", testStoppedSeekKeepsReadAheadAndPendingEditRebuild});
     tests.push_back({"AudioEngine addClip consumes a pre-opened reader (and fails cleanly on null)", testAudioEngineAddClipConsumesPreOpenedReader});
     tests.push_back({"AudioEngine reclaims retired playback snapshots", testAudioEngineReclaimsRetiredPlaybackSnapshots});
     tests.push_back({"OutputKeepAlive floor is post-gain and transport-gated", testOutputKeepAliveFloorIsPostGainAndGated});

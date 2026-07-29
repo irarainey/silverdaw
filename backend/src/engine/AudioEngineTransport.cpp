@@ -20,6 +20,7 @@ void AudioEngine::play()
     master.cancelScrub();
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
+    const auto primeStart = juce::Time::getMillisecondCounterHiRes();
     flushAllDirtyRebuildsSync();
 
     if (! primeTracksForPlayback(kPlayPrimeBudgetMs))
@@ -31,6 +32,10 @@ void AudioEngine::play()
                                  ") — gate kept closed to avoid a silent first play");
         return;
     }
+    // Message-thread time spent rebuilding and refilling read-ahead buffers before the gate
+    // opens. Near zero when a prior seek settle left them warm; anything above a few ms is
+    // heard as a stall on the first beat, so it is logged to make that measurable.
+    const double primeMs = juce::Time::getMillisecondCounterHiRes() - primeStart;
 
     // On a sleep-prone (USB) endpoint, MasterClockSource runs a short audio-thread wake pre-roll
     // here (it emits the louder wake burst without advancing the transport) so the DAC's auto-mute
@@ -43,7 +48,7 @@ void AudioEngine::play()
     updateTimelineLoopTimer();
     silverdaw::log::info("engine", "play (tracks=" + juce::String(static_cast<int>(tracks.size())) +
                                        " pos=" + juce::String(master.getPositionSamples()) +
-                                       " wakePreroll=" +
+                                       " primeMs=" + juce::String(primeMs, 1) + " wakePreroll=" +
                                        (outputKeepAlive.isKeepAwakeEnabled() ? "on" : "off") + ")");
 }
 

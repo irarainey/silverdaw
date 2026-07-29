@@ -20,6 +20,7 @@
 - Restarting playback shortly after stopping no longer begins with a brief silence and a stalled playhead.
 - Closing the timeline part-way through dragging a group of clips no longer collapses every later edit into a single undo step.
 - The end of a scratch performance is now always reported to the timeline, instead of occasionally being missed.
+- Starting playback of a timeline selection no longer briefly stalls on the first beat.
 
 ## 1.4.1
 
