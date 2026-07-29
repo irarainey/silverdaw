@@ -39,6 +39,13 @@ files:
   - resources/icons/**
   - node_modules/**
   - package.json
+  # Dependency pruning is by package, not by file, so a production dependency
+  # that publishes its own test suite ships it too (pixi.js → ismobilejs is the
+  # current example). None of it is reachable at runtime, so it is dead weight
+  # in the installer and extra source for a scanner to walk. Exclusions are
+  # scoped to `node_modules` so they can never reach Silverdaw's own `out/`.
+  - '!node_modules/**/{__tests__,test,tests,spec,__mocks__}/**'
+  - '!node_modules/**/*.{spec,test}.{js,ts,mjs,cjs}'
 
 # The JUCE backend lives outside the renderer bundle. Build it Release first
 # (see scripts/Build-Release.ps1, which uses its own `backend/build-release/`

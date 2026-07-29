@@ -73,8 +73,15 @@ to `DECISIONS.md` in the same change.
 
 ## CHANGELOG entries
 
-- One short, high-level sentence per entry describing the **user-facing**
-  change — not its cause, mechanism, or implementation.
+`CHANGELOG.md` is a **repo-level** log read from a developer's perspective: it
+records every key change to the codebase, not only the ones a user would notice.
+Engineering-only work — a new test tier, a build or tooling change, a
+dependency swap — earns an entry when it is a key change in its own right.
+
+- One short, high-level sentence per entry describing **what changed** — not its
+  cause, mechanism, or implementation.
+- Lead with the observable effect. For user-facing work that is the behaviour a
+  user sees; for engineering-only work it is the capability the repository gains.
 - No trailing explanations, parentheticals, em-dash clauses, or "because…"
   detail. If a reader needs the why, it belongs in a code comment, `docs/`, or
   an ADR.

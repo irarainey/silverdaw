@@ -18,7 +18,9 @@ import {
 } from '@/lib/stems/stemSeparationFlow'
 import { clearStemSeparationState, snapshotStemSeparationState } from '@/lib/stemSeparationState'
 
-const sendMock = vi.fn()
+// `send` returns false when the bridge is down; the flow now treats that as a
+// dispatch failure, so the default mock has to report success.
+const sendMock = vi.fn((..._args: unknown[]): boolean => true)
 vi.mock('@/lib/bridgeService', () => ({ send: (...args: unknown[]) => sendMock(...args) }))
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() } }))
 
@@ -218,6 +220,9 @@ function packsInstallOnEnsure(): void {
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  // clearAllMocks keeps implementations, so restore the "bridge connected" default
+  // that the failed-dispatch test overrides.
+  sendMock.mockImplementation(() => true)
   clearStemSeparationState()
   cancelStemSelection()
   cancelModelFlow()
@@ -500,6 +505,21 @@ describe('stemSeparationFlow', () => {
     expect(snapshotStemSeparationState()?.jobId).toBe('job-123')
     // The default path uses the RoFormer packs, not the htdemucs backup.
     expect(api.ensureStemModel).not.toHaveBeenCalled()
+  })
+
+  it('clears the job and reports an error when the dispatch send fails', async () => {
+    // Regression: the job and its progress state are opened before the send. If the
+    // bridge is down no progress or completion envelope will ever arrive, so the panel
+    // would sit at 0% until the app restarts and cancelling only sends a second doomed
+    // envelope.
+    sendMock.mockImplementation((...args: unknown[]) => args[0] !== 'STEM_SEPARATE')
+
+    await startClipSeparation()
+
+    expect(sendMock).toHaveBeenCalledWith('STEM_SEPARATE', FULL_DISPATCH)
+    expect(forgetStemJob).toHaveBeenCalledWith('job-123')
+    expect(snapshotStemSeparationState()).toBeNull()
+    expect(pushError).toHaveBeenCalledOnce()
   })
 
   it('does not dispatch a second separation while one is already in progress', async () => {

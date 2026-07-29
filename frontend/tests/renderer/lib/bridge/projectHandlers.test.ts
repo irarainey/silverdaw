@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
+import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
@@ -111,5 +112,38 @@ describe('project bridge handlers', () => {
     projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
 
     expect(editor.isOpen).toBe(true)
+  })
+
+  it('keeps a pending start-screen action locked through the initial boot snapshot', () => {
+    // The boot snapshot is what releases an action deferred until the engine is
+    // ready, so clearing the lock on it would unlock the start screen in the very
+    // tick the action fires — letting a second click replace the first.
+    const app = useAppStore()
+    app.beginProjectAction()
+
+    projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
+
+    expect(app.projectActionPending).toBe(true)
+  })
+
+  it('releases a pending start-screen action once the requested project replaces state', () => {
+    const app = useAppStore()
+    app.beginProjectAction()
+
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, reset: true })
+
+    expect(app.projectActionPending).toBe(false)
+  })
+
+  it('releases a pending start-screen action when the load fails', () => {
+    const app = useAppStore()
+    app.beginProjectAction()
+
+    projectBridgeHandlers.PROJECT_LOAD_FAILED({
+      filePath: 'C:\\projects\\Broken.silverdaw',
+      error: 'Unreadable project file'
+    })
+
+    expect(app.projectActionPending).toBe(false)
   })
 })

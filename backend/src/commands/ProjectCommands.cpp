@@ -167,6 +167,28 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         }
     }
 
+    // Adopt the chosen file's basename BEFORE serialising, so the name the user
+    // picked is the name that reaches disk. Renaming after the write left the file
+    // holding "Untitled" while the session showed the new name, and the markClean()
+    // below then settled that mismatch permanently — the project reopened as
+    // "Untitled" and the chosen name was lost for good.
+    //
+    // Only a first save or an explicit Save As may do this, because only those put
+    // the user in front of a dialog naming the file. A plain Ctrl+S must never
+    // rename an existing project: projects saved before 1.4.2 all carry the default
+    // name, and rewriting those on an ordinary save would silently relabel a user's
+    // back catalogue.
+    const auto previousName = projectState.getName();
+    if ((wasUnsaved || isSaveAs) && previousName == silverdaw::ProjectState::kDefaultName)
+    {
+        // Only the default project name follows the chosen file basename.
+        const auto stem = juce::File(filePath).getFileNameWithoutExtension();
+        if (stem.isNotEmpty())
+        {
+            projectState.setName(stem);
+        }
+    }
+
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();
     p->setProperty("filePath", filePath);
@@ -178,17 +200,13 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     if (result.wasOk())
     {
         session.currentPath = filePath;
-        // Only the default project name follows the chosen file basename.
-        if (projectState.getName() == silverdaw::ProjectState::kDefaultName)
-        {
-            const auto stem = juce::File(filePath).getFileNameWithoutExtension();
-            if (stem.isNotEmpty())
-            {
-                projectState.setName(stem);
-            }
-        }
         // markClean emits PROJECT_DIRTY(false).
         projectState.markClean();
+    }
+    else if (projectState.getName() != previousName)
+    {
+        // A failed save must not leave the project named after a file it is not in.
+        projectState.setName(previousName);
     }
     bridge.broadcast("PROJECT_SAVED", juce::var(p));
     silverdaw::log::info("project",

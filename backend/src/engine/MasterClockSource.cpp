@@ -70,7 +70,11 @@ void MasterClockSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
 
     if (playStartPending.exchange(false, std::memory_order_acq_rel))
     {
-        if (keepAlive.isKeepAwakeEnabled())
+        // Only rouse a genuinely cold endpoint. A warm amp (real audio played within the
+        // warm window) is already awake, so bursting into it just adds an audible
+        // start-of-play hiss and needlessly delays the downbeat by the pre-roll. Mirrors
+        // PreviewMetronomeSource, which already applies this rule.
+        if (keepAlive.isKeepAwakeEnabled() && ! keepAlive.isWarm())
         {
             wakePrerollRemaining = prerollSamples;
             keepAlive.armWakeBurst();

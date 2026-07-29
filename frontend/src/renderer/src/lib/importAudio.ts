@@ -14,6 +14,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
 import { saveProjectMedia, getProjectMedia } from '@/lib/library/projectMedia'
+import { runInUndoGroupAsync } from '@/lib/undo/undoGroup'
 
 function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
   if (!detectedKey) return metadata
@@ -61,16 +62,19 @@ export async function importDroppedAudioFiles(files: readonly File[]): Promise<L
 
   library.beginImportBatch(paths.length)
   const imported = new Map<string, LibraryItem>()
-  for (const path of paths) {
-    const opened = await window.silverdaw.readAudioFile(path)
-    if (!opened) {
-      library.noteImportFinished()
-      continue
+  // One drop is one user action, however many files it carried.
+  await runInUndoGroupAsync('Import audio', async () => {
+    for (const path of paths) {
+      const opened = await window.silverdaw.readAudioFile(path)
+      if (!opened) {
+        library.noteImportFinished()
+        continue
+      }
+      const itemId = await importAudioIntoLibrary(opened)
+      const item = itemId ? library.getItem(itemId) : undefined
+      if (item) imported.set(item.id, item)
     }
-    const itemId = await importAudioIntoLibrary(opened)
-    const item = itemId ? library.getItem(itemId) : undefined
-    if (item) imported.set(item.id, item)
-  }
+  })
 
   return Array.from(imported.values())
 }
@@ -147,9 +151,13 @@ export async function openAndImportAudioFilesIntoLibrary(): Promise<void> {
   }
   // Track batch progress as one status-bar operation.
   library.beginImportBatch(opened.length)
-  for (const file of opened) {
-    await importAudioIntoLibrary(file)
-  }
+  // Choosing several files is one user action, so the whole batch is one undo
+  // step. Opened after the dialog and the sample-rate prompt have both closed.
+  await runInUndoGroupAsync('Import audio', async () => {
+    for (const file of opened) {
+      await importAudioIntoLibrary(file)
+    }
+  })
 }
 
 /** Map a library item to the placement payload `addClipFromLibrary` expects, so
@@ -234,19 +242,24 @@ export async function importAudioIntoTrack(
   // Self-batch so per-track imports still show progress.
   library.beginImportBatch(1)
 
-  // Reuse the library import path so decode, peaks, metadata, temp WAV, and warp stay aligned.
-  const itemId = await importAudioIntoLibrary(opened)
-  if (!itemId) return null
-  const audio = library.getItem(itemId)
-  if (!audio) return null
+  // Adding the library item and placing its clip are two undoable sends, but one
+  // user action, so they fold into a single transaction. The group opens only
+  // once the file dialog has closed — never around the dialog itself.
+  return runInUndoGroupAsync('Import audio', async () => {
+    // Reuse the library import path so decode, peaks, metadata, temp WAV, and warp stay aligned.
+    const itemId = await importAudioIntoLibrary(opened)
+    if (!itemId) return null
+    const audio = library.getItem(itemId)
+    if (!audio) return null
 
-  // Reuse drag/drop placement so warp, collision, and library-clip handling match.
-  log.info(
-    'import',
-    `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +
-      `variableTempo=${audio.variableTempo ?? false} kind=${audio.kind ?? 'audio'}`
-  )
-  return project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), resolvedStartMs)
+    // Reuse drag/drop placement so warp, collision, and library-clip handling match.
+    log.info(
+      'import',
+      `importAudioIntoTrack → addClipFromLibrary itemId=${audio.id} bpm=${audio.bpm ?? 'undef'} ` +
+        `variableTempo=${audio.variableTempo ?? false} kind=${audio.kind ?? 'audio'}`
+    )
+    return project.addClipFromLibrary(trackId, libraryItemToClipPlacement(audio), resolvedStartMs)
+  })
 }
 
 /** Add an opened file to the library, de-duping by path and always draining import progress. */

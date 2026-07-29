@@ -1,19 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { importAudioIntoLibrary } from '@/lib/importAudio'
+import { importAudioIntoLibrary, importAudioIntoTrack } from '@/lib/importAudio'
+import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
 
 const mocks = vi.hoisted(() => ({
   decodeAudioToPeaks: vi.fn(),
   detectMusicalKey: vi.fn(),
   probeAudioFile: vi.fn(),
+  send: vi.fn(),
   addItem: vi.fn(() => 'stem-item'),
   setItemChannelPeaks: vi.fn(),
   setItemMetadata: vi.fn(),
   beginImport: vi.fn(() => 'import-1'),
+  beginImportBatch: vi.fn(),
+  getItem: vi.fn(),
   finishImport: vi.fn(),
   markImportAnalyzing: vi.fn(),
   noteImportFinished: vi.fn(),
   saveProjectMedia: vi.fn(),
-  getProjectMedia: vi.fn()
+  getProjectMedia: vi.fn(),
+  addClipFromLibrary: vi.fn(() => 'clip-1')
 }))
 
 vi.mock('@/lib/audioDecode', () => ({
@@ -21,7 +27,7 @@ vi.mock('@/lib/audioDecode', () => ({
   detectMusicalKey: mocks.detectMusicalKey
 }))
 vi.mock('@/lib/bridgeService', () => ({
-  send: vi.fn(),
+  send: mocks.send,
   probeAudioFile: mocks.probeAudioFile
 }))
 vi.mock('@/lib/log', () => ({
@@ -41,6 +47,8 @@ vi.mock('@/stores/libraryStore', () => ({
     items: [],
     byId: { source: { id: 'source', mediaId: 'media-1' } },
     beginImport: mocks.beginImport,
+    beginImportBatch: mocks.beginImportBatch,
+    getItem: mocks.getItem,
     finishImport: mocks.finishImport,
     addItem: mocks.addItem,
     setItemChannelPeaks: mocks.setItemChannelPeaks,
@@ -107,3 +115,81 @@ describe('importAudioIntoLibrary generated audio', () => {
     expect(mocks.setItemMetadata).toHaveBeenCalledWith('stem-item', inheritedMetadata)
   })
 })
+
+describe('importAudioIntoTrack undo grouping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.decodeAudioToPeaks.mockResolvedValue({
+      durationMs: 100,
+      sampleRate: 48000,
+      channelCount: 1,
+      peaks: new Float32Array([0, 1]),
+      channelPeaks: [],
+      peaksPerSecond: 100,
+      channels: [new Float32Array([0, 1])]
+    })
+    mocks.getItem.mockReturnValue({ id: 'stem-item', filePath: 'C:\\a.wav', durationMs: 100 })
+    mocks.probeAudioFile.mockResolvedValue({ ok: false })
+    vi.mocked(useProjectStore).mockReturnValue({
+      addClipFromLibrary: mocks.addClipFromLibrary
+    } as unknown as ReturnType<typeof useProjectStore>)
+    vi.mocked(useTransportStore).mockReturnValue({ positionMs: 0 } as unknown as ReturnType<
+      typeof useTransportStore
+    >)
+    vi.stubGlobal('window', {
+      silverdaw: {
+        openAudioFile: vi.fn(async () => ({
+          filePath: 'C:\\a.wav',
+          fileName: 'a.wav',
+          data: new ArrayBuffer(8)
+        })),
+        readAudioMetadata: vi.fn(async () => null),
+        writeTempWav: vi.fn()
+      }
+    })
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'new-media') })
+  })
+
+  // Importing onto a track is one user action but several undoable sends (the
+  // library item, then the clip). Without an explicit bracket the backend records
+  // one transaction per send, so the user's first Ctrl+Z appears to do nothing.
+  it('brackets the whole import in a single undo group', async () => {
+    await importAudioIntoTrack('track-1')
+
+    const types = mocks.send.mock.calls.map(([type]) => type as string)
+    expect(types.at(0)).toBe('EDIT_GROUP_BEGIN')
+    expect(types.at(-1)).toBe('EDIT_GROUP_END')
+    // Exactly one bracket: a second would be a second undo step.
+    expect(types.filter((t) => t === 'EDIT_GROUP_BEGIN')).toHaveLength(1)
+    expect(types.filter((t) => t === 'EDIT_GROUP_END')).toHaveLength(1)
+
+    expect(mocks.send).toHaveBeenNthCalledWith(1, 'EDIT_GROUP_BEGIN', { label: 'Import audio' })
+    // The clip is placed inside the bracket, not after it closes.
+    expect(mocks.addClipFromLibrary).toHaveBeenCalledTimes(1)
+  })
+
+  // The group must not be open while a modal file dialog is up, or anything the
+  // user does before choosing a file would be folded into this transaction.
+  it('opens the group only after the file dialog resolves', async () => {
+    await importAudioIntoTrack('track-1')
+
+    expect(window.silverdaw.openAudioFile).toHaveBeenCalledTimes(1)
+    const dialogOrder = vi.mocked(window.silverdaw.openAudioFile).mock.invocationCallOrder[0] ?? 0
+    const groupOrder = mocks.send.mock.invocationCallOrder[0] ?? 0
+    expect(dialogOrder).toBeGreaterThan(0)
+    expect(groupOrder).toBeGreaterThan(dialogOrder)
+  })
+
+  it('sends no group at all when the dialog is cancelled', async () => {
+    vi.mocked(window.silverdaw.openAudioFile).mockResolvedValue(
+      null as unknown as Awaited<ReturnType<typeof window.silverdaw.openAudioFile>>
+    )
+
+    await importAudioIntoTrack('track-1')
+
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.addClipFromLibrary).not.toHaveBeenCalled()
+  })
+})
+
+

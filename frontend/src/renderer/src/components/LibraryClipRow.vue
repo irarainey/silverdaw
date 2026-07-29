@@ -39,6 +39,8 @@ const inUsePillClass = computed(
 <template>
   <div
     draggable="true"
+    data-testid="library-item"
+    :data-library-item-name="props.displayTitle(props.item)"
     :class="props.rowClass"
     @dragstart="(e) => emit('dragStart', e, props.item)"
     @dragend="emit('dragEnd')"

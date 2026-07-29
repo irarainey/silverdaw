@@ -72,6 +72,14 @@ export const importActions = {
       // project grid may still be the stale pre-seed tempo. `alignClipToBarGrid`
       // itself skips simple samples, locked clips, tempo mismatches, and warped
       // clips are excluded here.
+      //
+      // This lands as its own undo step, separate from the import that triggered
+      // it, and that is deliberate. Alignment is a distinct behaviour the user
+      // opts into via `alignClipsToGridOnAnalysis`, so it stays independently
+      // undoable: someone who leaves it on can drop the snap without also
+      // dropping the import. Don't fold it into the import's group — it fires
+      // asynchronously once analysis returns, so doing so would mean holding an
+      // undo group open across arbitrary background work.
       if (bpm > 0 && align && useUiStore().alignClipsToGridOnAnalysis) {
         this.alignItemClipsToGrid(itemId)
         gridAlignPendingItemIds.add(itemId)

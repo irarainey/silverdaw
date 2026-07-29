@@ -157,6 +157,57 @@ describe('useTransportSkip', () => {
     expect(transport.positionMs).toBe(1000)
   })
 
+  it('does not re-seek when the playhead is already parked on the range start', () => {
+    // Finishing a range drag already seeks to the range start, which leaves the engine
+    // settling a warm read-ahead buffer. Repeating the seek here would flag every track
+    // dirty again and force the play that follows to rebuild and refill inline, stalling
+    // the first beat.
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.isPlaying = false
+    transport.audioState = 'ready'
+    transport.positionMs = 1000
+    ui.setTimelineSelection({ startMs: 1000, endMs: 3000 })
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 1000 })
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.positionMs).toBe(1000)
+  })
+
+  it('treats a sample-quantised playhead as already on the range start', () => {
+    // The engine rounds every seek to a whole sample and reports that back, so a playhead
+    // parked exactly where we asked still reads back a fraction of a sample out.
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.isPlaying = false
+    transport.audioState = 'ready'
+    transport.positionMs = 1000.0113
+    ui.setTimelineSelection({ startMs: 1000, endMs: 3000 })
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 1000 })
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PLAY')
+  })
+
+  it('still seeks when the playhead sits just off the range start', () => {
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.isPlaying = false
+    transport.audioState = 'ready'
+    transport.positionMs = 1002
+    ui.setTimelineSelection({ startMs: 1000, endMs: 3000 })
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 1000 })
+  })
+
   it('does not start playback while no output device is available', () => {
     const transport = useTransportStore()
     transport.audioState = 'no_device'

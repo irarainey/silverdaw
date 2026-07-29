@@ -99,10 +99,10 @@ type StartupRecoveryData = {
   recoverableEntries: RecoverableEntry[]
 }
 let startupRecoveryPrefetch: Promise<StartupRecoveryData> | null = null
-// A project open requested before `bridgeReady` (e.g. a fast click on the startup
-// picker): the latest requested path, plus the single watcher that fires it once the
-// bridge is ready. Coalesced so rapid clicks resolve to one load of the last choice.
-let deferredOpenPath: string | null = null
+// A project action requested before `bridgeReady` (e.g. a fast click on the start
+// screen): the latest deferred step, plus the single watcher that fires it once the
+// engine is ready. Coalesced so rapid clicks resolve to the last thing asked for.
+let deferredProjectAction: (() => void) | null = null
 let stopDeferredOpen: (() => void) | null = null
 
 // Missing-file relink, per-project audio-output reconciliation, and the
@@ -138,7 +138,7 @@ onMounted(() => {
   unsubscribeMenu = window.silverdaw.onMenuAction(handleMenuAction)
   // Warm-launch file hand-offs arrive from the single-instance lock.
   unsubscribeOpenFromPath = window.silverdaw.onOpenProjectFromPath((filePath) => {
-    void openProjectByPath(filePath)
+    openProjectByPath(filePath)
   })
   // Backend supervisor status drives startup fast-fail + the engine-recovery overlay.
   unsubscribeBackendStatus = window.silverdaw.onBackendStatus(handleBackendStatus)
@@ -318,7 +318,7 @@ function finishStartupFlow(): void {
 /** Open a cold-launch path now if the engine is ready, else once it becomes ready. */
 function openProjectWhenBridgeReady(filePath: string): void {
   // `openProjectByPath` now defers until `bridgeReady` itself, so just route through it.
-  void openProjectByPath(filePath)
+  openProjectByPath(filePath)
 }
 
 function onRecoveryRestored(): void {
@@ -338,44 +338,80 @@ function onRecoveryDiscarded(projectId: string): void {
   if (recoveryEntries.value.length === 0) onRecoveryClose()
 }
 
-/** Open `.silverdaw` hand-offs through the same guard as File > Open. */
-async function openProjectByPath(filePath: string): Promise<void> {
-  if (!filePath) return
-  if (!transport.bridgeReady) {
-    // The startup picker (and a cold-launch path) can surface as soon as the WebSocket
-    // handshake lands, which is BEFORE `bridgeReady` — the backend opens the audio device
-    // and emits the first PROJECT_STATE only after the bridge is already serving. A click
-    // in that window must NOT be dropped; defer the open until the bridge is ready (the
-    // same contract the cold-launch path used) instead of silently ignoring it. Rapid
-    // clicks coalesce onto the latest path behind a single watcher.
-    deferredOpenPath = filePath
-    if (stopDeferredOpen === null) {
-      log.info('app', `deferring open ${filePath} until bridge ready`)
-      stopDeferredOpen = watch(
-        () => transport.bridgeReady,
-        (ready) => {
-          if (!ready) return
-          stopDeferredOpen?.()
-          stopDeferredOpen = null
-          const next = deferredOpenPath
-          deferredOpenPath = null
-          if (next) void openProjectByPath(next)
-        }
-      )
-    }
+/**
+ * Run a project action now, or once the engine is ready to accept instructions.
+ *
+ * The start screen's buttons surface as soon as the WebSocket handshake lands, which
+ * is BEFORE `bridgeReady` — the backend opens the audio device and emits the first
+ * PROJECT_STATE only after the bridge is already serving. Nothing may be sent to the
+ * engine in that window, but a click in it must not be silently dropped either, so
+ * the action is held until the engine is ready. The first choice wins: the start
+ * screen locks its buttons while one is pending, so a second click cannot discard
+ * work the user has already done (such as picking a file in the open dialog).
+ */
+function whenBridgeReady(run: () => void): void {
+  if (transport.bridgeReady) {
+    run()
     return
   }
-  guardAgainstUnsavedChanges(async () => {
-    try {
-      await window.silverdaw.prepareProjectOpen(filePath)
-      project.requestLoad(filePath)
-      // PROJECT_STATE hides StartupScreen without exposing the empty timeline.
-    } catch (err) {
-      appStore.finishRecentProjectOpen()
-      log.warn('project', `prepareProjectOpen failed: ${String(err)}`)
-      notifications.pushError(`Could not open project: ${String(err)}`)
-    }
-  })
+  if (deferredProjectAction !== null) {
+    // First choice wins. The start screen locks its buttons while an action is
+    // pending, so this is defence in depth for any other route into the window.
+    log.info('app', 'ignoring project action; one is already waiting for the engine')
+    return
+  }
+  deferredProjectAction = run
+  if (stopDeferredOpen === null) {
+    log.info('app', 'deferring project action until bridge ready')
+    stopDeferredOpen = watch(
+      () => transport.bridgeReady,
+      (ready) => {
+        if (!ready) return
+        stopDeferredOpen?.()
+        stopDeferredOpen = null
+        const next = deferredProjectAction
+        deferredProjectAction = null
+        next?.()
+      }
+    )
+  }
+}
+
+/** Seed the allow-list, then ask the engine to load. Assumes the bridge is ready. */
+async function loadProjectPath(filePath: string): Promise<void> {
+  try {
+    await window.silverdaw.prepareProjectOpen(filePath)
+    project.requestLoad(filePath)
+    // PROJECT_STATE hides StartupScreen without exposing the empty timeline.
+  } catch (err) {
+    appStore.finishRecentProjectOpen()
+    appStore.finishProjectAction()
+    log.warn('project', `prepareProjectOpen failed: ${String(err)}`)
+    notifications.pushError(`Could not open project: ${String(err)}`)
+  }
+}
+
+/** Open `.silverdaw` hand-offs through the same guard as File > Open. */
+function openProjectByPath(filePath: string): void {
+  if (!filePath) return
+  // Guard once the bridge is ready, never before: the prompt's Save button cannot
+  // complete a save while the engine is still coming up.
+  whenBridgeReady(() => guardAgainstUnsavedChanges(() => loadProjectPath(filePath)))
+}
+
+/**
+ * Load a path the user has already chosen from the File > Open picker.
+ *
+ * That flow runs the unsaved-changes guard before showing the picker, so this must
+ * not guard again — a second prompt would reappear after Discard, which leaves the
+ * project dirty by design.
+ */
+function openChosenProjectPath(filePath: string): void {
+  if (!filePath) return
+  // The user has committed to a file, so lock the start screen behind that choice
+  // for as long as it takes the engine to become ready and load it.
+  appStore.beginProjectAction()
+  whenBridgeReady(() => void loadProjectPath(filePath))
 }
 
 /** Open a recent project, dropping stale MRU entries before loading. */
@@ -402,12 +438,15 @@ async function openRecentPath(filePath: string): Promise<void> {
     notifications.pushError(`Recent project file no longer exists: ${filePath}`)
     return
   }
-  void openProjectByPath(filePath)
+  openProjectByPath(filePath)
 }
 
 function onStartScreenNew(): void {
-  // Empty new projects need explicit start-screen dismissal.
-  appStore.dismissStartScreen()
+  // No eager dismissal: the dispatcher dismisses once the new project is actually
+  // requested, so an early click leaves the start screen up rather than dropping the
+  // user on a bare timeline with no project behind it. Locking the buttons meanwhile
+  // means this first choice is the one that follows through.
+  appStore.beginProjectAction()
   handleMenuAction('file.newProject')
 }
 
@@ -478,7 +517,9 @@ const { handleMenuAction } = useAppMenuActions({
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isInteractionBlocked,
-  openRecentPath
+  openRecentPath,
+  openChosenProjectPath,
+  whenEngineReady: whenBridgeReady
 })
 </script>
 

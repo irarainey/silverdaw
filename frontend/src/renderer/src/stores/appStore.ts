@@ -17,6 +17,13 @@ interface AppState {
   startScreenDismissed: boolean
   /** Recent project selected while the startup screen waits for the engine or load result. */
   openingRecentProjectPath: string | null
+  /**
+   * A New Project or Open Project action chosen on the start screen and not yet
+   * resolved — including while it waits for the engine to accept instructions. The
+   * start screen locks its buttons on this so the first choice follows through
+   * instead of being replaced by a second click.
+   */
+  projectActionPending: boolean
   hydrated: boolean
 }
 
@@ -31,6 +38,7 @@ export const useAppStore = defineStore('app', {
     startupFlowComplete: false,
     startScreenDismissed: false,
     openingRecentProjectPath: null,
+    projectActionPending: false,
     hydrated: false
   }),
 
@@ -93,6 +101,14 @@ export const useAppStore = defineStore('app', {
 
     finishRecentProjectOpen(): void {
       this.openingRecentProjectPath = null
+    },
+
+    beginProjectAction(): void {
+      this.projectActionPending = true
+    },
+
+    finishProjectAction(): void {
+      this.projectActionPending = false
     },
 
     markStartupFlowComplete(): void {

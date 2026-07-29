@@ -592,7 +592,8 @@ async function dispatchSeparation(
       log.info('stems', `skipped dispatch for abandoned preparation jobId=${jobId}`)
       return
     }
-    sendBridge('STEM_SEPARATE', {
+    if (
+      !sendBridge('STEM_SEPARATE', {
       jobId,
       sourceItemId: target.sourceItemId,
       clipId: target.clipId,
@@ -614,7 +615,19 @@ async function dispatchSeparation(
       // Per-run vocal dereverb (chosen in the picker, not persisted). Sent with its
       // strength only when the user enabled it for a vocals run.
       ...(dereverb ? { dereverb: true, dereverbStrength: dereverb } : {})
-    })
+      })
+    ) {
+      // The job and its progress state were opened before the send. If the
+      // envelope never reaches the engine no progress or completion will ever
+      // arrive, so the panel would sit at 0% until the app restarts — and
+      // cancelling only sends a second doomed envelope. Same cleanup as the
+      // preparation-failure path below.
+      forgetStemJob(jobId)
+      clearStemSeparationState()
+      notifications.pushError('Could not start stem separation — the audio engine is not connected.')
+      log.error('stems', `dispatch failed: bridge rejected STEM_SEPARATE jobId=${jobId}`)
+      return
+    }
     log.info(
       'stem-perf',
       `dispatch job=${jobId} preparationMs=${(performance.now() - preparationStarted).toFixed(1)}`

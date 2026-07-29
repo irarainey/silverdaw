@@ -18,6 +18,7 @@
 #include "ProjectFile.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
+#include "ClipCommands.h"
 #include "UndoCommands.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
@@ -1116,6 +1117,42 @@ void testVariableTempoAnalysisAppliesPendingAutoWarp()
                 "late auto-warp should use project BPM divided by representative source BPM");
 }
 
+void testClipSetWarpRejectsMalformedTempoRatio()
+{
+    // Regression: a wrong-typed tempoRatio used to be raw-cast to 0.0, which
+    // setClipWarp clamps to the 0.25 floor and persists — silently baking a 4x
+    // time-stretch into the saved project that the user cannot explain or undo.
+    // The strict reader must ignore the bad field and leave the ratio untouched.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 8000.0, 48000, 2),
+            "library item should add");
+    require(state.addTrack("track"), "track should add");
+    require(state.addClip("track", "clip", "src", 0.0, 8000.0), "clip should add");
+
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("clipId", "clip");
+    obj->setProperty("tempoRatio", "not-a-number");
+    const juce::var payload(obj);
+
+    silverdaw::handleClipSetWarp(payload, engine, state, bridge);
+
+    bool found = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId != "clip") return;
+            found = true;
+            // The old raw cast produced 0.0, which the 0.25..4.0 clamp turned into a
+            // pinned 0.25 — a durable 4x stretch written into the project file.
+            require(!info.tempoRatioPinned,
+                    "a malformed tempoRatio must not pin a tempo ratio on the clip");
+        });
+    require(found, "clip should remain in project state");
+}
+
 void testProjectStateManualTempoIsUndoableAndDirtying()
 {
     // A hand-set tempo/beat grid is a deliberate user edit: unlike automatic
@@ -1247,6 +1284,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
                      testStemInheritsSynthesisedGridPastLastBeat});
     tests.push_back({"Variable-tempo analysis applies pending auto-warp",
                      testVariableTempoAnalysisAppliesPendingAutoWarp});
+    tests.push_back({"CLIP_SET_WARP rejects a malformed tempoRatio",
+                     testClipSetWarpRejectsMalformedTempoRatio});
 }
 
 } // namespace silverdaw::tests

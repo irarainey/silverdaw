@@ -45,4 +45,38 @@ describe('listProjectImportSources', () => {
       { path: join(root, 'Broken.silverdaw'), name: 'Broken' }
     ])
   })
+
+  it('falls back to the file name for projects still carrying the default name', async () => {
+    // Releases before 1.4.2 adopted the chosen filename only after serialising, so
+    // every project they saved stores "Untitled". Showing the stored name would
+    // render a user's whole back catalogue as identical, unusable rows.
+    const root = await makeProjectsRoot()
+    await mkdir(join(root, 'Summer Mashup'))
+    await writeFile(
+      join(root, 'Summer Mashup', 'Summer Mashup.silverdaw'),
+      JSON.stringify({ project: { name: 'Untitled' } })
+    )
+    await mkdir(join(root, 'Winter Mashup'))
+    await writeFile(
+      join(root, 'Winter Mashup', 'Winter Mashup.silverdaw'),
+      JSON.stringify({ project: { name: 'Untitled' } })
+    )
+
+    await expect(listProjectImportSources(root)).resolves.toEqual([
+      { path: join(root, 'Summer Mashup', 'Summer Mashup.silverdaw'), name: 'Summer Mashup' },
+      { path: join(root, 'Winter Mashup', 'Winter Mashup.silverdaw'), name: 'Winter Mashup' }
+    ])
+  })
+
+  it('keeps a name the user actually chose', async () => {
+    const root = await makeProjectsRoot()
+    await writeFile(
+      join(root, 'OnDisk.silverdaw'),
+      JSON.stringify({ project: { name: 'Chosen Name' } })
+    )
+
+    await expect(listProjectImportSources(root)).resolves.toEqual([
+      { path: join(root, 'OnDisk.silverdaw'), name: 'Chosen Name' }
+    ])
+  })
 })

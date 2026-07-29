@@ -29,7 +29,9 @@ const transport = useTransportStore()
 
 const MAX_STARTUP_RECENTS = 3
 const recents = computed(() => app.recentProjects.slice(0, MAX_STARTUP_RECENTS))
-const projectOpenPending = computed(() => app.openingRecentProjectPath !== null)
+const projectOpenPending = computed(
+  () => app.openingRecentProjectPath !== null || app.projectActionPending
+)
 
 // Initial-connect timeout swaps the screen to focused error mode.
 const bridgeFailed = computed(() => transport.bridgeFailureMessage !== null)

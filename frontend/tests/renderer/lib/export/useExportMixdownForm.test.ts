@@ -3,11 +3,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { useExportMixdownForm } from '@/lib/export/useExportMixdownForm'
 import { useProjectStore } from '@/stores/projectStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 
-const sendMock = vi.hoisted(() => vi.fn())
+// `send` returns false when the bridge is down; onSave now treats that as a
+// failure to start, so the default mock has to report success.
+const sendMock = vi.hoisted(() => vi.fn((..._args: unknown[]): boolean => true))
 const beginMixdownMock = vi.hoisted(() => vi.fn())
+const clearMixdownMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bridgeService', () => ({ send: sendMock }))
-vi.mock('@/lib/mixdownState', () => ({ beginMixdown: beginMixdownMock }))
+vi.mock('@/lib/mixdownState', () => ({
+  beginMixdown: beginMixdownMock,
+  clearMixdownState: clearMixdownMock
+}))
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))
@@ -32,7 +39,10 @@ describe('useExportMixdownForm', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     sendMock.mockClear()
+    // mockClear keeps a previously set return value, so restore the success default.
+    sendMock.mockReturnValue(true)
     beginMixdownMock.mockClear()
+    clearMixdownMock.mockClear()
     requestCloseMock.mockClear()
     resolveMixdownDefaultPath.mockClear()
     confirmMixdownOverwrite.mockClear()
@@ -177,6 +187,29 @@ describe('useExportMixdownForm', () => {
       dither: true
     })
     expect(requestCloseMock).toHaveBeenCalledOnce()
+  })
+
+  it('onSave clears progress and reports an error when the send fails', async () => {
+    // Regression: `beginMixdown` opens the progress dialog before the send. If the bridge is
+    // down the send returns false and no backend DONE/FAILED envelope will ever arrive, so
+    // without this cleanup the user is left staring at a progress dialog stuck at 0%.
+    sendMock.mockReturnValue(false)
+    const notifications = useNotificationsStore()
+    // Spy rather than inspect `items`: `push` deliberately drops the toast when the
+    // user has disabled notifications, but the error path must still run.
+    const pushError = vi.spyOn(notifications, 'pushError')
+    const f = makeForm()
+    f.draftOutputPath.value = 'C:/out/song.wav'
+    f.draftDurationText.value = '0:30'
+
+    f.onSave()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(clearMixdownMock).toHaveBeenCalledOnce()
+    expect(pushError).toHaveBeenCalledOnce()
+    // The dialog stays open so the user can retry once the engine reconnects.
+    expect(requestCloseMock).not.toHaveBeenCalled()
   })
 
   it('onSave stays open when the overwrite confirmation is declined', async () => {

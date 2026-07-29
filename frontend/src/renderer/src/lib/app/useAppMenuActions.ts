@@ -37,6 +37,16 @@ export interface AppMenuActionsDeps {
   // True when a modal/dialog owns the keyboard; suppresses menu-zoom.
   isModalOpen: () => boolean
   openRecentPath: (filePath: string) => void | Promise<void>
+  /**
+   * Load a path chosen from the File > Open picker, deferring until the engine is
+   * ready. The caller has already run the unsaved-changes guard.
+   */
+  openChosenProjectPath: (filePath: string) => void
+  /**
+   * Run a project action once the engine is ready to accept instructions, or now if
+   * it already is. Nothing may reach the engine before its first PROJECT_STATE.
+   */
+  whenEngineReady: (run: () => void) => void
 }
 
 export interface AppMenuActions {
@@ -89,6 +99,34 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       deps.guardAgainstUnsavedChanges(() => window.silverdaw.menuAction('app.confirmClose'))
       return
     }
+    // Sits above the bridge-ready drop below on purpose. The startup screen enables
+    // its picker as soon as the handshake lands, which is before `bridgeReady`, so
+    // dropping here would silently ignore an early click. Choosing a file needs no
+    // engine, and `openChosenProjectPath` defers the load itself if one is still
+    // coming up.
+    if (action === 'file.openProject') {
+      deps.guardAgainstUnsavedChanges(() => {
+        void window.silverdaw.chooseProjectOpen().then((filePath) => {
+          if (!filePath) return
+          deps.openChosenProjectPath(filePath)
+        })
+      })
+      return
+    }
+    // Sits above the bridge-ready drop below, for the same reason as file.openProject:
+    // the start screen offers this before the engine is ready. Dropping it left the
+    // user on the engine's boot state, which is NOT what PROJECT_NEW builds — notably
+    // it keeps master volume at unity instead of the headroom a new project expects.
+    // `whenEngineReady` holds the request rather than sending it early.
+    if (action === 'file.newProject') {
+      deps.whenEngineReady(() => {
+        deps.guardAgainstUnsavedChanges(() => {
+          project.requestNewProject()
+          appStore.dismissStartScreen()
+        })
+      })
+      return
+    }
     // Drop accelerators until initial PROJECT_STATE reconciles local state.
     if (!transport.bridgeReady) {
       log.warn('menu', `dropped ${action} (bridge not ready)`)
@@ -135,24 +173,6 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'file.exportMixdown') {
       deps.exportMixdownOpen.value = true
-      return
-    }
-    if (action === 'file.newProject') {
-      deps.guardAgainstUnsavedChanges(() => {
-        project.requestNewProject()
-        appStore.dismissStartScreen()
-      })
-      return
-    }
-    if (action === 'file.openProject') {
-      deps.guardAgainstUnsavedChanges(() => {
-        void window.silverdaw.chooseProjectOpen().then(async (filePath) => {
-          if (!filePath) return
-          // Seed the allow-list before PROJECT_STATE triggers metadata refresh.
-          await window.silverdaw.prepareProjectOpen(filePath)
-          project.requestLoad(filePath)
-        })
-      })
       return
     }
     // Recent-project actions encode the appStore MRU index.

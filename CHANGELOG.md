@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.2
+
+### Added
+
+- An automated end-to-end test suite now exercises Silverdaw's main workflows before each release, guarding against regressions in everyday use.
+
+### Fixed
+
+- Choosing Open Project on the start screen now works even when clicked the instant the buttons appear, instead of doing nothing.
+- Starting a new project the instant the start screen appears now applies the correct default master volume instead of leaving it at full.
+- Saving a new project now stores the name it was saved under, so it reopens with that name instead of "Untitled".
+- The Import from Project picker now always lists projects by their file name.
+- Importing audio is now a single undo step. Importing onto a track previously recorded the library item and the clip as separate steps, so the first Undo appeared to do nothing, and importing several files at once needed one Undo per file.
+- Saving a clip to the library is now a single undo step instead of three.
+- Exporting a mixdown or separating stems while the audio engine is unavailable now reports the problem, instead of leaving a progress dialog stuck at 0% that could only be cleared by restarting.
+- Preferences are no longer lost if Silverdaw stops unexpectedly while saving them.
+- The Clip Editor no longer opens blank until Silverdaw is restarted, which could happen after closing it again very quickly.
+- Restarting playback shortly after stopping no longer begins with a brief silence and a stalled playhead.
+- Closing the timeline part-way through dragging a group of clips no longer collapses every later edit into a single undo step.
+- The end of a scratch performance is now always reported to the timeline, instead of occasionally being missed.
+- Starting playback of a timeline selection no longer briefly stalls on the first beat.
+
 ## 1.4.1
 
 ### Added
