@@ -4,7 +4,7 @@
 
 ### Added
 
-- Automated end-to-end tests now cover launching Silverdaw, importing audio, saving and reopening a project, opening an existing project from disk or the recent list, recovering unsaved work from an autosave, importing onto a track without altering the source audio, exporting a mixdown, the unsaved-changes prompt, upgrading a preferences file written by an earlier release, importing assets from another saved project, undoing and redoing an edit across a restart, and recovering after the audio engine is killed mid-session.
+- An automated end-to-end test suite now exercises Silverdaw's main workflows before each release, guarding against regressions in everyday use.
 
 ### Fixed
 

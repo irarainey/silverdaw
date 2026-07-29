@@ -75,6 +75,16 @@ export interface LaunchOptions {
    * this when the round trip through the file is the point.
    */
   preferences?: Record<string, unknown>
+  /**
+   * Relaunch onto an existing profile instead of a fresh one. Only for a spec
+   * that restarts the *same* installation: everything already in the directory
+   * is left exactly as the previous session wrote it, which is the point — a
+   * fresh profile could never show that settings survive a restart.
+   *
+   * Seeding options are rejected alongside it rather than silently ignored,
+   * because seeding would overwrite the very file under test.
+   */
+  userDataDir?: string
 }
 
 /** Writes the seeded autosave buckets into a profile before the app reads them. */
@@ -121,22 +131,31 @@ export async function launchSilverdaw(options: LaunchOptions = {}): Promise<Silv
 
   // Tracked as well as removed in `closeSilverdaw`, so a run that crashes before
   // teardown still gets swept up rather than leaving a profile behind.
-  const userDataDir = makeTrackedTempDir('profile')
+  const reusedProfile = options.userDataDir !== undefined
+  if (reusedProfile && (options.preferences || options.recentProjects || options.autosaveBuckets)) {
+    throw new Error('launchSilverdaw: cannot seed a reused profile — seeding would overwrite it')
+  }
+  const userDataDir = options.userDataDir ?? makeTrackedTempDir('profile')
 
   // Seed the throwaway profile with diagnostic logging on. The renderer mirrors
   // its logger to the console only when this is enabled, and that narrative is
   // often the sole trace of a silently-swallowed cross-process failure. Written
   // as a partial document on purpose: the loader merges it over the defaults,
   // so this also exercises the read-old/write-latest preferences path.
-  writeFileSync(
-    join(userDataDir, 'preferences.json'),
-    JSON.stringify({
-      debug: { loggingEnabled: true },
-      ...(options.recentProjects ? { recentProjects: options.recentProjects } : {}),
-      ...(options.preferences ?? {})
-    }),
-    'utf8'
-  )
+  //
+  // Skipped on a relaunch: the previous session's `preferences.json` is the
+  // artefact under test, and it already carries this flag forward.
+  if (!reusedProfile) {
+    writeFileSync(
+      join(userDataDir, 'preferences.json'),
+      JSON.stringify({
+        debug: { loggingEnabled: true },
+        ...(options.recentProjects ? { recentProjects: options.recentProjects } : {}),
+        ...(options.preferences ?? {})
+      }),
+      'utf8'
+    )
+  }
 
   if (options.autosaveBuckets?.length) {
     seedAutosaveBuckets(userDataDir, options.autosaveBuckets)
@@ -250,17 +269,35 @@ export async function readDiagnosticsLogs(
  *
  * Safe to call twice: a round-trip journey closes its first app mid-test to
  * prove the saved file survives a real restart, and teardown then sweeps up.
+ *
+ * Pass `keepProfile` when the *same* profile is about to be relaunched. Without
+ * it the directory goes, Electron silently recreates an empty one, and the next
+ * session reads defaults — which looks exactly like the persistence bug such a
+ * journey exists to catch. The profile is a tracked temp dir either way, so
+ * teardown still removes it.
  */
-export async function closeSilverdaw(app: SilverdawApp): Promise<void> {
+export async function closeSilverdaw(
+  app: SilverdawApp,
+  options: { keepProfile?: boolean } = {}
+): Promise<void> {
   await app.electronApp
     .evaluate(({ BrowserWindow }) => {
       for (const win of BrowserWindow.getAllWindows()) win.destroy()
     })
     .catch(() => undefined)
   await app.electronApp.close().catch(() => undefined)
+  if (options.keepProfile) return
   // Ignore residual file locks so a cleanup failure can never mask the real
-  // assertion result.
-  rmSync(app.userDataDir, { recursive: true, force: true, maxRetries: 3 })
+  // assertion result. `force` only swallows a missing directory, not the EPERM
+  // Windows raises while another process still holds a handle — which a restart
+  // journey provokes by design, since teardown reaches the first app's profile
+  // while the second session is still running on it. The profile is a tracked
+  // temp dir, so the end-of-run sweep collects whatever is left here.
+  try {
+    rmSync(app.userDataDir, { recursive: true, force: true, maxRetries: 3 })
+  } catch {
+    // Deliberately swallowed; see above.
+  }
 }
 
 /**

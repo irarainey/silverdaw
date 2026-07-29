@@ -57,6 +57,14 @@ Each launch gets a throwaway `--user-data-dir`, which isolates preferences,
 recent projects, and Electron's single-instance lock. A spec can therefore run
 while an ordinary Silverdaw is open.
 
+A journey that has to prove state survives a restart is the one exception: pass
+`launchApp({ userDataDir })` to relaunch onto the profile the previous session
+wrote, and close that session with `closeSilverdaw(app, { keepProfile: true })`.
+Without the flag the directory is deleted, Electron silently recreates an empty
+one, and the second session reads defaults — indistinguishable from the
+persistence bug the journey exists to catch. Seeding options are rejected on a
+reused profile, since seeding would overwrite the file under test.
+
 `~/Silverdaw/{Logs,Diagnostics,Models}` is **not** isolated. Electron resolves
 `home` from the Windows shell API rather than the environment, so it cannot be
 redirected from a test. Accepted as a known gap: these directories are
