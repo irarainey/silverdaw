@@ -5,6 +5,10 @@
 _In development. Entries are added under `Added` / `Changed` / `Fixed` as
 changes land._
 
+### Added
+
+- Edit ▸ Clear All Markers removes every marker in the project in one step.
+
 ### Fixed
 
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.

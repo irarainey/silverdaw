@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { send as sendBridge } from '@/lib/bridgeService'
 import { useProjectStore } from '@/stores/projectStore'
 
 vi.mock('@/lib/bridgeService', () => ({ send: vi.fn(() => true) }))
@@ -9,7 +10,10 @@ vi.mock('@/lib/log', () => ({
 vi.mock('@/lib/audioDecode', () => ({ PEAKS_PER_SECOND: 200, decodeAudioToPeaks: vi.fn() }))
 
 describe('projectStore — marker toggling', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(sendBridge).mockClear()
+  })
 
   it('removes an off-grid marker the playhead is parked on', () => {
     const project = useProjectStore()
@@ -45,5 +49,40 @@ describe('projectStore — marker toggling', () => {
     expect(project.markers).toHaveLength(0)
     expect(project.toggleMarkerAt(700)).toBe(true)
     expect(project.markers[0]!.positionMs).toBe(700)
+  })
+})
+
+describe('projectStore — clearAllMarkers', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(sendBridge).mockClear()
+  })
+
+  it('removes every marker as a single undo step', () => {
+    const project = useProjectStore()
+    project.markers = [
+      { id: 'm1', positionMs: 0 },
+      { id: 'm2', positionMs: 500 },
+      { id: 'm3', positionMs: 1500 }
+    ]
+
+    expect(project.clearAllMarkers()).toBe(3)
+    expect(project.markers).toHaveLength(0)
+
+    const types = vi.mocked(sendBridge).mock.calls.map((call) => call[0])
+    expect(types).toEqual([
+      'EDIT_GROUP_BEGIN',
+      'PROJECT_MARKER_REMOVE',
+      'PROJECT_MARKER_REMOVE',
+      'PROJECT_MARKER_REMOVE',
+      'EDIT_GROUP_END'
+    ])
+  })
+
+  it('is a no-op with no markers', () => {
+    const project = useProjectStore()
+
+    expect(project.clearAllMarkers()).toBe(0)
+    expect(sendBridge).not.toHaveBeenCalled()
   })
 })

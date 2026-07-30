@@ -1120,7 +1120,11 @@ timeline range and Loop Selection state. All are round-tripped through
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
-added, moved or removed.
+added, moved or removed. `M` toggles a marker at the playhead: a new marker snaps
+to the sub-beat grid, but removal matches the raw playhead position first, so a
+marker left off-grid by a tempo change still toggles off where it sits.
+**Edit ▸ Clear All Markers** removes every marker as one undo step (greyed out
+when the project has none).
 
 `metronomeEnabled` toggles an audible click track that the backend
 [`Metronome`](../backend/src/engine/Metronome.h) renders in time with the project

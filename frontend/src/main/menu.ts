@@ -91,6 +91,9 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'edit.cropProjectToLastClip':
       wc.send(IPC.menu.action, action)
       break
+    case 'edit.clearAllMarkers':
+      wc.send(IPC.menu.action, action)
+      break
 
     // View
     case 'view.zoomIn':

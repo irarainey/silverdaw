@@ -74,6 +74,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
       removeClip: vi.fn(),
       splitClipAt: vi.fn(),
       setProjectLengthMs: vi.fn(),
+      clearAllMarkers: vi.fn(() => 0),
       saveAndWait: vi.fn(() => Promise.resolve({ ok: true }))
     },
     transport: { bridgeReady: overrides.bridgeReady ?? true, positionMs: 0 },
@@ -356,6 +357,24 @@ describe('useAppMenuActions — handleMenuAction', () => {
     handleMenuAction('edit.cropProjectToLastClip')
     expect(h.stores.project.setProjectLengthMs).toHaveBeenCalledWith(4000)
     expect(sendBridge).toHaveBeenCalledWith('PROJECT_SET_LENGTH', { lengthMs: 4000 })
+  })
+
+  it('clearAllMarkers with no markers notifies instead of clearing', () => {
+    const h = makeDeps()
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('edit.clearAllMarkers')
+    expect(h.stores.project.clearAllMarkers).toHaveBeenCalledTimes(1)
+    expect(h.stores.notifications.pushInfo).toHaveBeenCalledWith(
+      'No markers on the timeline — nothing to clear.'
+    )
+  })
+
+  it('clearAllMarkers reports how many markers were cleared', () => {
+    const h = makeDeps()
+    ;(h.stores.project.clearAllMarkers as ReturnType<typeof vi.fn>).mockReturnValue(3)
+    const { handleMenuAction } = useAppMenuActions(h.deps)
+    handleMenuAction('edit.clearAllMarkers')
+    expect(h.stores.notifications.pushInfo).toHaveBeenCalledWith('3 markers cleared.')
   })
 
   it('file.clearRecentProjects clears the MRU', () => {
