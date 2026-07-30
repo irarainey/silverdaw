@@ -1,13 +1,15 @@
 # Changelog
 
-## 1.5.0
-
-_In development. Entries are added under `Added` / `Changed` / `Fixed` as
-changes land._
+## 1.4.3
 
 ### Added
 
 - Edit ▸ Clear All Markers removes every marker in the project in one step.
+
+### Changed
+
+- Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear; the graphics canvas is prepared while the start screen is up.
+- Updated the graphics library to its latest release.
 
 ### Fixed
 

@@ -160,7 +160,13 @@ onMounted(() => {
   if (pinia) startAutosaveManager(pinia)
   // A2: warm the large Pixi/WebGL chunk in the background now (after first paint, while the
   // startup screen is shown) so the first timeline/clip-editor draw doesn't pay the import cost.
-  warmPixi()
+  // Once the chunk is in, mount the timeline behind the opaque startup overlay: creating the
+  // WebGL context costs far more than the import (~800 ms on a cold GPU), and paying it while
+  // the user is still choosing a project is what keeps the canvas from appearing a beat after
+  // the track headers on open.
+  void warmPixi().then(() => {
+    timelinePrewarmed.value = true
+  })
 })
 
 // ─── Global keyboard shortcuts ────────────────────────────────────────────
@@ -478,6 +484,11 @@ const startupScreenVisible = computed(
     library.items.length === 0
 )
 
+// The timeline mounts as soon as the Pixi chunk has warmed, even while the startup screen is
+// still up: the overlay is opaque and covers the whole window, so the canvas builds unseen.
+// Falls back to mounting on dismissal so a project opened before warming completes still works.
+const timelinePrewarmed = ref(false)
+
 useMidiControllerActions(isInteractionBlocked)
 
 onBeforeUnmount(() => {
@@ -530,7 +541,7 @@ const { handleMenuAction } = useAppMenuActions({
     <TransportBar />
 
     <main class="min-h-0 flex-1 overflow-hidden">
-      <TimelineView v-if="!startupScreenVisible" />
+      <TimelineView v-if="timelinePrewarmed || !startupScreenVisible" />
     </main>
 
     <LibraryPanel

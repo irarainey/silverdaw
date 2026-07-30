@@ -3100,10 +3100,28 @@ tracks. Values are stored in native units; only the lane renderer normalises to 
 
 ## Rendering performance
 
-The timeline component stays unmounted while the startup screen is visible.
-PixiJS can warm through the shared idle loader during that time, but WebGL
-application creation, observers, and the first timeline draw wait until the
-user starts or opens a project.
+The timeline component mounts as soon as the shared idle loader has warmed the
+PixiJS chunk, while the startup screen is still up. The startup overlay is
+opaque and covers the whole window, so the WebGL application is created,
+observers attach, and the first (empty) draw happens unseen. That matters
+because creating the WebGL context contends badly with project-load work on the
+main thread: paid at open time it measured ~800 ms — long enough for the Vue
+track headers to appear a beat before the canvas — while paid against an idle
+startup screen it is ~50 ms, leaving the first paint after a project snapshot in
+the tens of milliseconds. `App.vue` falls back to mounting on startup-screen
+dismissal, so a project opened before warming completes still gets a timeline.
+
+Both Pixi surfaces (timeline and Clip Editor) init through
+`pixiInitOptions()` in `pixiLoader.ts`. It pins `preference: 'webgl'`: Pixi 8
+otherwise probes for WebGPU first, and the renderer is WebGL-only by design —
+the CSP shader patch targets WebGL and context loss is handled through the
+`webglcontextlost` event, which a WebGPU renderer would never raise.
+
+Two `perf` log lines make this measurable in a user's `renderer.log`:
+`pixi+webgl ready in Xms (import wait=…, webgl init=…)` splits chunk load from
+context creation, and `[perf.timeline] first paint after project snapshot in
+Xms` spans the gap between a project snapshot landing in the store and the
+canvas actually drawing it.
 
 Dialogs that cannot appear during startup use async Vue components and
 parent-level visibility gates. Their component code is requested only when the

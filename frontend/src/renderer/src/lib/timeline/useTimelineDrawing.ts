@@ -6,6 +6,7 @@
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
+import { reportFirstTimelinePaint } from '@/lib/timeline/projectOpenPaintProbe'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
@@ -245,6 +246,7 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
       meshes: waveStats.meshes
     }
     ++redrawCount
+    reportFirstTimelinePaint(lastRedrawStats.rows, lastRedrawStats.clips)
     if (redrawCount % 20 === 0 || lastRedrawStats.durationMs > 16) {
       log.debug(
         'perf.timeline',

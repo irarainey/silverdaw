@@ -26,6 +26,7 @@ import {
 } from './projectSnapshotLibrary'
 import { filePathKey } from './projectHelpers'
 import { applyProjectTracks, finalizeProjectSnapshot } from './projectSnapshotTracks'
+import { markProjectSnapshotApplied } from '@/lib/timeline/projectOpenPaintProbe'
 
 export type { SnapshotTarget } from './projectSnapshotTypes'
 
@@ -73,5 +74,6 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
     }
   }
   finalizeProjectSnapshot(target, snapshot, clipsNeedingPeaks, pendingProjectLengthMs)
+  markProjectSnapshotApplied(snapshot.name ?? 'Untitled')
   refreshProjectLibraryMedia(mediaRefreshes, backendPeakFilePaths)
 }
