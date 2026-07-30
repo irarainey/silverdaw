@@ -564,6 +564,47 @@ describe('projectStore', () => {
     })
   })
 
+  it('keeps a trimmed project length when a track is added afterwards', () => {
+    const project = useProjectStore()
+    project.addTrack()
+    project.setProjectLengthMs(268_000)
+    expect(project.durationMs).toBe(268_000)
+
+    // Regression: a new track used to be created at the 5-minute default, which
+    // stretched a trimmed project back out (Add Track, stem separation, split).
+    project.addTrack()
+
+    expect(project.tracks[1]?.lengthMs).toBe(268_000)
+    expect(project.durationMs).toBe(268_000)
+  })
+
+  it('still extends a trimmed project to fit a longer clip', () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    project.setProjectLengthMs(268_000)
+
+    const longClipMs = 290_000
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'lib-longer',
+        filePath: 'C:\\audio\\longer.wav',
+        fileName: 'longer.wav',
+        durationMs: longClipMs,
+        sampleRate: 48_000,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      },
+      0
+    )
+
+    expect(clipId).toBeTruthy()
+    expect(project.durationMs).toBe(longClipMs)
+    // And a track added after that inherits the grown length, not the 5-min default.
+    project.addTrack()
+    expect(project.durationMs).toBe(longClipMs)
+  })
+
   it('does not shorten project length below the longest clip end', () => {
     const project = useProjectStore()
     const trackId = project.addTrack()

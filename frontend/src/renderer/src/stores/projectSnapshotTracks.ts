@@ -12,9 +12,9 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useUiStore } from '@/stores/uiStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import {
-  DEFAULT_TRACK_LENGTH_MS,
   MAX_TRACK_VOLUME,
-  TRACK_PALETTE
+  TRACK_PALETTE,
+  newTrackLengthMs
 } from './projectTypes'
 import type { AutomationParamId, AutomationPoint, Clip } from './projectTypes'
 import { filePathToDisplayName, hydrateBeatRepeats, hydrateTransitions } from './projectHelpers'
@@ -59,7 +59,7 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
         volume: Math.min(MAX_TRACK_VOLUME, Math.max(0, t.gain)),
         colorIndex:
           typeof t.colorIndex === 'number' ? t.colorIndex : index % TRACK_PALETTE.length,
-        lengthMs: DEFAULT_TRACK_LENGTH_MS,
+        lengthMs: newTrackLengthMs(target.tracks),
         heightPx: typeof t.heightPx === 'number' && t.heightPx > 0 ? t.heightPx : undefined,
         toneBassDb: typeof t.toneBassDb === 'number' && t.toneBassDb !== 0 ? t.toneBassDb : undefined,
         toneMidDb: typeof t.toneMidDb === 'number' && t.toneMidDb !== 0 ? t.toneMidDb : undefined,

@@ -9,7 +9,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { sanitizeBreakpoints, flatCurve, insertBreakpoint, moveBreakpoint } from '@/lib/automation/breakpoints'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import type { AutomationParamId, AutomationPoint, ProjectState, Track } from './projectTypes'
-import { DEFAULT_TRACK_LENGTH_MS, MAX_TRACK_VOLUME, TRACK_PALETTE } from './projectTypes'
+import { MAX_TRACK_VOLUME, TRACK_PALETTE, newTrackLengthMs } from './projectTypes'
 
 type TrackActionsThis = ProjectState & {
   pushAllGains(): void
@@ -71,7 +71,7 @@ export const trackActions = {
         soloed: false,
         volume: 1.0,
         colorIndex: this.tracks.length % TRACK_PALETTE.length,
-        lengthMs: DEFAULT_TRACK_LENGTH_MS
+        lengthMs: newTrackLengthMs(this.tracks)
       }
       this.tracks.push(track)
       this.timelineRevision++

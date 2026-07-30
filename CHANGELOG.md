@@ -11,6 +11,7 @@ changes land._
 
 ### Fixed
 
+- Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
 
 ## 1.4.2
