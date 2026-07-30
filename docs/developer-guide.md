@@ -2220,7 +2220,7 @@ a **WARP** pill in the editor header; the playhead is shown at the start of
 the view immediately, and Play becomes available once the backend preview
 voice is ready. Auditioning runs through an independent **backend preview
 voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_ENVELOPE` /
+`PREVIEW_SEEK` / `PREVIEW_SET_LOOP` / `PREVIEW_SET_WARP` / `PREVIEW_SET_ENVELOPE` /
 `PREVIEW_SET_REVERSED` / `PREVIEW_SET_METRONOME` / `PREVIEW_SET_BRAKE` /
 `PREVIEW_SET_BACKSPIN` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
 `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
@@ -2228,6 +2228,15 @@ monotonic `generation` counter on the preview voice means stale events for a
 preview the user has already closed are silently dropped. While playing the
 canvas follows the playhead with the same smooth ease-in catch-up the main
 timeline uses.
+
+The **Loop** toggle arms an engine-side loop window over the active playback
+range — the selection if there is one, otherwise the whole preview window — via
+`PREVIEW_SET_LOOP`, in preview-relative ms. The engine wraps the voice itself on
+a 2 ms poll, exactly as it does for the timeline loop, so the restart is
+seamless; the renderer only scrolls the view back when it sees the playhead jump.
+Bounding playback at the end of a **non**-looped selection stays renderer-side,
+as a one-shot stop is not latency-critical. See
+[ADR 0023](adr/0023-engine-owned-timeline-loop.md).
 
 The dialog is **transactional**. Whenever it opens on an existing clip
 (saved clip library item, linked timeline clip, or unlinked timeline clip)

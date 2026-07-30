@@ -98,6 +98,9 @@ void AudioEngine::unloadPreview()
 {
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
+    // A loop window belongs to the loaded voice; the next load arms its own.
+    previewPlayIntent = false;
+    setPreviewLoop(std::nullopt);
     // Remove the metronome wrapper (the actual mixer input) before tearing down the transport it
     // wraps. removeInputSource synchronises against the audio callback, so no in-flight render can
     // touch the transport afterwards.
@@ -380,12 +383,16 @@ void AudioEngine::playPreview()
     // endpoints skip it and play instantly. This keeps the Clip Editor / preview window on the
     // exact same device rules as timeline playback.
     preview.transportSource->start();
+    previewPlayIntent = true;
+    updatePreviewLoopTimer();
 }
 
 void AudioEngine::pausePreview()
 {
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
+    previewPlayIntent = false;
+    updatePreviewLoopTimer();
     reclaimRetiredPreviewSnapshots();
 }
 
@@ -394,7 +401,42 @@ void AudioEngine::stopPreview()
     if (preview.transportSource == nullptr) return;
     preview.transportSource->stop();
     preview.transportSource->setPosition(0.0);
+    previewPlayIntent = false;
+    updatePreviewLoopTimer();
     reclaimRetiredPreviewSnapshots();
+}
+
+void AudioEngine::setPreviewLoop(std::optional<LoopRange> range)
+{
+    previewLoop = range;
+    updatePreviewLoopTimer();
+}
+
+void AudioEngine::updatePreviewLoopTimer()
+{
+    // The poll also has to run after a natural end-of-window auto-stop, which is how a
+    // loop whose end sits on the window end reaches the wrap — hence the play intent
+    // rather than isPreviewPlaying().
+    if (previewLoop.has_value() && previewPlayIntent)
+        previewLoopTimer.startTimer(kPreviewLoopPollMs);
+    else
+        previewLoopTimer.stopTimer();
+}
+
+// Preview counterpart of wrapTimelineLoopIfDue (ADR 0023): wrap on the engine's own
+// position, with no fade and no bridge round trip. A window end reached as true EOF
+// auto-stops the JUCE transport, so the restart also has to start it again.
+void AudioEngine::wrapPreviewLoopIfDue()
+{
+    if (! previewLoop.has_value() || ! previewPlayIntent || preview.transportSource == nullptr)
+    {
+        updatePreviewLoopTimer();
+        return;
+    }
+    if (! isPreviewFinished() && getPreviewPositionMs() < previewLoop->endMs) return;
+
+    setPreviewPositionMs(previewLoop->startMs);
+    if (! isPreviewPlaying()) preview.transportSource->start();
 }
 
 void AudioEngine::setPreviewPositionMs(double ms)

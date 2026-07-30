@@ -169,6 +169,47 @@ describe('previewStore', () => {
     expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_ENVELOPE', { points })
   })
 
+  it('setLoop sends PREVIEW_SET_LOOP once per distinct window and disarms with null', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 0, 1_000)
+    preview.applyState({
+      libraryItemId: 'lib1',
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 1_000,
+      generation: 1
+    })
+    sendMock.mockClear()
+
+    preview.setLoop({ startMs: 100, endMs: 400 })
+    preview.setLoop({ startMs: 100, endMs: 400 })
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_SET_LOOP', {
+      enabled: true,
+      startMs: 100,
+      endMs: 400
+    })
+    expect(preview.loopEnabled).toBe(true)
+
+    preview.setLoop(null)
+    expect(sendMock).toHaveBeenLastCalledWith('PREVIEW_SET_LOOP', {
+      enabled: false,
+      startMs: 0,
+      endMs: 0
+    })
+    expect(preview.loopEnabled).toBe(false)
+  })
+
+  it('setLoop does nothing while the preview is not loaded', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 0, 1_000)
+    sendMock.mockClear()
+
+    preview.setLoop({ startMs: 0, endMs: 500 })
+
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
   it('applyEnded resets isPlaying without bumping older state', () => {
     const preview = usePreviewStore()
     preview.applyState({

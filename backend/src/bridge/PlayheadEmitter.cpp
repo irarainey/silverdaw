@@ -60,7 +60,9 @@ void PlayheadEmitter::timerCallback()
     const double previewDur = engine.getPreviewDurationMs();
     const bool reachedWindowEnd = previewPlaying && previewDur > 0.0 && previewPos >= previewDur;
     const bool streamFinished = engine.isPreviewFinished();
-    if (reachedWindowEnd || streamFinished)
+    // While a loop window is armed the engine wraps the voice itself (ADR 0023), so the
+    // window end is not an end: stopping here would race the wrap and reintroduce the gap.
+    if (! engine.isPreviewLoopArmed() && (reachedWindowEnd || streamFinished))
     {
         engine.stopPreview();
         auto* endedObj = new juce::DynamicObject();

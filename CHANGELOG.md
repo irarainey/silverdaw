@@ -11,6 +11,7 @@ changes land._
 
 ### Fixed
 
+- Clip Editor loop playback no longer glitches at the loop point — the audio engine now wraps the preview seamlessly, exactly as it already did for timeline loops.
 - Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
 

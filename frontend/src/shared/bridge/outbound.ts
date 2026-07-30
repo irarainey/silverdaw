@@ -622,6 +622,7 @@ export interface BridgeOutboundMap {
   PREVIEW_PAUSE: undefined
   PREVIEW_STOP: undefined
   PREVIEW_SEEK: PreviewSeekPayload
+  PREVIEW_SET_LOOP: PreviewSetLoopPayload
   PREVIEW_SET_WARP: PreviewSetWarpPayload
   PREVIEW_SET_ENVELOPE: PreviewSetEnvelopePayload
   PREVIEW_SET_REVERSED: PreviewSetReversedPayload
@@ -1053,6 +1054,18 @@ export interface PreviewSetReversedPayload {
 }
 
 /**
+ * Arm (or, with `enabled: false`, disarm) the window the preview voice loops while
+ * playing. Positions are preview-relative ms — the same domain as `PREVIEW_SEEK`.
+ * The engine owns the wrap so the restart is seamless; the renderer never seeks to
+ * loop the preview (ADR 0023). No ack.
+ */
+export interface PreviewSetLoopPayload {
+  enabled: boolean
+  startMs: number
+  endMs: number
+}
+
+/**
  * Toggle the Clip Editor metronome and set the beat grid it clicks on (the clip's own BPM + phase
  * anchor). Independent of the main-timeline metronome. The enabled flag is persisted SILENTLY with
  * the project (never dirty, not undoable); the grid values are transient. No ack.
@@ -1267,6 +1280,7 @@ export const bridgeOutboundPayloadKinds: {
   PREVIEW_PAUSE: 'none',
   PREVIEW_STOP: 'none',
   PREVIEW_SEEK: 'payload',
+  PREVIEW_SET_LOOP: 'payload',
   PREVIEW_SET_WARP: 'payload',
   PREVIEW_SET_ENVELOPE: 'payload',
   PREVIEW_SET_REVERSED: 'payload',

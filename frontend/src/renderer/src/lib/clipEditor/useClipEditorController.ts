@@ -321,6 +321,7 @@ export function useClipEditorController(
     pushDraftPreviewBackspin,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
+    syncPreviewLoop,
     loadPreviewForView,
     resetPreviewLoadKey
   } = useClipEditorPreview({
@@ -595,20 +596,22 @@ export function useClipEditorController(
   // Scroll (manual or auto-follow) is repainted by the per-frame rAF loop while the
   // editor is open, so no separate scrollMs watcher is needed.
 
-  // endedCount is the reliable loop restart signal after natural preview end.
+  // The engine owns the preview wrap (ADR 0023), so every input that moves the loop
+  // window has to re-arm it: the toggle, the selection, and the preview window
+  // itself (which changes on crop/zoom-to-selection and on target switch).
   watch(
-    () => preview.endedCount,
-    (n, prev) => {
-      if (n === prev) return
-      if (!editorItem.value) return
-      // Loop the active window (selection or whole preview) for any editor item
-      // when loop is enabled, so standalone library samples loop like clips.
-      const looping = loopEnabled.value
-      if (!looping) return
-      const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
-      preview.seek(startRel)
-      preview.play()
-    }
+    [
+      loopEnabled,
+      () => props.open,
+      () => preview.isLoaded,
+      () => playbackStartMs.value,
+      () => playbackEndMs.value,
+      viewInMs
+    ],
+    () => {
+      syncPreviewLoop()
+    },
+    { immediate: true }
   )
 
   let resizeObserver: ResizeObserver | null = null

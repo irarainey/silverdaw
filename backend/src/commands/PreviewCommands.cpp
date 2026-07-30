@@ -169,6 +169,23 @@ void handlePreviewSetEnvelope(const juce::var& payload, AudioEngine& engine)
     engine.setPreviewEnvelope(points);
 }
 
+void handlePreviewSetLoop(const juce::var& payload, AudioEngine& engine)
+{
+    const bool enabled = static_cast<bool>(payload.getProperty("enabled", false));
+    const double startMs = static_cast<double>(payload.getProperty("startMs", 0.0));
+    const double endMs = static_cast<double>(payload.getProperty("endMs", 0.0));
+    silverdaw::log::info("bridge", "recv PREVIEW_SET_LOOP enabled=" + std::string(enabled ? "1" : "0")
+                                       + " start=" + std::to_string(startMs)
+                                       + " end=" + std::to_string(endMs));
+    // A window that isn't a forward range would wrap on every poll, so it disarms instead.
+    if (! enabled || endMs <= startMs)
+    {
+        engine.setPreviewLoop(std::nullopt);
+        return;
+    }
+    engine.setPreviewLoop(AudioEngine::LoopRange{juce::jmax(0.0, startMs), endMs});
+}
+
 void handlePreviewSetReversed(const juce::var& payload, AudioEngine& engine)
 {
     silverdaw::log::info("bridge", "recv PREVIEW_SET_REVERSED");
