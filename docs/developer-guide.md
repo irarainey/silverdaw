@@ -283,7 +283,12 @@ Silverdaw currently supports the core arrangement workflow:
   Its first division of the mixed track is captured and repeated until the
   region ends. The same **Effects ▸ Beat Repeat** submenu removes a region under
   the pointer.
-  Regions show as a sky overlay and affected clips carry a **REPEAT** badge.
+  Regions show as a sky overlay and the clip that owns a region carries a
+  **REPEAT** badge. Ownership is by widest overlap: a region belongs to the one
+  clip on that track it overlaps most, so a neighbouring clip whose tail runs a
+  few milliseconds past the region's start beat is not badged, and the same
+  attribution drives the region's removal entries in the context menu
+  ([`beatRepeatAttribution.ts`](../frontend/src/renderer/src/lib/timeline/beatRepeatAttribution.ts)).
   Playback and mixdown use the same processor. A seek, timeline discontinuity,
   or region edit clears the capture so playback begins from fresh track audio
   instead of replaying an old slice. Older projects omit the optional region

@@ -78,6 +78,7 @@ function setupMenu(opts: {
     {
       id: opts.clip.trackId,
       name: 'T1',
+      clipIds: [opts.clip.id],
       colorIndex: 5,
       muted: false,
       solo: false,
@@ -352,7 +353,7 @@ describe('useTimelineContextMenu — command dispatch', () => {
     const project = useProjectStore()
     const transport = useTransportStore()
     project.clips = { [clip.id]: clip }
-    project.tracks = [{ id: clip.trackId, beatRepeats: [] } as never]
+    project.tracks = [{ id: clip.trackId, clipIds: [clip.id], beatRepeats: [] } as never]
     transport.bpm = 120
     transport.positionMs = 2_625
     const host = {

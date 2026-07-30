@@ -11,6 +11,7 @@ changes land._
 
 ### Fixed
 
+- The REPEAT badge now appears on the clip a Beat Repeat region actually plays over, instead of on the neighbouring clip whose tail crossed the region's start beat by a few milliseconds.
 - Clip Editor loop playback no longer glitches at the loop point — the audio engine now wraps the preview seamlessly, exactly as it already did for timeline loops.
 - Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.

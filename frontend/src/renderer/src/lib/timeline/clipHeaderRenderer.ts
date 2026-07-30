@@ -4,12 +4,15 @@
 import { type ShallowRef } from 'vue'
 import type { Container, Graphics, Text } from 'pixi.js'
 import {
-  effectiveClipDurationMs,
   isClipTempoWarpActive,
   useProjectStore,
   type Clip,
   type TrackPaletteEntry
 } from '@/stores/projectStore'
+import {
+  beatRepeatRegionsForClip,
+  trackClipBeatSpans
+} from '@/lib/timeline/beatRepeatAttribution'
 import { libraryItemDisplayName, libraryItemShowsLinkBadge, type LibraryItem } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { isWarpPending } from '@/lib/warp'
@@ -93,13 +96,15 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     const SPIN_BADGE_W = hasBackspin ? SPIN_BADGE_FULL_W : 0
     const hasReversed = clip.reversed === true
     const REV_BADGE_W = hasReversed ? REV_BADGE_FULL_W : 0
-    const clipStartBeat = (clip.startMs / 60000) * transport.bpm
-    const clipEndBeat =
-      ((clip.startMs + effectiveClipDurationMs(clip)) / 60000) * transport.bpm
-    const hasBeatRepeat = (project.tracks.find((track) => track.id === clip.trackId)?.beatRepeats ?? [])
-      .some((region) =>
-        region.startBeat < clipEndBeat && region.startBeat + region.lengthBeats > clipStartBeat
-      )
+    const repeatTrack = project.tracks.find((track) => track.id === clip.trackId)
+    const repeatRegions = repeatTrack?.beatRepeats ?? []
+    const hasBeatRepeat =
+      repeatRegions.length > 0 &&
+      beatRepeatRegionsForClip(
+        repeatRegions,
+        clip.id,
+        trackClipBeatSpans(repeatTrack, project.clips, transport.bpm)
+      ).length > 0
     const REPEAT_BADGE_W = hasBeatRepeat ? REPEAT_BADGE_FULL_W : 0
     const BADGE_COUNT =
       (isLinked ? 1 : 0) +
