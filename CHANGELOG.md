@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0
+
+_In development. Entries are added under `Added` / `Changed` / `Fixed` as
+changes land._
+
 ## 1.4.2
 
 ### Added
