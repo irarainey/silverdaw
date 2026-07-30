@@ -331,7 +331,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.stopPropagation()
       const msPerSub = 60_000 / transport.bpm / SUB_BEATS_PER_BEAT
       const snappedMs = Math.max(0, Math.round(transport.positionMs / msPerSub) * msPerSub)
-      project.toggleMarkerAt(snappedMs)
+      // Match on the raw playhead as well as the snapped position: a marker
+      // placed under an earlier tempo no longer sits on the grid, and must
+      // still be removable from the spot it occupies.
+      project.toggleMarkerAt(transport.positionMs, snappedMs)
       return
     }
 

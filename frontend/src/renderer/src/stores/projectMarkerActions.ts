@@ -12,10 +12,16 @@ interface MarkerActionsThis extends ProjectState {
   removeMarker(markerId: string): boolean
 }
 
+// Markers are stored on whole milliseconds while the playhead is a float the
+// engine quantises to a sample, so anything inside this slop is "the same spot".
+const MARKER_MATCH_TOLERANCE_MS = 1
+
 export const markerActions = {
   addMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
     const safePositionMs = Math.max(0, Math.floor(positionMs))
-    const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
+    const existing = this.markers.find(
+      (marker) => Math.abs(marker.positionMs - safePositionMs) < MARKER_MATCH_TOLERANCE_MS
+    )
     if (existing) return false
 
     const marker: Marker = {
@@ -36,11 +42,20 @@ export const markerActions = {
     return true
   },
 
-  toggleMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
+  // `positionMs` is where the user actually is (the raw playhead); `addPositionMs`
+  // is where a new marker should land, which callers snap to the grid. Removal
+  // matches either, so a marker that a tempo change left off-grid still toggles
+  // off from its own position instead of adding a second marker beside it.
+  toggleMarkerAt(this: MarkerActionsThis, positionMs: number, addPositionMs = positionMs): boolean {
     const safePositionMs = Math.max(0, Math.round(positionMs))
-    const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
+    const safeAddPositionMs = Math.max(0, Math.round(addPositionMs))
+    const isNear = (marker: Marker, target: number): boolean =>
+      Math.abs(marker.positionMs - target) < MARKER_MATCH_TOLERANCE_MS
+    const existing =
+      this.markers.find((marker) => isNear(marker, safePositionMs)) ??
+      this.markers.find((marker) => isNear(marker, safeAddPositionMs))
     if (existing) return this.removeMarker(existing.id)
-    return this.addMarkerAt(safePositionMs)
+    return this.addMarkerAt(safeAddPositionMs)
   },
 
   removeMarker(this: MarkerActionsThis, markerId: string): boolean {

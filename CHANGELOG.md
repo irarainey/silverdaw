@@ -5,6 +5,10 @@
 _In development. Entries are added under `Added` / `Changed` / `Fixed` as
 changes land._
 
+### Fixed
+
+- Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
+
 ## 1.4.2
 
 ### Added
