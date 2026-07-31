@@ -10,6 +10,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
+import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -146,45 +147,31 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   }
 
   function firstSourceBeatOffsetMs(item: LibraryItem): number | null {
-    const beats = item.beats
-    const sourceBpm = item.bpm
-    const anchorSec = item.beatAnchorSec ?? beats?.[0]
-    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
-      return null
-    }
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    if (beatSpacingMs <= 0) return null
-    const universalAnchorMs = anchorSec * 1000
-    let firstBeatMs = universalAnchorMs + Math.ceil(-universalAnchorMs / beatSpacingMs) * beatSpacingMs
-    while (firstBeatMs < 0) firstBeatMs += beatSpacingMs
+    const grid = resolveSourceBeatGrid(item, library.byId)
+    if (!grid) return null
+    const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, 0)
     if (firstBeatMs > item.durationMs) return null
     // Project the first beat into timeline time using the warp that will apply on drop.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
-    const sourceIsSimple = libraryItemIsSimple(item, library.byId)
     const willWarpForSnap =
       item.warpEnabled === true ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
         projectHasOtherClips,
         sourceKind: item.kind,
-        sourceIsSimple,
-        sourceBpm,
+        sourceIsSimple: libraryItemIsSimple(item, library.byId),
+        sourceBpm: grid.bpm,
         projectBpm: transport.bpm,
         variableTempo: item.variableTempo
       })
-    const ratio = isWarpActive({
+    const warpInputs = {
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
-      sourceBpm,
+      sourceBpm: grid.bpm,
       projectBpm: transport.bpm
-    })
-      ? effectiveTempoRatio({
-          tempoRatio: item.tempoRatio,
-          sourceBpm,
-          projectBpm: transport.bpm
-        })
-      : 1
+    }
+    const ratio = isWarpActive(warpInputs) ? effectiveTempoRatio(warpInputs) : 1
     return firstBeatMs / ratio
   }
 

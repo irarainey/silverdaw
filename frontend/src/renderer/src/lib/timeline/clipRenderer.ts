@@ -11,7 +11,8 @@ import {
   TRACK_PALETTE,
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
-import { useLibraryStore, libraryItemSourceBpm, libraryItemIsSimple } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
+import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
@@ -516,24 +517,17 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       }
     }
 
-    // Source-global synthetic beat grid keeps split clips phase-aligned.
-    const beats = libItem?.beats
+    // Source-global synthetic beat grid keeps split clips phase-aligned. Resolved
+    // through the shared module so the markers, the drag/nudge snap, the drop snap,
+    // and bar-grid alignment can never disagree about where the beats are.
+    const grid = libItem ? resolveSourceBeatGrid(libItem, library.byId) : null
     const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
-    // Samples suppress synthetic beat markers even if analysis found beats.
-    const treatAsSample = libItem ? libraryItemIsSimple(libItem, library.byId) : false
-    // Prefer regression-derived anchor; older projects fall back to `beats[0]`.
-    const anchorSec = libItem?.beatAnchorSec ?? beats?.[0]
-    if (!treatAsSample && beats && beats.length > 0 && markerSourceBpm && markerSourceBpm > 0 && anchorSec !== undefined && w > 0) {
+    if (grid && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000
       const inMs = clip.inMs
       const outMs = inMs + clip.durationMs
-      const beatSpacingMs = (60 / markerSourceBpm) * 1000
-      const universalAnchorMs = anchorSec * 1000
-      // First synthetic beat at or after `inMs`.
-      let firstBeatMs =
-        universalAnchorMs +
-        Math.ceil((inMs - universalAnchorMs) / beatSpacingMs) * beatSpacingMs
-      while (firstBeatMs < inMs) firstBeatMs += beatSpacingMs
+      const beatSpacingMs = grid.spacingMs
+      const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, inMs)
       const minMarkerSpacingPx = 4
       // Dedicated, stable pooled Graphics (see `markerGraphicsPool`): avoids both
       // the shared-pool slot-shift that corrupted Pixi's batcher (markers silently
@@ -541,11 +535,17 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       const markers = acquireMarkerGraphics(G)
       let drew = 0
       // Stride by whole beats when zoomed out to avoid drawing skipped markers.
+      // Powers of two only: an arbitrary stride (3, 5, 7 …) draws a grid at an
+      // interval that means nothing musically.
       const pxPerBeat = (beatSpacingMs / warpRatio) * pxPerMs
-      const beatStride =
+      const minStride =
         pxPerBeat > 0 ? Math.max(1, Math.ceil(minMarkerSpacingPx / pxPerBeat)) : 1
+      const beatStride = 2 ** Math.ceil(Math.log2(minStride))
       const stepMs = beatSpacingMs * beatStride
-      for (let beatMs = firstBeatMs; beatMs <= outMs; beatMs += stepMs) {
+      // Exclusive end: a beat landing exactly on the clip's out point belongs to
+      // whatever follows, and drawing it would put a marker on the neighbour's
+      // first pixel.
+      for (let beatMs = firstBeatMs; beatMs < outMs; beatMs += stepMs) {
         const offsetInClipMs = beatMs - inMs
         if (offsetInClipMs < 0) continue
         const x = absX + (offsetInClipMs / warpRatio) * pxPerMs

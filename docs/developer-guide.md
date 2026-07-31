@@ -1782,6 +1782,16 @@ This makes them survive a split / duplicate / trim without drifting — both hal
 of a split clip share one coordinate system, so the markers stay in lockstep
 across the split point.
 
+Marker drawing, drag-time snap and keyboard nudge all resolve that grid through a
+single helper, `lib/clip/sourceBeatGrid.ts` — `resolveSourceBeatGrid()` returns
+`{ bpm, spacingMs, anchorMs }` (or `null` when the item is a simple one-shot or has
+no detected beats), and `firstSourceBeatMsAtOrAfter()` walks it. Stems and samples
+resolve their BPM through `libraryItemSourceBpm`, so an item that inherits its
+analysis from its source lands on the same grid its parent does. Never re-derive
+`60_000 / bpm` phase maths at a call site: the three projections used to disagree on
+inherited BPM and on the simple-item gate, which made one-shots snap to a grid they
+never drew.
+
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the project sub-beat, it snaps the first
 source beat inside the clip's window. With the project BPM seeded to the source
