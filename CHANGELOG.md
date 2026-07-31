@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear; the graphics canvas is prepared while the start screen is up.
+- Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear.
 - Updated the graphics library to its latest release.
 
 ### Fixed
@@ -17,7 +17,7 @@
 - A clip no longer draws a stray beat marker on the very first pixel of the clip that follows it.
 - Beat markers on zoomed-out clips now thin out in musical steps (every 2, 4, 8 beats and so on) so the remaining markers stay on meaningful beats.
 - The REPEAT badge now appears on the clip a Beat Repeat region actually plays over, instead of on the neighbouring clip whose tail crossed the region's start beat by a few milliseconds.
-- Clip Editor loop playback no longer glitches at the loop point — the audio engine now wraps the preview seamlessly, exactly as it already did for timeline loops.
+- Clip Editor loop playback no longer glitches at the loop point.
 - Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
 

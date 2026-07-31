@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.4.0" } }
+{ "type": "READY", "payload": { "version": "1.5.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1833,12 +1833,44 @@ add the automated end-to-end tier that found them. No new user-facing concepts.
    rename: every project saved before 1.4.2 carries the default name, and
    renaming on an ordinary save would relabel a user's existing work.
 4. [x] **Playwright end-to-end tier** (`frontend/e2e/`, ADR 0014). Nine journeys
-   drive the packaged Electron build against the real backend: cold launch,
-   dialog stubbing, audio import, save/reopen round trip, new-project defaults,
-   opening an existing project, and the recent-projects list. It asserts on DOM,
+   at this release — the tier has grown since — drive the packaged Electron build
+   against the real backend: cold launch, dialog stubbing, audio import,
+   save/reopen round trip, new-project defaults, opening an existing project, and
+   the recent-projects list. It asserts on DOM,
    the filesystem, and saved project files rather than production test hooks, and
    carries a frozen 1.4.1 project fixture as the backward-compatibility canary.
    It supplements, and does not replace, the Vitest and ctest tiers.
+
+### 1.5.0 - Beat Grid & Marker Correctness *(current release)*
+
+**Goal:** make the beat grid drawn on a clip agree with the grid everything else
+snaps to, and clear the marker, badge, and loop defects that followed from the
+mismatch. No new concepts — every item corrects behaviour that already shipped.
+
+1. [x] **One shared source beat grid.** Clips snap to the same grid as the
+   markers drawn on them, including stem clips and one-shot samples, through a
+   single `sourceBeatGrid` helper rather than each call site deriving its own.
+2. [x] **Marker toggling survives a tempo change.** `M` on a marker that no
+   longer sits on the beat grid after a BPM change removes that marker, instead
+   of adding a second one on the nearest beat and leaving the original stranded.
+3. [x] **Edit ▸ Clear All Markers** removes every marker in the project in one
+   step.
+4. [x] **Clip marker painting fixes.** A clip no longer draws a stray beat marker
+   on the first pixel of the clip that follows it (an exclusive loop end bound),
+   and zoomed-out clips thin their markers in power-of-two steps so the ones that
+   remain still land on musically meaningful beats.
+5. [x] **Beat Repeat badge attribution.** The REPEAT badge appears on the clip the
+   region actually plays over, rather than on a neighbouring clip whose tail
+   crossed the region's start beat by a few milliseconds.
+6. [x] **Seamless Clip Editor loop preview.** The engine owns the preview wrap, as
+   it already did for timeline loops (ADR 0023), so the loop point no longer
+   glitches.
+7. [x] **Adding a track keeps the project length.** Adding a track — including the
+   tracks created by stem separation and channel split — no longer stretches a
+   trimmed project back to the 5-minute default.
+8. [x] **Immediate timeline paint on project open.** The graphics canvas is
+   prepared while the start screen is up, so opening a project draws the timeline
+   at once instead of showing bare track headers for around a second first.
 
 ### Phase 1 — Backend Foundation & Bridge
 

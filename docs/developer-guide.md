@@ -1152,9 +1152,10 @@ likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
 preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
 project's `UndoManager`).
-The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
-dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
-scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
+The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) are written
+through `setNonDirtyRootProperty`, which mirrors the value into `cleanSnapshot` so the
+dirty comparison never sees a delta — zooming, scrolling, or moving the playhead doesn't
+prompt an unsaved-changes dialog. Meaningful
 project edits (BPM, project length, marker add/move/remove, clip add/move/remove/rename,
 gain changes, library import/remove/rename/relink, etc.) still mark the project dirty as
 normal property edits.
