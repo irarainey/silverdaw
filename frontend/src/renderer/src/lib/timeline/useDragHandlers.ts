@@ -542,8 +542,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (draggedMarkerId === null) return
     const pointerMs = pointerToRawMsClamped(e.clientX)
     if (pointerMs === null) return
-    const snap = geometry.msPerSubBeat()
-    const target = Math.max(0, Math.round(pointerMs / snap) * snap)
+    // Alt fine mode, matching clip, trim and playhead drags: markers are placed
+    // at an exact position by the `M` key, so a drag must be able to reach any
+    // position too rather than only grid points.
+    const target = snapTimelineMs(pointerMs, e.altKey)
     project.moveMarker(draggedMarkerId, target)
     onMarkerMoved()
   }

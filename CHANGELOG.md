@@ -8,6 +8,9 @@
 
 ### Changed
 
+- Markers are now placed at the exact playhead position instead of snapping to the nearest beat.
+- Hot-cue marker pads on a MIDI deck now toggle the marker at the playhead, matching the `M` key.
+- Holding `Alt` while dragging a marker now moves it to any position rather than only to grid points.
 - Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear.
 - Updated the graphics library to its latest release.
 

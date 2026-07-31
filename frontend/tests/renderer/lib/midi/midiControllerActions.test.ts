@@ -719,7 +719,7 @@ describe('MIDI controller actions', () => {
     expect(zoom).not.toHaveBeenCalled()
   })
 
-  it('jumps to and deletes chronological marker slots from Hot Cue pads', () => {
+  it('jumps to chronological marker slots from Hot Cue pads and toggles at the playhead', () => {
     seedProject()
     const project = useProjectStore()
     project.markers = [
@@ -749,6 +749,9 @@ describe('MIDI controller actions', () => {
     })
     expect(sendMock).toHaveBeenLastCalledWith('TRANSPORT_SEEK', { positionMs: 3000 })
 
+    // The jump parks the playhead exactly on marker 2, so the toggle pad runs the
+    // same shared action as the keyboard `M` and removes the marker it is on —
+    // regardless of which pad invoked it.
     handleMidiControl({
       deviceIdentifier: 'ddj-rb',
       timestampMs: 3,
@@ -758,8 +761,8 @@ describe('MIDI controller actions', () => {
       pad: 1,
       pressed: true
     })
-    expect(project.markers.map((marker) => marker.id)).toEqual(['late'])
-    expect(sendMock).toHaveBeenLastCalledWith('PROJECT_MARKER_REMOVE', { markerId: 'early' })
+    expect(project.markers.map((marker) => marker.id)).toEqual(['early'])
+    expect(sendMock).toHaveBeenLastCalledWith('PROJECT_MARKER_REMOVE', { markerId: 'late' })
 
     useTransportStore().positionMs = 2000
     handleMidiControl({
@@ -771,7 +774,25 @@ describe('MIDI controller actions', () => {
       pad: 2,
       pressed: true
     })
-    expect(project.markers.map((marker) => marker.positionMs)).toEqual([2000, 3000])
+    expect(project.markers.map((marker) => marker.positionMs)).toEqual([1000, 2000])
+  })
+
+  it('adds a marker at the exact playhead, not the nearest beat', () => {
+    seedProject()
+    const project = useProjectStore()
+    project.markers = [] as unknown as typeof project.markers
+    useTransportStore().positionMs = 2345.6
+
+    handleMidiControl({
+      deviceIdentifier: 'ddj-rb',
+      timestampMs: 1,
+      kind: 'button',
+      control: 'markerToggle',
+      deck: 1,
+      pad: 1,
+      pressed: true
+    })
+    expect(project.markers.map((marker) => marker.positionMs)).toEqual([2346])
   })
 
   it('anchors mixer controls to current values before applying movement', () => {

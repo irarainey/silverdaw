@@ -1129,9 +1129,11 @@ timeline range and Loop Selection state. All are round-tripped through
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
-added, moved or removed. `M` toggles a marker at the playhead: a new marker snaps
-to the sub-beat grid, but removal matches the raw playhead position first, so a
-marker left off-grid by a tempo change still toggles off where it sits.
+added, moved or removed. `M` toggles a marker at the playhead: the marker is placed
+at the exact playhead position rather than snapped to the beat grid, so it always
+sits where the user put it and always toggles off from that same spot. The MIDI
+hot-cue toggle pads run the same `toggleMarkerAt` store action, so both control
+surfaces behave identically.
 **Edit ▸ Clear All Markers** removes every marker as one undo step (greyed out
 when the project has none).
 
@@ -2886,7 +2888,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
 | Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
 | Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
-| `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
+| `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid; hold `Alt` as well for a 1 ms fine drag to any position. A move onto an occupied position is refused. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | `Shift` + click on **clip** | Extend the selection to a range of clips on the anchor's track, between the anchor and the clicked clip (ordered by start time). |
 | `Ctrl` + click on **clip** | Toggle that clip in/out of the multi-selection, across tracks. Right-clicking any selected clip opens a dedicated menu (Copy, Cut, Lock, Colour, Duplicate, Delete) that acts on the whole selection; **Delete**, **Ctrl+L** and **Duplicate** also apply to every selected clip as one undo step. **Copy / Cut / Paste** (Ctrl+C/X/V) carry the whole selection — paste drops it at the playhead starting on the selected track, keeping each clip's relative timing and track offset, and is rejected wholesale if any clip wouldn't fit. Dragging any selected clip moves the whole group by a uniform delta (preserving relative offsets, across tracks), applied atomically — the move is refused wholesale if any clip wouldn't fit or one is locked. **Shift + ←/→** (and **Shift+Alt+←/→** for 1 ms) nudge the whole group. A plain click on a selected clip (no drag) collapses back to just that clip. |
@@ -2905,7 +2907,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
 | `Shift` + `←` / `→` | Move the **selected** clip one beat-grid step, snapping its first in-window source beat to the project sub-beat grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
 | `Shift` + `Alt` + `←` / `→` | Nudge the **selected** clip along the timeline at the finest granularity (1 ms, no snap — the keyboard twin of `Alt`+drag). Bump-clamped against neighbours; a burst of nudges folds into one undo step. No-op on a locked clip or with no clip selected. |
-| `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
+| `M` | Toggle a marker at the exact playhead position. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
 | `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |
 | `Home` / `End` | Skip to the start or end of the project and jump the timeline viewport there (the bare-key twin of `Ctrl` + `Shift` + `←` / `→`). |

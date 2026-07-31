@@ -329,12 +329,10 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
       e.preventDefault()
       e.stopPropagation()
-      const msPerSub = 60_000 / transport.bpm / SUB_BEATS_PER_BEAT
-      const snappedMs = Math.max(0, Math.round(transport.positionMs / msPerSub) * msPerSub)
-      // Match on the raw playhead as well as the snapped position: a marker
-      // placed under an earlier tempo no longer sits on the grid, and must
-      // still be removable from the spot it occupies.
-      project.toggleMarkerAt(transport.positionMs, snappedMs)
+      // The playhead is freely positionable, so the marker lands exactly where it
+      // is. Snapping to the beat grid would silently move the marker off the spot
+      // the user chose, and leave markers that a later tempo change stranded.
+      project.toggleMarkerAt(transport.positionMs)
       return
     }
 

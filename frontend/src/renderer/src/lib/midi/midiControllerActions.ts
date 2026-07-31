@@ -366,13 +366,11 @@ export function handleMidiControl(payload: MidiControlPayload): void {
       seekToMarkerIndex(payload.pad - 1, `MIDI Hot Cue ${payload.pad}`)
       break
     case 'markerToggle': {
-      const project = useProjectStore()
-      const marker = project.markers[payload.pad - 1]
-      if (marker) {
-        project.removeMarker(marker.id)
-      } else {
-        project.addMarkerAt(useTransportStore().positionMs)
-      }
+      // Deliberately the same action as the keyboard `M`, on the same shared
+      // store code: toggle a marker at the exact playhead position. Pad N still
+      // jumps to marker N via `markerJump`, which parks the playhead exactly on
+      // that marker, so toggling it off from the pad still works.
+      useProjectStore().toggleMarkerAt(useTransportStore().positionMs)
       break
     }
     case 'shift':

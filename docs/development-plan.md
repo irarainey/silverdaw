@@ -1871,6 +1871,15 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
 8. [x] **Immediate timeline paint on project open.** The graphics canvas is
    prepared while the start screen is up, so opening a project draws the timeline
    at once instead of showing bare track headers for around a second first.
+9. [x] **Markers land on the exact playhead.** The playhead is freely
+   positionable, so `M` no longer snaps a new marker to the sub-beat grid — it
+   places it exactly where the playhead is. This also removes the class of defect
+   in item 2 at source: a marker can never be stranded off a grid it was never
+   bound to.
+10. [x] **One marker toggle for both control surfaces.** The MIDI hot-cue toggle
+    pads call the same `toggleMarkerAt` store action as the keyboard rather than
+    adding by playhead and removing by pad slot, so the two behave identically.
+    Pad N still jumps to marker N, which parks the playhead exactly on it.
 
 ### Phase 1 — Backend Foundation & Bridge
 

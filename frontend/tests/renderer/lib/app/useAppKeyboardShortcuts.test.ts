@@ -314,11 +314,11 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(h.stores.project.setClipLocked).not.toHaveBeenCalled()
   })
 
-  it('bare M toggles a marker at the raw playhead, adding on the snapped grid', () => {
-    h.stores.transport.positionMs = 500
+  it('bare M toggles a marker at the exact playhead, unsnapped', () => {
+    h.stores.transport.positionMs = 500.4
     const { e } = makeKey({ key: 'm' })
     kb.onGlobalShortcutKey(e)
-    expect(h.stores.project.toggleMarkerAt).toHaveBeenCalledWith(500, expect.any(Number))
+    expect(h.stores.project.toggleMarkerAt).toHaveBeenCalledWith(500.4)
   })
 
   it('Ctrl++ requests a zoom-in', () => {

@@ -17,6 +17,25 @@ interface MarkerActionsThis extends ProjectState {
 // engine quantises to a sample, so anything inside this slop is "the same spot".
 const MARKER_MATCH_TOLERANCE_MS = 1
 
+// Every entry point — keyboard, MIDI, store callers — normalises through these
+// two helpers so they all agree on where a marker goes and what counts as
+// already having one there.
+function normalisePositionMs(positionMs: number): number {
+  return Math.max(0, Math.round(positionMs))
+}
+
+function findMarkerAt(
+  markers: readonly Marker[],
+  positionMs: number,
+  excludeId?: string
+): Marker | undefined {
+  return markers.find(
+    (marker) =>
+      marker.id !== excludeId &&
+      Math.abs(marker.positionMs - positionMs) < MARKER_MATCH_TOLERANCE_MS
+  )
+}
+
 const ENGINE_OFFLINE_REMOVE_MESSAGE =
   'Marker was removed locally, but the audio engine isn\'t connected.'
 const ENGINE_OFFLINE_CLEAR_MESSAGE =
@@ -38,11 +57,8 @@ function removeMarkerLocally(state: MarkerActionsThis, markerId: string): Marker
 
 export const markerActions = {
   addMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
-    const safePositionMs = Math.max(0, Math.floor(positionMs))
-    const existing = this.markers.find(
-      (marker) => Math.abs(marker.positionMs - safePositionMs) < MARKER_MATCH_TOLERANCE_MS
-    )
-    if (existing) return false
+    const safePositionMs = normalisePositionMs(positionMs)
+    if (findMarkerAt(this.markers, safePositionMs)) return false
 
     const marker: Marker = {
       id: crypto.randomUUID(),
@@ -62,20 +78,15 @@ export const markerActions = {
     return true
   },
 
-  // `positionMs` is where the user actually is (the raw playhead); `addPositionMs`
-  // is where a new marker should land, which callers snap to the grid. Removal
-  // matches either, so a marker that a tempo change left off-grid still toggles
-  // off from its own position instead of adding a second marker beside it.
-  toggleMarkerAt(this: MarkerActionsThis, positionMs: number, addPositionMs = positionMs): boolean {
-    const safePositionMs = Math.max(0, Math.round(positionMs))
-    const safeAddPositionMs = Math.max(0, Math.round(addPositionMs))
-    const isNear = (marker: Marker, target: number): boolean =>
-      Math.abs(marker.positionMs - target) < MARKER_MATCH_TOLERANCE_MS
-    const existing =
-      this.markers.find((marker) => isNear(marker, safePositionMs)) ??
-      this.markers.find((marker) => isNear(marker, safeAddPositionMs))
+  // Adds a marker at the playhead, or removes the one already sitting there.
+  // Markers are placed at the exact playhead position rather than snapped to the
+  // beat grid, so a marker is always removable from the spot it occupies —
+  // including one placed under an earlier tempo.
+  toggleMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
+    const safePositionMs = normalisePositionMs(positionMs)
+    const existing = findMarkerAt(this.markers, safePositionMs)
     if (existing) return this.removeMarker(existing.id)
-    return this.addMarkerAt(safeAddPositionMs)
+    return this.addMarkerAt(safePositionMs)
   },
 
   // Removes every marker as one undo step: the backend folds the individual
@@ -110,10 +121,9 @@ export const markerActions = {
   moveMarker(this: MarkerActionsThis, markerId: string, positionMs: number): boolean {
     const marker = this.markers.find((m) => m.id === markerId)
     if (!marker) return false
-    const safePositionMs = Math.max(0, Math.round(positionMs))
-    if (Math.abs(marker.positionMs - safePositionMs) < 1) return true
-    const existing = this.markers.find((m) => m.id !== markerId && Math.abs(m.positionMs - safePositionMs) < 1)
-    if (existing) return false
+    const safePositionMs = normalisePositionMs(positionMs)
+    if (Math.abs(marker.positionMs - safePositionMs) < MARKER_MATCH_TOLERANCE_MS) return true
+    if (findMarkerAt(this.markers, safePositionMs, markerId)) return false
     marker.positionMs = safePositionMs
     this.markers.sort((a, b) => a.positionMs - b.positionMs)
     const sent = sendBridge('PROJECT_MARKER_MOVE', {

@@ -15,33 +15,35 @@ describe('projectStore — marker toggling', () => {
     vi.mocked(sendBridge).mockClear()
   })
 
-  it('removes an off-grid marker the playhead is parked on', () => {
+  it('removes a marker the playhead is parked on, wherever it sits', () => {
     const project = useProjectStore()
     project.markers = [{ id: 'm1', positionMs: 1234 }]
 
-    // A marker placed under an earlier tempo: the playhead sits on it, but the
-    // caller's snapped position lands on the current grid instead.
-    expect(project.toggleMarkerAt(1234.011, 1250)).toBe(true)
+    // A marker placed under an earlier tempo sits off the current beat grid, and
+    // must still toggle off from the spot it occupies.
+    expect(project.toggleMarkerAt(1234.011)).toBe(true)
     expect(project.markers).toHaveLength(0)
   })
 
-  it('adds at the snapped position when no marker is under the playhead', () => {
+  it('adds at the exact playhead position rather than the nearest beat', () => {
     const project = useProjectStore()
 
-    expect(project.toggleMarkerAt(1234.011, 1250)).toBe(true)
+    expect(project.toggleMarkerAt(1234.011)).toBe(true)
     expect(project.markers).toHaveLength(1)
-    expect(project.markers[0]!.positionMs).toBe(1250)
+    expect(project.markers[0]!.positionMs).toBe(1234)
   })
 
-  it('removes a marker sitting on the snapped position', () => {
+  it('adds a second marker rather than snapping onto a nearby one', () => {
     const project = useProjectStore()
     project.markers = [{ id: 'm1', positionMs: 1250 }]
 
-    expect(project.toggleMarkerAt(1248, 1250)).toBe(true)
-    expect(project.markers).toHaveLength(0)
+    // 1248 is a distinct position the user chose; it must not be pulled onto the
+    // marker two milliseconds away.
+    expect(project.toggleMarkerAt(1248)).toBe(true)
+    expect(project.markers.map((marker) => marker.positionMs)).toEqual([1248, 1250])
   })
 
-  it('toggles on the given position when no snapped position is supplied', () => {
+  it('toggles the same position off and back on', () => {
     const project = useProjectStore()
     project.markers = [{ id: 'm1', positionMs: 700 }]
 
@@ -49,6 +51,17 @@ describe('projectStore — marker toggling', () => {
     expect(project.markers).toHaveLength(0)
     expect(project.toggleMarkerAt(700)).toBe(true)
     expect(project.markers[0]!.positionMs).toBe(700)
+  })
+
+  it('rounds a fractional add so it stays toggleable', () => {
+    const project = useProjectStore()
+
+    // The MIDI path calls addMarkerAt with the raw playhead float. Flooring here
+    // would store 1233 and put the marker outside the 1 ms match tolerance.
+    expect(project.addMarkerAt(1233.6)).toBe(true)
+    expect(project.markers[0]!.positionMs).toBe(1234)
+    expect(project.toggleMarkerAt(1233.6)).toBe(true)
+    expect(project.markers).toHaveLength(0)
   })
 })
 
