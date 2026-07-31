@@ -3,7 +3,7 @@ description: "TypeScript standards for Silverdaw waveform, timeline, and audio-p
 applyTo: "frontend/src/**/*.ts"
 ---
 
-## TypeScript Audio and Waveform Instructions
+# TypeScript Audio and Waveform Instructions
 
 Use these rules when modifying Silverdaw's TypeScript audio-facing code:
 waveform decoding and peaks, import/reanalysis, timeline rendering, warp math,

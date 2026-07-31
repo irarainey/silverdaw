@@ -174,6 +174,21 @@ export interface ProjectDelayState {
 export const DEFAULT_TRACK_LENGTH_MS = 5 * 60 * 1000
 
 /**
+ * Length a newly created track adopts. Project length is mirrored onto every
+ * track (`setProjectLengthMs`), so an added track must match the tracks already
+ * there — otherwise adding one to a trimmed project (Add Track, stem separation,
+ * channel split) stretches the project back out to the 5-minute default.
+ * Falls back to that default only when there is no track to copy.
+ */
+export function newTrackLengthMs(tracks: readonly Track[]): number {
+  let longest = 0
+  for (const track of tracks) {
+    if (track.lengthMs > longest) longest = track.lengthMs
+  }
+  return longest > 0 ? longest : DEFAULT_TRACK_LENGTH_MS
+}
+
+/**
  * Upper bound on a track's linear volume — the linear equivalent of MAX_TRACK_DB
  * (+6 dB ≈ 1.9953). TrackHeaderPanel's taper puts unity near the top of fader
  * travel. Saved projects clamp incoming `gain` to this domain; older files load identically.

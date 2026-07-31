@@ -258,7 +258,8 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
                                                               selectedTrackId, fxPanelOpen,
                                                               projectState.getMetronomeEnabled(),
                                                               projectState.getClipEditorMetronomeEnabled(),
-                                                              timelineSelection);
+                                                              timelineSelection,
+                                                              projectState.getViewSnapGrid());
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {

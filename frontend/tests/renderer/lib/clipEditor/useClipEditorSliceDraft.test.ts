@@ -7,7 +7,7 @@ describe('useClipEditorSliceDraft', () => {
     d.initialise(0, 4000)
     expect(d.hasMarkers.value).toBe(false)
     d.subdivision.value = '1/4'
-    d.generateToGrid(120, 0) // 500 ms grid, interior of 0..4000
+    d.generateToGrid({ bpm: 120, spacingMs: 500, anchorMs: 0 }) // 500 ms grid, interior of 0..4000
     expect(d.markers.value).toEqual([500, 1000, 1500, 2000, 2500, 3000, 3500])
     expect(d.hasMarkers.value).toBe(true)
   })
@@ -16,7 +16,7 @@ describe('useClipEditorSliceDraft', () => {
     const d = useClipEditorSliceDraft()
     d.initialise(1000, 2000) // window 1000..3000
     d.subdivision.value = '1/4'
-    d.generateToGrid(120, 0)
+    d.generateToGrid({ bpm: 120, spacingMs: 500, anchorMs: 0 })
     expect(d.markers.value).toEqual([1500, 2000, 2500])
   })
 
@@ -66,7 +66,7 @@ describe('useClipEditorSliceDraft', () => {
     d.initialise(0, 4000)
     d.addMarker(1234)
     d.subdivision.value = '1/4'
-    d.generateToGrid(120, 0)
+    d.generateToGrid({ bpm: 120, spacingMs: 500, anchorMs: 0 })
     expect(d.markers.value).not.toContain(1234)
   })
 })

@@ -26,10 +26,10 @@ export const usePreviewStore = defineStore('preview', {
     /** Mirror of the backend's preview generation. Inbound envelopes with a
      *  lower generation are discarded. */
     generation: 0,
-    /** Monotonic counter that bumps on every inbound `PREVIEW_ENDED`. The
-     *  Clip Editor watches this so loop playback can restart cleanly
-     *  even though `applyEnded` resets `positionMs` to 0. */
-    endedCount: 0
+    /** True while the engine holds an armed loop window for this voice. */
+    loopEnabled: false,
+    /** Last loop window sent, so re-arming an unchanged window costs no bridge traffic. */
+    loopKey: ''
   }),
   actions: {
     /** Begin a new preview session for `itemId`, windowed to [inMs, inMs+durationMs].
@@ -53,6 +53,9 @@ export const usePreviewStore = defineStore('preview', {
       this.positionMs = 0
       this.isPlaying = false
       this.isLoaded = false
+      // The backend unloads the previous voice first, which drops its loop window.
+      this.loopEnabled = false
+      this.loopKey = ''
       sendBridge('PREVIEW_LOAD', {
         libraryItemId: itemId,
         inMs,
@@ -127,6 +130,8 @@ export const usePreviewStore = defineStore('preview', {
       this.isLoaded = false
       this.isPlaying = false
       this.positionMs = 0
+      this.loopEnabled = false
+      this.loopKey = ''
     },
     play(): void {
       if (!this.isLoaded) return
@@ -147,6 +152,23 @@ export const usePreviewStore = defineStore('preview', {
       const clamped = Math.max(0, Math.min(ms, this.durationMs > 0 ? this.durationMs : ms))
       this.positionMs = clamped
       sendBridge('PREVIEW_SEEK', { positionMs: clamped })
+    },
+    /**
+     * Arm the window the engine loops while the preview plays, or disarm it.
+     * Positions are preview-relative ms. The engine owns the wrap (ADR 0023), so
+     * nothing here restarts playback — a renderer-side seek could only ever land
+     * after audio past the loop end had been rendered. No-op when unloaded.
+     */
+    setLoop(window: { startMs: number; endMs: number } | null): void {
+      if (!this.isLoaded) return
+      const next = window && window.endMs > window.startMs
+        ? { enabled: true, startMs: Math.max(0, window.startMs), endMs: window.endMs }
+        : { enabled: false, startMs: 0, endMs: 0 }
+      const key = `${next.enabled}:${next.startMs}:${next.endMs}`
+      if (key === this.loopKey) return
+      this.loopKey = key
+      this.loopEnabled = next.enabled
+      sendBridge('PREVIEW_SET_LOOP', next)
     },
     /** Apply an inbound `PREVIEW_STATE` envelope. Ignored if its generation
      *  is older than the one we've already seen. */
@@ -181,7 +203,6 @@ export const usePreviewStore = defineStore('preview', {
       if (payload.generation < this.generation) return
       this.isPlaying = false
       this.positionMs = 0
-      this.endedCount++
     }
   }
 })

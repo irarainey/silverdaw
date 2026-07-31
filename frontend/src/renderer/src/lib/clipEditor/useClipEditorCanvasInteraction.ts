@@ -4,6 +4,7 @@ import type { Ref } from 'vue'
 import { hitTestHandle, overlayGainToY, overlayLaneIndexForY, overlayYToGain, sourceMsToVolumeTime, volumeOverlayLanes, volumeTimeToSourceMs } from '@/lib/clipEditor/volumeOverlay'
 import { snapTimelineMsToBeat, type BeatSnapContext } from '@/lib/clipEditor/envelopeBeatSnap'
 import { hitTestSliceMarker } from '@/lib/clipEditor/sliceOverlay'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { usePreviewStore } from '@/stores/previewStore'
 import type { ClipEditorVolumeShapeDraft } from '@/lib/clipEditor/useClipEditorVolumeShapeDraft'
@@ -38,6 +39,8 @@ export interface ClipEditorCanvasInteractionDeps {
   volumeShapeDurationMs: () => number
   draftEffectiveRatio: () => number
   sourceItem: () => LibraryItem | null
+  /** The resolved source beat grid every editor surface shares, or null when there is none. */
+  sourceBeatGrid: () => SourceBeatGrid | null
   zoom: () => number
 
   // Beat-grid slide-to-align: when active, dragging shifts the grid phase.
@@ -176,12 +179,10 @@ export function useClipEditorCanvasInteraction(
     }
     // Snap a clip-local time to the source beat grid unless Shift is held.
     // Freehand placement by default; hold Shift to snap to the source beat grid.
-    const src = deps.sourceItem()
     const snapCtx: BeatSnapContext = {
       baseSourceMs: clipStartSourceMs,
       ratio,
-      sourceBpm: src?.bpm,
-      anchorSec: src?.beatAnchorSec ?? src?.beats?.[0],
+      grid: deps.sourceBeatGrid(),
       durationMs: durMs
     }
     const timeAt = (clientX: number, snap: boolean): number =>
@@ -318,14 +319,11 @@ export function useClipEditorCanvasInteraction(
     if (!snapToBeats) {
       return Math.max(fullIn, Math.min(fullEnd, fromMs + direction * SMALLEST_NUDGE_MS))
     }
-    const src = deps.sourceItem()
-    const sourceBpm = src?.bpm
-    const anchorSec = src?.beatAnchorSec ?? src?.beats?.[0]
-    if (!sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
+    const grid = deps.sourceBeatGrid()
+    if (!grid) {
       return Math.max(fullIn, Math.min(fullEnd, fromMs + direction * SMALLEST_NUDGE_MS))
     }
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    const anchorMs = anchorSec * 1000
+    const { spacingMs: beatSpacingMs, anchorMs } = grid
     const epsilon = 1
     const beatsFromAnchor = (fromMs - anchorMs) / beatSpacingMs
     const nextIdx =

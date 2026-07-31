@@ -10,7 +10,8 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { clipFirstBeatOffsetMs, effectiveClipDurationMs } from '@/lib/clip/clipTiming'
+import { effectiveClipDurationMs } from '@/lib/clip/clipTiming'
+import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { laneYToValue } from './automationLaneRenderer'
@@ -541,8 +542,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (draggedMarkerId === null) return
     const pointerMs = pointerToRawMsClamped(e.clientX)
     if (pointerMs === null) return
-    const snap = geometry.msPerSubBeat()
-    const target = Math.max(0, Math.round(pointerMs / snap) * snap)
+    // Alt fine mode, matching clip, trim and playhead drags: markers are placed
+    // at an exact position by the `M` key, so a drag must be able to reach any
+    // position too rather than only grid points.
+    const target = snapTimelineMs(pointerMs, e.altKey)
     project.moveMarker(draggedMarkerId, target)
     onMarkerMoved()
   }
@@ -590,6 +593,22 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (ms !== null) seekTo(ms)
   }
 
+  // Beat-aware snap aligns the clip's first in-window source beat to the project
+  // grid rather than its left edge, so a clip that opens with silence still
+  // lands on the beat. Alt fine mode and a Free grid both give exact placement.
+  function snapClipStartMs(
+    clip: Parameters<typeof clipFirstBeatOffsetMs>[0],
+    rawStartMs: number,
+    fineMode: boolean
+  ): number {
+    const referenceBeatOffsetMs = clipFirstBeatOffsetMs(clip, library)
+    if (referenceBeatOffsetMs === null) return snapTimelineMs(rawStartMs, fineMode)
+    return Math.max(
+      0,
+      snapTimelineMs(rawStartMs + referenceBeatOffsetMs, fineMode) - referenceBeatOffsetMs
+    )
+  }
+
   function applyClipDrag(pointer: ClipDragPointer): void {
     if (draggedClipId === null) return
     const clip = project.clips[draggedClipId]
@@ -597,23 +616,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const pointerMs = pointerToRawMsClamped(pointer.clientX)
     if (pointerMs === null) return
 
-    const rawStartMs = pointerMs - clipGrabOffsetMs
-    let target: number
-    if (pointer.altKey) {
-      // Alt fine drag: 1 ms resolution, no snap.
-      target = Math.max(0, Math.round(rawStartMs))
-    } else {
-      const snap = geometry.msPerSubBeat()
-      // Beat-aware snap aligns the first in-window source beat to the project grid.
-      const referenceBeatOffsetMs = clipFirstBeatOffsetMs(clip, library)
-      if (referenceBeatOffsetMs !== null) {
-        const projectBeat = rawStartMs + referenceBeatOffsetMs
-        const snappedBeat = Math.round(projectBeat / snap) * snap
-        target = Math.max(0, snappedBeat - referenceBeatOffsetMs)
-      } else {
-        target = Math.max(0, Math.round(rawStartMs / snap) * snap)
-      }
-    }
+    const target = snapClipStartMs(clip, pointerMs - clipGrabOffsetMs, pointer.altKey)
     const destTrackId = pointerToTrackId(pointer.clientY) ?? clip.trackId
     project.moveClip(clip.id, target, destTrackId)
   }
@@ -672,20 +675,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const pointerMs = pointerToRawMsClamped(pointer.clientX)
     if (pointerMs === null) return
 
-    const rawStartMs = pointerMs - groupAnchorGrabOffsetMs
-    let anchorTarget: number
-    if (pointer.altKey) {
-      anchorTarget = Math.max(0, Math.round(rawStartMs))
-    } else {
-      const snap = geometry.msPerSubBeat()
-      const referenceBeatOffsetMs = clipFirstBeatOffsetMs(anchor, library)
-      if (referenceBeatOffsetMs !== null) {
-        const projectBeat = rawStartMs + referenceBeatOffsetMs
-        anchorTarget = Math.max(0, Math.round(projectBeat / snap) * snap - referenceBeatOffsetMs)
-      } else {
-        anchorTarget = Math.max(0, Math.round(rawStartMs / snap) * snap)
-      }
-    }
+    const anchorTarget = snapClipStartMs(
+      anchor,
+      pointerMs - groupAnchorGrabOffsetMs,
+      pointer.altKey
+    )
     const deltaMs = anchorTarget - groupDragAnchorOrigStartMs
     if (deltaMs > 0) groupDragDirection = 1
     else if (deltaMs < 0) groupDragDirection = -1

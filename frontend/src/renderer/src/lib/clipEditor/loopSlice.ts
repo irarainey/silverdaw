@@ -6,6 +6,8 @@
 // pure: marker generation and the shared guard pipeline, with no UI or store
 // coupling, so both the grid generator and manual edits enforce identical rules.
 
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+
 /** Musical subdivisions offered for grid slicing (coarse bars → fine notes). */
 export type SliceSubdivision = '1 bar' | '1/2 bar' | '1/4' | '1/8' | '1/16' | '1/32'
 
@@ -36,10 +38,8 @@ export interface SliceGuardOptions {
 }
 
 export interface GridSliceParams extends SliceGuardOptions {
-  /** Source-file tempo; generation yields nothing when missing or non-positive. */
-  sourceBpm: number | undefined
-  /** Beat-grid anchor in seconds; generation yields nothing when undefined. */
-  anchorSec: number | undefined
+  /** Resolved source beat grid; generation yields nothing when null. */
+  grid: SourceBeatGrid | null
   /** Subdivision to lay slices on. */
   subdivision: SliceSubdivision
   /** Clip in-point in source ms (the slice window start). */
@@ -83,18 +83,16 @@ export function applySliceGuards(
 /**
  * Generate interior slice markers (source ms, ascending) on the source beat grid
  * for the given subdivision, constrained to the clip's window and passed through
- * {@link applySliceGuards}. Returns `[]` when the source has no usable tempo /
- * anchor.
+ * {@link applySliceGuards}. Returns `[]` when the source has no usable grid.
  */
 export function generateGridSlices(params: GridSliceParams): number[] {
-  const { sourceBpm, anchorSec, subdivision, windowInMs, windowDurationMs } = params
-  if (!sourceBpm || sourceBpm <= 0 || anchorSec === undefined) return []
+  const { grid, subdivision, windowInMs, windowDurationMs } = params
+  if (!grid) return []
 
-  const beatSpacingMs = (60 / sourceBpm) * 1000
-  const stepMs = beatSpacingMs / DIVISIONS_PER_BEAT[subdivision]
+  const stepMs = grid.spacingMs / DIVISIONS_PER_BEAT[subdivision]
   if (stepMs <= 0) return []
 
-  const anchorMs = anchorSec * 1000
+  const anchorMs = grid.anchorMs
   const windowEndMs = windowInMs + windowDurationMs
 
   // First grid line strictly past the window start; iterate to the window end.

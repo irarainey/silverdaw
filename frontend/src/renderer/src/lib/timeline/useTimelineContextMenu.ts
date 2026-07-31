@@ -24,9 +24,14 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { trackIndexAtWorldY } from '@/lib/timeline/trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
+import {
+  beatRepeatRegionsForClip,
+  trackClipBeatSpans
+} from '@/lib/timeline/beatRepeatAttribution'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loopSlice'
+import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
@@ -139,14 +144,13 @@ export function useTimelineContextMenu(
     const activeRegion = regions.find(
       (region) => startBeat >= region.startBeat && startBeat < region.startBeat + region.lengthBeats
     )
-    const clipStartBeat = clip ? (clip.startMs / 60000) * transport.bpm : Number.NaN
-    const clipEndBeat = clip
-      ? ((clip.startMs + effectiveClipDurationMs(clip)) / 60000) * transport.bpm
-      : Number.NaN
-    const affectingClip = Number.isFinite(clipStartBeat) && Number.isFinite(clipEndBeat)
-      ? regions.filter(
-          (region) =>
-            region.startBeat < clipEndBeat && region.startBeat + region.lengthBeats > clipStartBeat
+    // Right-clicking a clip lists the regions that clip owns; an empty-lane
+    // right-click has no clip, so it falls back to the region under the playhead.
+    const affectingClip = clip
+      ? beatRepeatRegionsForClip(
+          regions,
+          clip.id,
+          trackClipBeatSpans(track, project.clips, transport.bpm)
         )
       : activeRegion
         ? [activeRegion]
@@ -691,9 +695,10 @@ export function useTimelineContextMenu(
       const subdivision = command.slice('clip.chopGrid:'.length) as SliceSubdivision
       const src = clip ? library.byId[clip.libraryItemId] : undefined
       if (clip && src) {
+        // Explicit command, not a snap — so unlike the timeline's beat markers this
+        // still chops a one-shot, which is how you slice a break or loop sample.
         const markers = generateGridSlices({
-          sourceBpm: src.bpm,
-          anchorSec: src.beatAnchorSec ?? src.beats?.[0],
+          grid: resolveSourceBeatGrid(src, library.byId, { suppressSimple: false }),
           subdivision,
           windowInMs: clip.inMs,
           windowDurationMs: clip.durationMs

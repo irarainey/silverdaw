@@ -303,7 +303,13 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
     {
         const double periodSec = 60.0 / derivedBpm;
         constexpr double kMaxPhaseCorrectionSec = 0.12; // latency-sized, not half-beat
-        constexpr double kMaxConsistentSpreadSec = 0.030; // IQR ceiling
+        // IQR ceiling. Do NOT loosen this to "rescue" tracks it rejects. Measured on
+        // real dance and funk material the ODF-peak phase offset has an IQR of
+        // 92-101ms here, and on every track checked the correction it proposed was
+        // the OPPOSITE sign to the one the grid actually needed by ear. The estimate
+        // is not merely noisy on that material, it is anti-correlated, so widening
+        // this ceiling makes markers worse rather than better.
+        constexpr double kMaxConsistentSpreadSec = 0.030;
         constexpr double kMinSignificantSec = 0.004;
         double offset = 0.0;
         int matched = 0;

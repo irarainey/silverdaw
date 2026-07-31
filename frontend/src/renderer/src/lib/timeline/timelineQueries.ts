@@ -48,12 +48,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     if (x < geometry.headerWidth() || x > rightEdge) return null
     const trackLocalX = x - geometry.headerWidth()
     const rawMs = ((scrollX.value + trackLocalX) / geometry.pxPerSecond.value) * 1000
-    if (fineMode) {
-      // Alt fine mode: whole milliseconds, no grid snap.
-      return Math.max(0, Math.round(rawMs))
-    }
-    const snap = geometry.msPerSubBeat()
-    return Math.max(0, Math.round(rawMs / snap) * snap)
+    return geometry.snapTimelineMs(rawMs, fineMode)
   }
 
   /** Unsnapped pointer x to timeline ms; null outside track content. */
@@ -79,9 +74,7 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
   }
 
   function snapTimelineMs(ms: number, fineMode: boolean): number {
-    if (fineMode) return Math.max(0, Math.round(ms))
-    const snap = geometry.msPerSubBeat()
-    return Math.max(0, Math.round(ms / snap) * snap)
+    return geometry.snapTimelineMs(ms, fineMode)
   }
 
   function clipAutoScrollDelta(clientX: number): number {

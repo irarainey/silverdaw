@@ -10,6 +10,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
+import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -124,12 +125,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     return null
   }
 
+  // Beat-aware items align their first source beat, rather than their left edge,
+  // to the grid; a Free grid leaves the drop exactly where it landed.
   function startMsForItem(rawMs: number, item: LibraryItem): number {
-    const snap = geometry.msPerSubBeat()
     const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
-    return referenceBeatOffsetMs !== null
-      ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
-      : Math.max(0, Math.round(rawMs / snap) * snap)
+    if (referenceBeatOffsetMs === null) return geometry.snapTimelineMs(rawMs, false)
+    return Math.max(
+      0,
+      geometry.snapTimelineMs(rawMs + referenceBeatOffsetMs, false) - referenceBeatOffsetMs
+    )
   }
 
   type ResolvedDrop =
@@ -146,45 +150,35 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   }
 
   function firstSourceBeatOffsetMs(item: LibraryItem): number | null {
-    const beats = item.beats
-    const sourceBpm = item.bpm
-    const anchorSec = item.beatAnchorSec ?? beats?.[0]
-    if (!beats || beats.length === 0 || !sourceBpm || sourceBpm <= 0 || anchorSec === undefined) {
-      return null
-    }
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    if (beatSpacingMs <= 0) return null
-    const universalAnchorMs = anchorSec * 1000
-    let firstBeatMs = universalAnchorMs + Math.ceil(-universalAnchorMs / beatSpacingMs) * beatSpacingMs
-    while (firstBeatMs < 0) firstBeatMs += beatSpacingMs
+    const grid = resolveSourceBeatGrid(item, library.byId)
+    if (!grid) return null
+    const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, 0)
     if (firstBeatMs > item.durationMs) return null
-    // Project the first beat into timeline time using the warp that will apply on drop.
+    // Project the first beat into timeline time using the warp that will apply on
+    // drop. That decision reads `item.bpm`, NOT the grid's (possibly inherited)
+    // BPM — the ghost preview and the placement both use `item.bpm`, and a snap
+    // computed against a ratio the drop never applies lands the first beat off
+    // the grid by exactly that ratio.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
-    const sourceIsSimple = libraryItemIsSimple(item, library.byId)
     const willWarpForSnap =
       item.warpEnabled === true ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
         projectHasOtherClips,
         sourceKind: item.kind,
-        sourceIsSimple,
-        sourceBpm,
+        sourceIsSimple: libraryItemIsSimple(item, library.byId),
+        sourceBpm: item.bpm,
         projectBpm: transport.bpm,
         variableTempo: item.variableTempo
       })
-    const ratio = isWarpActive({
+    const warpInputs = {
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
-      sourceBpm,
+      sourceBpm: item.bpm,
       projectBpm: transport.bpm
-    })
-      ? effectiveTempoRatio({
-          tempoRatio: item.tempoRatio,
-          sourceBpm,
-          projectBpm: transport.bpm
-        })
-      : 1
+    }
+    const ratio = isWarpActive(warpInputs) ? effectiveTempoRatio(warpInputs) : 1
     return firstBeatMs / ratio
   }
 

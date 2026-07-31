@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-29 · Owner: @irarainey_
+_Last reviewed: 2026-07-31 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -17,12 +17,14 @@ audio engine, linked by a per-session-authenticated loopback WebSocket.
 
 Core arrangement, mixing, analysis, stem separation, supported MIDI deck
 control, Scratch Editor, and out-of-process engine recovery are all shipped, as
-are the **1.4.0** additions — multiple automation parameter lanes per track,
-timeline range selection with one-shot or looped playback, and importing stems
-and samples from another project — and the **1.4.1** release, which
-polishes range auditioning (engine-owned seamless loop restart, the `L` Loop
-Selection shortcut, range-start marker navigation, and edge auto-scroll while
-selecting). The current **1.4.2** release is a bug fix. Silverdaw is
+are the **1.4.x** additions — multiple automation parameter lanes per track,
+timeline range selection with one-shot or looped playback, importing stems and
+samples from another project, range-auditioning polish, and the Playwright
+end-to-end test tier. The current release is **1.5.0**: a selectable timeline
+snap grid, exact-position markers, Clear All Markers, smooth playhead-follow
+scrolling, `Enter` to accept a dialog, restyled dropdowns, an immediate timeline
+paint on project open, and a set of beat-grid, marker, MIDI-jog, audio-driver
+and loop-playback fixes. Per-release detail lives in `CHANGELOG.md`. Silverdaw is
 **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).

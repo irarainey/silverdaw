@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.4.0" } }
+{ "type": "READY", "payload": { "version": "1.5.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -142,7 +142,7 @@ type-checked list of every currently-defined envelope.
   "tracks": [{ "id": "t1", "name": "Track 1", "gain": 1.0, "heightPx": 180,
     "clips": [{ "id": "c1", "libraryItemId": "l1", "offsetMs": 0, "inMs": 0, "durationMs": 8000, "colorIndex": 3, "unresolved": false }] }] } }
 { "type": "PLAYHEAD_UPDATE", "payload": { "positionMs": 4250, "isPlaying": true } }
-{ "type": "CLIP_ADDED", "payload": { "trackId": "t1", "clipId": "c1", "ok": true } }
+{ "type": "CLIP_ADDED", "payload": { "trackId": "t1", "clipId": "c1", "libraryItemId": "l1", "ok": true } }
 { "type": "LIBRARY_ITEM_ANALYSIS", "payload": { "itemId": "l1", "bpm": 124.37, "beats": [0.487, 0.972], "beatAnchorSec": 0.487, "variableTempo": false, "playbackFilePath": "..." } }
 { "type": "WAVEFORM_READY", "payload": { "clipId": "c1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 158310, "peaksPerSecond": 501.13, "sampleRate": 44100, "laneCount": 3 } }
 { "type": "CLIP_EDITOR_PEAKS_READY", "payload": { "libraryItemId": "l1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 633240, "peaksPerSecond": 2004.54, "sampleRate": 44100, "laneCount": 3 } }
@@ -195,7 +195,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 
 ### Backend
 
-```
+```text
 JUCEBackend (headless)
 │
 ├── BridgeServer                — IXWebSocket loopback + AUTH gate; text-only JSON
@@ -222,7 +222,7 @@ JUCEBackend (headless)
 
 ### Frontend
 
-```
+```text
 Electron Shell
 │
 ├── Main process
@@ -793,7 +793,7 @@ Reverb.
 
 The signal path for every block, top-down:
 
-```
+```text
 clips[clipId]
   → OffsetSource (per clip: warp, in/out window, volume-shape envelope §7.11)
   → AudioTransportSource (read-ahead in live; direct read in mixdown)
@@ -1399,8 +1399,13 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   Each node maps to an object such as
   `{ "$type": "TRACK", "id": "...", "$children": [] }`. Saves are atomic:
   the backend writes a sibling `.tmp` file and renames it into place.
-  Audio imports are currently referenced by absolute path; project-local
-  captured assets remain future sample-creation work.
+  Imported audio is referenced by absolute path, but **generated artifacts are
+  project-local**: separated stems, exported samples, recorded channels and
+  scratch renders are written to `stems/`, `samples/`, `channels/` and
+  `scratches/` beside the project file (or to a disposable temp workspace while
+  the project is unsaved, migrated into the project folder on first save — see
+  `projectArtifactsBaseDir()` and `migrateTempArtifactsIntoProject()` in
+  `backend/src/project/ProjectSession.h`).
 - **What is saved:**
   - **Project metadata** — schema version, app version, saved-at timestamp,
     project name, BPM and project length.
@@ -1560,11 +1565,11 @@ project transport.
   Saved clips can also be removed from the library while still in
   use: the remove silently unlinks every dependent timeline clip via
   the same rebind, no destructive prompt needed.
-- Bridge envelopes: inbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
+- Bridge envelopes: outbound `PREVIEW_LOAD` / `PREVIEW_PLAY` /
   `PREVIEW_PAUSE` / `PREVIEW_STOP` / `PREVIEW_SEEK` / `PREVIEW_UNLOAD`
   / `PREVIEW_SET_ENVELOPE` / `PREVIEW_SET_REVERSED` / `PREVIEW_SET_BRAKE` /
   `PREVIEW_SET_BACKSPIN` / `PREVIEW_SET_METRONOME` / `CLIP_EDITOR_PEAKS_REQUEST` / `CLIP_REBIND`
-  / `CLIP_SET_ENVELOPE`; outbound
+  / `CLIP_SET_ENVELOPE`; inbound
   `PREVIEW_STATE` / `PREVIEW_POSITION` / `PREVIEW_ENDED` /
   `CLIP_EDITOR_PEAKS_READY`. A monotonic `generation` counter on the
   preview voice silently drops stale events for a preview the user
@@ -1679,14 +1684,15 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-### 1.4.0 - Timeline Precision & Range Auditioning *(released; snap grid outstanding)*
+### 1.4.0 - Timeline Precision & Range Auditioning *(released)*
 
 **Goal:** make arrangement edits more deliberate and let a user quickly
 audition one part of a mix, without turning the timeline into a dense advanced
-editor. The implemented work and remaining planned snap-grid work are:
+editor. The implemented work is:
 
-1. **Selectable timeline snap grid.** A compact timeline **Snap** control
-   offers **Bar**, **Beat**, **Half beat**, **Quarter beat**, and **Free**.
+1. [x] **Selectable timeline snap grid.** *(delivered in 1.5.0.)* A compact
+   timeline snap-grid dropdown offers **Bar**, **Beat**, **Half beat**,
+   **Quarter beat**, and **Free**.
    Quarter beat remains the default, preserving the current behaviour. It drives
    grid-line density and all timeline-time snapping: clip placement,
    move, trim, marker movement, playhead movement, range boundaries, and
@@ -1783,8 +1789,8 @@ outside 1.4.0.
 
 **Goal:** make the 1.4.0 timeline range comfortable to live with. No new
 concepts — every item sharpens an affordance that already shipped. The
-selectable snap grid (1.4.0, item 1) is still outstanding and is not part of
-this release.
+selectable snap grid (1.4.0, item 1) was not part of this release and landed in
+1.5.0.
 
 1. [x] **Loop Selection keyboard toggle.** `L` flips Loop Selection for the
    active range, the keyboard twin of the transport loop button, and is a no-op
@@ -1833,12 +1839,59 @@ add the automated end-to-end tier that found them. No new user-facing concepts.
    rename: every project saved before 1.4.2 carries the default name, and
    renaming on an ordinary save would relabel a user's existing work.
 4. [x] **Playwright end-to-end tier** (`frontend/e2e/`, ADR 0014). Nine journeys
-   drive the packaged Electron build against the real backend: cold launch,
-   dialog stubbing, audio import, save/reopen round trip, new-project defaults,
-   opening an existing project, and the recent-projects list. It asserts on DOM,
+   at this release — the tier has grown since — drive the packaged Electron build
+   against the real backend: cold launch, dialog stubbing, audio import,
+   save/reopen round trip, new-project defaults, opening an existing project, and
+   the recent-projects list. It asserts on DOM,
    the filesystem, and saved project files rather than production test hooks, and
    carries a frozen 1.4.1 project fixture as the backward-compatibility canary.
    It supplements, and does not replace, the Vitest and ctest tiers.
+
+### 1.5.0 - Beat Grid & Marker Correctness *(current release)*
+
+**Goal:** make the beat grid drawn on a clip agree with the grid everything else
+snaps to, and clear the marker, badge, and loop defects that followed from the
+mismatch. No new concepts — every item corrects behaviour that already shipped.
+
+1. [x] **One shared source beat grid.** Clips snap to the same grid as the
+   markers drawn on them, including stem clips and one-shot samples, through a
+   single `sourceBeatGrid` helper rather than each call site deriving its own.
+2. [x] **Marker toggling survives a tempo change.** `M` on a marker that no
+   longer sits on the beat grid after a BPM change removes that marker, instead
+   of adding a second one on the nearest beat and leaving the original stranded.
+3. [x] **Edit ▸ Clear All Markers** removes every marker in the project in one
+   step.
+4. [x] **Clip marker painting fixes.** A clip no longer draws a stray beat marker
+   on the first pixel of the clip that follows it (an exclusive loop end bound),
+   and zoomed-out clips thin their markers in power-of-two steps so the ones that
+   remain still land on musically meaningful beats.
+5. [x] **Beat Repeat badge attribution.** The REPEAT badge appears on the clip the
+   region actually plays over, rather than on a neighbouring clip whose tail
+   crossed the region's start beat by a few milliseconds.
+6. [x] **Seamless Clip Editor loop preview.** The engine owns the preview wrap, as
+   it already did for timeline loops (ADR 0023), so the loop point no longer
+   glitches.
+7. [x] **Adding a track keeps the project length.** Adding a track — including the
+   tracks created by stem separation and channel split — no longer stretches a
+   trimmed project back to the 5-minute default.
+8. [x] **Immediate timeline paint on project open.** The graphics canvas is
+   prepared while the start screen is up, so opening a project draws the timeline
+   at once instead of showing bare track headers for around a second first.
+9. [x] **Markers land on the exact playhead.** The playhead is freely
+   positionable, so `M` no longer snaps a new marker to the sub-beat grid — it
+   places it exactly where the playhead is. This also removes the class of defect
+   in item 2 at source: a marker can never be stranded off a grid it was never
+   bound to.
+10. [x] **One marker toggle for both control surfaces.** The MIDI hot-cue toggle
+    pads call the same `toggleMarkerAt` store action as the keyboard rather than
+    adding by playhead and removing by pad slot, so the two behave identically.
+    Pad N still jumps to marker N, which parks the playhead exactly on it.
+11. [x] **Selectable timeline snap grid.** Closes the outstanding 1.4.0 item 1;
+    see that section for the full specification. A status-bar dropdown, labelled
+    with a grid glyph to match the zoom control,
+    picks Bar, Beat, Half beat, Quarter beat or Free, drives both the drawn grid
+    density and every timeline-time snap, and persists as non-dirty project view
+    state (`viewSnapGrid`) defaulting to Quarter beat for older projects.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -1919,8 +1972,8 @@ library, transport, UI layout and per-clip edits — from a single
   fields (id, source path, offsetMs, inMs, durationMs, colorIndex). Mute/solo
   are stored on the track node and serialised with the project tree
   (`ProjectState::setTrackMuted` / `setTrackSoloed`; suppressed when false).
-- [x] Persist transport playhead position; loop region + metronome flag
-  deferred until those features exist.
+- [x] Persist transport playhead position. The loop region and metronome flag
+  followed once those features shipped, and now persist alongside it.
 - [x] Persist project metadata: name (with rename), BPM (2 d.p.), project
   length, savedAt ISO timestamp. Time signature is fixed 4/4 today.
 - [x] Persist library catalogue as a `LIBRARY > ITEM[...]` sub-tree
@@ -1975,10 +2028,10 @@ library, transport, UI layout and per-clip edits — from a single
   *Locate file…* button per row; single info toast summarises the
   count. The direct **Relink** entry on unresolved clips re-enters
   the flow later.
-- [x] `CLIP_RELINK { clipId, filePath }` envelope; backend updates the
+- [x] `LIBRARY_ITEM_RELINK { itemId, filePath }` envelope; backend updates the
   path in the `ValueTree`, re-creates the engine source, rebroadcasts
-  `PROJECT_STATE` which clears `unresolved` on the relinked clip. Marks
-  the project dirty as a normal property edit.
+  `PROJECT_STATE` which clears `unresolved` on every clip referencing the
+  relinked item. Marks the project dirty as a normal property edit.
 
 ### Phase 4 — Analysis, Browser & Editing
 
@@ -2029,7 +2082,7 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Warped timeline clips and warped saved clips render through a fresh offline Rubber Band processor when baked as a **simple** sample so it matches the clip's tempo/pitch state; **music** samples are exported at the source tempo/pitch so they re-warp on drop
 
 **Library upgrades:**
-- [x] Library item information dialog (double-click / context menu): file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata, cover art and "used on" track list. Tag editor and jump links are deferred to Phase 8.
+- [x] Library item information dialog (context menu): file path, decoded cache path, sample rate, channel count, duration, detected BPM / key, embedded metadata, cover art and "used on" track list. Tag editor and jump links are deferred to Phase 8.
 
 ### Phase 5 — Mixing, Effects & Automation
 
@@ -2103,16 +2156,16 @@ playable at every point):
   and `ProjectStateTrackSchema` (`toneBassDb`, `toneMidDb`,
   `toneTrebleDb`, `toneFilter`, `levelerAmount`,
   `levelerAdvanced{…}`, `reverbSend`, `delaySend`, `pan`, `mute`,
-  `solo`) plus `PROJECT_REVERB` / `PROJECT_DELAY` blocks **as
+  `solo`) plus flat project-wide `reverb*` / `delay*` fields **as
   optional fields with defaults**. Extend
   `ProjectState::tracksAsJson` and `applyProjectStateSnapshot` to
   read/write them with **default-suppression on save** (so projects
   that don't touch any Phase 5 field remain bit-identical on disk —
   no surprise rewrites of existing user projects). Add
   `BridgeOutboundMap` entries for every new envelope
-  (`CLIP_SET_FADES`, `CLIP_SET_ENVELOPE`, `TRACK_SET_TONE`,
+  (`CLIP_SET_ENVELOPE`, `TRACK_SET_TONE`,
   `TRACK_SET_LEVELER`, `TRACK_SET_SENDS`, `TRACK_SET_PAN`,
-  `TRACK_SET_MUTE_SOLO`, `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`)
+  `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`)
   pointing at **inert backend handlers** that validate, persist to
   `ValueTree`, register undo entries, and acknowledge — but do **no
   DSP work**. Register each in the hardcoded undoable-types list and
@@ -2352,7 +2405,7 @@ playable at every point):
   global shortcut handler owns the keys; `menuShortcuts` skips binding the
   display-only accelerators to avoid a double-fire.
 - [x] **Track row resize** — drag the bottom edge of any track
-  header to change just that track's row height (clamp 80..400 px).
+  header to change just that track's row height (clamp 120..400 px).
   Persisted with the project and undoable. `TRACK_SET_HEIGHT` bridge
   envelope; backend `setTrackHeightPx` clamps and writes to the
   Track ValueTree with `&undoManager` so each drag is one undo step.
@@ -2502,6 +2555,14 @@ robustness without changing the core editing model.
   ready). Consider exposing it as an explicit "Freeze clip" action rather than
   automatic, given the re-render cost on every warp change.
 - [ ] Tag editing and jump-to-clip links in the Library Item Info dialog.
+- [ ] **Sample-rate handling, phase 2.** Phase 1 (probe envelope, project
+  target-rate field, mismatch prompt, RATE indicator and classification gates)
+  shipped and is documented in the developer guide. Phase 2 adds an on-disk
+  rate-keyed playback cache (libsamplerate-converted WAVs under
+  `%APPDATA%/Silverdaw/playback/`), project-rate change-and-rebuild that
+  regenerates those caches and resumes transport behind a transcode-generation
+  counter for stale-ack safety, sample-bake at the project rate, and a throttled
+  probe-on-load batch for older projects that stored a wrong renderer-side rate.
 - [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.

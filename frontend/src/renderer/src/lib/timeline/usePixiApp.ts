@@ -3,7 +3,7 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { BG } from './constants'
-import { loadPixi } from './pixiLoader'
+import { loadPixi, pixiInitOptions } from './pixiLoader'
 import { log } from '@/lib/log'
 
 export interface PixiApp {
@@ -151,6 +151,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
     const tPixi0 = performance.now()
     try {
       const pixi = await loadPixi()
+      const tAfterImport = performance.now()
       GraphicsCtor.value = pixi.Graphics
       ContainerCtor.value = pixi.Container
       TextCtor.value = pixi.Text
@@ -162,13 +163,7 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
       if (destroyed || !opts.host.value) return false
 
       const instance = new pixi.Application()
-      await instance.init({
-        background: BG,
-        antialias: true,
-        resizeTo: opts.host.value,
-        autoDensity: true,
-        resolution: window.devicePixelRatio || 1
-      })
+      await instance.init(pixiInitOptions(BG, opts.host.value))
 
       // And again — host might have unmounted while init was awaiting.
       if (destroyed || !opts.host.value) {
@@ -180,7 +175,11 @@ export function usePixiApp(opts: PixiAppOptions): PixiApp {
       }
 
       app.value = instance
-      log.info('perf', `pixi+webgl ready in ${Math.round(performance.now() - tPixi0)}ms`)
+      log.info(
+        'perf',
+        `pixi+webgl ready in ${Math.round(performance.now() - tPixi0)}ms ` +
+          `(import wait=${Math.round(tAfterImport - tPixi0)}ms, webgl init=${Math.round(performance.now() - tAfterImport)}ms)`
+      )
       opts.host.value.appendChild(instance.canvas)
       instance.canvas.style.display = 'block'
       instance.canvas.addEventListener('webglcontextlost', handleContextLost)

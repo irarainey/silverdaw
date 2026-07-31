@@ -40,6 +40,7 @@ export function useAppTitleBarController(
     if (!action) return null
     if (action === 'edit.undo') return !project.canUndo
     if (action === 'edit.redo') return !project.canRedo
+    if (action === 'edit.clearAllMarkers') return project.markers.length === 0
     return null
   }
 

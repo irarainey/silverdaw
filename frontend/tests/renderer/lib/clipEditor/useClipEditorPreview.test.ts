@@ -14,6 +14,7 @@ function fakePreview() {
     setEnvelope: vi.fn(),
     setReversed: vi.fn(),
     seek: vi.fn(),
+    setLoop: vi.fn(),
     pause: vi.fn(),
     play: vi.fn()
   }
@@ -152,7 +153,7 @@ describe('useClipEditorPreview — reverse push', () => {
 })
 
 describe('useClipEditorPreview — selection playback bounds', () => {
-  it('loops back to selection start at the selection end', () => {
+  it('leaves the wrap to the engine while looping', () => {
     const preview = fakePreview()
     preview.isPlaying = true
     preview.positionMs = 1000
@@ -165,7 +166,7 @@ describe('useClipEditorPreview — selection playback bounds', () => {
       })
     )
     p.enforceSelectionPlaybackBounds()
-    expect(preview.seek).toHaveBeenCalledWith(200)
+    expect(preview.seek).not.toHaveBeenCalled()
     expect(preview.pause).not.toHaveBeenCalled()
   })
 
@@ -186,21 +187,71 @@ describe('useClipEditorPreview — selection playback bounds', () => {
     expect(preview.seek).toHaveBeenCalledWith(200)
   })
 
-  it('loops the whole window for a standalone item with no selection when loop is on', () => {
+  it('does not bound playback without a selection when not looping', () => {
     const preview = fakePreview()
     preview.isPlaying = true
     preview.positionMs = 1000
     const p = useClipEditorPreview(
       makeDeps(preview, {
-        editsExistingClip: () => false,
         hasPlaybackSelection: () => false,
-        loopEnabled: () => true,
+        loopEnabled: () => false,
         playbackStartMs: () => 0,
         playbackEndMs: () => 1000
       })
     )
     p.enforceSelectionPlaybackBounds()
-    expect(preview.seek).toHaveBeenCalledWith(0)
     expect(preview.pause).not.toHaveBeenCalled()
+    expect(preview.seek).not.toHaveBeenCalled()
+  })
+})
+
+describe('useClipEditorPreview — engine loop window', () => {
+  it('arms the selection window in preview-relative ms', () => {
+    const preview = fakePreview()
+    const p = useClipEditorPreview(
+      makeDeps(preview, {
+        loopEnabled: () => true,
+        hasPlaybackSelection: () => true,
+        viewInMs: () => 500,
+        playbackStartMs: () => 700,
+        playbackEndMs: () => 1200
+      })
+    )
+    p.syncPreviewLoop()
+    expect(preview.setLoop).toHaveBeenCalledWith({ startMs: 200, endMs: 700 })
+  })
+
+  it('arms the whole window when there is no selection', () => {
+    const preview = fakePreview()
+    const p = useClipEditorPreview(
+      makeDeps(preview, {
+        loopEnabled: () => true,
+        hasPlaybackSelection: () => false,
+        playbackStartMs: () => 0,
+        playbackEndMs: () => 1000
+      })
+    )
+    p.syncPreviewLoop()
+    expect(preview.setLoop).toHaveBeenCalledWith({ startMs: 0, endMs: 1000 })
+  })
+
+  it('disarms when loop is off or the dialog is closed', () => {
+    const off = fakePreview()
+    useClipEditorPreview(makeDeps(off, { loopEnabled: () => false })).syncPreviewLoop()
+    expect(off.setLoop).toHaveBeenCalledWith(null)
+
+    const closed = fakePreview()
+    useClipEditorPreview(
+      makeDeps(closed, { isOpen: () => false, loopEnabled: () => true })
+    ).syncPreviewLoop()
+    expect(closed.setLoop).toHaveBeenCalledWith(null)
+  })
+
+  it('does nothing while the preview is not loaded', () => {
+    const preview = fakePreview()
+    preview.isLoaded = false
+    const p = useClipEditorPreview(makeDeps(preview, { loopEnabled: () => true }))
+    p.syncPreviewLoop()
+    expect(preview.setLoop).not.toHaveBeenCalled()
   })
 })

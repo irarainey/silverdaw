@@ -62,15 +62,23 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
-  free placement. **Select several clips at once** — Shift-click a range on one
+  free placement. A grid control in the status bar sets how coarse that grid
+  is — bar, beat, half beat or quarter beat — or turns snapping off entirely,
+  and it is saved with the project. **Select several clips at once** — Shift-click a range on one
   track or Ctrl-click clips across tracks — then move the whole group together,
   nudge it with the arrow keys, or lock, colour, duplicate, delete, and
   cut/copy/paste them in one step. Bar numbering starts at 1 by default,
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Timeline range playback.** Drag the ruler away from the playhead to select
-  a grid-snapped section to play once or repeat with **Loop Selection** (`L`). The
+  a section snapped to the timeline grid, to play once or repeat with
+  **Loop Selection** (`L`). The
   range and loop mode are saved with the project; press `Escape` to clear them.
+- **Markers.** Press `M` to drop a marker at the playhead — exactly where it
+  sits, not nudged to the nearest beat — and `M` again on it to remove it. Jump
+  between markers with `Ctrl`+`←`/`→`, drag one along the ruler to move it (hold
+  `Alt` for free placement), or clear the lot with **Edit ▸ Clear All Markers**.
+  Markers are saved with the project and survive a tempo change.
 - **Crossfade transitions.** Extend a clip edge over an adjacent clip to create
   a crossfade. Use the clip menu's **Crossfade** group to choose a Smooth or
   Fade out/in recipe, or remove it.

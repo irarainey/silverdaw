@@ -322,6 +322,10 @@ bool dispatchPreview(const DispatchContext& ctx)
     {
         silverdaw::handlePreviewSeek(payload, engine);
     }
+    else if (type == "PREVIEW_SET_LOOP")
+    {
+        silverdaw::handlePreviewSetLoop(payload, engine);
+    }
     else if (type == "PREVIEW_SET_WARP")
     {
         silverdaw::handlePreviewSetWarp(payload, engine);

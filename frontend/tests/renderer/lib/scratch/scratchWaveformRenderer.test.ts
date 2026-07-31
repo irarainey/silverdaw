@@ -40,8 +40,7 @@ function baseOptions(overrides: Partial<ScratchWaveformRenderOptions> = {}): Scr
     preparedDurationMs: 2000,
     inMs: 0,
     reversed: false,
-    sourceBpm: undefined,
-    beatAnchorSec: undefined,
+    grid: null,
     positionMs: 0,
     ...overrides
   }
@@ -106,7 +105,7 @@ describe('renderScratchWaveform', () => {
 
   it('skips beat markers when no source bpm/anchor is known', () => {
     const ctx = makeMockCtx()
-    renderScratchWaveform(ctx, baseOptions({ sourceBpm: undefined, beatAnchorSec: undefined }))
+    renderScratchWaveform(ctx, baseOptions({ grid: null }))
     // Should not throw and should still paint the baseline/ruler.
     expect(ctx.fillRect).toHaveBeenCalled()
   })

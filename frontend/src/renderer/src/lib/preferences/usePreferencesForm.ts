@@ -23,8 +23,8 @@ import type {
   ScratchCrossfaderCutKeyDto
 } from '@shared/types'
 import {
-  BACKEND_PREFERENCE,
   preferredBackendFor,
+  sortByBackendPreference,
   useUniqueAudioDevices,
   type UniqueDevice
 } from '@/lib/audio/audioOutputPicker'
@@ -135,13 +135,7 @@ export function usePreferencesForm(): PreferencesForm {
     const name = audioOutputDeviceName.value
     if (!name) return []
     const dev = uniqueDevices.value.find((d) => d.name.toLowerCase() === name.toLowerCase())
-    return dev
-      ? dev.backends.slice().sort((a, b) => {
-          const ai = BACKEND_PREFERENCE.indexOf(a)
-          const bi = BACKEND_PREFERENCE.indexOf(b)
-          return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi)
-        })
-      : []
+    return dev ? sortByBackendPreference(dev.backends) : []
   })
 
   // Hidden by default to avoid exposing duplicate driver backends.

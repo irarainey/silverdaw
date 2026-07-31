@@ -14,6 +14,7 @@ import {
 } from '@/lib/clipEditor/clipEditorWaveformTheme'
 import { drawScratchWaveformLane } from '@/lib/scratch/scratchWaveformLane'
 import { formatRulerTime } from '@/lib/musicTime'
+import { firstSourceBeatMsAtOrAfter, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 const RULER_HEIGHT = 20
 
@@ -32,8 +33,8 @@ export interface ScratchWaveformRenderOptions {
   preparedDurationMs: number
   inMs: number
   reversed: boolean
-  sourceBpm: number | undefined
-  beatAnchorSec: number | undefined
+  /** Resolved source beat grid; beat markers are skipped when null. */
+  grid: SourceBeatGrid | null
   positionMs: number
 }
 
@@ -97,11 +98,11 @@ function drawBeatMarkers(
   viewDurationMs: number,
   options: ScratchWaveformRenderOptions
 ): void {
-  const { sourceBpm, beatAnchorSec, inMs, sourceDurationMs, reversed, preparedDurationMs } = options
-  if (!sourceBpm || sourceBpm <= 0 || beatAnchorSec === undefined || sourceDurationMs <= 0) return
-  const beatSpacingMs = (60 / sourceBpm) * 1000
+  const { grid, inMs, sourceDurationMs, reversed, preparedDurationMs } = options
+  if (!grid || sourceDurationMs <= 0) return
+  const beatSpacingMs = grid.spacingMs
   const windowEndMs = inMs + sourceDurationMs
-  let beatMs = beatAnchorSec * 1000 + Math.ceil((inMs - beatAnchorSec * 1000) / beatSpacingMs) * beatSpacingMs
+  let beatMs = firstSourceBeatMsAtOrAfter(grid, inMs)
   ctx.strokeStyle = cssHex(COL_BEAT)
   ctx.globalAlpha = 0.55
   ctx.lineWidth = 1

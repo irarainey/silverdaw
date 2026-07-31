@@ -18,7 +18,7 @@ import type {
   Text,
   Texture
 } from 'pixi.js'
-import { loadPixi } from '@/lib/timeline/pixiLoader'
+import { loadPixi, pixiInitOptions } from '@/lib/timeline/pixiLoader'
 import { log } from '@/lib/log'
 
 export interface ClipEditorScene {
@@ -111,13 +111,7 @@ export function useClipEditorScene(opts: ClipEditorSceneOptions): ClipEditorScen
       whiteTexture.value = pixi.Texture.WHITE
 
       const instance = new pixi.Application()
-      await instance.init({
-        background: COL_EDITOR_BG,
-        antialias: true,
-        resizeTo: host,
-        autoDensity: true,
-        resolution: window.devicePixelRatio || 1
-      })
+      await instance.init(pixiInitOptions(COL_EDITOR_BG, host))
 
       // The editor may have been closed (or reopened) while init was awaiting.
       // `{ removeView: true }` and `texture: false` for the same shared-global

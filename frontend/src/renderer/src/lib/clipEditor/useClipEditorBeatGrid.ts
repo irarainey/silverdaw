@@ -8,8 +8,9 @@
 // the editor session (a live redraw with no bridge round-trip) and committed to the
 // backend as a single undoable edit on Save, or discarded on Cancel.
 
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
+import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 export interface ClipEditorBeatGridDeps {
   /** The source library item backing the clip, or null when unavailable. */
@@ -31,6 +32,13 @@ export interface ClipEditorBeatGrid {
   originalBpm: Ref<number | null>
   /** Whether the source currently has a tempo grid to align. */
   hasGrid: () => boolean
+  /**
+   * The resolved source beat grid every editor surface draws and snaps to
+   * (waveform lines, envelope beat snap, grid slicing). Resolved through the
+   * shared module so an inherited BPM counts, and without one-shot suppression:
+   * at Clip Editor zoom a one-shot's grid is the thing you chop a break against.
+   */
+  resolvedGrid: ComputedRef<SourceBeatGrid | null>
   /** Whether the current BPM differs from the captured original (restore is possible). */
   canRestore: () => boolean
   /**
@@ -135,6 +143,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     return !!item && typeof item.bpm === 'number' && item.bpm > 0
   }
+
+  const resolvedGrid = computed<SourceBeatGrid | null>(() => {
+    const item = deps.sourceItem()
+    return item ? resolveSourceBeatGrid(item, library.byId, { suppressSimple: false }) : null
+  })
 
   function canRestore(): boolean {
     const item = deps.sourceItem()
@@ -278,6 +291,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     manualBpmInput,
     originalBpm,
     hasGrid,
+    resolvedGrid,
     canRestore,
     hasGridChanged,
     toggleAlign,

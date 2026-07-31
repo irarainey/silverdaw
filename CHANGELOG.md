@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+
+- Edit ▸ Clear All Markers removes every marker in the project in one step.
+- A grid control in the status bar sets the timeline grid to Bar, Beat, Half beat, Quarter beat or Free, and is saved with the project.
+
+### Changed
+
+- Pressing `Enter` in a dialog now accepts it, activating the blue button in its footer.
+- Markers are now placed at the exact playhead position instead of snapping to the nearest beat.
+- Hot-cue marker pads on a MIDI deck now toggle the marker at the playhead, matching the `M` key.
+- Holding `Alt` while dragging a marker now moves it to any position rather than only to grid points.
+- Dropdowns throughout the app now match the surrounding controls instead of using the oversized Windows style.
+- Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear.
+- Updated the graphics library to its latest release.
+
+### Fixed
+
+- An unplugged audio device no longer makes its driver look missing too.
+- A MIDI jog on a Free snap grid no longer pulls the playhead onto the beat grid.
+- Dropping a stem on the timeline now lands its first beat on the grid.
+- Clips now snap to the same beat grid as the markers drawn on them, including stem clips and one-shot samples.
+- Chop to Grid, the Clip Editor grid and the Scratch Editor grid now work on a stem, which previously showed beat markers but had nothing to chop or snap to.
+- A clip no longer draws a stray beat marker on the very first pixel of the clip that follows it.
+- Beat markers on zoomed-out clips now thin out in musical steps (every 2, 4, 8 beats and so on) so the remaining markers stay on meaningful beats.
+- The REPEAT badge now appears on the clip a Beat Repeat region actually plays over, instead of on the neighbouring clip whose tail crossed the region's start beat by a few milliseconds.
+- Clip Editor loop playback no longer glitches at the loop point.
+- Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
+- Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
+- Starting playback now smoothly scrolls the timeline to the playhead when zooming or scrolling has left it off screen, instead of continuing to play out of view.
+
 ## 1.4.2
 
 ### Added

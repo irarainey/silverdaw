@@ -12,6 +12,13 @@ export interface MenuActionContext {
   confirmClose(): void
 }
 
+/** Docs are published per `major.minor` only, so patch releases never need a
+ *  guide-site republish. Falls back to the raw version if it is not semver. */
+function docsVersionSegment(version: string): string {
+  const parts = version.split('.')
+  return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : version
+}
+
 export function handleMenuAction(action: string, ctx: MenuActionContext): void {
   const mainWindow = ctx.getMainWindow()
   if (!mainWindow) return
@@ -91,6 +98,9 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
     case 'edit.cropProjectToLastClip':
       wc.send(IPC.menu.action, action)
       break
+    case 'edit.clearAllMarkers':
+      wc.send(IPC.menu.action, action)
+      break
 
     // View
     case 'view.zoomIn':
@@ -113,8 +123,10 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
       void shell.openExternal('https://docs.silverdaw.com')
       break
     case 'help.shortcuts':
-      // Versioned docs page — the path always matches the running app version.
-      void shell.openExternal(`https://docs.silverdaw.com/${app.getVersion()}/guide/shortcuts`)
+      // Versioned docs page — the path matches the running app's major.minor.
+      void shell.openExternal(
+        `https://docs.silverdaw.com/${docsVersionSegment(app.getVersion())}/guide/shortcuts`
+      )
       break
     case 'help.reportIssue':
       void shell.openExternal('https://silverdaw.featurebase.app')

@@ -236,6 +236,17 @@ class AudioEngine : private AudioEngineGraphState,
 
     void setPreviewPositionMs(double ms);
 
+    /** Arms (or, with nullopt, disarms) a window the preview voice loops while playing.
+     *  Positions are preview-relative ms, the same domain as `setPreviewPositionMs`.
+     *  As with `setTimelineLoop`, owning the wrap here is what makes it seamless: the
+     *  renderer would have to wait for a `PREVIEW_POSITION` and send a seek back, which
+     *  can only ever land after audio past the loop end has been rendered (ADR 0023). */
+    void setPreviewLoop(std::optional<LoopRange> range);
+
+    /** True while a preview loop window is armed. The playhead emitter uses this to leave
+     *  the window end to the wrap instead of stopping the voice and raising `PREVIEW_ENDED`. */
+    bool isPreviewLoopArmed() const noexcept { return previewLoop.has_value(); }
+
     double getPreviewPositionMs() const;
 
     double getPreviewDurationMs() const;
@@ -511,6 +522,27 @@ class AudioEngine : private AudioEngineGraphState,
     // tighter poll than a block period (~10 ms at 512 frames) would only add message-thread
     // wakeups for no audible gain.
     static constexpr int kTimelineLoopPollMs = 2;
+
+    void wrapPreviewLoopIfDue();
+    /** Runs the preview loop poll only while a window is armed and the voice is moving. */
+    void updatePreviewLoopTimer();
+
+    class PreviewLoopTimer : public juce::Timer
+    {
+      public:
+        explicit PreviewLoopTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.wrapPreviewLoopIfDue(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    PreviewLoopTimer previewLoopTimer{*this};
+    std::optional<LoopRange> previewLoop;
+    /** Whether the user currently wants the preview to run. The loop wrap has to
+     *  restart a voice that JUCE auto-stopped at EOF, so it cannot infer intent from
+     *  the transport alone — pausing exactly at EOF would otherwise resume itself. */
+    bool previewPlayIntent = false;
+    static constexpr int kPreviewLoopPollMs = kTimelineLoopPollMs;
 
     class TrackBypassTimer : public juce::Timer
     {

@@ -205,7 +205,7 @@ export function useClipEditorWaveform(deps: ClipEditorWaveformDeps): ClipEditorW
 
     passes.drawRulerBackground(rulerBg, g)
     passes.drawWaveform(world, src, g)
-    passes.drawBeatGrid(world, src, g)
+    passes.drawBeatGrid(world, g)
     passes.drawRulerTicks(rulerTicks, g)
     passes.drawSelection(world, g)
     passes.drawSliceMarkers(world, g)

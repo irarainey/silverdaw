@@ -11,9 +11,21 @@
 //   SilverdawBpmEval <manifest>
 // Manifest lines: `<path>|<referenceBpm>[|<refFirstBeatSec>]`; '#'/blank ignored.
 // `path` may be any format JUCE can read (wav always; mp3/flac if supported).
+//
+// Supplying `refFirstBeatSec` unlocks the two phase columns. The second of those,
+// `drift`, is the headline number for beat-marker quality: it measures the grid at
+// the *end* of the track, where a small period error has had the whole duration to
+// accumulate. Tempo accuracy alone cannot show that — a track can sit inside the
+// "within 0.5 BPM" bucket and still be half a beat out by the last chorus.
+//
+// The `wall` column is kept as prominent as the accuracy columns: an accuracy win
+// that costs tens of seconds per track is not automatically a win.
 
 #include "../../src/dsp/BpmDetector.h"
+#include "../../src/core/Log.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +46,12 @@ struct Entry
     juce::String path;
     double referenceBpm = 0.0;
     double referenceFirstBeatSec = std::numeric_limits<double>::quiet_NaN(); // optional phase ground truth
+    // Every captured reference beat time, in order. Beat markers are drawn from a
+    // rigid (bpm, anchor) pair, so measuring the grid against beats sampled ACROSS
+    // the track is what exposes lateness and drift separately: a constant offset at
+    // every checkpoint is a phase error, an offset that grows is a period error.
+    std::vector<double> checkpointSec;
+    double durationSec = 0.0;                                               // filled in once the file is read
 };
 
 // Smallest tempo error after allowing common metrical ratios, so a clean
@@ -69,6 +87,30 @@ double phaseErrorSec(double anchorSec, double periodSec, double refFirstBeatSec)
     return (anchorSec + n * periodSec) - refFirstBeatSec;
 }
 
+// Signed distance (seconds) between the *last* reference beat in the track and the
+// nearest line of the detected rigid grid.
+//
+// This is the metric that matters for beat markers. Markers are drawn from a rigid
+// (bpm, anchor) pair, so a period error accumulates: the marker at beat N is out by
+// N * periodError. A track can score a perfect "within 0.5 BPM" hit and still be
+// half a beat out by the end — at 120 BPM over five minutes, 0.1 BPM is ~210 ms.
+// Measuring the far end of the lever arm exposes exactly that.
+double endDriftSec(double anchorSec, double periodSec, const Entry& e)
+{
+    if (periodSec <= 0.0 || e.referenceBpm <= 0.0 || e.durationSec <= 0.0
+        || std::isnan(e.referenceFirstBeatSec))
+        return std::numeric_limits<double>::quiet_NaN();
+
+    const double refPeriod = 60.0 / e.referenceBpm;
+    const double beatsToEnd = std::floor((e.durationSec - e.referenceFirstBeatSec) / refPeriod);
+    if (!(beatsToEnd >= 1.0)) return std::numeric_limits<double>::quiet_NaN();
+
+    const double lastRefBeatSec = e.referenceFirstBeatSec + beatsToEnd * refPeriod;
+    // Nearest-line comparison, so a correct half/double-time grid is not punished:
+    // its lines still coincide with (a subset of) the reference beats.
+    return phaseErrorSec(anchorSec, periodSec, lastRefBeatSec);
+}
+
 std::vector<Entry> parseManifest(const juce::File& file)
 {
     std::vector<Entry> entries;
@@ -90,8 +132,21 @@ std::vector<Entry> parseManifest(const juce::File& file)
         e.path = fields[0].trim();
         e.referenceBpm = fields[1].trim().getDoubleValue();
         if (fields.size() >= 3 && fields[2].trim().isNotEmpty())
-            e.referenceFirstBeatSec = fields[2].trim().getDoubleValue();
-        if (e.path.isEmpty() || e.referenceBpm <= 0.0)
+        {
+            // One or more comma-separated reference beat times.
+            juce::StringArray times;
+            times.addTokens(fields[2].trim(), ",", "");
+            for (const auto& t : times)
+            {
+                const auto v = t.trim();
+                if (v.isNotEmpty()) e.checkpointSec.push_back(v.getDoubleValue());
+            }
+            if (!e.checkpointSec.empty()) e.referenceFirstBeatSec = e.checkpointSec.front();
+        }
+        // A phase-only entry carries no reference tempo, just captured beat times.
+        // It still measures the thing users actually see - whether markers land on
+        // the beat - so it is kept rather than discarded for the missing BPM.
+        if (e.path.isEmpty() || (e.referenceBpm <= 0.0 && e.checkpointSec.empty()))
         {
             std::cerr << "[eval] skipping malformed line: " << line.toStdString() << '\n';
             continue;
@@ -110,10 +165,76 @@ struct Accum
     int phaseScored = 0;
     int phaseGood = 0;
     double sumAbsPhaseBeat = 0.0;
+    int driftScored = 0;
+    int driftGood = 0;
+    double sumAbsDriftMs = 0.0;
+    double worstAbsDriftMs = 0.0;
+    double sumSeconds = 0.0;
+    double worstSeconds = 0.0;
 };
 
+// Per-checkpoint offset of the detected grid from captured reference beats.
+//
+// This is the marker-accuracy readout: each checkpoint says how far the nearest
+// grid line sits from a beat the user actually marked. A roughly constant offset
+// across all checkpoints is a phase error (markers uniformly early or late); an
+// offset that grows through the track is a period error (markers drift).
+//
+// Raw nearest-line offsets wrap at half a beat, which makes a steady drift look
+// like noise (e.g. -172ms, +89ms, -153ms is actually +261ms per checkpoint once
+// unwrapped). The offsets are therefore unwrapped into a continuous series before
+// reporting, and the slope of that series is converted into the tempo error that
+// would explain it - which is the number needed to judge a detection change.
+void printCheckpoints(const silverdaw::BpmAnalysis& a, const Entry& e, const juce::String& name)
+{
+    if (e.checkpointSec.empty() || a.bpm <= 0.0) return;
+    const double periodSec = 60.0 / a.bpm;
+
+    std::vector<double> unwrapped;
+    unwrapped.reserve(e.checkpointSec.size());
+    double previous = 0.0;
+    for (size_t i = 0; i < e.checkpointSec.size(); ++i)
+    {
+        double off = phaseErrorSec(a.beatAnchorSec, periodSec, e.checkpointSec[i]);
+        if (i > 0)
+        {
+            // Continue the series: pick the equivalent offset nearest the last one.
+            off += std::round((previous - off) / periodSec) * periodSec;
+        }
+        unwrapped.push_back(off);
+        previous = off;
+    }
+
+    std::printf("  [phase] %-44s %8.3f BPM |", name.toStdString().c_str(), a.bpm);
+    for (size_t i = 0; i < unwrapped.size(); ++i)
+        std::printf(" %+8.1fms @%6.1fs |", unwrapped[i] * 1000.0, e.checkpointSec[i]);
+
+    // Least-squares slope of offset against time is the fractional period error.
+    if (unwrapped.size() >= 2)
+    {
+        const size_t n = unwrapped.size();
+        double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            sx += e.checkpointSec[i];
+            sy += unwrapped[i];
+            sxx += e.checkpointSec[i] * e.checkpointSec[i];
+            sxy += e.checkpointSec[i] * unwrapped[i];
+        }
+        const double denom = (double)n * sxx - sx * sx;
+        if (std::abs(denom) > 1e-9)
+        {
+            const double slope = ((double)n * sxy - sx * sy) / denom; // seconds drift per second
+            // Grid running late means its period is too long, so the true tempo is
+            // higher than detected by the same fraction.
+            std::printf(" drift %+7.1fms/min  implies %8.3f BPM", slope * 60000.0, a.bpm * (1.0 + slope));
+        }
+    }
+    std::printf("\n");
+}
+
 void scoreRow(const char* label, const silverdaw::BpmAnalysis& a, const Entry& e, const juce::String& name,
-              Accum& acc)
+              Accum& acc, double elapsedSec)
 {
     ++acc.analysed;
     double ratio = 1.0;
@@ -142,10 +263,28 @@ void scoreRow(const char* label, const silverdaw::BpmAnalysis& a, const Entry& e
     if (a.lowConfidence) flags += "L";
     if (flags.isEmpty()) flags = "-";
 
+    const double drift = endDriftSec(a.beatAnchorSec, periodSec, e);
+    juce::String driftCol = "    -      - ";
+    if (!std::isnan(drift))
+    {
+        const double driftMs = drift * 1000.0;
+        const double driftBeat = periodSec > 0.0 ? drift / periodSec : 0.0;
+        ++acc.driftScored;
+        acc.sumAbsDriftMs += std::abs(driftMs);
+        acc.worstAbsDriftMs = std::max(acc.worstAbsDriftMs, std::abs(driftMs));
+        if (std::abs(driftMs) <= 25.0) ++acc.driftGood;
+        char db[64];
+        std::snprintf(db, sizeof(db), "%+8.1f  %+.2f", driftMs, driftBeat);
+        driftCol = db;
+    }
+
+    acc.sumSeconds += elapsedSec;
+    acc.worstSeconds = std::max(acc.worstSeconds, elapsedSec);
+
     char buf[512];
-    std::snprintf(buf, sizeof(buf), "  %-3s  %7.2f  %8.3f  %5.2fx  %+7.2f  %5.2f  %s  %-4s  %s", label,
-                  e.referenceBpm, a.bpm, ratio, signedErr, absErr, phaseCol.toRawUTF8(), flags.toRawUTF8(),
-                  name.toStdString().c_str());
+    std::snprintf(buf, sizeof(buf), "  %-3s  %7.2f  %8.3f  %5.2fx  %+7.2f  %5.2f  %s  %s  %-4s  %6.1f  %s",
+                  label, e.referenceBpm, a.bpm, ratio, signedErr, absErr, phaseCol.toRawUTF8(),
+                  driftCol.toRawUTF8(), flags.toRawUTF8(), elapsedSec, name.toStdString().c_str());
     std::cout << buf << '\n';
 }
 
@@ -157,6 +296,12 @@ void printSummary(const char* label, const Accum& acc)
     if (acc.phaseScored > 0)
         std::cout << " | phase mean|offset|=" << (acc.sumAbsPhaseBeat / acc.phaseScored) << " beat, within 0.10="
                   << acc.phaseGood << "/" << acc.phaseScored;
+    if (acc.driftScored > 0)
+        std::cout << " | end-drift mean=" << (acc.sumAbsDriftMs / acc.driftScored) << " ms, worst="
+                  << acc.worstAbsDriftMs << " ms, within 25ms=" << acc.driftGood << "/" << acc.driftScored;
+    if (acc.analysed > 0)
+        std::cout << " | wall mean=" << (acc.sumSeconds / acc.analysed) << " s, worst=" << acc.worstSeconds
+                  << " s";
     std::cout << '\n';
 }
 
@@ -471,6 +616,20 @@ int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
+    // Surface the detector's own diagnostics. BpmDetector logs its period fit,
+    // phase alignment and grid refit decisions through the shared logger; without
+    // a sink those lines are dropped and the harness can only see the end result,
+    // not which stage produced it.
+    //
+    // Written to the temp directory rather than the working directory: this tool is
+    // normally run from the repo root, and a dev harness must never drop artefacts
+    // into the source tree.
+    const auto logDir =
+        juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("silverdaw_bpm_eval");
+    silverdaw::log::initialise(logDir.getFullPathName(), silverdaw::log::Level::Debug, true);
+    std::cout << "[eval] detector log: " << logDir.getChildFile("backend.log").getFullPathName().toStdString()
+              << '\n';
+
     // Subcommand: SilverdawBpmEval --combphase <manifest>
     // Prototype of the consensus global comb-template phase scorer; prints, per
     // track, the detector anchor phase vs the comb-chosen phase and their gap.
@@ -531,12 +690,14 @@ int main(int argc, char** argv)
     fm.registerBasicFormats();
     silverdaw::BpmDetector detector;
 
-    std::cout << "\n  src  ref      detected  ratio   signed   |err|  phase(ms) /beat  flags  name\n";
-    std::cout << "  ---  -------  --------  ------  -------  -----  --------- -----  -----  ----\n";
+    std::cout << "\n  src  ref      detected  ratio   signed   |err|  phase(ms) /beat  drift(ms) /beat  flags"
+                 "    wall  name\n";
+    std::cout << "  ---  -------  --------  ------  -------  -----  --------- -----  --------- -----  -----"
+                 "  ------  ----\n";
 
     Accum mixAcc;
 
-    for (const auto& e : entries)
+    for (auto e : entries)
     {
         juce::File f = juce::File::isAbsolutePath(e.path)
                            ? juce::File(e.path)
@@ -547,8 +708,19 @@ int main(int argc, char** argv)
             continue;
         }
 
+        // Duration drives the end-of-track drift lever arm, so read it from the file
+        // rather than trusting the manifest to carry it.
+        if (std::unique_ptr<juce::AudioFormatReader> reader{fm.createReaderFor(f)};
+            reader != nullptr && reader->sampleRate > 0.0)
+            e.durationSec = (double)reader->lengthInSamples / reader->sampleRate;
+
+        const auto mixStart = std::chrono::steady_clock::now();
         const auto mix = detector.analyse(f, fm);
-        scoreRow("mix", mix, e, f.getFileName(), mixAcc);
+        const double mixSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - mixStart).count();
+        // Phase-only entries have no reference tempo, so there is no BPM row to
+        // score - they contribute the checkpoint readout alone.
+        if (e.referenceBpm > 0.0) scoreRow("mix", mix, e, f.getFileName(), mixAcc, mixSec);
+        printCheckpoints(mix, e, f.getFileName());
     }
 
     std::cout << '\n';

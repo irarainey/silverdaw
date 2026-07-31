@@ -8,10 +8,10 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
-  clipFirstBeatOffsetMs,
   findClipSlot,
   CLIP_FIT_EPSILON_MS
 } from '@/lib/clip/clipTiming'
+import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'

@@ -5,7 +5,7 @@ import {
   seekToPreviousMarker,
   toggleTransportPlayback
 } from '@/lib/transport/useTransportSkip'
-import { msPerSubBeat } from '@/lib/musicTime'
+import { stepToGridMs } from '@/lib/musicTime'
 import {
   linearToTaperPosition,
   MAX_MASTER_DB,
@@ -86,17 +86,13 @@ function flushTimelineJog(timestamp: number): void {
       Math.abs(snappedJogUnits) >= pendingSnapUnitsPerBeat &&
       timestamp - lastSnappedSeekAt >= pendingSnapMinIntervalMs
     ) {
-      const gridLineMs = msPerSubBeat(transport.bpm)
-      const gridStep = Math.sign(snappedJogUnits)
+      // A stepped jog walks the grid exactly like the arrow keys, through the
+      // same helper — including a Free grid, where the step is relative so an
+      // off-grid playhead is not dragged onto a grid the user switched off.
+      const gridStep = Math.sign(snappedJogUnits) as 1 | -1
       snappedJogUnits -= gridStep * pendingSnapUnitsPerBeat
       lastSnappedSeekAt = timestamp
-      if (gridStep > 0) {
-        unclamped =
-          (Math.floor(transport.positionMs / gridLineMs + 1e-9) + gridStep) * gridLineMs
-      } else {
-        unclamped =
-          (Math.ceil(transport.positionMs / gridLineMs - 1e-9) + gridStep) * gridLineMs
-      }
+      unclamped = stepToGridMs(transport.positionMs, transport.bpm, ui.snapGrid, gridStep)
     }
   }
   pendingSeekDeltaMs = 0
@@ -366,13 +362,11 @@ export function handleMidiControl(payload: MidiControlPayload): void {
       seekToMarkerIndex(payload.pad - 1, `MIDI Hot Cue ${payload.pad}`)
       break
     case 'markerToggle': {
-      const project = useProjectStore()
-      const marker = project.markers[payload.pad - 1]
-      if (marker) {
-        project.removeMarker(marker.id)
-      } else {
-        project.addMarkerAt(useTransportStore().positionMs)
-      }
+      // Deliberately the same action as the keyboard `M`, on the same shared
+      // store code: toggle a marker at the exact playhead position. Pad N still
+      // jumps to marker N via `markerJump`, which parks the playhead exactly on
+      // that marker, so toggling it off from the pad still works.
+      useProjectStore().toggleMarkerAt(useTransportStore().positionMs)
       break
     }
     case 'shift':

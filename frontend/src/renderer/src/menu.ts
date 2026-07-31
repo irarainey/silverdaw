@@ -111,6 +111,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Delete Clip', action: 'edit.deleteClip', accelerator: 'Delete' },
         SEP,
         { label: 'Trim Project to Last Clip', action: 'edit.cropProjectToLastClip', accelerator: 'Ctrl+Shift+T' },
+        { label: 'Clear All Markers', action: 'edit.clearAllMarkers' },
         SEP,
         { label: 'Preferences\u2026', action: 'edit.preferences' }
       ]

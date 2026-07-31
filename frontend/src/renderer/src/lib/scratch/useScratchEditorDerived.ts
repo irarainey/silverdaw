@@ -3,6 +3,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import type { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
+import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 export interface ScratchEditorDerivedState {
   clip: ComputedRef<ReturnType<typeof useProjectStore>['clips'][string] | null>
@@ -14,8 +15,8 @@ export interface ScratchEditorDerivedState {
   channelPeaksPerSecond: ComputedRef<number>
   clipInMs: ComputedRef<number>
   clipReversed: ComputedRef<boolean>
-  sourceBpm: ComputedRef<number | undefined>
-  beatAnchorSec: ComputedRef<number | undefined>
+  /** Resolved source beat grid for the scratch waveform, or null when there is none. */
+  sourceBeatGrid: ComputedRef<SourceBeatGrid | null>
   waveformDurationMs: ComputedRef<number>
   positionMs: ComputedRef<number>
   platterTurns: ComputedRef<number>
@@ -99,10 +100,12 @@ export function useScratchEditorDerived(
       : 0
   })
   const clipReversed = computed(() => clip.value?.reversed ?? false)
-  const sourceBpm = computed(() => sourceItem.value?.bpm)
-  const beatAnchorSec = computed(
-    () => sourceItem.value?.beatAnchorSec ?? sourceItem.value?.beats?.[0]
-  )
+  // Scratch works on a single sample at high zoom, so a one-shot's grid is kept
+  // (unlike the timeline, which suppresses it).
+  const sourceBeatGrid = computed(() => {
+    const item = sourceItem.value
+    return item ? resolveSourceBeatGrid(item, library.byId, { suppressSimple: false }) : null
+  })
   // Peak coordinates remain in source time; the session supplies the separate
   // prepared duration used for playback and playhead positioning.
   const waveformDurationMs = computed(() => {
@@ -150,7 +153,7 @@ export function useScratchEditorDerived(
 
   return {
     clip, sourceItemId, peaks, peaksPerSecond, channelPeaks, channelPeaksPerSecond,
-    clipInMs, clipReversed, sourceBpm, beatAnchorSec, waveformDurationMs,
+    clipInMs, clipReversed, sourceBeatGrid, waveformDurationMs,
     positionMs, platterTurns, crossfaderValue, crossfaderReversed, isTouched, clipName,
     statusMessage, isError, isRecording, isArmed, recordingStatus, canRecord, hasPattern,
     deckLabel

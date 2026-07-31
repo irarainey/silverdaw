@@ -75,7 +75,7 @@ export function wheelDeltaToTurns(deltaX: number, deltaY: number, pixelsPerTurn:
 }
 
 /**
- * Crossfader display value for the momentary cut key: open = the deck's audible
+ * Crossfader display value for the cut key: open = the deck's audible
  * edge, closed = its silent edge (deck 1 audible at 0, deck 2 audible at 1).
  */
 export function crossfaderCutValue(open: boolean, deck: ScratchDeckSide = VIRTUAL_DECK): number {

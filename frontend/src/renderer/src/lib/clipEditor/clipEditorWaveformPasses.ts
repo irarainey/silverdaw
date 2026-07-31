@@ -26,6 +26,7 @@ import {
 import type { createWaveMeshBuilder } from '@/lib/clipEditor/clipEditorWaveMesh'
 import type { LibraryItem } from '@/stores/libraryStore'
 import type { ClipEditorWaveformDeps, SceneGeometry } from './clipEditorWaveformTypes'
+import { firstSourceBeatMsAtOrAfter } from '@/lib/clip/sourceBeatGrid'
 import {
   EDITOR_MIN_STEREO_LANE_PX,
   RULER_H,
@@ -262,16 +263,12 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
   }
 
   // --- Beat grid (world layer) ------------------------------------------------
-  function drawBeatGrid(layer: Container, src: LibraryItem, g: SceneGeometry): void {
-    const sourceBpm = src.bpm
-    const anchorSec = src.beatAnchorSec ?? src.beats?.[0]
-    if (!sourceBpm || sourceBpm <= 0 || anchorSec === undefined) return
-    const beatSpacingMs = (60 / sourceBpm) * 1000
-    if (beatSpacingMs <= 0) return
-    const anchorMs = anchorSec * 1000
+  function drawBeatGrid(layer: Container, g: SceneGeometry): void {
+    const grid = deps.sourceBeatGrid()
+    if (!grid) return
+    const { spacingMs: beatSpacingMs } = grid
     const { fromMs, toMs } = bandMsRange(g)
-    let firstBeatMs = anchorMs + Math.ceil((fromMs - anchorMs) / beatSpacingMs) * beatSpacingMs
-    while (firstBeatMs < fromMs) firstBeatMs += beatSpacingMs
+    const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, fromMs)
 
     const lines = acquireGraphics()
     if (!lines) return

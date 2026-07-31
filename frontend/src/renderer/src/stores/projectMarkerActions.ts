@@ -4,6 +4,7 @@
 
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import type { Marker, ProjectState } from './projectTypes'
 
@@ -12,11 +13,52 @@ interface MarkerActionsThis extends ProjectState {
   removeMarker(markerId: string): boolean
 }
 
+// Markers are stored on whole milliseconds while the playhead is a float the
+// engine quantises to a sample, so anything inside this slop is "the same spot".
+const MARKER_MATCH_TOLERANCE_MS = 1
+
+// Every entry point — keyboard, MIDI, store callers — normalises through these
+// two helpers so they all agree on where a marker goes and what counts as
+// already having one there.
+function normalisePositionMs(positionMs: number): number {
+  return Math.max(0, Math.round(positionMs))
+}
+
+function findMarkerAt(
+  markers: readonly Marker[],
+  positionMs: number,
+  excludeId?: string
+): Marker | undefined {
+  return markers.find(
+    (marker) =>
+      marker.id !== excludeId &&
+      Math.abs(marker.positionMs - positionMs) < MARKER_MATCH_TOLERANCE_MS
+  )
+}
+
+const ENGINE_OFFLINE_REMOVE_MESSAGE =
+  'Marker was removed locally, but the audio engine isn\'t connected.'
+const ENGINE_OFFLINE_CLEAR_MESSAGE =
+  'Markers were cleared locally, but the audio engine isn\'t connected.'
+
+// Drops one marker from local state and tells the engine. The result separates
+// "no such marker" from "removed but the engine never heard", so callers can
+// decide how to report it — a batch clear wants one toast, not one per marker.
+type MarkerRemoval = 'missing' | 'removed' | 'removed-offline'
+
+function removeMarkerLocally(state: MarkerActionsThis, markerId: string): MarkerRemoval {
+  const index = state.markers.findIndex((marker) => marker.id === markerId)
+  if (index < 0) return 'missing'
+  const [marker] = state.markers.splice(index, 1)
+  const sent = sendBridge('PROJECT_MARKER_REMOVE', { markerId })
+  log.info('project', `removeMarker id=${markerId} position=${marker?.positionMs ?? '?'}`)
+  return sent ? 'removed' : 'removed-offline'
+}
+
 export const markerActions = {
   addMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
-    const safePositionMs = Math.max(0, Math.floor(positionMs))
-    const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
-    if (existing) return false
+    const safePositionMs = normalisePositionMs(positionMs)
+    if (findMarkerAt(this.markers, safePositionMs)) return false
 
     const marker: Marker = {
       id: crypto.randomUUID(),
@@ -36,32 +78,52 @@ export const markerActions = {
     return true
   },
 
+  // Adds a marker at the playhead, or removes the one already sitting there.
+  // Markers are placed at the exact playhead position rather than snapped to the
+  // beat grid, so a marker is always removable from the spot it occupies —
+  // including one placed under an earlier tempo.
   toggleMarkerAt(this: MarkerActionsThis, positionMs: number): boolean {
-    const safePositionMs = Math.max(0, Math.round(positionMs))
-    const existing = this.markers.find((marker) => Math.abs(marker.positionMs - safePositionMs) < 1)
+    const safePositionMs = normalisePositionMs(positionMs)
+    const existing = findMarkerAt(this.markers, safePositionMs)
     if (existing) return this.removeMarker(existing.id)
     return this.addMarkerAt(safePositionMs)
   },
 
-  removeMarker(this: MarkerActionsThis, markerId: string): boolean {
-    const index = this.markers.findIndex((marker) => marker.id === markerId)
-    if (index < 0) return false
-    const [marker] = this.markers.splice(index, 1)
-    const sent = sendBridge('PROJECT_MARKER_REMOVE', { markerId })
-    if (!sent) {
-      useNotificationsStore().pushError('Marker was removed locally, but the audio engine isn\'t connected.')
+  // Removes every marker as one undo step: the backend folds the individual
+  // PROJECT_MARKER_REMOVE commands into a single transaction. Returns how many
+  // markers were cleared.
+  clearAllMarkers(this: MarkerActionsThis): number {
+    const markerIds = this.markers.map((marker) => marker.id)
+    if (markerIds.length === 0) return 0
+    const offline = runInUndoGroup('Clear all markers', () =>
+      markerIds.reduce(
+        (anyOffline, markerId) =>
+          removeMarkerLocally(this, markerId) === 'removed-offline' || anyOffline,
+        false
+      )
+    )
+    if (offline) {
+      useNotificationsStore().pushError(ENGINE_OFFLINE_CLEAR_MESSAGE)
     }
-    log.info('project', `removeMarker id=${markerId} position=${marker?.positionMs ?? '?'}`)
+    log.info('project', `clearAllMarkers removed=${markerIds.length}`)
+    return markerIds.length
+  },
+
+  removeMarker(this: MarkerActionsThis, markerId: string): boolean {
+    const result = removeMarkerLocally(this, markerId)
+    if (result === 'missing') return false
+    if (result === 'removed-offline') {
+      useNotificationsStore().pushError(ENGINE_OFFLINE_REMOVE_MESSAGE)
+    }
     return true
   },
 
   moveMarker(this: MarkerActionsThis, markerId: string, positionMs: number): boolean {
     const marker = this.markers.find((m) => m.id === markerId)
     if (!marker) return false
-    const safePositionMs = Math.max(0, Math.round(positionMs))
-    if (Math.abs(marker.positionMs - safePositionMs) < 1) return true
-    const existing = this.markers.find((m) => m.id !== markerId && Math.abs(m.positionMs - safePositionMs) < 1)
-    if (existing) return false
+    const safePositionMs = normalisePositionMs(positionMs)
+    if (Math.abs(marker.positionMs - safePositionMs) < MARKER_MATCH_TOLERANCE_MS) return true
+    if (findMarkerAt(this.markers, safePositionMs, markerId)) return false
     marker.positionMs = safePositionMs
     this.markers.sort((a, b) => a.positionMs - b.positionMs)
     const sent = sendBridge('PROJECT_MARKER_MOVE', {

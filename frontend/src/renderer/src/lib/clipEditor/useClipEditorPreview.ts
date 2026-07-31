@@ -56,6 +56,7 @@ export interface ClipEditorPreview {
   pushDraftPreviewBackspin: () => void
   autoFollowPlayhead: () => void
   enforceSelectionPlaybackBounds: () => void
+  syncPreviewLoop: () => void
   loadPreviewForView: () => void
   resetPreviewLoadKey: () => void
 }
@@ -154,6 +155,14 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     const maxScroll = Math.max(0, fullDur - visDur)
     const desired = Math.max(0, Math.min(maxScroll, phRel - visDur / 2))
 
+    // The engine wraps a loop on its own thread, so the playhead can jump
+    // backwards out of view with no renderer-side event. Easing only ever moves
+    // forward, so snap the view back rather than waiting for the next pass.
+    if (phRel < deps.scrollMs.value) {
+      deps.scrollMs.value = Math.max(0, Math.min(maxScroll, desired))
+      return
+    }
+
     // Match useTimelineDrawing: hold scroll if target is behind us (avoids
     // jarring backward teleports), and ease in when ahead.
     if (desired <= deps.scrollMs.value) return
@@ -170,37 +179,44 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     }
   }
 
-  // When a selection is active, playback is bounded by it. As soon as
-  // the playhead reaches the selection end, pause and rewind to the
-  // selection start so the next Play press replays the section.
-  // Natural end-of-window (the entire preview window finished playing)
-  // is handled separately via the `endedCount` watcher in the SFC
-  // — applyEnded resets positionMs to 0, so a position-based check
-  // here can't detect that transition.
+  // When a selection is active and loop is off, playback is bounded by it: as soon
+  // as the playhead reaches the selection end, pause and rewind to the selection
+  // start so the next Play press replays the section. A one-shot stop is not
+  // latency-critical, so it stays renderer-side (ADR 0023).
+  //
+  // Looping is NOT handled here: the engine owns the wrap via `PREVIEW_SET_LOOP`
+  // (see `syncPreviewLoop`). A renderer-driven seek could only ever land after the
+  // engine had rendered audio past the loop end, which is heard as a gap or click
+  // on every pass.
   function enforceSelectionPlaybackBounds(): void {
     if (!preview.isPlaying) return
 
     if (!deps.editorItem()) return
-    const hasSel = deps.hasPlaybackSelection()
-    // When loop is enabled, loop the active playback window: the selection if
-    // there is one, otherwise the whole preview window. This applies to any
-    // editor item (timeline clips, saved clips, and standalone library samples
-    // opened directly), so a music/simple sample loops just like a clip.
-    const looping = deps.loopEnabled()
-
-    // While playing, enforce the selection bounds before reaching the
-    // natural end of the preview window.
-    if (!hasSel && !looping) return
+    if (deps.loopEnabled()) return
+    if (!deps.hasPlaybackSelection()) return
     const pos = preview.positionMs
     const endRel = deps.playbackEndMs() - deps.viewInMs()
     if (pos < endRel - 0.5) return
     const startRel = Math.max(0, deps.playbackStartMs() - deps.viewInMs())
-    if (looping) {
-      preview.seek(startRel)
-    } else {
-      preview.pause()
-      preview.seek(startRel)
+    preview.pause()
+    preview.seek(startRel)
+  }
+
+  // Arm/disarm the engine-side loop window for the active playback window: the
+  // selection when there is one, otherwise the whole preview window, so a
+  // standalone library sample loops just like a clip. Idempotent — the store drops
+  // an unchanged window, so this can be called from a watcher on every input.
+  function syncPreviewLoop(): void {
+    if (!preview.isLoaded) return
+    if (!deps.isOpen() || !deps.loopEnabled() || !deps.editorItem()) {
+      preview.setLoop(null)
+      return
     }
+    const viewIn = deps.viewInMs()
+    preview.setLoop({
+      startMs: Math.max(0, deps.playbackStartMs() - viewIn),
+      endMs: deps.playbackEndMs() - viewIn
+    })
   }
 
   function loadPreviewForView(): void {
@@ -263,6 +279,7 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
     pushDraftPreviewBackspin,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
+    syncPreviewLoop,
     loadPreviewForView,
     resetPreviewLoadKey
   }

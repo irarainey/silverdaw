@@ -307,6 +307,17 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       }
       return
     }
+    if (action === 'edit.clearAllMarkers') {
+      const cleared = project.clearAllMarkers()
+      if (cleared === 0) {
+        notifications.pushInfo('No markers on the timeline — nothing to clear.')
+        return
+      }
+      notifications.pushInfo(
+        cleared === 1 ? 'Marker cleared.' : `${cleared} markers cleared.`
+      )
+      return
+    }
   }
 
   return { handleMenuAction }

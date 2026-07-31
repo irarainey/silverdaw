@@ -16,8 +16,6 @@ import {
   RULER_LABEL_HINT,
   RULER_TICK,
   SCROLLBAR_WIDTH,
-  SUBDIVISIONS_PER_BEAT,
-  TIME_SIG_NUM,
   TRACK_HEADER_BG
 } from './constants'
 import type { GridGeometry } from './useGridGeometry'
@@ -30,7 +28,7 @@ export interface TimelineRulerRendererDeps {
   headersLayer: ShallowRef<Container | null>
   GraphicsCtor: ShallowRef<typeof Graphics | null>
   TextCtor: ShallowRef<typeof Text | null>
-  geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth'>
+  geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth' | 'subsPerBeat' | 'subsPerBar'>
   scrollX: Ref<number>
   project: ReturnType<typeof useProjectStore>
   transport: ReturnType<typeof useTransportStore>
@@ -49,7 +47,7 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     project,
     transport
   } = deps
-  const { pxPerSecond, headerWidth } = geometry
+  const { pxPerSecond, headerWidth, subsPerBeat, subsPerBar } = geometry
   const ui = useUiStore()
 
   function drawTimelineSelection(): void {
@@ -146,8 +144,8 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     const rightEdge = width - SCROLLBAR_WIDTH
 
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
-    const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
-    const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
+    const pxPerSub = pxPerBeat / subsPerBeat.value
+    const subsPerBarNow = subsPerBar.value
 
     // Project extent in subdivisions, used as the clamp ceiling for the band.
     const viewWidth = rightEdge - headerWidth()
@@ -168,8 +166,8 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
 
     for (let s = firstSub; s <= lastVisibleSub; s++) {
       const x = headerWidth() + s * pxPerSub + 0.5
-      const isBar = s % subsPerBar === 0
-      const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
+      const isBar = s % subsPerBarNow === 0
+      const isBeat = s % subsPerBeat.value === 0
       const tickH = isBar ? 14 : isBeat ? 10 : 5
       const target = isBar ? barTicks : isBeat ? beatTicks : subTicks
       target.moveTo(x, RULER_HEIGHT - tickH).lineTo(x, RULER_HEIGHT - 1)
@@ -184,10 +182,10 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     // Bar labels: barCounterStart is the first bar's number (default 1; 0 or lower for lead-in).
     if (T) {
       const barCounterStart = project.barCounterStart
-      const firstBarSub = Math.ceil(firstSub / subsPerBar) * subsPerBar
-      for (let s = firstBarSub; s <= lastVisibleSub; s += subsPerBar) {
+      const firstBarSub = Math.ceil(firstSub / subsPerBarNow) * subsPerBarNow
+      for (let s = firstBarSub; s <= lastVisibleSub; s += subsPerBarNow) {
         const x = headerWidth() + s * pxPerSub + 0.5
-        const barNumber = s / subsPerBar + barCounterStart
+        const barNumber = s / subsPerBarNow + barCounterStart
         const label = new T({
           text: String(barNumber),
           style: {

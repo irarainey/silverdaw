@@ -240,8 +240,7 @@ export function useClipEditorController(
 
   function onGenerateSliceGrid(): void {
     reseedSliceWindow()
-    const src = sourceItem.value
-    sliceDraft.generateToGrid(src?.bpm, src?.beatAnchorSec ?? src?.beats?.[0])
+    sliceDraft.generateToGrid(beatGrid.resolvedGrid.value)
     if (sliceDraft.markers.value.length === 0) {
       notifications.pushInfo('No beat grid available to slice on — drag markers by hand.')
     }
@@ -321,6 +320,7 @@ export function useClipEditorController(
     pushDraftPreviewBackspin,
     autoFollowPlayhead,
     enforceSelectionPlaybackBounds,
+    syncPreviewLoop,
     loadPreviewForView,
     resetPreviewLoadKey
   } = useClipEditorPreview({
@@ -595,20 +595,22 @@ export function useClipEditorController(
   // Scroll (manual or auto-follow) is repainted by the per-frame rAF loop while the
   // editor is open, so no separate scrollMs watcher is needed.
 
-  // endedCount is the reliable loop restart signal after natural preview end.
+  // The engine owns the preview wrap (ADR 0023), so every input that moves the loop
+  // window has to re-arm it: the toggle, the selection, and the preview window
+  // itself (which changes on crop/zoom-to-selection and on target switch).
   watch(
-    () => preview.endedCount,
-    (n, prev) => {
-      if (n === prev) return
-      if (!editorItem.value) return
-      // Loop the active window (selection or whole preview) for any editor item
-      // when loop is enabled, so standalone library samples loop like clips.
-      const looping = loopEnabled.value
-      if (!looping) return
-      const startRel = Math.max(0, playbackStartMs.value - viewInMs.value)
-      preview.seek(startRel)
-      preview.play()
-    }
+    [
+      loopEnabled,
+      () => props.open,
+      () => preview.isLoaded,
+      () => playbackStartMs.value,
+      () => playbackEndMs.value,
+      viewInMs
+    ],
+    () => {
+      syncPreviewLoop()
+    },
+    { immediate: true }
   )
 
   let resizeObserver: ResizeObserver | null = null
@@ -670,6 +672,7 @@ export function useClipEditorController(
     resetHiResRequestKey
   } = useClipEditorWaveform({
     sourceItem: () => sourceItem.value,
+    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
     sourceDurationMs: () => sourceDurationMs.value,
     zoom: () => zoom.value,
     visibleInMs: () => visibleInMs.value,
@@ -736,6 +739,7 @@ export function useClipEditorController(
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     sourceItem: () => sourceItem.value,
+    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
     zoom: () => zoom.value,
     gridAlignActive: () => beatGrid.alignActive.value,
     previewGridAnchorSec: (anchorSec: number) => beatGrid.previewAnchorSec(anchorSec),

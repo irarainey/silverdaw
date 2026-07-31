@@ -1,11 +1,14 @@
-# ADR 0023 — Engine-owned timeline loop wrapping
+# ADR 0023 — Engine-owned loop wrapping
 
 - **Date:** 2026-07-28 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
 
 ## Decision
 
-When a timeline range has **Loop Selection** enabled, the **engine** performs
-the loop restart. The renderer never issues a seek to wrap playback.
+When a loop is enabled — a timeline range with **Loop Selection**, or the Clip
+Editor's **Loop** toggle — the **engine** performs the loop restart. The
+renderer never issues a seek to wrap playback.
+
+### Timeline transport
 
 - `PROJECT_SET_VIEW` and project load call `syncTimelineLoop`, which arms
   `AudioEngine::setTimelineLoop` with the range, or clears it when the range is
@@ -22,10 +25,31 @@ the loop restart. The renderer never issues a seek to wrap playback.
   latency-compensated position the user sees.
 - A pending pause, stop, or seek fade owns the transport, so the poll defers to
   it rather than competing for the playhead.
-- The renderer keeps only view concerns: it scrolls back when it observes the
-  position jump to the range start, because auto-follow only eases forward.
-  Pausing at the end of a **non**-looped range also stays renderer-side, as a
-  one-shot stop is not latency-critical.
+
+### Preview voice (Clip Editor)
+
+- `PREVIEW_SET_LOOP` arms `AudioEngine::setPreviewLoop` with the active playback
+  window — the selection if there is one, otherwise the whole preview window —
+  in preview-relative ms, the same domain as `PREVIEW_SEEK`. The Clip Editor
+  re-arms it whenever the Loop toggle, the selection, or the preview window
+  changes, and disarms it on close; `unloadPreview` drops it too, because a loop
+  window belongs to the loaded voice.
+- The wrap mirrors the timeline: the same 2 ms message-thread poll, compared
+  against the engine's own preview position, restarting via
+  `setPreviewPositionMs` with no fade.
+- Two details are specific to the preview voice. A loop end that sits on the
+  window end is reached as true EOF, which auto-stops the JUCE transport, so the
+  wrap also restarts it and the poll runs off a *play intent* flag rather than
+  `isPreviewPlaying()`. And `PlayheadEmitter` must not treat the window end as
+  an end while a loop is armed, or it would stop the voice and raise
+  `PREVIEW_ENDED` in a race with the wrap.
+
+### Renderer's remaining role
+
+The renderer keeps only view concerns: it scrolls back when it observes the
+position jump to the loop start, because auto-follow only eases forward.
+Pausing at the end of a **non**-looped range or selection also stays
+renderer-side, as a one-shot stop is not latency-critical.
 
 The poll runs on the message thread and reads a published position; the audio
 callback is unchanged and still does not lock, allocate, or wait (ADR 0006).
@@ -37,9 +61,10 @@ a click or a stutter on every pass, which defeats the purpose of auditioning a
 range while tuning an edit. Two properties of the two-process split (ADR 0001)
 make a renderer-driven wrap unable to be seamless:
 
-- **Round trip.** The renderer would have to wait for a `PLAYHEAD_UPDATE`, then
-  send `TRANSPORT_SEEK` back across the bridge. The wrap would land late by at
-  least the update interval plus the round trip.
+- **Round trip.** The renderer would have to wait for a `PLAYHEAD_UPDATE` (or
+  `PREVIEW_POSITION` / `PREVIEW_ENDED`), then send a seek back across the
+  bridge. The wrap would land late by at least the update interval plus the
+  round trip.
 - **Latency compensation.** The renderer's playhead is latency-compensated by
   design, so it only reaches the loop end after the engine has already rendered
   and queued audio past it. The renderer therefore cannot ask for the seek early
@@ -49,6 +74,11 @@ Placing the wrap next to the transport that owns the position removes both. It
 also lets the wrap opt out of the seek fade: `setPositionMs` while playing
 deliberately fades out, waits for the ramp, seeks, then fades in, which is right
 for a user-initiated seek and wrong for a loop boundary.
+
+The preview voice was originally left on the renderer-driven design, which is
+why the same clip could loop cleanly on the timeline and glitch in the Clip
+Editor. Applying one rule to both voices removes that inconsistency and means a
+single place has to be correct.
 
 This follows the playback-first priority in ADR 0017 — a correctness and
 audible-quality problem is solved where the audio actually is, and the renderer
@@ -61,6 +91,10 @@ keeps only the parts that are purely visual.
   by a bridge round trip and, because the renderer position is
   latency-compensated, it can only ever request the seek after audio beyond the
   loop end has been rendered. Both are audible on every pass.
+- **Keep the preview voice on the renderer wrap because it is "only a
+  preview".** The Clip Editor is where loop auditioning matters most, and the
+  glitch was audible on every pass; leaving two different rules for the same
+  user-facing feature also invites the next bug.
 - **Reuse the normal `setPositionMs` seek for the wrap.** Consistent with every
   other seek, but its fade-out / poll / fade-in sequence inserts an audible gap
   at each loop boundary.

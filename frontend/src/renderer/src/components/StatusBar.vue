@@ -8,6 +8,7 @@
 
 import { computed, nextTick, ref } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
+import { SNAP_GRIDS, SNAP_GRID_LABELS, toSnapGrid } from '@shared/snapGrid'
 import {
   DEFAULT_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
@@ -15,6 +16,19 @@ import {
 } from '@/lib/timeline/constants'
 
 const ui = useUiStore()
+
+// Snap grid. A dense native select suits the status bar; the radio-card pattern
+// is for preference panels, not a 24px-tall strip.
+//
+// The select is driven by :value/@change rather than v-model so it can hand
+// focus straight back to the timeline. A select keeps focus after a choice is
+// made, and a focused select swallows the global shortcuts, so leaving it
+// focused would silently break the keyboard until the user clicked away.
+function onSnapGridChange(e: Event): void {
+  const el = e.target as HTMLSelectElement
+  ui.setSnapGrid(toSnapGrid(el.value))
+  el.blur()
+}
 
 // Timeline zoom expressed as a percentage of the default (100 px/s = 100%).
 // Shown to the nearest whole percent; tooltip carries the raw px/sec.
@@ -129,6 +143,51 @@ function cancelEdit(): void {
         >
           <span class="text-sm leading-none">+</span>
         </button>
+      </span>
+
+      <!-- Snap grid: drives both the drawn grid density and all timeline snapping.
+           A grid glyph replaces a text label to match the zoom control beside it;
+           the select keeps an aria-label so the control is still named. -->
+      <span
+        class="flex items-center gap-1"
+        title="Timeline snap grid — the interval clips, markers, the playhead and ranges snap to"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="mr-0.5 h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <rect
+            x="3"
+            y="3"
+            width="18"
+            height="18"
+            rx="2"
+          />
+          <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+        </svg>
+        <select
+          id="snap-grid"
+          class="app-select app-select-dense"
+          :value="ui.snapGrid"
+          aria-label="Timeline snap grid"
+          @change="onSnapGridChange"
+          @keyup.esc="($event.target as HTMLSelectElement).blur()"
+        >
+          <option
+            v-for="grid in SNAP_GRIDS"
+            :key="grid"
+            :value="grid"
+          >
+            {{ SNAP_GRID_LABELS[grid] }}
+          </option>
+        </select>
       </span>
     </div>
 

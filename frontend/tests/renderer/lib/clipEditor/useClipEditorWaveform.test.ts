@@ -22,6 +22,7 @@ interface Harness {
 
 function makeWaveform(h: Harness): ReturnType<typeof useClipEditorWaveform> {
   const deps: ClipEditorWaveformDeps = {
+    sourceBeatGrid: () => null,
     sourceItem: () => h.source.value,
     sourceDurationMs: () => 0,
     zoom: () => h.zoom.value,

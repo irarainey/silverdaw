@@ -23,6 +23,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [BPM and beat detection](#bpm-and-beat-detection)
   - [Confidence and audio type classification](#confidence-and-audio-type-classification)
   - [Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)
+  - [Timeline snap grid](#timeline-snap-grid)
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
@@ -33,9 +34,12 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project properties](#project-properties)
 - [Project sample rate](#project-sample-rate)
 - [Keyboard & mouse reference](#keyboard--mouse-reference)
+  - [Application commands](#application-commands)
+  - [Dialogs](#dialogs)
+  - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
-  - [Selection model](#selection-model)
+  - [Track effect automation](#track-effect-automation)
 - [Rendering performance](#rendering-performance)
 - [Prerequisites](#prerequisites)
   - [One-shot setup (recommended)](#one-shot-setup-recommended)
@@ -209,7 +213,7 @@ Silverdaw currently supports the core arrangement workflow:
   or pending spinner on the timeline. The Timeline preference can disable
   automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
-  (clamped 80..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
+  (clamped 120..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
 - Edit track gain with the fader or double-click the dB readout to type a value
@@ -283,7 +287,12 @@ Silverdaw currently supports the core arrangement workflow:
   Its first division of the mixed track is captured and repeated until the
   region ends. The same **Effects ▸ Beat Repeat** submenu removes a region under
   the pointer.
-  Regions show as a sky overlay and affected clips carry a **REPEAT** badge.
+  Regions show as a sky overlay and the clip that owns a region carries a
+  **REPEAT** badge. Ownership is by widest overlap: a region belongs to the one
+  clip on that track it overlaps most, so a neighbouring clip whose tail runs a
+  few milliseconds past the region's start beat is not badged, and the same
+  attribution drives the region's removal entries in the context menu
+  ([`beatRepeatAttribution.ts`](../frontend/src/renderer/src/lib/timeline/beatRepeatAttribution.ts)).
   Playback and mixdown use the same processor. A seek, timeline discontinuity,
   or region edit clears the capture so playback begins from fresh track audio
   instead of replaying an old slice. Older projects omit the optional region
@@ -408,7 +417,11 @@ Silverdaw currently supports the core arrangement workflow:
   non-undoable project view state.
 - **Edit ▸ Trim Project to Last Clip** collapses the project length to the end of
   the latest clip on any track. Manual project-length edits are also clamped so
-  the ruler cannot be shortened below the longest clip's effective end. Reducing
+  the ruler cannot be shortened below the longest clip's effective end. Project
+  length is mirrored onto every track's `lengthMs`, so a newly created track
+  adopts the current project length (`newTrackLengthMs`) rather than the
+  5-minute default — otherwise Add Track, stem separation, or channel split
+  would stretch a trimmed project back out. Reducing
   project length truncates a crossing timeline range, or clears a range whose
   start falls outside the new duration (also disabling Loop Selection).
 - Save reusable saved clips to the library from any timeline clip; saved clips are
@@ -1120,7 +1133,13 @@ timeline range and Loop Selection state. All are round-tripped through
 
 Timeline markers are stored as `MARKER` children with absolute project positions in
 milliseconds, round-trip through `PROJECT_STATE`, and mark the project dirty when
-added, moved or removed.
+added, moved or removed. `M` toggles a marker at the playhead: the marker is placed
+at the exact playhead position rather than snapped to the beat grid, so it always
+sits where the user put it and always toggles off from that same spot. The MIDI
+hot-cue toggle pads run the same `toggleMarkerAt` store action, so both control
+surfaces behave identically.
+**Edit ▸ Clear All Markers** removes every marker as one undo step (greyed out
+when the project has none).
 
 `metronomeEnabled` toggles an audible click track that the backend
 [`Metronome`](../backend/src/engine/Metronome.h) renders in time with the project
@@ -1134,14 +1153,17 @@ monitoring aid never marks the project dirty or adds an undo step. It is omitted
 from save (and from the `PROJECT_STATE` broadcast) while at its default-off value.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
-Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400) is
+Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400,
+and re-clamped to the stricter renderer range of 120..400 by `trackHeightPx()` in
+`lib/timeline/trackLayout.ts` so a legacy project cannot crop the header controls) is
 likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
 preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
 project's `UndoManager`).
-The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) bypass the
-dirty-flag listener via a `suppressDirtyTransitions` guard inside their setters — zooming,
-scrolling, or moving the playhead doesn't prompt an unsaved-changes dialog. Meaningful
+The view-state properties (`viewPxPerSecond`, `viewScrollX`, `playheadMs`) are written
+through `setNonDirtyRootProperty`, which mirrors the value into `cleanSnapshot` so the
+dirty comparison never sees a delta — zooming, scrolling, or moving the playhead doesn't
+prompt an unsaved-changes dialog. Meaningful
 project edits (BPM, project length, marker add/move/remove, clip add/move/remove/rename,
 gain changes, library import/remove/rename/relink, etc.) still mark the project dirty as
 normal property edits.
@@ -1769,11 +1791,35 @@ This makes them survive a split / duplicate / trim without drifting — both hal
 of a split clip share one coordinate system, so the markers stay in lockstep
 across the split point.
 
+Every surface that reads that grid resolves it through a single helper,
+`lib/clip/sourceBeatGrid.ts` — `resolveSourceBeatGrid()` returns
+`{ bpm, spacingMs, anchorMs }` or `null`, and `firstSourceBeatMsAtOrAfter()` walks
+it. That covers timeline markers, drag/nudge snap, library drop snap, bar-grid
+alignment, Chop to Grid, and the Clip Editor and Scratch Editor grids (waveform
+lines, envelope beat snap, grid slicing). Never re-derive `60_000 / bpm` phase
+maths at a call site: the projections used to disagree on inherited BPM and on the
+simple-item gate, which made one-shots snap to a grid they never drew and made Chop
+to Grid silently do nothing on a stem that visibly had one.
+
+Two rules the helper settles:
+
+- **Inheritance is unconditional.** BPM resolves through `libraryItemSourceBpm`,
+  and `beats` / `beatAnchorSec` fall back to the source item, so a stem or saved
+  clip lands on the same grid its parent does. Anything drawn with a grid must be
+  usable by every operation that reads one.
+- **One-shot suppression is per-surface**, via `{ suppressSimple }` (default
+  `true`). The timeline suppresses it — a grid over a kick sample is noise at
+  timeline zoom, and nothing may snap to lines that were never drawn. The Clip
+  Editor, Scratch Editor and Chop to Grid pass `false`: they work on one sample at
+  high zoom, where that grid is exactly what you slice a break against. Clip Editor
+  surfaces read the resolved grid from `useClipEditorBeatGrid`'s `resolvedGrid`
+  rather than resolving it themselves.
+
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
-of snapping the clip's left edge to the project sub-beat, it snaps the first
+of snapping the clip's left edge to the snap grid, it snaps the first
 source beat inside the clip's window. With the project BPM seeded to the source
 BPM (the common case), every subsequent marker on the clip then lines up exactly
-with a project grid sub-beat. Drag with `Alt` for fine 1 ms unsnapped
+with a project grid line. Drag with `Alt` for fine 1 ms unsnapped
 behaviour.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
@@ -1781,6 +1827,71 @@ dragged edge as the source window changes. Hold `Alt` while trimming for
 freeform 1 ms edge placement. Linked saved clip instances do not expose timeline
 edge-resize handles; edit their shared window in the Clip Editor or unlink the
 instance first.
+
+### Timeline snap grid
+
+The snap-grid dropdown in the status bar is the single setting behind both the
+density of the drawn grid lines and the interval every timeline-time edit
+quantises to, so what the user sees is what they snap to. It offers **Bar**,
+**Beat**, **Half beat**, **Quarter beat** and **Free**, and defaults to Quarter
+beat, which is the behaviour that shipped before the grid became selectable.
+The control blurs itself once a choice is made — a focused `<select>` swallows
+the global shortcuts, so keeping focus would leave the keyboard dead until the
+user clicked away.
+
+The vocabulary and its pure helpers live in `shared/snapGrid.ts` — the value
+crosses the bridge, so both sides share one definition. `BEATS_PER_BAR` is
+defined there too and is the single statement of the app's 4/4 assumption;
+`timeline/constants.ts` derives `TIME_SIG_NUM` from it rather than restating the
+number. There is deliberately no constant for the sub-beat tier: it follows the
+selection, so `useGridGeometry` resolves it per read via
+`gridSubdivisionsPerBeat()`.
+
+Two derived quantities do the work:
+
+- `beatsPerSnapStep()` feeds `msPerSnapUnit(bpm, grid)` in `lib/musicTime.ts`,
+  which returns the snap interval in milliseconds. **Free returns 0**, meaning
+  "do not snap" rather than "snap to zero", so callers must branch on it instead
+  of dividing by it.
+- `gridSubdivisionsPerBeat()` is what the two renderers draw. It is deliberately
+  restricted to 1, 2 or 4 so the existing integer bar/beat tick maths still
+  holds. At **Beat** and **Bar** every subdivision *is* a beat, which suppresses
+  the fine tier and leaves the bar/beat hierarchy intact; **Free** keeps the
+  finest lines as a visual reference even though nothing snaps to them.
+
+`useGridGeometry` exposes `snapTimelineMs(ms, fineMode)` as a function rather
+than a computed so a handler mid-drag always reads the latest
+BPM and grid without wiring up its own watcher. Every snapping call site routes
+through `snapTimelineMs`: ruler seeks and playhead drags, clip and group drags,
+edge trims, marker drags, range boundaries, and library drops. The keyboard
+(`←`/`→`, `Shift`+`←`/`→`) and the MIDI jog step rather than snap, so they go
+through `stepToGridMs()` instead — see below.
+
+`Alt` remains the temporary fine-placement override. Because `snapMs()` treats
+Alt and Free identically, holding `Alt` on an already-Free grid is a no-op
+rather than an inversion.
+
+Stepped controls — the `←`/`→` playhead seek, the `Shift`+`←`/`→` clip nudge and
+the MIDI jog — all walk the grid through one shared helper, `stepToGridMs()` in
+`lib/musicTime.ts`. It differs from `snapMs()` in that it always *moves*: from a
+position already sitting on a line it lands on the next one, which is what a
+stepped control needs. On a Free grid there is no line to walk to, so it borrows
+`freeGridStepMs()` (a quarter beat) and applies it
+*relative* to the current position rather than quantising. This keeps stepping
+at roughly the same pace on every grid setting and leaves a deliberately
+off-grid position off-grid; a literal 1 ms step would take thousands of presses
+to cross a bar. `Alt`+arrow (pixel-resolution seek) and `Shift`+`Alt`+arrow
+(1 ms clip nudge) remain the finer steps on every grid.
+
+The choice persists as **non-dirty project view state** — changing it never
+marks a project unsaved. It travels as `snapGrid` on `PROJECT_SET_VIEW` and
+comes back as `viewSnapGrid` on `PROJECT_STATE`, backed by the `viewSnapGrid`
+root property in `ProjectState`. The backend stores the string opaquely and does
+not validate it: the renderer owns the vocabulary, and `toSnapGrid()` falls back
+to Quarter beat for an unknown or absent value. That fallback is what makes a
+project saved before this feature open correctly, so the snapshot path applies
+the grid on every reset even when the field is missing — otherwise an older
+project would silently inherit the previously open project's choice.
 
 ### Processing progress panel
 
@@ -2212,7 +2323,7 @@ a **WARP** pill in the editor header; the playhead is shown at the start of
 the view immediately, and Play becomes available once the backend preview
 voice is ready. Auditioning runs through an independent **backend preview
 voice** (`PREVIEW_LOAD` / `PREVIEW_PLAY` / `PREVIEW_PAUSE` / `PREVIEW_STOP` /
-`PREVIEW_SEEK` / `PREVIEW_SET_WARP` / `PREVIEW_SET_ENVELOPE` /
+`PREVIEW_SEEK` / `PREVIEW_SET_LOOP` / `PREVIEW_SET_WARP` / `PREVIEW_SET_ENVELOPE` /
 `PREVIEW_SET_REVERSED` / `PREVIEW_SET_METRONOME` / `PREVIEW_SET_BRAKE` /
 `PREVIEW_SET_BACKSPIN` / `PREVIEW_UNLOAD` → `PREVIEW_STATE` /
 `PREVIEW_POSITION` / `PREVIEW_ENDED`) so the main transport is unaffected. A
@@ -2220,6 +2331,15 @@ monotonic `generation` counter on the preview voice means stale events for a
 preview the user has already closed are silently dropped. While playing the
 canvas follows the playhead with the same smooth ease-in catch-up the main
 timeline uses.
+
+The **Loop** toggle arms an engine-side loop window over the active playback
+range — the selection if there is one, otherwise the whole preview window — via
+`PREVIEW_SET_LOOP`, in preview-relative ms. The engine wraps the voice itself on
+a 2 ms poll, exactly as it does for the timeline loop, so the restart is
+seamless; the renderer only scrolls the view back when it sees the playhead jump.
+Bounding playback at the end of a **non**-looped selection stays renderer-side,
+as a one-shot stop is not latency-critical. See
+[ADR 0023](adr/0023-engine-owned-timeline-loop.md).
 
 The dialog is **transactional**. Whenever it opens on an existing clip
 (saved clip library item, linked timeline clip, or unlinked timeline clip)
@@ -2394,11 +2514,11 @@ extreme). The session's display direction is retained when platter ownership is
 released, so touching or releasing the platter never recolours an unchanged
 fader. The `L`/`R` label on the blue extreme is accented, and changing
 colouring never moves the knob. When the fader is focused, `←`/`→` step it (0.02,
-or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A momentary **keyboard
-cut** works globally within the editor: holding the configured key opens the fader
-(deck audible) and releasing it closes — the resting state is closed (asserted once
-the session is controllable so the fader and audio agree), and blur/close force it
-closed so a held key can never leave the deck stuck open. The key is **Z**
+or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A **keyboard
+cut** works globally within the editor: each non-repeating press of the configured
+key **toggles** the fader between open (deck audible) and closed. The resting
+state is **open**, asserted once the session is controllable so the fader and
+audio agree before any key is pressed. The key is **Z**
 (right-handed, default) or **M** (left-handed), chosen in **Preferences ▸ Effects**
 (see below). While recording, the cut is captured like any other fader move.
 
@@ -2583,7 +2703,15 @@ Persisted fields:
 - **Follow playback** — continuous-follow auto-scroll. When on, the timeline scrolls so the
   playhead stays near the centre of the viewport during playback (default). Off pins the
   view in place. Toggleable in the transport bar (chevron-in-circle icon) and the
-  Preferences dialog.
+  Preferences dialog. Follow eases *forward* only, since playback never runs
+  backwards and easing back introduces scroll jitter — so on the frame follow
+  begins, a playhead left outside the viewport by a zoom or a manual pan enters
+  a one-off **recovery** scroll that eases in either direction until the view is
+  centred, then hands back to steady-state follow. Without that, starting
+  playback with the view scrolled past the playhead appeared to do nothing at
+  all. Recovery eases rather than jumping, because a jump reads as a glitch
+  rather than as the view catching up. Both modes share one deceleration curve
+  in `playbackFollow.ts`.
 - **Show images on library tiles** — controls whether library tiles show embedded cover
   art or the fallback audio icon. Off makes the library tiles text-only.
 - **Set project tempo from first clip** — `ui.seedProjectTempoFromFirstClip`
@@ -2748,12 +2876,26 @@ fields stored directly on the `PROJECT` ValueTree node:
 - **Audio output device** + **driver** — per-project override of the global
   preference. Two dropdowns: device list (deduplicated across drivers) and
   driver list (Windows Audio / DirectSound / ASIO / etc.), both with a
-  "Use Application Settings" entry that clears the override. If the saved device isn't
-  present at project-load, an `AudioDeviceUnavailableDialog` informs the user
+  "Use Application Settings" entry that clears the override. The saved
+  preference is a `(driver, device)` **pair**, because the same physical device
+  can be exposed by several drivers under different names and latencies, so the
+  pair is the device's real identity. If that pair isn't present at
+  project-load, an `AudioDeviceUnavailableDialog` informs the user
   and the engine falls back to the next available device; the project preference is left
-  intact so re-plugging or re-saving restores it. Shares the device list (real
+  intact so re-plugging or re-saving restores it. Drivers are machine-wide, so
+  the usual cause is a missing *device* under a driver that is still there
+  (unplugged, powered off, renamed); `audioUnavailableSavedTypeAvailable`
+  distinguishes that from the rarer case of the driver itself being absent
+  (for example ASIO with no ASIO driver installed), and the dialog wording
+  differs accordingly so the driver name is never mistaken for the thing that
+  is missing. The same distinction governs the driver dropdown: `(not
+  available)` is appended only when the driver is genuinely not installed, and
+  when the chosen device is absent the list falls back to every installed
+  driver (the device-scoped subset is unknowable while the device is gone).
+  Shares the device list (real
   named devices only, pseudo-endpoints filtered) with the Preferences ▸ Audio
-  picker via the single composable in `lib/audio/audioOutputPicker.ts`.
+  picker via the single composable in `lib/audio/audioOutputPicker.ts`, which
+  also owns `buildDriverOptions` — the pure builder behind the driver dropdown.
 - **Sample rate** — 44.1 kHz / 48 kHz dropdown. Changing the value pushes
   `PROJECT_SET_TARGET_SAMPLE_RATE` and the transport-bar **RATE** column
   updates immediately. See [Project sample rate](#project-sample-rate) for the
@@ -2806,14 +2948,10 @@ bucket-by-rate summary and three exit paths:
 whitelists `0` (clear), `44100` and `48000`; the dropdowns enforce the same
 on the renderer side.
 
-> **Phase 1 / Phase 2.** What's described here is Phase 1 — the foundations:
-> probe envelope, target-rate field, prompt dialog, RATE indicator,
-> classification gates. Phase 2 adds an on-disk rate-keyed playback cache
-> (libsamplerate-converted WAVs under `%APPDATA%/Silverdaw/playback/`),
-> project-rate change-and-rebuild (regenerate caches and resume transport
-> with `transcodeGeneration` for stale-ack safety), sample-bake at the
-> project rate, and a throttled probe-on-load batch for older projects that
-> stored a wrong renderer-side rate. Phase 2 is not yet shipped.
+> **Scope.** This is the shipped foundation: probe envelope, target-rate field,
+> prompt dialog, RATE indicator and classification gates. An on-disk rate-keyed
+> playback cache and project-rate change-and-rebuild are tracked as Phase 8 work
+> in [the development plan](development-plan.md).
 
 ## Keyboard & mouse reference
 
@@ -2836,6 +2974,25 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `F11` | Toggle full screen. |
 | `Ctrl + 1`–`Ctrl + 8` | Set timeline zoom to 100%–800%. |
 
+### Dialogs
+
+| Input | Effect |
+|---|---|
+| `Enter` | Accept the dialog — activates its footer's primary (blue) button, exactly as clicking it would. Disabled primaries are left alone, so a dialog with an invalid form cannot be submitted by keyboard any more than by mouse. |
+| `Escape` | Cancel the dialog, discarding any draft it was holding. |
+| `Tab` / `Shift + Tab` | Move focus within the dialog; focus is trapped inside it. |
+
+`Enter` is wired once for the whole application by `useDialogDefaultButton`,
+which works off the rendered DOM rather than per-dialog handlers — any dialog
+built from the documented `.dialog-*` markup inherits the behaviour, including
+ones added later. It stands down wherever `Enter` already means something
+locally, so it never overrides a newline in a textarea, a focused button (so
+`Cancel` stays `Cancel`), a `<select>` committing its value, an IME candidate,
+any modified `Enter`, or a dialog that claims the key itself with
+`preventDefault()`. Dialogs whose footer offers no single safe accept — the
+progress dialogs, and the recovery dialog with its per-item **Restore**
+buttons — carry no primary button and so have no default.
+
 ### Timeline commands
 
 **Nested clip context menu.** On a single clip, commands are grouped under
@@ -2849,30 +3006,30 @@ multi-selection and empty-track menus show only actions relevant to that target.
 
 | Input | Effect |
 |---|---|
-| Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
+| Click on **ruler** | Seek the playhead to the nearest snap-grid line (see [Timeline snap grid](#timeline-snap-grid)). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
-| Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
-| `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid and refusing occupied grid points. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the snap grid (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Drag the **playhead** | Move the playhead, snapping to the snap grid (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
+| `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid; hold `Alt` as well for a 1 ms fine drag to any position. A move onto an occupied position is refused. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | `Shift` + click on **clip** | Extend the selection to a range of clips on the anchor's track, between the anchor and the clicked clip (ordered by start time). |
 | `Ctrl` + click on **clip** | Toggle that clip in/out of the multi-selection, across tracks. Right-clicking any selected clip opens a dedicated menu (Copy, Cut, Lock, Colour, Duplicate, Delete) that acts on the whole selection; **Delete**, **Ctrl+L** and **Duplicate** also apply to every selected clip as one undo step. **Copy / Cut / Paste** (Ctrl+C/X/V) carry the whole selection — paste drops it at the playhead starting on the selected track, keeping each clip's relative timing and track offset, and is rejected wholesale if any clip wouldn't fit. Dragging any selected clip moves the whole group by a uniform delta (preserving relative offsets, across tracks), applied atomically — the move is refused wholesale if any clip wouldn't fit or one is locked. **Shift + ←/→** (and **Shift+Alt+←/→** for 1 ms) nudge the whole group. A plain click on a selected clip (no drag) collapses back to just that clip. |
-| Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
+| Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the snap grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
 | Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (**Library ▸ Unlink from Library** first, or use the Clip Editor) and on **locked** clips (Ctrl+L or **Edit ▸ Unlock** to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
-| Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
+| Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (120–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
 | Double-click a **track gain number** | Type a track gain in dB directly (range `-∞..+6 dB`). Accepts `-3`, `+1.5`, `0 dB`, `-inf`, `-∞`. Invalid input is rejected and the previous value is kept. |
 | Double-click the **master volume readout** in the transport bar | Type a master gain in dB directly (range `-∞..0 dB` — no boost above unity). Same parser as the track readout. |
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip, and move the playhead to the click position (drag to scrub). |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track, and move the playhead to the click position. |
 | **Right-click on an empty track lane** | Open a menu with **Paste** and **Effects ▸ Beat Repeat**. Paste drops the clipboard clip onto that track at the playhead (disabled when the clipboard is empty); Beat Repeat acts at the beat-snapped playhead. Click first to place the playhead where the action should land. |
-| `←` / `→` | Step the playhead one grid line (sub-beat). |
+| `←` / `→` | Step the playhead one snap-grid line (a relative quarter beat on a Free grid). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
-| `Shift` + `←` / `→` | Move the **selected** clip one beat-grid step, snapping its first in-window source beat to the project sub-beat grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
+| `Shift` + `←` / `→` | Move the **selected** clip one snap-grid step, snapping its first in-window source beat to the grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
 | `Shift` + `Alt` + `←` / `→` | Nudge the **selected** clip along the timeline at the finest granularity (1 ms, no snap — the keyboard twin of `Alt`+drag). Bump-clamped against neighbours; a burst of nudges folds into one undo step. No-op on a locked clip or with no clip selected. |
-| `M` | Toggle a marker at the nearest grid point to the playhead. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
+| `M` | Toggle a marker at the exact playhead position. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
 | `Ctrl` + `Shift` + `←` / `→` | Skip to the start or end of the project and jump the timeline viewport there. |
 | `Home` / `End` | Skip to the start or end of the project and jump the timeline viewport there (the bare-key twin of `Ctrl` + `Shift` + `←` / `→`). |
@@ -2952,7 +3109,10 @@ jumps to the project start / end. Every marker-stepping affordance treats the
 start of an active timeline selection as a temporary marker, so a selection is
 always reachable in one step.
 
-The status bar shows the current zoom level (e.g. `🔍 150%`). It deliberately does
+The status bar shows the current zoom level (e.g. `🔍 150%`) and the snap-grid
+dropdown (see [Timeline snap grid](#timeline-snap-grid)). Both are labelled by a
+glyph rather than a word — a magnifier and a grid — with the name carried by the
+hover tooltip, so the strip stays 24px tall. It deliberately does
 **not** show backend / audio-engine connection status: the front-end/back-end
 split is an implementation detail the user shouldn't have to reason about, so
 engine availability is handled invisibly by automatic recovery (see
@@ -3041,7 +3201,7 @@ height; its lower edge resizes only that lane from 80 to 220 px. The picker trun
 too long for the header and names the parameter in its tooltip, and it hands focus back to the
 timeline on change or `Escape`, so the global shortcuts keep working after a lane is
 retargeted. The track row's bottom edge
-still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
+still resizes only the clip/header area from 120 to 400 px. Removing a lane only hides it; it
 does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
 as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through
 `PROJECT_STATE` and `.silverdaw`; absence keeps old projects collapsed.
@@ -3078,10 +3238,28 @@ tracks. Values are stored in native units; only the lane renderer normalises to 
 
 ## Rendering performance
 
-The timeline component stays unmounted while the startup screen is visible.
-PixiJS can warm through the shared idle loader during that time, but WebGL
-application creation, observers, and the first timeline draw wait until the
-user starts or opens a project.
+The timeline component mounts as soon as the shared idle loader has warmed the
+PixiJS chunk, while the startup screen is still up. The startup overlay is
+opaque and covers the whole window, so the WebGL application is created,
+observers attach, and the first (empty) draw happens unseen. That matters
+because creating the WebGL context contends badly with project-load work on the
+main thread: paid at open time it measured ~800 ms — long enough for the Vue
+track headers to appear a beat before the canvas — while paid against an idle
+startup screen it is ~50 ms, leaving the first paint after a project snapshot in
+the tens of milliseconds. `App.vue` falls back to mounting on startup-screen
+dismissal, so a project opened before warming completes still gets a timeline.
+
+Both Pixi surfaces (timeline and Clip Editor) init through
+`pixiInitOptions()` in `pixiLoader.ts`. It pins `preference: 'webgl'`: Pixi 8
+otherwise probes for WebGPU first, and the renderer is WebGL-only by design —
+the CSP shader patch targets WebGL and context loss is handled through the
+`webglcontextlost` event, which a WebGPU renderer would never raise.
+
+Two `perf` log lines make this measurable in a user's `renderer.log`:
+`pixi+webgl ready in Xms (import wait=…, webgl init=…)` splits chunk load from
+context creation, and `[perf.timeline] first paint after project snapshot in
+Xms` spans the gap between a project snapshot landing in the store and the
+canvas actually drawing it.
 
 Dialogs that cannot appear during startup use async Vue components and
 parent-level visibility gates. Their component code is requested only when the
@@ -3263,7 +3441,7 @@ pnpm install
 pnpm dev
 ```
 
-The same commands are also available as Visual Studio Code tasks (`setup: dev`,
+Equivalent Visual Studio Code tasks cover the same steps (`setup: dev`,
 `backend: configure`, `backend: build`, `frontend: install`, `frontend: dev`, plus the
 composite `dev: all`).
 
@@ -3271,11 +3449,17 @@ The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch 
 selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt
 before the renderer starts.
 
-`backend/build/` is the Debug cache used by VS Code; `backend/build-release/` is the Release
+`backend/build/` is the Debug cache; `backend/build-release/` is the Release
 cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't
-reconfigure the Debug cache out from under your dev session (Ninja is single-config — sharing
-one directory means whichever configure ran last silently wins, and `cmake --build … --config`
-flags are ignored).
+reconfigure the Debug cache out from under your dev session.
+
+> **Pick one generator for `backend/build/` and stay with it.** The CLI steps
+> above configure it with `-G Ninja` (single-config, so `CMAKE_BUILD_TYPE`
+> decides the build type and `--config` is ignored), while the
+> `backend: configure` VS Code task configures the same directory with
+> `-G 'Visual Studio 17 2022'` (multi-config, where `--config` decides). Whichever
+> configure ran last wins. If you switch between the two, delete
+> `backend/build/` first rather than reconfiguring over the top.
 
 ## Packaging for Windows
 
@@ -3422,6 +3606,9 @@ pnpm dist:dir    # win-unpacked only, no packaging
 ```
 
 ## Quality gates
+
+The `pnpm` gates below run from `frontend/` (the only package manifest in the
+repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,

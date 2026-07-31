@@ -55,7 +55,10 @@ class FakeApplication {
 }
 
 const loadPixi = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/timeline/pixiLoader', () => ({ loadPixi }))
+vi.mock('@/lib/timeline/pixiLoader', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/timeline/pixiLoader')>()),
+  loadPixi
+}))
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))

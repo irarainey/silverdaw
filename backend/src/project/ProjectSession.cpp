@@ -172,6 +172,11 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
     obj->setProperty("viewFxPanelOpen", projectState.getViewFxPanelOpen());
+    // Omit an unset grid so the renderer applies its own default.
+    {
+        const auto snapGrid = projectState.getViewSnapGrid();
+        if (snapGrid.isNotEmpty()) obj->setProperty("viewSnapGrid", snapGrid);
+    }
     if (const auto selection = projectState.getViewTimelineSelection())
     {
         auto* selectionObj = new juce::DynamicObject();

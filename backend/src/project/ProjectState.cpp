@@ -31,6 +31,7 @@ const juce::Identifier ProjectState::kViewPxPerSecond{"viewPxPerSecond"};
 const juce::Identifier ProjectState::kViewScrollX{"viewScrollX"};
 const juce::Identifier ProjectState::kViewSelectedTrack{"viewSelectedTrack"};
 const juce::Identifier ProjectState::kViewFxPanelOpen{"viewFxPanelOpen"};
+const juce::Identifier ProjectState::kViewSnapGrid{"viewSnapGrid"};
 const juce::Identifier ProjectState::kViewTimelineSelectionStartMs{"viewTimelineSelectionStartMs"};
 const juce::Identifier ProjectState::kViewTimelineSelectionEndMs{"viewTimelineSelectionEndMs"};
 const juce::Identifier ProjectState::kViewTimelineSelectionLoop{"viewTimelineSelectionLoop"};

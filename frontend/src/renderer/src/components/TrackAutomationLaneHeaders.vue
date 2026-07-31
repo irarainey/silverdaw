@@ -229,7 +229,7 @@ const HANDLE_PX = 5
     >
       <div class="mb-1.5 flex items-center gap-1">
         <select
-          class="h-5 min-w-0 flex-1 truncate rounded border border-sky-700 bg-zinc-900 px-1 text-[10px] text-sky-200 outline-none focus:border-sky-400"
+          class="app-select app-select-dense min-w-0 flex-1 truncate border-sky-700 text-sky-200 focus:border-sky-400"
           :title="'Automation parameter — ' + AUTOMATION_PARAMS[lane.paramId].label"
           :value="lane.paramId"
           @change="onLaneParamChange(lane.paramId, $event)"

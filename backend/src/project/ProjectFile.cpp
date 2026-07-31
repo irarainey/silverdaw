@@ -180,7 +180,8 @@ juce::Result save(const juce::File& file, const ProjectState& project)
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
                            bool metronomeEnabled, bool clipEditorMetronomeEnabled,
-                           std::optional<ProjectState::TimelineSelectionView> timelineSelection)
+                           std::optional<ProjectState::TimelineSelectionView> timelineSelection,
+                           const juce::String& snapGrid)
 {
     if (!file.existsAsFile())
     {
@@ -213,6 +214,12 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
     projectObj->setProperty("viewSelectedTrack", selectedTrackId);
     projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);
+    // An empty grid means "never set"; leave the key out so a load falls back
+    // to the renderer's default rather than persisting a meaningless value.
+    if (snapGrid.isNotEmpty())
+    {
+        projectObj->setProperty("viewSnapGrid", snapGrid);
+    }
     if (timelineSelection.has_value())
     {
         projectObj->setProperty("viewTimelineSelectionStartMs", timelineSelection->startMs);

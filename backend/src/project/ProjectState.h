@@ -342,6 +342,12 @@ class ProjectState : public juce::ValueTree::Listener
 
     void setViewFxPanelOpen(bool open);
 
+    /** Timeline snap grid identifier (e.g. "quarter"); empty when never set.
+     *  Stored opaquely — the renderer owns the vocabulary and its fallback. */
+    juce::String getViewSnapGrid() const;
+
+    void setViewSnapGrid(const juce::String& snapGrid);
+
     struct TimelineSelectionView
     {
         double startMs{0.0};
@@ -739,6 +745,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;
     static const juce::Identifier kViewFxPanelOpen;
+    static const juce::Identifier kViewSnapGrid;
     static const juce::Identifier kViewTimelineSelectionStartMs;
     static const juce::Identifier kViewTimelineSelectionEndMs;
     static const juce::Identifier kViewTimelineSelectionLoop;
