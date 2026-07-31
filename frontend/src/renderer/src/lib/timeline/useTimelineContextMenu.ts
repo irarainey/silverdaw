@@ -31,6 +31,7 @@ import {
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loopSlice'
+import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
@@ -694,9 +695,10 @@ export function useTimelineContextMenu(
       const subdivision = command.slice('clip.chopGrid:'.length) as SliceSubdivision
       const src = clip ? library.byId[clip.libraryItemId] : undefined
       if (clip && src) {
+        // Explicit command, not a snap — so unlike the timeline's beat markers this
+        // still chops a one-shot, which is how you slice a break or loop sample.
         const markers = generateGridSlices({
-          sourceBpm: src.bpm,
-          anchorSec: src.beatAnchorSec ?? src.beats?.[0],
+          grid: resolveSourceBeatGrid(src, library.byId, { suppressSimple: false }),
           subdivision,
           windowInMs: clip.inMs,
           windowDurationMs: clip.durationMs

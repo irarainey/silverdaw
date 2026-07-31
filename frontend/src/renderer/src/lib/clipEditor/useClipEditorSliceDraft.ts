@@ -8,6 +8,7 @@
 // rather than being dropped mid-gesture; generation and one-shot adds reguard.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import {
   applySliceGuards,
   generateGridSlices,
@@ -29,7 +30,7 @@ export interface ClipEditorSliceDraft {
   /** Reset markers and pin the clip's source window used for all guards. */
   initialise(windowInMs: number, windowDurationMs: number): void
   /** Replace markers with the current subdivision's grid over the window. */
-  generateToGrid(sourceBpm: number | undefined, anchorSec: number | undefined): void
+  generateToGrid(grid: SourceBeatGrid | null): void
   /** Insert a marker (source ms); returns its index, or -1 if guards dropped it. */
   addMarker(sourceMs: number): number
   /** Drag a marker, clamped between its neighbours/edges; returns its index. */
@@ -61,10 +62,9 @@ export function useClipEditorSliceDraft(): ClipEditorSliceDraft {
     markers.value = []
   }
 
-  function generateToGrid(sourceBpm: number | undefined, anchorSec: number | undefined): void {
+  function generateToGrid(grid: SourceBeatGrid | null): void {
     markers.value = generateGridSlices({
-      sourceBpm,
-      anchorSec,
+      grid,
       subdivision: subdivision.value,
       windowInMs: windowInMs.value,
       windowDurationMs: windowDurationMs.value

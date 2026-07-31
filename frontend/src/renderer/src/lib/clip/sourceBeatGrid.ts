@@ -9,10 +9,13 @@
 // `beatAnchorSec` existed.
 //
 // Every consumer must resolve the grid through here: the timeline beat markers,
-// the beat-aware clip drag/nudge snap, the library drop snap, and bar-grid
-// alignment. They previously each re-derived it and disagreed on two points —
-// whether an inherited source BPM counted, and whether a "simple" one-shot has a
-// grid at all — which let a clip snap to a grid that was never drawn.
+// the beat-aware clip drag/nudge snap, the library drop snap, bar-grid alignment,
+// Chop to Grid, and the Clip Editor / Scratch grids. They previously each
+// re-derived it and disagreed on two points — whether an inherited source BPM
+// counted, and whether a "simple" one-shot has a grid at all — which let a clip
+// snap to a grid that was never drawn, and let Chop to Grid do nothing on a stem
+// that visibly had one. Inheritance is now unconditional; the one-shot question is
+// a per-surface option, because the answer genuinely differs by zoom level.
 import { libraryItemIsSimple, libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import type { LibraryItem } from '@/stores/libraryTypes'
 import { effectiveClipTempoRatio, isClipTempoWarpActive } from './clipTiming'
@@ -33,21 +36,37 @@ export interface SourceBeatGridLibrary {
   items: readonly LibraryItem[]
 }
 
+/** Options for {@link resolveSourceBeatGrid}. */
+export interface ResolveSourceBeatGridOptions {
+  /**
+   * Whether a "simple" (one-shot) item is treated as having no grid.
+   *
+   * True for the timeline, where a grid over a kick sample is noise at timeline
+   * zoom — so no markers are drawn and nothing may snap to them. False for the
+   * Clip Editor and Scratch surfaces, which are zoomed into a single sample
+   * where that same grid is the thing you chop a break against. Stated here
+   * rather than left to each call site to re-decide.
+   */
+  suppressSimple?: boolean
+}
+
 /**
  * Resolve the source beat grid for a library item, or null when it has none.
  *
  * Derived items (stems, saved clips) inherit BPM, beats, and anchor from the item
  * they came from, matching how a stem inherits the rest of its identity while its
- * source is still in the library.
+ * source is still in the library. This is unconditional: an item that visibly has
+ * a grid drawn on it must be usable by every operation that reads a grid.
  *
- * Simple (one-shot) items never have a grid: markers are not drawn for them, so
- * nothing may snap to one either.
+ * Whether a simple (one-shot) item has a grid is per-surface — see
+ * {@link ResolveSourceBeatGridOptions.suppressSimple}.
  */
 export function resolveSourceBeatGrid(
   item: LibraryItem,
-  byId: Readonly<Record<string, LibraryItem>>
+  byId: Readonly<Record<string, LibraryItem>>,
+  options: ResolveSourceBeatGridOptions = {}
 ): SourceBeatGrid | null {
-  if (libraryItemIsSimple(item, byId)) return null
+  if (options.suppressSimple !== false && libraryItemIsSimple(item, byId)) return null
 
   const bpm = libraryItemSourceBpm(item, byId)
   if (typeof bpm !== 'number' || !Number.isFinite(bpm) || bpm <= 0) return null

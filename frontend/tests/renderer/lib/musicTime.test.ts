@@ -7,7 +7,8 @@ import {
   formatTime,
   freeGridStepMs,
   msPerSubBeat,
-  parseTime
+  parseTime,
+  stepToGridMs
 } from '@/lib/musicTime'
 
 describe('formatTime', () => {
@@ -94,6 +95,43 @@ describe('freeGridStepMs', () => {
 
   it('clamps bpm to >= 1 so it never divides by zero', () => {
     expect(Number.isFinite(freeGridStepMs(0))).toBe(true)
+  })
+})
+
+describe('stepToGridMs', () => {
+  // 120 bpm: beat = 500 ms, quarter beat = 125 ms, bar = 2000 ms.
+  it('always moves, even from a position already on a grid line', () => {
+    expect(stepToGridMs(500, 120, 'beat', 1)).toBeCloseTo(1000, 6)
+    expect(stepToGridMs(500, 120, 'beat', -1)).toBeCloseTo(0, 6)
+  })
+
+  it('lands on the enclosing lines from a position between two', () => {
+    expect(stepToGridMs(600, 120, 'beat', 1)).toBeCloseTo(1000, 6)
+    expect(stepToGridMs(600, 120, 'beat', -1)).toBeCloseTo(500, 6)
+  })
+
+  it('honours the grid size', () => {
+    expect(stepToGridMs(0, 120, 'quarter', 1)).toBeCloseTo(125, 6)
+    expect(stepToGridMs(0, 120, 'half', 1)).toBeCloseTo(250, 6)
+    expect(stepToGridMs(0, 120, 'bar', 1)).toBeCloseTo(2000, 6)
+  })
+
+  it('never returns a negative position', () => {
+    expect(stepToGridMs(0, 120, 'beat', -1)).toBe(0)
+    expect(stepToGridMs(10, 120, 'free', -1)).toBe(0)
+  })
+
+  it('steps relatively on a Free grid, preserving the off-grid offset', () => {
+    // The whole point of Free: 613 must not be pulled onto a 125 ms line.
+    expect(stepToGridMs(613, 120, 'free', 1)).toBeCloseTo(738, 6)
+    expect(stepToGridMs(613, 120, 'free', -1)).toBeCloseTo(488, 6)
+  })
+
+  it('uses the same step size on Free as a quarter beat', () => {
+    const from = 1000
+    const quarter = stepToGridMs(from, 120, 'quarter', 1) - from
+    const free = stepToGridMs(from, 120, 'free', 1) - from
+    expect(free).toBeCloseTo(quarter, 6)
   })
 })
 

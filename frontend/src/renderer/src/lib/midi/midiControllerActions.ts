@@ -5,7 +5,7 @@ import {
   seekToPreviousMarker,
   toggleTransportPlayback
 } from '@/lib/transport/useTransportSkip'
-import { freeGridStepMs, msPerSnapUnit } from '@/lib/musicTime'
+import { stepToGridMs } from '@/lib/musicTime'
 import {
   linearToTaperPosition,
   MAX_MASTER_DB,
@@ -86,20 +86,13 @@ function flushTimelineJog(timestamp: number): void {
       Math.abs(snappedJogUnits) >= pendingSnapUnitsPerBeat &&
       timestamp - lastSnappedSeekAt >= pendingSnapMinIntervalMs
     ) {
-      // A stepped jog needs a musical step, so a Free grid falls back to the
-      // shared relative step rather than a 1 ms crawl.
-      const snapUnitMs = msPerSnapUnit(transport.bpm, ui.snapGrid)
-      const gridLineMs = snapUnitMs > 0 ? snapUnitMs : freeGridStepMs(transport.bpm)
-      const gridStep = Math.sign(snappedJogUnits)
+      // A stepped jog walks the grid exactly like the arrow keys, through the
+      // same helper — including a Free grid, where the step is relative so an
+      // off-grid playhead is not dragged onto a grid the user switched off.
+      const gridStep = Math.sign(snappedJogUnits) as 1 | -1
       snappedJogUnits -= gridStep * pendingSnapUnitsPerBeat
       lastSnappedSeekAt = timestamp
-      if (gridStep > 0) {
-        unclamped =
-          (Math.floor(transport.positionMs / gridLineMs + 1e-9) + gridStep) * gridLineMs
-      } else {
-        unclamped =
-          (Math.ceil(transport.positionMs / gridLineMs - 1e-9) + gridStep) * gridLineMs
-      }
+      unclamped = stepToGridMs(transport.positionMs, transport.bpm, ui.snapGrid, gridStep)
     }
   }
   pendingSeekDeltaMs = 0

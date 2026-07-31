@@ -2,6 +2,10 @@
 
 import { beatsPerSnapStep, snapsFreely, type SnapGrid } from '@shared/snapGrid'
 
+// Nudges a position that is already sitting on a grid line off it, so floating-point
+// dust in the ms position cannot make a step land back on the line it started from.
+const GRID_STEP_EPSILON_MS = 1e-6
+
 export const DEFAULT_SUBS_PER_BEAT = 4
 export const DEFAULT_BEATS_PER_BAR = 4
 
@@ -42,6 +46,30 @@ export function snapMs(positionMs: number, bpm: number, grid: SnapGrid, fineMode
  */
 export function freeGridStepMs(bpm: number): number {
   return msPerSubBeat(bpm)
+}
+
+/**
+ * Walk one step along the snap grid from `positionMs`.
+ *
+ * Distinct from `snapMs`, which *rounds* to the nearest line: this always moves,
+ * landing on the next line in `direction` even when the position is already on
+ * one. That is what a stepped control needs — the arrow keys, a MIDI jog detent.
+ *
+ * On a **Free** grid there is no line to land on, so the step is applied
+ * *relatively* and the off-grid position is preserved. Shared so every stepped
+ * control agrees on both the epsilon and the Free-grid semantics.
+ */
+export function stepToGridMs(
+  positionMs: number,
+  bpm: number,
+  grid: SnapGrid,
+  direction: 1 | -1
+): number {
+  const unit = msPerSnapUnit(bpm, grid)
+  if (unit <= 0) return Math.max(0, positionMs + direction * freeGridStepMs(bpm))
+  return direction < 0
+    ? Math.max(0, Math.floor((positionMs - GRID_STEP_EPSILON_MS) / unit) * unit)
+    : (Math.floor(positionMs / unit + GRID_STEP_EPSILON_MS) + 1) * unit
 }
 
 export interface BarPositionOptions {

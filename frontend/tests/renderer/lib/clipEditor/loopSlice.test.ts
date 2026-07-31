@@ -7,12 +7,16 @@ import {
   type GridSliceParams,
   type SliceSubdivision
 } from '@/lib/clipEditor/loopSlice'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+
+function gridAt(bpm: number, anchorSec: number): SourceBeatGrid {
+  return { bpm, spacingMs: (60 / bpm) * 1000, anchorMs: anchorSec * 1000 }
+}
 
 // 120 BPM → 500 ms/beat. Window covers source 0..4000 ms unless overridden.
 function gridParams(overrides: Partial<GridSliceParams> = {}): GridSliceParams {
   return {
-    sourceBpm: 120,
-    anchorSec: 0,
+    grid: gridAt(120, 0),
     subdivision: '1/4',
     windowInMs: 0,
     windowDurationMs: 4000,
@@ -35,7 +39,7 @@ describe('generateGridSlices', () => {
 
   it('respects the source beat anchor', () => {
     // anchor 0.1 s → grid at 100, 600, 1100, ... within 0..2000.
-    expect(generateGridSlices(gridParams({ anchorSec: 0.1, windowDurationMs: 2000 }))).toEqual([
+    expect(generateGridSlices(gridParams({ grid: gridAt(120, 0.1), windowDurationMs: 2000 }))).toEqual([
       100, 600, 1100, 1600
     ])
   })
@@ -47,10 +51,8 @@ describe('generateGridSlices', () => {
     ).toEqual([1500, 2000, 2500])
   })
 
-  it('returns nothing without a usable tempo or anchor', () => {
-    expect(generateGridSlices(gridParams({ sourceBpm: undefined }))).toEqual([])
-    expect(generateGridSlices(gridParams({ sourceBpm: 0 }))).toEqual([])
-    expect(generateGridSlices(gridParams({ anchorSec: undefined }))).toEqual([])
+  it('returns nothing without a usable grid', () => {
+    expect(generateGridSlices(gridParams({ grid: null }))).toEqual([])
   })
 
   it('drops grid lines closer than the min slice to a window edge', () => {

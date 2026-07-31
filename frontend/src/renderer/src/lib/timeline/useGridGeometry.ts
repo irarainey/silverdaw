@@ -8,7 +8,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { msPerSnapUnit, snapMs } from '@/lib/musicTime'
+import { snapMs } from '@/lib/musicTime'
 import { gridSubdivisionsPerBeat } from '@shared/snapGrid'
 import {
   DEFAULT_PX_PER_SECOND,
@@ -35,8 +35,6 @@ export interface GridGeometry {
   pxPerSub: ComputedRef<number>
   /** Number of drawn sub-beats in one bar. */
   subsPerBar: ComputedRef<number>
-  /** Snap step in milliseconds at the current BPM and Snap grid; 0 means Free. */
-  snapUnitMs: () => number
   /** Quantise a timeline position, honouring the Snap grid and Alt fine mode. */
   snapTimelineMs: (positionMs: number, fineMode: boolean) => number
   /** Clamp + apply a new zoom; returns the value actually applied. */
@@ -60,10 +58,9 @@ export function useGridGeometry(): GridGeometry {
   const pxPerSub = computed(() => pxPerBeat.value / subsPerBeat.value)
   const subsPerBar = computed(() => subsPerBeat.value * TIME_SIG_NUM)
 
-  // Functions (not computeds) so callers always read the *latest* BPM and snap
+  // A function (not a computed) so callers always read the *latest* BPM and snap
   // grid even mid-drag without each handler having to wire up its own watcher.
   // Single source of truth lives in `lib/musicTime.ts`.
-  const snapUnitMs = (): number => msPerSnapUnit(transport.bpm, ui.snapGrid)
   const snapTimelineMs = (positionMs: number, fineMode: boolean): number =>
     snapMs(positionMs, transport.bpm, ui.snapGrid, fineMode)
 
@@ -83,7 +80,6 @@ export function useGridGeometry(): GridGeometry {
     subsPerBeat,
     pxPerSub,
     subsPerBar,
-    snapUnitMs,
     snapTimelineMs,
     setPxPerSecond
   }

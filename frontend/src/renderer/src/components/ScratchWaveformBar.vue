@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useScratchWaveformView } from '@/lib/scratch/useScratchWaveformView'
 import { renderScratchWaveform } from '@/lib/scratch/scratchWaveformRenderer'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 const props = defineProps<{
   peaks: Float32Array
@@ -17,10 +18,8 @@ const props = defineProps<{
   inMs: number
   /** Whether the clip source is reversed. */
   reversed: boolean
-  /** Source beat-grid tempo. */
-  sourceBpm: number | undefined
-  /** Source-file beat-grid anchor in seconds. */
-  beatAnchorSec: number | undefined
+  /** Resolved source beat grid, or null when the source has none. */
+  grid: SourceBeatGrid | null
   positionMs: number
   isPlaying: boolean
   playbackRate: number
@@ -46,8 +45,7 @@ function draw(): void {
     preparedDurationMs: props.preparedDurationMs,
     inMs: props.inMs,
     reversed: props.reversed,
-    sourceBpm: props.sourceBpm,
-    beatAnchorSec: props.beatAnchorSec,
+    grid: props.grid,
     positionMs: props.positionMs
   })
 }
@@ -72,8 +70,7 @@ watch(
     props.preparedDurationMs,
     props.inMs,
     props.reversed,
-    props.sourceBpm,
-    props.beatAnchorSec,
+    props.grid,
     props.positionMs,
     ui.waveformDisplayMode,
     view.visibleStartMs.value,

@@ -1789,15 +1789,29 @@ This makes them survive a split / duplicate / trim without drifting — both hal
 of a split clip share one coordinate system, so the markers stay in lockstep
 across the split point.
 
-Marker drawing, drag-time snap and keyboard nudge all resolve that grid through a
-single helper, `lib/clip/sourceBeatGrid.ts` — `resolveSourceBeatGrid()` returns
-`{ bpm, spacingMs, anchorMs }` (or `null` when the item is a simple one-shot or has
-no detected beats), and `firstSourceBeatMsAtOrAfter()` walks it. Stems and samples
-resolve their BPM through `libraryItemSourceBpm`, so an item that inherits its
-analysis from its source lands on the same grid its parent does. Never re-derive
-`60_000 / bpm` phase maths at a call site: the three projections used to disagree on
-inherited BPM and on the simple-item gate, which made one-shots snap to a grid they
-never drew.
+Every surface that reads that grid resolves it through a single helper,
+`lib/clip/sourceBeatGrid.ts` — `resolveSourceBeatGrid()` returns
+`{ bpm, spacingMs, anchorMs }` or `null`, and `firstSourceBeatMsAtOrAfter()` walks
+it. That covers timeline markers, drag/nudge snap, library drop snap, bar-grid
+alignment, Chop to Grid, and the Clip Editor and Scratch Editor grids (waveform
+lines, envelope beat snap, grid slicing). Never re-derive `60_000 / bpm` phase
+maths at a call site: the projections used to disagree on inherited BPM and on the
+simple-item gate, which made one-shots snap to a grid they never drew and made Chop
+to Grid silently do nothing on a stem that visibly had one.
+
+Two rules the helper settles:
+
+- **Inheritance is unconditional.** BPM resolves through `libraryItemSourceBpm`,
+  and `beats` / `beatAnchorSec` fall back to the source item, so a stem or saved
+  clip lands on the same grid its parent does. Anything drawn with a grid must be
+  usable by every operation that reads one.
+- **One-shot suppression is per-surface**, via `{ suppressSimple }` (default
+  `true`). The timeline suppresses it — a grid over a kick sample is noise at
+  timeline zoom, and nothing may snap to lines that were never drawn. The Clip
+  Editor, Scratch Editor and Chop to Grid pass `false`: they work on one sample at
+  high zoom, where that grid is exactly what you slice a break against. Clip Editor
+  surfaces read the resolved grid from `useClipEditorBeatGrid`'s `resolvedGrid`
+  rather than resolving it themselves.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the snap grid, it snaps the first
@@ -1826,8 +1840,10 @@ user clicked away.
 The vocabulary and its pure helpers live in `shared/snapGrid.ts` — the value
 crosses the bridge, so both sides share one definition. `BEATS_PER_BAR` is
 defined there too and is the single statement of the app's 4/4 assumption;
-`timeline/constants.ts` derives `TIME_SIG_NUM` and `SUBDIVISIONS_PER_BEAT` from
-it rather than restating the numbers.
+`timeline/constants.ts` derives `TIME_SIG_NUM` from it rather than restating the
+number. There is deliberately no constant for the sub-beat tier: it follows the
+selection, so `useGridGeometry` resolves it per read via
+`gridSubdivisionsPerBeat()`.
 
 Two derived quantities do the work:
 
@@ -1853,8 +1869,11 @@ Alt and Free identically, holding `Alt` on an already-Free grid is a no-op
 rather than an inversion.
 
 Stepped controls — the `←`/`→` playhead seek, the `Shift`+`←`/`→` clip nudge and
-the MIDI jog — need a step size even when there is no grid to walk to, so on a
-Free grid they all borrow `freeGridStepMs()` (a quarter beat) and apply it
+the MIDI jog — all walk the grid through one shared helper, `stepToGridMs()` in
+`lib/musicTime.ts`. It differs from `snapMs()` in that it always *moves*: from a
+position already sitting on a line it lands on the next one, which is what a
+stepped control needs. On a Free grid there is no line to walk to, so it borrows
+`freeGridStepMs()` (a quarter beat) and applies it
 *relative* to the current position rather than quantising. This keeps stepping
 at roughly the same pace on every grid setting and leaves a deliberately
 off-grid position off-grid; a literal 1 ms step would take thousands of presses

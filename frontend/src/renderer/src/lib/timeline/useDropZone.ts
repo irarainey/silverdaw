@@ -154,7 +154,11 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     if (!grid) return null
     const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, 0)
     if (firstBeatMs > item.durationMs) return null
-    // Project the first beat into timeline time using the warp that will apply on drop.
+    // Project the first beat into timeline time using the warp that will apply on
+    // drop. That decision reads `item.bpm`, NOT the grid's (possibly inherited)
+    // BPM — the ghost preview and the placement both use `item.bpm`, and a snap
+    // computed against a ratio the drop never applies lands the first beat off
+    // the grid by exactly that ratio.
     const ui = useUiStore()
     const projectHasOtherClips = Object.keys(project.clips).length > 0
     const willWarpForSnap =
@@ -164,14 +168,14 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
         projectHasOtherClips,
         sourceKind: item.kind,
         sourceIsSimple: libraryItemIsSimple(item, library.byId),
-        sourceBpm: grid.bpm,
+        sourceBpm: item.bpm,
         projectBpm: transport.bpm,
         variableTempo: item.variableTempo
       })
     const warpInputs = {
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
-      sourceBpm: grid.bpm,
+      sourceBpm: item.bpm,
       projectBpm: transport.bpm
     }
     const ratio = isWarpActive(warpInputs) ? effectiveTempoRatio(warpInputs) : 1

@@ -20,7 +20,10 @@
 ### Fixed
 
 - An unplugged audio device no longer makes its driver look missing too.
+- A MIDI jog on a Free snap grid no longer pulls the playhead onto the beat grid.
+- Dropping a stem on the timeline now lands its first beat on the grid.
 - Clips now snap to the same beat grid as the markers drawn on them, including stem clips and one-shot samples.
+- Chop to Grid, the Clip Editor grid and the Scratch Editor grid now work on a stem, which previously showed beat markers but had nothing to chop or snap to.
 - A clip no longer draws a stray beat marker on the very first pixel of the clip that follows it.
 - Beat markers on zoomed-out clips now thin out in musical steps (every 2, 4, 8 beats and so on) so the remaining markers stay on meaningful beats.
 - The REPEAT badge now appears on the clip a Beat Repeat region actually plays over, instead of on the neighbouring clip whose tail crossed the region's start beat by a few milliseconds.

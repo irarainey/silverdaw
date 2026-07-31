@@ -59,6 +59,24 @@ describe('resolveSourceBeatGrid', () => {
     expect(resolveSourceBeatGrid(derived, { ssrc: simpleSource, cut: derived })).toBeNull()
   })
 
+  it('keeps a one-shot grid when the surface opts out of suppression', () => {
+    // Clip Editor / Scratch / Chop to Grid work on one sample at high zoom, where
+    // a one-shot's grid is exactly what you slice a break against.
+    const oneShot = makeItem({ id: 'hit', bpm: 120, beats: [0], beatAnchorSec: 0, audioType: 'simple' })
+    expect(resolveSourceBeatGrid(oneShot, { hit: oneShot }, { suppressSimple: false })).toEqual({
+      bpm: 120,
+      spacingMs: 500,
+      anchorMs: 0
+    })
+  })
+
+  it('inherits a bpm even when suppression is off, so a stem always grids', () => {
+    const stem = makeItem({ id: 'stem', kind: 'stem', derivedFrom: { sourceItemId: 'src', inMs: 0, durationMs: 10_000 } })
+    expect(
+      resolveSourceBeatGrid(stem, { src: source, stem }, { suppressSimple: false })?.bpm
+    ).toBe(120)
+  })
+
   it('has no grid without a bpm or without beats', () => {
     const noBpm = makeItem({ id: 'nobpm', beats: [0], beatAnchorSec: 0 })
     const noBeats = makeItem({ id: 'nobeats', bpm: 120, beatAnchorSec: 0 })

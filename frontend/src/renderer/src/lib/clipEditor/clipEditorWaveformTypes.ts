@@ -7,9 +7,12 @@ import type {
   LibraryItem
 } from '@/stores/libraryStore'
 import type { ClipEnvelopePoint } from '@shared/bridge-protocol'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 export interface ClipEditorWaveformDeps {
   sourceItem: () => LibraryItem | null
+  /** The resolved source beat grid the editor draws, or null when there is none. */
+  sourceBeatGrid: () => SourceBeatGrid | null
   sourceDurationMs: () => number
   zoom: () => number
   visibleInMs: () => number

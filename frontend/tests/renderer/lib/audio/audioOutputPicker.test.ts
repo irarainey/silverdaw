@@ -88,6 +88,21 @@ describe('buildDriverOptions', () => {
     expect(saved).toEqual({ value: 'ASIO', label: 'ASIO (not available)', unavailable: true })
   })
 
+  it('does not mark an installed driver unavailable just because it lacks the device', () => {
+    // The device is present but only on Windows Audio/DirectSound. ASIO is
+    // installed, so it must not claim to be missing — the same driver-vs-device
+    // distinction the unavailable-device dialog draws.
+    const opts = buildDriverOptions({
+      deviceName: 'Speakers (Realtek)',
+      uniqueDevices: PRESENT,
+      installedTypeNames: INSTALLED,
+      savedTypeName: 'ASIO',
+      savedDeviceName: 'Speakers (Realtek)'
+    })
+    const saved = opts.find((o) => o.value === 'ASIO')
+    expect(saved).toEqual({ value: 'ASIO', label: 'ASIO', unavailable: false })
+  })
+
   it('matches the saved device name case-insensitively', () => {
     const opts = buildDriverOptions({
       deviceName: 'gone dac',

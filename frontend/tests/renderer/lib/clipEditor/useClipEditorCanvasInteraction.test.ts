@@ -5,6 +5,7 @@ import {
   type ClipEditorCanvasInteractionDeps
 } from '@/lib/clipEditor/useClipEditorCanvasInteraction'
 import type { LibraryItem } from '@/stores/libraryStore'
+import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 interface Harness {
   api: ReturnType<typeof useClipEditorCanvasInteraction>
@@ -24,6 +25,7 @@ interface Harness {
     hasPlaybackSelection: boolean
     zoom: number
     sourceItem: LibraryItem | null
+    sourceBeatGrid: SourceBeatGrid | null
   }
 }
 
@@ -43,7 +45,8 @@ function makeHarness(): Harness {
     playheadAbsMs: 1000,
     hasPlaybackSelection: false,
     zoom: 1,
-    sourceItem: null
+    sourceItem: null,
+    sourceBeatGrid: null
   }
 
   const deps: ClipEditorCanvasInteractionDeps = {
@@ -68,6 +71,7 @@ function makeHarness(): Harness {
     volumeEditActive: () => false,
     volumeShapeDurationMs: () => 0,
     draftEffectiveRatio: () => 1,
+    sourceBeatGrid: () => state.sourceBeatGrid,
     sourceItem: () => state.sourceItem,
     zoom: () => state.zoom,
     gridAlignActive: () => false,
@@ -170,6 +174,7 @@ describe('useClipEditorCanvasInteraction — playhead & selection', () => {
   it('beat-snapping nudge jumps to the next beat on the grid', () => {
     // 120 BPM → 500ms/beat, anchor at 0
     h.state.sourceItem = { bpm: 120, beatAnchorSec: 0 } as unknown as LibraryItem
+    h.state.sourceBeatGrid = { bpm: 120, spacingMs: 500, anchorMs: 0 }
     h.state.viewInMs = 0
     h.state.viewEndMs = 10000
     h.state.playheadAbsMs = 600 // between beat 1 (500) and beat 2 (1000)
@@ -253,6 +258,7 @@ function makeWheelHarness(
     volumeEditActive: () => false,
     volumeShapeDurationMs: () => 0,
     draftEffectiveRatio: () => 1,
+    sourceBeatGrid: () => h.state.sourceBeatGrid,
     sourceItem: () => h.state.sourceItem,
     zoom: () => h.state.zoom,
     gridAlignActive: () => false,

@@ -240,8 +240,7 @@ export function useClipEditorController(
 
   function onGenerateSliceGrid(): void {
     reseedSliceWindow()
-    const src = sourceItem.value
-    sliceDraft.generateToGrid(src?.bpm, src?.beatAnchorSec ?? src?.beats?.[0])
+    sliceDraft.generateToGrid(beatGrid.resolvedGrid.value)
     if (sliceDraft.markers.value.length === 0) {
       notifications.pushInfo('No beat grid available to slice on — drag markers by hand.')
     }
@@ -673,6 +672,7 @@ export function useClipEditorController(
     resetHiResRequestKey
   } = useClipEditorWaveform({
     sourceItem: () => sourceItem.value,
+    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
     sourceDurationMs: () => sourceDurationMs.value,
     zoom: () => zoom.value,
     visibleInMs: () => visibleInMs.value,
@@ -739,6 +739,7 @@ export function useClipEditorController(
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     sourceItem: () => sourceItem.value,
+    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
     zoom: () => zoom.value,
     gridAlignActive: () => beatGrid.alignActive.value,
     previewGridAnchorSec: (anchorSec: number) => beatGrid.previewAnchorSec(anchorSec),

@@ -164,10 +164,14 @@ export function buildDriverOptions(params: DriverOptionsParams): AudioListOption
     savedDeviceName.toLowerCase() === deviceName.toLowerCase() &&
     !items.some((o) => o.value === savedTypeName)
   ) {
+    // A driver can be installed yet not expose the chosen device — the same
+    // driver-vs-device distinction the unavailable-device dialog draws. Only a
+    // driver that is genuinely not installed is marked missing.
+    const installed = installedTypeNames.includes(savedTypeName)
     items.push({
       value: savedTypeName,
-      label: `${savedTypeName} (not available)`,
-      unavailable: true
+      label: installed ? savedTypeName : `${savedTypeName} (not available)`,
+      unavailable: !installed
     })
   }
   return items
