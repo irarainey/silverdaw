@@ -620,8 +620,15 @@ int main(int argc, char** argv)
     // phase alignment and grid refit decisions through the shared logger; without
     // a sink those lines are dropped and the harness can only see the end result,
     // not which stage produced it.
-    silverdaw::log::initialise(juce::File::getCurrentWorkingDirectory().getChildFile("bpm_eval_logs").getFullPathName(),
-                               silverdaw::log::Level::Debug, true);
+    //
+    // Written to the temp directory rather than the working directory: this tool is
+    // normally run from the repo root, and a dev harness must never drop artefacts
+    // into the source tree.
+    const auto logDir =
+        juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("silverdaw_bpm_eval");
+    silverdaw::log::initialise(logDir.getFullPathName(), silverdaw::log::Level::Debug, true);
+    std::cout << "[eval] detector log: " << logDir.getChildFile("backend.log").getFullPathName().toStdString()
+              << '\n';
 
     // Subcommand: SilverdawBpmEval --combphase <manifest>
     // Prototype of the consensus global comb-template phase scorer; prints, per
