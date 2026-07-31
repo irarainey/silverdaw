@@ -71,8 +71,14 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   or you can start it at 0 or lower to leave lead-in bars before bar one for clips
   with a silent intro.
 - **Timeline range playback.** Drag the ruler away from the playhead to select
-  a grid-snapped section to play once or repeat with **Loop Selection** (`L`). The
+  a section snapped to the timeline grid, to play once or repeat with
+  **Loop Selection** (`L`). The
   range and loop mode are saved with the project; press `Escape` to clear them.
+- **Markers.** Press `M` to drop a marker at the playhead — exactly where it
+  sits, not nudged to the nearest beat — and `M` again on it to remove it. Jump
+  between markers with `Ctrl`+`←`/`→`, drag one along the ruler to move it (hold
+  `Alt` for free placement), or clear the lot with **Edit ▸ Clear All Markers**.
+  Markers are saved with the project and survive a tempo change.
 - **Crossfade transitions.** Extend a clip edge over an adjacent clip to create
   a crossfade. Use the clip menu's **Crossfade** group to choose a Smooth or
   Fade out/in recipe, or remove it.

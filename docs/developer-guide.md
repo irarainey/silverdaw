@@ -213,7 +213,7 @@ Silverdaw currently supports the core arrangement workflow:
   or pending spinner on the timeline. The Timeline preference can disable
   automatic matching without removing per-clip warp controls.
 - Resize any track row by dragging its bottom edge in the track-header column
-  (clamped 80..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
+  (clamped 120..400 px). Reorder tracks by grabbing the 6-dot grip icon next to
   a track name and dragging up or down; an emerald drop indicator shows where
   the track will land. Both are persisted with the project and undoable.
 - Edit track gain with the fader or double-click the dB readout to type a value
@@ -1153,7 +1153,9 @@ monitoring aid never marks the project dirty or adds an undo step. It is omitted
 from save (and from the `PROJECT_STATE` broadcast) while at its default-off value.
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
-Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400) is
+Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400,
+and re-clamped to the stricter renderer range of 120..400 by `trackHeightPx()` in
+`lib/timeline/trackLayout.ts` so a legacy project cannot crop the header controls) is
 likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
 preserved by save/load and by drag-reorder (`juce::ValueTree::moveChild` with the
@@ -1857,12 +1859,13 @@ Two derived quantities do the work:
   the fine tier and leaves the bar/beat hierarchy intact; **Free** keeps the
   finest lines as a visual reference even though nothing snaps to them.
 
-`useGridGeometry` exposes `snapUnitMs()` and `snapTimelineMs(ms, fineMode)` as
-functions rather than computeds so a handler mid-drag always reads the latest
+`useGridGeometry` exposes `snapTimelineMs(ms, fineMode)` as a function rather
+than a computed so a handler mid-drag always reads the latest
 BPM and grid without wiring up its own watcher. Every snapping call site routes
 through `snapTimelineMs`: ruler seeks and playhead drags, clip and group drags,
 edge trims, marker drags, range boundaries, and library drops. The keyboard
-(`←`/`→`, `Shift`+`←`/`→`) and the MIDI jog read `msPerSnapUnit` directly.
+(`←`/`→`, `Shift`+`←`/`→`) and the MIDI jog step rather than snap, so they go
+through `stepToGridMs()` instead — see below.
 
 `Alt` remains the temporary fine-placement override. Because `snapMs()` treats
 Alt and Free identically, holding `Alt` on an already-Free grid is a no-op
@@ -2511,11 +2514,11 @@ extreme). The session's display direction is retained when platter ownership is
 released, so touching or releasing the platter never recolours an unchanged
 fader. The `L`/`R` label on the blue extreme is accented, and changing
 colouring never moves the knob. When the fader is focused, `←`/`→` step it (0.02,
-or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A momentary **keyboard
-cut** works globally within the editor: holding the configured key opens the fader
-(deck audible) and releasing it closes — the resting state is closed (asserted once
-the session is controllable so the fader and audio agree), and blur/close force it
-closed so a held key can never leave the deck stuck open. The key is **Z**
+or 0.1 with `Shift`) and `Home`/`End` jump to the extremes. A **keyboard
+cut** works globally within the editor: each non-repeating press of the configured
+key **toggles** the fader between open (deck audible) and closed. The resting
+state is **open**, asserted once the session is controllable so the fader and
+audio agree before any key is pressed. The key is **Z**
 (right-handed, default) or **M** (left-handed), chosen in **Preferences ▸ Effects**
 (see below). While recording, the cut is captured like any other fader move.
 
@@ -2945,14 +2948,10 @@ bucket-by-rate summary and three exit paths:
 whitelists `0` (clear), `44100` and `48000`; the dropdowns enforce the same
 on the renderer side.
 
-> **Phase 1 / Phase 2.** What's described here is Phase 1 — the foundations:
-> probe envelope, target-rate field, prompt dialog, RATE indicator,
-> classification gates. Phase 2 adds an on-disk rate-keyed playback cache
-> (libsamplerate-converted WAVs under `%APPDATA%/Silverdaw/playback/`),
-> project-rate change-and-rebuild (regenerate caches and resume transport
-> with `transcodeGeneration` for stale-ack safety), sample-bake at the
-> project rate, and a throttled probe-on-load batch for older projects that
-> stored a wrong renderer-side rate. Phase 2 is not yet shipped.
+> **Scope.** This is the shipped foundation: probe envelope, target-rate field,
+> prompt dialog, RATE indicator and classification gates. An on-disk rate-keyed
+> playback cache and project-rate change-and-rebuild are tracked as Phase 8 work
+> in [the development plan](development-plan.md).
 
 ## Keyboard & mouse reference
 
@@ -3019,7 +3018,7 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
 | Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (**Library ▸ Unlink from Library** first, or use the Clip Editor) and on **locked** clips (Ctrl+L or **Edit ▸ Unlock** to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
-| Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (60–400 px). Each track's height is persisted with the project and undoable. |
+| Drag the **bottom edge of a track header** (~5 px hit zone) | Resize that track row vertically (120–400 px). Each track's height is persisted with the project and undoable. |
 | Drag the **grip icon** (6-dot handle next to the track name) | Reorder the track. A green drop indicator shows the target slot. Drop on the indicator commits one undoable reorder step. |
 | Double-click a **track gain number** | Type a track gain in dB directly (range `-∞..+6 dB`). Accepts `-3`, `+1.5`, `0 dB`, `-inf`, `-∞`. Invalid input is rejected and the previous value is kept. |
 | Double-click the **master volume readout** in the transport bar | Type a master gain in dB directly (range `-∞..0 dB` — no boost above unity). Same parser as the track readout. |
@@ -3202,7 +3201,7 @@ height; its lower edge resizes only that lane from 80 to 220 px. The picker trun
 too long for the header and names the parameter in its tooltip, and it hands focus back to the
 timeline on change or `Escape`, so the global shortcuts keep working after a lane is
 retargeted. The track row's bottom edge
-still resizes only the clip/header area from 80 to 400 px. Removing a lane only hides it; it
+still resizes only the clip/header area from 120 to 400 px. Removing a lane only hides it; it
 does not clear its curve. The ordered visible descriptors are stored separately on each `TRACK`
 as `automationLaneView` (`{ paramId, heightPx }`), are undoable, and round-trip through
 `PROJECT_STATE` and `.silverdaw`; absence keeps old projects collapsed.
@@ -3442,7 +3441,7 @@ pnpm install
 pnpm dev
 ```
 
-The same commands are also available as Visual Studio Code tasks (`setup: dev`,
+Equivalent Visual Studio Code tasks cover the same steps (`setup: dev`,
 `backend: configure`, `backend: build`, `frontend: install`, `frontend: dev`, plus the
 composite `dev: all`).
 
@@ -3450,11 +3449,17 @@ The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch 
 selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt
 before the renderer starts.
 
-`backend/build/` is the Debug cache used by VS Code; `backend/build-release/` is the Release
+`backend/build/` is the Debug cache; `backend/build-release/` is the Release
 cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't
-reconfigure the Debug cache out from under your dev session (Ninja is single-config — sharing
-one directory means whichever configure ran last silently wins, and `cmake --build … --config`
-flags are ignored).
+reconfigure the Debug cache out from under your dev session.
+
+> **Pick one generator for `backend/build/` and stay with it.** The CLI steps
+> above configure it with `-G Ninja` (single-config, so `CMAKE_BUILD_TYPE`
+> decides the build type and `--config` is ignored), while the
+> `backend: configure` VS Code task configures the same directory with
+> `-G 'Visual Studio 17 2022'` (multi-config, where `--config` decides). Whichever
+> configure ran last wins. If you switch between the two, delete
+> `backend/build/` first rather than reconfiguring over the top.
 
 ## Packaging for Windows
 
@@ -3601,6 +3606,9 @@ pnpm dist:dir    # win-unpacked only, no packaging
 ```
 
 ## Quality gates
+
+The `pnpm` gates below run from `frontend/` (the only package manifest in the
+repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,

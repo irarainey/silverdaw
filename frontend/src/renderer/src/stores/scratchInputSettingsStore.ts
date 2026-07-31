@@ -1,5 +1,5 @@
 // Scratch Editor input preferences (a renderer-only app preference). Currently
-// just the momentary crossfader cut key; it maps keyboard input to crossfader
+// just the toggling crossfader cut key; it maps keyboard input to crossfader
 // control and is never sent to the backend. Persisted via the prefs IPC and
 // hydrated on demand so the Scratch Editor and Preferences dialog stay in sync.
 

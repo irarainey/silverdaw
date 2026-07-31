@@ -1,4 +1,4 @@
-## MIDI deck controllers
+# MIDI deck controllers
 
 Silverdaw can use supported MIDI deck controllers to operate the arrangement
 timeline, markers, selected-track mixer controls, and transport. Controller

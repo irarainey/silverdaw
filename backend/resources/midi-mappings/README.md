@@ -1,4 +1,4 @@
-## MIDI controller profiles
+# MIDI controller profiles
 
 Each JSON file maps one or more device-name substrings to Silverdaw actions.
 The backend validates every profile when MIDI support is first used. Invalid

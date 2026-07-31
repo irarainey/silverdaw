@@ -107,12 +107,3 @@ keeps only the parts that are purely visual.
 - **Duplicate the loop range in engine state independently of the project view
   state.** Avoids the sync call, but creates a second source of truth for the
   range and would drift from the saved project (ADR 0002).
-- **Reset shared effect state on wrap.** Gives each pass an identical tail, but
-  cuts Reverb and Delay abruptly at the boundary, which is more noticeable than
-  the tail carrying over.
-- **Wrap from the audio callback.** The lowest possible latency, but seeking
-  involves transport and source work that must not run on the real-time thread
-  (ADR 0006). The 2 ms message-thread poll is inaudible in comparison.
-- **Duplicate the loop range in engine state independently of the project view
-  state.** Avoids the sync call, but creates a second source of truth for the
-  range and would drift from the saved project (ADR 0002).

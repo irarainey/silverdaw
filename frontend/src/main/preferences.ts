@@ -147,8 +147,8 @@ export interface ScratchRealismPrefs {
   level: ScratchRealismLevel
 }
 
-// Scratch Editor input preferences. The crossfader cut key is a momentary
-// keyboard "kill" for the virtual deck; the Z/M choice suits handedness.
+// Scratch Editor input preferences. The crossfader cut key toggles a keyboard
+// "kill" for the virtual deck; the Z/M choice suits handedness.
 export type ScratchCrossfaderCutKey = 'KeyZ' | 'KeyM'
 export interface ScratchPrefs {
   crossfaderCutKey: ScratchCrossfaderCutKey

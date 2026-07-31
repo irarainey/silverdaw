@@ -3,7 +3,7 @@ description: "C++17, JUCE, and real-time audio processing standards for Silverda
 applyTo: "**/*.{cpp,h,hpp,cxx,cc}"
 ---
 
-## C++ / JUCE Audio Development Instructions
+# C++ / JUCE Audio Development Instructions
 
 Use these rules when modifying Silverdaw's C++ backend, especially code under
 `backend/src`. The backend is a JUCE 8 headless audio engine, so correctness,
