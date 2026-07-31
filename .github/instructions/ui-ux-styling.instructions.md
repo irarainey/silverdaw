@@ -89,6 +89,16 @@ floating surfaces — it fights the panel look.
   `.dialog-btn-destructive`.
 - Gate the primary button with `:disabled` when the form is invalid — the
   disabled styling is already baked into `.dialog-btn-primary`.
+- **`Enter` accepts the dialog.** `useDialogDefaultButton` (installed once in
+  `App.vue`) finds the topmost dialog's footer `.dialog-btn-primary` and clicks
+  it, so *do not* add per-dialog `@keydown.enter` handlers or
+  `@keydown.enter.prevent` on individual inputs — they duplicate the shared
+  behaviour and bypass the `:disabled` gate. A dialog that genuinely needs a
+  different `Enter` can claim the key with `preventDefault()`; the shared
+  handler stands down. A dialog with no single safe accept (progress, per-row
+  actions) simply carries no primary button.
+- **`Escape` cancels**, and is still wired per dialog because what "cancel"
+  discards is dialog-specific.
 - **Avoid modal dialogs for common actions** (plan §2). Prefer inline editing,
   contextual panels, and right-click menus. Reserve dialogs for genuinely
   transactional or destructive flows (Export, Preferences, Save-As, Discard).

@@ -42,6 +42,7 @@ import { useMissingFileRelink } from '@/lib/app/useMissingFileRelink'
 import { useProjectAudioOutputReconciliation } from '@/lib/app/useProjectAudioOutputReconciliation'
 import { useUnsavedChangesGuard } from '@/lib/app/useUnsavedChangesGuard'
 import { useRenderedDialogPresence } from '@/lib/app/useRenderedDialogPresence'
+import { useDialogDefaultButton } from '@/lib/app/useDialogDefaultButton'
 import { useDialogInputCapture } from '@/lib/app/useDialogInputCapture'
 import { useAppStore } from '@/stores/appStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
@@ -75,6 +76,8 @@ const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
 const renderedDialogOpen = useRenderedDialogPresence()
 useDialogInputCapture(renderedDialogOpen)
+// Enter accepts the topmost dialog by clicking its primary button.
+useDialogDefaultButton()
 
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)

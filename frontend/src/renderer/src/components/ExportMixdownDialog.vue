@@ -64,14 +64,9 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') {
     e.preventDefault()
     onClose()
-    return
   }
-  if (e.key === 'Enter' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
-    if (formIsValid.value) {
-      e.preventDefault()
-      onSave()
-    }
-  }
+  // Enter is handled app-wide by `useDialogDefaultButton`, which clicks the
+  // footer's primary button (already gated on `formIsValid`).
 }
 
 function focusDialog(): void {

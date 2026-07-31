@@ -24,7 +24,8 @@ function onAcknowledge(): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape' || ev.key === 'Enter') {
+  // Enter is handled app-wide by `useDialogDefaultButton`.
+  if (ev.key === 'Escape') {
     ev.preventDefault()
     onAcknowledge()
   }

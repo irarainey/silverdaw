@@ -35,6 +35,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project sample rate](#project-sample-rate)
 - [Keyboard & mouse reference](#keyboard--mouse-reference)
   - [Application commands](#application-commands)
+  - [Dialogs](#dialogs)
   - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
@@ -2940,6 +2941,25 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `Ctrl + J` | Toggle the Library / FX panel. |
 | `F11` | Toggle full screen. |
 | `Ctrl + 1`–`Ctrl + 8` | Set timeline zoom to 100%–800%. |
+
+### Dialogs
+
+| Input | Effect |
+|---|---|
+| `Enter` | Accept the dialog — activates its footer's primary (blue) button, exactly as clicking it would. Disabled primaries are left alone, so a dialog with an invalid form cannot be submitted by keyboard any more than by mouse. |
+| `Escape` | Cancel the dialog, discarding any draft it was holding. |
+| `Tab` / `Shift + Tab` | Move focus within the dialog; focus is trapped inside it. |
+
+`Enter` is wired once for the whole application by `useDialogDefaultButton`,
+which works off the rendered DOM rather than per-dialog handlers — any dialog
+built from the documented `.dialog-*` markup inherits the behaviour, including
+ones added later. It stands down wherever `Enter` already means something
+locally, so it never overrides a newline in a textarea, a focused button (so
+`Cancel` stays `Cancel`), a `<select>` committing its value, an IME candidate,
+any modified `Enter`, or a dialog that claims the key itself with
+`preventDefault()`. Dialogs whose footer offers no single safe accept — the
+progress dialogs, and the recovery dialog with its per-item **Restore**
+buttons — carry no primary button and so have no default.
 
 ### Timeline commands
 

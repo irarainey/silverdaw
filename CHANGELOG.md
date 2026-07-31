@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Pressing `Enter` in a dialog now accepts it, activating the blue button in its footer.
 - Markers are now placed at the exact playhead position instead of snapping to the nearest beat.
 - Hot-cue marker pads on a MIDI deck now toggle the marker at the playhead, matching the `M` key.
 - Holding `Alt` while dragging a marker now moves it to any position rather than only to grid points.
