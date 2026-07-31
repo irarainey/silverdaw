@@ -60,6 +60,29 @@ describe('useProjectAudioOutputReconciliation', () => {
     expect(audioUnavailableSavedDeviceName.value).toBe('Missing DAC')
   })
 
+  it('reports the driver as still present when only the device is missing', () => {
+    // The common case: drivers are machine-wide, so a missing device does not
+    // mean a missing driver, and the dialog must not imply that it does.
+    seedSavedOutput('WASAPI', 'Missing DAC')
+    seedDevices('WASAPI', ['Speakers'])
+
+    const { audioUnavailableSavedTypeAvailable } = useProjectAudioOutputReconciliation()
+
+    expect(audioUnavailableSavedTypeAvailable.value).toBe(true)
+  })
+
+  it('reports the driver as missing when the saved driver type is gone', () => {
+    // ASIO really can be absent — a different problem with a different fix.
+    seedSavedOutput('ASIO', 'Interface ASIO')
+    seedDevices('WASAPI', ['Speakers'])
+
+    const { audioUnavailableOpen, audioUnavailableSavedTypeAvailable } =
+      useProjectAudioOutputReconciliation()
+
+    expect(audioUnavailableOpen.value).toBe(true)
+    expect(audioUnavailableSavedTypeAvailable.value).toBe(false)
+  })
+
   it('does nothing until device state has hydrated', () => {
     seedSavedOutput('WASAPI', 'Speakers')
     const audioDevices = useAudioDeviceStore()

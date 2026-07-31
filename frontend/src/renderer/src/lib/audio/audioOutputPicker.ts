@@ -43,6 +43,17 @@ export function describeBackend(typeName: string): string {
   return AUDIO_BACKEND_DESCRIPTIONS[typeName] ?? 'Audio backend.'
 }
 
+/** Rank for `BACKEND_PREFERENCE` ordering; unknown backends sort last. */
+function backendRank(name: string): number {
+  const i = BACKEND_PREFERENCE.indexOf(name)
+  return i < 0 ? Number.MAX_SAFE_INTEGER : i
+}
+
+/** Sorts a copy of `names` by `BACKEND_PREFERENCE`, unknown backends last. */
+export function sortByBackendPreference(names: readonly string[]): string[] {
+  return [...names].sort((a, b) => backendRank(a) - backendRank(b))
+}
+
 // Windows/JUCE report a couple of pseudo "devices" that are not real endpoints — the
 // DirectSound default alias ("Primary Sound Driver") and the legacy "Microsoft Sound
 // Mapper". They can't carry a per-device keep-awake setting and only confuse the picker,
@@ -83,13 +94,7 @@ export function useUniqueAudioDevices(): ComputedRef<UniqueDevice[]> {
     // Sort each device's backends list by preference order so the
     // "preferred" backend lands first.
     for (const dev of map.values()) {
-      dev.backends.sort((a, b) => {
-        const ai = BACKEND_PREFERENCE.indexOf(a)
-        const bi = BACKEND_PREFERENCE.indexOf(b)
-        return (
-          (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi)
-        )
-      })
+      dev.backends = sortByBackendPreference(dev.backends)
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
   })
@@ -105,4 +110,65 @@ export function preferredBackendFor(device: UniqueDevice): string {
     if (device.backends.includes(b)) return b
   }
   return device.backends[0] ?? ''
+}
+
+/** One row of the Project Properties audio device / driver pickers. */
+export interface AudioListOption {
+  /** Empty string represents "Use Application Settings" (no project override). */
+  value: string
+  label: string
+  /** The value itself is no longer exposed by the OS. */
+  unavailable: boolean
+}
+
+export interface DriverOptionsParams {
+  /** Device currently chosen in the picker; `null` inherits the app setting. */
+  deviceName: string | null
+  /** Devices the OS is exposing right now, deduplicated across drivers. */
+  uniqueDevices: readonly UniqueDevice[]
+  /** Every driver installed on this machine, device availability aside. */
+  installedTypeNames: readonly string[]
+  savedTypeName: string | null
+  savedDeviceName: string | null
+}
+
+/**
+ * Builds the driver picker's rows for `deviceName`.
+ *
+ * Normally the list is scoped to the drivers that actually expose the chosen
+ * device. When the device is absent we cannot know that subset, so every
+ * installed driver is offered instead — drivers are machine-wide, so each stays
+ * a valid choice for when the device returns. Only a driver that is genuinely
+ * not installed is marked "(not available)"; a missing *device* says nothing
+ * about its driver.
+ */
+export function buildDriverOptions(params: DriverOptionsParams): AudioListOption[] {
+  const { deviceName, uniqueDevices, installedTypeNames, savedTypeName, savedDeviceName } =
+    params
+
+  if (!deviceName) {
+    return [{ value: '', label: 'Use Application Settings', unavailable: false }]
+  }
+
+  const dev = uniqueDevices.find((d) => d.name.toLowerCase() === deviceName.toLowerCase())
+  const names = dev ? dev.backends : sortByBackendPreference(installedTypeNames)
+  const items: AudioListOption[] = names.map((name) => ({
+    value: name,
+    label: name,
+    unavailable: false
+  }))
+
+  if (
+    savedTypeName &&
+    savedDeviceName &&
+    savedDeviceName.toLowerCase() === deviceName.toLowerCase() &&
+    !items.some((o) => o.value === savedTypeName)
+  ) {
+    items.push({
+      value: savedTypeName,
+      label: `${savedTypeName} (not available)`,
+      unavailable: true
+    })
+  }
+  return items
 }

@@ -2854,12 +2854,26 @@ fields stored directly on the `PROJECT` ValueTree node:
 - **Audio output device** + **driver** — per-project override of the global
   preference. Two dropdowns: device list (deduplicated across drivers) and
   driver list (Windows Audio / DirectSound / ASIO / etc.), both with a
-  "Use Application Settings" entry that clears the override. If the saved device isn't
-  present at project-load, an `AudioDeviceUnavailableDialog` informs the user
+  "Use Application Settings" entry that clears the override. The saved
+  preference is a `(driver, device)` **pair**, because the same physical device
+  can be exposed by several drivers under different names and latencies, so the
+  pair is the device's real identity. If that pair isn't present at
+  project-load, an `AudioDeviceUnavailableDialog` informs the user
   and the engine falls back to the next available device; the project preference is left
-  intact so re-plugging or re-saving restores it. Shares the device list (real
+  intact so re-plugging or re-saving restores it. Drivers are machine-wide, so
+  the usual cause is a missing *device* under a driver that is still there
+  (unplugged, powered off, renamed); `audioUnavailableSavedTypeAvailable`
+  distinguishes that from the rarer case of the driver itself being absent
+  (for example ASIO with no ASIO driver installed), and the dialog wording
+  differs accordingly so the driver name is never mistaken for the thing that
+  is missing. The same distinction governs the driver dropdown: `(not
+  available)` is appended only when the driver is genuinely not installed, and
+  when the chosen device is absent the list falls back to every installed
+  driver (the device-scoped subset is unknowable while the device is gone).
+  Shares the device list (real
   named devices only, pseudo-endpoints filtered) with the Preferences ▸ Audio
-  picker via the single composable in `lib/audio/audioOutputPicker.ts`.
+  picker via the single composable in `lib/audio/audioOutputPicker.ts`, which
+  also owns `buildDriverOptions` — the pure builder behind the driver dropdown.
 - **Sample rate** — 44.1 kHz / 48 kHz dropdown. Changing the value pushes
   `PROJECT_SET_TARGET_SAMPLE_RATE` and the transport-bar **RATE** column
   updates immediately. See [Project sample rate](#project-sample-rate) for the

@@ -12,6 +12,8 @@ export interface ProjectAudioOutputReconciliation {
   audioUnavailableOpen: Ref<boolean>
   audioUnavailableSavedTypeName: Ref<string | null>
   audioUnavailableSavedDeviceName: Ref<string | null>
+  /** False only when the saved *driver* is missing too, not just the device. */
+  audioUnavailableSavedTypeAvailable: Ref<boolean>
 }
 
 // A saved output device can take a few seconds to enumerate after launch (a sleep-prone USB DAC
@@ -28,6 +30,11 @@ export function useProjectAudioOutputReconciliation(): ProjectAudioOutputReconci
   const audioUnavailableOpen = ref(false)
   const audioUnavailableSavedTypeName = ref<string | null>(null)
   const audioUnavailableSavedDeviceName = ref<string | null>(null)
+  // Driver types are machine-wide, so the saved one is normally still present and it is only the
+  // device that has gone (unplugged, asleep, renamed). A genuinely missing driver type — ASIO on a
+  // machine with no ASIO driver installed — is a different problem with a different fix, so the two
+  // are distinguished here rather than reported as one "not available".
+  const audioUnavailableSavedTypeAvailable = ref(true)
   // Keys we have SUCCESSFULLY applied (switched to, or confirmed already active). An unavailable
   // device is NOT recorded here so it is retried when the device list next changes — a sleep-prone
   // USB DAC can take seconds to enumerate after launch, appearing only in a later scan / hotplug.
@@ -109,6 +116,9 @@ export function useProjectAudioOutputReconciliation(): ProjectAudioOutputReconci
         )
         audioUnavailableSavedTypeName.value = savedType
         audioUnavailableSavedDeviceName.value = savedDevice
+        audioUnavailableSavedTypeAvailable.value = audioDevices.types.some(
+          (t) => t.name === savedType
+        )
         audioUnavailableOpen.value = true
       }
     }
@@ -130,5 +140,10 @@ export function useProjectAudioOutputReconciliation(): ProjectAudioOutputReconci
     { immediate: true }
   )
 
-  return { audioUnavailableOpen, audioUnavailableSavedTypeName, audioUnavailableSavedDeviceName }
+  return {
+    audioUnavailableOpen,
+    audioUnavailableSavedTypeName,
+    audioUnavailableSavedDeviceName,
+    audioUnavailableSavedTypeAvailable
+  }
 }

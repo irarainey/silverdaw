@@ -4,8 +4,10 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import {
+  buildDriverOptions,
   preferredBackendFor,
-  useUniqueAudioDevices
+  useUniqueAudioDevices,
+  type AudioListOption
 } from '@/lib/audio/audioOutputPicker'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { formatTime, parseTime } from '@/lib/musicTime'
@@ -45,14 +47,6 @@ export function useProjectPropertiesController(
 
   const parsedDurationMs = computed(() => parseTime(draftDurationText.value))
 
-  interface AudioListOption {
-    /** Empty string represents "Use Application Settings" (no project override). */
-    value: string
-    label: string
-    /** Saved value no longer exposed by the OS. */
-    unavailable: boolean
-  }
-
   // Device options mirror Preferences and include unavailable saved devices.
   const deviceOptions = computed<AudioListOption[]>(() => {
     const items: AudioListOption[] = [
@@ -75,39 +69,20 @@ export function useProjectPropertiesController(
     return items
   })
 
-  // Driver options are scoped to the selected device plus any unavailable saved driver.
-  const driverOptions = computed<AudioListOption[]>(() => {
-    const items: AudioListOption[] = []
-    const deviceName = draftAudioDeviceName.value
-    if (!deviceName) {
-      // Inheriting the application settings has no explicit driver.
-      items.push({ value: '', label: 'Use Application Settings', unavailable: false })
-      return items
-    }
-    const dev = uniqueDevices.value.find(
-      (d) => d.name.toLowerCase() === deviceName.toLowerCase()
-    )
-    if (dev) {
-      for (const b of dev.backends) {
-        items.push({ value: b, label: b, unavailable: false })
-      }
-    }
-    const savedType = project.audioOutputTypeName
-    const savedDevice = project.audioOutputDeviceName
-    if (
-      savedType &&
-      savedDevice &&
-      savedDevice.toLowerCase() === deviceName.toLowerCase() &&
-      !items.some((o) => o.value === savedType)
-    ) {
-      items.push({
-        value: savedType,
-        label: `${savedType} (not available)`,
-        unavailable: true
-      })
-    }
-    return items
-  })
+  // Every driver installed on this machine. Drivers are machine-wide, so this stays
+  // valid even when no device is currently exposing them.
+  const installedDriverNames = computed<string[]>(() => audioDevices.types.map((t) => t.name))
+
+  // Driver options are scoped to the selected device plus any genuinely-missing saved driver.
+  const driverOptions = computed<AudioListOption[]>(() =>
+    buildDriverOptions({
+      deviceName: draftAudioDeviceName.value,
+      uniqueDevices: uniqueDevices.value,
+      installedTypeNames: installedDriverNames.value,
+      savedTypeName: project.audioOutputTypeName,
+      savedDeviceName: project.audioOutputDeviceName
+    })
+  )
 
   // Select bindings map empty string to "Use Application Settings" and auto-pick a preferred driver.
   const draftAudioDeviceValue = computed<string>({

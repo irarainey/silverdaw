@@ -12,6 +12,12 @@ const props = defineProps<{
   /** The device the project asked for (saved on the project file). */
   savedTypeName: string | null
   savedDeviceName: string | null
+  /**
+   * Whether the saved *driver* is still present. Almost always true — drivers
+   * are machine-wide, so normally only the device has gone — but ASIO can be
+   * genuinely absent, and that needs different wording.
+   */
+  savedTypeAvailable: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -91,7 +97,19 @@ onBeforeUnmount(() => {
             <span
               v-if="savedTypeName"
               class="text-zinc-500"
-            > — {{ savedTypeName }}</span>
+            > via {{ savedTypeName }}</span>
+          </p>
+          <p v-if="savedTypeName && savedTypeAvailable">
+            <span class="font-medium text-zinc-100">{{ savedTypeName }}</span> is
+            the driver the device was used through, and it is still
+            available — it just no longer lists this device. That
+            usually means the device is unplugged, powered off, or has
+            been renamed.
+          </p>
+          <p v-else-if="savedTypeName">
+            The <span class="font-medium text-zinc-100">{{ savedTypeName }}</span>
+            driver isn't installed on this machine, so none of its
+            devices can be opened.
           </p>
           <p>
             Playback continues on your default audio device. The

@@ -111,8 +111,12 @@ let stopDeferredOpen: (() => void) | null = null
 // Missing-file relink, per-project audio-output reconciliation, and the
 // unsaved-changes guard live in focused shell composables.
 const { relinkDialogOpen } = useMissingFileRelink()
-const { audioUnavailableOpen, audioUnavailableSavedTypeName, audioUnavailableSavedDeviceName } =
-  useProjectAudioOutputReconciliation()
+const {
+  audioUnavailableOpen,
+  audioUnavailableSavedTypeName,
+  audioUnavailableSavedDeviceName,
+  audioUnavailableSavedTypeAvailable
+} = useProjectAudioOutputReconciliation()
 const {
   unsavedPromptOpen,
   guardAgainstUnsavedChanges,
@@ -638,6 +642,7 @@ const { handleMenuAction } = useAppMenuActions({
       :open="audioUnavailableOpen"
       :saved-type-name="audioUnavailableSavedTypeName"
       :saved-device-name="audioUnavailableSavedDeviceName"
+      :saved-type-available="audioUnavailableSavedTypeAvailable"
       @close="audioUnavailableOpen = false"
     />
 
