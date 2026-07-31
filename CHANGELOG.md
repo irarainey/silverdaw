@@ -25,6 +25,7 @@
 - Clip Editor loop playback no longer glitches at the loop point.
 - Adding a track — including the tracks created by stem separation and channel split — no longer stretches a trimmed project back to the 5-minute default length.
 - Pressing `M` on a marker that no longer sits on the beat grid after a tempo change now removes that marker instead of adding a second one on the nearest beat.
+- Starting playback now smoothly scrolls the timeline to the playhead when zooming or scrolling has left it off screen, instead of continuing to play out of view.
 
 ## 1.4.2
 

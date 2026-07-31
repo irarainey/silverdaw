@@ -2680,7 +2680,15 @@ Persisted fields:
 - **Follow playback** — continuous-follow auto-scroll. When on, the timeline scrolls so the
   playhead stays near the centre of the viewport during playback (default). Off pins the
   view in place. Toggleable in the transport bar (chevron-in-circle icon) and the
-  Preferences dialog.
+  Preferences dialog. Follow eases *forward* only, since playback never runs
+  backwards and easing back introduces scroll jitter — so on the frame follow
+  begins, a playhead left outside the viewport by a zoom or a manual pan enters
+  a one-off **recovery** scroll that eases in either direction until the view is
+  centred, then hands back to steady-state follow. Without that, starting
+  playback with the view scrolled past the playhead appeared to do nothing at
+  all. Recovery eases rather than jumping, because a jump reads as a glitch
+  rather than as the view catching up. Both modes share one deceleration curve
+  in `playbackFollow.ts`.
 - **Show images on library tiles** — controls whether library tiles show embedded cover
   art or the fallback audio icon. Off makes the library tiles text-only.
 - **Set project tempo from first clip** — `ui.seedProjectTempoFromFirstClip`

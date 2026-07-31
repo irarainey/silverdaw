@@ -16,6 +16,7 @@ import {
   TRACK_HEIGHT
 } from './constants'
 import { trackHeightOf } from './trackLayout'
+import { followFrame } from './playbackFollow'
 import type { DropPreview } from './useDropZone'
 import type { GridGeometry } from './useGridGeometry'
 
@@ -68,6 +69,10 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
   let displayPositionMs = 0
   // Auto-follow uses wall-clock deltas so scroll feel is refresh-rate independent.
   let lastUpdateMs = 0
+  // Edge-detects the start of a follow so we can recover an off-screen playhead once.
+  let wasFollowing = false
+  // True while an off-screen recovery scroll is easing toward the playhead.
+  let recoveringFollow = false
 
   function setDisplayPositionMs(ms: number): void {
     displayPositionMs = ms
@@ -128,35 +133,37 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     const posMs = displayPositionMs || transport.positionMs
     const absX = headerWidth() + (posMs / 1000) * pxPerSecond.value
 
-    // Auto-follow is a playback affordance only: it eases the view forward to keep
-    // the moving playhead in view during playback. Dragging the playhead never
-    // re-centres the view (that felt jarring and could scroll the wrong way while
-    // catching up) — a drag edge-scrolls in useDragHandlers instead, and a drag
-    // inside the visible area leaves the scroll untouched.
+    // Auto-follow is a playback affordance only: it keeps the moving playhead in
+    // view during playback (see `playbackFollow.ts` for the scroll maths).
+    // Dragging the playhead never re-centres the view (that felt jarring and
+    // could scroll the wrong way while catching up) — a drag edge-scrolls in
+    // useDragHandlers instead, and a drag inside the visible area leaves the
+    // scroll untouched.
     const shouldFollow =
       transport.isPlaying && ui.followPlayback && !isDraggingPlayhead.value
+    // Only true on the frame follow begins, which can start a smooth recovery
+    // scroll for a playhead left off-screen by a zoom or pan while stopped.
+    const startedFollowing = shouldFollow && !wasFollowing
+    wasFollowing = shouldFollow
+    if (!shouldFollow) recoveringFollow = false
     const now = performance.now()
     const dtSec = lastUpdateMs === 0 ? 0 : Math.min(0.1, (now - lastUpdateMs) / 1000)
     lastUpdateMs = now
     if (shouldFollow) {
-      const viewportCentre = headerWidth() + (width - headerWidth()) / 2
-      const desired = Math.max(0, absX - viewportCentre)
-      // Playback follow eases forward only: playback never runs backwards, and we
-      // don't want backward scroll jitter.
-      const gap = desired - scrollX.value
-      let nextScroll: number | null = null
-      if (gap > 0.5) {
-        // Mix playback-relative and gap-proportional catch-up; cap prevents overshoot.
-        const audioPxPerSec = pxPerSecond.value
-        const approachPxPerSec = audioPxPerSec * 3
-        const proportionalPxPerSec = Math.abs(gap) * 5
-        const ratePxPerSec = Math.max(approachPxPerSec, proportionalPxPerSec)
-        const magnitude = Math.min(Math.abs(gap), ratePxPerSec * dtSec)
-        if (magnitude > 0) nextScroll = scrollX.value + (gap > 0 ? magnitude : -magnitude)
-      }
+      const frame = followFrame({
+        playheadX: absX,
+        scrollX: scrollX.value,
+        viewportWidth: width,
+        headerWidth: headerWidth(),
+        pxPerSecond: pxPerSecond.value,
+        dtSec,
+        startedFollowing,
+        recovering: recoveringFollow
+      })
+      recoveringFollow = frame.recovering
 
-      if (nextScroll !== null) {
-        scrollX.value = nextScroll
+      if (frame.scrollX !== null) {
+        scrollX.value = frame.scrollX
         clampScroll()
         const tracks = tracksLayer.value
         const rulerTicks = rulerTicksLayer.value
