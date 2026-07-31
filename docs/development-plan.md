@@ -1679,14 +1679,15 @@ packs with the htdemucs backup, DirectML, vocal cleanup) plus the **Loop Slicer*
 (§7.11.1), transition crossfades (§11.1 steps A–E), and MIDI deck controller
 input (§11.7) have all shipped.
 
-### 1.4.0 - Timeline Precision & Range Auditioning *(released; snap grid outstanding)*
+### 1.4.0 - Timeline Precision & Range Auditioning *(released)*
 
 **Goal:** make arrangement edits more deliberate and let a user quickly
 audition one part of a mix, without turning the timeline into a dense advanced
-editor. The implemented work and remaining planned snap-grid work are:
+editor. The implemented work is:
 
-1. **Selectable timeline snap grid.** A compact timeline **Snap** control
-   offers **Bar**, **Beat**, **Half beat**, **Quarter beat**, and **Free**.
+1. [x] **Selectable timeline snap grid.** *(delivered in 1.5.0.)* A compact
+   timeline snap-grid dropdown offers **Bar**, **Beat**, **Half beat**,
+   **Quarter beat**, and **Free**.
    Quarter beat remains the default, preserving the current behaviour. It drives
    grid-line density and all timeline-time snapping: clip placement,
    move, trim, marker movement, playhead movement, range boundaries, and
@@ -1783,8 +1784,8 @@ outside 1.4.0.
 
 **Goal:** make the 1.4.0 timeline range comfortable to live with. No new
 concepts — every item sharpens an affordance that already shipped. The
-selectable snap grid (1.4.0, item 1) is still outstanding and is not part of
-this release.
+selectable snap grid (1.4.0, item 1) was not part of this release and landed in
+1.5.0.
 
 1. [x] **Loop Selection keyboard toggle.** `L` flips Loop Selection for the
    active range, the keyboard twin of the transport loop button, and is a no-op
@@ -1880,6 +1881,12 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
     pads call the same `toggleMarkerAt` store action as the keyboard rather than
     adding by playhead and removing by pad slot, so the two behave identically.
     Pad N still jumps to marker N, which parks the playhead exactly on it.
+11. [x] **Selectable timeline snap grid.** Closes the outstanding 1.4.0 item 1;
+    see that section for the full specification. A status-bar dropdown, labelled
+    with a grid glyph to match the zoom control,
+    picks Bar, Beat, Half beat, Quarter beat or Free, drives both the drawn grid
+    density and every timeline-time snap, and persists as non-dirty project view
+    state (`viewSnapGrid`) defaulting to Quarter beat for older projects.
 
 ### Phase 1 — Backend Foundation & Bridge
 

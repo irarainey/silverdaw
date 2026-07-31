@@ -1,5 +1,7 @@
 // Shared timeline layout, theme, and musical constants.
 
+import { BEATS_PER_BAR, DEFAULT_SNAP_GRID, gridSubdivisionsPerBeat } from '@shared/snapGrid'
+
 // ─── Layout (pixels) ────────────────────────────────────────────────────────
 /** Default height of a freshly-created track row. */
 export const TRACK_HEIGHT = 120
@@ -26,9 +28,11 @@ export const MAX_PX_PER_SECOND = 800
 export const ZOOM_STEP_PX_PER_SECOND = 10
 
 // ─── Musical grid ───────────────────────────────────────────────────────────
-// Quarter-beat snap resolution keeps the grid useful without overcrowding.
-export const TIME_SIG_NUM = 4
-export const SUBDIVISIONS_PER_BEAT = 4
+// The drawn sub-beat tier follows the selected snap grid; these are the
+// fallbacks used where no selection is in play. 4/4 is defined once, in
+// `@shared/snapGrid`.
+export const TIME_SIG_NUM = BEATS_PER_BAR
+export const SUBDIVISIONS_PER_BEAT = gridSubdivisionsPerBeat(DEFAULT_SNAP_GRID)
 
 // ─── Theme (matches tailwind zinc palette) ──────────────────────────────────
 export const BG = 0x09090b // zinc-950 (timeline canvas)

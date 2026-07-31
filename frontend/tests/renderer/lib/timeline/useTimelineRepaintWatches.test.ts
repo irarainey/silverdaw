@@ -6,6 +6,7 @@ import {
   type TimelineRepaintWatchesDeps
 } from '@/lib/timeline/useTimelineRepaintWatches'
 import { useProjectStore } from '@/stores/projectStore'
+import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('@/lib/bridgeService', () => ({
   send: vi.fn()
@@ -116,6 +117,15 @@ describe('useTimelineRepaintWatches', () => {
     await nextTick()
     expect(deps.redraw).toHaveBeenCalledTimes(1)
     expect(deps.updatePlayhead).toHaveBeenCalledTimes(1)
+  })
+
+  it('repaints the grid when the snap grid changes', async () => {
+    const ui = useUiStore()
+
+    ui.applySnapGridView('bar')
+    await nextTick()
+
+    expect(deps.redraw).toHaveBeenCalledTimes(1)
   })
 
   it('repaints after reordering rows with equal heights', async () => {

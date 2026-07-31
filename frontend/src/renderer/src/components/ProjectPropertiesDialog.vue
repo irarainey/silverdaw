@@ -135,7 +135,7 @@ const {
             <span class="text-xs font-medium text-zinc-300">Sample rate</span>
             <select
               v-model.number="draftSampleRate"
-              class="w-32 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-sky-500 focus:outline-none"
+              class="app-select w-32 text-sm"
             >
               <option :value="44100">44 100 Hz</option>
               <option :value="48000">48 000 Hz</option>
@@ -173,7 +173,7 @@ const {
             <span class="text-xs font-medium text-zinc-300">Audio device</span>
             <select
               v-model="draftAudioDeviceValue"
-              class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-sky-500 focus:outline-none"
+              class="app-select w-full text-sm"
             >
               <option
                 v-for="opt in deviceOptions"
@@ -193,7 +193,7 @@ const {
             <select
               v-model="draftAudioTypeValue"
               :disabled="draftAudioDeviceName === null"
-              class="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 focus:border-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              class="app-select w-full text-sm disabled:opacity-60"
             >
               <option
                 v-for="opt in driverOptions"

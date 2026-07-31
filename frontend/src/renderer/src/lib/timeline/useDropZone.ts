@@ -125,12 +125,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     return null
   }
 
+  // Beat-aware items align their first source beat, rather than their left edge,
+  // to the grid; a Free grid leaves the drop exactly where it landed.
   function startMsForItem(rawMs: number, item: LibraryItem): number {
-    const snap = geometry.msPerSubBeat()
     const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
-    return referenceBeatOffsetMs !== null
-      ? Math.max(0, Math.round((rawMs + referenceBeatOffsetMs) / snap) * snap - referenceBeatOffsetMs)
-      : Math.max(0, Math.round(rawMs / snap) * snap)
+    if (referenceBeatOffsetMs === null) return geometry.snapTimelineMs(rawMs, false)
+    return Math.max(
+      0,
+      geometry.snapTimelineMs(rawMs + referenceBeatOffsetMs, false) - referenceBeatOffsetMs
+    )
   }
 
   type ResolvedDrop =

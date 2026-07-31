@@ -1,19 +1,20 @@
 // Reactive grid + zoom geometry for the timeline. Owns horizontal zoom
 // (`pxPerSecond`) and derived pixel/ms/beat/sub-beat conversions for the
-// renderer, drag handlers and drop zone, plus the snap unit (a quarter-beat at
-// 4/4). Reads project duration, transport BPM and header width via Pinia.
+// renderer, drag handlers and drop zone, plus the snap unit, which follows the
+// user's Snap grid selection. Reads project duration, transport BPM, snap grid
+// and header width via Pinia.
 
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { msPerSubBeat as msPerSubBeatAt } from '@/lib/musicTime'
+import { msPerSnapUnit, snapMs } from '@/lib/musicTime'
+import { gridSubdivisionsPerBeat } from '@shared/snapGrid'
 import {
   DEFAULT_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
   MIN_PX_PER_SECOND,
   ZOOM_STEP_PX_PER_SECOND,
-  SUBDIVISIONS_PER_BEAT,
   TIME_SIG_NUM
 } from './constants'
 
@@ -28,12 +29,16 @@ export interface GridGeometry {
   contentPx: ComputedRef<number>
   /** Pixels per beat at the current BPM + zoom. */
   pxPerBeat: ComputedRef<number>
-  /** Pixels per sub-beat (1/16 of a bar at 4/4). */
+  /** Sub-beat tier currently drawn, following the Snap grid. */
+  subsPerBeat: ComputedRef<number>
+  /** Pixels per drawn sub-beat. */
   pxPerSub: ComputedRef<number>
-  /** Number of sub-beats in one bar (e.g. 16 at 4/4). */
-  subsPerBar: number
-  /** Snap unit in milliseconds (one sub-beat at the current BPM). */
-  msPerSubBeat: () => number
+  /** Number of drawn sub-beats in one bar. */
+  subsPerBar: ComputedRef<number>
+  /** Snap step in milliseconds at the current BPM and Snap grid; 0 means Free. */
+  snapUnitMs: () => number
+  /** Quantise a timeline position, honouring the Snap grid and Alt fine mode. */
+  snapTimelineMs: (positionMs: number, fineMode: boolean) => number
   /** Clamp + apply a new zoom; returns the value actually applied. */
   setPxPerSecond: (next: number) => number
 }
@@ -51,13 +56,16 @@ export function useGridGeometry(): GridGeometry {
   const contentPx = computed(() => Math.max(0, (project.durationMs / 1000) * pxPerSecond.value))
 
   const pxPerBeat = computed(() => (60 / transport.bpm) * pxPerSecond.value)
-  const pxPerSub = computed(() => pxPerBeat.value / SUBDIVISIONS_PER_BEAT)
-  const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
+  const subsPerBeat = computed(() => gridSubdivisionsPerBeat(ui.snapGrid))
+  const pxPerSub = computed(() => pxPerBeat.value / subsPerBeat.value)
+  const subsPerBar = computed(() => subsPerBeat.value * TIME_SIG_NUM)
 
-  // Function (not computed) so callers always read the *latest* BPM even
-  // mid-drag without each handler having to wire up its own watcher.
+  // Functions (not computeds) so callers always read the *latest* BPM and snap
+  // grid even mid-drag without each handler having to wire up its own watcher.
   // Single source of truth lives in `lib/musicTime.ts`.
-  const msPerSubBeat = (): number => msPerSubBeatAt(transport.bpm, SUBDIVISIONS_PER_BEAT)
+  const snapUnitMs = (): number => msPerSnapUnit(transport.bpm, ui.snapGrid)
+  const snapTimelineMs = (positionMs: number, fineMode: boolean): number =>
+    snapMs(positionMs, transport.bpm, ui.snapGrid, fineMode)
 
   function setPxPerSecond(next: number): number {
     const stepped = Math.round(next / ZOOM_STEP_PX_PER_SECOND) * ZOOM_STEP_PX_PER_SECOND
@@ -72,9 +80,11 @@ export function useGridGeometry(): GridGeometry {
     headerWidth,
     contentPx,
     pxPerBeat,
+    subsPerBeat,
     pxPerSub,
     subsPerBar,
-    msPerSubBeat,
+    snapUnitMs,
+    snapTimelineMs,
     setPxPerSecond
   }
 }

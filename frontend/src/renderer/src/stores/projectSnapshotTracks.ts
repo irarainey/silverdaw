@@ -347,6 +347,14 @@ export function finalizeProjectSnapshot(
     )
   }
 
+  // Snap grid follows the same non-echoing path. On a reset (project load) an
+  // absent field must still be applied so it falls back to the default: a
+  // project saved before the grid was selectable opens on Quarter beat rather
+  // than inheriting the previously open project's choice.
+  if (snapshot.reset === true || snapshot.viewSnapGrid !== undefined) {
+    ui.applySnapGridView(snapshot.viewSnapGrid)
+  }
+
   // Migration (project LOAD only): rebind pre-existing library-clip windows to their saved
   // item. This exists purely to reconcile older saved projects on open, where a timeline
   // clip references the source item directly but a saved library-clip now covers the same

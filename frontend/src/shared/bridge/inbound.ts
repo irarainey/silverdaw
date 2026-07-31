@@ -12,6 +12,7 @@ import type {
   ScratchSourcePeaksReadyPayload
 } from './scratch'
 import { ScratchPatternSchema, ScratchSourcePeaksReadyPayloadSchema } from './scratch'
+import { SNAP_GRIDS } from '../snapGrid'
 
 export * from './scratch'
 import type {
@@ -498,6 +499,8 @@ export const ProjectStatePayloadSchema = z.object({
     .nullable()
     .optional(),
   loopTimelineSelection: z.boolean().optional(),
+  /** Timeline snap interval; unknown values fall back to the default at the store. */
+  viewSnapGrid: z.enum(SNAP_GRIDS).optional(),
   playheadMs: z.number().optional(),
   bpm: z.number().optional(),
   projectLengthMs: z.number().optional(),

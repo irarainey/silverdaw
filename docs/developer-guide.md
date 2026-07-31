@@ -23,6 +23,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [BPM and beat detection](#bpm-and-beat-detection)
   - [Confidence and audio type classification](#confidence-and-audio-type-classification)
   - [Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)
+  - [Timeline snap grid](#timeline-snap-grid)
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
@@ -33,9 +34,11 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project properties](#project-properties)
 - [Project sample rate](#project-sample-rate)
 - [Keyboard & mouse reference](#keyboard--mouse-reference)
+  - [Application commands](#application-commands)
+  - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
-  - [Selection model](#selection-model)
+  - [Track effect automation](#track-effect-automation)
 - [Rendering performance](#rendering-performance)
 - [Prerequisites](#prerequisites)
   - [One-shot setup (recommended)](#one-shot-setup-recommended)
@@ -1796,10 +1799,10 @@ inherited BPM and on the simple-item gate, which made one-shots snap to a grid t
 never drew.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
-of snapping the clip's left edge to the project sub-beat, it snaps the first
+of snapping the clip's left edge to the snap grid, it snaps the first
 source beat inside the clip's window. With the project BPM seeded to the source
 BPM (the common case), every subsequent marker on the clip then lines up exactly
-with a project grid sub-beat. Drag with `Alt` for fine 1 ms unsnapped
+with a project grid line. Drag with `Alt` for fine 1 ms unsnapped
 behaviour.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
@@ -1807,6 +1810,65 @@ dragged edge as the source window changes. Hold `Alt` while trimming for
 freeform 1 ms edge placement. Linked saved clip instances do not expose timeline
 edge-resize handles; edit their shared window in the Clip Editor or unlink the
 instance first.
+
+### Timeline snap grid
+
+The snap-grid dropdown in the status bar is the single setting behind both the
+density of the drawn grid lines and the interval every timeline-time edit
+quantises to, so what the user sees is what they snap to. It offers **Bar**,
+**Beat**, **Half beat**, **Quarter beat** and **Free**, and defaults to Quarter
+beat, which is the behaviour that shipped before the grid became selectable.
+The control blurs itself once a choice is made — a focused `<select>` swallows
+the global shortcuts, so keeping focus would leave the keyboard dead until the
+user clicked away.
+
+The vocabulary and its pure helpers live in `shared/snapGrid.ts` — the value
+crosses the bridge, so both sides share one definition. `BEATS_PER_BAR` is
+defined there too and is the single statement of the app's 4/4 assumption;
+`timeline/constants.ts` derives `TIME_SIG_NUM` and `SUBDIVISIONS_PER_BEAT` from
+it rather than restating the numbers.
+
+Two derived quantities do the work:
+
+- `beatsPerSnapStep()` feeds `msPerSnapUnit(bpm, grid)` in `lib/musicTime.ts`,
+  which returns the snap interval in milliseconds. **Free returns 0**, meaning
+  "do not snap" rather than "snap to zero", so callers must branch on it instead
+  of dividing by it.
+- `gridSubdivisionsPerBeat()` is what the two renderers draw. It is deliberately
+  restricted to 1, 2 or 4 so the existing integer bar/beat tick maths still
+  holds. At **Beat** and **Bar** every subdivision *is* a beat, which suppresses
+  the fine tier and leaves the bar/beat hierarchy intact; **Free** keeps the
+  finest lines as a visual reference even though nothing snaps to them.
+
+`useGridGeometry` exposes `snapUnitMs()` and `snapTimelineMs(ms, fineMode)` as
+functions rather than computeds so a handler mid-drag always reads the latest
+BPM and grid without wiring up its own watcher. Every snapping call site routes
+through `snapTimelineMs`: ruler seeks and playhead drags, clip and group drags,
+edge trims, marker drags, range boundaries, and library drops. The keyboard
+(`←`/`→`, `Shift`+`←`/`→`) and the MIDI jog read `msPerSnapUnit` directly.
+
+`Alt` remains the temporary fine-placement override. Because `snapMs()` treats
+Alt and Free identically, holding `Alt` on an already-Free grid is a no-op
+rather than an inversion.
+
+Stepped controls — the `←`/`→` playhead seek, the `Shift`+`←`/`→` clip nudge and
+the MIDI jog — need a step size even when there is no grid to walk to, so on a
+Free grid they all borrow `freeGridStepMs()` (a quarter beat) and apply it
+*relative* to the current position rather than quantising. This keeps stepping
+at roughly the same pace on every grid setting and leaves a deliberately
+off-grid position off-grid; a literal 1 ms step would take thousands of presses
+to cross a bar. `Alt`+arrow (pixel-resolution seek) and `Shift`+`Alt`+arrow
+(1 ms clip nudge) remain the finer steps on every grid.
+
+The choice persists as **non-dirty project view state** — changing it never
+marks a project unsaved. It travels as `snapGrid` on `PROJECT_SET_VIEW` and
+comes back as `viewSnapGrid` on `PROJECT_STATE`, backed by the `viewSnapGrid`
+root property in `ProjectState`. The backend stores the string opaquely and does
+not validate it: the renderer owns the vocabulary, and `toSnapGrid()` falls back
+to Quarter beat for an unknown or absent value. That fallback is what makes a
+project saved before this feature open correctly, so the snapshot path applies
+the grid on every reset even when the field is missing — otherwise an older
+project would silently inherit the previously open project's choice.
 
 ### Processing progress panel
 
@@ -2884,15 +2946,15 @@ multi-selection and empty-track menus show only actions relevant to that target.
 
 | Input | Effect |
 |---|---|
-| Click on **ruler** | Seek the playhead to the nearest sub-beat (1/16 at 4/4). |
+| Click on **ruler** | Seek the playhead to the nearest snap-grid line (see [Timeline snap grid](#timeline-snap-grid)). |
 | `Alt` + click on ruler | Seek to the exact pointer position (1 ms resolution, no snap). |
-| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the nearest sub-beat (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
-| Drag the **playhead** | Move the playhead, snapping to the nearest sub-beat (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
+| Click + drag on **ruler** away from the **playhead** | Create a timeline range, snapping its boundaries to the snap grid (`Alt` for 1 ms resolution). Dragging to either viewport edge auto-scrolls the timeline, so a range can be longer than the visible area, and completing the drag scrolls the playhead back into view. Play starts at its beginning and pauses exactly on its exclusive end; enable **Loop Selection** in the transport to wrap instead. The range and loop mode persist as non-undoable project view state. A click without a drag clears the range and seeks the playhead. |
+| Drag the **playhead** | Move the playhead, snapping to the snap grid (`Alt` for 1 ms resolution). This does not create or change a timeline range. |
 | `Shift` + drag a **marker** | Move the marker, snapping it to the timeline grid; hold `Alt` as well for a 1 ms fine drag to any position. A move onto an occupied position is refused. Without `Shift`, a drag over a marker moves the playhead instead, so the two are never ambiguous when the playhead sits on a marker. |
 | Click on **clip** (no drag) | Select the clip and its host track, and seek the playhead to the click position. |
 | `Shift` + click on **clip** | Extend the selection to a range of clips on the anchor's track, between the anchor and the clicked clip (ordered by start time). |
 | `Ctrl` + click on **clip** | Toggle that clip in/out of the multi-selection, across tracks. Right-clicking any selected clip opens a dedicated menu (Copy, Cut, Lock, Colour, Duplicate, Delete) that acts on the whole selection; **Delete**, **Ctrl+L** and **Duplicate** also apply to every selected clip as one undo step. **Copy / Cut / Paste** (Ctrl+C/X/V) carry the whole selection — paste drops it at the playhead starting on the selected track, keeping each clip's relative timing and track offset, and is rejected wholesale if any clip wouldn't fit. Dragging any selected clip moves the whole group by a uniform delta (preserving relative offsets, across tracks), applied atomically — the move is refused wholesale if any clip wouldn't fit or one is locked. **Shift + ←/→** (and **Shift+Alt+←/→** for 1 ms) nudge the whole group. A plain click on a selected clip (no drag) collapses back to just that clip. |
-| Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the project sub-beat grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
+| Click + drag on **clip body** | Move the clip; the clip's first detected source beat snaps to the snap grid (or the clip's left edge if the source has no detected beats yet). Drag across rows to move the clip to a different track. Clips can't overlap on a single track — they magnetically butt against neighbour edges instead. |
 | `Alt` + drag on clip | Move with 1 ms resolution — the clip stays at the unsnapped position. |
 | Click + drag on **clip edge** (~8 px hit zone) | Trim the clip from that edge, snapping the dragged edge to the project grid by default. Non-destructive — only the window over the source file changes. Disabled on clips linked to a saved clip library item (**Library ▸ Unlink from Library** first, or use the Clip Editor) and on **locked** clips (Ctrl+L or **Edit ▸ Unlock** to free). |
 | `Alt` + drag on clip edge | Trim with 1 ms resolution — the dragged edge stays at the unsnapped position. |
@@ -2903,9 +2965,9 @@ multi-selection and empty-track menus show only actions relevant to that target.
 | Click on **empty area of a track row** | Select that track (highlighted row border), deselect any clip, and move the playhead to the click position (drag to scrub). |
 | Click on **inter-track gap** / below the last track | Deselect both clip and track, and move the playhead to the click position. |
 | **Right-click on an empty track lane** | Open a menu with **Paste** and **Effects ▸ Beat Repeat**. Paste drops the clipboard clip onto that track at the playhead (disabled when the clipboard is empty); Beat Repeat acts at the beat-snapped playhead. Click first to place the playhead where the action should land. |
-| `←` / `→` | Step the playhead one grid line (sub-beat). |
+| `←` / `→` | Step the playhead one snap-grid line (a relative quarter beat on a Free grid). |
 | `Alt` + `←` / `→` | Step the playhead by one pixel's worth of time (~16.7 ms at default zoom, finer when zoomed in). |
-| `Shift` + `←` / `→` | Move the **selected** clip one beat-grid step, snapping its first in-window source beat to the project sub-beat grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
+| `Shift` + `←` / `→` | Move the **selected** clip one snap-grid step, snapping its first in-window source beat to the grid (the keyboard twin of a plain clip drag; falls back to the clip's left edge when the source has no detected beats). Bump-clamped against neighbours; a burst folds into one undo step. No-op on a locked clip or with no clip selected. |
 | `Shift` + `Alt` + `←` / `→` | Nudge the **selected** clip along the timeline at the finest granularity (1 ms, no snap — the keyboard twin of `Alt`+drag). Bump-clamped against neighbours; a burst of nudges folds into one undo step. No-op on a locked clip or with no clip selected. |
 | `M` | Toggle a marker at the exact playhead position. Markers are shown as emerald downward triangles on the ruler and are saved with the project. |
 | `Ctrl` + `←` / `→` | Move the playhead to the previous or next marker, scrolling the timeline if needed. |
@@ -2987,7 +3049,10 @@ jumps to the project start / end. Every marker-stepping affordance treats the
 start of an active timeline selection as a temporary marker, so a selection is
 always reachable in one step.
 
-The status bar shows the current zoom level (e.g. `🔍 150%`). It deliberately does
+The status bar shows the current zoom level (e.g. `🔍 150%`) and the snap-grid
+dropdown (see [Timeline snap grid](#timeline-snap-grid)). Both are labelled by a
+glyph rather than a word — a magnifier and a grid — with the name carried by the
+hover tooltip, so the strip stays 24px tall. It deliberately does
 **not** show backend / audio-engine connection status: the front-end/back-end
 split is an implementation detail the user shouldn't have to reason about, so
 engine availability is handled invisibly by automatic recovery (see

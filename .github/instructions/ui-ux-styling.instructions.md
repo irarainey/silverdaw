@@ -23,6 +23,7 @@ Before hand-rolling chrome, use the existing component classes from
 - `.dialog-backdrop`, `.dialog-card`, `.dialog-header`, `.dialog-title`,
   `.dialog-body`, `.dialog-footer`
 - `.dialog-btn-primary`, `.dialog-btn-cancel`, `.dialog-btn-destructive`
+- `.app-select` (+ `.app-select-dense`) — every native dropdown
 
 If a visual needs to change globally, **edit `style.css` once** rather than
 overriding per-component. Add a new shared class there when a pattern repeats in
@@ -68,7 +69,7 @@ Rules:
 | --- | --- |
 | App shell / timeline backdrop | `zinc-950` |
 | Panels & dialog cards | `zinc-900` (one step lighter than the shell) |
-| Inset inputs / fields / wells | `zinc-950` with a `zinc-700` (or `zinc-600`) border |
+| Inset inputs / fields / wells | `zinc-950` with a `zinc-700` (or `zinc-600`) border (dropdowns are the exception — see §5) |
 | Hover row / subtle raised chip | `zinc-800` |
 | Dividers / hairlines | `border-zinc-800` |
 
@@ -106,12 +107,33 @@ floating surfaces — it fights the panel look.
 
 ## 5. Form controls
 
-Canonical text/number/select input:
+Canonical text/number input:
 
 ```html
 class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
 ```
 
+- **Native `<select>`:** never hand-roll the classes — use the shared
+  `.app-select` primitive, plus `.app-select-dense` in tight chrome (the status
+  bar, an automation lane header). It carries the same border, radius and focus
+  treatment as the input above, but also strips the platform chrome with
+  `appearance-none`, inherits the app font (a native select does **not** by
+  default, which is why an unstyled one reads oversized), draws its own chevron,
+  and puts the popup list on the same surface as the closed field. Only sizing
+  (`w-full`, `w-32`, `flex-1`) and any deliberate accent recolouring go on the
+  element as utilities.
+- **Dropdowns sit on `zinc-900`, not the `zinc-950` well** — the one deliberate
+  exception to the rule below. A `<select>` is a *chooser*, not a typing
+  surface, so it takes the lighter panel colour (the library panel background)
+  and lets its border and chevron carry the affordance. Its option list matches,
+  so the control reads as one surface open or shut.
+- **A dropdown in app chrome must release focus after a choice** — call `blur()`
+  in its `@change` handler (see `StatusBar.vue` and
+  `TrackAutomationLaneHeaders.vue`). A native select keeps focus once used, and a
+  focused select swallows the global keyboard shortcuts, so leaving it focused
+  silently breaks the keyboard until the user clicks elsewhere. Dropdowns inside
+  a dialog are exempt: shortcuts are already suppressed there and `Tab` order
+  should be preserved.
 - **Numeric / time / value fields:** add `font-mono text-right` and
   `tabular-nums` for alignment; use the `no-spinner` class to hide native number
   spinners.
@@ -145,13 +167,15 @@ class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-10
   - This is the single standard for option pickers in settings/preferences —
     **do not** use a native `<select>` dropdown there (it also drags in the
     browser focus ring; see §6). Reserve native `<select>` for long or dynamic
-    lists (e.g. device pickers, many sample rates) and still style it per §5/§6.
+    lists (e.g. device pickers, many sample rates) and still style it with
+    `.app-select` (§5).
   - A bare radio row with only a label (no description) keeps the same chrome and
     just drops the description span.
 - **Disabled:** `disabled:opacity-50` (or `disabled:opacity-40` in dense panels)
   plus `disabled:cursor-not-allowed`; never just hide the control.
-- Inputs sit on `zinc-950` even inside a `zinc-900` panel — the darker well is
-  the "editable" signal.
+- Text, number and other typing fields sit on `zinc-950` even inside a
+  `zinc-900` panel — the darker well is the "editable" signal. Dropdowns are the
+  exception (see above).
 
 ## 6. Focus handling — no browser focus rings
 
@@ -163,9 +187,10 @@ ever see that on a control, the control is wrong and must be fixed.
   Indicate focus by **recolouring the border to the accent**:
   `focus:border-sky-500`. Wrapper groups may use `focus-within:border-sky-500`.
 - **Native `<select>` is the most common offender** — it does NOT inherit a
-  global reset, so it must carry `outline-none focus:border-sky-500` explicitly
-  (do not tint it with `accent-*`; `accent` only applies to checkbox/radio/range).
-  A `<select>` without `outline-none` shows the white/orange ring and is a bug.
+  global reset, so it must carry `outline-none focus:border-sky-500`. Using
+  `.app-select` (§5) covers this; a bare `<select>` without `outline-none` shows
+  the white/orange ring and is a bug. Do not tint a select with `accent-*`;
+  `accent` only applies to checkbox/radio/range.
 - Custom range sliders strip the outline entirely
   (`outline-none focus:outline-none focus-visible:outline-none`) and style the
   thumb directly (see `FxRangeControl.vue` `.fx-range-input`, and

@@ -5,7 +5,7 @@ import {
   seekToPreviousMarker,
   toggleTransportPlayback
 } from '@/lib/transport/useTransportSkip'
-import { msPerSubBeat } from '@/lib/musicTime'
+import { freeGridStepMs, msPerSnapUnit } from '@/lib/musicTime'
 import {
   linearToTaperPosition,
   MAX_MASTER_DB,
@@ -86,7 +86,10 @@ function flushTimelineJog(timestamp: number): void {
       Math.abs(snappedJogUnits) >= pendingSnapUnitsPerBeat &&
       timestamp - lastSnappedSeekAt >= pendingSnapMinIntervalMs
     ) {
-      const gridLineMs = msPerSubBeat(transport.bpm)
+      // A stepped jog needs a musical step, so a Free grid falls back to the
+      // shared relative step rather than a 1 ms crawl.
+      const snapUnitMs = msPerSnapUnit(transport.bpm, ui.snapGrid)
+      const gridLineMs = snapUnitMs > 0 ? snapUnitMs : freeGridStepMs(transport.bpm)
       const gridStep = Math.sign(snappedJogUnits)
       snappedJogUnits -= gridStep * pendingSnapUnitsPerBeat
       lastSnappedSeekAt = timestamp

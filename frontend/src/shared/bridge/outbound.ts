@@ -15,6 +15,7 @@ import type {
   StemName,
   TransitionRecipe
 } from './inbound'
+import type { SnapGrid } from '../snapGrid'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -745,6 +746,8 @@ export interface ProjectSetViewPayload {
   timelineSelection?: { startMs: number; endMs: number } | null
   /** Whether transport loops the persisted selected range. */
   loopTimelineSelection?: boolean
+  /** Timeline snap interval. Persisted as non-dirty view state. */
+  snapGrid?: SnapGrid
 }
 
 /** Tempo edit. Marks the project dirty on the backend. */

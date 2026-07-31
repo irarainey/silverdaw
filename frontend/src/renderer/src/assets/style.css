@@ -99,3 +99,46 @@
     @apply rounded border border-red-700 bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600;
   }
 }
+
+/* ── Select primitive ──────────────────────────────────────────────────
+ *
+ * A native `<select>` does not inherit the app's font family and draws a
+ * chunky platform chevron, so an unstyled one reads noticeably larger and
+ * heavier than the fields beside it. `appearance-none` strips the platform
+ * chrome; the font is then inherited explicitly and the chevron redrawn as
+ * a background SVG that matches the icon weight used elsewhere.
+ *
+ * Use `.app-select` for dialog and panel dropdowns, and add
+ * `.app-select-dense` in tight chrome such as the status bar or a lane
+ * header. Sizing (`w-full`, `w-32`, `flex-1`) and any accent recolouring
+ * stay as utilities on the element — those sit in the utility layer and so
+ * win over this component class.
+ */
+@layer components {
+  .app-select {
+    @apply cursor-pointer appearance-none rounded border border-zinc-700 bg-zinc-900 py-1 pl-2 pr-6 text-xs text-zinc-100 outline-none hover:border-zinc-600 focus:border-sky-500 disabled:cursor-not-allowed disabled:opacity-50;
+    font-family: inherit;
+    /* Tells the platform to draw the popup list, its scrollbar and its
+     * selection highlight from the dark palette rather than the light default. */
+    color-scheme: dark;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.75 6 8l3-3.25'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.375rem center;
+    background-size: 0.625rem 0.625rem;
+  }
+  /* Dense chrome: status bar strip, automation lane headers. The fixed height
+   * keeps every dense dropdown on the same rhythm as the small square buttons
+   * they sit beside, rather than collapsing to the text height. */
+  .app-select-dense {
+    @apply h-5 py-px pl-1.5 pr-5 text-[11px] leading-none;
+    background-position: right 0.25rem center;
+    background-size: 0.5rem 0.5rem;
+  }
+  /* The popup list is drawn by the platform and would otherwise default to a
+   * light surface. Matching the closed field exactly (`zinc-900` on
+   * `zinc-100`) keeps a dropdown reading as one surface whether open or shut. */
+  .app-select option {
+    background-color: #18181b;
+    color: #f4f4f5;
+  }
+}

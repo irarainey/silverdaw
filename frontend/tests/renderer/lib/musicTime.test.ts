@@ -5,6 +5,7 @@ import {
   DEFAULT_SUBS_PER_BEAT,
   formatRulerTime,
   formatTime,
+  freeGridStepMs,
   msPerSubBeat,
   parseTime
 } from '@/lib/musicTime'
@@ -79,6 +80,20 @@ describe('msPerSubBeat', () => {
 
   it('clamps bpm to >= 1 so it never divides by zero', () => {
     expect(Number.isFinite(msPerSubBeat(0))).toBe(true)
+  })
+})
+
+describe('freeGridStepMs', () => {
+  it('borrows the quarter-beat step so Free is not a 1 ms crawl', () => {
+    expect(freeGridStepMs(120)).toBeCloseTo(125, 6)
+  })
+
+  it('scales with tempo', () => {
+    expect(freeGridStepMs(60)).toBeCloseTo(250, 6)
+  })
+
+  it('clamps bpm to >= 1 so it never divides by zero', () => {
+    expect(Number.isFinite(freeGridStepMs(0))).toBe(true)
   })
 })
 

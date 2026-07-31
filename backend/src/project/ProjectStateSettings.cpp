@@ -67,6 +67,17 @@ void ProjectState::setViewFxPanelOpen(bool open)
     setNonDirtyRootProperty(kViewFxPanelOpen, open);
 }
 
+juce::String ProjectState::getViewSnapGrid() const
+{
+    return root.getProperty(kViewSnapGrid, juce::String{}).toString();
+}
+
+void ProjectState::setViewSnapGrid(const juce::String& snapGrid)
+{
+    // Grid choice is a view preference, not a content edit.
+    setNonDirtyRootProperty(kViewSnapGrid, snapGrid);
+}
+
 std::optional<ProjectState::TimelineSelectionView> ProjectState::getViewTimelineSelection() const
 {
     const auto start = root.getProperty(kViewTimelineSelectionStartMs, juce::var());

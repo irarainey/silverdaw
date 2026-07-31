@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useAppKeyboardShortcuts, type AppKeyboardShortcutsDeps } from '@/lib/app/useAppKeyboardShortcuts'
+import { DEFAULT_SNAP_GRID, type SnapGrid } from '@shared/snapGrid'
 
 // The handler's editable-target guard uses `instanceof HTMLElement`, a browser
 // global absent under the node test env. Stub it so plain-object targets read
@@ -53,6 +54,7 @@ interface FakeStores {
     requestTimelineScroll: ReturnType<typeof vi.fn>
     requestTimelineScrollToPosition: ReturnType<typeof vi.fn>
     timelineSelection: { startMs: number; endMs: number } | null
+    snapGrid: SnapGrid
     setTimelineSelection: ReturnType<typeof vi.fn>
     persistTimelineSelectionView: ReturnType<typeof vi.fn>
     selectedAutomationPoint: unknown
@@ -108,6 +110,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       requestTimelineScroll: vi.fn(),
       requestTimelineScrollToPosition: vi.fn(),
       timelineSelection: null,
+      snapGrid: DEFAULT_SNAP_GRID,
       setTimelineSelection: vi.fn(),
       persistTimelineSelectionView: vi.fn(),
       selectedAutomationPoint: null,
@@ -590,6 +593,44 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     const { e } = makeKey({ key: 'ArrowLeft', shiftKey: true })
     kb.onGlobalShortcutKey(e)
     expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 375)
+  })
+
+  describe('with a Free snap grid', () => {
+    // Free has no grid line to walk to. A literal 1 ms step would be unusable —
+    // thousands of presses to cross a bar — so the arrows step by a relative
+    // quarter beat (125 ms at 120 bpm), keeping the off-grid position intact.
+    beforeEach(() => {
+      h.stores.ui.snapGrid = 'free'
+    })
+
+    it('bare ArrowRight steps forward by a relative quarter beat', () => {
+      h.stores.transport.positionMs = 40
+      const { e } = makeKey({ key: 'ArrowRight' })
+      kb.onGlobalShortcutKey(e)
+      expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 165 })
+    })
+
+    it('bare ArrowLeft steps back by a relative quarter beat, clamped at 0', () => {
+      h.stores.transport.positionMs = 40
+      const { e } = makeKey({ key: 'ArrowLeft' })
+      kb.onGlobalShortcutKey(e)
+      expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 0 })
+    })
+
+    it('Alt+ArrowRight still offers the finer per-pixel step', () => {
+      h.stores.transport.positionMs = 40
+      const { e } = makeKey({ key: 'ArrowRight', altKey: true })
+      kb.onGlobalShortcutKey(e)
+      expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_SEEK', { positionMs: 50 })
+    })
+
+    it('Shift+ArrowRight nudges the clip by a relative quarter beat', () => {
+      h.stores.project.selectedClipId = 'c1'
+      h.stores.project.clips = { c1: { locked: false, startMs: 540 } }
+      const { e } = makeKey({ key: 'ArrowRight', shiftKey: true })
+      kb.onGlobalShortcutKey(e)
+      expect(h.stores.project.moveClip).toHaveBeenCalledWith('c1', 665)
+    })
   })
 
   it('Shift+Arrow does not move a locked selected clip', () => {

@@ -5,12 +5,14 @@
 ### Added
 
 - Edit ▸ Clear All Markers removes every marker in the project in one step.
+- A grid control in the status bar sets the timeline grid to Bar, Beat, Half beat, Quarter beat or Free, and is saved with the project.
 
 ### Changed
 
 - Markers are now placed at the exact playhead position instead of snapping to the nearest beat.
 - Hot-cue marker pads on a MIDI deck now toggle the marker at the playhead, matching the `M` key.
 - Holding `Alt` while dragging a marker now moves it to any position rather than only to grid points.
+- Dropdowns throughout the app now match the surrounding controls instead of using the oversized Windows style.
 - Opening a project now draws the timeline immediately instead of leaving the track headers on screen for around a second before the clips appear.
 - Updated the graphics library to its latest release.
 

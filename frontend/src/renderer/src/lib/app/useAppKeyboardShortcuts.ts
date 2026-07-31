@@ -13,6 +13,7 @@ import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
+import { freeGridStepMs, msPerSnapUnit } from '@/lib/musicTime'
 import {
   nextMarkerCandidateMs,
   previousMarkerCandidateMs,
@@ -39,8 +40,6 @@ export interface AppKeyboardShortcutsDeps {
 export interface AppKeyboardShortcuts {
   onGlobalShortcutKey: (e: KeyboardEvent) => void
 }
-
-const SUB_BEATS_PER_BEAT = 4
 
 function isEditableTarget(target: EventTarget | null, e: KeyboardEvent): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -420,17 +419,25 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       const bpm = transport.bpm
       if (!Number.isFinite(bpm) || bpm <= 0) return
       lastArrowSeekMs = null
-      const snap = 60_000 / bpm / SUB_BEATS_PER_BEAT
+      const snap = msPerSnapUnit(bpm, ui.snapGrid)
       const direction = e.key === 'ArrowLeft' ? -1 : 1
-      // Snap the first in-window source beat to the grid, falling back to the
-      // clip's left edge when the source has no detected beats.
       const offset = clipFirstBeatOffsetMs(target.clip, library) ?? 0
-      const beatBase = target.clip.startMs + offset
-      const snappedBeat =
-        direction < 0
-          ? Math.max(0, Math.floor((beatBase - 1e-6) / snap) * snap)
-          : (Math.floor(beatBase / snap + 1e-6) + 1) * snap
-      const targetMs = Math.max(0, snappedBeat - offset)
+      // Snap the first in-window source beat to the grid, falling back to the
+      // clip's left edge when the source has no detected beats. A Free grid has
+      // no line to land on, so the clip shifts by a relative step instead —
+      // keeping its off-grid placement rather than being pulled onto a grid the
+      // user has switched off.
+      let targetMs: number
+      if (snap > 0) {
+        const beatBase = target.clip.startMs + offset
+        const snappedBeat =
+          direction < 0
+            ? Math.max(0, Math.floor((beatBase - 1e-6) / snap) * snap)
+            : (Math.floor(beatBase / snap + 1e-6) + 1) * snap
+        targetMs = Math.max(0, snappedBeat - offset)
+      } else {
+        targetMs = Math.max(0, target.clip.startMs + direction * freeGridStepMs(bpm))
+      }
       if (isMultiSelectionNudge()) {
         nudgeSelectedClips(targetMs - target.clip.startMs)
         return
@@ -473,7 +480,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
 
     const bpm = transport.bpm
     if (!Number.isFinite(bpm) || bpm <= 0) return
-    const msPerSub = 60_000 / bpm / SUB_BEATS_PER_BEAT
+    const snapUnitMs = msPerSnapUnit(bpm, ui.snapGrid)
 
     // If our last arrow-seek target is still essentially the current
     // position (the backend's ack will have rounded by a sub-millisecond
@@ -487,10 +494,15 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
         ? lastArrowSeekMs
         : reported
 
+    // On a Free grid there is no line to walk to, so step by a relative
+    // quarter beat rather than quantising — same pace as any other grid, and
+    // the playhead keeps its off-grid position. Alt is still the fine step.
     const target =
-      direction < 0
-        ? Math.max(0, Math.floor((base - 1e-6) / msPerSub) * msPerSub)
-        : (Math.floor(base / msPerSub + 1e-6) + 1) * msPerSub
+      snapUnitMs > 0
+        ? direction < 0
+          ? Math.max(0, Math.floor((base - 1e-6) / snapUnitMs) * snapUnitMs)
+          : (Math.floor(base / snapUnitMs + 1e-6) + 1) * snapUnitMs
+        : Math.max(0, base + direction * freeGridStepMs(bpm))
     if (target === reported) return
 
     e.preventDefault()
@@ -499,7 +511,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     transport.setPosition(target)
     ui.requestTimelineScrollToPosition(target)
     sendBridge('TRANSPORT_SEEK', { positionMs: target })
-    log.debug('transport', `arrow-seek to ${target}ms (msPerSub=${msPerSub.toFixed(2)})`)
+    log.debug('transport', `arrow-seek to ${target}ms (step=${(snapUnitMs > 0 ? snapUnitMs : freeGridStepMs(bpm)).toFixed(2)}ms)`)
   }
 
   return { onGlobalShortcutKey }

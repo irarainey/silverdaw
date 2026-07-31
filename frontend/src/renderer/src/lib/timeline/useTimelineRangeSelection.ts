@@ -21,7 +21,7 @@ export interface TimelineRangeSelectionOptions {
   app: Readonly<Ref<Application | null>>
   scrollX: Ref<number>
   maxScrollX: ComputedRef<number>
-  geometry: Pick<GridGeometry, 'headerWidth' | 'pxPerSecond' | 'msPerSubBeat'>
+  geometry: Pick<GridGeometry, 'headerWidth' | 'pxPerSecond' | 'snapTimelineMs'>
   onSeek: (positionMs: number) => void
 }
 
@@ -51,8 +51,7 @@ export function useTimelineRangeSelection(opts: TimelineRangeSelectionOptions) {
     if (!Number.isFinite(rawMs) || durationMs <= 0) return null
     const clampedMs = Math.max(0, Math.min(durationMs, rawMs))
     if (pointer.altKey) return clampedMs
-    const snapMs = opts.geometry.msPerSubBeat()
-    return Math.max(0, Math.min(durationMs, Math.round(clampedMs / snapMs) * snapMs))
+    return Math.min(durationMs, opts.geometry.snapTimelineMs(clampedMs, false))
   }
 
   /** Edge auto-scroll pressure for a client x, 0 when there is no room to scroll. */

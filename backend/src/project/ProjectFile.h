@@ -25,7 +25,8 @@ juce::Result save(const juce::File& file, const ProjectState& project);
 juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
                            bool metronomeEnabled, bool clipEditorMetronomeEnabled,
-                           std::optional<ProjectState::TimelineSelectionView> timelineSelection = std::nullopt);
+                           std::optional<ProjectState::TimelineSelectionView> timelineSelection = std::nullopt,
+                           const juce::String& snapGrid = {});
 
 // Removes the given library items from an ALREADY-SAVED project file in place, leaving
 // every other saved field (and the user's other unsaved in-memory edits) untouched. Used

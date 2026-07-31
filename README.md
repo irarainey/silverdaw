@@ -62,7 +62,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
-  free placement. **Select several clips at once** — Shift-click a range on one
+  free placement. A grid control in the status bar sets how coarse that grid
+  is — bar, beat, half beat or quarter beat — or turns snapping off entirely,
+  and it is saved with the project. **Select several clips at once** — Shift-click a range on one
   track or Ctrl-click clips across tracks — then move the whole group together,
   nudge it with the arrow keys, or lock, colour, duplicate, delete, and
   cut/copy/paste them in one step. Bar numbering starts at 1 by default,

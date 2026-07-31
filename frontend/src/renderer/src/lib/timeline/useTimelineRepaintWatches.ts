@@ -137,6 +137,11 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     updatePlayhead()
   })
 
+  // The snap grid sets how many subdivisions the ruler and track grid draw.
+  watch(() => ui.snapGrid, () => {
+    redraw()
+  })
+
   // Ruler bar labels depend on the project's bar-counter offset.
   watch(() => project.barCounterStart, () => {
     redraw()

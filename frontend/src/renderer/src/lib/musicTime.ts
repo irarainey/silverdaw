@@ -1,11 +1,47 @@
 // Pure musical-time helpers shared by transport, timeline grid and tests.
 
+import { beatsPerSnapStep, snapsFreely, type SnapGrid } from '@shared/snapGrid'
+
 export const DEFAULT_SUBS_PER_BEAT = 4
 export const DEFAULT_BEATS_PER_BAR = 4
 
 /** Milliseconds per sub-beat; clamps BPM to avoid infinite timeline geometry. */
 export function msPerSubBeat(bpm: number, subsPerBeat: number = DEFAULT_SUBS_PER_BEAT): number {
   return 60000 / (Math.max(1, bpm) * subsPerBeat)
+}
+
+/**
+ * Milliseconds in one snap step of `grid`, or 0 for **Free**, which means "do
+ * not snap" — callers must branch on 0 rather than dividing by it.
+ */
+export function msPerSnapUnit(bpm: number, grid: SnapGrid): number {
+  if (snapsFreely(grid)) return 0
+  return (60000 / Math.max(1, bpm)) * beatsPerSnapStep(grid)
+}
+
+/**
+ * Quantise a timeline position. `fineMode` (Alt) and a **Free** grid both give
+ * exact 1 ms placement, so Alt stays a no-op rather than an inversion when the
+ * grid is already free. Never returns a negative position.
+ */
+export function snapMs(positionMs: number, bpm: number, grid: SnapGrid, fineMode: boolean): number {
+  const unit = fineMode ? 0 : msPerSnapUnit(bpm, grid)
+  if (unit <= 0) return Math.max(0, Math.round(positionMs))
+  return Math.max(0, Math.round(positionMs / unit) * unit)
+}
+
+/**
+ * Step for a **Free** snap grid, where there is no grid line to walk to.
+ *
+ * A stepped control — the arrow keys, a MIDI jog detent — still needs a usable
+ * increment, and a literal millisecond is not one: it takes thousands of presses
+ * to cross a single bar. Free therefore borrows the Quarter beat step and
+ * applies it *relative* to the current position, so movement stays as quick as
+ * on any other grid while the off-grid placement is preserved. `Alt` remains the
+ * fine, per-pixel override.
+ */
+export function freeGridStepMs(bpm: number): number {
+  return msPerSubBeat(bpm)
 }
 
 export interface BarPositionOptions {

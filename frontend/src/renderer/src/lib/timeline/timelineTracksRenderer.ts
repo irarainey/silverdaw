@@ -14,8 +14,6 @@ import {
   RULER_HEIGHT,
   RULER_TICK,
   SCROLLBAR_WIDTH,
-  SUBDIVISIONS_PER_BEAT,
-  TIME_SIG_NUM,
   TRACK_BG,
   TRACK_HEADER_BG
 } from './constants'
@@ -32,7 +30,7 @@ export interface TimelineTracksRendererDeps {
   tracksLayer: ShallowRef<Container | null>
   headersLayer: ShallowRef<Container | null>
   GraphicsCtor: ShallowRef<typeof Graphics | null>
-  geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth'>
+  geometry: Pick<GridGeometry, 'pxPerSecond' | 'headerWidth' | 'subsPerBeat' | 'subsPerBar'>
   scrollX: Ref<number>
   scrollY: Ref<number>
   trackAreaHeight: ComputedRef<number>
@@ -57,7 +55,7 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     transport,
     clipRenderer
   } = deps
-  const { pxPerSecond, headerWidth } = geometry
+  const { pxPerSecond, headerWidth, subsPerBeat, subsPerBar } = geometry
 
   /** Full-height grid lines in world coordinates for translate-only scroll. */
   function drawGrid(width: number): void {
@@ -77,8 +75,8 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     if (gridBottom <= gridTop || rightEdge <= gridLeft) return
 
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
-    const pxPerSub = pxPerBeat / SUBDIVISIONS_PER_BEAT
-    const subsPerBar = SUBDIVISIONS_PER_BEAT * TIME_SIG_NUM
+    const pxPerSub = pxPerBeat / subsPerBeat.value
+    const subsPerBarNow = subsPerBar.value
 
     const viewWidth = rightEdge - gridLeft
     const projectPx = (project.durationMs / 1000) * pxPerSecond.value
@@ -97,8 +95,8 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
 
     for (let s = firstSub; s <= lastVisibleSub; s++) {
       const x = gridLeft + s * pxPerSub + 0.5
-      const isBar = s % subsPerBar === 0
-      const isBeat = s % SUBDIVISIONS_PER_BEAT === 0
+      const isBar = s % subsPerBarNow === 0
+      const isBeat = s % subsPerBeat.value === 0
       const target = isBar ? barLines : isBeat ? beatLines : subLines
       target.moveTo(x, gridTop).lineTo(x, gridBottom)
     }

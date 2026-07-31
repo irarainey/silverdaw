@@ -55,7 +55,9 @@ function setup(maxScrollXPx = 5_000) {
   const geometry = {
     headerWidth: () => HEADER_WIDTH,
     pxPerSecond: ref(PX_PER_SECOND),
-    msPerSubBeat: () => 125
+    // Quarter-beat grid at 120 BPM.
+    snapTimelineMs: (ms: number, fineMode: boolean) =>
+      fineMode ? Math.max(0, Math.round(ms)) : Math.max(0, Math.round(ms / 125) * 125)
   } as unknown as GridGeometry
   const onSeek = vi.fn()
   const { tryBegin } = useTimelineRangeSelection({

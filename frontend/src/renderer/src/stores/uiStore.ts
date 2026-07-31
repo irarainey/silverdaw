@@ -5,6 +5,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
+import { DEFAULT_SNAP_GRID, toSnapGrid, type SnapGrid } from '@shared/snapGrid'
 import {
   clampTimelineSelectionToDuration,
   normaliseTimelineSelection,
@@ -59,6 +60,8 @@ interface UiState {
   timelineSelection: TimelineSelection | null
   /** Whether transport wraps at the active timeline selection's exclusive end. */
   loopTimelineSelection: boolean
+  /** Timeline snap interval; drives both grid-line density and all timeline snapping. */
+  snapGrid: SnapGrid
   /** Per-track visible automation lanes, persisted independently from their curves. */
   automationLanes: Record<string, AutomationLane[]>
   /** Bumped for every lane-layout mutation so the timeline can repaint reliably. */
@@ -182,6 +185,7 @@ export const useUiStore = defineStore('ui', {
     timelineRevealTrackRequest: null,
     timelineSelection: null,
     loopTimelineSelection: false,
+    snapGrid: DEFAULT_SNAP_GRID,
     automationLanes: {},
     automationLaneRevision: 0,
     automationClipboard: null,
@@ -386,6 +390,16 @@ export const useUiStore = defineStore('ui', {
     },
     setLoopTimelineSelection(loop: boolean): void {
       this.loopTimelineSelection = this.timelineSelection !== null && loop
+    },
+    /** Change the snap grid and persist it as non-dirty project view state. */
+    setSnapGrid(grid: SnapGrid): void {
+      if (this.snapGrid === grid) return
+      this.snapGrid = grid
+      sendBridge('PROJECT_SET_VIEW', { snapGrid: grid })
+    },
+    /** Apply snapshot state locally without echoing a PROJECT_SET_VIEW command. */
+    applySnapGridView(grid: unknown): void {
+      this.snapGrid = toSnapGrid(grid)
     },
     /** Flip Loop Selection and persist it; no-op without an active range. */
     toggleLoopTimelineSelection(): void {
