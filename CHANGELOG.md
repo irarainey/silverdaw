@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- Adding a clip no longer applies its track gain twice in the audio engine.
+- Undoing an edit no longer stalls the timeline re-reading library waveforms, artwork and track details that have not changed.
+- Undoing or redoing a large edit now shows a busy cursor while it completes, instead of appearing to do nothing.
+- Chopping a clip to the grid now settles as soon as it looks finished, rather than continuing to work for a second afterwards.
+- Splitting a clip now carries its reverse, turntable and volume-shape settings to the correct half.
+
 ## 1.5.0
 
 ### Added

@@ -58,7 +58,9 @@ export async function refreshLibraryItemMedia(
   try {
     const opened = await window.silverdaw.readAudioFile(filePath)
     if (!opened) return
-    const decoded = await decodeAudioToPeaks(opened.data)
+    // Peaks + geometry only: this path never reads `decoded.channels`, and the
+    // PCM copy would duplicate the whole decoded file for nothing.
+    const decoded = await decodeAudioToPeaks(opened.data, { includeChannels: false })
     if (needsDetails) {
       library.setItemAudioDetails(itemId, decoded.durationMs, decoded.sampleRate, decoded.channelCount)
     }

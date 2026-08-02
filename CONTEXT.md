@@ -20,11 +20,13 @@ control, Scratch Editor, and out-of-process engine recovery are all shipped, as
 are the **1.4.x** additions — multiple automation parameter lanes per track,
 timeline range selection with one-shot or looped playback, importing stems and
 samples from another project, range-auditioning polish, and the Playwright
-end-to-end test tier. The current release is **1.5.0**: a selectable timeline
+end-to-end test tier. The current release is **1.5.1**, a patch over **1.5.0**:
+a selectable timeline
 snap grid, exact-position markers, Clear All Markers, smooth playhead-follow
 scrolling, `Enter` to accept a dialog, restyled dropdowns, an immediate timeline
-paint on project open, and a set of beat-grid, marker, MIDI-jog, audio-driver
-and loop-playback fixes. Per-release detail lives in `CHANGELOG.md`. Silverdaw is
+paint on project open, a set of beat-grid, marker, MIDI-jog, audio-driver
+and loop-playback fixes, and undo no longer stalling the timeline by re-decoding
+library waveforms. Per-release detail lives in `CHANGELOG.md`. Silverdaw is
 **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).
@@ -130,6 +132,15 @@ gotcha: `docs/developer-guide.md#quality-gates`.
   truth (CMake generates `Version.h`; no source file hardcodes the number), and
   `frontend/package.json` `"version"` is the Electron app version. Setup,
   packaging, and release detail: `docs/developer-guide.md`.
+
+## Diagnosing a reported problem
+
+Runtime logs are the first place to look. Each run writes an ISO-timestamped
+folder under `%USERPROFILE%\Silverdaw\Logs\` containing `main.log`,
+`renderer.log`, and `backend.log` (verbose logging is opt-in via
+**Preferences ▸ Developer**). Always-on startup and crash artifacts live
+separately in `%USERPROFILE%\Silverdaw\Diagnostics\`. Detail:
+`docs/developer-guide.md#startup-diagnostics-always-on`.
 
 ## Load on demand
 

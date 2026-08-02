@@ -48,6 +48,9 @@ class AudioEngine : private AudioEngineGraphState,
 
     void shutdown();
 
+    // `initialGain` is applied to the clip's transport as part of the attach, before it can be
+    // heard, so a caller passing the track's effective (mute/solo-folded) gain must NOT follow up
+    // with setClipGain: that is a duplicate write of the same value.
     bool addClip(const juce::String& trackId, const juce::String& clipId,
                  const juce::File& filePath, double initialOffsetMs = 0.0,
                  double inMs = 0.0, double clipDurationMs = 0.0, float initialGain = 1.0F,

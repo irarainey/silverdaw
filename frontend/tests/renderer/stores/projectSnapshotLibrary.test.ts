@@ -156,12 +156,114 @@ describe('project snapshot library media hydration', () => {
     await flushAsyncWork()
 
     expect(window.silverdaw.readAudioFile).toHaveBeenCalledWith(opened.filePath)
-    expect(decodeMock).toHaveBeenCalledWith(opened.data)
+    // Peaks-only decode: this path discards the PCM, so it must not be copied.
+    expect(decodeMock).toHaveBeenCalledWith(opened.data, { includeChannels: false })
     expect(useLibraryStore().byId['source-1']?.peaks).toEqual(decodedAudio().peaks)
   })
 
-  it('retains renderer decoding when placed media details are missing', async () => {
+  it('carries library peaks across an undo soft-replace instead of re-decoding', async () => {
     const opened = {
+      filePath: 'C:\\audio\\standalone.wav',
+      fileName: 'standalone.wav',
+      data: new ArrayBuffer(8)
+    }
+    vi.mocked(window.silverdaw.readAudioFile).mockResolvedValue(opened)
+    decodeMock.mockResolvedValue(decodedAudio())
+
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const snapshotLibrary = [
+      {
+        id: 'source-1',
+        kind: 'source' as const,
+        filePath: opened.filePath,
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2
+      }
+    ]
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Standalone source',
+      reset: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    const decodedPeaks = library.byId['source-1']?.peaks
+    const decodedLod = library.byId['source-1']?.peaksLod
+    expect(decodedPeaks).toBeDefined()
+    expect(decodeMock).toHaveBeenCalledTimes(1)
+
+    // An undo wipes and rehydrates the catalogue; the audio file is unchanged, so
+    // the decoded peaks and their LOD pyramids must survive untouched.
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Standalone source',
+      reset: false,
+      softReplace: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    expect(decodeMock).toHaveBeenCalledTimes(1)
+    expect(window.silverdaw.readAudioFile).toHaveBeenCalledTimes(1)
+    expect(library.byId['source-1']?.peaks).toBe(decodedPeaks)
+    expect(library.byId['source-1']?.peaksLod).toBe(decodedLod)
+    expect(library.channelPeaksByItemId['source-1']?.channels).toEqual(
+      decodedAudio().channelPeaks
+    )
+  })
+
+  it('carries library tags across an undo soft-replace instead of re-reading them', async () => {
+    vi.mocked(window.silverdaw.readAudioMetadata).mockResolvedValue({ title: 'Carried' })
+    vi.mocked(window.silverdaw.readAudioFile).mockResolvedValue(null)
+
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const snapshotLibrary = [
+      {
+        id: 'source-1',
+        kind: 'source' as const,
+        filePath: 'C:\\audio\\tagged.wav',
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2
+      }
+    ]
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Tagged source',
+      reset: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+    expect(window.silverdaw.readAudioMetadata).toHaveBeenCalledTimes(1)
+    // Stand in for a completed decode so the row has nothing left to fetch.
+    library.setItemPeaks('source-1', new Float32Array([-0.5, 0.5]), 48_000, 500)
+
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Tagged source',
+      reset: false,
+      softReplace: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    expect(window.silverdaw.readAudioMetadata).toHaveBeenCalledTimes(1)
+    expect(library.byId['source-1']?.metadata).toEqual({ title: 'Carried' })
+  })
+
+  it('retains renderer decoding when placed media details are missing', async () => {    const opened = {
       filePath: 'C:\\audio\\legacy.wav',
       fileName: 'legacy.wav',
       data: new ArrayBuffer(8)

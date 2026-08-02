@@ -226,8 +226,6 @@ export const clipLibraryActions = {
           )
           if (sibling?.envelopePoints) this.setClipEnvelope(clipId, sibling.envelopePoints)
         }
-
-        this.pushTrackGain(track)
       })
       log.info('project', `addClipFromLibrary track=${trackId} clip=${clipId} pos=${snapped}ms`)
       return clipId

@@ -116,7 +116,6 @@ function replayPastedClipBridge(
     ...(entry.colorIndex !== undefined ? { colorIndex: entry.colorIndex } : {}),
     ...(pastedClip ? waveformReusePayload(pastedClip, useLibraryStore()) : {})
   })
-  self.pushTrackGain(track)
   if (entry.name) {
     sendBridge('CLIP_RENAME', { clipId: newId, name: entry.name })
   }

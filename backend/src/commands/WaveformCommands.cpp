@@ -199,7 +199,8 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
     }
 
     juce::String errorMsg;
-    // Seed effective gain at addClip to avoid a pre-mute/solo gain blip.
+    // addClip seeds the effective gain on the transport itself, avoiding a pre-mute/solo
+    // gain blip; re-applying it here would be a duplicate write of the same value.
     const auto effectiveGain = projectState.getEffectiveTrackGain(trackId);
     bool ok = engine.addClip(trackId, clipId, juce::File(engineFilePath), initialOffsetMs, inMs, payloadDurationMs,
                              effectiveGain, &errorMsg);
@@ -214,10 +215,6 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
             engine.removeClip(clipId);
             ok = false;
             errorMsg = "duplicate clipId or unknown trackId";
-        }
-        else
-        {
-            engine.setClipGain(clipId, effectiveGain);
         }
     }
 

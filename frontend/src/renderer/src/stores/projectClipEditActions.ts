@@ -17,6 +17,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
 import { waveformReusePayload } from './project-waveform-state'
+import { splitEnvelopeAtMs } from '@/lib/envelope'
 
 export const clipEditActions = {
     /** Split a clip at timeline time while preserving source-time trim math. */
@@ -45,9 +46,21 @@ export const clipEditActions = {
 
       const splitOffsetTimelineMs = atMs - clip.startMs
       const splitOffsetSourceMs = splitOffsetTimelineMs * ratio
+      // Reverse plays the clip's source window backwards, so the timeline-LEFT half is
+      // the TAIL of that window and the timeline-right half is its head. Mapping both
+      // halves forwards would swap the audio across the seam.
+      const isReversed = clip.reversed === true
+      const leftInMs = isReversed
+        ? clip.inMs + (clip.durationMs - splitOffsetSourceMs)
+        : clip.inMs
       const newClipDurationMs = clip.durationMs - splitOffsetSourceMs
-      const newClipInMs = clip.inMs + splitOffsetSourceMs
+      const newClipInMs = isReversed ? clip.inMs : clip.inMs + splitOffsetSourceMs
       const newClipStartMs = atMs
+      // Turntable effects fire at the clip's END, which after a split belongs to the
+      // right half only; leaving them on the left would brake mid-phrase.
+      const carriedBrake = clip.brake === true
+      const carriedBackspin = clip.backspin === true
+      const splitEnvelope = splitEnvelopeAtMs(clip.envelopePoints, splitOffsetTimelineMs)
       // Derive the right half's own timeline footprint from its source length.
       // Must be captured before trimClip(), which mutates clip.effectiveDurationMs
       // in place to the LEFT half's value — copying it afterwards would size the
@@ -57,10 +70,11 @@ export const clipEditActions = {
       const track = this.tracks.find((t) => t.id === clip.trackId)
       if (!track) return null
 
-      // One undo step for the whole split: the left-half trim and the new right-half clip (plus its
-      // name/warp replay) fold into a single transaction.
+      // One undo step for the whole split: the left-half trim and the new right-half clip
+      // (plus its name / warp / reverse / turntable / envelope replay) fold into a single
+      // transaction.
       return runInUndoGroup('Split clip', () => {
-        this.trimClip(clipId, clip.startMs, clip.inMs, splitOffsetSourceMs)
+        this.trimClip(clipId, clip.startMs, leftInMs, splitOffsetSourceMs)
 
         // Reuse peaks and carry warp settings so both halves stay in time.
         const newId = crypto.randomUUID()
@@ -90,6 +104,12 @@ export const clipEditActions = {
           semitones: clip.semitones,
           cents: clip.cents,
           pendingAutoWarp: clip.pendingAutoWarp,
+          // Per-clip playback state the right half must inherit to stay a faithful
+          // continuation of the source clip.
+          reversed: clip.reversed,
+          brake: carriedBrake ? true : undefined,
+          backspin: carriedBackspin ? true : undefined,
+          envelopePoints: splitEnvelope.right?.map((p) => ({ ...p })),
           effectiveDurationMs: newClipEffectiveDurationMs,
           effectiveTempoRatio: clip.effectiveTempoRatio,
           effectiveWarpActive: clip.effectiveWarpActive
@@ -113,7 +133,6 @@ export const clipEditActions = {
           ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
           ...waveformReusePayload(clip, library)
         })
-        this.pushTrackGain(track)
         if (clip.name) {
           sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
         }
@@ -127,6 +146,28 @@ export const clipEditActions = {
             semitones: clip.semitones,
             cents: clip.cents
           })
+        }
+        // Replay reverse so the right half keeps playing backwards like its source.
+        if (isReversed) {
+          sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
+        }
+        // Hand the end-of-clip turntable effect to the right half and clear it from the
+        // left, so it still fires once, at the end of the original clip's audio.
+        if (carriedBrake) {
+          clip.brake = undefined
+          sendBridge('CLIP_SET_BRAKE', { clipId, on: false })
+          sendBridge('CLIP_SET_BRAKE', { clipId: newId, on: true })
+        }
+        if (carriedBackspin) {
+          clip.backspin = undefined
+          sendBridge('CLIP_SET_BACKSPIN', { clipId, on: false })
+          sendBridge('CLIP_SET_BACKSPIN', { clipId: newId, on: true })
+        }
+        // Re-map the volume shape onto each half so the pair reproduces the original
+        // curve; the left half's points would otherwise span a now-shorter clip.
+        if (clip.envelopePoints && clip.envelopePoints.length >= 2) {
+          this.setClipEnvelope(clipId, splitEnvelope.left ?? [])
+          if (splitEnvelope.right) this.setClipEnvelope(newId, splitEnvelope.right)
         }
         log.info(
           'project',
@@ -258,7 +299,6 @@ export const clipEditActions = {
           ...(clip.colorIndex !== undefined ? { colorIndex: clip.colorIndex } : {}),
           ...waveformReusePayload(clip, useLibraryStore())
         })
-        this.pushTrackGain(track)
         if (clip.name) {
           sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
         }

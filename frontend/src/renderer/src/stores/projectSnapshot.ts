@@ -27,6 +27,8 @@ import {
 import { filePathKey } from './projectHelpers'
 import { applyProjectTracks, finalizeProjectSnapshot } from './projectSnapshotTracks'
 import { markProjectSnapshotApplied } from '@/lib/timeline/projectOpenPaintProbe'
+import { endUndoRedoPending } from './projectUndoPending'
+import { useLibraryStore } from '@/stores/libraryStore'
 
 export type { SnapshotTarget } from './projectSnapshotTypes'
 
@@ -51,10 +53,20 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
     const parsed = ScratchPatternSchema.safeParse(pattern)
     return parsed.success ? [parsed.data] : []
   })
+  // An undo/redo soft-replace wipes and rehydrates the library catalogue, but it
+  // cannot change the audio files or project media behind it. Carry the resolved
+  // peaks, LOD pyramids, tags and cover art across the wipe: without this, every
+  // library item whose file is NOT placed on the timeline misses the backend
+  // `.peaks` cache on rehydration and falls back to `readAudioFile` +
+  // `decodeAudioData` on the main thread, and every row re-fetches its tags and
+  // cover image over IPC — seconds of dead time per undo.
+  const library = useLibraryStore()
+  const carried = isSoftReplace ? library.captureSoftReplaceCache() : null
   applyProjectStructureReset(target, snapshot, isSoftReplace)
 
   // Hydrate library first so clip rebuild can resolve library items.
   const mediaRefreshes = applyProjectLibrary(target, snapshot)
+  if (carried) library.restoreSoftReplaceCache(carried)
   const clipsNeedingPeaks = applyProjectTracks(target, snapshot)
   const backendPeakFilePaths = new Set<string>()
   for (const clipId of clipsNeedingPeaks) {
@@ -75,5 +87,17 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
   }
   finalizeProjectSnapshot(target, snapshot, clipsNeedingPeaks, pendingProjectLengthMs)
   markProjectSnapshotApplied(snapshot.name ?? 'Untitled')
-  refreshProjectLibraryMedia(mediaRefreshes, backendPeakFilePaths)
+  // A row that kept its tags, cover and peaks across a soft replace has nothing
+  // left for the media refresh to fetch, so skip the IPC round trip entirely.
+  const pendingRefreshes = carried
+    ? mediaRefreshes.filter((refresh) => {
+        if (!carried.restoredMediaIds.has(refresh.itemId)) return true
+        const item = library.getItem(refresh.itemId)
+        return !item || item.peaks.length === 0 || item.durationMs <= 0
+      })
+    : mediaRefreshes
+  refreshProjectLibraryMedia(pendingRefreshes, backendPeakFilePaths)
+  // Any snapshot arrival ends an undo/redo round trip, including a project reload
+  // that lands while one is outstanding.
+  endUndoRedoPending(target)
 }

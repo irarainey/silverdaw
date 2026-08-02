@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.0" } }
+{ "type": "READY", "payload": { "version": "1.5.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1847,7 +1847,7 @@ add the automated end-to-end tier that found them. No new user-facing concepts.
    carries a frozen 1.4.1 project fixture as the backward-compatibility canary.
    It supplements, and does not replace, the Vitest and ctest tiers.
 
-### 1.5.0 - Beat Grid & Marker Correctness *(current release)*
+### 1.5.0 - Beat Grid & Marker Correctness *(released)*
 
 **Goal:** make the beat grid drawn on a clip agree with the grid everything else
 snaps to, and clear the marker, badge, and loop defects that followed from the
@@ -1892,6 +1892,72 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
     picks Bar, Beat, Half beat, Quarter beat or Free, drives both the drawn grid
     density and every timeline-time snap, and persists as non-dirty project view
     state (`viewSnapGrid`) defaulting to Quarter beat for older projects.
+
+### 1.5.1 - Undo Waveform Rework *(current release)*
+
+**Goal:** stop an undo — and the bulk edits that precede one — from re-doing work
+already done, and show that one is running. No new user-facing concepts.
+
+1. [x] **Library data survives an undo.** An undo/redo `softReplace` snapshot
+   wipes and rehydrates the library catalogue, which previously discarded every
+   decoded peaks array, LOD pyramid, parsed tag set and cover-art Blob URL —
+   none of which an undo can change. `applyProjectStateSnapshot` now captures
+   them through `libraryStore.captureSoftReplaceCache` before the wipe and
+   reattaches them with `restoreSoftReplaceCache` after rehydration, keyed on
+   item id plus file path so a relinked file still re-reads. Without this, any
+   library item whose file is not placed on the timeline missed the backend
+   `.peaks` cache on rehydration and fell back to `readAudioFile` plus
+   `decodeAudioData` on the main thread — seconds of timeline stutter per undo
+   on a project with unplaced stems — and every row re-fetched its tags and
+   cover image over IPC. Rows whose media is carried over are filtered out of
+   the media-refresh queue entirely. Capture takes ownership of each cover URL
+   (clearing it on the live row) so the wipe cannot revoke a Blob still in use;
+   restore revokes any it fails to reattach.
+2. [x] **The snapshot decode path stops copying PCM.** `decodeAudioToPeaks`
+   takes an `includeChannels` option, and `refreshLibraryItemMedia` passes
+   `false`. That path only ever read geometry and peaks, while the copy
+   duplicated the whole decoded file for nothing.
+3. [x] **Undo/redo shows a busy cursor.** A structural undo (undoing a chop that
+   produced 100+ clips) is inherently slow in the backend — it takes the full
+   `rebuildEngineFromProject` path — so the round trip now raises
+   `project.undoRedoPending`, which feeds the same body class as imports and
+   mixdowns. `projectUndoPending.ts` owns the flag: `requestUndo`/`requestRedo`
+   raise it (and now no-op when the matching `can…` flag is false, since the
+   backend broadcasts nothing for a no-op transaction), the resulting snapshot
+   clears it, and a watchdog clears it if no snapshot ever arrives. The body
+   class was renamed `is-importing` → `is-busy` to match what it now covers.
+4. [x] **Clip adds stop re-pushing track gain.** Every `CLIP_ADD` (split,
+   duplicate, paste, library drop) and every cross-track `CLIP_MOVE` followed
+   itself with a `TRACK_GAIN` so the new clip would inherit the track's
+   mute/solo-folded gain. The backend has seeded that itself since the same
+   commit introduced both halves — `handleClipAdd` passes
+   `getEffectiveTrackGain` into `addClip`, and `handleClipMove` re-applies it on
+   re-parent — so the follow-up was pure duplication, and expensive duplication:
+   `handleTrackGain` answers by re-applying the gain to *every* clip on the
+   track, making a bulk edit O(clips²). One 128-slice Chop to Grid drove 17 024
+   `setClipGain` calls and kept the backend committing for ~1 s after the chop
+   looked finished — long enough that a following undo appeared to hang.
+   `pushTrackGain` is gone; `pushAllGains` (reconnect) is unaffected. The backend
+   half of the same duplication went too: `handleClipAdd` and the relink rebuild
+   each passed the effective gain to `engine.addClip` — which applies it to the
+   clip's transport as part of the attach — and then re-applied the identical
+   value with `engine.setClipGain`. `AudioEngine::addClip` now documents that it
+   seeds the gain so callers must not follow up, matching what the project
+   rebuild path already relied on. The three surviving `setClipGain` call sites
+   (cross-track re-parent, track-gain fan-out, undo reconcile) have no preceding
+   `addClip`.
+5. [x] **Split carries per-clip playback state.** `duplicateClip` has always
+   replayed reverse, envelope and lock onto its copy, but `splitClipAt` replayed
+   only name and warp, so a split dropped reverse, the turntable effects and the
+   volume shape. Reverse also needed mirrored trim math: it plays the clip's
+   source window backwards, so the timeline-*left* half is the *tail* of that
+   window — mapping both halves forwards swapped the audio across the seam.
+   `brake`/`backspin` fire at the clip's end, so they now transfer to the right
+   half and are cleared from the left; the envelope is re-mapped onto both halves
+   through `splitEnvelopeAtMs`, which pins a shared breakpoint at the seam
+   sampled from the original curve. The envelope axis is elapsed playback time
+   from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
+   splits on the timeline axis regardless of reverse.
 
 ### Phase 1 — Backend Foundation & Bridge
 

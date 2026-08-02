@@ -7,11 +7,9 @@
 
 import type { ClipWarpMode, TransitionRecipe, ClipEnvelopePoint } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
-import type { ProjectState, Track } from './projectTypes'
+import type { ProjectState } from './projectTypes'
 
 export type ProjectClipThis = ProjectState & {
-  pushTrackGain(track: Track): void
-
   addClipToTrack(
     trackId: string,
     audio: {

@@ -332,6 +332,8 @@ export interface ProjectState {
   /** Next undo/redo transaction label; null when the matching `can…` flag is false. */
   undoLabel: string | null
   redoLabel: string | null
+  /** True between sending EDIT_UNDO/EDIT_REDO and applying the resulting snapshot. Drives the busy cursor. */
+  undoRedoPending: boolean
 
   /** Per-project preferred output device. Null = no override. On load, bridgeService
    *  switches to it if available, else warns and keeps the user-scope device. */

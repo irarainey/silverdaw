@@ -927,10 +927,11 @@ void testNestedUndoGroupsCollapseToOneStep()
             "nested group undo reverts every mutation in one step");
 }
 
-// Faithful replay of the renderer "Duplicate clip" message sequence: a single group containing
-// CLIP_ADD (new clip) + a no-op TRACK_GAIN (re-push of the unchanged track gain) + CLIP_RENAME.
-// Regression guard for the bug where a duplicated, named clip needed several undos because the
-// trailing CLIP_RENAME landed in its own transaction at the top of the stack.
+// Replay of a "Duplicate clip" message sequence: a single group containing CLIP_ADD (new clip) +
+// a no-op TRACK_GAIN (a re-push of the unchanged track gain) + CLIP_RENAME. Regression guard for
+// the bug where a duplicated, named clip needed several undos because the trailing CLIP_RENAME
+// landed in its own transaction at the top of the stack. The renderer no longer re-pushes track
+// gain after a clip add, but a no-op mutation mid-group must still not split the transaction.
 void testDuplicateClipGroupUndoesInOneStep()
 {
     silverdaw::ProjectState state;
