@@ -500,12 +500,10 @@ export const trackActions = {
       })
     },
 
-    /** Re-push user volume; backend folds in mute/solo. */
-    pushTrackGain(track: Track): void {
-      sendBridge('TRACK_GAIN', { trackId: track.id, gain: track.volume })
-    },
-
-    /** Re-push all user volumes after reconnect; mute/solo ride PROJECT_STATE. */
+    /** Re-push user volume; backend folds in mute/solo. Reconnect-only: CLIP_ADD and
+     *  cross-track CLIP_MOVE already seed the destination track's effective gain
+     *  backend-side, and a redundant TRACK_GAIN re-applies it to every clip on the
+     *  track — quadratic across a bulk edit such as Chop to Grid. */
     pushAllGains(): void {
       for (const t of this.tracks) {
         sendBridge('TRACK_GAIN', { trackId: t.id, gain: t.volume })

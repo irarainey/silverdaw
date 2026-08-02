@@ -74,6 +74,44 @@ export function envelopeGainAtMs(points: readonly ClipEnvelopePoint[], ms: numbe
   return Math.pow(10, (aDb + (bDb - aDb) * frac) / 20)
 }
 
+/**
+ * Cut a volume shape in two at clip-local `atMs`, as a timeline split does.
+ *
+ * The backend evaluates breakpoints against elapsed playback time from the clip's
+ * start (OffsetSource: `timelineSample - clipStart`), so this axis is the clip's
+ * timeline footprint and is unaffected by reverse. Both halves gain a boundary
+ * breakpoint sampled from the original curve, so the pair reproduces the source
+ * shape exactly across the seam. The right half is re-based to its own zero.
+ *
+ * Returns `undefined` for a half whose shape carries no audible information.
+ */
+export function splitEnvelopeAtMs(
+  points: readonly ClipEnvelopePoint[] | undefined,
+  atMs: number
+): { left: ClipEnvelopePoint[] | undefined; right: ClipEnvelopePoint[] | undefined } {
+  const source = points ? sanitizeEnvelopePoints(points) : []
+  if (source.length < 2 || !Number.isFinite(atMs) || atMs <= 0) {
+    return { left: undefined, right: undefined }
+  }
+
+  const seamGain = envelopeGainAtMs(source, atMs)
+  const left = sanitizeEnvelopePoints([
+    ...source.filter((p) => p.timeMs < atMs - 1e-3),
+    { timeMs: atMs, gain: seamGain }
+  ])
+  const right = sanitizeEnvelopePoints([
+    { timeMs: 0, gain: seamGain },
+    ...source
+      .filter((p) => p.timeMs > atMs + 1e-3)
+      .map((p) => ({ timeMs: p.timeMs - atMs, gain: p.gain }))
+  ])
+
+  return {
+    left: isFlatUnityEnvelope(left) ? undefined : left,
+    right: isFlatUnityEnvelope(right) ? undefined : right
+  }
+}
+
 /** True when an envelope has no audible shape and should not be persisted. */
 export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
   if (points.length < 2) return true

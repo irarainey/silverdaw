@@ -1895,8 +1895,8 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
 
 ### 1.5.1 - Undo Waveform Rework *(current release)*
 
-**Goal:** stop an undo from re-doing work it already holds, and show that one is
-running. No new user-facing concepts.
+**Goal:** stop an undo — and the bulk edits that precede one — from re-doing work
+already done, and show that one is running. No new user-facing concepts.
 
 1. [x] **Library data survives an undo.** An undo/redo `softReplace` snapshot
    wipes and rehydrates the library catalogue, which previously discarded every
@@ -1926,6 +1926,30 @@ running. No new user-facing concepts.
    backend broadcasts nothing for a no-op transaction), the resulting snapshot
    clears it, and a watchdog clears it if no snapshot ever arrives. The body
    class was renamed `is-importing` → `is-busy` to match what it now covers.
+4. [x] **Clip adds stop re-pushing track gain.** Every `CLIP_ADD` (split,
+   duplicate, paste, library drop) and every cross-track `CLIP_MOVE` followed
+   itself with a `TRACK_GAIN` so the new clip would inherit the track's
+   mute/solo-folded gain. The backend has seeded that itself since the same
+   commit introduced both halves — `handleClipAdd` passes
+   `getEffectiveTrackGain` into `addClip`, and `handleClipMove` re-applies it on
+   re-parent — so the follow-up was pure duplication, and expensive duplication:
+   `handleTrackGain` answers by re-applying the gain to *every* clip on the
+   track, making a bulk edit O(clips²). One 128-slice Chop to Grid drove 17 024
+   `setClipGain` calls and kept the backend committing for ~1 s after the chop
+   looked finished — long enough that a following undo appeared to hang.
+   `pushTrackGain` is gone; `pushAllGains` (reconnect) is unaffected.
+5. [x] **Split carries per-clip playback state.** `duplicateClip` has always
+   replayed reverse, envelope and lock onto its copy, but `splitClipAt` replayed
+   only name and warp, so a split dropped reverse, the turntable effects and the
+   volume shape. Reverse also needed mirrored trim math: it plays the clip's
+   source window backwards, so the timeline-*left* half is the *tail* of that
+   window — mapping both halves forwards swapped the audio across the seam.
+   `brake`/`backspin` fire at the clip's end, so they now transfer to the right
+   half and are cleared from the left; the envelope is re-mapped onto both halves
+   through `splitEnvelopeAtMs`, which pins a shared breakpoint at the seam
+   sampled from the original curve. The envelope axis is elapsed playback time
+   from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
+   splits on the timeline axis regardless of reverse.
 
 ### Phase 1 — Backend Foundation & Bridge
 

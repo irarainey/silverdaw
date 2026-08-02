@@ -108,13 +108,13 @@ export const clipPlacementActions = {
       const clipEnd = target + effectiveClipDurationMs(clip)
       if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
 
-      // One CLIP_MOVE keeps backend position and optional re-parenting atomic.
+      // One CLIP_MOVE keeps backend position and optional re-parenting atomic; the
+      // backend re-applies the destination track's effective gain on re-parent.
       sendBridge('CLIP_MOVE', {
         clipId: clip.id,
         positionMs: target,
         ...(trackChanged ? { trackId: destTrackId } : {})
       })
-      if (trackChanged) this.pushTrackGain(destTrack)
       this.timelineRevision++
       log.debug(
         'project',
@@ -208,7 +208,6 @@ export const clipPlacementActions = {
         if (destTrack) {
           const clipEnd = t.startMs + effectiveClipDurationMs(clip)
           if (clipEnd > destTrack.lengthMs) destTrack.lengthMs = clipEnd
-          if (t.trackChanged) this.pushTrackGain(destTrack)
         }
         sendBridge('CLIP_MOVE', {
           clipId: clip.id,

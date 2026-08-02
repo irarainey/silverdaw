@@ -109,7 +109,7 @@ describe('compound clip actions are one undo group', () => {
     expect(types.indexOf('CLIP_ADD')).toBeLessThan(end)
   })
 
-  it('duplicateClip brackets CLIP_ADD + gain + rename in a single group', () => {
+  it('duplicateClip brackets CLIP_ADD + rename in a single group', () => {
     const project = useProjectStore()
     project.tracks = [
       {
