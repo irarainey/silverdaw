@@ -39,6 +39,7 @@ export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libra
 import { libraryClipActions } from './libraryClipActions'
 import { importActions } from './libraryImportActions'
 import { peaksActions } from './libraryPeaksActions'
+import { softReplaceActions } from './librarySoftReplaceActions'
 
 function touchTimelineClipsForLibraryItem(itemId: string): number {
   const project = useProjectStore()
@@ -95,6 +96,7 @@ export const useLibraryStore = defineStore('library', {
     ...libraryClipActions,
     ...importActions,
     ...peaksActions,
+    ...softReplaceActions,
     /** Clears state before a reset PROJECT_STATE rebuilds the catalogue. */
     clear(): void {
       // Revoke cover-art URLs so Blobs can be collected.

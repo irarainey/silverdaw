@@ -133,6 +133,15 @@ gotcha: `docs/developer-guide.md#quality-gates`.
   `frontend/package.json` `"version"` is the Electron app version. Setup,
   packaging, and release detail: `docs/developer-guide.md`.
 
+## Diagnosing a reported problem
+
+Runtime logs are the first place to look. Each run writes an ISO-timestamped
+folder under `%USERPROFILE%\Silverdaw\Logs\` containing `main.log`,
+`renderer.log`, and `backend.log` (verbose logging is opt-in via
+**Preferences ▸ Developer**). Always-on startup and crash artifacts live
+separately in `%USERPROFILE%\Silverdaw\Diagnostics\`. Detail:
+`docs/developer-guide.md#startup-diagnostics-always-on`.
+
 ## Load on demand
 
 _Read these only when the task touches them — not by default._

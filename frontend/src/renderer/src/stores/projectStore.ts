@@ -44,6 +44,7 @@ import type {
   ProjectState
 } from './projectTypes'
 import { applyProjectStateSnapshot as applyProjectStateSnapshotImpl } from './projectSnapshot'
+import { beginUndoRedoPending } from './projectUndoPending'
 import * as persistence from './projectPersistence'
 import { markerActions } from './projectMarkerActions'
 import { trackActions } from './projectTrackActions'
@@ -98,6 +99,7 @@ export const useProjectStore = defineStore('project', {
     canRedo: false,
     undoLabel: null,
     redoLabel: null,
+    undoRedoPending: false,
     audioOutputTypeName: null,
     audioOutputDeviceName: null,
     targetSampleRate: null,
@@ -527,12 +529,19 @@ export const useProjectStore = defineStore('project', {
     },
 
     requestUndo(): void {
+      // The backend answers nothing when there is nothing to undo, so raising the
+      // in-flight flag here would leave the busy cursor waiting on a reply that
+      // never comes.
+      if (!this.canUndo) return
       log.info('project', 'requestUndo')
+      beginUndoRedoPending(this)
       sendBridge('EDIT_UNDO')
     },
 
     requestRedo(): void {
+      if (!this.canRedo) return
       log.info('project', 'requestRedo')
+      beginUndoRedoPending(this)
       sendBridge('EDIT_REDO')
     },
 

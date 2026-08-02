@@ -219,8 +219,51 @@ describe('project snapshot library media hydration', () => {
     )
   })
 
-  it('retains renderer decoding when placed media details are missing', async () => {
-    const opened = {
+  it('carries library tags across an undo soft-replace instead of re-reading them', async () => {
+    vi.mocked(window.silverdaw.readAudioMetadata).mockResolvedValue({ title: 'Carried' })
+    vi.mocked(window.silverdaw.readAudioFile).mockResolvedValue(null)
+
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const snapshotLibrary = [
+      {
+        id: 'source-1',
+        kind: 'source' as const,
+        filePath: 'C:\\audio\\tagged.wav',
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2
+      }
+    ]
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Tagged source',
+      reset: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+    expect(window.silverdaw.readAudioMetadata).toHaveBeenCalledTimes(1)
+    // Stand in for a completed decode so the row has nothing left to fetch.
+    library.setItemPeaks('source-1', new Float32Array([-0.5, 0.5]), 48_000, 500)
+
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Tagged source',
+      reset: false,
+      softReplace: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    expect(window.silverdaw.readAudioMetadata).toHaveBeenCalledTimes(1)
+    expect(library.byId['source-1']?.metadata).toEqual({ title: 'Carried' })
+  })
+
+  it('retains renderer decoding when placed media details are missing', async () => {    const opened = {
       filePath: 'C:\\audio\\legacy.wav',
       fileName: 'legacy.wav',
       data: new ArrayBuffer(8)

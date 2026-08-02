@@ -1895,23 +1895,37 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
 
 ### 1.5.1 - Undo Waveform Rework *(current release)*
 
-**Goal:** stop an undo from re-doing waveform work it already holds. No new
-user-facing concepts.
+**Goal:** stop an undo from re-doing work it already holds, and show that one is
+running. No new user-facing concepts.
 
-1. [x] **Library peaks survive an undo.** An undo/redo `softReplace` snapshot
+1. [x] **Library data survives an undo.** An undo/redo `softReplace` snapshot
    wipes and rehydrates the library catalogue, which previously discarded every
-   decoded peaks array and LOD pyramid. `applyProjectStateSnapshot` now captures
-   them through `libraryStore.capturePeaksCache` before the wipe and reattaches
-   them with `restorePeaksCache` after rehydration, keyed on item id plus file
-   path so a relinked file still re-reads. Without this, any library item whose
-   file is not placed on the timeline missed the backend `.peaks` cache on
-   rehydration and fell back to `readAudioFile` plus `decodeAudioData` on the
-   main thread — seconds of timeline stutter per undo on a project with unplaced
-   stems.
+   decoded peaks array, LOD pyramid, parsed tag set and cover-art Blob URL —
+   none of which an undo can change. `applyProjectStateSnapshot` now captures
+   them through `libraryStore.captureSoftReplaceCache` before the wipe and
+   reattaches them with `restoreSoftReplaceCache` after rehydration, keyed on
+   item id plus file path so a relinked file still re-reads. Without this, any
+   library item whose file is not placed on the timeline missed the backend
+   `.peaks` cache on rehydration and fell back to `readAudioFile` plus
+   `decodeAudioData` on the main thread — seconds of timeline stutter per undo
+   on a project with unplaced stems — and every row re-fetched its tags and
+   cover image over IPC. Rows whose media is carried over are filtered out of
+   the media-refresh queue entirely. Capture takes ownership of each cover URL
+   (clearing it on the live row) so the wipe cannot revoke a Blob still in use;
+   restore revokes any it fails to reattach.
 2. [x] **The snapshot decode path stops copying PCM.** `decodeAudioToPeaks`
    takes an `includeChannels` option, and `refreshLibraryItemMedia` passes
    `false`. That path only ever read geometry and peaks, while the copy
    duplicated the whole decoded file for nothing.
+3. [x] **Undo/redo shows a busy cursor.** A structural undo (undoing a chop that
+   produced 100+ clips) is inherently slow in the backend — it takes the full
+   `rebuildEngineFromProject` path — so the round trip now raises
+   `project.undoRedoPending`, which feeds the same body class as imports and
+   mixdowns. `projectUndoPending.ts` owns the flag: `requestUndo`/`requestRedo`
+   raise it (and now no-op when the matching `can…` flag is false, since the
+   backend broadcasts nothing for a no-op transaction), the resulting snapshot
+   clears it, and a watchdog clears it if no snapshot ever arrives. The body
+   class was renamed `is-importing` → `is-busy` to match what it now covers.
 
 ### Phase 1 — Backend Foundation & Bridge
 

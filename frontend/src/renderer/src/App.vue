@@ -132,9 +132,9 @@ let unregisterShortcuts: (() => void) | null = null
 
 // One body class covers all long-running jobs so the busy cursor cannot clear early.
 const stopBusyCursorWatcher = watch(
-  () => library.isImporting || mixdownState.value !== null,
+  () => library.isImporting || mixdownState.value !== null || project.undoRedoPending,
   (busy) => {
-    document.body.classList.toggle('is-importing', busy)
+    document.body.classList.toggle('is-busy', busy)
   },
   { immediate: true }
 )
@@ -517,7 +517,7 @@ onBeforeUnmount(() => {
     clearTimeout(bridgeTimer)
     bridgeTimer = null
   }
-  document.body.classList.remove('is-importing')
+  document.body.classList.remove('is-busy')
 })
 
 const { handleMenuAction } = useAppMenuActions({
@@ -693,9 +693,9 @@ const { handleMenuAction } = useAppMenuActions({
 </template>
 
 <style>
-/* Busy-but-interactive cursor while imports or mixdowns run. */
-body.is-importing,
-body.is-importing * {
+/* Busy-but-interactive cursor while imports, mixdowns or undo/redo run. */
+body.is-busy,
+body.is-busy * {
   cursor: progress !important;
 }
 

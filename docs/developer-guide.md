@@ -935,7 +935,11 @@ certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
 
 The verbose application-log directory is configured separately in
 **Preferences ▸ Developer**. When diagnostic logging is enabled, its default is
-`%USERPROFILE%\Silverdaw\Logs`.
+`%USERPROFILE%\Silverdaw\Logs`, and each run gets its own ISO-timestamped
+subfolder holding `main.log` (Electron main), `renderer.log` (the UI), and
+`backend.log` (the audio engine) — the first place to look when reproducing a
+user-reported problem. **Help ▸ Send Diagnostic Logs** zips the current run's
+folder alongside the always-on diagnostics below.
 
 - **Diagnostics directory.** Electron main always creates a diagnostics
   directory on launch (packaged and development builds:

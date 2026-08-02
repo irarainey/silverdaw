@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- Undoing an edit no longer stalls the timeline while every library waveform is re-read and decoded again.
+- Undoing an edit no longer stalls the timeline re-reading library waveforms, artwork and track details that have not changed.
+- Undoing or redoing a large edit now shows a busy cursor while it completes, instead of appearing to do nothing.
 
 ## 1.5.0
 
