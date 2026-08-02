@@ -533,7 +533,11 @@ Silverdaw currently supports the core arrangement workflow:
   **Save Selection to Library** does the change land in the main undo stack.
   Compound operations like clip split, duplicate, and paste run inside an
   explicit undo group (`EDIT_GROUP_BEGIN` / `EDIT_GROUP_END`) so the whole action
-  collapses to a single undo step.
+  collapses to a single undo step. An undo or redo that replaces the whole
+  project state shows the OS busy cursor until the timeline has repainted, and
+  carries the library's cached peaks, tags and cover art across the replace
+  instead of re-decoding the audio, so undoing a large edit in a project with
+  many unplaced library items doesn't stall scrolling.
 
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
@@ -1096,6 +1100,20 @@ Clip Editor auditions them live on the preview voice via `PREVIEW_SET_BRAKE` /
 `PREVIEW_SET_BACKSPIN`. Both flags are
 suppressed from save when off and round-trip through `PROJECT_STATE` and the
 `.silverdaw` file.
+
+**How a split divides these properties.** `splitClipAt` cuts one clip in two at
+a timeline position, and each per-clip property above has to land on the correct
+half. Reverse plays the source window back-to-front, so the timeline-*left* half
+is the *tail* of that window: the split mirrors its trim math instead of mapping
+both halves forwards, and replays `CLIP_SET_REVERSED` onto the new right half.
+`brake` and `backspin` fire at a clip's end, so they transfer to the right half
+and are cleared from the left, keeping exactly one tail effect at the end of the
+original clip's audio. `envelopePoints` are re-mapped onto both halves by
+`splitEnvelopeAtMs`, which pins a shared breakpoint at the seam sampled from the
+original curve and re-bases the right half to its own zero; the envelope's axis
+is elapsed playback time from the clip start, so it splits on the timeline axis
+regardless of reverse. `locked` needs no handling — a locked clip refuses the
+split outright.
 
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay

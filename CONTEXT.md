@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-07-31 · Owner: @irarainey_
+_Last reviewed: 2026-08-02 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -20,13 +20,16 @@ control, Scratch Editor, and out-of-process engine recovery are all shipped, as
 are the **1.4.x** additions — multiple automation parameter lanes per track,
 timeline range selection with one-shot or looped playback, importing stems and
 samples from another project, range-auditioning polish, and the Playwright
-end-to-end test tier. The current release is **1.5.1**, a patch over **1.5.0**:
-a selectable timeline
-snap grid, exact-position markers, Clear All Markers, smooth playhead-follow
-scrolling, `Enter` to accept a dialog, restyled dropdowns, an immediate timeline
-paint on project open, a set of beat-grid, marker, MIDI-jog, audio-driver
-and loop-playback fixes, and undo no longer stalling the timeline by re-decoding
-library waveforms. Per-release detail lives in `CHANGELOG.md`. Silverdaw is
+end-to-end test tier. **1.5.0** added a selectable timeline snap grid,
+exact-position markers, Clear All Markers, smooth playhead-follow scrolling,
+`Enter` to accept a dialog, restyled dropdowns, an immediate timeline paint on
+project open, and a set of beat-grid, marker, MIDI-jog, audio-driver and
+loop-playback fixes. The current release is **1.5.1**, a patch covering undo and
+clip-split correctness and performance: undo no longer stalls the timeline
+re-decoding library waveforms, a busy cursor covers a long undo or redo, Chop to
+Grid settles as soon as it looks finished, and a split now carries a clip's
+reverse, turntable and volume-shape settings to the correct half. Per-release
+detail lives in `CHANGELOG.md`. Silverdaw is
 **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).

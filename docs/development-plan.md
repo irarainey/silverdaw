@@ -2620,6 +2620,14 @@ robustness without changing the core editing model.
   the background (with the live stretcher as the fallback until the bake is
   ready). Consider exposing it as an explicit "Freeze clip" action rather than
   automatic, given the re-render cost on every warp change.
+- [ ] **Finish the per-clip playback-state carry-over.** 1.5.1 fixed the split
+  path; two gaps in the same family remain. `duplicateClip` replays reverse,
+  envelope and lock onto its copy but not `brake`/`backspin`, so duplicating a
+  clip loses its turntable tail. And `sliceClipToTimeline` maps Clip Editor
+  markers forward (`clip.startMs + (m - clip.inMs) / ratio`), which is the
+  mirrored mapping for a reversed clip, so Chop to Grid would cut a reversed
+  clip at mirrored positions. The second needs a decision first: whether the
+  Clip Editor's stored markers are source-ms or playback-ms for a reversed clip.
 - [ ] Tag editing and jump-to-clip links in the Library Item Info dialog.
 - [ ] **Sample-rate handling, phase 2.** Phase 1 (probe envelope, project
   target-rate field, mismatch prompt, RATE indicator and classification gates)
