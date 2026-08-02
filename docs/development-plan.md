@@ -1937,7 +1937,15 @@ already done, and show that one is running. No new user-facing concepts.
    track, making a bulk edit O(clips²). One 128-slice Chop to Grid drove 17 024
    `setClipGain` calls and kept the backend committing for ~1 s after the chop
    looked finished — long enough that a following undo appeared to hang.
-   `pushTrackGain` is gone; `pushAllGains` (reconnect) is unaffected.
+   `pushTrackGain` is gone; `pushAllGains` (reconnect) is unaffected. The backend
+   half of the same duplication went too: `handleClipAdd` and the relink rebuild
+   each passed the effective gain to `engine.addClip` — which applies it to the
+   clip's transport as part of the attach — and then re-applied the identical
+   value with `engine.setClipGain`. `AudioEngine::addClip` now documents that it
+   seeds the gain so callers must not follow up, matching what the project
+   rebuild path already relied on. The three surviving `setClipGain` call sites
+   (cross-track re-parent, track-gain fan-out, undo reconcile) have no preceding
+   `addClip`.
 5. [x] **Split carries per-clip playback state.** `duplicateClip` has always
    replayed reverse, envelope and lock onto its copy, but `splitClipAt` replayed
    only name and warp, so a split dropped reverse, the turntable effects and the

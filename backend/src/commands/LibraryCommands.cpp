@@ -457,7 +457,6 @@ void handleLibraryItemRelink(const juce::var& payload, silverdaw::AudioEngine& e
             juce::String err;
             if (engine.addClip(trackId, clipId, juce::File(engineFilePath), offsetMs, inMs, durationMs, effectiveGain, &err))
             {
-                engine.setClipGain(clipId, effectiveGain);
                 ++rebuilt;
             }
             else
