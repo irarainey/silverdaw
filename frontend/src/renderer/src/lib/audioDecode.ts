@@ -19,8 +19,24 @@ function getAudioContext(): AudioContext {
   return audioContext
 }
 
+/** Options for {@link decodeAudioToPeaks}. */
+export interface DecodeAudioToPeaksOptions {
+  /**
+   * Whether to return a standalone copy of the decoded PCM.
+   *
+   * True (the default) for the import path, which transfers the PCM onward.
+   * False for callers that only want geometry + peaks: the copy is a full second
+   * duplicate of the decoded audio (~100 MB for a 4-minute stereo 48 kHz file),
+   * and allocating it only to discard it stalls the main thread on GC.
+   */
+  includeChannels?: boolean
+}
+
 /** Decode browser-supported audio into waveform peaks and transferable PCM. */
-export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
+export async function decodeAudioToPeaks(
+  data: ArrayBuffer,
+  options: DecodeAudioToPeaksOptions = {}
+): Promise<{
   durationMs: number
   sampleRate: number
   channelCount: number
@@ -30,7 +46,7 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
   channelPeaks: Float32Array[]
   /** Actual peak-pair rate after integer sample buckets are applied. */
   peaksPerSecond: number
-  /** Planar PCM, one Float32Array per channel. */
+  /** Planar PCM, one Float32Array per channel; empty when not requested. */
   channels: Float32Array[]
 }> {
   // Clone because `decodeAudioData` consumes its ArrayBuffer.
@@ -39,11 +55,13 @@ export async function decodeAudioToPeaks(data: ArrayBuffer): Promise<{
 
   // Copy AudioBuffer views into standalone arrays for IPC transfer.
   const channels: Float32Array[] = []
-  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
-    const src = audioBuffer.getChannelData(c)
-    const copy = new Float32Array(src.length)
-    copy.set(src)
-    channels.push(copy)
+  if (options.includeChannels !== false) {
+    for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+      const src = audioBuffer.getChannelData(c)
+      const copy = new Float32Array(src.length)
+      copy.set(src)
+      channels.push(copy)
+    }
   }
 
   const peaks = computePeaks(audioBuffer, PEAKS_PER_SECOND)

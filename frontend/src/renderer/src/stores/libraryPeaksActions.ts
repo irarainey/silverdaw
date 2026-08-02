@@ -3,11 +3,73 @@
 
 import { log } from '@/lib/log'
 import { buildPeaksLodPyramid } from '@/lib/peaksLod'
-import type { LibraryState } from './libraryTypes'
+import { filePathKey } from './projectHelpers'
+import type { ItemChannelPeaks, LibraryState } from './libraryTypes'
+import type { PeaksLodLayer } from '@/lib/peaksLod'
 
 type PeaksThis = LibraryState
 
+/** One item's decoded waveform data, carried across a catalogue rebuild. */
+interface PreservedItemPeaks {
+  peaks: Float32Array
+  peaksPerSecond?: number
+  sampleRate: number
+  peaksLod?: PeaksLodLayer[]
+  channelPeaks?: ItemChannelPeaks
+}
+
+/** Opaque handle from {@link peaksActions.capturePeaksCache}. */
+export type PreservedPeaksCache = ReadonlyMap<string, PreservedItemPeaks>
+
+/** Cache key: peaks only carry over when the item id AND its file both match. */
+function preservedKey(itemId: string, filePath: string): string {
+  return `${itemId}|${filePathKey(filePath)}`
+}
+
 export const peaksActions = {
+    /**
+     * Snapshot every item's decoded peaks + LOD pyramids before a catalogue
+     * rebuild that is known not to change the underlying audio (undo/redo).
+     * Restoring these avoids re-reading and re-decoding whole audio files on the
+     * main thread — see {@link peaksActions.restorePeaksCache}.
+     */
+    capturePeaksCache(): PreservedPeaksCache {
+      const cache = new Map<string, PreservedItemPeaks>()
+      for (const item of this.items) {
+        if (item.peaks.length === 0) continue
+        cache.set(preservedKey(item.id, item.filePath), {
+          peaks: item.peaks,
+          peaksPerSecond: item.peaksPerSecond,
+          sampleRate: item.sampleRate,
+          peaksLod: item.peaksLod,
+          channelPeaks: this.channelPeaksByItemId[item.id]
+        })
+      }
+      return cache
+    },
+
+    /**
+     * Re-attach captured peaks to rebuilt rows that came back with the same id and
+     * file. Assigns directly rather than going through `setItemPeaks` so the LOD
+     * pyramids are reused as-is instead of being rebuilt. Rows that already hold
+     * peaks (a concurrent WAVEFORM_READY landed first) are left untouched.
+     */
+    restorePeaksCache(cache: PreservedPeaksCache): void {
+      let restored = 0
+      for (const item of this.items) {
+        if (item.peaks.length > 0) continue
+        const preserved = cache.get(preservedKey(item.id, item.filePath))
+        if (!preserved) continue
+        item.peaks = preserved.peaks
+        if (preserved.peaksPerSecond !== undefined) item.peaksPerSecond = preserved.peaksPerSecond
+        if (item.sampleRate <= 0 && preserved.sampleRate > 0) item.sampleRate = preserved.sampleRate
+        item.peaksLod = preserved.peaksLod
+        if (preserved.channelPeaks) this.channelPeaksByItemId[item.id] = preserved.channelPeaks
+        ++restored
+      }
+      if (restored > 0) log.debug('library', `restorePeaksCache items=${restored}`)
+    },
+
     /** Replaces peaks for PROJECT_STATE items once cached WAVEFORM_DATA arrives. */
     setItemPeaks(itemId: string, peaks: Float32Array, sampleRate: number, peaksPerSecond?: number): void {
       const item = this.items.find((i) => i.id === itemId)

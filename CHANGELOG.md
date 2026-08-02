@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- Undoing an edit no longer stalls the timeline while every library waveform is re-read and decoded again.
+
 ## 1.5.0
 
 ### Added

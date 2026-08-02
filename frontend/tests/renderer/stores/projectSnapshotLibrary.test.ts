@@ -156,8 +156,67 @@ describe('project snapshot library media hydration', () => {
     await flushAsyncWork()
 
     expect(window.silverdaw.readAudioFile).toHaveBeenCalledWith(opened.filePath)
-    expect(decodeMock).toHaveBeenCalledWith(opened.data)
+    // Peaks-only decode: this path discards the PCM, so it must not be copied.
+    expect(decodeMock).toHaveBeenCalledWith(opened.data, { includeChannels: false })
     expect(useLibraryStore().byId['source-1']?.peaks).toEqual(decodedAudio().peaks)
+  })
+
+  it('carries library peaks across an undo soft-replace instead of re-decoding', async () => {
+    const opened = {
+      filePath: 'C:\\audio\\standalone.wav',
+      fileName: 'standalone.wav',
+      data: new ArrayBuffer(8)
+    }
+    vi.mocked(window.silverdaw.readAudioFile).mockResolvedValue(opened)
+    decodeMock.mockResolvedValue(decodedAudio())
+
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const snapshotLibrary = [
+      {
+        id: 'source-1',
+        kind: 'source' as const,
+        filePath: opened.filePath,
+        durationMs: 2_000,
+        sampleRate: 48_000,
+        channelCount: 2
+      }
+    ]
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Standalone source',
+      reset: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    const decodedPeaks = library.byId['source-1']?.peaks
+    const decodedLod = library.byId['source-1']?.peaksLod
+    expect(decodedPeaks).toBeDefined()
+    expect(decodeMock).toHaveBeenCalledTimes(1)
+
+    // An undo wipes and rehydrates the catalogue; the audio file is unchanged, so
+    // the decoded peaks and their LOD pyramids must survive untouched.
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Standalone source',
+      reset: false,
+      softReplace: true,
+      bpm: 120,
+      library: snapshotLibrary,
+      tracks: []
+    })
+    await flushAsyncWork()
+
+    expect(decodeMock).toHaveBeenCalledTimes(1)
+    expect(window.silverdaw.readAudioFile).toHaveBeenCalledTimes(1)
+    expect(library.byId['source-1']?.peaks).toBe(decodedPeaks)
+    expect(library.byId['source-1']?.peaksLod).toBe(decodedLod)
+    expect(library.channelPeaksByItemId['source-1']?.channels).toEqual(
+      decodedAudio().channelPeaks
+    )
   })
 
   it('retains renderer decoding when placed media details are missing', async () => {

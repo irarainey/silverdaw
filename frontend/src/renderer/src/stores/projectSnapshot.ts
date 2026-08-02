@@ -27,6 +27,7 @@ import {
 import { filePathKey } from './projectHelpers'
 import { applyProjectTracks, finalizeProjectSnapshot } from './projectSnapshotTracks'
 import { markProjectSnapshotApplied } from '@/lib/timeline/projectOpenPaintProbe'
+import { useLibraryStore } from '@/stores/libraryStore'
 
 export type { SnapshotTarget } from './projectSnapshotTypes'
 
@@ -51,10 +52,19 @@ export function applyProjectStateSnapshot(target: SnapshotTarget, snapshot: Proj
     const parsed = ScratchPatternSchema.safeParse(pattern)
     return parsed.success ? [parsed.data] : []
   })
+  // An undo/redo soft-replace wipes and rehydrates the library catalogue, but it
+  // cannot change the audio files behind it. Carry the decoded peaks and LOD
+  // pyramids across the wipe: without this, every library item whose file is NOT
+  // placed on the timeline misses the backend `.peaks` cache on rehydration and
+  // falls back to `readAudioFile` + `decodeAudioData` on the main thread, which
+  // costs seconds of scroll jank per undo on a project with unplaced stems.
+  const library = useLibraryStore()
+  const preservedPeaks = isSoftReplace ? library.capturePeaksCache() : null
   applyProjectStructureReset(target, snapshot, isSoftReplace)
 
   // Hydrate library first so clip rebuild can resolve library items.
   const mediaRefreshes = applyProjectLibrary(target, snapshot)
+  if (preservedPeaks) library.restorePeaksCache(preservedPeaks)
   const clipsNeedingPeaks = applyProjectTracks(target, snapshot)
   const backendPeakFilePaths = new Set<string>()
   for (const clipId of clipsNeedingPeaks) {

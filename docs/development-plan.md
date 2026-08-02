@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.0" } }
+{ "type": "READY", "payload": { "version": "1.5.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1847,7 +1847,7 @@ add the automated end-to-end tier that found them. No new user-facing concepts.
    carries a frozen 1.4.1 project fixture as the backward-compatibility canary.
    It supplements, and does not replace, the Vitest and ctest tiers.
 
-### 1.5.0 - Beat Grid & Marker Correctness *(current release)*
+### 1.5.0 - Beat Grid & Marker Correctness *(released)*
 
 **Goal:** make the beat grid drawn on a clip agree with the grid everything else
 snaps to, and clear the marker, badge, and loop defects that followed from the
@@ -1892,6 +1892,26 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
     picks Bar, Beat, Half beat, Quarter beat or Free, drives both the drawn grid
     density and every timeline-time snap, and persists as non-dirty project view
     state (`viewSnapGrid`) defaulting to Quarter beat for older projects.
+
+### 1.5.1 - Undo Waveform Rework *(current release)*
+
+**Goal:** stop an undo from re-doing waveform work it already holds. No new
+user-facing concepts.
+
+1. [x] **Library peaks survive an undo.** An undo/redo `softReplace` snapshot
+   wipes and rehydrates the library catalogue, which previously discarded every
+   decoded peaks array and LOD pyramid. `applyProjectStateSnapshot` now captures
+   them through `libraryStore.capturePeaksCache` before the wipe and reattaches
+   them with `restorePeaksCache` after rehydration, keyed on item id plus file
+   path so a relinked file still re-reads. Without this, any library item whose
+   file is not placed on the timeline missed the backend `.peaks` cache on
+   rehydration and fell back to `readAudioFile` plus `decodeAudioData` on the
+   main thread — seconds of timeline stutter per undo on a project with unplaced
+   stems.
+2. [x] **The snapshot decode path stops copying PCM.** `decodeAudioToPeaks`
+   takes an `includeChannels` option, and `refreshLibraryItemMedia` passes
+   `false`. That path only ever read geometry and peaks, while the copy
+   duplicated the whole decoded file for nothing.
 
 ### Phase 1 — Backend Foundation & Bridge
 
