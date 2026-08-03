@@ -252,6 +252,8 @@ describe('projectStore', () => {
     const transport = useTransportStore()
     const ui = useUiStore()
     transport.bpm = 120
+    // The project tempo is established; auto-warp keys off this, not clip count.
+    transport.bpmSeeded = true
     const trackId = project.addTrack()
     const makeClip = (libraryItemId: string, startMs: number): string =>
       project.addClipToTrack(
@@ -300,6 +302,189 @@ describe('projectStore', () => {
       'CLIP_SET_WARP',
       expect.objectContaining({ clipId: disabledClipId, warpEnabled: true })
     )
+  })
+
+  it('auto-warps the first clip dropped into a project whose tempo is already settled', () => {
+    // Reported: project at 95 BPM reopened with an empty timeline, drum sample at
+    // 100.77 dropped on a track, no auto-warp. The gate asked "is another clip on
+    // the timeline?" as a stand-in for "is the tempo established?" — a proxy the
+    // backend already answers properly with bpmSeeded.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 95
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'drum-sample',
+        filePath: 'C:\\audio\\drum-sample.wav',
+        fileName: 'drum-sample.wav',
+        durationMs: 4_536,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, {
+      kind: 'sample',
+      bpm: 100.77,
+      audioType: 'music'
+    })
+
+    expect(project.clips[clipId]?.warpEnabled).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({ clipId, warpEnabled: true })
+    )
+  })
+
+  it('auto-warps a stem whose reanalysed tempo only just misses the project tempo', () => {
+    // Reported: a drum stem reanalysed from 94.05 to 94.0446 BPM was dropped on a
+    // new track and left unwarped. The skip was a flat |ratio - 1| < 1e-3 band,
+    // which is blind to length — across this three-minute stem that hidden mismatch
+    // drifts about 10 ms off the grid.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 94.05
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'drum-stem',
+        filePath: 'C:\\audio\\drum-stem.wav',
+        fileName: 'drum-stem.wav',
+        durationMs: 177_397,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, {
+      kind: 'stem',
+      bpm: 94.04458826555116,
+      audioType: 'music'
+    })
+
+    expect(project.clips[clipId]?.warpEnabled).toBe(true)
+  })
+
+  it('leaves a clip unwarped when its tempo already matches the project', () => {
+    // The flip side: warp exists to move something. A stem at exactly the project
+    // tempo gets no warp — a later tempo change picks it up instead.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 94.05
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'matching-stem',
+        filePath: 'C:\\audio\\matching-stem.wav',
+        fileName: 'matching-stem.wav',
+        durationMs: 177_397,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, { kind: 'stem', bpm: 94.05, audioType: 'music' })
+
+    expect(project.clips[clipId]?.warpEnabled).toBeUndefined()
+  })
+
+  it('still refuses to auto-warp before the project tempo is seeded', () => {
+    // The original reason for the gate stands: the first musical clip establishes
+    // the tempo, so warping it would target the transient default.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+    transport.bpmSeeded = false
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'seeder',
+        filePath: 'C:\\audio\\seeder.wav',
+        fileName: 'seeder.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, { kind: 'source', bpm: 100, audioType: 'music' })
+
+    expect(project.clips[clipId]?.warpEnabled).toBeUndefined()
+  })
+
+  it('retimes an active timeline selection with the clips when the tempo changes', () => {
+    // Reported: a range was selected, the project tempo was changed, and the range
+    // stayed where it was in milliseconds while the arrangement moved under it. A
+    // selection covers bars, not seconds, so halving the tempo doubles both ends.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    ui.setTimelineSelection({ startMs: 4_000, endMs: 8_000 })
+    ui.setLoopTimelineSelection(true)
+    sendMock.mockClear()
+
+    project.applyProjectBpm(60)
+
+    expect(ui.timelineSelection).toEqual({ startMs: 8_000, endMs: 16_000 })
+    // Loop Selection is the user's, not a side effect of retiming.
+    expect(ui.loopTimelineSelection).toBe(true)
+    // Persisted after the tempo, so the stored view keeps the retimed range.
+    const viewCall = sendMock.mock.calls.find(([type]) => type === 'PROJECT_SET_VIEW')
+    expect(viewCall?.[1]).toMatchObject({
+      timelineSelection: { startMs: 8_000, endMs: 16_000 },
+      loopTimelineSelection: true
+    })
+    expect(sendMock.mock.calls.findIndex(([type]) => type === 'PROJECT_SET_BPM')).toBeLessThan(
+      sendMock.mock.calls.findIndex(([type]) => type === 'PROJECT_SET_VIEW')
+    )
+  })
+
+  it('leaves the timeline selection alone when the tempo is unchanged', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    ui.setTimelineSelection({ startMs: 4_000, endMs: 8_000 })
+    sendMock.mockClear()
+
+    project.applyProjectBpm(120)
+
+    expect(ui.timelineSelection).toEqual({ startMs: 4_000, endMs: 8_000 })
+    expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_SET_VIEW')).toBe(false)
+  })
+
+  it('changes tempo without a selection persisting an empty view', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    sendMock.mockClear()
+
+    project.applyProjectBpm(90)
+
+    expect(ui.timelineSelection).toBeNull()
+    expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_SET_VIEW')).toBe(false)
   })
 
   it('alignClipToBarGrid moves a matching-tempo clip the least distance so its beat grid lands on a beat line', () => {

@@ -57,6 +57,7 @@ const juce::Identifier ProjectState::kMarker{"MARKER"};
 const juce::Identifier ProjectState::kPositionMs{"positionMs"};
 const juce::Identifier ProjectState::kBeats{"beats"};
 const juce::Identifier ProjectState::kBeatAnchorSec{"beatAnchorSec"};
+const juce::Identifier ProjectState::kMusicalBeats{"musicalBeats"};
 const juce::Identifier ProjectState::kPlaybackFilePath{"playbackFilePath"};
 const juce::Identifier ProjectState::kVariableTempo{"variableTempo"};
 const juce::Identifier ProjectState::kLowConfidence{"lowConfidence"};

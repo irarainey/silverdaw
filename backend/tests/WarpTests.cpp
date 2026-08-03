@@ -36,6 +36,19 @@ namespace silverdaw::tests
 namespace
 {
 
+// ConstantSource reports an endless stream; a real clip's reader has a finite length, which
+// is what the timeline-length mapping has to scale.
+class FiniteConstantSource : public ConstantSource
+{
+  public:
+    FiniteConstantSource(float v, juce::int64 lengthSamples)
+        : ConstantSource(v), length(lengthSamples) {}
+    juce::int64 getTotalLength() const override { return length; }
+
+  private:
+    juce::int64 length;
+};
+
 void testWarpProcessorBasicStretch()
 {
     // Smoke test: build a WarpProcessor, feed it a unit-amplitude sine
@@ -282,6 +295,56 @@ void testOffsetSourceChunksOversizedWarpRequests()
             "warped reads must not leak source audio beyond the trimmed clip window");
 }
 
+// A stretched clip must remain audible for its whole timeline window. The clip's timeline
+// extent scales with the warp ratio, but juce::AudioTransportSource ends the stream at
+// `getNextReadPosition() >= getTotalLength()`, so an unwarped total length made a stretched
+// clip fall silent at its unstretched end while still being drawn (and rendered) full length.
+void testOffsetSourceTotalLengthFollowsWarpedTimeline()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr juce::int64 sourceLength = 96000;
+    constexpr juce::int64 offset = 24000;
+
+    FiniteConstantSource child(0.25F, sourceLength);
+    silverdaw::OffsetSource source(&child);
+    source.setOffsetSamples(offset);
+    source.setInSourceSamples(0);
+    source.setClipDurationSamples(sourceLength);
+
+    require(source.getTotalLength() == sourceLength + offset,
+            "an unwarped clip must report its plain source length on the timeline");
+
+    silverdaw::WarpProcessor warp(
+        1, sampleRate, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    source.setWarpProcessor(&warp);
+
+    // tempoRatio = project/source, so 0.5 halves the tempo and doubles the timeline extent.
+    warp.setTempoRatio(0.5);
+    const juce::int64 stretched = source.getTotalLength();
+    require(stretched > sourceLength + offset,
+            "stretching a clip must extend the length the transport plays to, not just its tempo");
+    require(stretched == offset + silverdaw::WarpProcessor::timelineSamplesForSourceSamples(
+                                      sourceLength, 0.5),
+            "warped total length must match the timeline mapping the clip window uses");
+
+    // The transport must never declare EOF before the clip's own audible end.
+    const juce::int64 clipEnd =
+        offset + silverdaw::WarpProcessor::timelineSamplesForSourceSamples(
+                     source.getClipDurationSamples(), 0.5);
+    require(stretched >= clipEnd,
+            "reported length must cover the clip window or the transport stops mid-clip");
+
+    // Compressing (ratio > 1) shortens the timeline extent and must not be over-reported.
+    warp.setTempoRatio(2.0);
+    require(source.getTotalLength() < sourceLength + offset,
+            "compressing a clip must shorten the length the transport plays to");
+
+    // A bypassed warp is inactive, so the timeline mapping is identity again.
+    warp.setTempoRatio(1.0);
+    require(source.getTotalLength() == sourceLength + offset,
+            "a bypassed warp must leave the reported length unscaled");
+}
+
 } // namespace
 
 void addWarpTests(std::vector<TestCase>& tests)
@@ -292,6 +355,7 @@ void addWarpTests(std::vector<TestCase>& tests)
     tests.push_back({"Warp feeds Rubber Band on demand", testWarpFeedsRubberBandOnDemand});
     tests.push_back({"Warp produces at extreme ratios", testWarpProducesAtExtremeRatios});
     tests.push_back({"OffsetSource chunks oversized warp requests", testOffsetSourceChunksOversizedWarpRequests});
+    tests.push_back({"OffsetSource total length follows the warped timeline", testOffsetSourceTotalLengthFollowsWarpedTimeline});
 }
 
 } // namespace silverdaw::tests

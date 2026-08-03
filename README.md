@@ -73,7 +73,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **Timeline range playback.** Drag the ruler away from the playhead to select
   a section snapped to the timeline grid, to play once or repeat with
   **Loop Selection** (`L`). The
-  range and loop mode are saved with the project; press `Escape` to clear them.
+  range and loop mode are saved with the project, the range keeps its place in
+  the bars if you change the project tempo, and pressing `Escape` clears them.
 - **Markers.** Press `M` to drop a marker at the playhead — exactly where it
   sits, not nudged to the nearest beat — and `M` again on it to remove it. Jump
   between markers with `Ctrl`+`←`/`→`, drag one along the ruler to move it (hold

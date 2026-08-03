@@ -30,3 +30,4 @@ decision and add its line here.
 | D-0021 | `IMPORTANT` | Scratch Editor: modal single-session editor over a prepared, bounded scratch source, with direct MIDI-to-audio control, a monitor-only pre-rendered backing bed, notation-based recording, transport-independent replay, and save-to-library as a baked sample | `docs/adr/0021-scratch-editor-action-patterns.md` |
 | D-0022 | `IMPORTANT` | Canonical Track FX, shared-return, master-FX, and mixdown routing | `docs/adr/0022-canonical-effects-routing.md` |
 | D-0023 | `IMPORTANT` | Engine owns every loop wrap — timeline and Clip Editor preview (immediate, unfaded, uncompensated restart) | `docs/adr/0023-engine-owned-timeline-loop.md` |
+| D-0024 | `CRITICAL` | One original BPM per clip and one warp target, resolved by a single function per process that share the same rules | `docs/adr/0024-single-source-bpm-resolver.md` |

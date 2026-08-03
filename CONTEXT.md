@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-02 · Owner: @irarainey_
+_Last reviewed: 2026-08-03 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -24,13 +24,20 @@ end-to-end test tier. **1.5.0** added a selectable timeline snap grid,
 exact-position markers, Clear All Markers, smooth playhead-follow scrolling,
 `Enter` to accept a dialog, restyled dropdowns, an immediate timeline paint on
 project open, and a set of beat-grid, marker, MIDI-jog, audio-driver and
-loop-playback fixes. The current release is **1.5.1**, a patch covering undo and
-clip-split correctness and performance: undo no longer stalls the timeline
-re-decoding library waveforms, a busy cursor covers a long undo or redo, Chop to
-Grid settles as soon as it looks finished, and a split now carries a clip's
-reverse, turntable and volume-shape settings to the correct half. Per-release
-detail lives in `CHANGELOG.md`. Silverdaw is
-**publicly released** — installable from the
+loop-playback fixes. **1.5.1** was a patch covering undo and clip-split
+correctness and performance. The current release is **1.5.2**, a patch fixing
+warped clips: a stretched clip now plays and exports for its full stretched
+length, and saved music samples auto-warp to the project tempo on drop and offer
+Follow project BPM / Pin in the warp controls. It also settles what a one-shot
+is: a simple sample cannot hold a BPM at all, and no surface draws a beat grid
+over one, and it makes a clip's original BPM a single fact resolved the same way
+in both processes (ADR 0024), so a clip can no longer be drawn stretched while
+playing back dry. A clip cut to a number of bars now stays that number of bars
+however its tempo is later re-detected, and changing the project tempo keeps the
+arrangement's musical shape — clips, their warps, and an active timeline
+selection all move with it; a reanalysis likewise brings the clips already using
+that source onto its new tempo. Per-release detail lives in `CHANGELOG.md`.
+Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).
 
@@ -51,6 +58,12 @@ and saved projects must keep working across every update (see ADR 0019).
   or blocking I/O in the audio callback. Publish to it lock-free. See ADR 0006.
 - `CRITICAL` — **Backend `ValueTree` is the single source of truth** for project
   state; the renderer mirrors it. See ADR 0002.
+- `CRITICAL` — **A clip has one original BPM and one warp target.** The renderer
+  resolves it only via `libraryItemSourceBpm`, the engine only via
+  `ProjectState::getLibraryItemBpm`, and the two share the same rules — including
+  that a recorded musical length (`musicalBeats`) outranks any detected tempo, so
+  a clip cut to a number of bars stays that number of bars. Never read
+  `item.bpm` directly to draw, grid, warp or stretch. See ADR 0024.
 - `CRITICAL` — **Non-destructive editing.** Tempo, pitch, trim, fades, reverse,
   and volume shape are clip settings — never mutate the user's source files.
   See ADR 0007.
@@ -117,11 +130,11 @@ beside `SilverdawBackendTests`. The backend uses a custom `SilverdawBackendTests
 harness wired into **CTest** (no Catch2/GoogleTest); the frontend uses **Vitest**
 with Vue Test Utils; **Playwright** (`frontend/e2e/`, `pnpm test:e2e`) drives the
 built app against a real backend for end-to-end journeys. The e2e tier
-supplements the other two and replaces neither — keep it few, wide, and off the
-canvas.
+supplements the other two and replaces neither — keep it few, wide, and asserted
+on the DOM, the filesystem, and saved project files, never on canvas pixels.
 
-Rationale: ADR 0014. Commands, coverage tooling, and the backend test-registry
-gotcha: `docs/developer-guide.md#quality-gates`.
+Rationale: ADR 0014. Commands and coverage tooling:
+`docs/developer-guide.md#quality-gates`.
 
 ## Versioning & builds
 

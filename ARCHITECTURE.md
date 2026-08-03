@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-07-31 · Owner: @irarainey_
+_Last reviewed: 2026-08-03 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -31,9 +31,11 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
 - **Renderer (Vue 3 + Pinia + PixiJS)** — all UI, drag-and-drop, timeline
   rendering, key detection (Web Audio chroma). Mirrors backend state and owns
   only **ephemeral interaction state** (hover, in-flight drag, transient
-  selection highlight). Persisted view state (zoom, scroll, selected track, open
-  FX panel, timeline range and its Loop Selection flag) is backend-authoritative
-  and round-trips via `PROJECT_SET_VIEW` / `PROJECT_STATE`.
+  selection highlight). Persisted view state (zoom, scroll, snap grid, selected
+  track, open FX panel, timeline range and its Loop Selection flag) is
+  backend-authoritative and round-trips via `PROJECT_SET_VIEW` /
+  `PROJECT_STATE`; per-track automation lanes persist the same way through
+  `TRACK_SET_AUTOMATION_LANE_VIEW`.
 - **Backend bridge** — IXWebSocket loopback server; AUTH gate; marshals every
   envelope onto the JUCE message thread.
 - **Backend engine** — `AudioEngine` (mixer/bus graph, per-track sources, master

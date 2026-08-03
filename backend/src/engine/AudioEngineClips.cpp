@@ -318,6 +318,10 @@ void AudioEngine::rebuildTrackPrefetch(Track& track)
     // so keep the opportunistic far-then-near seek for the live-edit case.
     track.transportSource->setPosition(pos + 3600.0);
     track.transportSource->setPosition(pos);
+    // An edit can extend a clip past the point its transport already auto-stopped at
+    // (AudioTransportSource clears `playing` at EOF, and repositioning alone does not clear it),
+    // so the newly added tail would stay silent. start() is idempotent while already playing.
+    track.transportSource->start();
     track.prefetchDirty = false;
 }
 

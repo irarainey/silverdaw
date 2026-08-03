@@ -179,15 +179,17 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
     // All gates passed: this is the first seed for the project.
     projectState.setBpmSeeded(true);
 
-    // Gate 3: don't re-broadcast if the project BPM is already in sync.
-    if (std::abs(projectState.getBpm() - itemBpm) < 1e-6)
+    // The tempo is now established. Tell the renderer even when the value itself
+    // did not move: `bpmSeeded` is what drop auto-warp keys off, so the renderer's
+    // copy must flip at the same moment the backend's does.
+    const bool bpmAlreadyInSync = std::abs(projectState.getBpm() - itemBpm) < 1e-6;
+    if (!bpmAlreadyInSync)
     {
-        return;
+        projectState.setBpm(itemBpm);
     }
-
-    projectState.setBpm(itemBpm);
     auto* bpmObj = new juce::DynamicObject();
     bpmObj->setProperty("bpm", itemBpm);
+    bpmObj->setProperty("bpmSeeded", true);
     bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
     silverdaw::log::info("bpmjob", "seeded project BPM from " + itemId + ": " + juce::String(itemBpm, 4));
 }
@@ -243,6 +245,10 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     p->setProperty("beats", juce::var(beatArr));
     p->setProperty("variableTempo", variableTempo);
     p->setProperty("lowConfidence", lowConfidence);
+    // Always sent, including as 0: a manual tempo clears any recorded musical length,
+    // and the renderer must drop it too or the two processes would resolve different
+    // source BPMs for the same item (ADR 0024).
+    p->setProperty("musicalBeats", projectState.getLibraryItemMusicalBeats(itemId));
     if (cachedPath.isNotEmpty())
     {
         p->setProperty("playbackFilePath", cachedPath);
@@ -256,26 +262,52 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     }
     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-    // Late auto-warp uses the detected representative BPM even when tempo varies;
-    // users can split and refine the initial warp afterwards.
-    if (bpm > 0.0)
+    // A reanalysis moves the source tempo under every clip already using it. Clips that
+    // follow the project tempo must be re-derived from the new BPM: their stored state
+    // says only "follow the project", so nothing about them changes on disk, but the
+    // engine still holds the ratio built from the old BPM and the renderer still holds
+    // the matching effective timing — while its beat grid recomputes live from the new
+    // one. Left alone, the markers come out spaced at `newSpacing / oldRatio` and walk
+    // off the project grid by exactly the tempo change, the clip keeps its old drawn
+    // width, and playback keeps the old stretch. A pinned ratio is explicit user intent
+    // and is never touched.
+    const double projectBpm = projectState.getBpm();
+    if (projectBpm > 0.0)
     {
-        const double projectBpm = projectState.getBpm();
         projectState.forEachWarpClip(
             [&](const silverdaw::ProjectState::WarpClipInfo& info)
             {
-                if (info.libraryItemId != itemId) return;
-                if (info.pendingAutoWarp && projectBpm > 0.0)
+                // Clips on this item, plus clips on items that borrow its tempo (the
+                // resolver falls back to the item something was derived from), so a
+                // stem that carries no BPM of its own moves with its source.
+                if (info.libraryItemId != itemId
+                    && projectState.getLibraryItemSourceItemId(info.libraryItemId) != itemId)
+                    return;
+                if (info.tempoRatioPinned) return;
+                // Always through the resolver, never a local derivation: a recorded
+                // musical length still outranks whatever this analysis detected (ADR 0024).
+                const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+                if (sourceBpm <= 0.0) return;
+                const double ratio = projectBpm / sourceBpm;
+                if (info.pendingAutoWarp)
                 {
-                    const double ratio = projectBpm / bpm;
                     projectState.setClipWarp(info.clipId, /*enabled=*/true, juce::String("rhythmic"),
                                              /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
                                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
                     engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
                                        std::nullopt, std::nullopt);
-                    auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
-                    bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
                 }
+                else if (info.warpEnabled)
+                {
+                    engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
+                                       info.cents);
+                }
+                else
+                {
+                    return;
+                }
+                auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
+                bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
             });
     }
 
@@ -397,6 +429,26 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
     const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
     if (itemId.isEmpty()) return; // No library item to attach BPM to.
     if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
+
+    // A derived item's original tempo belongs to the item it was cut from, not to a
+    // fresh detection on its own audio (ADR 0024 — one original BPM per clip). A
+    // saved sample or saved clip is routinely only a few seconds long, far below what
+    // tempo detection needs to be reliable: a two-bar drum excerpt gives the detector
+    // about eight beats, and the few-percent error that produces is directly visible,
+    // because the clip no longer warps to a whole number of bars. The item it came
+    // from was analysed over its whole length and already knows the answer.
+    //
+    // This is the AUTOMATIC path (a library add or the first clip add). Reanalyse is
+    // an explicit instruction from the user and keeps whatever it detects — it runs
+    // through forceLibraryItemAnalysis and never reaches here.
+    const juce::String sourceItemId = projectState.getTempoInheritanceSourceId(itemId);
+    if (sourceItemId.isNotEmpty())
+    {
+        inheritAnalysisFromSource(itemId, sourceItemId, engine, projectState, bridge);
+        silverdaw::log::info("bpmjob", "skipped detection for derived itemId=" + itemId
+                                           + " — inherited tempo from " + sourceItemId);
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
@@ -416,6 +468,32 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
     peakPool.addJob(
         [itemId, file = juce::File(analysisPath), &engine, &projectState, &bridge, &decodedCache]
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
+}
+
+int recordMusicalLength(const juce::String& itemId, double sourceBpm, double windowDurationMs,
+                        ProjectState& projectState)
+{
+    if (itemId.isEmpty() || sourceBpm <= 0.0 || windowDurationMs <= 0.0) return 0;
+    // Never overwrite: the first writer is the one that measured the window against a
+    // trusted grid. A sample exported with its warp baked in is recorded at save time
+    // from the pre-stretch window, and must not be recomputed from its stretched file.
+    if (projectState.getLibraryItemMusicalBeats(itemId) > 0) return 0;
+
+    const double exact = (windowDurationMs * sourceBpm) / 60000.0;
+    const int whole = static_cast<int>(std::llround(exact));
+    // Only a window that really is a whole number of beats gets a musical length. One
+    // that is not keeps none, rather than being rounded onto the grid — that would bend
+    // the tempo of an excerpt that is legitimately not a whole number of bars. The
+    // tolerance tightens with length so the implied stretch always stays under ~1%.
+    if (whole < 1
+        || std::abs(exact - static_cast<double>(whole)) > juce::jmin(0.05, 0.01 * static_cast<double>(whole)))
+        return 0;
+
+    if (!projectState.setLibraryItemMusicalBeats(itemId, whole)) return 0;
+    silverdaw::log::info("bpmjob", "musical length itemId=" + itemId + " beats=" + juce::String(whole)
+                                       + " from bpm=" + juce::String(sourceBpm, 4) + " window="
+                                       + juce::String(windowDurationMs, 2) + "ms");
+    return whole;
 }
 
 void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& sourceItemId,
@@ -482,6 +560,12 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
         beats = buildRigidBeatGrid(bpm, beatAnchorSec, projectState.getLibraryItemDurationMs(itemId));
 
     if (key.isNotEmpty()) projectState.setLibraryItemKey(itemId, key);
+    // Record the window's musical length while the source's grid is in hand. Every
+    // derived item goes through here — stem, saved clip and saved sample alike — so
+    // this is the one place that knows both the trusted tempo and the window. A later
+    // reanalysis of the item's own (often only a few seconds of) audio can then change
+    // its detected BPM without changing where it lands on the grid.
+    recordMusicalLength(itemId, bpm, projectState.getLibraryItemDurationMs(itemId), projectState);
     // A stem has no independent confidence measurement; leave its lowConfidence
     // unset so it defers its sample/music classification to the source (the stem
     // carries derivedFrom.sourceItemId). This keeps a stem visible as music

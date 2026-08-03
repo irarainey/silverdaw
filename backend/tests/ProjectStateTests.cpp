@@ -483,6 +483,330 @@ void testProjectStateViewLibraryMarkersAndReplace()
     require(state.replaceTree(wrongRoot).failed(), "replaceTree should reject non-PROJECT roots");
 }
 
+void testProjectStateReanalyseKeepsDerivedKind()
+{
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 300000.0, 48000, 2),
+            "source item should add");
+    require(state.addLibraryItem("smp", "C:\\proj\\samples\\S\\s.wav", "s.wav", 4500.0, 48000, 2,
+                                 {}, {}, "sample", "Drum loop", "src", {}, 15230.0, 4500.0),
+            "sample item should add");
+
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier kindId{"kind"};
+    auto sampleItem = state.getTree().getChildWithName(libraryId).getChildWithProperty(
+        juce::Identifier{"id"}, "smp");
+    requireEqual(sampleItem.getProperty(kindId).toString(), "sample", "sample kind should store");
+
+    // LIBRARY_REANALYSE re-adds an existing item with no kind; that must not demote it.
+    require(state.addLibraryItem("smp", "C:\\proj\\samples\\S\\s.wav", "s.wav", 4500.0, 48000, 2,
+                                 "C:\\cache\\s.wav"),
+            "reanalyse re-add should succeed");
+    requireEqual(sampleItem.getProperty(kindId).toString(), "sample",
+                 "reanalyse must not demote a sample to a plain source");
+    requireEqual(sampleItem.getProperty(juce::Identifier{"sourceItemId"}).toString(), "src",
+                 "reanalyse must keep the sample's provenance link");
+
+    // A new item with no kind still defaults to source.
+    require(state.addLibraryItem("plain", "C:\\audio\\b.wav", "b.wav", 1000.0, 48000, 2),
+            "plain item should add");
+    requireEqual(state.getTree()
+                     .getChildWithName(libraryId)
+                     .getChildWithProperty(juce::Identifier{"id"}, "plain")
+                     .getProperty(kindId)
+                     .toString(),
+                 "source", "a new item with no kind should default to source");
+}
+
+// A one-shot has no pulse: classifying an item simple must strip any tempo grid it
+// already had, and later analysis must not be able to put one back. Key is kept —
+// a one-shot can be in a key.
+void testProjectStateSimpleClassificationHasNoTempo()
+{
+    silverdaw::ProjectState state;
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier idId{"id"};
+    const juce::Identifier bpmId{"bpm"};
+    const juce::Identifier beatsId{"beats"};
+    const juce::Identifier anchorId{"beatAnchorSec"};
+    const juce::Identifier lowConfId{"lowConfidence"};
+    const juce::Identifier keyId{"key"};
+
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 900.0, 48000, 2),
+            "item should add");
+    require(state.setLibraryItemBpm("hit", 120.0), "bpm should apply while unclassified");
+    require(state.setLibraryItemBeats("hit", {0.0, 0.5, 1.0}), "beats should apply");
+    require(state.setLibraryItemBeatAnchor("hit", 0.25), "anchor should apply");
+    require(state.setLibraryItemLowConfidence("hit", true), "low confidence should apply");
+    require(state.setLibraryItemKey("hit", "Am"), "key should apply");
+
+    auto item = state.getTree().getChildWithName(libraryId).getChildWithProperty(idId, "hit");
+    require(item.hasProperty(bpmId), "bpm should be present before classification");
+
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    require(!item.hasProperty(bpmId), "classifying simple must strip the bpm");
+    require(!item.hasProperty(beatsId), "classifying simple must strip the beats");
+    require(!item.hasProperty(anchorId), "classifying simple must strip the beat anchor");
+    require(!item.hasProperty(lowConfId), "classifying simple must strip the confidence flag");
+    requireEqual(item.getProperty(keyId).toString(), "Am", "classifying simple must keep the key");
+
+    // Reanalysis / detection must not be able to re-add a tempo to a one-shot.
+    state.setLibraryItemBpm("hit", 128.0);
+    state.setLibraryItemBeats("hit", {0.0, 0.5});
+    state.setLibraryItemBeatAnchor("hit", 0.1);
+    require(!item.hasProperty(bpmId), "a one-shot must not accept a detected bpm");
+    require(!item.hasProperty(beatsId), "a one-shot must not accept detected beats");
+    require(!item.hasProperty(anchorId), "a one-shot must not accept a beat anchor");
+    require(!state.setLibraryItemManualTempo("hit", 128.0, {0.0}, 0.0),
+            "a one-shot must refuse a hand-set tempo");
+    require(!item.hasProperty(bpmId), "a refused manual tempo must leave no bpm");
+
+    // Reclassifying as music reopens tempo writes.
+    require(state.setLibraryItemAudioType("hit", "music"), "music classification applies");
+    require(state.setLibraryItemBpm("hit", 128.0), "a musical item accepts a bpm again");
+    require(std::abs(static_cast<double>(item.getProperty(bpmId)) - 128.0) < 1e-9,
+            "the reinstated bpm should store");
+}
+
+void testProjectStateMusicalLengthOutranksDetectedBpm()
+{
+    // A clip cut to a number of bars must stay that number of bars however its BPM is
+    // later re-detected. Detection on a two-bar excerpt sees only about eight beats and
+    // lands a few percent out, which shows up as a clip that no longer warps onto the
+    // grid. The recorded beat count is a measurement of the audio, so it wins.
+    silverdaw::ProjectState state;
+
+    // 4536.83 ms is exactly 8 beats (two bars) at 105.804 BPM.
+    const double durationMs = 4536.83;
+    require(state.addLibraryItem("src", "C:\\audio\\track.wav", "track.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 105.804), "source bpm should apply");
+    require(state.addLibraryItem("cut", "C:\\audio\\cut.wav", "cut.wav", durationMs, 44100, 2,
+                                 {}, {}, "sample", {}, "src"),
+            "cut should add");
+
+    require(state.setLibraryItemMusicalBeats("cut", 8), "musical length should apply");
+    require(state.getLibraryItemMusicalBeats("cut") == 8, "musical length should read back");
+    require(std::abs(state.getLibraryItemBpm("cut") - (8.0 * 60000.0 / durationMs)) < 1e-9,
+            "the musical length should resolve the source bpm");
+
+    // A mis-detection on the cut's own audio must not move it off the grid.
+    require(state.setLibraryItemBpm("cut", 100.768), "detected bpm should apply");
+    require(std::abs(state.getLibraryItemBpm("cut") - (8.0 * 60000.0 / durationMs)) < 1e-9,
+            "a re-detected bpm must not override the recorded musical length");
+
+    // A hand-set tempo is an explicit instruction and drops the length.
+    require(state.setLibraryItemManualTempo("cut", 90.0, {}, 0.0), "manual tempo should apply");
+    require(state.getLibraryItemMusicalBeats("cut") == 0, "manual tempo should clear the length");
+    require(std::abs(state.getLibraryItemBpm("cut") - 90.0) < 1e-9,
+            "a hand-set tempo must win once the length is cleared");
+
+    // A reanalysis, by contrast, keeps it — that is the whole point.
+    require(state.setLibraryItemMusicalBeats("cut", 8), "musical length should re-apply");
+    require(state.clearLibraryItemAnalysis("cut"), "reanalysis should clear the grid");
+    require(state.getLibraryItemMusicalBeats("cut") == 8,
+            "a reanalysis must preserve the recorded musical length");
+
+    // A one-shot has no pulse, so it may not hold a musical length either.
+    require(state.setLibraryItemAudioType("cut", "simple"), "one-shot classification applies");
+    require(state.getLibraryItemMusicalBeats("cut") == 0,
+            "classifying as a one-shot should strip the musical length");
+    require(state.getLibraryItemBpm("cut") <= 0.0, "a one-shot must resolve no tempo");
+}
+
+void testProjectStateRetimesClipsOnTempoChange()
+{
+    // Changing the project tempo must keep the arrangement's musical shape: a clip on
+    // bar 9 stays on bar 9. Without this, warped clips re-stretch in place while their
+    // starts stay in milliseconds, so the arrangement drifts apart on every tempo edit.
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("src", "C:\\audio\\track.wav", "track.wav", 60000.0, 44100, 2),
+            "source should add");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "c0", "src", 0.0, 2000.0), "clip at zero should add");
+    require(state.addClip("t1", "c1", "src", 4000.0, 2000.0), "clip should add");
+    require(state.addClip("t1", "c2", "src", 8000.0, 2000.0), "second clip should add");
+
+    std::vector<std::pair<juce::String, double>> moves;
+    const int retimed = state.retimeClipsForTempoChange(
+        120.0, 60.0, [&](const juce::String& id, double ms) { moves.emplace_back(id, ms); });
+
+    // Halving the tempo doubles the milliseconds each bar occupies.
+    require(retimed == 2, "only the two clips away from zero should move");
+    require(moves.size() == 2, "every move should be reported so the engine stays in sync");
+    require(std::abs(moves[0].second - 8000.0) < 1e-9, "first clip should scale by oldBpm/newBpm");
+    require(std::abs(moves[1].second - 16000.0) < 1e-9, "second clip should scale identically");
+    // The musical gap between them is preserved, which is the point.
+    require(std::abs((moves[1].second - moves[0].second) - 8000.0) < 1e-9,
+            "the gap between clips should scale with the tempo");
+
+    require(state.retimeClipsForTempoChange(60.0, 60.0, nullptr) == 0,
+            "an unchanged tempo should move nothing");
+    require(state.retimeClipsForTempoChange(0.0, 60.0, nullptr) == 0,
+            "an unknown previous tempo should move nothing");
+}
+
+void testProjectStateSourceBpmResolverContract()
+{
+    // The renderer's `libraryItemSourceBpm` must resolve the same original BPM this
+    // does, for every case below. A clip has ONE original tempo; when the two
+    // processes derived their own, a clip could be drawn stretched while the engine
+    // played it unwarped.
+    silverdaw::ProjectState state;
+
+    require(state.addLibraryItem("track", "C:\\audio\\track.wav", "track.wav", 60000.0, 48000, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("track", 105.5), "source bpm should apply");
+
+    // 1. An item's own BPM wins.
+    require(std::abs(state.getLibraryItemBpm("track") - 105.5) < 1e-9,
+            "own bpm should resolve");
+
+    // 2. A derived item with no BPM of its own inherits from its source.
+    require(state.addLibraryItem("stem", "C:\\audio\\stem.wav", "stem.wav", 60000.0, 48000, 2,
+                                 {}, {}, "stem", {}, "track"),
+            "stem should add");
+    require(std::abs(state.getLibraryItemBpm("stem") - 105.5) < 1e-9,
+            "a stem with no bpm of its own should inherit its source's");
+
+    // 3. A one-shot has no tempo, even with a musical parent to inherit from.
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 800.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "sample should add");
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    require(state.getLibraryItemBpm("hit") <= 0.0,
+            "a one-shot must resolve no tempo rather than inheriting one");
+
+    // 4. A one-shot classification is inherited, so a child of a one-shot has none either.
+    require(state.addLibraryItem("hitcut", "C:\\audio\\hitcut.wav", "hitcut.wav", 400.0, 48000, 2,
+                                 {}, {}, "clip", {}, "hit"),
+            "derived clip should add");
+    require(state.getLibraryItemBpm("hitcut") <= 0.0,
+            "a clip cut from a one-shot must resolve no tempo");
+
+    // 5. An unknown item resolves nothing rather than falling through.
+    require(state.getLibraryItemBpm("nope") <= 0.0, "an unknown item should resolve no tempo");
+}
+
+void testProjectStateRepairsLegacySampleKind()
+{
+    // Projects saved before the sample `kind` fix hold their samples as plain
+    // sources; reopening one must fix it forward rather than leaving the item
+    // permanently mis-typed.
+    silverdaw::ProjectState state;
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier idId{"id"};
+    const juce::Identifier kindId{"kind"};
+
+    require(state.addLibraryItem("sample-f5f925e3", "C:\\audio\\s.wav", "s.wav", 4536.0, 44100, 2,
+                                 {}, {}, "source"),
+            "legacy-shaped sample should add");
+    require(state.addLibraryItem("l23", "C:\\audio\\t.mp3", "t.mp3", 268094.0, 44100, 2,
+                                 {}, {}, "source"),
+            "ordinary source should add");
+
+    require(state.repairLegacyLibraryItemKinds() == 1,
+            "exactly the sample-prefixed item should be repaired");
+
+    const auto library = state.getTree().getChildWithName(libraryId);
+    requireEqual(library.getChildWithProperty(idId, "sample-f5f925e3").getProperty(kindId).toString(),
+                 "sample", "a sample-prefixed item should be restored to kind=sample");
+    requireEqual(library.getChildWithProperty(idId, "l23").getProperty(kindId).toString(),
+                 "source", "an ordinary source must be left alone");
+
+    require(state.repairLegacyLibraryItemKinds() == 0, "repair should be idempotent");
+}
+
+void testProjectStateRepairsDemotedStemKind()
+{
+    // Reanalysing a stem used to re-add it without a kind, demoting it to a plain
+    // source. A demoted stem then disappeared from the cross-project import, which
+    // only offers stem and sample items. Generated artifacts are stored under a
+    // project-relative category folder, so the path restores the kind exactly.
+    silverdaw::ProjectState state;
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier idId{"id"};
+    const juce::Identifier kindId{"kind"};
+
+    const juce::String stemDir = "stems\\02 T Plays It Cool-stems-2\\";
+    require(state.addLibraryItem("l20", stemDir + "T Plays It Cool - drums - 5ccde04d.wav",
+                                 "drums.wav", 268094.0, 44100, 2, {}, {}, "source", {}, "l1"),
+            "demoted drums stem should add");
+    require(state.addLibraryItem("l21", stemDir + "T Plays It Cool - bass - 5ccde04d.wav",
+                                 "bass.wav", 268094.0, 44100, 2, {}, {}, "stem", {}, "l1"),
+            "intact bass stem should add");
+    require(state.addLibraryItem("ch1", "channels\\left.wav", "left.wav", 100.0, 44100, 1,
+                                 {}, {}, "source", {}, "l1"),
+            "demoted channel split should add");
+    require(state.addLibraryItem("sc1", "scratches\\bake.wav", "bake.wav", 100.0, 44100, 2,
+                                 {}, {}, "source"),
+            "demoted scratch bake should add");
+    require(state.addLibraryItem("l1", "C:\\Music\\02 T Plays It Cool.mp3", "t.mp3", 268094.0,
+                                 44100, 2, {}, {}, "source"),
+            "original source should add");
+    require(state.addLibraryItem("ext", "C:\\Music\\stems\\borrowed.wav", "borrowed.wav", 100.0,
+                                 44100, 2, {}, {}, "source"),
+            "external file under a same-named folder should add");
+
+    require(state.repairLegacyLibraryItemKinds() == 3,
+            "only the three project-relative artifacts should be repaired");
+
+    const auto library = state.getTree().getChildWithName(libraryId);
+    const auto kindOf = [&](const char* id) {
+        return library.getChildWithProperty(idId, id).getProperty(kindId).toString();
+    };
+    requireEqual(kindOf("l20"), "stem", "a demoted stem should be restored to kind=stem");
+    requireEqual(kindOf("l21"), "stem", "an intact stem must be left alone");
+    requireEqual(kindOf("ch1"), "stem", "a channel split reuses the stem kind");
+    requireEqual(kindOf("sc1"), "sample", "a scratch bake is a sample");
+    requireEqual(kindOf("l1"), "source", "the original source must be left alone");
+    requireEqual(kindOf("ext"), "source", "an absolute path must never be reclassified");
+
+    require(state.repairLegacyLibraryItemKinds() == 0, "repair should be idempotent");
+}
+
+void testProjectStateTempoInheritanceSourceId()
+{
+    // Automatic detection must never run on a derived item whose source already knows
+    // the tempo. A saved sample is often only a couple of bars long — far too short for
+    // reliable detection — and the few-percent error it yields is visible as a warped
+    // clip that no longer spans a whole number of bars.
+    silverdaw::ProjectState state;
+
+    require(state.addLibraryItem("track", "C:\\audio\\track.wav", "track.wav", 60000.0, 48000, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("track", 105.804), "source bpm should apply");
+
+    // An original has nothing to inherit from: it must be analysed.
+    require(state.getTempoInheritanceSourceId("track").isEmpty(),
+            "an original must be analysed on its own audio");
+
+    // A saved sample cut from an analysed source inherits instead of detecting.
+    require(state.addLibraryItem("sample-a", "C:\\audio\\s.wav", "s.wav", 4536.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "sample should add");
+    require(state.setLibraryItemAudioType("sample-a", "music"), "music classification applies");
+    requireEqual(state.getTempoInheritanceSourceId("sample-a"), "track",
+                 "a music sample must inherit its source's tempo, not detect its own");
+
+    // A one-shot holds no tempo at all, so there is nothing to inherit.
+    require(state.addLibraryItem("sample-b", "C:\\audio\\hit.wav", "hit.wav", 800.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "one-shot sample should add");
+    require(state.setLibraryItemAudioType("sample-b", "simple"), "simple classification applies");
+    require(state.getTempoInheritanceSourceId("sample-b").isEmpty(),
+            "a one-shot must neither inherit nor detect a tempo");
+
+    // A source with no tempo of its own has nothing to give, so the derived item is analysed.
+    require(state.addLibraryItem("quiet", "C:\\audio\\quiet.wav", "quiet.wav", 60000.0, 48000, 2),
+            "untimed source should add");
+    require(state.addLibraryItem("sample-c", "C:\\audio\\c.wav", "c.wav", 4000.0, 48000, 2,
+                                 {}, {}, "sample", {}, "quiet"),
+            "sample of an untimed source should add");
+    require(state.getTempoInheritanceSourceId("sample-c").isEmpty(),
+            "a derived item whose source has no tempo must fall back to detection");
+}
+
 void testProjectStateCoverArtHiddenOverride()
 {
     silverdaw::ProjectState state;
@@ -1118,6 +1442,105 @@ void testVariableTempoAnalysisAppliesPendingAutoWarp()
                 "late auto-warp should use project BPM divided by representative source BPM");
 }
 
+// A reanalysis moves the source tempo under clips that are already on the timeline.
+// Clips following the project tempo must be re-derived from the new BPM (their drawn
+// width, beat markers and playback all hang off that ratio); a pinned ratio is explicit
+// user intent and must survive untouched.
+void testReanalysisRederivesWarpForExistingClips()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 8000.0, 48000, 2),
+            "source library item should add");
+    require(state.setLibraryItemBpm("src", 100.0), "source BPM should apply");
+    require(state.addTrack("track"), "track should add");
+
+    require(state.addClip("track", "following", "src", 0.0, 8000.0), "following clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "following clip should warp to the project tempo");
+    require(state.addClip("track", "pinned", "src", 10000.0, 8000.0), "pinned clip should add");
+    require(state.setClipWarp("pinned", true, std::nullopt, 1.5, false, std::nullopt, std::nullopt,
+                              std::nullopt),
+            "pinned clip should hold its own ratio");
+    require(state.addClip("track", "pending", "src", 20000.0, 8000.0), "pending clip should add");
+    require(state.setClipWarp("pending", std::nullopt, std::nullopt, std::nullopt, false,
+                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/true),
+            "pending clip should be marked for late auto-warp");
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.2, 1e-9,
+                "the following clip starts at project / original BPM");
+
+    silverdaw::applyManualTempo("src", 80.0, 0.0, engine, state, bridge);
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.5, 1e-9,
+                "a reanalysed tempo should re-derive a following clip's ratio");
+    requireNear(state.getClipEffectiveTiming("pinned").tempoRatio, 1.5, 1e-9,
+                "a pinned ratio must survive a reanalysis unchanged");
+
+    bool sawPinned = false;
+    bool sawPending = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId == "pinned")
+            {
+                sawPinned = true;
+                require(info.tempoRatioPinned, "pinned clip should still be pinned");
+                requireNear(info.tempoRatio, 1.5, 1e-9, "pinned ratio value should be unchanged");
+            }
+            if (info.clipId == "pending")
+            {
+                sawPending = true;
+                require(info.warpEnabled, "reanalysis should apply a pending auto-warp");
+                require(! info.pendingAutoWarp, "applied auto-warp should clear the pending flag");
+            }
+        });
+    require(sawPinned && sawPending, "both clips should remain in project state");
+}
+
+void testEffectiveTimingReportsNearMissWarpOnLongClip()
+{
+    // Regression: a near-miss tempo (a stem reanalysed to 94.0446 in a 94.05 project)
+    // fell inside the old flat ratio epsilon, so the clip reported warpActive=false and
+    // its native duration while the engine was already stretching it. The UI then drew
+    // the clip at native width with no WARP badge and beat markers off the warped grid.
+    silverdaw::ProjectState state;
+    state.setBpm(94.05);
+    state.setBpmSeeded(true);
+
+    const double stemMs = 177397.0;
+    require(state.addLibraryItem("stem", "C:\\audio\\drums.wav", "drums.wav", stemMs, 48000, 2),
+            "stem library item should add");
+    require(state.setLibraryItemBpm("stem", 94.04458826555116), "reanalysed BPM should apply");
+    require(state.addTrack("track"), "track should add");
+    require(state.addClip("track", "long", "stem", 0.0, stemMs), "long clip should add");
+    require(state.setClipWarp("long", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "warp should enable");
+
+    const auto longTiming = state.getClipEffectiveTiming("long");
+    require(longTiming.warpActive, "a near-miss tempo should warp a three-minute stem");
+    require(longTiming.durationMs < stemMs - 1.0,
+            "an active warp should shorten the reported timeline duration");
+
+    // The same tempo mismatch moves a two-bar loop by well under a millisecond.
+    const double loopMs = 5104.0;
+    require(state.addClip("track", "short", "stem", 200000.0, loopMs), "short clip should add");
+    require(state.setClipWarp("short", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "warp should enable");
+
+    const auto shortTiming = state.getClipEffectiveTiming("short");
+    require(! shortTiming.warpActive, "the same tempo mismatch is inaudible on a short loop");
+    requireNear(shortTiming.durationMs, loopMs, 1e-9,
+                "an inactive warp should report the native duration");
+}
+
 void testClipSetWarpRejectsMalformedTempoRatio()
 {
     // Regression: a wrong-typed tempoRatio used to be raw-cast to 0.0, which
@@ -1259,6 +1682,14 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
+    tests.push_back({"ProjectState reanalyse preserves a derived library-item kind", testProjectStateReanalyseKeepsDerivedKind});
+    tests.push_back({"ProjectState simple classification strips and blocks tempo", testProjectStateSimpleClassificationHasNoTempo});
+    tests.push_back({"ProjectState source-BPM resolver contract", testProjectStateSourceBpmResolverContract});
+    tests.push_back({"ProjectState repairs legacy sample kind on load", testProjectStateRepairsLegacySampleKind});
+    tests.push_back({"ProjectState repairs demoted stem kind on load", testProjectStateRepairsDemotedStemKind});
+    tests.push_back({"ProjectState musical length outranks detected bpm", testProjectStateMusicalLengthOutranksDetectedBpm});
+    tests.push_back({"ProjectState retimes clips on tempo change", testProjectStateRetimesClipsOnTempoChange});
+    tests.push_back({"ProjectState derived items inherit tempo instead of detecting", testProjectStateTempoInheritanceSourceId});
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
@@ -1287,6 +1718,10 @@ void addProjectStateTests(std::vector<TestCase>& tests)
                      testVariableTempoAnalysisAppliesPendingAutoWarp});
     tests.push_back({"CLIP_SET_WARP rejects a malformed tempoRatio",
                      testClipSetWarpRejectsMalformedTempoRatio});
+    tests.push_back({"Effective timing reports a near-miss warp on a long clip",
+                     testEffectiveTimingReportsNearMissWarpOnLongClip});
+    tests.push_back({"Reanalysis re-derives warp for clips already on the timeline",
+                     testReanalysisRederivesWarpForExistingClips});
 }
 
 } // namespace silverdaw::tests

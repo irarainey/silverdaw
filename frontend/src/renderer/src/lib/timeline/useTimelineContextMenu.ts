@@ -341,10 +341,13 @@ export function useTimelineContextMenu(
       }
     ]
     // Quick chop: slice the whole clip onto the beat grid without opening the
-    // editor. Only offered for an unlocked, unlinked clip with a known tempo
-    // (the editor's Slice mode adds manual markers and 1/32).
+    // editor. Only offered for an unlocked, unlinked clip whose source resolves a
+    // grid — the same grid the timeline draws, so the command is never offered
+    // where there are no lines to chop on, and never withheld from a stem that
+    // inherits its tempo (the editor's Slice mode adds manual markers and 1/32).
     const chopSrc = clip ? library.byId[clip.libraryItemId] : undefined
-    if (clip && !clip.locked && !isLinkedClip && chopSrc?.bpm && chopSrc.bpm > 0) {
+    const chopGrid = chopSrc ? resolveSourceBeatGrid(chopSrc, library.byId) : null
+    if (clip && !clip.locked && !isLinkedClip && chopGrid) {
       const subdivisions: { sub: SliceSubdivision; label: string }[] = [
         { sub: '1 bar', label: '1 bar' },
         { sub: '1/2 bar', label: '1/2 bar' },
@@ -695,10 +698,8 @@ export function useTimelineContextMenu(
       const subdivision = command.slice('clip.chopGrid:'.length) as SliceSubdivision
       const src = clip ? library.byId[clip.libraryItemId] : undefined
       if (clip && src) {
-        // Explicit command, not a snap — so unlike the timeline's beat markers this
-        // still chops a one-shot, which is how you slice a break or loop sample.
         const markers = generateGridSlices({
-          grid: resolveSourceBeatGrid(src, library.byId, { suppressSimple: false }),
+          grid: resolveSourceBeatGrid(src, library.byId),
           subdivision,
           windowInMs: clip.inMs,
           windowDurationMs: clip.durationMs

@@ -119,9 +119,45 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
         const double bpm = static_cast<double>(bpmVar);
         if (bpm >= 20.0 && bpm <= 300.0)
         {
+            const double previousBpm = projectState.getBpm();
             projectState.setBpm(bpm);
+            // Setting the tempo by hand is the strongest statement that it is
+            // established: without this the flag stays false and the next analysed
+            // clip re-seeds the project, overriding the tempo the user just typed.
+            projectState.setBpmSeeded(true);
             engine.setMetronomeBpm(bpm);
             syncBeatRepeatRegions(engine, projectState);
+
+            // Bring unwarped clips onto the new tempo first, so the re-stretch below
+            // sees them. Only when the renderer says the "match project tempo" pref is
+            // on — it is the same preference that warps a clip on drop, and this is the
+            // same decision applied to clips that are already placed. An unwarped clip
+            // left alone would be the one thing on the timeline still at the old tempo.
+            const bool autoWarp = static_cast<bool>(payload.getProperty("autoWarp", false));
+            if (autoWarp)
+            {
+                projectState.forEachWarpClip(
+                    [&](const silverdaw::ProjectState::WarpClipInfo& info)
+                    {
+                        if (info.warpEnabled || info.tempoRatioPinned) return;
+                        if (projectState.getLibraryItemBpm(info.libraryItemId) <= 0.0) return;
+                        projectState.setClipWarp(info.clipId, true, std::nullopt, std::nullopt,
+                                                 /*tempoRatioClear=*/true, std::nullopt, std::nullopt,
+                                                 std::nullopt);
+                    });
+            }
+
+            // Keep the arrangement's musical shape: a clip on bar 9 stays on bar 9.
+            // Warped clips re-stretch below, but without this their start times stay
+            // in milliseconds and the whole arrangement drifts apart on a tempo edit.
+            const int retimed = projectState.retimeClipsForTempoChange(
+                previousBpm, bpm,
+                [&](const juce::String& clipId, double offsetMs)
+                {
+                    engine.setClipOffsetMs(clipId, offsetMs);
+                    engine.commitClipOffset(clipId);
+                });
+
             // Pinned tempo ratios opt out of project-BPM tracking.
             projectState.forEachWarpClip(
                 [&](const silverdaw::ProjectState::WarpClipInfo& info)
@@ -135,6 +171,13 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
                     auto appliedPayload = silverdaw::buildClipWarpAppliedPayload(projectState, info.clipId);
                     bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
                 });
+
+            if (retimed > 0 || autoWarp)
+            {
+                silverdaw::log::info("project", "tempo change " + juce::String(previousBpm, 2) + " -> "
+                                                    + juce::String(bpm, 2) + " retimed "
+                                                    + juce::String(retimed) + " clip(s)");
+            }
         }
     }
 }

@@ -51,9 +51,7 @@ export function useTransportBarController() {
 
   // User edits update local state and persist to the backend.
   function applyBpm(bpm: number): void {
-    transport.setBpm(bpm)
-    // Send the clamped value.
-    sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
+    project.applyProjectBpm(bpm)
   }
 
   function applyProjectLength(ms: number): void {

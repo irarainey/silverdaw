@@ -151,6 +151,9 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
                          inbound.ts also re-exports MIDI-specific schemas from
                          bridge/midi-inbound.ts
                          Plus ipc-channels.ts and types.ts (also TS-tested)
+  tests/                 Vitest specs mirroring src/ (renderer, main, shared)
+  e2e/                   Playwright journeys driving the built app against a
+                         real backend (ADR 0014)
   electron-builder.yml   Windows packaging config (signed MSIX/AppX + portable zip)
   electron-builder.store.cjs  Store variant of the above (unsigned, Store identity)
 scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
@@ -1729,15 +1732,101 @@ analysed library items — is the authoritative once-only signal, and derived st
 inherit a BPM without ever seeding), **and** the app-level `ui.seedProjectTempoFromFirstClip`
 preference (default on, mirrored to the backend via `PROJECT_SET_SEED_TEMPO_PREF`)
 is enabled — with it off the seed is skipped entirely and the project BPM stays put.
-When it fires a `PROJECT_BPM_APPLIED { bpm }`
+Once seeded a `PROJECT_BPM_APPLIED { bpm, bpmSeeded }`
 envelope is broadcast and the renderer mirrors both into `libraryStore` and
-`transportStore`. At that point the renderer also beat-aligns the just-analysed
+`transportStore`. It is broadcast **whenever the seed gate passes, including when the
+seeded value has not moved**, because `bpmSeeded` is the renderer's only source for
+"does this project have an established tempo?" and it must learn the flag flipped.
+Setting the tempo by hand (`PROJECT_SET_BPM`, and the Transport bar / Project
+Properties controls that send it) also marks the project seeded, so the next clip
+analysed cannot seed over a deliberate choice. At that point the renderer also beat-aligns the just-analysed
 clips to the project **bar** grid when the **Align clips to the beat grid after
 analysis** preference is on (see that preference for the mechanics). Seeding runs even for variable-tempo and low-confidence sources
 (an approximate tempo is more useful than the default 100) but is suppressed for
 items **explicitly classified as a sample**, so a rain ambience the user has
 marked as a sample can't drag the project tempo. The user can fine-tune from the
 Transport bar afterwards.
+
+**Source BPM: one resolver per process.** A clip or library item has exactly one
+original BPM and one warp target, and neither process may derive its own version
+— see [ADR 0024](adr/0024-single-source-bpm-resolver.md), which is `CRITICAL`. The
+renderer resolves it only through `libraryItemSourceBpm`
+(`frontend/src/renderer/src/stores/libraryItemHelpers.ts`); the engine only
+through `ProjectState::getLibraryItemBpm`
+(`backend/src/project/ProjectStateClips.cpp`). Both apply the same rules in order:
+a one-shot has no tempo at all, not even an inherited one; otherwise the tempo
+implied by its **recorded musical length**; otherwise the item's own BPM; otherwise
+the BPM of the item it was derived from. Nothing else may read
+`item.bpm` to decide how a clip is drawn, gridded, warped or stretched — when the
+two sides disagreed, a clip could be drawn stretched to the project tempo while the
+engine played it dry. `libraryItemWarpSourceBpm` remains only as a deprecated
+pass-through for the warp UI. The same rule governs how a tempo is *acquired*:
+`ensureBpmDetection` (the automatic path, reached from `LIBRARY_ADD` and the first
+`CLIP_ADD`) asks `ProjectState::getTempoInheritanceSourceId` first and inherits from
+the source rather than analysing a derived item's own audio. A saved sample or clip
+is routinely a couple of bars long — around eight beats, far below what the detector
+needs — and the few-percent error that produces is plainly visible, because the clip
+no longer warps to a whole number of bars. `LIBRARY_REANALYSE` is an explicit
+instruction from the user, runs through `forceLibraryItemAnalysis`, and keeps
+whatever it detects.
+
+**Musical length: how many bars, not how fast.** A derived item also records
+`musicalBeats` — how many whole beats of music its file contains, measured against
+the grid of the item it was cut from by `recordMusicalLength`
+(`backend/src/project/LibraryAnalysis.cpp`), which every derived item reaches via
+`inheritAnalysisFromSource`. It is a measurement of the audio rather than an opinion
+about it, so it outranks a detected tempo in both resolvers: a clip cut to a number
+of bars stays that number of bars however its tempo is later re-detected. It is
+recorded only when the cut really is a whole number of beats (a tolerance that keeps
+the implied stretch under ~1%); anything else records nothing rather than being
+rounded onto the grid. `SampleExport` records it from the **source window** rather
+than the exported file, so a sample saved with its warp baked in still records the
+true count. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
+explicit override — while a reanalysis deliberately keeps it.
+
+On load, `ProjectState::repairLibraryItemKinds` promotes library items an older
+build persisted with the wrong `kind`: any `sample-`-prefixed item stored as a plain
+source back to `kind: "sample"`, and any item whose project-relative path sits under
+`stems/`, `channels/`, `samples/` or `scratches/` back to the kind that folder
+implies — a reanalysis used to demote a stem to a plain source, which then vanished
+from the import-from-project picker. It runs both from `ProjectFile::load` and from
+`loadSourceProjectImport`, which reads a project tree without building a
+`ProjectState`, so an old project imports correctly without being opened first.
+
+**Warping on drop is a question about drift, not about the ratio.** Auto-warp on
+drop engages whenever the mismatch between the source tempo and the project tempo
+actually moves the clip's end: `warpChangesTiming` (`renderer/src/lib/warp.ts`)
+converts the ratio into the milliseconds it pulls across that clip's own length and
+ignores anything under `WARP_NEGLIGIBLE_DRIFT_MS`. A fixed ratio band cannot do this
+job — the band that is inaudible on a two-bar loop swallows a fifth of a second on a
+three-minute stem, which is how a drum stem reanalysed from 94.05 to 94.0446 BPM was
+dropped unwarped and ended ~10 ms off the grid. `shouldAutoWarpOnDrop` and
+`applyDropTimeWarp` share the one test, so the ghost width, the overlap check, the
+beat snap and the landed clip cannot disagree.
+
+The same drift rule decides whether a warp *reports* itself active, in both processes:
+`isWarpActive` in the renderer and `ProjectState::getClipEffectiveTiming` in the backend
+(`kWarpNegligibleDriftMs`). They must move together — the epsilons used to disagree with
+the engine, which happily stretched the near-miss stem while the project state called the
+warp inactive, so the timeline drew the clip at its native width, withheld the WARP badge
+and spaced its beat markers on the unwarped grid.
+
+**Changing the project tempo.** `handleProjectSetBpm` keeps the arrangement's
+musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
+by `previousBpm / newBpm`, so a clip on bar 9 stays on bar 9. Without it, warped
+clips re-stretch in place while their starts stay in milliseconds and the
+arrangement drifts apart on every tempo edit. When the renderer's **Match project
+tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
+since the preference lives in the renderer — clips that are not warped but whose
+source has a tempo are warped first, so nothing is left behind at the old tempo. The
+renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
+shared by the transport bar and the project properties dialog. An active timeline
+selection is rescaled by the same factor there
+(`uiStore.retimeTimelineSelectionForTempoChange`, persisted with
+`PROJECT_SET_VIEW` after `PROJECT_SET_BPM`): a range is a musical span, so a
+selection drawn around eight bars must still cover them, and Loop Selection reads
+the range live every frame. It is view state only, which is why the retime is a
+renderer concern with no backend counterpart.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
@@ -1823,19 +1912,38 @@ maths at a call site: the projections used to disagree on inherited BPM and on t
 simple-item gate, which made one-shots snap to a grid they never drew and made Chop
 to Grid silently do nothing on a stem that visibly had one.
 
-Two rules the helper settles:
+Three rules the helper settles:
 
 - **Inheritance is unconditional.** BPM resolves through `libraryItemSourceBpm`,
   and `beats` / `beatAnchorSec` fall back to the source item, so a stem or saved
   clip lands on the same grid its parent does. Anything drawn with a grid must be
   usable by every operation that reads one.
-- **One-shot suppression is per-surface**, via `{ suppressSimple }` (default
-  `true`). The timeline suppresses it — a grid over a kick sample is noise at
-  timeline zoom, and nothing may snap to lines that were never drawn. The Clip
-  Editor, Scratch Editor and Chop to Grid pass `false`: they work on one sample at
-  high zoom, where that grid is exactly what you slice a break against. Clip Editor
-  surfaces read the resolved grid from `useClipEditorBeatGrid`'s `resolvedGrid`
-  rather than resolving it themselves.
+- **A one-shot has no grid, ever.** A simple sample has no musical pulse — it
+  cannot even hold a BPM (see the sample flavours above) — so beat markers over it
+  are noise on the timeline and equally meaningless zoomed into the Clip Editor or
+  Scratch Editor. Neither draws them, the Clip Editor's tempo and align controls
+  stay disabled to match, and **Chop to Grid** is not offered: its menu gate is the
+  resolved grid itself, so the command appears exactly where lines are drawn,
+  including on a stem that inherits its tempo. There is no opt-out; snapping or
+  slicing against lines that were never drawn is how this went wrong before. Clip
+  Editor surfaces read the resolved grid from `useClipEditorBeatGrid`'s
+  `resolvedGrid` rather than resolving it themselves.
+- **A warped clip's markers come from the project, not from arithmetic.** A clip
+  warped to follow the project tempo *is* at the project tempo, so
+  `clipTimelineBeatSpacingMs()` spaces its timeline markers at `60_000 / projectBPM`
+  — by construction, rather than by two numbers agreeing. Deriving them as
+  `sourceSpacing / effectiveTempoRatio` gives the same answer only while the grid
+  and the ratio are built from the identical, current source BPM; a reanalysis broke
+  that (the grid picked up the new BPM immediately, the ratio still held the old one)
+  and the markers came out a few percent off the project grid — line one up and the
+  rest walk away. A **pinned** ratio is deliberately not at the project tempo, so it
+  keeps `sourceSpacing / ratio`. The phase still comes from the source grid, projected
+  through the ratio the clip is playing at, so markers and the beat-aware snap agree.
+
+  The backend half of the same fix lives in `LibraryAnalysis.cpp`: after any analysis
+  it re-derives the warp of every unpinned clip using that item (or inheriting its
+  tempo) and re-broadcasts `CLIP_WARP_APPLIED`, so the engine's stretch, the clip's
+  drawn width and the markers all move onto the new tempo together.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the snap grid, it snaps the first
@@ -1843,6 +1951,15 @@ source beat inside the clip's window. With the project BPM seeded to the source
 BPM (the common case), every subsequent marker on the clip then lines up exactly
 with a project grid line. Drag with `Alt` for fine 1 ms unsnapped
 behaviour.
+
+Snapping the beat rather than the edge means the resulting start can resolve
+*before* the timeline origin. `startMsForAlignedBeat()` (`lib/musicTime.ts`)
+steps forward by whole snap units in that case instead of clamping the start to
+0, and drag, library drop and the keyboard grid-nudge all go through it. The
+clamp kept the clip on the timeline but left its beat off the line by the whole
+offset, always in the same direction — a clip placed against the start of the
+timeline drew its first marker a fraction of a beat ahead of bar 1 however
+carefully it was positioned.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
 dragged edge as the source window changes. Hold `Alt` while trimming for
@@ -2263,8 +2380,12 @@ under the temporary workspace
 migrate into the project folder on the first save. The numeric
 suffix increments for duplicate base names. There are two flavours: a **music
 sample** inherits the source's tempo/key grid so it warps and shows its grid, while
-a **simple sample** is a non-musical one-shot — the presence of pitch + BPM is the
-only difference. The baked WAV is added as a
+a **simple sample** is a non-musical one-shot. A one-shot has no pulse, so it
+**cannot hold a BPM at all**: classifying an item simple strips `bpm`, `beats`,
+`beatAnchorSec`, `variableTempo` and `lowConfidence`, and every tempo writer in
+`ProjectStateLibraryAnalysis.cpp` then refuses it, so detection, reanalysis and
+inheritance cannot put one back. A key is still allowed — a one-shot can be in a
+key. The baked WAV is added as a
 sample library item that **records its source** (`sourceItemId`, persisted in
 the project file): that provenance both inherits the source's cover art + tags via
 the shared media GUID and marks the item as a saved sample rather than an ordinary
@@ -3647,10 +3768,10 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   ```
   Each case is a separate CTest test, discovered at build time via the harness's
   `--list` / `--run` flags, so cases appear individually in `ctest` and the VS
-  Code Testing panel. Keep test-case names ASCII. **When you add or remove a
-  backend test, update the registry-count assertion in
-  `backend/tests/BackendTests.cpp` (`tests.size() == N`) to match — otherwise
-  build-time test discovery (`--list`) aborts and the build fails.**
+  Code Testing panel. Test-case names must be unique and ASCII — the harness
+  checks this at startup, along with every domain having registered at least one
+  case, and fails discovery with a named error if not. Adding or removing a test
+  needs no bookkeeping beyond registering it in its domain's `add*Tests`.
 
   Backend coverage is available with `-DSILVERDAW_ENABLE_COVERAGE=ON`, which
   adds a `SilverdawBackendCoverage` target that runs the backend unit tests and
@@ -3679,6 +3800,13 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   `@shared` and `@main` path aliases. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
   under `frontend/coverage/`.
+- **End-to-end**: `pnpm test:e2e` builds the app (`electron-vite build`) and runs
+  the Playwright journeys under `frontend/e2e/` against a real spawned backend,
+  so a run covers the spawn → port → AUTH → handshake chain, the native dialog
+  stubs and the saved project format. The tier is deliberately small and wide and
+  asserts only on the DOM, the filesystem and saved project files; its rules and
+  helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
+  type-checked by `pnpm typecheck` through `tsconfig.node.json`.
 - **Dead code**: a configured `frontend/knip.json` (entry points for the main /
   preload / renderer electron-vite processes) lets `pnpm dlx knip` report unused
   files, exports and dependencies. Treat its output as *candidates* — the zod

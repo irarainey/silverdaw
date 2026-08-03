@@ -335,6 +335,35 @@ void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)
     }
 }
 
+int ProjectState::retimeClipsForTempoChange(double previousBpm, double newBpm,
+                                            const std::function<void(const juce::String&, double)>& moved)
+{
+    if (previousBpm <= 0.0 || newBpm <= 0.0 || previousBpm == newBpm) return 0;
+    const double scale = previousBpm / newBpm;
+    int count = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            auto clip = track.getChild(c);
+            if (!clip.hasType(kClip)) continue;
+            const double offsetMs = static_cast<double>(clip.getProperty(kOffsetMs, 0.0));
+            // A clip at zero is already on bar 1; scaling it is a no-op either way.
+            if (offsetMs <= 0.0) continue;
+            const double next = offsetMs * scale;
+            // Part of the same undoable "Change tempo" transaction as the BPM itself,
+            // so one undo restores both the tempo and the arrangement.
+            clip.setProperty(kOffsetMs, next, &undoManager);
+            ++count;
+            if (moved) moved(clip.getProperty(kId).toString(), next);
+        }
+    }
+    if (count > 0) markDirty();
+    return count;
+}
+
 ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juce::String& clipId) const
 {
     EffectiveClipTiming out;
@@ -364,10 +393,22 @@ ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juc
     }
 
     out.tempoRatio = ratio > 0.0 ? ratio : 1.0;
-    out.warpActive = std::abs(out.tempoRatio - 1.0) > 1.0e-4;
+    // Whether a warp is doing anything is a question about this clip, not about the
+    // ratio: a flat epsilon is duration-blind, so a stem warped from 94.0446 to 94.05
+    // BPM read as inactive while the engine was already stretching it, and the timeline
+    // then drew it at native length, hid the WARP badge, and spaced its beat markers to
+    // the wrong grid. Judge it on the drift the ratio produces across the clip instead.
+    // Mirrored by the renderer's `isWarpActive` (ADR 0024).
+    const double stretchedMs = out.durationMs / out.tempoRatio;
+    out.warpActive = out.durationMs > 0.0
+                         ? std::abs(stretchedMs - out.durationMs) >= kWarpNegligibleDriftMs
+                         // Length not known yet (a clip warped before its audio landed):
+                         // fall back to the ratio, matching the renderer's "can't tell, so
+                         // treat it as warped" rather than reporting a stretch as inactive.
+                         : std::abs(out.tempoRatio - 1.0) > 1.0e-9;
     if (out.warpActive)
     {
-        out.durationMs = out.durationMs / out.tempoRatio;
+        out.durationMs = stretchedMs;
     }
     return out;
 }
@@ -466,22 +507,40 @@ ProjectState::getLibraryItemPreparationInfo(const juce::String& libraryItemId) c
     return result;
 }
 
+// The single backend resolver for an item's ORIGINAL BPM, mirroring the renderer's
+// `libraryItemSourceBpm`. An item has exactly one original tempo and the two
+// processes must never derive their own version: when they drifted, a clip could be
+// drawn stretched while the engine played it unwarped.
+//
+// Two rules, in order: a one-shot has no tempo at all (inherited or otherwise), then
+// own BPM, falling back to the item it was derived from.
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return 0.0;
     juce::String sourceItemId;
+    bool foundItem = false;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
+            foundItem = true;
+            if (isOneShotItem(item)) return 0.0;
+            // A recorded musical length is a measurement of the audio itself ("this
+            // file is exactly N beats"), so it outranks any tempo opinion — including
+            // a reanalysis, whose few seconds of audio are exactly what makes short
+            // saved samples mis-detect. Keeping the grid and the warp on the same
+            // number is what stops a clip being drawn to one tempo and played at
+            // another (ADR 0024): a single resolver, refined, not a second source.
+            if (const auto fromLength = musicalLengthBpm(item); fromLength > 0.0) return fromLength;
             const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0));
             if (bpm > 0.0) return bpm;
             sourceItemId = item.getProperty(kSourceItemId, {}).toString();
             break;
         }
     }
+    if (!foundItem) return 0.0;
     if (sourceItemId.isNotEmpty())
     {
         for (int i = 0; i < library.getNumChildren(); ++i)
@@ -489,6 +548,9 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
             const auto item = library.getChild(i);
             if (item.getProperty(kId).toString() == sourceItemId)
             {
+                // A one-shot classification is inherited, so a clip cut from a
+                // one-shot has no tempo to borrow either.
+                if (isOneShotItem(item)) return 0.0;
                 return static_cast<double>(item.getProperty(kBpm, 0.0));
             }
         }

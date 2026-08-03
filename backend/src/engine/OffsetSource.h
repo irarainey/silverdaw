@@ -170,9 +170,22 @@ class OffsetSource : public juce::PositionableAudioSource
         return position.load(std::memory_order_relaxed);
     }
 
+    // Reported in TIMELINE samples: `position` advances in timeline time and
+    // juce::AudioTransportSource ends the stream once it reaches this length. Warp rescales
+    // how many timeline samples the source spans, so an unscaled length would silence a
+    // stretched clip at its unstretched end while the rest of its window still plays.
     juce::int64 getTotalLength() const override
     {
-        return child != nullptr ? child->getTotalLength() + offsetSamples.load() : offsetSamples.load();
+        constexpr auto kMaxLength = std::numeric_limits<juce::int64>::max();
+        const juce::int64 offset = offsetSamples.load();
+        if (child == nullptr) return offset;
+        const juce::int64 childLength = child->getTotalLength();
+        if (childLength <= 0) return offset;
+        // An endless child stays endless; the minimum 0.25 tempo ratio quadruples at most.
+        if (childLength > kMaxLength / 4) return kMaxLength;
+        const juce::int64 timeline =
+            timelineSamplesForSourceSamples(childLength, warp.load(std::memory_order_acquire));
+        return timeline > kMaxLength - offset ? kMaxLength : timeline + offset;
     }
 
     bool isLooping() const override

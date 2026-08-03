@@ -135,6 +135,7 @@ function onBpmWheel(e: WheelEvent): void {
             max="300"
             step="0.01"
             spellcheck="false"
+            aria-label="Project BPM"
             :disabled="!timingEditable"
             :title="projectBpmPending ? 'Detecting tempo for the first clip…' : timingEditable ? 'Tempo (20 – 300 BPM). Scroll or use ↑/↓ / the spinner to adjust by 1; hold Alt for 0.01.' : 'Add a track to edit project tempo'"
             :class="[

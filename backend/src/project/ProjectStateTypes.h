@@ -41,6 +41,16 @@ struct EffectiveClipTiming
     bool warpActive = false;
 };
 
+/**
+ * Drift small enough to treat a warp as doing nothing: under a millisecond across the
+ * whole clip, well inside a single audio buffer.
+ *
+ * A ratio threshold cannot answer this question, because the same ratio moves a
+ * three-minute stem a hundred times further than a two-bar loop. Mirrored by the
+ * renderer's `WARP_NEGLIGIBLE_DRIFT_MS`, and the two must stay in step (ADR 0024).
+ */
+inline constexpr double kWarpNegligibleDriftMs = 1.0;
+
 // Immutable message-thread snapshot for preparing clip audio off-thread.
 struct ClipPreparationInfo
 {

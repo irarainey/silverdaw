@@ -9,8 +9,10 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
-import { effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
+import { effectiveDurationMs, effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
 import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { startMsForAlignedBeat } from '@/lib/musicTime'
+import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -130,9 +132,11 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   function startMsForItem(rawMs: number, item: LibraryItem): number {
     const referenceBeatOffsetMs = firstSourceBeatOffsetMs(item)
     if (referenceBeatOffsetMs === null) return geometry.snapTimelineMs(rawMs, false)
-    return Math.max(
-      0,
-      geometry.snapTimelineMs(rawMs + referenceBeatOffsetMs, false) - referenceBeatOffsetMs
+    return startMsForAlignedBeat(
+      geometry.snapTimelineMs(rawMs + referenceBeatOffsetMs, false),
+      referenceBeatOffsetMs,
+      transport.bpm,
+      useUiStore().snapGrid
     )
   }
 
@@ -155,28 +159,30 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, 0)
     if (firstBeatMs > item.durationMs) return null
     // Project the first beat into timeline time using the warp that will apply on
-    // drop. That decision reads `item.bpm`, NOT the grid's (possibly inherited)
-    // BPM — the ghost preview and the placement both use `item.bpm`, and a snap
-    // computed against a ratio the drop never applies lands the first beat off
-    // the grid by exactly that ratio.
+    // drop. Snap, ghost preview and placement all resolve the original BPM through
+    // the one shared resolver — when they disagreed, a snap computed against a
+    // ratio the drop never applied landed the first beat off the grid by exactly
+    // that ratio.
     const ui = useUiStore()
-    const projectHasOtherClips = Object.keys(project.clips).length > 0
+    const snapSourceBpm = libraryItemSourceBpm(item, library.byId)
     const willWarpForSnap =
       item.warpEnabled === true ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
-        projectHasOtherClips,
+        projectBpmSeeded: transport.bpmSeeded,
         sourceKind: item.kind,
         sourceIsSimple: libraryItemIsSimple(item, library.byId),
-        sourceBpm: item.bpm,
+        sourceBpm: snapSourceBpm,
         projectBpm: transport.bpm,
-        variableTempo: item.variableTempo
+        variableTempo: item.variableTempo,
+        sourceDurationMs: item.durationMs
       })
     const warpInputs = {
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
-      sourceBpm: item.bpm,
-      projectBpm: transport.bpm
+      sourceBpm: snapSourceBpm,
+      projectBpm: transport.bpm,
+      nativeDurationMs: item.durationMs
     }
     const ratio = isWarpActive(warpInputs) ? effectiveTempoRatio(warpInputs) : 1
     return firstBeatMs / ratio
@@ -207,31 +213,30 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
     // Mirror drop-time warp so the ghost width matches the landed clip.
     const ui = useUiStore()
-    const projectHasOtherClips = Object.keys(project.clips).length > 0
-    // Samples skip auto-warp on drop, so the preview must too.
+    // Simple samples skip auto-warp on drop, so the preview must too.
     const dropIsSample = libraryItemIsSimple(item, library.byId)
+    const previewSourceBpm = libraryItemSourceBpm(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
-        projectHasOtherClips,
+        projectBpmSeeded: transport.bpmSeeded,
         sourceKind: item.kind,
         sourceIsSimple: dropIsSample,
-        sourceBpm: item.bpm,
+        sourceBpm: previewSourceBpm,
         projectBpm: transport.bpm,
-        variableTempo: item.variableTempo
+        variableTempo: item.variableTempo,
+        sourceDurationMs: item.durationMs
       })
-    const previewRatio = willWarp
-      ? effectiveTempoRatio({
+    const effectiveDurMs = willWarp
+      ? effectiveDurationMs(item.durationMs, {
+          warpEnabled: true,
           tempoRatio: item.tempoRatio,
-          sourceBpm: item.bpm,
-          projectBpm: transport.bpm
+          sourceBpm: previewSourceBpm,
+          projectBpm: transport.bpm,
+          nativeDurationMs: item.durationMs
         })
-      : 1
-    const effectiveDurMs =
-      previewRatio > 0 && Math.abs(previewRatio - 1) > 1e-4
-        ? item.durationMs / previewRatio
-        : item.durationMs
+      : item.durationMs
 
     // A new track is always empty, so a new-track drop can never overlap.
     const overlaps = target.createNewTrack

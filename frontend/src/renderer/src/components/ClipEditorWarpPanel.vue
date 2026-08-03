@@ -4,8 +4,8 @@
 // passed in via props (shared with the sibling pitch panel) so this
 // component stays trivially testable.
 
-import { ref, watch } from 'vue'
 import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
+import { useDecimalFieldText } from '@/lib/useDecimalFieldText'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
@@ -27,32 +27,22 @@ const draftEffectiveBpm = props.draft.draftEffectiveBpm
 const draftEffectiveRatio = props.draft.draftEffectiveRatio
 const setTempoMode = props.draft.setTempoMode
 
-// The pinned-BPM field is shown as a string always formatted to two decimals (e.g. "120.00")
-// while `draftPinnedBpm` stays a plain number for the warp maths. The display only reformats when
-// the field isn't being typed into, so intermediate keystrokes aren't clobbered.
-const pinnedBpmText = ref('')
-let pinnedBpmFocused = false
-function formatPinnedBpm(): string {
-  const v = draftPinnedBpm.value
-  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : ''
-}
-watch(draftPinnedBpm, () => {
-  if (!pinnedBpmFocused) pinnedBpmText.value = formatPinnedBpm()
-}, { immediate: true })
+// The pinned-BPM and stretch fields are shown always formatted to two decimals
+// (e.g. "120.00", "100.00") while the drafts stay plain numbers for the warp maths.
+const {
+  text: pinnedBpmText,
+  onFocus: onPinnedBpmFocus,
+  onInput: onPinnedBpmInput,
+  onBlur: onPinnedBpmBlur,
+  sync: syncPinnedBpmText
+} = useDecimalFieldText(draftPinnedBpm)
 
-function onPinnedBpmFocus(): void {
-  pinnedBpmFocused = true
-}
-function onPinnedBpmInput(e: Event): void {
-  const raw = (e.target as HTMLInputElement).value
-  pinnedBpmText.value = raw
-  const n = Number(raw.trim())
-  if (raw.trim() !== '' && Number.isFinite(n)) draftPinnedBpm.value = n
-}
-function onPinnedBpmBlur(): void {
-  pinnedBpmFocused = false
-  pinnedBpmText.value = formatPinnedBpm()
-}
+const {
+  text: stretchPercentText,
+  onFocus: onStretchPercentFocus,
+  onInput: onStretchPercentInput,
+  onBlur: onStretchPercentBlur
+} = useDecimalFieldText(draftStretchPercent)
 
 /** Wheel over the pinned-BPM field steps by 1 (whole integer), or 0.01 with Alt held (fine).
  *  Only active in "pin" mode and when the field already holds a tempo to step from. */
@@ -64,7 +54,7 @@ function onPinnedBpmWheel(e: WheelEvent): void {
   const direction = e.deltaY < 0 ? 1 : -1
   const next = Math.min(300, Math.max(20, current + direction * (e.altKey ? 0.01 : 1)))
   draftPinnedBpm.value = Math.round(next * 100) / 100
-  pinnedBpmText.value = formatPinnedBpm()
+  syncPinnedBpmText()
 }
 </script>
 
@@ -178,13 +168,16 @@ function onPinnedBpmWheel(e: WheelEvent): void {
         >
         <span class="text-zinc-200">Stretch</span>
         <input
-          v-model.number="draftStretchPercent"
+          :value="stretchPercentText"
           type="number"
           min="25"
           max="400"
-          step="1"
+          step="0.01"
           :disabled="draftTempoMode !== 'stretch'"
           class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+          @focus="onStretchPercentFocus"
+          @input="onStretchPercentInput"
+          @blur="onStretchPercentBlur"
         >
         <span class="text-[10px] text-zinc-500">%</span>
       </label>

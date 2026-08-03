@@ -401,6 +401,10 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
+    // Fix forward on the single ingress for a loaded tree, so every load path
+    // (project open, autosave recovery) repairs old data exactly once.
+    project.repairLegacyLibraryItemKinds();
+
     return result;
 }
 

@@ -6,10 +6,11 @@ import type { Clip } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
-import type { LibraryState } from './libraryTypes'
-import { libraryItemDisplayName } from './libraryItemHelpers'
+import type { LibraryItem, LibraryState } from './libraryTypes'
+import { libraryItemDisplayName, libraryItemIsSimple } from './libraryItemHelpers'
 
 type ImportThis = LibraryState & {
+  readonly byId: Readonly<Record<string, LibraryItem>>
   markItemWarping(libraryItemId: string): void
   finishImport(id: string, stage: 'done' | 'failed'): void
   alignItemClipsToGrid(itemId: string): number
@@ -54,6 +55,19 @@ export const importActions = {
     ): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return
+      // A one-shot has no pulse, so it may not hold a tempo grid — the same rule the
+      // backend enforces on every tempo writer. Applies to an inherited classification
+      // too, and clears anything a project saved before this rule still carries.
+      if (libraryItemIsSimple(item, this.byId)) {
+        item.bpm = undefined
+        item.beatAnchorSec = undefined
+        item.beats = undefined
+        item.variableTempo = undefined
+        item.lowConfidence = undefined
+        item.decodedCacheFilePath = playbackFilePath?.trim() ? playbackFilePath : undefined
+        useProjectStore().timelineRevision++
+        return
+      }
       // Keep full-precision BPM; display rounding would drift in beat math.
       item.bpm = bpm > 0 ? bpm : undefined
       item.beatAnchorSec = beats.length > 0 ? beatAnchorSec : undefined

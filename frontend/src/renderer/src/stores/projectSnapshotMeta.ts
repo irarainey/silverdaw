@@ -70,6 +70,9 @@ export function applyProjectTransport(
   if (typeof snapshot.bpm === 'number' && snapshot.bpm > 0) {
     useTransportStore().setBpm(snapshot.bpm)
   }
+  // Mirror the backend's seeded flag rather than guessing from clip count; a saved
+  // project can carry an established tempo with nothing yet on the timeline.
+  useTransportStore().setBpmSeeded(snapshot.bpmSeeded === true)
   if (typeof snapshot.playheadMs === 'number' && snapshot.playheadMs >= 0) {
     useTransportStore().setPosition(snapshot.playheadMs)
   }

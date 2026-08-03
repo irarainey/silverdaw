@@ -8,6 +8,7 @@ import {
   freeGridStepMs,
   msPerSubBeat,
   parseTime,
+  startMsForAlignedBeat,
   stepToGridMs
 } from '@/lib/musicTime'
 
@@ -158,3 +159,39 @@ describe('barPositionDisplay', () => {
     expect(DEFAULT_BEATS_PER_BAR).toBe(4)
   })
 })
+
+// Beat-aware placement snaps the clip's first source beat, not its left edge, so the
+// start can resolve before the timeline origin. Clamping that to 0 used to leave the
+// beat off the line by the whole offset — and always in the same direction, which is
+// what made a clip dropped at the very start draw its first marker slightly ahead of
+// bar 1 no matter how carefully it was placed.
+describe('startMsForAlignedBeat', () => {
+  const BPM = 94.05
+  const beatMs = 60_000 / BPM
+
+  it('backs the offset out of a grid position that clears the origin', () => {
+    expect(startMsForAlignedBeat(beatMs, 61, BPM, 'quarter')).toBeCloseTo(beatMs - 61, 9)
+  })
+
+  it('steps forward a whole snap unit rather than clamping to the origin', () => {
+    const subMs = beatMs / 4
+    const start = startMsForAlignedBeat(0, 61, BPM, 'quarter')
+    expect(start).toBeGreaterThan(0)
+    // The beat still lands on a grid line — the whole point of aligning it.
+    expect(((start + 61) / subMs) % 1).toBeCloseTo(0, 9)
+    expect(start).toBeCloseTo(subMs - 61, 9)
+  })
+
+  it('steps far enough for an offset longer than one snap unit', () => {
+    const subMs = beatMs / 4
+    const offset = subMs * 2.5
+    const start = startMsForAlignedBeat(0, offset, BPM, 'quarter')
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(((start + offset) / subMs) % 1).toBeCloseTo(0, 9)
+  })
+
+  it('clamps on a Free grid, which has no line to step to', () => {
+    expect(startMsForAlignedBeat(0, 61, BPM, 'free')).toBe(0)
+  })
+})
+

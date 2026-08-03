@@ -218,9 +218,7 @@ export function useProjectPropertiesController(
       project.requestRename(nextName)
     }
     if (hasBpmChange.value) {
-      transport.setBpm(nextBpm)
-      // Send the clamped renderer value.
-      sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
+      project.applyProjectBpm(nextBpm)
     }
     if (hasDurationChange.value && nextDurationMs !== null) {
       project.setProjectLengthMs(nextDurationMs)

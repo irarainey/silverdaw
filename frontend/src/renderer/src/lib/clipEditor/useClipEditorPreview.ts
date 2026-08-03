@@ -235,7 +235,8 @@ export function useClipEditorPreview(deps: ClipEditorPreviewDeps): ClipEditorPre
       warpEnabled: current.warpEnabled,
       tempoRatio: current.tempoRatio,
       sourceBpm: previewSourceBpm,
-      projectBpm: deps.projectBpm()
+      projectBpm: deps.projectBpm(),
+      nativeDurationMs: current.durationMs
     })
       ? effectiveTempoRatio({
           tempoRatio: current.tempoRatio,

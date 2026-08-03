@@ -10,6 +10,15 @@ interface TransportState {
   /** Master-clock playhead position in ms. */
   positionMs: number
   bpm: number
+  /**
+   * True once the project tempo is established (backend-owned `bpmSeeded`).
+   *
+   * Mirrored, never inferred: drop auto-warp needs to know the tempo is a real
+   * target rather than the transient default, and "does the timeline already hold
+   * a clip?" is not the same question — a project can load with an established
+   * tempo and an empty timeline.
+   */
+  bpmSeeded: boolean
   connected: boolean
   /** True after socket open and initial `PROJECT_STATE` reconcile. */
   bridgeReady: boolean
@@ -38,6 +47,7 @@ export const useTransportStore = defineStore('transport', {
     midiPlaybackHoldSources: [],
     positionMs: 0,
     bpm: 100,
+    bpmSeeded: false,
     connected: false,
     bridgeReady: false,
     handshakeReady: false,
@@ -91,6 +101,9 @@ export const useTransportStore = defineStore('transport', {
     setBpm(bpm: number): void {
       // Clamp away invalid grid math, but keep full precision to avoid timeline drift.
       this.bpm = Math.min(300, Math.max(20, bpm))
+    },
+    setBpmSeeded(seeded: boolean): void {
+      this.bpmSeeded = seeded
     },
     setConnected(connected: boolean): void {
       this.connected = connected

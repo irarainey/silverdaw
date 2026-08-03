@@ -30,6 +30,13 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
 
   LIBRARY_ITEM_ANALYSIS: (payload) => {
     const library = useLibraryStore()
+    // Applied before the analysis so the item's source BPM resolves from its musical
+    // length the moment the grid lands. Sent as 0 when there is none — a hand-set tempo
+    // clears it, and leaving a stale count would keep overriding the typed value.
+    if (typeof payload.musicalBeats === 'number') {
+      const item = library.byId[payload.itemId]
+      if (item) item.musicalBeats = payload.musicalBeats >= 1 ? payload.musicalBeats : undefined
+    }
     library.setItemAnalysis(
       payload.itemId,
       payload.bpm,

@@ -42,6 +42,20 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
 void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
                       AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge);
 
+// Record how many whole beats of music a derived item's window contains, measured
+// against the tempo of the item it was cut from. Returns the recorded count, or 0
+// when nothing was recorded — the window was not a whole number of beats (within a
+// tolerance that keeps the implied stretch under ~1%), or a count is already stored.
+//
+// This is what keeps a clip cut to a number of bars at that number of bars whatever
+// its BPM later says: reanalysing a two-bar excerpt sees only about eight beats and
+// lands a few percent out, and the resulting clip no longer warps onto the grid. The
+// count is a measurement of the audio, so it outranks that opinion — see ADR 0024.
+// Never overwrites an existing count; the first writer measured the true window.
+// Runs on the message thread.
+int recordMusicalLength(const juce::String& itemId, double sourceBpm, double windowDurationMs,
+                        ProjectState& projectState);
+
 // Background-decodes missing WAV caches so playback can use cheap PCM.
 void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine, ProjectState& projectState,
                         juce::ThreadPool& peakPool, const DecodedCache& decodedCache);

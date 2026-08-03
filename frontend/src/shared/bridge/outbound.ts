@@ -753,6 +753,12 @@ export interface ProjectSetViewPayload {
 /** Tempo edit. Marks the project dirty on the backend. */
 export interface ProjectSetBpmPayload {
   bpm: number
+  /**
+   * The "match project tempo" preference, so the backend can bring already-placed
+   * unwarped clips onto the new tempo — the same decision that warps a clip on drop,
+   * applied to clips that are already on the timeline. Omitted means off.
+   */
+  autoWarp?: boolean
 }
 
 /** Project-length edit (ms). Marks the project dirty on the backend. */

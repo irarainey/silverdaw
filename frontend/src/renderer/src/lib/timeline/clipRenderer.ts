@@ -12,7 +12,7 @@ import {
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
-import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { clipTimelineBeatSpacingMs, firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
@@ -525,8 +525,6 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     if (grid && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000
       const inMs = clip.inMs
-      const outMs = inMs + clip.durationMs
-      const beatSpacingMs = grid.spacingMs
       const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, inMs)
       const minMarkerSpacingPx = 4
       // Dedicated, stable pooled Graphics (see `markerGraphicsPool`): avoids both
@@ -534,21 +532,32 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       // not painting) and the per-frame `new Graphics()` leak.
       const markers = acquireMarkerGraphics(G)
       let drew = 0
+      // Step in TIMELINE time. A clip warped to the project tempo takes its spacing
+      // from the project itself, so its markers sit on the project's beat lines by
+      // construction rather than by two BPMs agreeing (`clipTimelineBeatSpacingMs`).
+      const beatSpacingMs = clipTimelineBeatSpacingMs(clip, grid.spacingMs, transport.bpm)
       // Stride by whole beats when zoomed out to avoid drawing skipped markers.
       // Powers of two only: an arbitrary stride (3, 5, 7 …) draws a grid at an
       // interval that means nothing musically.
-      const pxPerBeat = (beatSpacingMs / warpRatio) * pxPerMs
+      const pxPerBeat = beatSpacingMs * pxPerMs
       const minStride =
         pxPerBeat > 0 ? Math.max(1, Math.ceil(minMarkerSpacingPx / pxPerBeat)) : 1
       const beatStride = 2 ** Math.ceil(Math.log2(minStride))
       const stepMs = beatSpacingMs * beatStride
+      // Phase still comes from the source grid: the first in-window beat, projected
+      // onto the timeline through the warp the clip is actually playing at.
+      const firstOffsetMs = (firstBeatMs - inMs) / warpRatio
       // Exclusive end: a beat landing exactly on the clip's out point belongs to
       // whatever follows, and drawing it would put a marker on the neighbour's
-      // first pixel.
-      for (let beatMs = firstBeatMs; beatMs < outMs; beatMs += stepMs) {
-        const offsetInClipMs = beatMs - inMs
+      // first pixel. A non-positive step would spin forever on an off-screen
+      // marker, so it draws nothing at all.
+      for (
+        let offsetInClipMs = firstOffsetMs;
+        stepMs > 0 && offsetInClipMs < effectiveDurMs;
+        offsetInClipMs += stepMs
+      ) {
         if (offsetInClipMs < 0) continue
-        const x = absX + (offsetInClipMs / warpRatio) * pxPerMs
+        const x = absX + offsetInClipMs * pxPerMs
         // A non-finite x (NaN/Infinity from a bad ratio or anchor) would slip
         // past both bounds checks below (NaN comparisons are always false) and
         // push invalid geometry that Pixi silently drops — draw nothing instead.
@@ -562,7 +571,6 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         // as the clip block and waveform mesh, which always render.
         markers.rect(Math.round(x), innerY + 1, 1, Math.max(1, innerH - 2))
         ++drew
-        if (stepMs <= 0) break
       }
       if (drew > 0) {
         markers.fill({ color: 0xffffff, alpha: 0.4 })

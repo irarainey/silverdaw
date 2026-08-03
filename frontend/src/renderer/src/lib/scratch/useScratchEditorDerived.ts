@@ -100,11 +100,10 @@ export function useScratchEditorDerived(
       : 0
   })
   const clipReversed = computed(() => clip.value?.reversed ?? false)
-  // Scratch works on a single sample at high zoom, so a one-shot's grid is kept
-  // (unlike the timeline, which suppresses it).
+  // A one-shot has no musical grid to show, on any surface.
   const sourceBeatGrid = computed(() => {
     const item = sourceItem.value
-    return item ? resolveSourceBeatGrid(item, library.byId, { suppressSimple: false }) : null
+    return item ? resolveSourceBeatGrid(item, library.byId) : null
   })
   // Peak coordinates remain in source time; the session supplies the separate
   // prepared duration used for playback and playhead positioning.
