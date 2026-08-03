@@ -128,7 +128,11 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
 
   PROJECT_BPM_APPLIED: (payload) => {
     // Mirror backend-seeded BPM locally without echoing to the bridge.
-    useTransportStore().setBpm(payload.bpm)
+    const transport = useTransportStore()
+    transport.setBpm(payload.bpm)
+    // This message only fires once the backend has established the tempo, so its
+    // arrival is itself the seed signal for backends that omit the flag.
+    transport.setBpmSeeded(payload.bpmSeeded ?? true)
     // The grid tempo is now final: snap any clips analysed just before this seed
     // that were skipped as a tempo mismatch against the stale pre-seed tempo.
     useLibraryStore().flushGridAlignAfterBpm()

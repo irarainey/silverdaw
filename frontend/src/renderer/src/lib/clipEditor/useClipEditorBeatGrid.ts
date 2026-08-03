@@ -10,6 +10,7 @@
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
+import { libraryItemIsSimple } from '@/stores/libraryItemHelpers'
 import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 export interface ClipEditorBeatGridDeps {
@@ -33,10 +34,15 @@ export interface ClipEditorBeatGrid {
   /** Whether the source currently has a tempo grid to align. */
   hasGrid: () => boolean
   /**
+   * Whether the source is a one-shot, and so can never have a beat grid however it
+   * is retuned. Distinct from `hasGrid`, which is also false for a musical item
+   * that simply has no tempo yet — that one may still be given a BPM by hand.
+   */
+  isOneShot: () => boolean
+  /**
    * The resolved source beat grid every editor surface draws and snaps to
    * (waveform lines, envelope beat snap, grid slicing). Resolved through the
-   * shared module so an inherited BPM counts, and without one-shot suppression:
-   * at Clip Editor zoom a one-shot's grid is the thing you chop a break against.
+   * shared module so an inherited BPM counts.
    */
   resolvedGrid: ComputedRef<SourceBeatGrid | null>
   /** Whether the current BPM differs from the captured original (restore is possible). */
@@ -92,14 +98,24 @@ export interface ClipEditorBeatGrid {
 const MIN_BPM = 20
 const MAX_BPM = 300
 
-function currentAnchorSec(item: LibraryItem): number {
-  return item.beatAnchorSec ?? item.beats?.[0] ?? 0
-}
-
 export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorBeatGrid {
   const library = useLibraryStore()
   const alignActive = ref(false)
   const manualBpmInput = ref<string | number>('')
+
+  const resolvedGrid = computed<SourceBeatGrid | null>(() => {
+    const item = deps.sourceItem()
+    return item ? resolveSourceBeatGrid(item, library.byId) : null
+  })
+
+  const oneShot = computed<boolean>(() => {
+    const item = deps.sourceItem()
+    return item ? libraryItemIsSimple(item, library.byId) : false
+  })
+
+  function isOneShot(): boolean {
+    return oneShot.value
+  }
   // The tempo the source had when the editor opened. Snapshotted once so the user
   // can always see the value they started from and restore it after an override.
   const originalBpm = ref<number | null>(null)
@@ -118,8 +134,19 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   let tempoEditing = false
 
   function currentBpm(): number | undefined {
-    const bpm = deps.sourceItem()?.bpm
+    // Always the tempo the grid is actually drawn from, so the controls can never
+    // act on something the user cannot see: an item inheriting its source's tempo
+    // is editable, while a one-shot (which draws no grid) is inert.
+    const bpm = resolvedGrid.value?.bpm
     return typeof bpm === 'number' && bpm > 0 ? bpm : undefined
+  }
+
+  /** Grid phase to keep when only the tempo changes; resolves the same inheritance. */
+  function currentAnchorSec(): number {
+    const grid = resolvedGrid.value
+    if (grid) return grid.anchorMs / 1000
+    const item = deps.sourceItem()
+    return item?.beatAnchorSec ?? item?.beats?.[0] ?? 0
   }
 
   function syncTempoField(): void {
@@ -129,7 +156,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   }
 
   watch(
-    () => deps.sourceItem()?.bpm,
+    currentBpm,
     (bpm) => {
       if (originalBpm.value === null && typeof bpm === 'number' && bpm > 0) {
         originalBpm.value = bpm
@@ -140,19 +167,14 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   )
 
   function hasGrid(): boolean {
-    const item = deps.sourceItem()
-    return !!item && typeof item.bpm === 'number' && item.bpm > 0
+    // Agrees with what is drawn: any resolvable grid, inherited or not.
+    return resolvedGrid.value !== null
   }
 
-  const resolvedGrid = computed<SourceBeatGrid | null>(() => {
-    const item = deps.sourceItem()
-    return item ? resolveSourceBeatGrid(item, library.byId, { suppressSimple: false }) : null
-  })
-
   function canRestore(): boolean {
-    const item = deps.sourceItem()
+    const cur = currentBpm()
     const orig = originalBpm.value
-    return !!item && typeof item.bpm === 'number' && orig !== null && Math.abs(item.bpm - orig) > 1e-6
+    return cur !== undefined && orig !== null && Math.abs(cur - orig) > 1e-6
   }
 
   function hasGridChanged(): boolean {
@@ -175,9 +197,13 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     const rawBpm = String(manualBpmInput.value).trim()
     const bpm = Number(rawBpm)
-    if (item && rawBpm !== '' && Number.isFinite(bpm) && bpm >= MIN_BPM && bpm <= MAX_BPM) {
-      if (typeof item.bpm !== 'number' || Math.abs(item.bpm - bpm) > 1e-6) {
-        library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec(item))
+    // A one-shot can never show a grid, so typing a tempo at it would silently
+    // write a value with nothing to display; a musical item with no tempo yet is
+    // exactly who this field is for.
+    if (item && !oneShot.value && rawBpm !== '' && Number.isFinite(bpm) && bpm >= MIN_BPM && bpm <= MAX_BPM) {
+      const cur = currentBpm()
+      if (cur === undefined || Math.abs(cur - bpm) > 1e-6) {
+        library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec())
         gridEdited.value = true
       }
       manualBpmInput.value = bpm.toFixed(2)
@@ -193,7 +219,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     const orig = originalBpm.value
     if (!item || orig === null || orig < MIN_BPM || orig > MAX_BPM) return
-    library.setItemManualTempoLocal(item.id, orig, currentAnchorSec(item))
+    library.setItemManualTempoLocal(item.id, orig, currentAnchorSec())
     manualBpmInput.value = orig.toFixed(2)
     gridEdited.value = true
   }
@@ -201,10 +227,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // Re-anchor on the same phase so a halve/double doesn't jump the grid origin.
   function scaleBpm(factor: number): void {
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0) return
-    const next = item.bpm * factor
+    const cur = currentBpm()
+    if (!item || cur === undefined) return
+    const next = cur * factor
     if (next < MIN_BPM || next > MAX_BPM) return
-    library.setItemManualTempoLocal(item.id, next, currentAnchorSec(item))
+    library.setItemManualTempoLocal(item.id, next, currentAnchorSec())
     manualBpmInput.value = next.toFixed(2)
     gridEdited.value = true
   }
@@ -219,26 +246,29 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function bumpBpm(delta: number): void {
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0 || !Number.isFinite(delta)) return
-    const next = Math.min(MAX_BPM, Math.max(MIN_BPM, item.bpm + delta))
-    if (Math.abs(next - item.bpm) < 1e-9) return
-    library.setItemManualTempoLocal(item.id, next, currentAnchorSec(item))
+    const cur = currentBpm()
+    if (!item || cur === undefined || !Number.isFinite(delta)) return
+    const next = Math.min(MAX_BPM, Math.max(MIN_BPM, cur + delta))
+    if (Math.abs(next - cur) < 1e-9) return
+    library.setItemManualTempoLocal(item.id, next, currentAnchorSec())
     manualBpmInput.value = next.toFixed(2)
     gridEdited.value = true
   }
 
   function nudgeAnchorMs(deltaMs: number): void {
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0 || !Number.isFinite(deltaMs)) return
-    library.setItemManualTempoLocal(item.id, item.bpm, currentAnchorSec(item) + deltaMs / 1000)
+    const cur = currentBpm()
+    if (!item || cur === undefined || !Number.isFinite(deltaMs)) return
+    library.setItemManualTempoLocal(item.id, cur, currentAnchorSec() + deltaMs / 1000)
     gridEdited.value = true
   }
 
   function nudgeHalfBeat(direction: -1 | 1): void {
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0) return
-    const halfBeatSec = 30 / item.bpm
-    library.setItemManualTempoLocal(item.id, item.bpm, currentAnchorSec(item) + direction * halfBeatSec)
+    const cur = currentBpm()
+    if (!item || cur === undefined) return
+    const halfBeatSec = 30 / cur
+    library.setItemManualTempoLocal(item.id, cur, currentAnchorSec() + direction * halfBeatSec)
     gridEdited.value = true
   }
 
@@ -250,18 +280,20 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function commitAnchorSec(anchorSec: number): void {
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0) return
-    library.setItemManualTempoLocal(item.id, item.bpm, anchorSec)
+    const cur = currentBpm()
+    if (!item || cur === undefined) return
+    library.setItemManualTempoLocal(item.id, cur, anchorSec)
     gridEdited.value = true
   }
 
   function commit(): void {
     if (!gridEdited.value || gridCommitted) return
     const item = deps.sourceItem()
-    if (!item || !item.bpm || item.bpm <= 0) return
+    const cur = currentBpm()
+    if (!item || cur === undefined) return
     // The draft already lives in the item's local (bpm, anchor); persist that final
     // pair as the session's single undoable grid edit.
-    library.setItemManualTempo(item.id, item.bpm, currentAnchorSec(item))
+    library.setItemManualTempo(item.id, cur, currentAnchorSec())
     gridCommitted = true
   }
 
@@ -281,8 +313,8 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     tempoEditing = false
     const item = deps.sourceItem()
     gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
-    const bpm = item?.bpm
-    originalBpm.value = typeof bpm === 'number' && bpm > 0 ? bpm : null
+    const bpm = currentBpm()
+    originalBpm.value = bpm !== undefined ? bpm : null
     syncTempoField()
   }
 
@@ -291,6 +323,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     manualBpmInput,
     originalBpm,
     hasGrid,
+    isOneShot,
     resolvedGrid,
     canRestore,
     hasGridChanged,

@@ -219,6 +219,8 @@ export function useProjectPropertiesController(
     }
     if (hasBpmChange.value) {
       transport.setBpm(nextBpm)
+      // Mirrors the backend marking the project seeded on PROJECT_SET_BPM.
+      transport.setBpmSeeded(true)
       // Send the clamped renderer value.
       sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
     }

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.2
+
+### Fixed
+
+- Stretching a clip past its original length now plays and exports for its full stretched length, instead of cutting off where it used to end.
+- Changing a clip's stretch while the timeline is playing now takes effect straight away, instead of leaving the clip silent until the next seek.
+- A music sample dropped on the timeline now auto-warps to the project tempo like any other musical clip.
+- The Warp dialog and Clip Editor now offer Follow project BPM and Pin for a music sample, instead of only a stretch percentage.
+- Reanalysing a sample, stem or saved clip no longer reclassifies it as a plain imported source.
+- The Clip Editor now lets you correct the beat grid of a stem or saved clip that takes its tempo from the track it came from, instead of showing beat markers with the tempo and align controls greyed out.
+- The Clip Editor and Scratch Editor no longer draw a beat grid over a simple sample, matching the timeline — a one-shot has no beat to mark.
+- Classifying an item as a simple sample now clears any BPM it was carrying, and detection or reanalysis can no longer give one back. Its key is kept.
+- Chop to Grid is no longer offered on a simple sample, which has no grid to chop against, and is now offered on any clip whose beat markers are drawn — including a stem that takes its tempo from the track it came from.
+- The warp stretch percentage in the Clip Editor and Warp dialog now always reads to two decimal places, instead of switching between none, one and two as the value changes, and the stretch applied is now exactly the figure shown rather than a longer one rounded off for display.
+- The first clip dropped into a project that already has a tempo now auto-warps to it, instead of being left at its own tempo until a second clip was added.
+- Setting the project tempo by hand now sticks: the next clip analysed no longer seeds over it.
+- A clip's original tempo is now resolved the same way everywhere, so a clip can no longer be drawn stretched to the project tempo while playing back at its own — stems, saved clips and samples now agree with the timeline, the beat grid and playback.
+- Opening a project saved before this release repairs any saved samples in its library that were stored as plain imports, so they group and behave as samples again.
+
 ## 1.5.1
 
 ### Fixed

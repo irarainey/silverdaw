@@ -7,7 +7,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
 import { libraryItemDisplayName, useLibraryStore } from '@/stores/libraryStore'
-import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
+import { libraryItemWarpSourceBpm } from '@/stores/libraryItemHelpers'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
@@ -45,15 +45,10 @@ export function useClipWarpDialogController(
       : clip.value ? library.byId[clip.value!.libraryItemId] : undefined
   )
 
-  // Source BPM as seen by the tempo controls. Uses the item's own or inherited
-  // source tempo (matching the Clip Editor), EXCEPT samples: they are committed,
-  // free-form audio with no project-relative tempo, so they expose none and the
-  // dialog offers only free Stretch % (Follow/Pin need a source BPM).
-  const sourceBpm = computed(() => {
-    const item = libItem.value
-    if (!item || item.kind === 'sample') return undefined
-    return libraryItemSourceBpm(item, library.byId)
-  })
+  // Source BPM as seen by the tempo controls. Matches the Clip Editor: a sample
+  // exposes only the tempo baked onto it at save time, so a music sample offers
+  // Follow/Pin and a simple sample falls back to free Stretch %.
+  const sourceBpm = computed(() => libraryItemWarpSourceBpm(libItem.value, library.byId))
   const projectBpm = computed(() => transport.bpm)
   const dialogTitle = computed(() => props.panel === 'pitch' ? 'Pitch' : 'Warp')
   // True when the dialog's target is a library-clip library item — either

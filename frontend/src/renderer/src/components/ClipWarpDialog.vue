@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useClipWarpDialogController, type ClipWarpDialogProps } from '@/lib/clipEditor/useClipWarpDialogController'
+import { useDecimalFieldText } from '@/lib/useDecimalFieldText'
 import { useInlineNumberEdit } from '@/lib/useInlineNumberEdit'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 
@@ -36,6 +37,15 @@ const {
   cancel,
   onKeydown
 } = useClipWarpDialogController(props, emit, dialogEl)
+
+// Shown always formatted to two decimals (e.g. "100.00") while the draft stays a
+// plain number for the warp maths.
+const {
+  text: stretchPercentText,
+  onFocus: onStretchPercentFocus,
+  onInput: onStretchPercentInput,
+  onBlur: onStretchPercentBlur
+} = useDecimalFieldText(draftStretchPercent)
 
 // Double-click the readouts to type an exact value; Enter commits, Escape cancels.
 const {
@@ -230,13 +240,16 @@ const {
               >
               <span class="text-zinc-200">Stretch</span>
               <input
-                v-model.number="draftStretchPercent"
+                :value="stretchPercentText"
                 type="number"
                 min="25"
                 max="400"
-                step="1"
+                step="0.01"
                 :disabled="draftTempoMode !== 'stretch'"
                 class="no-spinner w-20 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-right font-mono text-xs text-zinc-100 focus:border-sky-500 focus:outline-none disabled:opacity-50"
+                @focus="onStretchPercentFocus"
+                @input="onStretchPercentInput"
+                @blur="onStretchPercentBlur"
               >
               <span class="text-[10px] text-zinc-500">%</span>
             </label>

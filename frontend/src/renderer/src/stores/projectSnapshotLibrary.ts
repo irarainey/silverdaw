@@ -147,6 +147,13 @@ export function applyProjectLibrary(
         scratchPatternId: item.scratchPatternId,
         fromSnapshot: true
       })
+      // Classify first: a one-shot may not hold a tempo, so the analysis block below
+      // must know what this item is before it tries to hydrate a grid onto it. This
+      // also cleans up projects saved before one-shots were barred from having a BPM.
+      if (item.audioType === 'simple' || item.audioType === 'music') {
+        const target = library.items.find((i) => i.id === libId)
+        if (target) target.audioType = item.audioType
+      }
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.
       if (typeof item.bpm === 'number' && item.bpm > 0) {
         const persistedBeats = Array.isArray(item.beats) ? item.beats : []
@@ -164,10 +171,6 @@ export function applyProjectLibrary(
           item.lowConfidence === true,
           /*align=*/ false
         )
-      }
-      if (item.audioType === 'simple' || item.audioType === 'music') {
-        const target = library.items.find((i) => i.id === libId)
-        if (target) target.audioType = item.audioType
       }
       // Resolve cover art + tags from the project media store by the item's media GUID
       // (shared by the imported source and every stem/sample derived from it). Items

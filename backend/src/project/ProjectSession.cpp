@@ -192,6 +192,10 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     }
     obj->setProperty("playheadMs", projectState.getPlayheadMs());
     obj->setProperty("bpm", projectState.getBpm());
+    // The renderer's drop auto-warp needs to know whether the tempo is established
+    // (a seeded tempo is a real target to warp to) rather than inferring it from
+    // whether any clip happens to be on the timeline.
+    obj->setProperty("bpmSeeded", projectState.isBpmSeeded());
     obj->setProperty("projectLengthMs", projectState.getProjectLengthMs());
     // Null lets the renderer distinguish unset from explicitly cleared.
     {

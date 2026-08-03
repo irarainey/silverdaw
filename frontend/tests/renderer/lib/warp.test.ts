@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  clipEffectiveDurationMs,
   effectiveDurationMs,
   effectivePitchScale,
   effectiveTempoRatio,
@@ -75,7 +74,7 @@ describe('warp helpers', () => {
   describe('shouldAutoWarpOnDrop', () => {
     const eligible = {
       preferenceEnabled: true,
-      projectHasOtherClips: true,
+      projectBpmSeeded: true,
       sourceKind: 'source' as const,
       sourceIsSimple: false,
       sourceBpm: 100,
@@ -92,10 +91,16 @@ describe('warp helpers', () => {
       expect(shouldAutoWarpOnDrop({ ...eligible, sourceKind: 'clip' })).toBe(false)
     })
 
-    it('requires another clip and usable source/project BPM values', () => {
-      expect(shouldAutoWarpOnDrop({ ...eligible, projectHasOtherClips: false })).toBe(false)
+    it('requires a seeded project tempo and usable source/project BPM values', () => {
+      expect(shouldAutoWarpOnDrop({ ...eligible, projectBpmSeeded: false })).toBe(false)
       expect(shouldAutoWarpOnDrop({ ...eligible, sourceBpm: undefined })).toBe(false)
       expect(shouldAutoWarpOnDrop({ ...eligible, projectBpm: 0 })).toBe(false)
+    })
+
+    it('warps the first clip dropped into a project whose tempo is already settled', () => {
+      // The old gate asked "is another clip on the timeline?", which refused to warp
+      // the first drop into a reopened project that already had an established tempo.
+      expect(shouldAutoWarpOnDrop(eligible)).toBe(true)
     })
   })
 
@@ -122,16 +127,6 @@ describe('warp helpers', () => {
       expect(
         effectiveDurationMs(2000, { warpEnabled: true, tempoRatio: 2.0, sourceBpm: 120, projectBpm: 60 })
       ).toBe(1000)
-    })
-
-    it('uses the same effective duration helper shape as clips and library items', () => {
-      expect(
-        clipEffectiveDurationMs(
-          { durationMs: 4000, warpEnabled: true },
-          { bpm: 120 },
-          180
-        )
-      ).toBeCloseTo(4000 / 1.5, 3)
     })
   })
 

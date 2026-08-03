@@ -11,6 +11,7 @@ import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveTempoRatio, isWarpActive, shouldAutoWarpOnDrop } from '@/lib/warp'
 import { firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import {
   RULER_HEIGHT,
   SCROLLBAR_HEIGHT,
@@ -155,27 +156,27 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     const firstBeatMs = firstSourceBeatMsAtOrAfter(grid, 0)
     if (firstBeatMs > item.durationMs) return null
     // Project the first beat into timeline time using the warp that will apply on
-    // drop. That decision reads `item.bpm`, NOT the grid's (possibly inherited)
-    // BPM — the ghost preview and the placement both use `item.bpm`, and a snap
-    // computed against a ratio the drop never applies lands the first beat off
-    // the grid by exactly that ratio.
+    // drop. Snap, ghost preview and placement all resolve the original BPM through
+    // the one shared resolver — when they disagreed, a snap computed against a
+    // ratio the drop never applied landed the first beat off the grid by exactly
+    // that ratio.
     const ui = useUiStore()
-    const projectHasOtherClips = Object.keys(project.clips).length > 0
+    const snapSourceBpm = libraryItemSourceBpm(item, library.byId)
     const willWarpForSnap =
       item.warpEnabled === true ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
-        projectHasOtherClips,
+        projectBpmSeeded: transport.bpmSeeded,
         sourceKind: item.kind,
         sourceIsSimple: libraryItemIsSimple(item, library.byId),
-        sourceBpm: item.bpm,
+        sourceBpm: snapSourceBpm,
         projectBpm: transport.bpm,
         variableTempo: item.variableTempo
       })
     const warpInputs = {
       warpEnabled: willWarpForSnap,
       tempoRatio: item.tempoRatio,
-      sourceBpm: item.bpm,
+      sourceBpm: snapSourceBpm,
       projectBpm: transport.bpm
     }
     const ratio = isWarpActive(warpInputs) ? effectiveTempoRatio(warpInputs) : 1
@@ -207,24 +208,24 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
     // Mirror drop-time warp so the ghost width matches the landed clip.
     const ui = useUiStore()
-    const projectHasOtherClips = Object.keys(project.clips).length > 0
-    // Samples skip auto-warp on drop, so the preview must too.
+    // Simple samples skip auto-warp on drop, so the preview must too.
     const dropIsSample = libraryItemIsSimple(item, library.byId)
+    const previewSourceBpm = libraryItemSourceBpm(item, library.byId)
     const willWarp =
       (item.warpEnabled === true) ||
       shouldAutoWarpOnDrop({
         preferenceEnabled: ui.matchProjectTempoOnDrop,
-        projectHasOtherClips,
+        projectBpmSeeded: transport.bpmSeeded,
         sourceKind: item.kind,
         sourceIsSimple: dropIsSample,
-        sourceBpm: item.bpm,
+        sourceBpm: previewSourceBpm,
         projectBpm: transport.bpm,
         variableTempo: item.variableTempo
       })
     const previewRatio = willWarp
       ? effectiveTempoRatio({
           tempoRatio: item.tempoRatio,
-          sourceBpm: item.bpm,
+          sourceBpm: previewSourceBpm,
           projectBpm: transport.bpm
         })
       : 1

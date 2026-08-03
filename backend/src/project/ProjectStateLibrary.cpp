@@ -1,4 +1,5 @@
 #include "ProjectState.h"
+#include "Log.h"
 
 #include <vector>
 
@@ -14,9 +15,9 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
                                    int collapsedFlag, const juce::String& mediaId)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return false;
-    // 'stem', 'sample' and 'clip' are recognised derived/explicit kinds; anything else is a source.
-    const auto normalisedKind =
-        (kind == "clip" || kind == "stem" || kind == "sample") ? kind : juce::String("source");
+    // A recognised kind is explicit; anything else (including empty) means "not supplied".
+    const bool kindSupplied = (kind == "clip" || kind == "stem" || kind == "sample" || kind == "source");
+    const auto normalisedKind = kindSupplied ? kind : juce::String("source");
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid())
     {
@@ -30,7 +31,12 @@ bool ProjectState::addLibraryItem(const juce::String& itemId, const juce::String
         if (item.getProperty(kId).toString() == itemId)
         {
             item.setProperty(kFilePath, filePath, &undoManager);
-            item.setProperty(kKind, normalisedKind, &undoManager);
+            // Reanalyse and relink pass no kind; only an explicit one may re-classify an
+            // existing item, or a sample/stem/clip would silently demote to a plain source.
+            if (kindSupplied)
+            {
+                item.setProperty(kKind, normalisedKind, &undoManager);
+            }
             if (displayName.isNotEmpty())
             {
                 item.setProperty(kDisplayName, displayName, &undoManager);
@@ -268,6 +274,35 @@ juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) con
         currentId = found.getProperty(kSourceItemId, {}).toString();
     }
     return {};
+}
+
+int ProjectState::repairLegacyLibraryItemKinds()
+{
+    // Projects saved before saving a sample stopped normalising `kind` hold their
+    // samples as plain sources, so a saved sample reopened from one of those files
+    // is no longer grouped or treated as a sample. Every sample id is minted as
+    // "sample-<uuid>" by all three creation paths (save clip as sample, save library
+    // clip as sample, slice to samples), so the prefix identifies them exactly.
+    //
+    // Repaired in place on load: the project then persists correctly on the next
+    // save, and old files keep opening either way.
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0;
+    int repaired = 0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (!item.getProperty(kId).toString().startsWith("sample-")) continue;
+        if (item.getProperty(kKind, "source").toString() == "sample") continue;
+        item.setProperty(kKind, "sample", nullptr);
+        ++repaired;
+    }
+    if (repaired > 0)
+    {
+        silverdaw::log::info("project",
+                             "repaired legacy sample kind on " + juce::String(repaired) + " library item(s)");
+    }
+    return repaired;
 }
 
 bool ProjectState::hasLibraryItemForPath(const juce::String& filePath) const

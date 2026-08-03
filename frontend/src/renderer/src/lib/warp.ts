@@ -12,7 +12,16 @@ export interface ClipWarpInputs {
 
 export interface DropAutoWarpInputs {
   preferenceEnabled: boolean
-  projectHasOtherClips: boolean
+  /**
+   * Whether the project tempo is established (the backend's `bpmSeeded`).
+   *
+   * This used to ask "does the timeline hold another clip?" as a stand-in, on the
+   * reasoning that the first clip seeds the tempo so there is nothing real to warp
+   * to yet. That proxy is wrong for a project whose tempo is already established
+   * but whose timeline is empty — a saved project reopened, or one whose clips were
+   * all deleted — where the first clip dropped would silently refuse to warp.
+   */
+  projectBpmSeeded: boolean
   sourceKind?: 'source' | 'clip' | 'stem' | 'sample'
   sourceIsSimple: boolean
   sourceBpm?: number
@@ -27,7 +36,7 @@ export const WARP_BYPASS_EPSILON = 1e-4
 export function shouldAutoWarpOnDrop(inputs: DropAutoWarpInputs): boolean {
   return (
     inputs.preferenceEnabled &&
-    inputs.projectHasOtherClips &&
+    inputs.projectBpmSeeded &&
     inputs.sourceKind !== 'clip' &&
     !inputs.sourceIsSimple &&
     typeof inputs.sourceBpm === 'number' &&
@@ -88,21 +97,4 @@ export interface ClipForWarp {
   warpEnabled?: boolean
   tempoRatio?: number
   libraryItemId?: string
-}
-
-export interface LibraryItemForWarp {
-  bpm?: number
-}
-
-export function clipEffectiveDurationMs(
-  clip: ClipForWarp,
-  libraryItem: LibraryItemForWarp | undefined,
-  projectBpm: number | undefined
-): number {
-  return effectiveDurationMs(clip.durationMs, {
-    warpEnabled: clip.warpEnabled,
-    tempoRatio: clip.tempoRatio,
-    sourceBpm: libraryItem?.bpm,
-    projectBpm
-  })
 }

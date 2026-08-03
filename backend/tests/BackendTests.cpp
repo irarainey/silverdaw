@@ -5,7 +5,9 @@
 #include "TestRegistry.h"
 
 #include <iostream>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <juce_events/juce_events.h>
@@ -16,42 +18,87 @@ using namespace silverdaw::tests;
 
 // Assemble the full registry. Building it is cheap (each entry is just a name +
 // lambda); running JUCE / audio code only happens when a test's fn() is called.
-std::vector<TestCase> buildRegistry()
+// Registrars are listed with their names so a domain that silently contributes
+// nothing can be named in the error.
+struct DomainRegistrar
+{
+    const char* domain;
+    void (*add)(std::vector<TestCase>&);
+};
+
+constexpr DomainRegistrar kRegistrars[] = {
+    {"ProjectState", addProjectStateTests},
+    {"ProjectStateFx", addProjectStateFxTests},
+    {"Persistence", addPersistenceTests},
+    {"Bridge", addBridgeTests},
+    {"MidiControllerMapping", addMidiControllerMappingTests},
+    {"Warp", addWarpTests},
+    {"ScratchDsp", addScratchDspTests},
+    {"BackingMonitorSource", addBackingMonitorSourceTests},
+    {"ScratchProtocol", addScratchProtocolTests},
+    {"ScratchSession", addScratchSessionTests},
+    {"ScratchRecorder", addScratchRecorderTests},
+    {"AudioEngine", addAudioEngineTests},
+    {"FxDsp", addFxDspTests},
+    {"Loudness", addLoudnessTests},
+    {"EnvelopeFade", addEnvelopeFadeTests},
+    {"Automation", addAutomationTests},
+    {"BeatRepeat", addBeatRepeatTests},
+    {"MixdownRender", addMixdownRenderTests},
+    {"StemSeparation", addStemSeparationTests},
+    {"BpmDetector", addBpmDetectorTests},
+    {"VocalEnhancer", addVocalEnhancerTests},
+    {"VocalDenoiser", addVocalDenoiserTests},
+    {"Dereverberator", addDereverberatorTests},
+    {"VocalRestorer", addVocalRestorerTests},
+    {"DrumEnhancer", addDrumEnhancerTests},
+    {"BassEnhancer", addBassEnhancerTests},
+    {"OtherEnhancer", addOtherEnhancerTests},
+    {"MelRoformerSpectral", addMelRoformerSpectralTests},
+    {"BsRoformerSpectral", addBsRoformerSpectralTests},
+    {"LibraryCleanup", addLibraryCleanupTests},
+    {"ScratchPatternPersistence", addScratchPatternPersistenceTests},
+    {"ScratchPatternEvaluator", addScratchPatternEvaluatorTests},
+    {"ScratchPatternReplayProjectState", addScratchPatternReplayProjectStateTests},
+};
+
+// Structural validation of the assembled registry. Guards the failures that
+// would otherwise leave CTest green while tests went missing: a domain that
+// registers nothing, and a name that breaks discovery — CTest keys each case on
+// its exact name, so an empty, duplicate, or non-ASCII name loses a test.
+std::string validateRegistry(const std::vector<TestCase>& tests,
+                             const std::vector<std::pair<const char*, std::size_t>>& perDomainCounts)
+{
+    for (const auto& [domain, count] : perDomainCounts)
+    {
+        if (count == 0) return std::string("domain '") + domain + "' registered no tests";
+    }
+
+    std::set<std::string> seen;
+    for (const auto& test : tests)
+    {
+        if (test.name == nullptr || *test.name == '\0') return "a test has an empty name";
+        for (const char* c = test.name; *c != '\0'; ++c)
+        {
+            if (static_cast<unsigned char>(*c) > 0x7F)
+                return std::string("test name is not ASCII: '") + test.name + "'";
+        }
+        if (!seen.insert(test.name).second)
+            return std::string("duplicate test name: '") + test.name + "'";
+        if (!test.fn) return std::string("test has no function: '") + test.name + "'";
+    }
+    return {};
+}
+
+std::vector<TestCase> buildRegistry(std::vector<std::pair<const char*, std::size_t>>& perDomainCounts)
 {
     std::vector<TestCase> tests;
-    addProjectStateTests(tests);
-    addProjectStateFxTests(tests);
-    addPersistenceTests(tests);
-    addBridgeTests(tests);
-    addMidiControllerMappingTests(tests);
-    addWarpTests(tests);
-    addScratchDspTests(tests);
-    addBackingMonitorSourceTests(tests);
-    addScratchProtocolTests(tests);
-    addScratchSessionTests(tests);
-    addScratchRecorderTests(tests);
-    addAudioEngineTests(tests);
-    addFxDspTests(tests);
-    addLoudnessTests(tests);
-    addEnvelopeFadeTests(tests);
-    addAutomationTests(tests);
-    addBeatRepeatTests(tests);
-    addMixdownRenderTests(tests);
-    addStemSeparationTests(tests);
-    addBpmDetectorTests(tests);
-    addVocalEnhancerTests(tests);
-    addVocalDenoiserTests(tests);
-    addDereverberatorTests(tests);
-    addVocalRestorerTests(tests);
-    addDrumEnhancerTests(tests);
-    addBassEnhancerTests(tests);
-    addOtherEnhancerTests(tests);
-    addMelRoformerSpectralTests(tests);
-    addBsRoformerSpectralTests(tests);
-    addLibraryCleanupTests(tests);
-    addScratchPatternPersistenceTests(tests);
-    addScratchPatternEvaluatorTests(tests);
-    addScratchPatternReplayProjectStateTests(tests);
+    for (const auto& registrar : kRegistrars)
+    {
+        const auto before = tests.size();
+        registrar.add(tests);
+        perDomainCounts.emplace_back(registrar.domain, tests.size() - before);
+    }
     return tests;
 }
 } // namespace
@@ -64,12 +111,13 @@ int main(int argc, char** argv)
 {
     using namespace silverdaw::tests;
 
-    const auto tests = buildRegistry();
-#if defined(SILVERDAW_STEM_SEPARATION)
-    require(tests.size() == 381, "backend test registry should contain 381 tests");
-#else
-    require(tests.size() == 379, "backend test registry should contain 379 tests");
-#endif
+    std::vector<std::pair<const char*, std::size_t>> perDomainCounts;
+    const auto tests = buildRegistry(perDomainCounts);
+    if (const auto problem = validateRegistry(tests, perDomainCounts); !problem.empty())
+    {
+        std::cerr << "backend test registry is invalid: " << problem << '\n';
+        return 2;
+    }
 
     bool listOnly = false;
     std::string runOnly;

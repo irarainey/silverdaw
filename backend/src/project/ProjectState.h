@@ -547,6 +547,10 @@ class ProjectState : public juce::ValueTree::Listener
 
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
+    /** Restore `kind` on samples that older projects persisted as plain sources.
+     *  Returns how many items were repaired. Applied on load; see the definition. */
+    int repairLegacyLibraryItemKinds();
+
     // Duration in ms for a library item by id, or 0 when unknown. Used to build
     // a rigid manual beat grid spanning the source.
     double getLibraryItemDurationMs(const juce::String& itemId) const;
@@ -718,6 +722,13 @@ class ProjectState : public juce::ValueTree::Listener
     private:
         ProjectState& state;
     };
+
+    /**
+     * Whether a library item is classified as a one-shot ("simple"). Such an item
+     * has no pulse, so every tempo-grid writer refuses it — see
+     * `ProjectStateLibraryAnalysis.cpp`.
+     */
+    static bool isOneShotItem(const juce::ValueTree& item);
 
     // Central identifiers make property typos link-time failures.
     static const juce::Identifier kProject;

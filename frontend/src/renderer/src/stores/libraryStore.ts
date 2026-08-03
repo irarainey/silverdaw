@@ -34,7 +34,7 @@ export type {
   LibraryItemGridSnapshot,
   LibraryClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, libraryItemWarpSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
 
 import { libraryClipActions } from './libraryClipActions'
 import { importActions } from './libraryImportActions'
@@ -259,6 +259,16 @@ export const useLibraryStore = defineStore('library', {
         normalised === 'auto' ? undefined : normalised
       if (item.audioType === nextStored) return
       item.audioType = nextStored
+      // A one-shot has no pulse, so it may not keep a tempo grid — mirrors the
+      // backend, which strips the same fields and refuses later tempo writes.
+      // Key/pitch is deliberately left alone: a one-shot can be in a key.
+      if (nextStored === 'simple') {
+        item.bpm = undefined
+        item.beats = undefined
+        item.beatAnchorSec = undefined
+        item.variableTempo = undefined
+        item.lowConfidence = undefined
+      }
       useProjectStore().timelineRevision++
       sendBridge('LIBRARY_ITEM_SET_AUDIO_TYPE', {
         itemId,

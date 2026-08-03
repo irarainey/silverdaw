@@ -252,6 +252,8 @@ describe('projectStore', () => {
     const transport = useTransportStore()
     const ui = useUiStore()
     transport.bpm = 120
+    // The project tempo is established; auto-warp keys off this, not clip count.
+    transport.bpmSeeded = true
     const trackId = project.addTrack()
     const makeClip = (libraryItemId: string, startMs: number): string =>
       project.addClipToTrack(
@@ -300,6 +302,72 @@ describe('projectStore', () => {
       'CLIP_SET_WARP',
       expect.objectContaining({ clipId: disabledClipId, warpEnabled: true })
     )
+  })
+
+  it('auto-warps the first clip dropped into a project whose tempo is already settled', () => {
+    // Reported: project at 95 BPM reopened with an empty timeline, drum sample at
+    // 100.77 dropped on a track, no auto-warp. The gate asked "is another clip on
+    // the timeline?" as a stand-in for "is the tempo established?" — a proxy the
+    // backend already answers properly with bpmSeeded.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 95
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'drum-sample',
+        filePath: 'C:\\audio\\drum-sample.wav',
+        fileName: 'drum-sample.wav',
+        durationMs: 4_536,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, {
+      kind: 'sample',
+      bpm: 100.77,
+      audioType: 'music'
+    })
+
+    expect(project.clips[clipId]?.warpEnabled).toBe(true)
+    expect(sendMock).toHaveBeenCalledWith(
+      'CLIP_SET_WARP',
+      expect.objectContaining({ clipId, warpEnabled: true })
+    )
+  })
+
+  it('still refuses to auto-warp before the project tempo is seeded', () => {
+    // The original reason for the gate stands: the first musical clip establishes
+    // the tempo, so warping it would target the transient default.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+    transport.bpmSeeded = false
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'seeder',
+        filePath: 'C:\\audio\\seeder.wav',
+        fileName: 'seeder.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, { kind: 'source', bpm: 100, audioType: 'music' })
+
+    expect(project.clips[clipId]?.warpEnabled).toBeUndefined()
   })
 
   it('alignClipToBarGrid moves a matching-tempo clip the least distance so its beat grid lands on a beat line', () => {

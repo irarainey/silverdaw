@@ -120,6 +120,10 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
         if (bpm >= 20.0 && bpm <= 300.0)
         {
             projectState.setBpm(bpm);
+            // Setting the tempo by hand is the strongest statement that it is
+            // established: without this the flag stays false and the next analysed
+            // clip re-seeds the project, overriding the tempo the user just typed.
+            projectState.setBpmSeeded(true);
             engine.setMetronomeBpm(bpm);
             syncBeatRepeatRegions(engine, projectState);
             // Pinned tempo ratios opt out of project-BPM tracking.

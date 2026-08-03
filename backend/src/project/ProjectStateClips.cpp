@@ -466,22 +466,33 @@ ProjectState::getLibraryItemPreparationInfo(const juce::String& libraryItemId) c
     return result;
 }
 
+// The single backend resolver for an item's ORIGINAL BPM, mirroring the renderer's
+// `libraryItemSourceBpm`. An item has exactly one original tempo and the two
+// processes must never derive their own version: when they drifted, a clip could be
+// drawn stretched while the engine played it unwarped.
+//
+// Two rules, in order: a one-shot has no tempo at all (inherited or otherwise), then
+// own BPM, falling back to the item it was derived from.
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return 0.0;
     juce::String sourceItemId;
+    bool foundItem = false;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
         if (item.getProperty(kId).toString() == itemId)
         {
+            foundItem = true;
+            if (isOneShotItem(item)) return 0.0;
             const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0));
             if (bpm > 0.0) return bpm;
             sourceItemId = item.getProperty(kSourceItemId, {}).toString();
             break;
         }
     }
+    if (!foundItem) return 0.0;
     if (sourceItemId.isNotEmpty())
     {
         for (int i = 0; i < library.getNumChildren(); ++i)
@@ -489,6 +500,9 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
             const auto item = library.getChild(i);
             if (item.getProperty(kId).toString() == sourceItemId)
             {
+                // A one-shot classification is inherited, so a clip cut from a
+                // one-shot has no tempo to borrow either.
+                if (isOneShotItem(item)) return 0.0;
                 return static_cast<double>(item.getProperty(kBpm, 0.0));
             }
         }

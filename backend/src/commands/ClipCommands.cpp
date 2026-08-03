@@ -287,7 +287,15 @@ void handleClipSetWarp(const juce::var& payload, silverdaw::AudioEngine& engine,
         + " pendingAutoWarp=" + (pendingAutoWarp.has_value() ? (*pendingAutoWarp ? "true" : "false") : "unset")
         + " effectiveRatio=" + (effectiveRatio.has_value() ? juce::String(*effectiveRatio) : juce::String("unset")));
     // Engine owns WarpProcessor lifetime; update it for the next audio block.
-    engine.setClipWarp(clipId, warpEnabled, warpMode, effectiveRatio, semitones, cents);
+    // A false here means ProjectState (and so the UI) now says warped while the engine
+    // still plays the clip dry — the "clip looks stretched but sounds unchanged" defect.
+    // It is not recoverable from here, but it must never be silent.
+    if (!engine.setClipWarp(clipId, warpEnabled, warpMode, effectiveRatio, semitones, cents))
+    {
+        silverdaw::log::warn("warp",
+                             "engine refused CLIP_SET_WARP clipId=" + clipId
+                                 + " — project state and playback are now out of step");
+    }
     auto appliedPayload = silverdaw::buildClipWarpAppliedPayload(projectState, clipId);
     bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
 }

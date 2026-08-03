@@ -503,6 +503,8 @@ export const ProjectStatePayloadSchema = z.object({
   viewSnapGrid: z.enum(SNAP_GRIDS).optional(),
   playheadMs: z.number().optional(),
   bpm: z.number().optional(),
+  /** True once the project tempo is established; drop auto-warp keys off this. */
+  bpmSeeded: z.boolean().optional(),
   projectLengthMs: z.number().optional(),
   /** `null`/absent device preference leaves the live user-scope device unchanged. */
   audioOutputTypeName: z.string().nullable().optional(),
@@ -689,7 +691,9 @@ export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPaylo
 
 /** Backend-seeded project BPM; renderer applies without echoing `PROJECT_SET_BPM`. */
 export const ProjectBpmAppliedPayloadSchema = z.object({
-  bpm: z.number()
+  bpm: z.number(),
+  /** Absent on older backends; the tempo is established whenever this arrives. */
+  bpmSeeded: z.boolean().optional()
 })
 export type ProjectBpmAppliedPayload = z.infer<typeof ProjectBpmAppliedPayloadSchema>
 

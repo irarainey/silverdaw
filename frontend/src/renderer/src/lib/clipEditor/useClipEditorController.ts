@@ -6,7 +6,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { effectiveClipDurationMs, useProjectStore } from '@/stores/projectStore'
-import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useLibraryStore, libraryItemWarpSourceBpm, type LibraryItem } from '@/stores/libraryStore'
 import { isWarpActive } from '@/lib/warp'
 import { useClipEditorTarget } from '@/lib/clipEditor/useClipEditorTarget'
 import { useClipEditorViewport } from '@/lib/clipEditor/useClipEditorViewport'
@@ -65,12 +65,12 @@ export function useClipEditorController(
     sourceKey
   } = useClipEditorTarget(itemRef, clipIdRef)
 
-  // Source BPM as seen by the WARP/tempo controls only. Samples are committed,
-  // free-form audio: they expose no source tempo to warp, so the tempo control
-  // offers only free Stretch % (Follow/Pin need a source BPM). The beat grid still
-  // uses the item's real BPM (via `sourceItem`), so beat markers are unaffected.
+  // Source BPM as seen by the WARP/tempo controls only. A sample exposes just the
+  // tempo baked onto it at save time, so a music sample offers Follow/Pin while a
+  // simple sample falls back to free Stretch %. The beat grid still uses the item's
+  // real BPM (via `sourceItem`), so beat markers are unaffected.
   const warpSourceBpm = computed(() =>
-    editorItem.value?.kind === 'sample' ? undefined : sourceBpm.value
+    libraryItemWarpSourceBpm(editorItem.value ?? undefined, library.byId)
   )
 
   // Draft warp + pitch state reseeded on each target switch.

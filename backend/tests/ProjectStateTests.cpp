@@ -483,6 +483,162 @@ void testProjectStateViewLibraryMarkersAndReplace()
     require(state.replaceTree(wrongRoot).failed(), "replaceTree should reject non-PROJECT roots");
 }
 
+void testProjectStateReanalyseKeepsDerivedKind()
+{
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 300000.0, 48000, 2),
+            "source item should add");
+    require(state.addLibraryItem("smp", "C:\\proj\\samples\\S\\s.wav", "s.wav", 4500.0, 48000, 2,
+                                 {}, {}, "sample", "Drum loop", "src", {}, 15230.0, 4500.0),
+            "sample item should add");
+
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier kindId{"kind"};
+    auto sampleItem = state.getTree().getChildWithName(libraryId).getChildWithProperty(
+        juce::Identifier{"id"}, "smp");
+    requireEqual(sampleItem.getProperty(kindId).toString(), "sample", "sample kind should store");
+
+    // LIBRARY_REANALYSE re-adds an existing item with no kind; that must not demote it.
+    require(state.addLibraryItem("smp", "C:\\proj\\samples\\S\\s.wav", "s.wav", 4500.0, 48000, 2,
+                                 "C:\\cache\\s.wav"),
+            "reanalyse re-add should succeed");
+    requireEqual(sampleItem.getProperty(kindId).toString(), "sample",
+                 "reanalyse must not demote a sample to a plain source");
+    requireEqual(sampleItem.getProperty(juce::Identifier{"sourceItemId"}).toString(), "src",
+                 "reanalyse must keep the sample's provenance link");
+
+    // A new item with no kind still defaults to source.
+    require(state.addLibraryItem("plain", "C:\\audio\\b.wav", "b.wav", 1000.0, 48000, 2),
+            "plain item should add");
+    requireEqual(state.getTree()
+                     .getChildWithName(libraryId)
+                     .getChildWithProperty(juce::Identifier{"id"}, "plain")
+                     .getProperty(kindId)
+                     .toString(),
+                 "source", "a new item with no kind should default to source");
+}
+
+// A one-shot has no pulse: classifying an item simple must strip any tempo grid it
+// already had, and later analysis must not be able to put one back. Key is kept —
+// a one-shot can be in a key.
+void testProjectStateSimpleClassificationHasNoTempo()
+{
+    silverdaw::ProjectState state;
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier idId{"id"};
+    const juce::Identifier bpmId{"bpm"};
+    const juce::Identifier beatsId{"beats"};
+    const juce::Identifier anchorId{"beatAnchorSec"};
+    const juce::Identifier lowConfId{"lowConfidence"};
+    const juce::Identifier keyId{"key"};
+
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 900.0, 48000, 2),
+            "item should add");
+    require(state.setLibraryItemBpm("hit", 120.0), "bpm should apply while unclassified");
+    require(state.setLibraryItemBeats("hit", {0.0, 0.5, 1.0}), "beats should apply");
+    require(state.setLibraryItemBeatAnchor("hit", 0.25), "anchor should apply");
+    require(state.setLibraryItemLowConfidence("hit", true), "low confidence should apply");
+    require(state.setLibraryItemKey("hit", "Am"), "key should apply");
+
+    auto item = state.getTree().getChildWithName(libraryId).getChildWithProperty(idId, "hit");
+    require(item.hasProperty(bpmId), "bpm should be present before classification");
+
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    require(!item.hasProperty(bpmId), "classifying simple must strip the bpm");
+    require(!item.hasProperty(beatsId), "classifying simple must strip the beats");
+    require(!item.hasProperty(anchorId), "classifying simple must strip the beat anchor");
+    require(!item.hasProperty(lowConfId), "classifying simple must strip the confidence flag");
+    requireEqual(item.getProperty(keyId).toString(), "Am", "classifying simple must keep the key");
+
+    // Reanalysis / detection must not be able to re-add a tempo to a one-shot.
+    state.setLibraryItemBpm("hit", 128.0);
+    state.setLibraryItemBeats("hit", {0.0, 0.5});
+    state.setLibraryItemBeatAnchor("hit", 0.1);
+    require(!item.hasProperty(bpmId), "a one-shot must not accept a detected bpm");
+    require(!item.hasProperty(beatsId), "a one-shot must not accept detected beats");
+    require(!item.hasProperty(anchorId), "a one-shot must not accept a beat anchor");
+    require(!state.setLibraryItemManualTempo("hit", 128.0, {0.0}, 0.0),
+            "a one-shot must refuse a hand-set tempo");
+    require(!item.hasProperty(bpmId), "a refused manual tempo must leave no bpm");
+
+    // Reclassifying as music reopens tempo writes.
+    require(state.setLibraryItemAudioType("hit", "music"), "music classification applies");
+    require(state.setLibraryItemBpm("hit", 128.0), "a musical item accepts a bpm again");
+    require(std::abs(static_cast<double>(item.getProperty(bpmId)) - 128.0) < 1e-9,
+            "the reinstated bpm should store");
+}
+
+void testProjectStateSourceBpmResolverContract()
+{
+    // The renderer's `libraryItemSourceBpm` must resolve the same original BPM this
+    // does, for every case below. A clip has ONE original tempo; when the two
+    // processes derived their own, a clip could be drawn stretched while the engine
+    // played it unwarped.
+    silverdaw::ProjectState state;
+
+    require(state.addLibraryItem("track", "C:\\audio\\track.wav", "track.wav", 60000.0, 48000, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("track", 105.5), "source bpm should apply");
+
+    // 1. An item's own BPM wins.
+    require(std::abs(state.getLibraryItemBpm("track") - 105.5) < 1e-9,
+            "own bpm should resolve");
+
+    // 2. A derived item with no BPM of its own inherits from its source.
+    require(state.addLibraryItem("stem", "C:\\audio\\stem.wav", "stem.wav", 60000.0, 48000, 2,
+                                 {}, {}, "stem", {}, "track"),
+            "stem should add");
+    require(std::abs(state.getLibraryItemBpm("stem") - 105.5) < 1e-9,
+            "a stem with no bpm of its own should inherit its source's");
+
+    // 3. A one-shot has no tempo, even with a musical parent to inherit from.
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 800.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "sample should add");
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    require(state.getLibraryItemBpm("hit") <= 0.0,
+            "a one-shot must resolve no tempo rather than inheriting one");
+
+    // 4. A one-shot classification is inherited, so a child of a one-shot has none either.
+    require(state.addLibraryItem("hitcut", "C:\\audio\\hitcut.wav", "hitcut.wav", 400.0, 48000, 2,
+                                 {}, {}, "clip", {}, "hit"),
+            "derived clip should add");
+    require(state.getLibraryItemBpm("hitcut") <= 0.0,
+            "a clip cut from a one-shot must resolve no tempo");
+
+    // 5. An unknown item resolves nothing rather than falling through.
+    require(state.getLibraryItemBpm("nope") <= 0.0, "an unknown item should resolve no tempo");
+}
+
+void testProjectStateRepairsLegacySampleKind()
+{
+    // Projects saved before the sample `kind` fix hold their samples as plain
+    // sources; reopening one must fix it forward rather than leaving the item
+    // permanently mis-typed.
+    silverdaw::ProjectState state;
+    const juce::Identifier libraryId{"LIBRARY"};
+    const juce::Identifier idId{"id"};
+    const juce::Identifier kindId{"kind"};
+
+    require(state.addLibraryItem("sample-f5f925e3", "C:\\audio\\s.wav", "s.wav", 4536.0, 44100, 2,
+                                 {}, {}, "source"),
+            "legacy-shaped sample should add");
+    require(state.addLibraryItem("l23", "C:\\audio\\t.mp3", "t.mp3", 268094.0, 44100, 2,
+                                 {}, {}, "source"),
+            "ordinary source should add");
+
+    require(state.repairLegacyLibraryItemKinds() == 1,
+            "exactly the sample-prefixed item should be repaired");
+
+    const auto library = state.getTree().getChildWithName(libraryId);
+    requireEqual(library.getChildWithProperty(idId, "sample-f5f925e3").getProperty(kindId).toString(),
+                 "sample", "a sample-prefixed item should be restored to kind=sample");
+    requireEqual(library.getChildWithProperty(idId, "l23").getProperty(kindId).toString(),
+                 "source", "an ordinary source must be left alone");
+
+    require(state.repairLegacyLibraryItemKinds() == 0, "repair should be idempotent");
+}
+
 void testProjectStateCoverArtHiddenOverride()
 {
     silverdaw::ProjectState state;
@@ -1259,6 +1415,10 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
+    tests.push_back({"ProjectState reanalyse preserves a derived library-item kind", testProjectStateReanalyseKeepsDerivedKind});
+    tests.push_back({"ProjectState simple classification strips and blocks tempo", testProjectStateSimpleClassificationHasNoTempo});
+    tests.push_back({"ProjectState source-BPM resolver contract", testProjectStateSourceBpmResolverContract});
+    tests.push_back({"ProjectState repairs legacy sample kind on load", testProjectStateRepairsLegacySampleKind});
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});

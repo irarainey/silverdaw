@@ -5,11 +5,22 @@
 namespace silverdaw
 {
 
+// A one-shot has no pulse, so it may not carry a tempo grid. Guarding every tempo
+// writer here (rather than at each caller) means detection, reanalysis and grid
+// inheritance all fail closed: a stale bpm would otherwise keep seeding the project
+// tempo, warping on drop and inheriting into anything cut from the sample. Key and
+// pitch are untouched — a one-shot can perfectly well be in a key.
+bool ProjectState::isOneShotItem(const juce::ValueTree& item)
+{
+    return item.getProperty(kAudioType).toString() == "simple";
+}
+
 bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm)
 {
     return mutateDerivedLibraryItem(itemId,
                                     [bpm](juce::ValueTree& item)
                                     {
+                                        if (isOneShotItem(item)) return;
                                         if (bpm > 0.0)
                                             item.setProperty(kBpm, bpm, nullptr);
                                         else
@@ -22,6 +33,7 @@ bool ProjectState::setLibraryItemBeats(const juce::String& itemId, const std::ve
     return mutateDerivedLibraryItem(itemId,
                                     [&beatTimesSec](juce::ValueTree& item)
                                     {
+                                        if (isOneShotItem(item)) return;
                                         if (beatTimesSec.empty())
                                         {
                                             item.removeProperty(kBeats, nullptr);
@@ -38,7 +50,10 @@ bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double a
 {
     return mutateDerivedLibraryItem(itemId,
                                     [anchorSec](juce::ValueTree& item)
-                                    { item.setProperty(kBeatAnchorSec, anchorSec, nullptr); });
+                                    {
+                                        if (isOneShotItem(item)) return;
+                                        item.setProperty(kBeatAnchorSec, anchorSec, nullptr);
+                                    });
 }
 
 bool ProjectState::setLibraryItemManualTempo(const juce::String& itemId, double bpm,
@@ -50,6 +65,9 @@ bool ProjectState::setLibraryItemManualTempo(const juce::String& itemId, double 
     {
         auto item = library.getChild(i);
         if (item.getProperty(kId).toString() != itemId) continue;
+
+        // A one-shot has no pulse — there is no grid to hand-tune.
+        if (isOneShotItem(item)) return false;
 
         // Undoable, dirtying user edit — written through the UndoManager, and
         // deliberately NOT routed through mutateDerivedLibraryItem (which suppresses
@@ -231,6 +249,18 @@ bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juc
             else
             {
                 item.removeProperty(kAudioType, nullptr);
+            }
+            // A one-shot has no pulse, so it may not carry a tempo grid: a stale bpm
+            // would keep seeding the project tempo, warping on drop and inheriting
+            // into anything cut from it, all for material with no beat. Key/pitch is
+            // unaffected — a one-shot can be in a key.
+            if (audioType == "simple")
+            {
+                item.removeProperty(kBpm, nullptr);
+                item.removeProperty(kBeats, nullptr);
+                item.removeProperty(kBeatAnchorSec, nullptr);
+                item.removeProperty(kVariableTempo, nullptr);
+                item.removeProperty(kLowConfidence, nullptr);
             }
             return true;
         }

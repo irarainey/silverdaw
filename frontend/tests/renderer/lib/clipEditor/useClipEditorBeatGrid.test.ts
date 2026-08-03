@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
+import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
@@ -312,5 +313,108 @@ describe('useClipEditorBeatGrid', () => {
     grid.commit()
     grid.discardIfUncommitted()
     expect(item.beatAnchorSec).toBe(0.9)
+  })
+
+  // A derived item with no tempo of its own still has a grid drawn on it, inherited
+  // from the item it came from. The tempo field and align controls must act on that
+  // same grid — otherwise the editor shows beat markers it refuses to let you touch.
+  // A one-shot has no musical pulse, so no surface that draws a grid may show one —
+  // and with no markers on screen there is nothing to align or retune against.
+  it('reports no grid for a simple sample, even one carrying a BPM', () => {
+    const library = useLibraryStore()
+    const item = addSource(120, 0)
+    item.audioType = 'simple'
+
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+    expect(resolveSourceBeatGrid(item, library.byId)).toBeNull()
+    expect(grid.hasGrid()).toBe(false)
+    expect(grid.resolvedGrid.value).toBeNull()
+
+    grid.toggleAlign()
+    expect(grid.alignActive.value).toBe(false)
+  })
+
+  it('does not edit the tempo of a simple sample', () => {
+    const item = addSource(120, 0)
+    item.audioType = 'simple'
+    const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+
+    grid.halveBpm()
+    grid.nudgeAnchorMs(50)
+    expect(item.bpm).toBe(120)
+    expect(item.beatAnchorSec).toBe(0)
+    expect(grid.hasGridChanged()).toBe(false)
+  })
+
+  describe('an item that inherits its tempo', () => {
+    function addStem(bpm: number, beatAnchorSec: number): LibraryItem {
+      const library = useLibraryStore()
+      const source = addSource(bpm, beatAnchorSec)
+      const id = library.addItem({
+        kind: 'stem',
+        filePath: 'C:\\audio\\grid-drums.wav',
+        fileName: 'grid-drums.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1]),
+        derivedFrom: { sourceItemId: source.id, inMs: 0, durationMs: 4_000 }
+      })
+      return library.byId[id]!
+    }
+
+    it('reports a grid and seeds the tempo field from the inherited BPM', () => {
+      const item = addStem(128, 0.25)
+      expect(item.bpm).toBeUndefined()
+
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+      expect(grid.hasGrid()).toBe(true)
+      expect(grid.manualBpmInput.value).toBe('128.00')
+    })
+
+    it('allows align mode', () => {
+      const item = addStem(128, 0.25)
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+      grid.toggleAlign()
+      expect(grid.alignActive.value).toBe(true)
+    })
+
+    it('halves the inherited tempo onto the item, keeping the inherited phase', () => {
+      const item = addStem(128, 0.25)
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+
+      grid.halveBpm()
+      expect(item.bpm).toBe(64)
+      expect(item.beatAnchorSec).toBe(0.25)
+      expect(grid.hasGridChanged()).toBe(true)
+    })
+
+    it('nudges the inherited anchor without needing an own tempo first', () => {
+      const item = addStem(128, 0.25)
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+
+      grid.nudgeAnchorMs(50)
+      expect(item.bpm).toBe(128)
+      expect(item.beatAnchorSec).toBeCloseTo(0.3, 6)
+    })
+
+    it('commits a slide-to-align drag against the inherited tempo', () => {
+      const item = addStem(128, 0.25)
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+      grid.reset()
+      sendMock.mockClear()
+
+      grid.commitAnchorSec(0.6)
+      expect(item.bpm).toBe(128)
+      expect(item.beatAnchorSec).toBe(0.6)
+      expect(sendMock).not.toHaveBeenCalled()
+
+      grid.commit()
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+        itemId: item.id,
+        bpm: 128,
+        beatAnchorSec: 0.6
+      })
+    })
   })
 })

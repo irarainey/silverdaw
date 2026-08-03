@@ -1502,6 +1502,101 @@ describe('libraryStore', () => {
     expect(library.editorHiResPeaks).toBeNull()
   })
 
+  it('refuses analysis for a one-shot, clearing anything an older project carried', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\legacy-oneshot.wav',
+      fileName: 'legacy-oneshot.wav',
+      durationMs: 900,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    const item = library.byId[id]!
+    item.audioType = 'simple'
+
+    // A project saved before one-shots were barred from holding a tempo replays its
+    // persisted grid through setItemAnalysis on load.
+    library.setItemAnalysis(id, 120, 0.25, [0.25, 0.75], false, undefined, false, false)
+
+    expect(item.bpm).toBeUndefined()
+    expect(item.beats).toBeUndefined()
+    expect(item.beatAnchorSec).toBeUndefined()
+  })
+
+  it('refuses analysis for an item inheriting a simple classification', () => {
+    const library = useLibraryStore()
+    const sourceId = library.addItem({
+      filePath: 'C:\\audio\\simple-src.wav',
+      fileName: 'simple-src.wav',
+      durationMs: 900,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.byId[sourceId]!.audioType = 'simple'
+    const cutId = library.addItem({
+      kind: 'clip',
+      filePath: 'C:\\audio\\simple-cut.wav',
+      fileName: 'simple-cut.wav',
+      durationMs: 400,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      derivedFrom: { sourceItemId: sourceId, inMs: 0, durationMs: 400 }
+    })
+
+    library.setItemAnalysis(cutId, 120, 0, [0], false, undefined, false, false)
+    expect(library.byId[cutId]!.bpm).toBeUndefined()
+  })
+
+  // A one-shot has no pulse, so classifying an item simple must strip its tempo
+  // grid — mirroring the backend, which does the same and refuses later writes.
+  // The key is deliberately kept: a one-shot can be in a key.
+  it('strips the tempo grid when an item is classified simple, keeping its key', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\oneshot.wav',
+      fileName: 'oneshot.wav',
+      durationMs: 900,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1]),
+      key: 'Am'
+    })
+    library.setItemManualTempo(id, 120, 0.25)
+    const item = library.byId[id]!
+    expect(item.bpm).toBe(120)
+
+    library.setItemAudioType(id, 'simple')
+
+    expect(item.bpm).toBeUndefined()
+    expect(item.beats).toBeUndefined()
+    expect(item.beatAnchorSec).toBeUndefined()
+    expect(item.lowConfidence).toBeUndefined()
+    expect(item.variableTempo).toBeUndefined()
+    expect(item.key).toBe('Am')
+  })
+
+  it('leaves the tempo grid alone when an item is classified music', () => {
+    const library = useLibraryStore()
+    const id = library.addItem({
+      filePath: 'C:\\audio\\musical.wav',
+      fileName: 'musical.wav',
+      durationMs: 4_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array([0, 1])
+    })
+    library.setItemManualTempo(id, 120, 0.25)
+
+    library.setItemAudioType(id, 'music')
+
+    const item = library.byId[id]!
+    expect(item.bpm).toBe(120)
+    expect(item.beatAnchorSec).toBe(0.25)
+  })
+
   it('applies a manual tempo override and persists it over the bridge', () => {
     const library = useLibraryStore()
     const id = library.addItem({

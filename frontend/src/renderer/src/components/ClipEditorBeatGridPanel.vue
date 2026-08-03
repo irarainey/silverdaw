@@ -27,7 +27,11 @@ function onBpmWheel(e: WheelEvent): void {
 <template>
   <div class="flex w-full flex-col gap-3 text-xs">
     <!-- Tempo: the beat spacing. This field IS the source BPM. -->
-    <fieldset class="flex flex-col gap-1.5">
+    <fieldset
+      class="flex flex-col gap-1.5"
+      :disabled="props.grid.isOneShot()"
+      :class="props.grid.isOneShot() ? 'opacity-50' : ''"
+    >
       <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
         Tempo
       </legend>

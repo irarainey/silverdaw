@@ -6,6 +6,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
+import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { shouldAutoWarpOnDrop } from '@/lib/warp'
@@ -142,21 +143,26 @@ export const clipLibraryActions = {
           ? Math.max(0, libraryItem.derivedFrom?.durationMs ?? libraryItem.durationMs)
           : libraryItem.durationMs
       // Predict post-drop effective duration so collision checks match auto-warp.
-      const projectBpm = useTransportStore().bpm
+      const transport = useTransportStore()
+      const projectBpm = transport.bpm
       const autoWarpPref = useUiStore().matchProjectTempoOnDrop
-      const projectHasOtherClips = Object.keys(this.clips).length > 0
+      const library = useLibraryStore()
       const sourceIsSimple = libraryItemIsSimple(
         { audioType: libraryItem.audioType, derivedFrom: libraryItem.derivedFrom },
-        useLibraryStore().byId
+        library.byId
       )
+      // One resolver for the original BPM, shared with drawing, the warp controls
+      // and the backend — a raw `libraryItem.bpm` here missed an inherited tempo
+      // and predicted an unwarped width for a clip that then warped.
+      const sourceBpm = libraryItemSourceBpm(libraryItem, library.byId)
       const willAutoWarp =
         libraryItem.warpEnabled === true ||
         shouldAutoWarpOnDrop({
           preferenceEnabled: autoWarpPref,
-          projectHasOtherClips,
+          projectBpmSeeded: transport.bpmSeeded,
           sourceKind: libraryItem.kind,
           sourceIsSimple,
-          sourceBpm: libraryItem.bpm,
+          sourceBpm,
           projectBpm,
           variableTempo: libraryItem.variableTempo
         })
@@ -165,8 +171,8 @@ export const clipLibraryActions = {
         const pinned = libraryItem.tempoRatio
         const ratio = typeof pinned === 'number' && pinned > 0
           ? pinned
-          : (typeof libraryItem.bpm === 'number' && libraryItem.bpm > 0 && projectBpm > 0
-              ? projectBpm / libraryItem.bpm
+          : (typeof sourceBpm === 'number' && sourceBpm > 0 && projectBpm > 0
+              ? projectBpm / sourceBpm
               : 1)
         if (ratio > 0 && Math.abs(ratio - 1) > 1e-4) {
           effectiveClipDurationMs = clipDurationMs / ratio
@@ -297,16 +303,21 @@ export const clipLibraryActions = {
         log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (matchProjectTempoOnDrop pref OFF)`)
         return
       }
-      // First audio clip seeds project BPM, so auto-warp would target a transient default.
-      const otherClipExists = Object.values(this.clips).some((c) => c.id !== clipId)
-      if (!otherClipExists) {
-        log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (first clip on project)`)
+      // Until the project tempo is established there is no real target to warp to
+      // — the first musical clip seeds it. This is the backend's `bpmSeeded`, not
+      // "is the timeline empty?": a reopened project can have a settled tempo and
+      // no clips, and its first drop must still warp.
+      const transport = useTransportStore()
+      if (!transport.bpmSeeded) {
+        log.info('warp', `applyDropTimeWarp clip=${clipId} → skip (project tempo not seeded yet)`)
         return
       }
       // A variable-tempo source still has a representative BPM that is useful
       // for an initial warp; users can split and refine it afterwards.
-      const projectBpm = useTransportStore().bpm
-      if (typeof src.bpm !== 'number' || src.bpm <= 0) {
+      const projectBpm = transport.bpm
+      // The one original-BPM resolver, matching the backend's inheritance.
+      const srcBpm = libraryItemSourceBpm(src, useLibraryStore().byId)
+      if (typeof srcBpm !== 'number' || srcBpm <= 0) {
         // Unknown source BPM: let later analysis opt in unless the user edits warp.
         if (src.kind !== 'clip') {
           log.info(
@@ -326,18 +337,18 @@ export const clipLibraryActions = {
         )
         return
       }
-      const ratio = projectBpm / src.bpm
+      const ratio = projectBpm / srcBpm
       // Ratio ≈ 1 is inaudible and should not burn an undo step.
       if (Math.abs(ratio - 1) < 1e-3) {
         log.info(
           'warp',
-          `applyDropTimeWarp clip=${clipId} → skip (ratio ≈ 1: project=${projectBpm} src=${src.bpm})`
+          `applyDropTimeWarp clip=${clipId} → skip (ratio ≈ 1: project=${projectBpm} src=${srcBpm})`
         )
         return
       }
       log.info(
         'warp',
-        `applyDropTimeWarp clip=${clipId} → ENGAGE warp (project=${projectBpm} src=${src.bpm} ratio=${ratio.toFixed(4)})`
+        `applyDropTimeWarp clip=${clipId} → ENGAGE warp (project=${projectBpm} src=${srcBpm} ratio=${ratio.toFixed(4)})`
       )
       this.setClipWarp(clipId, {
         warpEnabled: true,

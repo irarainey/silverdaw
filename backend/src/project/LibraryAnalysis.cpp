@@ -179,15 +179,17 @@ void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectSta
     // All gates passed: this is the first seed for the project.
     projectState.setBpmSeeded(true);
 
-    // Gate 3: don't re-broadcast if the project BPM is already in sync.
-    if (std::abs(projectState.getBpm() - itemBpm) < 1e-6)
+    // The tempo is now established. Tell the renderer even when the value itself
+    // did not move: `bpmSeeded` is what drop auto-warp keys off, so the renderer's
+    // copy must flip at the same moment the backend's does.
+    const bool bpmAlreadyInSync = std::abs(projectState.getBpm() - itemBpm) < 1e-6;
+    if (!bpmAlreadyInSync)
     {
-        return;
+        projectState.setBpm(itemBpm);
     }
-
-    projectState.setBpm(itemBpm);
     auto* bpmObj = new juce::DynamicObject();
     bpmObj->setProperty("bpm", itemBpm);
+    bpmObj->setProperty("bpmSeeded", true);
     bridge.broadcast("PROJECT_BPM_APPLIED", juce::var(bpmObj));
     silverdaw::log::info("bpmjob", "seeded project BPM from " + itemId + ": " + juce::String(itemBpm, 4));
 }

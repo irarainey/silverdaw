@@ -52,6 +52,9 @@ export function useTransportBarController() {
   // User edits update local state and persist to the backend.
   function applyBpm(bpm: number): void {
     transport.setBpm(bpm)
+    // A hand-set tempo is established by definition; mirror the backend, which
+    // marks the project seeded on PROJECT_SET_BPM.
+    transport.setBpmSeeded(true)
     // Send the clamped value.
     sendBridge('PROJECT_SET_BPM', { bpm: transport.bpm })
   }

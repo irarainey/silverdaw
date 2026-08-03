@@ -14,8 +14,8 @@
 // re-derived it and disagreed on two points — whether an inherited source BPM
 // counted, and whether a "simple" one-shot has a grid at all — which let a clip
 // snap to a grid that was never drawn, and let Chop to Grid do nothing on a stem
-// that visibly had one. Inheritance is now unconditional; the one-shot question is
-// a per-surface option, because the answer genuinely differs by zoom level.
+// that visibly had one. Both are now settled here: inheritance is unconditional,
+// and a one-shot never has a grid.
 import { libraryItemIsSimple, libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import type { LibraryItem } from '@/stores/libraryTypes'
 import { effectiveClipTempoRatio, isClipTempoWarpActive } from './clipTiming'
@@ -36,20 +36,6 @@ export interface SourceBeatGridLibrary {
   items: readonly LibraryItem[]
 }
 
-/** Options for {@link resolveSourceBeatGrid}. */
-export interface ResolveSourceBeatGridOptions {
-  /**
-   * Whether a "simple" (one-shot) item is treated as having no grid.
-   *
-   * True for the timeline, where a grid over a kick sample is noise at timeline
-   * zoom — so no markers are drawn and nothing may snap to them. False for the
-   * Clip Editor and Scratch surfaces, which are zoomed into a single sample
-   * where that same grid is the thing you chop a break against. Stated here
-   * rather than left to each call site to re-decide.
-   */
-  suppressSimple?: boolean
-}
-
 /**
  * Resolve the source beat grid for a library item, or null when it has none.
  *
@@ -58,15 +44,15 @@ export interface ResolveSourceBeatGridOptions {
  * source is still in the library. This is unconditional: an item that visibly has
  * a grid drawn on it must be usable by every operation that reads a grid.
  *
- * Whether a simple (one-shot) item has a grid is per-surface — see
- * {@link ResolveSourceBeatGridOptions.suppressSimple}.
+ * Simple (one-shot) items never have a grid — they have no musical pulse, so beat
+ * markers over them are noise, and nothing may snap or slice to lines that were
+ * never drawn.
  */
 export function resolveSourceBeatGrid(
   item: LibraryItem,
-  byId: Readonly<Record<string, LibraryItem>>,
-  options: ResolveSourceBeatGridOptions = {}
+  byId: Readonly<Record<string, LibraryItem>>
 ): SourceBeatGrid | null {
-  if (options.suppressSimple !== false && libraryItemIsSimple(item, byId)) return null
+  if (libraryItemIsSimple(item, byId)) return null
 
   const bpm = libraryItemSourceBpm(item, byId)
   if (typeof bpm !== 'number' || !Number.isFinite(bpm) || bpm <= 0) return null
