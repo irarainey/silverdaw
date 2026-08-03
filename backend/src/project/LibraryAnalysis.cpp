@@ -262,26 +262,52 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     }
     bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
 
-    // Late auto-warp uses the detected representative BPM even when tempo varies;
-    // users can split and refine the initial warp afterwards.
-    if (bpm > 0.0)
+    // A reanalysis moves the source tempo under every clip already using it. Clips that
+    // follow the project tempo must be re-derived from the new BPM: their stored state
+    // says only "follow the project", so nothing about them changes on disk, but the
+    // engine still holds the ratio built from the old BPM and the renderer still holds
+    // the matching effective timing — while its beat grid recomputes live from the new
+    // one. Left alone, the markers come out spaced at `newSpacing / oldRatio` and walk
+    // off the project grid by exactly the tempo change, the clip keeps its old drawn
+    // width, and playback keeps the old stretch. A pinned ratio is explicit user intent
+    // and is never touched.
+    const double projectBpm = projectState.getBpm();
+    if (projectBpm > 0.0)
     {
-        const double projectBpm = projectState.getBpm();
         projectState.forEachWarpClip(
             [&](const silverdaw::ProjectState::WarpClipInfo& info)
             {
-                if (info.libraryItemId != itemId) return;
-                if (info.pendingAutoWarp && projectBpm > 0.0)
+                // Clips on this item, plus clips on items that borrow its tempo (the
+                // resolver falls back to the item something was derived from), so a
+                // stem that carries no BPM of its own moves with its source.
+                if (info.libraryItemId != itemId
+                    && projectState.getLibraryItemSourceItemId(info.libraryItemId) != itemId)
+                    return;
+                if (info.tempoRatioPinned) return;
+                // Always through the resolver, never a local derivation: a recorded
+                // musical length still outranks whatever this analysis detected (ADR 0024).
+                const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+                if (sourceBpm <= 0.0) return;
+                const double ratio = projectBpm / sourceBpm;
+                if (info.pendingAutoWarp)
                 {
-                    const double ratio = projectBpm / bpm;
                     projectState.setClipWarp(info.clipId, /*enabled=*/true, juce::String("rhythmic"),
                                              /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
                                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
                     engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
                                        std::nullopt, std::nullopt);
-                    auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
-                    bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
                 }
+                else if (info.warpEnabled)
+                {
+                    engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
+                                       info.cents);
+                }
+                else
+                {
+                    return;
+                }
+                auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
+                bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
             });
     }
 

@@ -13,7 +13,7 @@ import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
-import { stepToGridMs } from '@/lib/musicTime'
+import { startMsForAlignedBeat, stepToGridMs } from '@/lib/musicTime'
 import {
   nextMarkerCandidateMs,
   previousMarkerCandidateMs,
@@ -425,9 +425,11 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       // to the clip's left edge when the source has no detected beats. On a Free
       // grid `stepToGridMs` steps relatively, so the clip keeps its off-grid
       // placement rather than being pulled onto a grid the user switched off.
-      const targetMs = Math.max(
-        0,
-        stepToGridMs(target.clip.startMs + offset, bpm, ui.snapGrid, direction) - offset
+      const targetMs = startMsForAlignedBeat(
+        stepToGridMs(target.clip.startMs + offset, bpm, ui.snapGrid, direction),
+        offset,
+        bpm,
+        ui.snapGrid
       )
       if (isMultiSelectionNudge()) {
         nudgeSelectedClips(targetMs - target.clip.startMs)

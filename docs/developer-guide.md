@@ -1790,6 +1790,24 @@ from the import-from-project picker. It runs both from `ProjectFile::load` and f
 `loadSourceProjectImport`, which reads a project tree without building a
 `ProjectState`, so an old project imports correctly without being opened first.
 
+**Warping on drop is a question about drift, not about the ratio.** Auto-warp on
+drop engages whenever the mismatch between the source tempo and the project tempo
+actually moves the clip's end: `warpChangesTiming` (`renderer/src/lib/warp.ts`)
+converts the ratio into the milliseconds it pulls across that clip's own length and
+ignores anything under `WARP_NEGLIGIBLE_DRIFT_MS`. A fixed ratio band cannot do this
+job — the band that is inaudible on a two-bar loop swallows a fifth of a second on a
+three-minute stem, which is how a drum stem reanalysed from 94.05 to 94.0446 BPM was
+dropped unwarped and ended ~10 ms off the grid. `shouldAutoWarpOnDrop` and
+`applyDropTimeWarp` share the one test, so the ghost width, the overlap check, the
+beat snap and the landed clip cannot disagree.
+
+The same drift rule decides whether a warp *reports* itself active, in both processes:
+`isWarpActive` in the renderer and `ProjectState::getClipEffectiveTiming` in the backend
+(`kWarpNegligibleDriftMs`). They must move together — the epsilons used to disagree with
+the engine, which happily stretched the near-miss stem while the project state called the
+warp inactive, so the timeline drew the clip at its native width, withheld the WARP badge
+and spaced its beat markers on the unwarped grid.
+
 **Changing the project tempo.** `handleProjectSetBpm` keeps the arrangement's
 musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
 by `previousBpm / newBpm`, so a clip on bar 9 stays on bar 9. Without it, warped
@@ -1885,7 +1903,7 @@ maths at a call site: the projections used to disagree on inherited BPM and on t
 simple-item gate, which made one-shots snap to a grid they never drew and made Chop
 to Grid silently do nothing on a stem that visibly had one.
 
-Two rules the helper settles:
+Three rules the helper settles:
 
 - **Inheritance is unconditional.** BPM resolves through `libraryItemSourceBpm`,
   and `beats` / `beatAnchorSec` fall back to the source item, so a stem or saved
@@ -1901,6 +1919,22 @@ Two rules the helper settles:
   slicing against lines that were never drawn is how this went wrong before. Clip
   Editor surfaces read the resolved grid from `useClipEditorBeatGrid`'s
   `resolvedGrid` rather than resolving it themselves.
+- **A warped clip's markers come from the project, not from arithmetic.** A clip
+  warped to follow the project tempo *is* at the project tempo, so
+  `clipTimelineBeatSpacingMs()` spaces its timeline markers at `60_000 / projectBPM`
+  — by construction, rather than by two numbers agreeing. Deriving them as
+  `sourceSpacing / effectiveTempoRatio` gives the same answer only while the grid
+  and the ratio are built from the identical, current source BPM; a reanalysis broke
+  that (the grid picked up the new BPM immediately, the ratio still held the old one)
+  and the markers came out a few percent off the project grid — line one up and the
+  rest walk away. A **pinned** ratio is deliberately not at the project tempo, so it
+  keeps `sourceSpacing / ratio`. The phase still comes from the source grid, projected
+  through the ratio the clip is playing at, so markers and the beat-aware snap agree.
+
+  The backend half of the same fix lives in `LibraryAnalysis.cpp`: after any analysis
+  it re-derives the warp of every unpinned clip using that item (or inheriting its
+  tempo) and re-broadcasts `CLIP_WARP_APPLIED`, so the engine's stretch, the clip's
+  drawn width and the markers all move onto the new tempo together.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the snap grid, it snaps the first
@@ -1908,6 +1942,15 @@ source beat inside the clip's window. With the project BPM seeded to the source
 BPM (the common case), every subsequent marker on the clip then lines up exactly
 with a project grid line. Drag with `Alt` for fine 1 ms unsnapped
 behaviour.
+
+Snapping the beat rather than the edge means the resulting start can resolve
+*before* the timeline origin. `startMsForAlignedBeat()` (`lib/musicTime.ts`)
+steps forward by whole snap units in that case instead of clamping the start to
+0, and drag, library drop and the keyboard grid-nudge all go through it. The
+clamp kept the clip on the timeline but left its beat off the line by the whole
+offset, always in the same direction — a clip placed against the start of the
+timeline drew its first marker a fraction of a beat ahead of bar 1 however
+carefully it was positioned.
 
 Non-linked edge-trim drags use the same project grid by default, snapping the
 dragged edge as the source window changes. Hold `Alt` while trimming for

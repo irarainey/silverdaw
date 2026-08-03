@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   clipFirstBeatOffsetMs,
+  clipTimelineBeatSpacingMs,
   firstSourceBeatMsAtOrAfter,
   resolveSourceBeatGrid
 } from '@/lib/clip/sourceBeatGrid'
@@ -163,17 +164,25 @@ describe('beat markers on warped clips', () => {
   const PROJECT_BPM = 140
   const projectBeatMs = 60_000 / PROJECT_BPM
 
-  /** The timeline's marker projection: source-grid beats as ms from the clip's left edge. */
+  /** The timeline's marker projection: marker positions as ms from the clip's left edge. */
   function markerOffsetsMs(
     grid: { spacingMs: number; anchorMs: number; bpm: number },
     inMs: number,
     durationMs: number,
-    tempoRatio: number
+    tempoRatio: number,
+    opts?: { pinned?: boolean; warpActive?: boolean }
   ): number[] {
+    const clip = {
+      effectiveWarpActive: opts?.warpActive ?? tempoRatio !== 1,
+      effectiveTempoRatio: tempoRatio,
+      tempoRatio: opts?.pinned === true ? tempoRatio : undefined
+    }
+    const spacingMs = clipTimelineBeatSpacingMs(clip, grid.spacingMs, PROJECT_BPM)
     const offsets: number[] = []
-    const outMs = inMs + durationMs
-    for (let beatMs = firstSourceBeatMsAtOrAfter(grid, inMs); beatMs < outMs; beatMs += grid.spacingMs) {
-      offsets.push((beatMs - inMs) / tempoRatio)
+    const effectiveDurationMs = durationMs / tempoRatio
+    const firstOffsetMs = (firstSourceBeatMsAtOrAfter(grid, inMs) - inMs) / tempoRatio
+    for (let offset = firstOffsetMs; offset < effectiveDurationMs; offset += spacingMs) {
+      offsets.push(offset)
     }
     return offsets
   }
@@ -241,6 +250,29 @@ describe('beat markers on warped clips', () => {
     const grid = resolveSourceBeatGrid(source, byId)!
     const offsets = markerOffsetsMs(grid, 0, 2000, 1)
     expect(offsets[1]! - offsets[0]!).toBeCloseTo(500, 9)
+  })
+
+  // The regression a reanalysis caused: the item's BPM moved, so the grid rebuilt
+  // instantly, but the clip kept the ratio built from the *old* BPM until the backend
+  // re-derived it. Deriving the spacing arithmetically (source / ratio) put the markers
+  // out by exactly the tempo change; the project tempo is the answer either way.
+  it('follows the project tempo even when the clip carries a stale warp ratio', () => {
+    const grid = resolveSourceBeatGrid(source, byId)!
+    const staleRatio = PROJECT_BPM / 105.8
+    const offsets = markerOffsetsMs(grid, 0, 4000, staleRatio)
+    expect(offsets.length).toBeGreaterThan(1)
+    for (let i = 1; i < offsets.length; ++i) {
+      expect(offsets[i]! - offsets[i - 1]!).toBeCloseTo(projectBeatMs, 9)
+    }
+  })
+
+  // A pinned ratio is a deliberate, fixed stretch that is *not* tracking the project, so
+  // its beats sit at the source spacing divided by that ratio.
+  it('spaces a pinned warp by its own ratio rather than the project tempo', () => {
+    const grid = resolveSourceBeatGrid(source, byId)!
+    const offsets = markerOffsetsMs(grid, 0, 4000, 2, { pinned: true })
+    expect(offsets.length).toBeGreaterThan(1)
+    expect(offsets[1]! - offsets[0]!).toBeCloseTo(250, 9)
   })
 
   // The Clip Editor and Scratch surfaces show the *source* audio unstretched, with a

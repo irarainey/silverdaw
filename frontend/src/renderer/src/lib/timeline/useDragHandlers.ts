@@ -12,6 +12,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { effectiveClipDurationMs } from '@/lib/clip/clipTiming'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
+import { startMsForAlignedBeat } from '@/lib/musicTime'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { laneYToValue } from './automationLaneRenderer'
@@ -603,9 +604,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   ): number {
     const referenceBeatOffsetMs = clipFirstBeatOffsetMs(clip, library)
     if (referenceBeatOffsetMs === null) return snapTimelineMs(rawStartMs, fineMode)
-    return Math.max(
-      0,
-      snapTimelineMs(rawStartMs + referenceBeatOffsetMs, fineMode) - referenceBeatOffsetMs
+    return startMsForAlignedBeat(
+      snapTimelineMs(rawStartMs + referenceBeatOffsetMs, fineMode),
+      referenceBeatOffsetMs,
+      transport.bpm,
+      fineMode ? 'free' : ui.snapGrid
     )
   }
 

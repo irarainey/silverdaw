@@ -157,7 +157,8 @@ export function useClipEditorController(
       warpEnabled: entry.warpEnabled,
       tempoRatio: entry.tempoRatio,
       sourceBpm: warpSourceBpm.value,
-      projectBpm: transport.bpm
+      projectBpm: transport.bpm,
+      nativeDurationMs: entry.durationMs
     })
   })
 

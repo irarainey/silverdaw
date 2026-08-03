@@ -342,6 +342,68 @@ describe('projectStore', () => {
     )
   })
 
+  it('auto-warps a stem whose reanalysed tempo only just misses the project tempo', () => {
+    // Reported: a drum stem reanalysed from 94.05 to 94.0446 BPM was dropped on a
+    // new track and left unwarped. The skip was a flat |ratio - 1| < 1e-3 band,
+    // which is blind to length — across this three-minute stem that hidden mismatch
+    // drifts about 10 ms off the grid.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 94.05
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'drum-stem',
+        filePath: 'C:\\audio\\drum-stem.wav',
+        fileName: 'drum-stem.wav',
+        durationMs: 177_397,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, {
+      kind: 'stem',
+      bpm: 94.04458826555116,
+      audioType: 'music'
+    })
+
+    expect(project.clips[clipId]?.warpEnabled).toBe(true)
+  })
+
+  it('leaves a clip unwarped when its tempo already matches the project', () => {
+    // The flip side: warp exists to move something. A stem at exactly the project
+    // tempo gets no warp — a later tempo change picks it up instead.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 94.05
+    transport.bpmSeeded = true
+    const trackId = project.addTrack()
+    const clipId = project.addClipToTrack(
+      trackId,
+      {
+        libraryItemId: 'matching-stem',
+        filePath: 'C:\\audio\\matching-stem.wav',
+        fileName: 'matching-stem.wav',
+        durationMs: 177_397,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array()
+      },
+      0
+    )!
+    sendMock.mockClear()
+
+    project.applyDropTimeWarp(clipId, { kind: 'stem', bpm: 94.05, audioType: 'music' })
+
+    expect(project.clips[clipId]?.warpEnabled).toBeUndefined()
+  })
+
   it('still refuses to auto-warp before the project tempo is seeded', () => {
     // The original reason for the gate stands: the first musical clip establishes
     // the tempo, so warping it would target the transient default.

@@ -72,6 +72,33 @@ export function stepToGridMs(
     : (Math.floor(positionMs / unit + GRID_STEP_EPSILON_MS) + 1) * unit
 }
 
+/**
+ * Clip start that puts the clip's first source beat on `alignedBeatMs`, a position
+ * already resolved onto the snap grid.
+ *
+ * Beat-aware placement snaps the beat, not the clip's left edge, so the start is the
+ * grid position minus the offset from the edge to that beat — which can fall before
+ * the timeline origin. Clamping that to 0 keeps the clip on the timeline but throws
+ * the beat off the line by the whole offset, and always in the same direction: a clip
+ * dropped or dragged against the start of the timeline drew its first beat marker a
+ * fraction of a beat ahead of bar 1, every time. Stepping forward by whole snap units
+ * instead keeps the beat on a line, which is the point of aligning it at all.
+ *
+ * A **Free** grid has no line to step to, so there the clamp is all there is.
+ */
+export function startMsForAlignedBeat(
+  alignedBeatMs: number,
+  beatOffsetMs: number,
+  bpm: number,
+  grid: SnapGrid
+): number {
+  const startMs = alignedBeatMs - beatOffsetMs
+  if (startMs >= 0) return startMs
+  const unit = msPerSnapUnit(bpm, grid)
+  if (unit <= 0) return 0
+  return Math.max(0, startMs + Math.ceil(-startMs / unit) * unit)
+}
+
 export interface BarPositionOptions {
   subsPerBeat?: number
   beatsPerBar?: number

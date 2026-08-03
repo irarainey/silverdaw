@@ -9,7 +9,7 @@ import { useLibraryStore, libraryItemIsSimple } from '@/stores/libraryStore'
 import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
-import { shouldAutoWarpOnDrop } from '@/lib/warp'
+import { shouldAutoWarpOnDrop, warpChangesTiming } from '@/lib/warp'
 import { fileStem } from './projectHelpers'
 import type { ClipWarpMode } from '@shared/bridge-protocol'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -164,7 +164,8 @@ export const clipLibraryActions = {
           sourceIsSimple,
           sourceBpm,
           projectBpm,
-          variableTempo: libraryItem.variableTempo
+          variableTempo: libraryItem.variableTempo,
+          sourceDurationMs: clipDurationMs
         })
       let effectiveClipDurationMs = clipDurationMs
       if (willAutoWarp) {
@@ -338,11 +339,15 @@ export const clipLibraryActions = {
         return
       }
       const ratio = projectBpm / srcBpm
-      // Ratio ≈ 1 is inaudible and should not burn an undo step.
-      if (Math.abs(ratio - 1) < 1e-3) {
+      // Warp whenever the mismatch actually moves the clip's end. This used to be a
+      // flat `|ratio - 1| < 1e-3` band, which is duration-blind: a drum stem
+      // reanalysed from 94.05 to 94.0446 BPM fell inside it and was dropped unwarped
+      // even though it drifts ~10 ms off the grid across its length.
+      const nativeDurationMs = this.clips[clipId]?.durationMs
+      if (!warpChangesTiming(nativeDurationMs, ratio)) {
         log.info(
           'warp',
-          `applyDropTimeWarp clip=${clipId} → skip (ratio ≈ 1: project=${projectBpm} src=${srcBpm})`
+          `applyDropTimeWarp clip=${clipId} → skip (tempo already matches: project=${projectBpm} src=${srcBpm})`
         )
         return
       }

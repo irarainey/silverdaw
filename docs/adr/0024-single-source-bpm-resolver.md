@@ -107,3 +107,15 @@ legitimately not a whole number of bars.
   any unwarped clip that has a source tempo when the Match project tempo
   preference is on. The preference lives in the renderer, so `PROJECT_SET_BPM`
   carries it as an optional `autoWarp` flag; both are one undoable step.
+- Whether a tempo mismatch counts as a warp at all is judged on the drift it
+  produces across the clip, not on a flat ratio epsilon, and both processes use
+  the same threshold (`WARP_NEGLIGIBLE_DRIFT_MS` / `kWarpNegligibleDriftMs`).
+  Separate ratio epsilons let the engine stretch a near-miss stem while project
+  state reported the warp inactive — the same split this ADR forbids for BPM.
+- An analysis is a write to the resolved BPM, so it re-derives the warp of every
+  unpinned clip already using that item (or inheriting its tempo) and re-broadcasts
+  `CLIP_WARP_APPLIED`. Without it the engine kept the ratio built from the old BPM
+  while the renderer's beat grid recomputed from the new one — one number, two
+  answers again. Timeline beat markers close the loop structurally: a clip warped to
+  follow the project tempo takes its marker spacing from the project itself rather
+  than deriving it from the ratio, so there is no arithmetic left to disagree.

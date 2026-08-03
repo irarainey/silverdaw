@@ -1442,6 +1442,105 @@ void testVariableTempoAnalysisAppliesPendingAutoWarp()
                 "late auto-warp should use project BPM divided by representative source BPM");
 }
 
+// A reanalysis moves the source tempo under clips that are already on the timeline.
+// Clips following the project tempo must be re-derived from the new BPM (their drawn
+// width, beat markers and playback all hang off that ratio); a pinned ratio is explicit
+// user intent and must survive untouched.
+void testReanalysisRederivesWarpForExistingClips()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 8000.0, 48000, 2),
+            "source library item should add");
+    require(state.setLibraryItemBpm("src", 100.0), "source BPM should apply");
+    require(state.addTrack("track"), "track should add");
+
+    require(state.addClip("track", "following", "src", 0.0, 8000.0), "following clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "following clip should warp to the project tempo");
+    require(state.addClip("track", "pinned", "src", 10000.0, 8000.0), "pinned clip should add");
+    require(state.setClipWarp("pinned", true, std::nullopt, 1.5, false, std::nullopt, std::nullopt,
+                              std::nullopt),
+            "pinned clip should hold its own ratio");
+    require(state.addClip("track", "pending", "src", 20000.0, 8000.0), "pending clip should add");
+    require(state.setClipWarp("pending", std::nullopt, std::nullopt, std::nullopt, false,
+                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/true),
+            "pending clip should be marked for late auto-warp");
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.2, 1e-9,
+                "the following clip starts at project / original BPM");
+
+    silverdaw::applyManualTempo("src", 80.0, 0.0, engine, state, bridge);
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.5, 1e-9,
+                "a reanalysed tempo should re-derive a following clip's ratio");
+    requireNear(state.getClipEffectiveTiming("pinned").tempoRatio, 1.5, 1e-9,
+                "a pinned ratio must survive a reanalysis unchanged");
+
+    bool sawPinned = false;
+    bool sawPending = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId == "pinned")
+            {
+                sawPinned = true;
+                require(info.tempoRatioPinned, "pinned clip should still be pinned");
+                requireNear(info.tempoRatio, 1.5, 1e-9, "pinned ratio value should be unchanged");
+            }
+            if (info.clipId == "pending")
+            {
+                sawPending = true;
+                require(info.warpEnabled, "reanalysis should apply a pending auto-warp");
+                require(! info.pendingAutoWarp, "applied auto-warp should clear the pending flag");
+            }
+        });
+    require(sawPinned && sawPending, "both clips should remain in project state");
+}
+
+void testEffectiveTimingReportsNearMissWarpOnLongClip()
+{
+    // Regression: a near-miss tempo (a stem reanalysed to 94.0446 in a 94.05 project)
+    // fell inside the old flat ratio epsilon, so the clip reported warpActive=false and
+    // its native duration while the engine was already stretching it. The UI then drew
+    // the clip at native width with no WARP badge and beat markers off the warped grid.
+    silverdaw::ProjectState state;
+    state.setBpm(94.05);
+    state.setBpmSeeded(true);
+
+    const double stemMs = 177397.0;
+    require(state.addLibraryItem("stem", "C:\\audio\\drums.wav", "drums.wav", stemMs, 48000, 2),
+            "stem library item should add");
+    require(state.setLibraryItemBpm("stem", 94.04458826555116), "reanalysed BPM should apply");
+    require(state.addTrack("track"), "track should add");
+    require(state.addClip("track", "long", "stem", 0.0, stemMs), "long clip should add");
+    require(state.setClipWarp("long", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "warp should enable");
+
+    const auto longTiming = state.getClipEffectiveTiming("long");
+    require(longTiming.warpActive, "a near-miss tempo should warp a three-minute stem");
+    require(longTiming.durationMs < stemMs - 1.0,
+            "an active warp should shorten the reported timeline duration");
+
+    // The same tempo mismatch moves a two-bar loop by well under a millisecond.
+    const double loopMs = 5104.0;
+    require(state.addClip("track", "short", "stem", 200000.0, loopMs), "short clip should add");
+    require(state.setClipWarp("short", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "warp should enable");
+
+    const auto shortTiming = state.getClipEffectiveTiming("short");
+    require(! shortTiming.warpActive, "the same tempo mismatch is inaudible on a short loop");
+    requireNear(shortTiming.durationMs, loopMs, 1e-9,
+                "an inactive warp should report the native duration");
+}
+
 void testClipSetWarpRejectsMalformedTempoRatio()
 {
     // Regression: a wrong-typed tempoRatio used to be raw-cast to 0.0, which
@@ -1619,6 +1718,10 @@ void addProjectStateTests(std::vector<TestCase>& tests)
                      testVariableTempoAnalysisAppliesPendingAutoWarp});
     tests.push_back({"CLIP_SET_WARP rejects a malformed tempoRatio",
                      testClipSetWarpRejectsMalformedTempoRatio});
+    tests.push_back({"Effective timing reports a near-miss warp on a long clip",
+                     testEffectiveTimingReportsNearMissWarpOnLongClip});
+    tests.push_back({"Reanalysis re-derives warp for clips already on the timeline",
+                     testReanalysisRederivesWarpForExistingClips});
 }
 
 } // namespace silverdaw::tests

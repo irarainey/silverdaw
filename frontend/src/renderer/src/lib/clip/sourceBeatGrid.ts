@@ -73,6 +73,33 @@ export function resolveSourceBeatGrid(
   return { bpm, spacingMs, anchorMs: anchorSec * 1000 }
 }
 
+/**
+ * Timeline-time spacing between a clip's beat markers.
+ *
+ * A clip warped to follow the project tempo *is* at the project tempo, so its markers
+ * must land on the project's own beat lines whatever the source BPM was — that is the
+ * whole point of warping it. Deriving the spacing as `sourceSpacing / effectiveRatio`
+ * gets the same answer only while the ratio and the grid are built from the identical
+ * source BPM; when a reanalysis moved the source tempo, the grid picked up the new BPM
+ * immediately while the clip still carried the ratio derived from the old one, and the
+ * markers came out spaced a few percent off the project grid — line one up and the rest
+ * walk away. Asking the project for its own spacing removes the chance to disagree.
+ *
+ * A pinned ratio is different: the user has explicitly stretched the clip to something
+ * other than the project tempo, so its beats genuinely do not sit on the project grid
+ * and the markers must say so.
+ */
+export function clipTimelineBeatSpacingMs(
+  clip: { tempoRatio?: number; effectiveTempoRatio?: number; effectiveWarpActive?: boolean },
+  sourceSpacingMs: number,
+  projectBpm: number
+): number {
+  if (!isClipTempoWarpActive(clip)) return sourceSpacingMs
+  const pinned = typeof clip.tempoRatio === 'number' && clip.tempoRatio > 0
+  if (!pinned && Number.isFinite(projectBpm) && projectBpm > 0) return 60000 / projectBpm
+  return sourceSpacingMs / effectiveClipTempoRatio(clip)
+}
+
 /** The first grid beat at or after `fromMs`, in source-time milliseconds. */
 export function firstSourceBeatMsAtOrAfter(grid: SourceBeatGrid, fromMs: number): number {
   let beatMs =
