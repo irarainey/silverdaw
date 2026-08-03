@@ -271,7 +271,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
             juce::MessageManager::callAsync(
                 [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, inMs, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &bridge]
+                 ok, error, peaks, peaksFile, inMs, durationMs, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &bridge]
                 {
                     auto* obj = new juce::DynamicObject();
                     if (batchTotal > 0)
@@ -311,6 +311,18 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                         projectState.setLibraryItemAudioType(newItemId, "music");
                     else if (audioType == "simple")
                         projectState.setLibraryItemAudioType(newItemId, "simple");
+
+                    // Record how many whole beats of music the window contains, measured
+                    // against the source's grid. This is what makes the sample warp back
+                    // onto a whole number of bars later, whatever any subsequent detection
+                    // on its own few seconds of audio decides (ADR 0024). Measured from the
+                    // SOURCE window, never the exported length, so a sample saved with its
+                    // warp baked in still records the true count; recorded here rather than
+                    // left to inheritAnalysisFromSource for exactly that reason.
+                    int musicalBeats = 0;
+                    if (isMusic && sourceItemId.isNotEmpty())
+                        musicalBeats = silverdaw::recordMusicalLength(
+                            newItemId, projectState.getLibraryItemBpm(sourceItemId), durationMs, projectState);
                     obj->setProperty("filePath", outFile.getFullPathName());
                     obj->setProperty("fileName", outFile.getFileName());
                     obj->setProperty("name", safeName);
@@ -322,6 +334,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     obj->setProperty("laneCount", peaks.laneCount);
                     obj->setProperty("peaksPerSecond", silverdaw::effectivePeaksPerSecond(peaks));
                     if (audioType.isNotEmpty()) obj->setProperty("audioType", audioType);
+                    if (musicalBeats > 0) obj->setProperty("musicalBeats", musicalBeats);
                     // Echo the source id for BOTH music and simple samples so the renderer can
                     // inherit the source's cover art + tags and persist them to a sidecar. Only a
                     // music sample additionally inherits the musical grid (tempo/key, below) — that

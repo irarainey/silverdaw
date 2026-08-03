@@ -283,6 +283,19 @@ class ProjectState : public juce::ValueTree::Listener
     // Used to re-stretch unpinned warped clips after project tempo changes.
     void forEachWarpClip(const std::function<void(const WarpClipInfo&)>& visitor) const;
 
+    /**
+     * Rescale every clip's timeline position so the project keeps its musical shape
+     * when the tempo changes: a clip on bar 9 stays on bar 9. Without this, warped
+     * clips re-stretch in place while their start times stay in milliseconds, so the
+     * arrangement drifts apart the moment the tempo is edited.
+     *
+     * Scales by `previousBpm / newBpm` and reports every clip it moved as
+     * (clipId, newOffsetMs) so the caller can sync the engine. Returns the number of
+     * clips moved; a no-op (either BPM unusable, or unchanged) returns 0.
+     */
+    int retimeClipsForTempoChange(double previousBpm, double newBpm,
+                                  const std::function<void(const juce::String&, double)>& moved);
+
     using EffectiveClipTiming = silverdaw::EffectiveClipTiming;
 
     // Effective duration is timeline/output time; stored duration remains source time.
@@ -475,6 +488,11 @@ class ProjectState : public juce::ValueTree::Listener
     // Derived beat anchor supports renderer beat-grid layout without marking dirty.
     bool setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec);
 
+    /** Record/clear how many whole beats of music a derived item's file contains.
+     *  Pass 0 to clear. See {@link musicalLengthBpm} for why this outranks detection. */
+    bool setLibraryItemMusicalBeats(const juce::String& itemId, int beats);
+    int getLibraryItemMusicalBeats(const juce::String& itemId) const;
+
     // A hand-set tempo/beat grid is a deliberate user edit (unlike automatic
     // analysis): it writes bpm/beats/anchor through the UndoManager and marks the
     // project dirty, so it is undoable via EDIT_UNDO. Clears the variable-tempo and
@@ -561,9 +579,13 @@ class ProjectState : public juce::ValueTree::Listener
 
     bool hasLibraryItemForPath(const juce::String& filePath) const;
 
-    /** Restore `kind` on samples that older projects persisted as plain sources.
-     *  Returns how many items were repaired. Applied on load; see the definition. */
+    /** Restore `kind` on library items that older projects persisted wrongly (a saved
+     *  sample demoted to a plain source, or a stem demoted by a reanalyse). Returns how
+     *  many items were repaired. Applied wherever a project tree is read; see the
+     *  definition. The static overload works on a bare LIBRARY tree so the cross-project
+     *  import — which reads a tree without building a ProjectState — repairs it too. */
     int repairLegacyLibraryItemKinds();
+    static int repairLibraryItemKinds(juce::ValueTree& library);
 
     // Duration in ms for a library item by id, or 0 when unknown. Used to build
     // a rigid manual beat grid spanning the source.
@@ -744,6 +766,18 @@ class ProjectState : public juce::ValueTree::Listener
      */
     static bool isOneShotItem(const juce::ValueTree& item);
 
+    /**
+     * The tempo implied by an item's recorded musical length, or 0 when it has none.
+     *
+     * A sample cut from a gridded source records how many whole beats of music the
+     * file contains (`musicalBeats`). That is a measurement of the audio, not an
+     * opinion about it, so it is the most reliable tempo the item can have:
+     * `beats * 60000 / durationMs`. Detection on a two-bar excerpt is not — it sees
+     * about eight beats and lands a few percent out, which is directly visible as a
+     * clip that no longer warps to a whole number of bars. See ADR 0024.
+     */
+    static double musicalLengthBpm(const juce::ValueTree& item);
+
     // Central identifiers make property typos link-time failures.
     static const juce::Identifier kProject;
     static const juce::Identifier kTrack;
@@ -796,6 +830,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kPositionMs;
     static const juce::Identifier kBeats;
     static const juce::Identifier kBeatAnchorSec;
+    static const juce::Identifier kMusicalBeats;
     static const juce::Identifier kPlaybackFilePath;
     static const juce::Identifier kVariableTempo;
     static const juce::Identifier kLowConfidence;

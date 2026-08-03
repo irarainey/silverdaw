@@ -302,29 +302,68 @@ juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) con
 
 int ProjectState::repairLegacyLibraryItemKinds()
 {
-    // Projects saved before saving a sample stopped normalising `kind` hold their
-    // samples as plain sources, so a saved sample reopened from one of those files
-    // is no longer grouped or treated as a sample. Every sample id is minted as
-    // "sample-<uuid>" by all three creation paths (save clip as sample, save library
-    // clip as sample, slice to samples), so the prefix identifies them exactly.
-    //
-    // Repaired in place on load: the project then persists correctly on the next
-    // save, and old files keep opening either way.
     auto library = root.getChildWithName(kLibrary);
+    return repairLibraryItemKinds(library);
+}
+
+int ProjectState::repairLibraryItemKinds(juce::ValueTree& library)
+{
+    // Two ways a library item could end up mis-typed in an older project file:
+    //
+    //  * Saved samples were persisted as plain sources before saving a sample
+    //    stopped normalising `kind`. Every sample id is minted as "sample-<uuid>"
+    //    by all three creation paths (save clip as sample, save library clip as
+    //    sample, slice to samples), so the prefix identifies them exactly.
+    //  * Reanalysing a stem or sample demoted it to a plain source, because the
+    //    reanalyse command re-added the item without a kind. A demoted stem then
+    //    vanished from the cross-project import, which only offers "stem" and
+    //    "sample" items. Generated artifacts live in a project-relative folder per
+    //    category, so the stored path says what the item is.
+    //
+    // Repaired in place wherever a project tree is read, so an old file both opens
+    // and imports correctly, and persists correctly on its next save.
     if (!library.isValid()) return 0;
+
+    // Category folder → the kind an item stored under it must have. Channel splits
+    // reuse the stem kind (badge, cleanup, serialisation); scratch bakes are samples.
+    struct ArtifactKind { const char* folder; const char* kind; };
+    static const ArtifactKind kArtifactKinds[] = {
+        {"stems", "stem"}, {"channels", "stem"}, {"samples", "sample"}, {"scratches", "sample"}};
+
     int repaired = 0;
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         auto item = library.getChild(i);
-        if (!item.getProperty(kId).toString().startsWith("sample-")) continue;
-        if (item.getProperty(kKind, "source").toString() == "sample") continue;
-        item.setProperty(kKind, "sample", nullptr);
-        ++repaired;
+        const auto kind = item.getProperty(kKind, "source").toString();
+
+        if (item.getProperty(kId).toString().startsWith("sample-"))
+        {
+            if (kind == "sample") continue;
+            item.setProperty(kKind, "sample", nullptr);
+            ++repaired;
+            continue;
+        }
+
+        // Only a plain source is ambiguous; an explicit stem/sample/clip is trusted.
+        if (kind != "source") continue;
+        const auto path = item.getProperty(kFilePath, {}).toString();
+        // Generated artifacts are stored project-relative; an absolute path is an
+        // external import that happens to sit in a folder of the same name.
+        if (path.isEmpty() || juce::File::isAbsolutePath(path)) continue;
+        const auto firstSegment = path.upToFirstOccurrenceOf("\\", false, false)
+                                      .upToFirstOccurrenceOf("/", false, false);
+        for (const auto& mapping : kArtifactKinds)
+        {
+            if (firstSegment != mapping.folder) continue;
+            item.setProperty(kKind, mapping.kind, nullptr);
+            ++repaired;
+            break;
+        }
     }
     if (repaired > 0)
     {
         silverdaw::log::info("project",
-                             "repaired legacy sample kind on " + juce::String(repaired) + " library item(s)");
+                             "repaired kind on " + juce::String(repaired) + " library item(s)");
     }
     return repaired;
 }
@@ -386,6 +425,10 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("beatAnchorSec",
                              static_cast<double>(item.getProperty(kBeatAnchorSec, 0.0)));
+        }
+        if (item.hasProperty(kMusicalBeats))
+        {
+            obj->setProperty("musicalBeats", static_cast<int>(item.getProperty(kMusicalBeats, 0)));
         }
         if (item.hasProperty(kPlaybackFilePath))
         {

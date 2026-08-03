@@ -154,6 +154,14 @@ export function applyProjectLibrary(
         const target = library.items.find((i) => i.id === libId)
         if (target) target.audioType = item.audioType
       }
+      // A recorded musical length must be hydrated before anything reads the item's
+      // source BPM, since it refines it (see libraryItemSourceBpm). It is persisted
+      // per item and never re-derived here — the backend measured it against the grid
+      // of the item this one was cut from, which may no longer be in the project.
+      if (typeof item.musicalBeats === 'number' && item.musicalBeats >= 1) {
+        const target = library.items.find((i) => i.id === libId)
+        if (target) target.musicalBeats = item.musicalBeats
+      }
       // Persisted analysis hydrates immediately; new imports use LIBRARY_ITEM_ANALYSIS.
       if (typeof item.bpm === 'number' && item.bpm > 0) {
         const persistedBeats = Array.isArray(item.beats) ? item.beats : []

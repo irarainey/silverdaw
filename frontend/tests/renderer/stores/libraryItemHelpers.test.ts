@@ -6,6 +6,7 @@ import {
   libraryItemSourceBpm,
   libraryItemTempoUnverified,
   libraryItemWarpSourceBpm,
+  musicalLengthBpm,
   stemPartLabel,
   STEM_NAME_SEPARATOR
 } from '@/stores/libraryItemHelpers'
@@ -153,6 +154,56 @@ describe('libraryItemSourceBpm', () => {
         byId
       )
     ).toBeUndefined()
+  })
+
+  // 4536.83 ms is exactly 8 beats (two bars) at 105.804 BPM. Detection on an excerpt
+  // that short lands a few percent out, and the clip then no longer warps onto the
+  // grid — so the recorded beat count, a measurement of the audio, wins.
+  const twoBars = 4536.83
+  const twoBarsBpm = (8 * 60_000) / twoBars
+
+  it('prefers a recorded musical length over a re-detected tempo', () => {
+    expect(
+      libraryItemSourceBpm(
+        { kind: 'sample', bpm: 100.768, durationMs: twoBars, musicalBeats: 8 } as never,
+        byId
+      )
+    ).toBeCloseTo(twoBarsBpm, 9)
+  })
+
+  it('falls back to the detected tempo when no musical length was recorded', () => {
+    expect(
+      libraryItemSourceBpm({ kind: 'sample', bpm: 100.768, durationMs: twoBars } as never, byId)
+    ).toBe(100.768)
+  })
+
+  it('ignores a musical length on a one-shot, which has no pulse', () => {
+    expect(
+      libraryItemSourceBpm(
+        { kind: 'sample', audioType: 'simple', durationMs: twoBars, musicalBeats: 8 } as never,
+        byId
+      )
+    ).toBeUndefined()
+  })
+
+  it('ignores an unusable musical length rather than dividing by zero', () => {
+    expect(
+      libraryItemSourceBpm(
+        { kind: 'sample', bpm: 100.768, durationMs: 0, musicalBeats: 8 } as never,
+        byId
+      )
+    ).toBe(100.768)
+    expect(
+      libraryItemSourceBpm(
+        { kind: 'sample', bpm: 100.768, durationMs: twoBars, musicalBeats: 0 } as never,
+        byId
+      )
+    ).toBe(100.768)
+  })
+
+  it('matches the backend resolver, which computes beats * 60000 / durationMs', () => {
+    expect(musicalLengthBpm({ durationMs: twoBars, musicalBeats: 8 })).toBeCloseTo(twoBarsBpm, 9)
+    expect(musicalLengthBpm({ durationMs: twoBars })).toBeUndefined()
   })
 })
 

@@ -266,6 +266,7 @@ export const useLibraryStore = defineStore('library', {
         item.bpm = undefined
         item.beats = undefined
         item.beatAnchorSec = undefined
+        item.musicalBeats = undefined
         item.variableTempo = undefined
         item.lowConfidence = undefined
       }
@@ -347,6 +348,10 @@ export const useLibraryStore = defineStore('library', {
       item.beats = [beatAnchorSec]
       item.variableTempo = undefined
       item.lowConfidence = undefined
+      // A hand-set tempo outranks a recorded musical length and so drops it, mirroring
+      // the backend's setLibraryItemManualTempo. Keeping it would silently ignore the
+      // number the user just typed, because the length wins when resolving source BPM.
+      item.musicalBeats = undefined
       useProjectStore().timelineRevision++
       return true
     },
@@ -363,6 +368,7 @@ export const useLibraryStore = defineStore('library', {
         bpm: item.bpm,
         beats: item.beats ? [...item.beats] : undefined,
         beatAnchorSec: item.beatAnchorSec,
+        musicalBeats: item.musicalBeats,
         variableTempo: item.variableTempo,
         lowConfidence: item.lowConfidence
       }
@@ -376,6 +382,7 @@ export const useLibraryStore = defineStore('library', {
       item.bpm = snap.bpm
       item.beats = snap.beats ? [...snap.beats] : undefined
       item.beatAnchorSec = snap.beatAnchorSec
+      item.musicalBeats = snap.musicalBeats
       item.variableTempo = snap.variableTempo
       item.lowConfidence = snap.lowConfidence
       useProjectStore().timelineRevision++
@@ -472,7 +479,9 @@ export const useLibraryStore = defineStore('library', {
       return true
     },
 
-    /** Clear stale tempo/beat metadata while a forced reanalysis is running. */
+    /** Clear stale tempo/beat metadata while a forced reanalysis is running.
+     *  `musicalBeats` deliberately survives: a clip cut to a number of bars stays that
+     *  number of bars whatever the reanalysis detects (see libraryItemSourceBpm). */
     clearItemAnalysis(itemId: string): void {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return

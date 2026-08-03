@@ -53,6 +53,9 @@ import { clipLibraryActions } from './projectClipLibraryActions'
 import { transitionActions } from './projectTransitionActions'
 import { beatRepeatActions } from './projectBeatRepeatActions'
 import { scratchPatternActions } from './scratchPatternActions'
+import { useTransportStore } from './transportStore'
+import { useUiStore } from './uiStore'
+import { useLibraryStore, libraryItemSourceBpm } from './libraryStore'
 
 // Re-export domain types/constants so existing `@/stores/projectStore` imports stay stable.
 export type {
@@ -506,6 +509,46 @@ export const useProjectStore = defineStore('project', {
         bpm,
         beatAnchorSec
       })
+    },
+
+    /**
+     * Apply a project tempo edit: persist it, keep the arrangement's musical shape, and
+     * bring already-placed clips onto the new tempo.
+     *
+     * Every clip's start is rescaled by `oldBpm / newBpm` so a clip on bar 9 stays on
+     * bar 9. Without this, warped clips re-stretch in place while their starts stay in
+     * milliseconds, and the arrangement drifts apart the moment the tempo is edited.
+     * Unwarped clips are additionally warped when the "match project tempo" preference
+     * is on — the same decision that warps a clip on drop, applied to what is already
+     * placed. The backend mirrors both in one undoable "Change tempo" step; applying
+     * them here too keeps the timeline correct without waiting for a round trip.
+     *
+     * Shared by the transport bar and the project properties dialog so both edit points
+     * behave identically.
+     */
+    applyProjectBpm(bpm: number): void {
+      const transport = useTransportStore()
+      const previousBpm = transport.bpm
+      transport.setBpm(bpm)
+      // A hand-set tempo is established by definition; mirror the backend, which marks
+      // the project seeded on PROJECT_SET_BPM.
+      transport.setBpmSeeded(true)
+      const nextBpm = transport.bpm // post-clamp
+      const autoWarp = useUiStore().matchProjectTempoOnDrop
+      sendBridge('PROJECT_SET_BPM', { bpm: nextBpm, autoWarp })
+
+      if (previousBpm <= 0 || nextBpm <= 0 || previousBpm === nextBpm) return
+      const library = useLibraryStore()
+      const scale = previousBpm / nextBpm
+      for (const clip of Object.values(this.clips)) {
+        if (autoWarp && clip.warpEnabled !== true && clip.tempoRatio === undefined) {
+          const item = library.byId[clip.libraryItemId]
+          const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
+          if (typeof sourceBpm === 'number' && sourceBpm > 0) clip.warpEnabled = true
+        }
+        if (clip.startMs > 0) clip.startMs *= scale
+      }
+      this.timelineRevision++
     },
 
     applyProjectStateSnapshot(snapshot: ProjectStatePayload): void {

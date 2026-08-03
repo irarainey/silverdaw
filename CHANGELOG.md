@@ -4,21 +4,19 @@
 
 ### Fixed
 
-- Stretching a clip past its original length now plays and exports for its full stretched length, instead of cutting off where it used to end.
-- Changing a clip's stretch while the timeline is playing now takes effect straight away, instead of leaving the clip silent until the next seek.
-- A music sample dropped on the timeline now auto-warps to the project tempo like any other musical clip.
-- The Warp dialog and Clip Editor now offer Follow project BPM and Pin for a music sample, instead of only a stretch percentage.
-- Reanalysing a sample, stem or saved clip no longer reclassifies it as a plain imported source.
-- The Clip Editor now lets you correct the beat grid of a stem or saved clip that takes its tempo from the track it came from, instead of showing beat markers with the tempo and align controls greyed out.
-- The Clip Editor and Scratch Editor no longer draw a beat grid over a simple sample, matching the timeline — a one-shot has no beat to mark.
-- Classifying an item as a simple sample now clears any BPM it was carrying, and detection or reanalysis can no longer give one back. Its key is kept.
-- Chop to Grid is no longer offered on a simple sample, which has no grid to chop against, and is now offered on any clip whose beat markers are drawn — including a stem that takes its tempo from the track it came from.
-- The warp stretch percentage in the Clip Editor and Warp dialog now always reads to two decimal places, instead of switching between none, one and two as the value changes, and the stretch applied is now exactly the figure shown rather than a longer one rounded off for display.
-- The first clip dropped into a project that already has a tempo now auto-warps to it, instead of being left at its own tempo until a second clip was added.
+- A clip's original tempo is now resolved the same way everywhere, so a clip can no longer be drawn stretched to the project tempo while playing back at its own. Stems, saved clips and samples now agree with the timeline, the beat grid and playback.
+- A saved sample or clip now keeps the tempo of the track it was cut from instead of detecting one from its own few seconds of audio, which was often several percent out. A clip cut to a number of bars now stays that number of bars however its tempo is later re-detected, so a two-bar loop warps to exactly two bars.
+- A music sample dropped on the timeline now auto-warps to the project tempo like any other musical clip, and the Warp dialog and Clip Editor offer it Follow project BPM and Pin rather than only a stretch percentage.
+- The first clip dropped into a project that already has a tempo now auto-warps to it, instead of waiting until a second clip was added.
+- Changing the project tempo now keeps the arrangement's musical shape — a clip on bar 9 stays on bar 9 — and brings already-placed clips onto the new tempo when Match project tempo is on.
 - Setting the project tempo by hand now sticks: the next clip analysed no longer seeds over it.
-- A clip's original tempo is now resolved the same way everywhere, so a clip can no longer be drawn stretched to the project tempo while playing back at its own — stems, saved clips and samples now agree with the timeline, the beat grid and playback.
-- Opening a project saved before this release repairs any saved samples in its library that were stored as plain imports, so they group and behave as samples again.
-- A saved sample or clip now keeps the tempo of the track it was cut from instead of having one detected from its own few seconds of audio, which was often several percent out — a two-bar loop now warps to exactly two bars of the project tempo rather than falling short. Reanalyse still detects and keeps whatever it finds.
+- Stretching a clip past its original length now plays and exports in full instead of cutting off where it used to end, and changing the stretch during playback takes effect straight away rather than leaving the clip silent until the next seek.
+- The warp stretch percentage now always reads to two decimal places, and the stretch applied is exactly the figure shown rather than a longer one rounded off for display.
+- Reanalysing a sample, stem or saved clip no longer reclassifies it as a plain imported source, which had hidden reanalysed stems from the import-from-project picker.
+- The Clip Editor now lets you correct the beat grid of a stem or saved clip that takes its tempo from the track it came from, instead of greying out the tempo and align controls.
+- A simple sample no longer carries a BPM or a beat grid anywhere: classifying an item as one clears any tempo it held, detection and reanalysis can no longer give one back, the Clip and Scratch Editors stop drawing beat markers over it, and Chop to Grid is no longer offered. Its key is kept.
+- Chop to Grid is now offered on any clip whose beat markers are drawn, including a stem that takes its tempo from the track it came from.
+- Opening a project saved before this release repairs library items stored with the wrong type — saved samples kept as plain imports, and stems demoted by a reanalysis — so they group, behave and import as they should.
 
 ## 1.5.1
 

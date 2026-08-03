@@ -70,6 +70,14 @@ export interface LibraryItem {
   beats?: number[]
   /** Ideal beat-grid phase in seconds; falls back to `beats[0]` for older projects. */
   beatAnchorSec?: number
+  /**
+   * Whole beats of music this file contains, recorded when the item was cut from a
+   * gridded source on an exact beat boundary. Keeps a clip cut to a number of bars at
+   * that number of bars whatever its BPM is later re-detected as; see
+   * {@link musicalLengthBpm}. Absent on items saved before this existed and on any cut
+   * that was not a whole number of beats.
+   */
+  musicalBeats?: number
   /** True when the analysed tempo varies enough that BPM is only an average. */
   variableTempo?: boolean
   /** Backend hint for defaulting non-musical sources to the simple audio type. */
@@ -115,6 +123,7 @@ export interface LibraryItemGridSnapshot {
   bpm?: number
   beats?: number[]
   beatAnchorSec?: number
+  musicalBeats?: number
   variableTempo?: boolean
   lowConfidence?: boolean
 }

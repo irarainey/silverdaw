@@ -245,6 +245,10 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     p->setProperty("beats", juce::var(beatArr));
     p->setProperty("variableTempo", variableTempo);
     p->setProperty("lowConfidence", lowConfidence);
+    // Always sent, including as 0: a manual tempo clears any recorded musical length,
+    // and the renderer must drop it too or the two processes would resolve different
+    // source BPMs for the same item (ADR 0024).
+    p->setProperty("musicalBeats", projectState.getLibraryItemMusicalBeats(itemId));
     if (cachedPath.isNotEmpty())
     {
         p->setProperty("playbackFilePath", cachedPath);
@@ -440,6 +444,32 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
         { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
 }
 
+int recordMusicalLength(const juce::String& itemId, double sourceBpm, double windowDurationMs,
+                        ProjectState& projectState)
+{
+    if (itemId.isEmpty() || sourceBpm <= 0.0 || windowDurationMs <= 0.0) return 0;
+    // Never overwrite: the first writer is the one that measured the window against a
+    // trusted grid. A sample exported with its warp baked in is recorded at save time
+    // from the pre-stretch window, and must not be recomputed from its stretched file.
+    if (projectState.getLibraryItemMusicalBeats(itemId) > 0) return 0;
+
+    const double exact = (windowDurationMs * sourceBpm) / 60000.0;
+    const int whole = static_cast<int>(std::llround(exact));
+    // Only a window that really is a whole number of beats gets a musical length. One
+    // that is not keeps none, rather than being rounded onto the grid — that would bend
+    // the tempo of an excerpt that is legitimately not a whole number of bars. The
+    // tolerance tightens with length so the implied stretch always stays under ~1%.
+    if (whole < 1
+        || std::abs(exact - static_cast<double>(whole)) > juce::jmin(0.05, 0.01 * static_cast<double>(whole)))
+        return 0;
+
+    if (!projectState.setLibraryItemMusicalBeats(itemId, whole)) return 0;
+    silverdaw::log::info("bpmjob", "musical length itemId=" + itemId + " beats=" + juce::String(whole)
+                                       + " from bpm=" + juce::String(sourceBpm, 4) + " window="
+                                       + juce::String(windowDurationMs, 2) + "ms");
+    return whole;
+}
+
 void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& sourceItemId,
                                AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge)
 {
@@ -504,6 +534,12 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
         beats = buildRigidBeatGrid(bpm, beatAnchorSec, projectState.getLibraryItemDurationMs(itemId));
 
     if (key.isNotEmpty()) projectState.setLibraryItemKey(itemId, key);
+    // Record the window's musical length while the source's grid is in hand. Every
+    // derived item goes through here — stem, saved clip and saved sample alike — so
+    // this is the one place that knows both the trusted tempo and the window. A later
+    // reanalysis of the item's own (often only a few seconds of) audio can then change
+    // its detected BPM without changing where it lands on the grid.
+    recordMusicalLength(itemId, bpm, projectState.getLibraryItemDurationMs(itemId), projectState);
     // A stem has no independent confidence measurement; leave its lowConfidence
     // unset so it defers its sample/music classification to the source (the stem
     // carries derivedFrom.sourceItemId). This keeps a stem visible as music

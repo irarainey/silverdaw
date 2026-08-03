@@ -1751,8 +1751,9 @@ renderer resolves it only through `libraryItemSourceBpm`
 (`frontend/src/renderer/src/stores/libraryItemHelpers.ts`); the engine only
 through `ProjectState::getLibraryItemBpm`
 (`backend/src/project/ProjectStateClips.cpp`). Both apply the same rules in order:
-a one-shot has no tempo at all, not even an inherited one; otherwise the item's own
-BPM; otherwise the BPM of the item it was derived from. Nothing else may read
+a one-shot has no tempo at all, not even an inherited one; otherwise the tempo
+implied by its **recorded musical length**; otherwise the item's own BPM; otherwise
+the BPM of the item it was derived from. Nothing else may read
 `item.bpm` to decide how a clip is drawn, gridded, warped or stretched — when the
 two sides disagreed, a clip could be drawn stretched to the project tempo while the
 engine played it dry. `libraryItemWarpSourceBpm` remains only as a deprecated
@@ -1764,10 +1765,41 @@ is routinely a couple of bars long — around eight beats, far below what the de
 needs — and the few-percent error that produces is plainly visible, because the clip
 no longer warps to a whole number of bars. `LIBRARY_REANALYSE` is an explicit
 instruction from the user, runs through `forceLibraryItemAnalysis`, and keeps
-whatever it detects. On load, `ProjectState::repairLegacyLibraryItemKinds`
-(called from `ProjectFile::load`) promotes any `sample-`-prefixed library item that
-an older build persisted as a plain source back to `kind: "sample"`, so an existing
-project fixes itself forward.
+whatever it detects.
+
+**Musical length: how many bars, not how fast.** A derived item also records
+`musicalBeats` — how many whole beats of music its file contains, measured against
+the grid of the item it was cut from by `recordMusicalLength`
+(`backend/src/project/LibraryAnalysis.cpp`), which every derived item reaches via
+`inheritAnalysisFromSource`. It is a measurement of the audio rather than an opinion
+about it, so it outranks a detected tempo in both resolvers: a clip cut to a number
+of bars stays that number of bars however its tempo is later re-detected. It is
+recorded only when the cut really is a whole number of beats (a tolerance that keeps
+the implied stretch under ~1%); anything else records nothing rather than being
+rounded onto the grid. `SampleExport` records it from the **source window** rather
+than the exported file, so a sample saved with its warp baked in still records the
+true count. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
+explicit override — while a reanalysis deliberately keeps it.
+
+On load, `ProjectState::repairLibraryItemKinds` promotes library items an older
+build persisted with the wrong `kind`: any `sample-`-prefixed item stored as a plain
+source back to `kind: "sample"`, and any item whose project-relative path sits under
+`stems/`, `channels/`, `samples/` or `scratches/` back to the kind that folder
+implies — a reanalysis used to demote a stem to a plain source, which then vanished
+from the import-from-project picker. It runs both from `ProjectFile::load` and from
+`loadSourceProjectImport`, which reads a project tree without building a
+`ProjectState`, so an old project imports correctly without being opened first.
+
+**Changing the project tempo.** `handleProjectSetBpm` keeps the arrangement's
+musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
+by `previousBpm / newBpm`, so a clip on bar 9 stays on bar 9. Without it, warped
+clips re-stretch in place while their starts stay in milliseconds and the
+arrangement drifts apart on every tempo edit. When the renderer's **Match project
+tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
+since the preference lives in the renderer — clips that are not warped but whose
+source has a tempo are warped first, so nothing is left behind at the old tempo. The
+renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
+shared by the transport bar and the project properties dialog.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`

@@ -15,8 +15,19 @@ bool ProjectState::isOneShotItem(const juce::ValueTree& item)
     return item.getProperty(kAudioType).toString() == "simple";
 }
 
-bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm)
+// Beats and duration both describe the file on disk, so this stays correct even for
+// a sample exported with its warp baked in: the export stretches the duration and the
+// beat count is unchanged, which is exactly the ratio that lands it back on the grid.
+// A one-shot is excluded by every caller before it reaches here.
+double ProjectState::musicalLengthBpm(const juce::ValueTree& item)
 {
+    const auto beats = static_cast<int>(item.getProperty(kMusicalBeats, 0));
+    const auto durationMs = static_cast<double>(item.getProperty(kDurationMs, 0.0));
+    if (beats <= 0 || durationMs <= 0.0) return 0.0;
+    return (static_cast<double>(beats) * 60000.0) / durationMs;
+}
+
+bool ProjectState::setLibraryItemBpm(const juce::String& itemId, double bpm){
     return mutateDerivedLibraryItem(itemId,
                                     [bpm](juce::ValueTree& item)
                                     {
@@ -46,8 +57,33 @@ bool ProjectState::setLibraryItemBeats(const juce::String& itemId, const std::ve
                                     });
 }
 
-bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec)
+bool ProjectState::setLibraryItemMusicalBeats(const juce::String& itemId, int beats)
 {
+    return mutateDerivedLibraryItem(itemId,
+                                    [beats](juce::ValueTree& item)
+                                    {
+                                        if (isOneShotItem(item)) return;
+                                        if (beats > 0)
+                                            item.setProperty(kMusicalBeats, beats, nullptr);
+                                        else
+                                            item.removeProperty(kMusicalBeats, nullptr);
+                                    });
+}
+
+int ProjectState::getLibraryItemMusicalBeats(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() != itemId) continue;
+        return static_cast<int>(item.getProperty(kMusicalBeats, 0));
+    }
+    return 0;
+}
+
+bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec){
     return mutateDerivedLibraryItem(itemId,
                                     [anchorSec](juce::ValueTree& item)
                                     {
@@ -72,6 +108,13 @@ bool ProjectState::setLibraryItemManualTempo(const juce::String& itemId, double 
         // Undoable, dirtying user edit — written through the UndoManager, and
         // deliberately NOT routed through mutateDerivedLibraryItem (which suppresses
         // dirty and mirrors the clean snapshot for automatic, non-undoable analysis).
+        //
+        // A hand-set tempo is the one instruction that outranks a recorded musical
+        // length, so it drops it: keeping the length would silently ignore the number
+        // the user just typed. This branch is manual tempo only — detection,
+        // reanalysis and grid inheritance all take the automatic path and preserve it.
+        item.removeProperty(kMusicalBeats, &undoManager);
+
         if (bpm > 0.0)
             item.setProperty(kBpm, bpm, &undoManager);
         else
@@ -183,6 +226,9 @@ bool ProjectState::setLibraryItemWarp(const juce::String& itemId,
 
 bool ProjectState::clearLibraryItemAnalysis(const juce::String& itemId)
 {
+    // `musicalBeats` deliberately survives a reanalysis: a clip cut to a number of bars
+    // stays that number of bars whatever the reanalysis detects. Only a hand-set tempo
+    // drops it — see setLibraryItemManualTempo.
     return mutateDerivedLibraryItem(itemId,
                                     [](juce::ValueTree& item)
                                     {
@@ -259,6 +305,7 @@ bool ProjectState::setLibraryItemAudioType(const juce::String& itemId, const juc
                 item.removeProperty(kBpm, nullptr);
                 item.removeProperty(kBeats, nullptr);
                 item.removeProperty(kBeatAnchorSec, nullptr);
+                item.removeProperty(kMusicalBeats, nullptr);
                 item.removeProperty(kVariableTempo, nullptr);
                 item.removeProperty(kLowConfidence, nullptr);
             }

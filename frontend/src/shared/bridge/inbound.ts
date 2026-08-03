@@ -426,6 +426,14 @@ export const ProjectStateLibraryItemSchema = z
     beats: z.array(z.number()).optional(),
     /** Regression-derived beat-grid phase anchor in seconds; may be negative. */
     beatAnchorSec: z.number().optional(),
+    /**
+     * Whole beats of music the file contains, recorded when a sample was cut from a
+     * gridded source on an exact beat boundary. A measurement of the audio rather than
+     * an opinion about it, so it refines the item's source BPM — see ADR 0024. Absent
+     * on every item saved before this existed, and on any cut that was not a whole
+     * number of beats.
+     */
+    musicalBeats: z.number().optional(),
     /** Decoded PCM cache path reused for clip playback. */
     playbackFilePath: z.string().optional(),
     /** Running tempo fluctuated enough to skip project-BPM seeding. */
@@ -648,6 +656,8 @@ const SampleSavedSuccessSchema = z.object({
   // inherits the source's display metadata / cover art.
   audioType: z.enum(['simple', 'music']).optional(),
   sourceItemId: z.string().optional(),
+  /** Whole beats of music the saved window contains, when it was an exact beat count. */
+  musicalBeats: z.number().int().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
   /** Source window length in ms; persisted so a re-opened scratch windows its source. */
@@ -675,6 +685,9 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
   beatAnchorSec: z.number(),
   beats: z.array(z.number()),
   variableTempo: z.boolean(),
+  /** Whole beats of music the item's file contains; 0 means none (a hand-set tempo
+   *  clears it). Refines the item's source BPM — see ADR 0024. */
+  musicalBeats: z.number().int().optional(),
   /** Auto-classification hint; user can override via `audioType`. */
   lowConfidence: z.boolean().optional(),
   /** Decoded PCM cache path reused for clip playback. */

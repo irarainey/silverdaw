@@ -32,7 +32,9 @@ Follow project BPM / Pin in the warp controls. It also settles what a one-shot
 is: a simple sample cannot hold a BPM at all, and no surface draws a beat grid
 over one, and it makes a clip's original BPM a single fact resolved the same way
 in both processes (ADR 0024), so a clip can no longer be drawn stretched while
-playing back dry. Per-release detail lives in `CHANGELOG.md`.
+playing back dry. A clip cut to a number of bars now stays that number of bars
+however its tempo is later re-detected, and changing the project tempo keeps the
+arrangement's musical shape. Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).
@@ -56,7 +58,9 @@ and saved projects must keep working across every update (see ADR 0019).
   state; the renderer mirrors it. See ADR 0002.
 - `CRITICAL` — **A clip has one original BPM and one warp target.** The renderer
   resolves it only via `libraryItemSourceBpm`, the engine only via
-  `ProjectState::getLibraryItemBpm`, and the two share the same rules. Never read
+  `ProjectState::getLibraryItemBpm`, and the two share the same rules — including
+  that a recorded musical length (`musicalBeats`) outranks any detected tempo, so
+  a clip cut to a number of bars stays that number of bars. Never read
   `item.bpm` directly to draw, grid, warp or stretch. See ADR 0024.
 - `CRITICAL` — **Non-destructive editing.** Tempo, pitch, trim, fades, reverse,
   and volume shape are clip settings — never mutate the user's source files.

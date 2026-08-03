@@ -270,6 +270,13 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     scratchPatternId: payload.scratchPatternId,
     fromSnapshot: true
   })
+  // The backend measured the saved window against its source's grid; carry the count
+  // straight over so the sample resolves its source BPM from its true musical length
+  // from the moment it appears, not only after a reload (see libraryItemSourceBpm).
+  if (typeof payload.musicalBeats === 'number' && payload.musicalBeats >= 1) {
+    const item = library.byId[payload.itemId]
+    if (item) item.musicalBeats = payload.musicalBeats
+  }
   if (parsed && parsed.channels.length > 0) {
     library.setItemChannelPeaks(payload.itemId, parsed.channels, payload.peaksPerSecond)
   }

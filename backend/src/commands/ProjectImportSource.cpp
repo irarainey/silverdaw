@@ -1,6 +1,7 @@
 #include "ProjectImportSource.h"
 
 #include "ProjectFile.h"
+#include "ProjectState.h"
 #include "ScratchPatternState.h"
 
 #include "scratch/ScratchProtocol.h"
@@ -89,7 +90,11 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
     SourceProjectImport source;
     source.name = tree.getProperty(kName, "Untitled").toString();
 
-    const auto library = tree.getChildWithName(kLibrary);
+    // The source project is read as a bare tree, so it never goes through the load-time
+    // repair. Apply it here too, or a stem an older build demoted to a plain source stays
+    // invisible to this import until that project is opened and re-saved.
+    auto library = tree.getChildWithName(kLibrary);
+    ProjectState::repairLibraryItemKinds(library);
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);

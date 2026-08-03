@@ -335,8 +335,36 @@ void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)
     }
 }
 
-ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juce::String& clipId) const
+int ProjectState::retimeClipsForTempoChange(double previousBpm, double newBpm,
+                                            const std::function<void(const juce::String&, double)>& moved)
 {
+    if (previousBpm <= 0.0 || newBpm <= 0.0 || previousBpm == newBpm) return 0;
+    const double scale = previousBpm / newBpm;
+    int count = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            auto clip = track.getChild(c);
+            if (!clip.hasType(kClip)) continue;
+            const double offsetMs = static_cast<double>(clip.getProperty(kOffsetMs, 0.0));
+            // A clip at zero is already on bar 1; scaling it is a no-op either way.
+            if (offsetMs <= 0.0) continue;
+            const double next = offsetMs * scale;
+            // Part of the same undoable "Change tempo" transaction as the BPM itself,
+            // so one undo restores both the tempo and the arrangement.
+            clip.setProperty(kOffsetMs, next, &undoManager);
+            ++count;
+            if (moved) moved(clip.getProperty(kId).toString(), next);
+        }
+    }
+    if (count > 0) markDirty();
+    return count;
+}
+
+ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juce::String& clipId) const{
     EffectiveClipTiming out;
     const auto clip = findClip(clipId);
     if (!clip.isValid()) return out;
@@ -486,6 +514,13 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
         {
             foundItem = true;
             if (isOneShotItem(item)) return 0.0;
+            // A recorded musical length is a measurement of the audio itself ("this
+            // file is exactly N beats"), so it outranks any tempo opinion — including
+            // a reanalysis, whose few seconds of audio are exactly what makes short
+            // saved samples mis-detect. Keeping the grid and the warp on the same
+            // number is what stops a clip being drawn to one tempo and played at
+            // another (ADR 0024): a single resolver, refined, not a second source.
+            if (const auto fromLength = musicalLengthBpm(item); fromLength > 0.0) return fromLength;
             const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0));
             if (bpm > 0.0) return bpm;
             sourceItemId = item.getProperty(kSourceItemId, {}).toString();
