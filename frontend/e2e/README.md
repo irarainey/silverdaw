@@ -41,11 +41,15 @@ Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
 which a test can only fake by synthesising the events a browser would otherwise
 generate — that asserts the implementation, so specs take the button instead.
 
-One journey does drive the mouse over a canvas: creating a library sample
-requires selecting a region in the clip editor, and no button reaches it. That
-is real pointer input over the waveform host, and the assertions either side are
-DOM state (the save button is disabled until a selection exists) — nothing is
-read back from the canvas itself.
+Two journeys do drive the mouse over a canvas, where no button reaches the
+gesture. Creating a library sample requires selecting a region in the clip
+editor; a tempo journey needs the playhead off the origin and a range selected,
+which are a press and a drag on the timeline ruler (`helpers/timeline.ts`). Both
+are real pointer input a user performs, rather than synthesised drag-and-drop,
+and the assertions either side are DOM state or the saved project file —
+nothing is read back from the canvas itself. The ruler helper locates itself
+from the header-resize divider, so a resized header column cannot silently move
+the gesture into the track headers.
 
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
