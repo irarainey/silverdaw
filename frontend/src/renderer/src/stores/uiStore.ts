@@ -407,6 +407,29 @@ export const useUiStore = defineStore('ui', {
       this.setLoopTimelineSelection(!this.loopTimelineSelection)
       this.persistTimelineSelectionView()
     },
+    /**
+     * Keep an active range on the same bars when the project tempo changes.
+     *
+     * A selection is a musical span — the chorus, the eight bars being looped — not a
+     * stretch of wall-clock time, so it is scaled by `previousBpm / newBpm` exactly as
+     * clip starts are. Left in milliseconds it slides off the material it was drawn
+     * around the moment the tempo is edited, taking Loop Selection with it.
+     *
+     * Returns true when the range moved, so the caller can persist the new view state.
+     */
+    retimeTimelineSelectionForTempoChange(previousBpm: number, nextBpm: number): boolean {
+      const selection = this.timelineSelection
+      if (selection === null) return false
+      if (!(previousBpm > 0) || !(nextBpm > 0) || previousBpm === nextBpm) return false
+      const scale = previousBpm / nextBpm
+      const next = normaliseTimelineSelection(selection.startMs * scale, selection.endMs * scale)
+      if (next === null) return false
+      // Assigned directly rather than through `setTimelineSelection`: retiming a range
+      // is not the user redrawing it, so Loop Selection stays as they left it.
+      this.timelineSelection = next
+      return true
+    },
+
     /** Repair an active range after reducing the project duration. */
     clampTimelineSelectionToDuration(durationMs: number): boolean {
       const nextSelection = clampTimelineSelectionToDuration(this.timelineSelection, durationMs)

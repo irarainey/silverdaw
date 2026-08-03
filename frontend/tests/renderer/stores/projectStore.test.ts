@@ -432,6 +432,61 @@ describe('projectStore', () => {
     expect(project.clips[clipId]?.warpEnabled).toBeUndefined()
   })
 
+  it('retimes an active timeline selection with the clips when the tempo changes', () => {
+    // Reported: a range was selected, the project tempo was changed, and the range
+    // stayed where it was in milliseconds while the arrangement moved under it. A
+    // selection covers bars, not seconds, so halving the tempo doubles both ends.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    ui.setTimelineSelection({ startMs: 4_000, endMs: 8_000 })
+    ui.setLoopTimelineSelection(true)
+    sendMock.mockClear()
+
+    project.applyProjectBpm(60)
+
+    expect(ui.timelineSelection).toEqual({ startMs: 8_000, endMs: 16_000 })
+    // Loop Selection is the user's, not a side effect of retiming.
+    expect(ui.loopTimelineSelection).toBe(true)
+    // Persisted after the tempo, so the stored view keeps the retimed range.
+    const viewCall = sendMock.mock.calls.find(([type]) => type === 'PROJECT_SET_VIEW')
+    expect(viewCall?.[1]).toMatchObject({
+      timelineSelection: { startMs: 8_000, endMs: 16_000 },
+      loopTimelineSelection: true
+    })
+    expect(sendMock.mock.calls.findIndex(([type]) => type === 'PROJECT_SET_BPM')).toBeLessThan(
+      sendMock.mock.calls.findIndex(([type]) => type === 'PROJECT_SET_VIEW')
+    )
+  })
+
+  it('leaves the timeline selection alone when the tempo is unchanged', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    ui.setTimelineSelection({ startMs: 4_000, endMs: 8_000 })
+    sendMock.mockClear()
+
+    project.applyProjectBpm(120)
+
+    expect(ui.timelineSelection).toEqual({ startMs: 4_000, endMs: 8_000 })
+    expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_SET_VIEW')).toBe(false)
+  })
+
+  it('changes tempo without a selection persisting an empty view', () => {
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    sendMock.mockClear()
+
+    project.applyProjectBpm(90)
+
+    expect(ui.timelineSelection).toBeNull()
+    expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_SET_VIEW')).toBe(false)
+  })
+
   it('alignClipToBarGrid moves a matching-tempo clip the least distance so its beat grid lands on a beat line', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

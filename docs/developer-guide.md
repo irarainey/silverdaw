@@ -1817,7 +1817,13 @@ tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SE
 since the preference lives in the renderer — clips that are not warped but whose
 source has a tempo are warped first, so nothing is left behind at the old tempo. The
 renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
-shared by the transport bar and the project properties dialog.
+shared by the transport bar and the project properties dialog. An active timeline
+selection is rescaled by the same factor there
+(`uiStore.retimeTimelineSelectionForTempoChange`, persisted with
+`PROJECT_SET_VIEW` after `PROJECT_SET_BPM`): a range is a musical span, so a
+selection drawn around eight bars must still cover them, and Loop Selection reads
+the range live every frame. It is view state only, which is why the retime is a
+renderer concern with no backend counterpart.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`

@@ -9,7 +9,7 @@
 - A music sample dropped on the timeline now auto-warps to the project tempo like any other musical clip, and the Warp dialog and Clip Editor offer it Follow project BPM and Pin rather than only a stretch percentage.
 - The first clip dropped into a project that already has a tempo now auto-warps to it, instead of waiting until a second clip was added.
 - A clip whose tempo only just misses the project tempo now warps on drop, shows the WARP badge and draws its beat markers on the warped grid. The check ignored differences under a tenth of a percent, which is nothing on a two-bar loop but leaves a three-minute stem drifting off the grid by its end.
-- Changing the project tempo now keeps the arrangement's musical shape — a clip on bar 9 stays on bar 9 — and brings already-placed clips onto the new tempo when Match project tempo is on.
+- Changing the project tempo now keeps the arrangement's musical shape — a clip on bar 9 stays on bar 9 — and brings already-placed clips onto the new tempo when Match project tempo is on. A timeline selection moves with them, so a range drawn around eight bars still covers those eight bars afterwards.
 - Setting the project tempo by hand now sticks: the next clip analysed no longer seeds over it.
 - Stretching a clip past its original length now plays and exports in full instead of cutting off where it used to end, and changing the stretch during playback takes effect straight away rather than leaving the clip silent until the next seek.
 - The warp stretch percentage now always reads to two decimal places, and the stretch applied is exactly the figure shown rather than a longer one rounded off for display.

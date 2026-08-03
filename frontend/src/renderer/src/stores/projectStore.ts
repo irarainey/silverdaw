@@ -518,6 +518,7 @@ export const useProjectStore = defineStore('project', {
      * Every clip's start is rescaled by `oldBpm / newBpm` so a clip on bar 9 stays on
      * bar 9. Without this, warped clips re-stretch in place while their starts stay in
      * milliseconds, and the arrangement drifts apart the moment the tempo is edited.
+     * An active timeline selection is a musical span too, so it moves with them.
      * Unwarped clips are additionally warped when the "match project tempo" preference
      * is on — the same decision that warps a clip on drop, applied to what is already
      * placed. The backend mirrors both in one undoable "Change tempo" step; applying
@@ -534,10 +535,16 @@ export const useProjectStore = defineStore('project', {
       // the project seeded on PROJECT_SET_BPM.
       transport.setBpmSeeded(true)
       const nextBpm = transport.bpm // post-clamp
-      const autoWarp = useUiStore().matchProjectTempoOnDrop
+      const ui = useUiStore()
+      const autoWarp = ui.matchProjectTempoOnDrop
       sendBridge('PROJECT_SET_BPM', { bpm: nextBpm, autoWarp })
 
       if (previousBpm <= 0 || nextBpm <= 0 || previousBpm === nextBpm) return
+      // Sent after PROJECT_SET_BPM so the stored view state ends up holding the
+      // retimed range rather than the one the tempo edit invalidated.
+      if (ui.retimeTimelineSelectionForTempoChange(previousBpm, nextBpm)) {
+        ui.persistTimelineSelectionView()
+      }
       const library = useLibraryStore()
       const scale = previousBpm / nextBpm
       for (const clip of Object.values(this.clips)) {
