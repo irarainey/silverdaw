@@ -18,6 +18,7 @@
 - Setting the project tempo by hand now sticks: the next clip analysed no longer seeds over it.
 - A clip's original tempo is now resolved the same way everywhere, so a clip can no longer be drawn stretched to the project tempo while playing back at its own — stems, saved clips and samples now agree with the timeline, the beat grid and playback.
 - Opening a project saved before this release repairs any saved samples in its library that were stored as plain imports, so they group and behave as samples again.
+- A saved sample or clip now keeps the tempo of the track it was cut from instead of having one detected from its own few seconds of audio, which was often several percent out — a two-bar loop now warps to exactly two bars of the project tempo rather than falling short. Reanalyse still detects and keeps whatever it finds.
 
 ## 1.5.1
 

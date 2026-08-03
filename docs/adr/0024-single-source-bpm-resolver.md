@@ -12,6 +12,11 @@ Neither process may derive its own version of either.
   `libraryItemSourceBpm` in `frontend/src/renderer/src/stores/libraryItemHelpers.ts`.
 - The engine resolves it only through `ProjectState::getLibraryItemBpm` in
   `backend/src/project/ProjectStateClips.cpp`.
+- A derived item **acquires** its tempo the same way: automatic detection
+  (`ensureBpmDetection`) inherits from the source instead of analysing the item's
+  own audio, because a saved sample or clip is usually far too short to detect a
+  trustworthy tempo from. A user-invoked **Reanalyse** is an explicit instruction
+  and keeps whatever it detects.
 - The two implement the same rules, in this order:
   1. A one-shot (`audioType: "simple"`, inherited through `derivedFrom`) has
      **no** tempo at all — not even an inherited one.

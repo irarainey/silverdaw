@@ -1756,7 +1756,15 @@ BPM; otherwise the BPM of the item it was derived from. Nothing else may read
 `item.bpm` to decide how a clip is drawn, gridded, warped or stretched — when the
 two sides disagreed, a clip could be drawn stretched to the project tempo while the
 engine played it dry. `libraryItemWarpSourceBpm` remains only as a deprecated
-pass-through for the warp UI. On load, `ProjectState::repairLegacyLibraryItemKinds`
+pass-through for the warp UI. The same rule governs how a tempo is *acquired*:
+`ensureBpmDetection` (the automatic path, reached from `LIBRARY_ADD` and the first
+`CLIP_ADD`) asks `ProjectState::getTempoInheritanceSourceId` first and inherits from
+the source rather than analysing a derived item's own audio. A saved sample or clip
+is routinely a couple of bars long — around eight beats, far below what the detector
+needs — and the few-percent error that produces is plainly visible, because the clip
+no longer warps to a whole number of bars. `LIBRARY_REANALYSE` is an explicit
+instruction from the user, runs through `forceLibraryItemAnalysis`, and keeps
+whatever it detects. On load, `ProjectState::repairLegacyLibraryItemKinds`
 (called from `ProjectFile::load`) promotes any `sample-`-prefixed library item that
 an older build persisted as a plain source back to `kind: "sample"`, so an existing
 project fixes itself forward.

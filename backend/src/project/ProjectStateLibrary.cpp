@@ -247,6 +247,30 @@ juce::String ProjectState::getLibraryItemFilePath(const juce::String& itemId) co
     return {};
 }
 
+juce::String ProjectState::getLibraryItemSourceItemId(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return {};
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+            return item.getProperty(kSourceItemId, {}).toString();
+    }
+    return {};
+}
+
+juce::String ProjectState::getTempoInheritanceSourceId(const juce::String& itemId) const
+{
+    const auto sourceItemId = getLibraryItemSourceItemId(itemId);
+    if (sourceItemId.isEmpty()) return {};
+    // getLibraryItemBpm is the single resolver: it returns 0 for a one-shot (which may
+    // never hold a tempo) and otherwise falls back to the source, so a positive value
+    // here means there is a real tempo to inherit and this item may hold it.
+    if (getLibraryItemBpm(itemId) <= 0.0) return {};
+    return sourceItemId;
+}
+
 juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) const
 {
     const auto library = root.getChildWithName(kLibrary);

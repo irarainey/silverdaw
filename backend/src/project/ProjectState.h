@@ -494,6 +494,20 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a library item's media GUID (the key into the project's metadata/covers store). */
     juce::String getLibraryItemMediaId(const juce::String& itemId) const;
 
+    /** Read the id of the item this one was derived from, or an empty string if it is an original. */
+    juce::String getLibraryItemSourceItemId(const juce::String& itemId) const;
+
+    /**
+        The id this item should inherit its tempo from, or an empty string when it must be
+        analysed on its own audio.
+
+        A derived item's original tempo belongs to the item it was cut from (ADR 0024), which
+        was analysed over its whole length; a saved sample or clip is often only a few seconds
+        long, far too short to detect a trustworthy tempo from. Returns empty for an original,
+        for a one-shot (which holds no tempo at all), and when the source has no tempo to give.
+    */
+    juce::String getTempoInheritanceSourceId(const juce::String& itemId) const;
+
     juce::String getLibraryItemPlaybackPath(const juce::String& itemId) const;
 
     // Empty key clears the detected-key override.

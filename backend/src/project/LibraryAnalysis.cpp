@@ -399,6 +399,26 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
     const juce::String itemId = findLibraryItemIdForPath(projectState, filePath);
     if (itemId.isEmpty()) return; // No library item to attach BPM to.
     if (projectState.getLibraryItemBpmForPath(filePath) > 0.0) return; // Already known.
+
+    // A derived item's original tempo belongs to the item it was cut from, not to a
+    // fresh detection on its own audio (ADR 0024 — one original BPM per clip). A
+    // saved sample or saved clip is routinely only a few seconds long, far below what
+    // tempo detection needs to be reliable: a two-bar drum excerpt gives the detector
+    // about eight beats, and the few-percent error that produces is directly visible,
+    // because the clip no longer warps to a whole number of bars. The item it came
+    // from was analysed over its whole length and already knows the answer.
+    //
+    // This is the AUTOMATIC path (a library add or the first clip add). Reanalyse is
+    // an explicit instruction from the user and keeps whatever it detects — it runs
+    // through forceLibraryItemAnalysis and never reaches here.
+    const juce::String sourceItemId = projectState.getTempoInheritanceSourceId(itemId);
+    if (sourceItemId.isNotEmpty())
+    {
+        inheritAnalysisFromSource(itemId, sourceItemId, engine, projectState, bridge);
+        silverdaw::log::info("bpmjob", "skipped detection for derived itemId=" + itemId
+                                           + " — inherited tempo from " + sourceItemId);
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())

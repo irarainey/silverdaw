@@ -639,6 +639,48 @@ void testProjectStateRepairsLegacySampleKind()
     require(state.repairLegacyLibraryItemKinds() == 0, "repair should be idempotent");
 }
 
+void testProjectStateTempoInheritanceSourceId()
+{
+    // Automatic detection must never run on a derived item whose source already knows
+    // the tempo. A saved sample is often only a couple of bars long — far too short for
+    // reliable detection — and the few-percent error it yields is visible as a warped
+    // clip that no longer spans a whole number of bars.
+    silverdaw::ProjectState state;
+
+    require(state.addLibraryItem("track", "C:\\audio\\track.wav", "track.wav", 60000.0, 48000, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("track", 105.804), "source bpm should apply");
+
+    // An original has nothing to inherit from: it must be analysed.
+    require(state.getTempoInheritanceSourceId("track").isEmpty(),
+            "an original must be analysed on its own audio");
+
+    // A saved sample cut from an analysed source inherits instead of detecting.
+    require(state.addLibraryItem("sample-a", "C:\\audio\\s.wav", "s.wav", 4536.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "sample should add");
+    require(state.setLibraryItemAudioType("sample-a", "music"), "music classification applies");
+    requireEqual(state.getTempoInheritanceSourceId("sample-a"), "track",
+                 "a music sample must inherit its source's tempo, not detect its own");
+
+    // A one-shot holds no tempo at all, so there is nothing to inherit.
+    require(state.addLibraryItem("sample-b", "C:\\audio\\hit.wav", "hit.wav", 800.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "one-shot sample should add");
+    require(state.setLibraryItemAudioType("sample-b", "simple"), "simple classification applies");
+    require(state.getTempoInheritanceSourceId("sample-b").isEmpty(),
+            "a one-shot must neither inherit nor detect a tempo");
+
+    // A source with no tempo of its own has nothing to give, so the derived item is analysed.
+    require(state.addLibraryItem("quiet", "C:\\audio\\quiet.wav", "quiet.wav", 60000.0, 48000, 2),
+            "untimed source should add");
+    require(state.addLibraryItem("sample-c", "C:\\audio\\c.wav", "c.wav", 4000.0, 48000, 2,
+                                 {}, {}, "sample", {}, "quiet"),
+            "sample of an untimed source should add");
+    require(state.getTempoInheritanceSourceId("sample-c").isEmpty(),
+            "a derived item whose source has no tempo must fall back to detection");
+}
+
 void testProjectStateCoverArtHiddenOverride()
 {
     silverdaw::ProjectState state;
@@ -1419,6 +1461,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState simple classification strips and blocks tempo", testProjectStateSimpleClassificationHasNoTempo});
     tests.push_back({"ProjectState source-BPM resolver contract", testProjectStateSourceBpmResolverContract});
     tests.push_back({"ProjectState repairs legacy sample kind on load", testProjectStateRepairsLegacySampleKind});
+    tests.push_back({"ProjectState derived items inherit tempo instead of detecting", testProjectStateTempoInheritanceSourceId});
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});
     tests.push_back({"ProjectState derived library metadata does not mark dirty", testProjectStateDerivedLibraryMetadataDoesNotMarkDirty});
