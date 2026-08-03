@@ -646,6 +646,38 @@ void testProjectStateRetimesClipsOnTempoChange()
             "an unknown previous tempo should move nothing");
 }
 
+void testProjectStateRetimesMarkersOnTempoChange()
+{
+    // Reported: markers stayed at their millisecond positions across a tempo change,
+    // so the arrangement moved out from under them. A marker names a musical place —
+    // the drop, the last bar of the intro — so it travels with the material.
+    silverdaw::ProjectState state;
+    require(state.addMarker("m0", 0.0), "marker at zero should add");
+    require(state.addMarker("m1", 4000.0), "marker should add");
+    require(state.addMarker("m2", 8000.0), "second marker should add");
+
+    // Halving the tempo doubles the milliseconds each bar occupies.
+    require(state.retimeMarkersForTempoChange(120.0, 60.0) == 2,
+            "only the two markers away from zero should move");
+
+    const auto markers = state.markersAsJson();
+    require(markers.isArray() && markers.getArray()->size() == 3, "all markers should survive");
+    auto positionOf = [&](const juce::String& id) {
+        for (const auto& entry : *markers.getArray())
+            if (entry.getProperty("id", {}).toString() == id)
+                return static_cast<double>(entry.getProperty("positionMs", 0.0));
+        return -1.0;
+    };
+    require(std::abs(positionOf("m0")) < 1e-9, "a marker on bar 1 stays on bar 1");
+    require(std::abs(positionOf("m1") - 8000.0) < 1e-9, "a marker should scale by oldBpm/newBpm");
+    require(std::abs(positionOf("m2") - 16000.0) < 1e-9, "every marker should scale identically");
+
+    require(state.retimeMarkersForTempoChange(60.0, 60.0) == 0,
+            "an unchanged tempo should move nothing");
+    require(state.retimeMarkersForTempoChange(0.0, 60.0) == 0,
+            "an unknown previous tempo should move nothing");
+}
+
 void testProjectStateSourceBpmResolverContract()
 {
     // The renderer's `libraryItemSourceBpm` must resolve the same original BPM this
@@ -1689,6 +1721,7 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState repairs demoted stem kind on load", testProjectStateRepairsDemotedStemKind});
     tests.push_back({"ProjectState musical length outranks detected bpm", testProjectStateMusicalLengthOutranksDetectedBpm});
     tests.push_back({"ProjectState retimes clips on tempo change", testProjectStateRetimesClipsOnTempoChange});
+    tests.push_back({"ProjectState retimes markers on tempo change", testProjectStateRetimesMarkersOnTempoChange});
     tests.push_back({"ProjectState derived items inherit tempo instead of detecting", testProjectStateTempoInheritanceSourceId});
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});

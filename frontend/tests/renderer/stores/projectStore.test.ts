@@ -460,8 +460,30 @@ describe('projectStore', () => {
     )
   })
 
-  it('leaves the timeline selection alone when the tempo is unchanged', () => {
+  it('retimes markers and the playhead with the clips when the tempo changes', () => {
+    // Reported: markers and the playhead were pinned to their millisecond positions,
+    // so a tempo change slid them off the material they marked while everything else
+    // moved. Both name a musical place, so halving the tempo doubles them.
     const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+    transport.setPosition(4_000)
+    project.markers = [
+      { id: 'm0', positionMs: 0 },
+      { id: 'm1', positionMs: 2_000 },
+      { id: 'm2', positionMs: 6_000 }
+    ]
+    sendMock.mockClear()
+
+    project.applyProjectBpm(60)
+
+    expect(project.markers.map((marker) => marker.positionMs)).toEqual([0, 4_000, 12_000])
+    expect(transport.positionMs).toBe(8_000)
+    // The backend retimes its own copy on PROJECT_SET_BPM; sending moves would double it.
+    expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_MARKER_MOVE')).toBe(false)
+  })
+
+  it('leaves the timeline selection alone when the tempo is unchanged', () => {    const project = useProjectStore()
     const transport = useTransportStore()
     const ui = useUiStore()
     transport.bpm = 120

@@ -132,4 +132,29 @@ bool ProjectState::removeMarker(const juce::String& markerId)
     return false;
 }
 
+int ProjectState::retimeMarkersForTempoChange(double previousBpm, double newBpm)
+{
+    if (previousBpm <= 0.0 || newBpm <= 0.0 || previousBpm == newBpm) return 0;
+
+    auto markers = root.getChildWithName(kMarkers);
+    if (!markers.isValid()) return 0;
+
+    const double scale = previousBpm / newBpm;
+    int count = 0;
+    for (int i = 0; i < markers.getNumChildren(); ++i)
+    {
+        auto marker = markers.getChild(i);
+        if (!marker.hasType(kMarker)) continue;
+        const double positionMs = static_cast<double>(marker.getProperty(kPositionMs, 0.0));
+        // A marker at zero is already on bar 1; scaling it is a no-op either way.
+        if (positionMs <= 0.0) continue;
+        // Part of the same undoable "Change tempo" transaction as the BPM itself,
+        // so one undo restores the tempo and every marker together.
+        marker.setProperty(kPositionMs, positionMs * scale, &undoManager);
+        ++count;
+    }
+    if (count > 0) markDirty();
+    return count;
+}
+
 } // namespace silverdaw

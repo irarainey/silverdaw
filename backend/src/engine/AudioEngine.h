@@ -360,6 +360,10 @@ class AudioEngine : private AudioEngineGraphState,
     // Test-only: direct access to the backing monitor source for verifying
     // clearScratchSession() and replay-backing teardown.
     scratch::BackingMonitorSource& backingSourceForTest() { return backingSource; }
+    // Test-only: whether a clip currently has a live WarpProcessor. The engine is
+    // the only place that fact exists, and a clip that project state calls warped
+    // while this is false is the "drawn stretched, plays dry" defect.
+    bool clipHasWarpForTest(const juce::String& clipId) const noexcept;
 
     // Windows under-reports Bluetooth endpoint latency, so known headset names get a
     // conservative visual offset.

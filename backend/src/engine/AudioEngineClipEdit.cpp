@@ -529,4 +529,10 @@ bool AudioEngine::canWarpClip(const juce::String& clipId) const noexcept
         && WarpProcessor::supportsChannelCount(it->second->numChannels);
 }
 
+bool AudioEngine::clipHasWarpForTest(const juce::String& clipId) const noexcept
+{
+    const auto it = tracks.find(clipId);
+    return it != tracks.end() && it->second->warp != nullptr;
+}
+
 } // namespace silverdaw

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.2
+## 1.5.3
 
 ### Fixed
 
@@ -13,9 +13,9 @@
 - A clip whose tempo only just misses the project tempo now warps on drop, shows the WARP badge and draws its beat markers on the warped grid.
 - Changing the project tempo now keeps the arrangement's musical shape, so a clip on bar 9 stays on bar 9.
 - Changing the project tempo now brings already-placed clips onto the new tempo when Match project tempo is on.
-- An active timeline selection now keeps its place in the bars when the project tempo changes.
+- An active timeline selection, the timeline markers and the playhead now keep their place in the bars when the project tempo changes.
 - A hand-set project tempo is no longer seeded over by the next clip analysed.
-- Stretching a clip past its original length now plays and exports in full instead of cutting off where it used to end.
+- A warped clip now plays and exports its full stretched length, however the warp was applied.
 - Changing a clip's stretch during playback now takes effect straight away.
 - The warp stretch percentage now always reads to two decimal places, and the stretch applied is exactly the figure shown.
 - Reanalysing a track now brings the clips already using it onto the new tempo, leaving any clip pinned to a fixed stretch alone.

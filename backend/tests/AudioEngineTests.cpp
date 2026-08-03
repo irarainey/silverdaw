@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "BridgeServer.h"
 #include "DecodedCache.h"
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
@@ -16,6 +17,7 @@
 #include "PeaksCache.h"
 #include "PreviewMetronomeSource.h"
 #include "ProjectFile.h"
+#include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
@@ -28,6 +30,7 @@
 #include <cmath>
 #include <exception>
 #include <limits>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1350,11 +1353,67 @@ void testMetronomeClicksOnBeatBoundaries()
     }
 }
 
+// Regression: a project tempo change used to hand the engine an unset `enabled`,
+// which it reads as "keep whatever this clip already is". A clip the same command
+// had only just auto-warped in project state was therefore *disabled* in the
+// engine: the timeline drew it stretched to the new tempo while playback ran it
+// dry, so it ended at its original length. A project seeded from its own first
+// clip is exactly the case that hits this — every clip on the timeline starts
+// unwarped, because none of them needed a stretch at the seeded tempo. Being at
+// the project tempo is a coincidence of the moment, not a property of the clip.
+void testTempoChangeWarpsPreviouslyUnwarpedClipInEngine()
+{
+    const auto dir = makeTempDir("tempo-change-warp");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr); // registers WAV formats for addClip
+    silverdaw::ProjectState state;
+    silverdaw::BridgeServer bridge(
+        "test-token", [](silverdaw::BridgeServer&, const juce::String&, const juce::var&) {});
+
+    const auto wav = writeTestWav(dir, "loop.wav", 2.0);
+    require(state.addLibraryItem("src", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
+            "library item should add");
+    require(state.setLibraryItemBpm("src", 120.0), "source BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "c1", "src", 0.0, 2000.0), "project-state clip should add");
+    require(engine.addClip("t1", "c1", wav, 0.0), "engine clip should attach");
+
+    // The project tempo was seeded from this clip, so it needs no stretch yet.
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(!engine.clipHasWarpForTest("c1"), "a clip at the project tempo starts unwarped");
+
+    // The playhead is parked on a beat, so it must land on the same beat afterwards.
+    engine.setPositionMs(4000.0, /*resetEffects=*/false);
+    const double positionBefore = engine.getPositionMs();
+    require(positionBefore > 0.0, "the seek should take, or the playhead check below proves nothing");
+
+    auto payload = std::make_unique<juce::DynamicObject>();
+    payload->setProperty("bpm", 100.0);
+    payload->setProperty("autoWarp", true);
+    silverdaw::handleProjectSetBpm(juce::var(payload.release()), engine, state, bridge);
+
+    bool warpedInState = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId == "c1") warpedInState = info.warpEnabled;
+        });
+    require(warpedInState, "a tempo change should auto-warp a clip that sat at the old tempo");
+    require(engine.clipHasWarpForTest("c1"),
+            "the engine must warp the clip project state calls warped, or it plays dry and ends early");
+
+    // 120 -> 100 BPM: the same beat is now 1.2x further along in milliseconds.
+    require(std::abs(engine.getPositionMs() - positionBefore * 1.2) < 1.0,
+            "the playhead should keep its beat rather than its millisecond");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
+    tests.push_back({"Tempo change warps a previously unwarped clip in the engine", testTempoChangeWarpsPreviouslyUnwarpedClipInEngine});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
     tests.push_back({"Stopped seek keeps the read-ahead and any pending edit rebuild", testStoppedSeekKeepsReadAheadAndPendingEditRebuild});

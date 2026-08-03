@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.2" } }
+{ "type": "READY", "payload": { "version": "1.5.3" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1959,7 +1959,7 @@ already done, and show that one is running. No new user-facing concepts.
    from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
    splits on the timeline axis regardless of reverse.
 
-### 1.5.2 - Tempo, Warp & Sample Correctness *(current release)*
+### 1.5.3 - Tempo, Warp & Sample Correctness *(current release)*
 
 **Goal:** make one clip have one tempo, and make every surface that draws,
 snaps, warps or plays it agree on that tempo. No new user-facing concepts —

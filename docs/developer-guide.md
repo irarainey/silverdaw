@@ -1818,7 +1818,14 @@ clips re-stretch in place while their starts stay in milliseconds and the
 arrangement drifts apart on every tempo edit. When the renderer's **Match project
 tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
 since the preference lives in the renderer — clips that are not warped but whose
-source has a tempo are warped first, so nothing is left behind at the old tempo. The
+source has a tempo are warped first, so nothing is left behind at the old tempo.
+Those clips are then re-stretched through `engine.setClipWarp` with `enabled`
+explicitly `true`: the engine reads an unset `enabled` as "keep the current engine
+state", and a clip that has never been warped has no warp processor, so leaving it
+unset would disable warp on the very clips the auto-warp pass just enabled and they
+would play dry and stop at their unwarped length. Sitting at the project tempo is a
+coincidence of the moment, not a property of the clip — any clip with a source tempo
+stays warp-capable and a tempo change must never turn its warp off. The
 renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
 shared by the transport bar and the project properties dialog. An active timeline
 selection is rescaled by the same factor there
@@ -1827,6 +1834,18 @@ selection is rescaled by the same factor there
 selection drawn around eight bars must still cover them, and Loop Selection reads
 the range live every frame. It is view state only, which is why the retime is a
 renderer concern with no backend counterpart.
+
+Timeline markers and the playhead are rescaled by that factor too. A marker names a
+musical place — the drop, the last bar of the intro — and the playhead is parked on
+a beat, so leaving either in milliseconds strands it against whatever now happens to
+occupy that instant while everything else moves. Markers are persisted state, so the
+backend owns them (`ProjectState::retimeMarkersForTempoChange`, in the same undoable
+transaction as the tempo itself) and `applyProjectBpm` mirrors the new positions
+locally — marker positions otherwise only reach the renderer on a full
+`PROJECT_STATE` snapshot, which a tempo edit does not trigger. The playhead is
+likewise moved on the backend, through the ordinary `setPositionMs` seek: the same
+material sits under it after the move, so the effect tails carry across rather than
+being reset.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`

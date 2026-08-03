@@ -604,6 +604,19 @@ class ProjectState : public juce::ValueTree::Listener
     /** Remove an existing timeline marker. Returns false when no marker matches. */
     bool removeMarker(const juce::String& markerId);
 
+    /**
+     * Keep every timeline marker on the same bar when the project tempo changes.
+     *
+     * A marker names a musical place — the drop, the last bar of the intro — not a
+     * wall-clock instant, so it is scaled by `previousBpm / newBpm` exactly as clip
+     * starts are. Left in milliseconds, markers slide off the material they were
+     * dropped against the moment the tempo is edited.
+     *
+     * Returns the number of markers moved; a no-op (either BPM unusable, or unchanged)
+     * returns 0.
+     */
+    int retimeMarkersForTempoChange(double previousBpm, double newBpm);
+
     /** Snapshot persisted timeline markers for PROJECT_STATE. */
     juce::var markersAsJson() const;
     int getMarkerCount() const noexcept;
