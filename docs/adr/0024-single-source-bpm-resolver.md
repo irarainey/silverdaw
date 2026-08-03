@@ -1,6 +1,6 @@
 # ADR 0024 — One original BPM per clip, resolved identically in both processes
 
-- **Date:** 2026-08-04 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `CRITICAL`
+- **Date:** 2026-08-03 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `CRITICAL`
 
 ## Decision
 

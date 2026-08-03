@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.1" } }
+{ "type": "READY", "payload": { "version": "1.5.2" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1893,7 +1893,7 @@ mismatch. No new concepts — every item corrects behaviour that already shipped
     density and every timeline-time snap, and persists as non-dirty project view
     state (`viewSnapGrid`) defaulting to Quarter beat for older projects.
 
-### 1.5.1 - Undo Waveform Rework *(current release)*
+### 1.5.1 - Undo Waveform Rework *(released)*
 
 **Goal:** stop an undo — and the bulk edits that precede one — from re-doing work
 already done, and show that one is running. No new user-facing concepts.
@@ -1958,6 +1958,72 @@ already done, and show that one is running. No new user-facing concepts.
    sampled from the original curve. The envelope axis is elapsed playback time
    from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
    splits on the timeline axis regardless of reverse.
+
+### 1.5.2 - Tempo, Warp & Sample Correctness *(current release)*
+
+**Goal:** make one clip have one tempo, and make every surface that draws,
+snaps, warps or plays it agree on that tempo. No new user-facing concepts —
+every item corrects behaviour that already shipped. See ADR 0024.
+
+1. [x] **One source-BPM resolver per process.** `libraryItemSourceBpm`
+   (renderer) and `ProjectState::getLibraryItemBpm` (engine) are the only
+   answers to "how fast is this clip's source?", and they implement the same
+   rules: a one-shot has no tempo at all, otherwise a recorded musical length,
+   otherwise the item's own BPM, otherwise the BPM it was derived from. The drop
+   paths, warp UI and beat grid no longer read `item.bpm` raw. A music sample cut
+   from a stem was drawn stretched while playing dry, and its Warp dialog offered
+   only a free stretch percentage.
+2. [x] **A derived item inherits its tempo rather than detecting one.**
+   `ensureBpmDetection` takes the source's BPM for a saved clip, sample or stem —
+   a few seconds of audio does not detect a trustworthy tempo — while a
+   user-invoked **Reanalyse** keeps whatever it finds.
+3. [x] **Musical length outranks detected tempo.** `musicalBeats` records how
+   many whole beats of music a cut contains, measured against the grid it was cut
+   from, so a two-bar loop warps to exactly two bars however its tempo is later
+   re-detected. Recorded only when the cut really is a whole number of beats.
+4. [x] **`bpmSeeded` is one fact, owned by the backend.** The renderer no longer
+   infers whether the project tempo is established from "does the timeline hold
+   another clip?", which left the first clip dropped into a seeded project
+   unwarped, and let the next analysis seed over a hand-set tempo.
+5. [x] **Warp is judged on drift, not on a ratio epsilon.** Both processes ask
+   whether the ratio moves the clip's end by at least `WARP_NEGLIGIBLE_DRIFT_MS`
+   / `kWarpNegligibleDriftMs`, so a three-minute stem a tenth of a percent out
+   warps while a two-bar loop is left alone — and the engine can no longer
+   stretch a clip the project state calls unwarped.
+6. [x] **Changing the project tempo keeps the musical shape.**
+   `retimeClipsForTempoChange` rescales every clip start by
+   `previousBpm / newBpm`, the **Match project tempo** preference rides along as
+   the optional `autoWarp` flag on `PROJECT_SET_BPM`, and an active timeline
+   selection is rescaled by the same factor in the renderer
+   (`uiStore.retimeTimelineSelectionForTempoChange`) because it is view state
+   with no engine counterpart.
+7. [x] **An analysis re-derives the warp of the clips already using it.** The
+   engine used to keep a ratio built from the old BPM while the renderer's grid
+   recomputed from the new one; unpinned clips now follow a reanalysis and
+   re-broadcast `CLIP_WARP_APPLIED`.
+8. [x] **A warped clip's beat markers come from the project tempo.**
+   `clipTimelineBeatSpacingMs` spaces them at `60_000 / projectBPM` by
+   construction rather than deriving `sourceSpacing / ratio`, so they cannot walk
+   away from the project grid. A pinned ratio keeps the derived spacing.
+9. [x] **Beat-aligned snap survives the timeline origin.**
+   `startMsForAlignedBeat` steps forward by whole snap units when the aligned
+   start resolves before 0, instead of clamping and leaving the clip's first beat
+   a fraction of a beat ahead of bar 1.
+10. [x] **Stretched playback plays to the end.** A clip stretched past its
+    original length no longer stops where it used to end, and a stretch changed
+    during playback takes effect without a seek.
+11. [x] **Library item kinds repair themselves on load.**
+    `ProjectState::repairLibraryItemKinds` promotes samples stored as plain
+    imports and stems demoted by a reanalysis, from both project load and the
+    import-from-project reader (ADR 0019).
+12. [x] **One-shots hold no tempo anywhere.** Classifying an item as a simple
+    sample clears any BPM it held, detection cannot give one back, no editor
+    draws beat markers over it, and Chop to Grid is not offered — while Chop to
+    Grid *is* offered on any clip whose markers are drawn, including an
+    inheriting stem.
+13. [x] **Two more e2e journeys** (ADR 0014): a tempo change retiming clips and
+    the timeline selection through a save/reopen round trip, and drop-time warp
+    into an established project tempo.
 
 ### Phase 1 — Backend Foundation & Bridge
 

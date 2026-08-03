@@ -34,7 +34,9 @@ over one, and it makes a clip's original BPM a single fact resolved the same way
 in both processes (ADR 0024), so a clip can no longer be drawn stretched while
 playing back dry. A clip cut to a number of bars now stays that number of bars
 however its tempo is later re-detected, and changing the project tempo keeps the
-arrangement's musical shape. Per-release detail lives in `CHANGELOG.md`.
+arrangement's musical shape — clips, their warps, and an active timeline
+selection all move with it; a reanalysis likewise brings the clips already using
+that source onto its new tempo. Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).
@@ -128,8 +130,8 @@ beside `SilverdawBackendTests`. The backend uses a custom `SilverdawBackendTests
 harness wired into **CTest** (no Catch2/GoogleTest); the frontend uses **Vitest**
 with Vue Test Utils; **Playwright** (`frontend/e2e/`, `pnpm test:e2e`) drives the
 built app against a real backend for end-to-end journeys. The e2e tier
-supplements the other two and replaces neither — keep it few, wide, and off the
-canvas.
+supplements the other two and replaces neither — keep it few, wide, and asserted
+on the DOM, the filesystem, and saved project files, never on canvas pixels.
 
 Rationale: ADR 0014. Commands and coverage tooling:
 `docs/developer-guide.md#quality-gates`.

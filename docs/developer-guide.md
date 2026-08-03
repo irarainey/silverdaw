@@ -151,6 +151,9 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
                          inbound.ts also re-exports MIDI-specific schemas from
                          bridge/midi-inbound.ts
                          Plus ipc-channels.ts and types.ts (also TS-tested)
+  tests/                 Vitest specs mirroring src/ (renderer, main, shared)
+  e2e/                   Playwright journeys driving the built app against a
+                         real backend (ADR 0014)
   electron-builder.yml   Windows packaging config (signed MSIX/AppX + portable zip)
   electron-builder.store.cjs  Store variant of the above (unsigned, Store identity)
 scripts/                 Dev-shell / build / clang-tidy helpers (PowerShell)
@@ -3797,6 +3800,13 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   `@shared` and `@main` path aliases. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
   under `frontend/coverage/`.
+- **End-to-end**: `pnpm test:e2e` builds the app (`electron-vite build`) and runs
+  the Playwright journeys under `frontend/e2e/` against a real spawned backend,
+  so a run covers the spawn → port → AUTH → handshake chain, the native dialog
+  stubs and the saved project format. The tier is deliberately small and wide and
+  asserts only on the DOM, the filesystem and saved project files; its rules and
+  helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
+  type-checked by `pnpm typecheck` through `tsconfig.node.json`.
 - **Dead code**: a configured `frontend/knip.json` (entry points for the main /
   preload / renderer electron-vite processes) lets `pnpm dlx knip` report unused
   files, exports and dependencies. Treat its output as *candidates* — the zod
