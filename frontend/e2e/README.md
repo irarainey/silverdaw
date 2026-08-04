@@ -23,6 +23,24 @@ code you have already changed, which has now happened more than once; the few
 seconds of build are cheaper than trusting a green run that meant nothing. Use
 `test:e2e:only` for a tight loop when you have not touched `src/`.
 
+`e2e/globalSetup.ts` enforces that: before any spec runs it compares the mtimes
+of `out/{main,preload,renderer}` against `src/` and `electron.vite.config.ts`,
+and aborts the run with a build hint if the bundles are missing or older. So
+`test:e2e:only` can no longer silently test stale code.
+
+### From the VS Code Testing panel
+
+Install the recommended `ms-playwright.playwright` extension (see
+`.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
+own, and the 25 specs appear in the Testing panel next to the CTest-provided
+backend tests — no extra configuration.
+
+The panel's ▶ runs the Playwright runner directly, exactly like
+`test:e2e:only`, so it does **not** build first. Discovery is unaffected — the
+tests always list — but a run against stale bundles stops at the freshness
+guard above. Run the `frontend: build` task (or `pnpm --dir frontend build`)
+after changing `src/`, then re-run.
+
 The e2e tier does not build or check the C++ backend. A backend change needs its
 own rebuild before these specs can see it.
 

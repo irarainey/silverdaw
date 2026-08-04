@@ -1,0 +1,25 @@
+{
+  // Extensions this workspace's settings.json / tasks.json actively configure.
+  // VS Code offers to install these on first open.
+  "recommendations": [
+    // Playwright e2e specs (frontend/e2e/**/*.e2e.ts) in the Testing panel,
+    // alongside the CTest-provided backend tests. Discovers
+    // frontend/playwright.config.ts automatically.
+    "ms-playwright.playwright",
+
+    // Backend: CTest integration for the Testing panel, plus configure/build.
+    "ms-vscode.cmake-tools",
+    // C++ IntelliSense (cpptools is disabled in settings; kept for debugging).
+    "llvm-vs-code-extensions.vscode-clangd",
+    "ms-vscode.cpptools",
+
+    // Frontend.
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+
+    // Docs.
+    "yzhang.markdown-all-in-one"
+  ]
+}

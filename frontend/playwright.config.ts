@@ -15,6 +15,12 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
 
+  // The specs launch the built app, so a run that skipped `electron-vite build`
+  // would test stale bundles. `pnpm test:e2e` builds first; running the runner
+  // directly (`pnpm test:e2e:only`, or the Testing panel's ▶) does not, so this
+  // guard turns that silent trap into an actionable failure.
+  globalSetup: './e2e/globalSetup.ts',
+
   // Each spec launches a real Electron app that spawns a real audio engine and
   // opens an output device. Parallel workers would contend for the audio device
   // and multiply cold-launch cost, so the tier is deliberately serial.
