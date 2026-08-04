@@ -3046,6 +3046,23 @@ Robustness:
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
   the next available device automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.
+- **Stalled device recovery** — a device can also stop delivering audio without
+  ever being removed: JUCE's WASAPI thread exits on a stream error and does not
+  come back, leaving the transport reporting `playing` with a playhead that never
+  moves and no sound. `DeviceCallbackGuard`
+  (`backend/src/engine/DeviceCallbackGuard.{h,cpp}`) wraps the device callback,
+  logs `audioDeviceAboutToStart` / `audioDeviceStopped` / `audioDeviceError`, and
+  exposes `isDeviceRunning()`. Those are device-thread *lifecycle* callbacks, not
+  the block callback, so logging in them is safe; the block callback itself is
+  pure forwarding and adds no real-time work. A message-thread watchdog in
+  `AudioEngineDevice.cpp` (`checkAudioDeviceHealth()`) then polls
+  `MasterClockSource::getCallbackCount()` every `kDeviceWatchdogIntervalMs`; the
+  counter advances on every block regardless of transport state, so a frozen
+  count is an unambiguous stall even while idle. After `kDeviceStallTicks`
+  consecutive ticks with no progress it calls `restartLastAudioDevice()`, capped
+  at `kMaxDeviceRecoveryAttempts` so a genuinely dead device can't spin. A
+  stalled device is now either recovered or, at minimum, named in the log
+  instead of failing silently.
 - **Fast startup** — the first full device-type scan (the slow step on
   machines with ASIO drivers — typically 100–400 ms) is deferred via
   `juce::MessageManager::callAsync` and runs *after* the bridge has shipped
@@ -3588,7 +3605,8 @@ matching Visual Studio Code tasks import the Visual Studio Developer Shell so `c
 `scripts/Setup-Dev.ps1` brings a fresh Windows machine to a buildable checkout in a single
 command. It verifies each prerequisite, offers to install anything missing via `winget`,
 activates `pnpm` via `corepack`, runs `pnpm install` in `frontend/`, and configures the
-backend Debug CMake cache in `backend/build/` (CMake creates that directory itself — no
+backend CMake cache in `backend/build/` with the Visual Studio 17 2022 generator and
+`SILVERDAW_BUILD_TESTS=ON` (CMake creates that directory itself — no
 manual `mkdir` is required).
 
 ```powershell
@@ -3636,7 +3654,7 @@ workspace root:
 ```powershell
 # 1. Configure + build the backend (Debug) — Setup-Dev already ran the configure step
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-  "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+  "cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
   "cmake --build backend/build --config Debug --parallel"
 
@@ -3660,13 +3678,19 @@ before the renderer starts.
 cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't
 reconfigure the Debug cache out from under your dev session.
 
-> **Pick one generator for `backend/build/` and stay with it.** The CLI steps
-> above configure it with `-G Ninja` (single-config, so `CMAKE_BUILD_TYPE`
-> decides the build type and `--config` is ignored), while the
-> `backend: configure` VS Code task configures the same directory with
-> `-G 'Visual Studio 17 2022'` (multi-config, where `--config` decides). Whichever
-> configure ran last wins. If you switch between the two, delete
-> `backend/build/` first rather than reconfiguring over the top.
+> **`backend/build/` is a Visual Studio 17 2022 (multi-config) tree — don't
+> reconfigure it with another generator.** `scripts/Setup-Dev.ps1`, the
+> `backend: configure` VS Code task, and `cmake.generator` in
+> `.vscode/settings.json` all agree on that generator, so `--config` decides the
+> build type and `CMAKE_BUILD_TYPE` is ignored. CMake refuses to reconfigure a
+> tree with a different generator, and CMake Tools treats that refusal as a
+> failed configure — which silently empties the backend tests out of the VS Code
+> Testing panel. If you really must switch, delete `backend/build/` first rather
+> than reconfiguring over the top, and change `cmake.generator` to match.
+>
+> `backend/build-release/` is the **Ninja** tree, and the only one that emits
+> `compile_commands.json` — which is why clangd and `scripts/Invoke-ClangTidy.ps1`
+> both point at it.
 
 ## Packaging for Windows
 
@@ -3924,11 +3948,11 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
   ```powershell
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSILVERDAW_BUILD_TESTS=ON"
+    "cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
     "cmake --build backend/build --target SilverdawBackendTests --config Debug --parallel"
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "ctest --test-dir backend/build --output-on-failure"
+    "ctest --test-dir backend/build --build-config Debug --output-on-failure"
   ```
   Each case is a separate CTest test, discovered at build time via the harness's
   `--list` / `--run` flags, so cases appear individually in `ctest` and the VS
@@ -3971,6 +3995,18 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   asserts only on the DOM, the filesystem and saved project files; its rules and
   helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
   type-checked by `pnpm typecheck` through `tsconfig.node.json`.
+
+  The specs launch the *built* app, so anything that invokes the runner
+  directly — `pnpm test:e2e:only`, or the ▶ button in the VS Code Testing panel
+  — skips that build and would otherwise silently test stale bundles.
+  `frontend/e2e/globalSetup.ts` guards against it: before any spec runs it
+  compares `out/{main,preload,renderer}` against `src/` and
+  `electron.vite.config.ts` and aborts with a build hint if the bundles are
+  missing or older. Discovery is unaffected, so the panel always lists the
+  specs. Installing the recommended `ms-playwright.playwright` extension (see
+  `.vscode/extensions.json`) puts them in the Testing panel alongside the
+  CTest-provided backend tests; it finds `frontend/playwright.config.ts` on its
+  own.
 - **Dead code**: a configured `frontend/knip.json` (entry points for the main /
   preload / renderer electron-vite processes) lets `pnpm dlx knip` report unused
   files, exports and dependencies. Treat its output as *candidates* — the zod
