@@ -138,12 +138,22 @@ jobs:
         run: ctest --test-dir backend/build --build-config Debug --output-on-failure
 
       # Handed to the e2e job so it runs the binary this job proved, and so the
-      # backend is built once rather than twice.
+      # backend is built once rather than twice. The directory is otherwise
+      # self-contained — CRT and ONNX DLLs, lame.exe and the MIDI mappings are
+      # all copied beside the executable by POST_BUILD steps.
+      #
+      # The debug symbols are excluded deliberately: SilverdawBackend.pdb alone
+      # is around 840 MB, which would dominate the run in upload and download
+      # time for a tier that never reads it.
       - name: Upload the backend build
         uses: actions/upload-artifact@v7
         with:
           name: backend-debug
-          path: backend/build/SilverdawBackend_artefacts/Debug/
+          path: |
+            backend/build/SilverdawBackend_artefacts/Debug/
+            !backend/build/SilverdawBackend_artefacts/Debug/*.pdb
+            !backend/build/SilverdawBackend_artefacts/Debug/*.lib
+            !backend/build/SilverdawBackend_artefacts/Debug/*.exp
           retention-days: 1
 
   backend-lint:
