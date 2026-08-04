@@ -74,6 +74,13 @@
 .PARAMETER Since
     The git ref -Changed compares against. Defaults to HEAD, i.e. uncommitted
     work. Pass a branch point such as origin/main to lint a whole branch.
+
+.PARAMETER ClangTidyPath
+    Use this clang-tidy executable instead of searching PATH. Different
+    clang-tidy releases disagree about what to warn on, so a gate that must
+    reproduce an established baseline needs to name its binary rather than
+    inherit whichever one happens to be first on PATH — the MSVC developer
+    shell, for instance, puts Visual Studio's copy ahead of everything else.
 #>
 [CmdletBinding()]
 param(
@@ -87,7 +94,8 @@ param(
     [int]$Jobs = [Environment]::ProcessorCount,
     [switch]$NoSystemHeaders,
     [switch]$Changed,
-    [string]$Since = 'HEAD'
+    [string]$Since = 'HEAD',
+    [string]$ClangTidyPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -321,6 +329,14 @@ if (-not $NoSystemHeaders) {
 }
 
 function Find-ClangTidy {
+    # An explicit path wins outright: this is how a caller pins a version.
+    if ($ClangTidyPath) {
+        if (-not (Test-Path -LiteralPath $ClangTidyPath)) {
+            throw "clang-tidy not found at the path given by -ClangTidyPath: $ClangTidyPath"
+        }
+        return (Resolve-Path -LiteralPath $ClangTidyPath).Path
+    }
+
     $cmd = Get-Command clang-tidy -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
 
@@ -350,13 +366,17 @@ if (-not $clangTidyExe) {
 }
 
 # run-clang-tidy fans the work out across processes. It ships beside
-# clang-tidy in every distribution we support, but the run still works
-# without it — just serially.
+# clang-tidy in some distributions but not all — the PyPI package omits it —
+# and the run still works without it, just serially.
+#
+# Only the copy beside the chosen clang-tidy counts. Searching PATH as well
+# would risk pairing one release's driver with another's linter, and on a
+# Visual Studio install it resolves to an extensionless Python script that
+# PowerShell cannot execute ("cannot run a document in the middle of a
+# pipeline") — a confusing failure in place of a clean serial run.
 function Find-RunClangTidy {
     $beside = Join-Path (Split-Path -Parent $clangTidyExe) 'run-clang-tidy.exe'
     if (Test-Path -LiteralPath $beside) { return $beside }
-    $cmd = Get-Command run-clang-tidy -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
     return $null
 }
 

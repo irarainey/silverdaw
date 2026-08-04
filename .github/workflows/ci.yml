@@ -1,0 +1,328 @@
+# Silverdaw CI gate.
+#
+# Runs on every branch push and on demand, so a regression is caught before it
+# reaches main rather than after. Every job runs on Windows because Silverdaw
+# is a Windows-x64-only product (CONTEXT.md): a green build on another platform
+# would be false signal.
+#
+# The image is pinned to `windows-2022` rather than `windows-latest`, and the
+# pin is load-bearing. `windows-latest` moved to Windows Server 2025 with
+# Visual Studio 2026 in June 2026, which carries no VS 2022 instance, so a
+# `Visual Studio 17 2022` generator cannot be found there. More importantly the
+# toolchain that builds the shipping binaries is VS 2022, so a gate running a
+# different MSVC would validate a compiler nobody releases from and could fail
+# on findings a developer cannot reproduce.
+#
+# GitHub keeps `windows-2022` for a transition period only. When it retires,
+# migrate the local toolchain first — install VS 2026, reconfigure, and clear
+# whatever the newer MSVC and its headers report — then bump this image, the
+# generator below, `.vscode/settings.json` and `scripts/Setup-Dev.ps1`
+# together. Note that CMake refuses to reuse a build tree configured by a
+# different generator, so the trees must be deleted as part of that move.
+#
+# The tiers are separate jobs so a failure names itself in the checks list —
+# "Backend clang-tidy" is a more useful red than a single monolithic "CI" — and
+# so the independent ones run in parallel. Only `e2e` has to wait, because it
+# runs the backend the `backend` job built.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Run the end-to-end tier (installs a virtual audio device)"
+        type: boolean
+        default: true
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+  # Pinned deliberately. -Strict turns warnings into errors, and different
+  # clang-tidy releases disagree about what to warn on, so an unpinned runner
+  # would fail the gate on findings a developer cannot reproduce. This is the
+  # version the zero-warning baseline was established against.
+  CLANG_TIDY_VERSION: "22.1.8"
+
+jobs:
+  frontend:
+    name: Frontend lint, typecheck and unit tests
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The pnpm version is pinned by `packageManager` in package.json, so
+      # corepack resolves it rather than this workflow naming a second source
+      # of truth that could drift.
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Resolve the pnpm store
+        id: store
+        run: 'echo "path=$(pnpm store path --silent)" >> $env:GITHUB_OUTPUT'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+  backend:
+    name: Backend build and unit tests
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      # The FetchContent dependencies (JUCE, Rubber Band, ONNX Runtime and the
+      # rest) are a large download that changes only when CMakeLists.txt pins a
+      # new revision, which is exactly the cache key.
+      #
+      # The image label is part of the key, and the fallback is scoped to it.
+      # `_deps` holds *configured* sub-build trees that bake in an absolute path
+      # to cl.exe, so a cache written on one image and restored onto another
+      # points CMake at a compiler that is not there. That is not theoretical:
+      # a cache saved on the VS 2026 image failed a later run here by demanding
+      # `Visual Studio/18/.../14.51/cl.exe` on a VS 2022 runner.
+      - uses: actions/cache@v6
+        with:
+          path: backend/build/_deps
+          key: cmake-deps-vs-windows-2022-${{ hashFiles('backend/CMakeLists.txt') }}
+          restore-keys: cmake-deps-vs-windows-2022-
+
+      # lame.exe is not in the repository, and CMake copies it next to the
+      # backend at build time.
+      - name: Fetch the LAME encoder
+        run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
+
+      # Visual Studio generator, matching .vscode/settings.json and the
+      # developer guide. It is multi-config, which is what the release build
+      # needs, and CMake locates MSVC itself so no developer shell is required
+      # here. Tests default to OFF, hence the explicit switch.
+      #
+      # The retry makes a stale dependency cache self-healing. Scoping the key
+      # to the image stops the known cross-image case, but a Visual Studio
+      # update *within* an image moves the compiler path too, and the resulting
+      # error names a missing cl.exe rather than the cache that caused it.
+      # Discarding the tree and configuring again turns that into a slower green
+      # run instead of a baffling red one.
+      - name: Configure
+        run: |
+          $configure = {
+            cmake -S backend -B backend/build `
+              -G "Visual Studio 17 2022" `
+              -DSILVERDAW_BUILD_TESTS=ON
+          }
+          & $configure
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '::warning::Configure failed; discarding the restored dependency cache and retrying from clean.'
+            Remove-Item backend/build -Recurse -Force -ErrorAction SilentlyContinue
+            & $configure
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Build
+        run: cmake --build backend/build --config Debug --parallel
+
+      # Two of the 399 tests drive the transport — one seeks and reads the
+      # playhead back, the other asserts `play()` reaches `isPlaying()`. Neither
+      # names a JUCE device class, so they look device-free, but the position
+      # they check is advanced by the audio callback and a runner has no sound
+      # hardware. Without this they fail, and they are worth keeping honest
+      # rather than skipping.
+      - name: Install a virtual audio device
+        run: pwsh -NoProfile -File scripts/Install-VirtualAudioDevice.ps1
+
+      - name: Unit tests
+        run: ctest --test-dir backend/build --build-config Debug --output-on-failure
+
+      # Handed to the e2e job so it runs the binary this job proved, and so the
+      # backend is built once rather than twice. The directory is otherwise
+      # self-contained — CRT and ONNX DLLs, lame.exe and the MIDI mappings are
+      # all copied beside the executable by POST_BUILD steps.
+      #
+      # The debug symbols are excluded deliberately: SilverdawBackend.pdb alone
+      # is around 840 MB, which would dominate the run in upload and download
+      # time for a tier that never reads it.
+      - name: Upload the backend build
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-debug
+          path: |
+            backend/build/SilverdawBackend_artefacts/Debug/
+            !backend/build/SilverdawBackend_artefacts/Debug/*.pdb
+            !backend/build/SilverdawBackend_artefacts/Debug/*.lib
+            !backend/build/SilverdawBackend_artefacts/Debug/*.exp
+          retention-days: 1
+
+  backend-lint:
+    name: Backend linting
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Invoke-ClangTidy.ps1 prefers whatever `clang-tidy` is on PATH and only
+      # falls back to the copy inside Visual Studio, whose version floats with
+      # the runner image. Installing a pinned one first makes the choice
+      # deterministic.
+      - name: Install clang-tidy ${{ env.CLANG_TIDY_VERSION }}
+        run: |
+          pip install "clang-tidy==${{ env.CLANG_TIDY_VERSION }}"
+          clang-tidy --version
+
+      # Keyed and scoped to the image for the same reason as the build job: the
+      # cached `_deps` sub-build trees bake in an absolute path to cl.exe, and
+      # this is the job that a VS 2026-written cache actually broke.
+      - uses: actions/cache@v6
+        with:
+          path: backend/build-release/_deps
+          key: cmake-deps-ninja-windows-2022-${{ hashFiles('backend/CMakeLists.txt') }}
+          restore-keys: cmake-deps-ninja-windows-2022-
+
+      - name: Fetch the LAME encoder
+        run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
+
+      # clang-tidy reads compile_commands.json, which only the Ninja generator
+      # emits — hence a second tree, and hence the developer shell, since Ninja
+      # needs the MSVC environment that the VS generator supplies for itself.
+      #
+      # Configure alone is enough: nothing in this project generates a header
+      # at build time (no JuceHeader.h includes, and every add_custom_command is
+      # POST_BUILD), so compiling first would only cost minutes.
+      #
+      # The retry makes a stale dependency cache self-healing, as in the build
+      # job — this is the exact failure that a VS 2026-written cache produced.
+      - name: Configure the Ninja tree
+        run: |
+          $configure = {
+            pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+              "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+          }
+          & $configure
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '::warning::Configure failed; discarding the restored dependency cache and retrying from clean.'
+            Remove-Item backend/build-release -Recurse -Force -ErrorAction SilentlyContinue
+            & $configure
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      # The developer shell puts Visual Studio's own LLVM ahead of everything
+      # else on PATH, so the pinned binary loses unless it is named explicitly.
+      # It is resolved here, outside the shell, and passed in. The echo is kept
+      # because it is what caught the substitution in the first place: the gate
+      # was silently running VS's clang-tidy 19 against a baseline established
+      # with 22.
+      - name: clang-tidy
+        run: |
+          $tidy = (Get-Command clang-tidy).Source
+          Write-Host "Pinned clang-tidy: $tidy"
+          pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+            "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1 -Strict -ClangTidyPath '$tidy'"
+
+  e2e:
+    name: End-to-end journeys
+    needs: backend
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_e2e }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Resolve the pnpm store
+        id: store
+        working-directory: frontend
+        run: 'echo "path=$(pnpm store path --silent)" >> $env:GITHUB_OUTPUT'
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # The path the Electron main process resolves for the backend in a
+      # development launch, with SILVERDAW_BACKEND_CONFIG=Debug as the fixture
+      # sets it.
+      - name: Download the backend build
+        uses: actions/download-artifact@v8
+        with:
+          name: backend-debug
+          path: backend/build/SilverdawBackend_artefacts/Debug/
+
+      # A runner has no sound hardware, so JUCE would open no device, the audio
+      # callback would never fire, and the playhead could not move — the
+      # playback journey would fail on a disabled Play button. Kept as its own
+      # step so a driver-install problem is never mistaken for a test failure.
+      - name: Install a virtual audio device
+        run: pwsh -NoProfile -File scripts/Install-VirtualAudioDevice.ps1
+
+      # `pnpm test:e2e` builds the renderer first, which the Playwright global
+      # setup insists on: the fixture launches the built app, so a stale out/
+      # would test code that is not the code under review.
+      - name: Journeys
+        working-directory: frontend
+        run: pnpm test:e2e
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7

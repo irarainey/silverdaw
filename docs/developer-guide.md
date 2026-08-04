@@ -52,6 +52,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Package artwork](#package-artwork)
   - [One-time signing setup](#one-time-signing-setup)
 - [Quality gates](#quality-gates)
+- [Continuous integration](#continuous-integration)
 - [License](#license)
 
 ## Architecture
@@ -3881,12 +3882,18 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   - `-Changed` lints only what the current changes affect, and `-Since <ref>`
     picks what they are compared against (default `HEAD`, i.e. uncommitted
     work; pass a branch point to cover a whole branch).
+  - `-ClangTidyPath <path>` names the executable instead of taking whichever
+    one `PATH` offers. Worth knowing that the developer shell puts Visual
+    Studio's LLVM ahead of anything installed separately, so this is how CI
+    guarantees it runs the pinned version the baseline was set with.
 
-  A run is parallel by default: when LLVM's `run-clang-tidy` is available
-  alongside `clang-tidy` it fans the 133 sources out across cores. Measured on
-  a 16-core machine, a full run goes from about 400 seconds serial to 85
-  parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the curve
-  flattens at roughly the core count and the default needs no tuning.
+  A run is parallel by default: when LLVM's `run-clang-tidy.exe` sits alongside
+  the chosen `clang-tidy` — it does in both the Visual Studio and PyPI
+  distributions — it fans the 133 sources out across cores. Only that copy is
+  used, never one found on `PATH`, so the driver always matches the linter.
+  Measured on a 16-core machine, a full run goes from about 400 seconds serial
+  to 85 parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the
+  curve flattens at roughly the core count and the default needs no tuning.
 
   On top of that the script derives its own compile database into
   `<build>/clang-tidy/`, rewriting every third-party include directory —
@@ -3992,9 +3999,20 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   the Playwright journeys under `frontend/e2e/` against a real spawned backend,
   so a run covers the spawn → port → AUTH → handshake chain, the native dialog
   stubs and the saved project format. The tier is deliberately small and wide and
-  asserts only on the DOM, the filesystem and saved project files; its rules and
+  asserts mostly on the DOM, the filesystem and saved project files; its rules and
   helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
   type-checked by `pnpm typecheck` through `tsconfig.node.json`.
+
+  One journey is the exception to "no audio": `playback.e2e.ts` (J17) presses
+  Play and asserts the playhead crosses a bar line. The playhead is advanced by
+  `MasterClockSource` from inside the audio device callback, so a moving
+  position is the only end-to-end proof that a device opened and its callback
+  is firing — the gap that let a frozen-playhead regression through the whole
+  suite. That makes it the one spec needing a real output device: with none,
+  the engine reports `no_device` and the renderer disables Play outright. Its
+  fixture is digital silence (`createToneWav({ amplitude: 0 })`), because the
+  callback fires regardless of sample values and a test suite should not make a
+  noise.
 
   The specs launch the *built* app, so anything that invokes the runner
   directly — `pnpm test:e2e:only`, or the ▶ button in the VS Code Testing panel
@@ -4012,6 +4030,85 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   files, exports and dependencies. Treat its output as *candidates* — the zod
   inbound/outbound schema maps and `.vue`-only usages produce false positives
   that need manual confirmation. Run before large refactors; not wired into CI.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs the gates above on every branch push and on
+demand (**Actions ▸ CI ▸ Run workflow**), so a regression is caught before it
+reaches `main`. Runs are grouped per ref with `cancel-in-progress`, because a
+newer push makes the previous answer irrelevant.
+
+Every job runs on `windows-2022`. Silverdaw is Windows-x64 only, so a green
+result anywhere else would be false signal — and the image is pinned rather
+than `windows-latest` because that label moved to Visual Studio 2026 in June
+2026, which has no VS 2022 instance for the generator to find. The deeper
+reason is parity: releases are built with VS 2022, and a gate on a different
+MSVC would validate a compiler nobody ships from. `windows-2022` is available
+for a transition period only; when it retires, migrate the local toolchain
+first, then bump the image, the generator, `.vscode/settings.json` and
+`scripts/Setup-Dev.ps1` together, deleting both build trees (CMake refuses to
+reuse a tree configured by a different generator).
+
+| Job | What it proves |
+| --- | --- |
+| **Frontend lint, typecheck and unit tests** | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
+| **Backend build and unit tests** | Visual Studio generator with `-DSILVERDAW_BUILD_TESTS=ON`, then `ctest` |
+| **Backend linting** | The zero-warning clang-tidy baseline, run `-Strict` as an error gate |
+| **End-to-end journeys** | The Playwright tier against the backend the build job produced |
+
+Six details are worth knowing before changing it:
+
+- **`lame.exe` is not in the repository**, so both C++ jobs run
+  `scripts/Fetch-Lame.ps1` first. A build without it cannot copy the encoder
+  next to the backend.
+- **Two build trees, two generators.** The test job uses the multi-config
+  Visual Studio generator; clang-tidy needs `compile_commands.json`, which only
+  Ninja emits, so it configures `backend/build-release` separately and through
+  `Invoke-DevShell.ps1` (Ninja needs the MSVC environment that the VS generator
+  finds for itself). The lint job configures without building: nothing here is
+  generated at build time, so compiling first would only cost minutes.
+- **The backend is built once.** The build job uploads
+  `SilverdawBackend_artefacts/Debug/` and the e2e job downloads it to the path
+  the Electron main process resolves in a development launch.
+- **clang-tidy is version-pinned, and named explicitly.** `-Strict` turns
+  warnings into errors, and different clang-tidy releases disagree about what
+  to warn on, so an unpinned runner would fail the gate on findings nobody can
+  reproduce locally. The workflow installs the exact version the zero-warning
+  baseline was established against (`CLANG_TIDY_VERSION`, currently 22.1.8,
+  from PyPI) and passes its path to `-ClangTidyPath`. Naming it is not
+  belt-and-braces: the MSVC developer shell puts Visual Studio's own LLVM ahead
+  of everything else on `PATH`, so relying on `PATH` silently ran the gate with
+  VS's clang-tidy 19 against a baseline established with 22. **When bumping the
+  pin, re-run the linter locally first and clear whatever the new version
+  finds.**
+- **A runner has no sound hardware.** `scripts/Install-VirtualAudioDevice.ps1`
+  installs Scream, an open-source virtual sound card, giving JUCE a WASAPI
+  endpoint to open so the audio callback — and therefore the playhead — runs.
+  It keeps Scream's own driver signature, which is timestamped and so still
+  verifies as valid despite the signing certificate having expired in 2023, and
+  adds that publisher to `TrustedPublisher` so the install is non-interactive.
+  Re-signing with a locally-minted certificate is the tempting alternative and
+  does not work: it replaces a valid signature with one that chains to nothing
+  Windows trusts, and Driver Signature Enforcement then refuses to load the
+  driver unless Secure Boot is off and test-signing is on, neither of which can
+  be arranged on a hosted image. Trusting a third-party driver publisher
+  machine-wide is only acceptable on a disposable machine, so the script
+  refuses to run unless `CI=true` or `-AllowLocal` is passed. It is a separate
+  step so a driver problem never reads as a test failure. Both the e2e job and
+  the **backend** job install it: two unit tests drive the transport (one seeks
+  and reads the playhead back, one asserts `play()` reaches `isPlaying()`) and
+  neither names a JUCE device class, so their dependency on an open device is
+  easy to miss until they fail.
+- **The dependency cache is scoped to the runner image, and configure retries
+  once.** `backend/build*/_deps` holds *configured* sub-build trees that bake in
+  an absolute path to `cl.exe`, so a cache written on one image and restored
+  onto another sends CMake looking for a compiler that is not installed — the
+  failure names a missing `cl.exe` and says nothing about the cache, which is
+  why this is worth stating. The image label is therefore part of both the key
+  and the `restore-keys` fallback. A Visual Studio update *within* an image
+  moves that path too, so both configure steps discard the tree and try again
+  on failure, turning a stale cache into a slower green run rather than a
+  baffling red one.
 
 ## License
 
