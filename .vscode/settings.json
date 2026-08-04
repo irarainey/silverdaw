@@ -57,11 +57,18 @@
 
   // ─── C / C++ / CMake (JUCE backend) ──────────────────────────────────────
   // Pin to MSVC (cl.exe) — required for JUCE + VST3 + ONNX on Windows.
-  "cmake.generator": "Ninja",
+  // `backend/build` is a Visual Studio 17 2022 multi-config tree (that is what
+  // the `backend: configure` task in tasks.json creates, and the `backend:
+  // build (Release)` task depends on multi-config). CMake Tools must be told
+  // the same generator: if it disagrees with the existing CMakeCache.txt,
+  // configure fails with "generator ... does not match the generator used
+  // previously", the project never loads, and the Testing panel silently shows
+  // no backend tests. The Ninja tree lives at `backend/build-release`.
+  "cmake.generator": "Visual Studio 17 2022",
   "cmake.sourceDirectory": "${workspaceFolder}/backend",
   "cmake.buildDirectory": "${workspaceFolder}/backend/build",
   "cmake.configureOnOpen": false,
-  "cmake.preferredGenerators": ["Ninja", "Visual Studio 17 2022"],
+  "cmake.preferredGenerators": ["Visual Studio 17 2022", "Ninja"],
   "cmake.useCMakePresets": "auto",
   "cmake.ctest.testExplorerIntegrationEnabled": true,
   // The Testing panel runs the already-built SilverdawBackendTests via CTest
@@ -81,10 +88,13 @@
   "C_Cpp.formatting": "disabled",
   // Use the clangd bundled with Visual Studio 2026 so it matches the MSVC toolchain.
   "clangd.path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Professional\\VC\\Tools\\Llvm\\x64\\bin\\clangd.exe",
-  // Tell clangd where the build dir with compile_commands.json lives.
+  // Tell clangd where the build dir with compile_commands.json lives. Only the
+  // Ninja tree emits one — the Visual Studio generator used for
+  // `backend/build` does not — so point at `backend/build-release`, the same
+  // tree scripts/Invoke-ClangTidy.ps1 falls back to.
   "clangd.arguments": [
     "--background-index",
-    "--compile-commands-dir=${workspaceFolder}/backend/build",
+    "--compile-commands-dir=${workspaceFolder}/backend/build-release",
     "--header-insertion=never",
     "--clang-tidy",
     "--completion-style=detailed",

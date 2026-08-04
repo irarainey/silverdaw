@@ -8,6 +8,84 @@
 # HeaderFilterRegex restricts diagnostics to *our* headers (under backend/src/)
 # so we don't drown in warnings from JUCE / IXWebSocket / the C++ standard
 # library, which are pulled in via target_link_libraries and won't be touched.
+#
+# The `-check` exclusions below are listed here with their reasons, because a
+# block scalar cannot carry inline comments. A lint run is only useful if a
+# warning means "look at this", so a check that fires by the hundred on a
+# deliberate convention costs more than it finds: it buries the handful of real
+# defects and trains everyone to ignore the output.
+#
+# THE BACKEND IS AT ZERO WARNINGS. Keep it there: fix what a run reports, or,
+# if the check is genuinely wrong for this codebase, exclude it and add the
+# reasoning below. An exclusion needs evidence, not a preference — for the
+# bugprone-* entries here that meant reading every site the check flagged and
+# establishing why it does not apply. Anything left unexplained is a warning
+# waiting to be ignored.
+#
+#   readability-braces-around-statements   Single-line guard clauses
+#       (`if (!x) return;`) are the house convention throughout the backend and
+#       read better than a four-line block for an early exit.
+#   readability-math-missing-parentheses   Demands parentheses around standard
+#       operator precedence (`a - b / c`). Adds noise, not clarity.
+#   readability-uppercase-literal-suffix   Wants `0.0F`; JUCE and this codebase
+#       use lowercase `0.0f` everywhere.
+#   modernize-use-auto                     Style preference. An explicit type is
+#       often the more readable choice, especially for numeric and JUCE types.
+#   modernize-use-nodiscard                Would demand `[[nodiscard]]` on
+#       essentially every getter in the backend.
+#   modernize-avoid-c-arrays               Fires on static lookup tables and on
+#       JUCE interop, where a C array is the natural form.
+#   bugprone-easily-swappable-parameters   Fires on any two adjacent parameters
+#       of the same type, which is unavoidable in audio code (gain/pan, in/out,
+#       start/end). Noisy by design and not actionable.
+#   bugprone-throwing-static-initialization Every hit is the
+#       `static const juce::Identifier k…` idiom the ValueTree model is built on
+#       (ADR 0002). Deliberate, pervasive, and not going to change.
+#   readability-inconsistent-ifelse-braces Sibling of
+#       readability-braces-around-statements above, and excluded for the same
+#       reason: it re-flags the single-line guard clauses that are house style.
+#   readability-isolate-declaration        Style preference for one declarator
+#       per statement. `int x = 0, y = 0;` is fine and common in DSP loops.
+#   readability-avoid-nested-conditional-operator  Nested ternaries in the
+#       coefficient/curve maths are compact and local; expanding them into
+#       if/else ladders makes the arithmetic harder to follow, not easier.
+#   readability-implicit-bool-conversion   Fires on idiomatic JUCE and pointer
+#       null-checks; the rewrite it wants is longer without being clearer.
+#   readability-function-cognitive-complexity  A standing refactoring backlog
+#       against ADR 0016, tracked there rather than re-reported on every run.
+#       Excluded so a run of this lint means "something new needs attention".
+#   performance-enum-size                  Wants `: std::uint8_t` on enums to
+#       save 3 bytes per value. Bottom of the review priority order
+#       (micro-optimisation) and it touches enums that appear in serialised
+#       state, where the underlying type is not a free choice.
+#   bugprone-misplaced-widening-cast       Every hit is `static_cast<size_t>`
+#       of an FFT/stem bin index such as `2 * k`. Overflowing would need
+#       k > 1e9 where the real bound is a few thousand. Checked, not real.
+#   bugprone-exception-escape              The `juce::ThreadPool` job lambdas
+#       it flags cannot terminate the process: JUCE wraps `runJob()` in
+#       try/catch (see juce_ThreadPool.cpp). The rest are implicit destructors
+#       of aggregates. Checked, not real.
+#   bugprone-unchecked-optional-access     All hits are the member
+#       `std::optional<Session> session` in ScratchSessionController. The
+#       check's dataflow cannot carry a has-value fact across an intervening
+#       member call (any of which might in principle `reset()` it), so it
+#       re-flags helpers whose documented precondition is that the caller
+#       holds sessionMutex and has already validated the session. Every call
+#       site was audited and does exactly that. A class invariant the check
+#       cannot see, not a missing check.
+#   readability-use-anyofallof             Wants explicit loops rewritten as
+#       std::any_of/all_of. With a lambda and iterator pair that is usually
+#       longer than the loop it replaces; a style preference either way.
+#   modernize-return-braced-init-list      Wants `return {arr};` in place of
+#       `return juce::var(arr);`. Same reasoning as modernize-use-auto above:
+#       naming the type being returned is the more readable choice, especially
+#       for juce::var and juce::File, which have many constructors.
+#   performance-no-automatic-move          Wants `const` dropped from locals
+#       that are then returned, so the return can move rather than copy. The
+#       types involved here are juce::String/juce::File, which are refcounted
+#       — the "copy" is an atomic increment. Trading away a local's constness
+#       for that is micro-optimisation, which is last in the review priority
+#       order, and const-by-default is worth more than the increment.
 
 ---
 Checks: >
@@ -18,7 +96,27 @@ Checks: >
   readability-*,
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
-  -readability-magic-numbers
+  -readability-magic-numbers,
+  -readability-braces-around-statements,
+  -readability-math-missing-parentheses,
+  -readability-uppercase-literal-suffix,
+  -modernize-use-auto,
+  -modernize-use-nodiscard,
+  -modernize-avoid-c-arrays,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-throwing-static-initialization,
+  -readability-inconsistent-ifelse-braces,
+  -readability-isolate-declaration,
+  -readability-avoid-nested-conditional-operator,
+  -readability-implicit-bool-conversion,
+  -readability-function-cognitive-complexity,
+  -performance-enum-size,
+  -bugprone-misplaced-widening-cast,
+  -bugprone-exception-escape,
+  -bugprone-unchecked-optional-access,
+  -readability-use-anyofallof,
+  -modernize-return-braced-init-list,
+  -performance-no-automatic-move
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*[\\/]backend[\\/]src[\\/].*'
 FormatStyle: file

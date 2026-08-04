@@ -165,7 +165,7 @@ juce::var serializePattern(const Pattern& pattern)
         object->setProperty("provenance", juce::var(prov));
     }
 
-    return juce::var(object);
+    return {object};
 }
 
 } // namespace silverdaw::scratch

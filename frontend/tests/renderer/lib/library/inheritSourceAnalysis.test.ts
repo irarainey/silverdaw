@@ -16,13 +16,13 @@ type SetItemAnalysisArgs = [
   boolean
 ]
 
-function makeLibrary(targetDurationMs: number) {
+function makeLibrary(targetDurationMs: number, byId: Record<string, unknown> = {}) {
   const setItemAnalysis = vi.fn()
   const setItemKey = vi.fn()
   const getItem = vi.fn((id: string) => ({ id, durationMs: targetDurationMs }))
-  // Cast through unknown: the function only touches these three members.
+  // Cast through unknown: the function only touches these four members.
   return {
-    library: { getItem, setItemAnalysis, setItemKey } as unknown as Parameters<
+    library: { getItem, setItemAnalysis, setItemKey, byId } as unknown as Parameters<
       typeof inheritSourceAnalysis
     >[0],
     setItemAnalysis,
@@ -79,5 +79,26 @@ describe('inheritSourceAnalysis', () => {
     inheritSourceAnalysis(library, 'stem-1', { bpm: 0, beats: [] } as never, 10)
     expect(setItemAnalysis).not.toHaveBeenCalled()
     expect(setItemKey).not.toHaveBeenCalled()
+  })
+
+  it('passes on a tempo the source itself only holds by inheritance', () => {
+    // A saved clip or an older stem often stores no BPM of its own and resolves one
+    // through its parent. Reading the raw field left everything separated from such
+    // an item with no grid at all.
+    const parent = { id: 'parent', bpm: 90 }
+    const source = { id: 'src', derivedFrom: { sourceItemId: 'parent' } }
+    const { library, setItemAnalysis } = makeLibrary(8000, { parent, src: source })
+    inheritSourceAnalysis(library, 'stem-1', source as never, 0)
+    const args = setItemAnalysis.mock.calls[0] as SetItemAnalysisArgs
+    expect(args[1]).toBe(90)
+    expect(args[3].length).toBeGreaterThan(0)
+  })
+
+  it('passes on nothing from a one-shot source', () => {
+    // A one-shot has no pulse to lend, whatever tempo an older project left on it.
+    const source = { id: 'src', bpm: 120, audioType: 'simple' as const }
+    const { library, setItemAnalysis } = makeLibrary(8000, { src: source })
+    inheritSourceAnalysis(library, 'stem-1', source as never, 0)
+    expect(setItemAnalysis).not.toHaveBeenCalled()
   })
 })

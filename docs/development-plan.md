@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.2" } }
+{ "type": "READY", "payload": { "version": "1.5.3" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1959,7 +1959,7 @@ already done, and show that one is running. No new user-facing concepts.
    from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
    splits on the timeline axis regardless of reverse.
 
-### 1.5.2 - Tempo, Warp & Sample Correctness *(current release)*
+### 1.5.3 - Tempo, Warp & Sample Correctness *(current release)*
 
 **Goal:** make one clip have one tempo, and make every surface that draws,
 snaps, warps or plays it agree on that tempo. No new user-facing concepts —
@@ -1992,7 +1992,8 @@ every item corrects behaviour that already shipped. See ADR 0024.
    stretch a clip the project state calls unwarped.
 6. [x] **Changing the project tempo keeps the musical shape.**
    `retimeClipsForTempoChange` rescales every clip start by
-   `previousBpm / newBpm`, the **Match project tempo** preference rides along as
+   `previousBpm / newBpm`, the **Auto-warp clips to project tempo** preference
+   rides along as
    the optional `autoWarp` flag on `PROJECT_SET_BPM`, and an active timeline
    selection is rescaled by the same factor in the renderer
    (`uiStore.retimeTimelineSelectionForTempoChange`) because it is view state
@@ -2662,8 +2663,8 @@ playable at every point):
 - [x] **Observability migration** — the renderer no longer uses
   `console.*` for diagnostics; every log site goes through
   `lib/log.ts`, which writes structured rows to
-  `debug/<session>/renderer.log` (dev) and is gated by a flag in
-  release. An ESLint `no-console` rule scoped to `src/renderer/**`
+  `%USERPROFILE%\Silverdaw\Logs\<session>\renderer.log` and is opt-in via
+  Preferences ▸ Developer. An ESLint `no-console` rule scoped to `src/renderer/**`
   (ignoring `lib/log.ts`) keeps the migration enforced. The backend
   side routes through `silverdaw::log::warn` / `info` / `error`
   rather than raw `std::cerr` / `std::cout` (except for the
@@ -2732,7 +2733,7 @@ robustness without changing the core editing model.
   mixdown-parity subsystems
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
-- **Logging:** the cross-layer `debug/<session>/{main,backend,renderer}.log` infrastructure stays in dev builds and is conditionally enabled in release via a flag. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to a discoverable diagnostics folder (packaged installs: `%USERPROFILE%\Silverdaw\Diagnostics`; dev builds: `<userData>/diagnostics`) on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
+- **Logging:** the cross-layer `%USERPROFILE%\Silverdaw\Logs\<session>\{main,backend,renderer}.log` infrastructure is opt-in via Preferences ▸ Developer, in dev and packaged builds alike. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Both locations deliberately resolve to the same discoverable user-profile folder in dev and packaged builds: under MSIX a `userData` path is silently redirected into the package's hidden LocalCache container, so it would be shown but never findable. Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
 - **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
 
 ---
@@ -2750,6 +2751,7 @@ robustness without changing the core editing model.
 | Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
 | VST3 plugin crashes                         | Sandbox plugins via JUCE `AudioPluginHost` separate process                                                                                       |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
+| Audio device stops delivering audio         | Implemented: `DeviceCallbackGuard` logs device start/stop/error, and a message-thread watchdog restarts a device whose callback count has stopped advancing (bounded attempts), so a stalled stream can no longer show playback with a frozen playhead and silence (see Developer Guide → Audio devices, Robustness) |
 | Project file forward/backward compat        | Versioned JSON with a schema-version field; backend reads any older version, writes the latest                                                    |
 | Unresolved file references on load          | Backend marks affected clips `unresolved` (silent playback, greyed UI); user can re-link via a per-clip "Locate file" action                      |
 | Per-clip envelope on the audio thread       | Breakpoint list double-buffered; the audio thread reads via a single atomic pointer swapped at edit time; no allocation in the hot path           |
@@ -2767,7 +2769,7 @@ robustness without changing the core editing model.
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
 - **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
-- **Cross-layer logging** — every session writes `debug/<stamp>/{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (dev builds; flag-gated in release). An always-on startup diagnostics log + backend crash report is also written to a discoverable diagnostics folder (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`; dev: `<userData>/diagnostics`) on every launch regardless of that flag, so a failed startup can still be diagnosed.
+- **Cross-layer logging** — every session writes `%USERPROFILE%\Silverdaw\Logs\<stamp>\{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (opt-in via Preferences ▸ Developer). An always-on startup diagnostics log + backend crash report is also written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch regardless of that flag, so a failed startup can still be diagnosed. Dev and packaged builds resolve both to the same discoverable location.
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
 
 ---

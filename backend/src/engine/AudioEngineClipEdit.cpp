@@ -442,12 +442,9 @@ bool AudioEngine::setClipBackspin(const juce::String& clipId, double backspinSec
     return true;
 }
 
-bool AudioEngine::setClipWarp(const juce::String& clipId,
-                              std::optional<bool> enabled,
-                              std::optional<juce::String> mode,
-                              std::optional<double> tempoRatio,
-                              std::optional<double> semitones,
-                              std::optional<double> cents)
+bool AudioEngine::setClipWarp(const juce::String& clipId, std::optional<bool> enabled,
+                              const std::optional<juce::String>& mode, std::optional<double> tempoRatio,
+                              std::optional<double> semitones, std::optional<double> cents)
 {
     auto it = tracks.find(clipId);
     if (it == tracks.end()) return false;
@@ -527,6 +524,12 @@ bool AudioEngine::canWarpClip(const juce::String& clipId) const noexcept
     const auto it = tracks.find(clipId);
     return it != tracks.end()
         && WarpProcessor::supportsChannelCount(it->second->numChannels);
+}
+
+bool AudioEngine::clipHasWarpForTest(const juce::String& clipId) const noexcept
+{
+    const auto it = tracks.find(clipId);
+    return it != tracks.end() && it->second->warp != nullptr;
 }
 
 } // namespace silverdaw

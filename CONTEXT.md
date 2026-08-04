@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-03 · Owner: @irarainey_
+_Last reviewed: 2026-08-04 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -25,7 +25,7 @@ exact-position markers, Clear All Markers, smooth playhead-follow scrolling,
 `Enter` to accept a dialog, restyled dropdowns, an immediate timeline paint on
 project open, and a set of beat-grid, marker, MIDI-jog, audio-driver and
 loop-playback fixes. **1.5.1** was a patch covering undo and clip-split
-correctness and performance. The current release is **1.5.2**, a patch fixing
+correctness and performance. The current release is **1.5.3**, a patch fixing
 warped clips: a stretched clip now plays and exports for its full stretched
 length, and saved music samples auto-warp to the project tempo on drop and offer
 Follow project BPM / Pin in the warp controls. It also settles what a one-shot
@@ -34,9 +34,12 @@ over one, and it makes a clip's original BPM a single fact resolved the same way
 in both processes (ADR 0024), so a clip can no longer be drawn stretched while
 playing back dry. A clip cut to a number of bars now stays that number of bars
 however its tempo is later re-detected, and changing the project tempo keeps the
-arrangement's musical shape — clips, their warps, and an active timeline
-selection all move with it; a reanalysis likewise brings the clips already using
-that source onto its new tempo. Per-release detail lives in `CHANGELOG.md`.
+arrangement's musical shape — clips, their warps, an active timeline selection,
+the markers and the playhead all move with it; a reanalysis likewise brings the
+clips already using that source onto its new tempo. It also detects an audio
+device that has silently stopped delivering audio and restarts it, rather than
+leaving the transport showing playback with a playhead that never moves.
+Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
 and saved projects must keep working across every update (see ADR 0019).

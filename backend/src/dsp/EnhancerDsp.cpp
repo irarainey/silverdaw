@@ -113,7 +113,7 @@ double percentile(std::vector<double> values, double p) noexcept
     if (values.empty()) return 0.0;
     std::sort(values.begin(), values.end());
     const double clamped = std::clamp(p, 0.0, 1.0);
-    auto idx = static_cast<size_t>(clamped * static_cast<double>(values.size() - 1) + 0.5);
+    auto idx = static_cast<size_t>(std::llround(clamped * static_cast<double>(values.size() - 1)));
     return values[std::min(idx, values.size() - 1)];
 }
 
@@ -122,7 +122,7 @@ double percentile(std::vector<float>& values, double p) noexcept
     if (values.empty()) return 0.0;
     std::sort(values.begin(), values.end());
     const double clamped = std::clamp(p, 0.0, 1.0);
-    auto idx = static_cast<size_t>(clamped * static_cast<double>(values.size() - 1) + 0.5);
+    auto idx = static_cast<size_t>(std::llround(clamped * static_cast<double>(values.size() - 1)));
     return values[std::min(idx, values.size() - 1)];
 }
 

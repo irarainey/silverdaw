@@ -83,8 +83,8 @@ void handleScratchPatternRemove(const juce::var& payload, ProjectState& projectS
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
 }
 
-void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engine,
-                                     ProjectState& projectState, BridgeServer&)
+void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
+                                     BridgeServer& /*unused*/)
 {
     if (!scratch::hasValidProtocolVersion(payload))
     {
@@ -137,8 +137,7 @@ void handleScratchPatternReplayStart(const juce::var& payload, AudioEngine& engi
     silverdaw::log::info("scratch", "SCRATCH_PATTERN_REPLAY_START ok pattern=" + foundPattern->id);
 }
 
-void handleScratchPatternReplayStop(const juce::var& payload, AudioEngine& engine,
-                                    BridgeServer&)
+void handleScratchPatternReplayStop(const juce::var& payload, AudioEngine& engine, BridgeServer& /*unused*/)
 {
     if (!scratch::hasValidProtocolVersion(payload))
     {

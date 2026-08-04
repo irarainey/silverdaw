@@ -518,7 +518,9 @@ export const useProjectStore = defineStore('project', {
      * Every clip's start is rescaled by `oldBpm / newBpm` so a clip on bar 9 stays on
      * bar 9. Without this, warped clips re-stretch in place while their starts stay in
      * milliseconds, and the arrangement drifts apart the moment the tempo is edited.
-     * An active timeline selection is a musical span too, so it moves with them.
+     * An active timeline selection is a musical span too, so it moves with them, as do
+     * the timeline markers and the playhead — all of them name musical places rather
+     * than instants.
      * Unwarped clips are additionally warped when the "match project tempo" preference
      * is on — the same decision that warps a clip on drop, applied to what is already
      * placed. The backend mirrors both in one undoable "Change tempo" step; applying
@@ -547,6 +549,14 @@ export const useProjectStore = defineStore('project', {
       }
       const library = useLibraryStore()
       const scale = previousBpm / nextBpm
+      // Markers and the playhead name musical places, not instants, so they move with
+      // the clips. Mirrored here rather than sent: the backend retimes its own copy on
+      // PROJECT_SET_BPM, and marker positions only reach the renderer again on a full
+      // PROJECT_STATE snapshot, which a tempo edit does not trigger.
+      for (const marker of this.markers) {
+        if (marker.positionMs > 0) marker.positionMs *= scale
+      }
+      if (transport.positionMs > 0) transport.setPosition(transport.positionMs * scale)
       for (const clip of Object.values(this.clips)) {
         if (autoWarp && clip.warpEnabled !== true && clip.tempoRatio === undefined) {
           const item = library.byId[clip.libraryItemId]

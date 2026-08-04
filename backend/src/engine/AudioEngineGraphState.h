@@ -2,6 +2,7 @@
 
 #include "BeatRepeatSnapshot.h"
 #include "BusGraph.h"
+#include "DeviceCallbackGuard.h"
 #include "MasterClockSource.h"
 #include "MeteringSource.h"
 #include "Metronome.h"
@@ -34,6 +35,7 @@ protected:
 
     juce::AudioDeviceManager deviceManager;
     juce::AudioSourcePlayer sourcePlayer;
+    DeviceCallbackGuard deviceCallbackGuard{sourcePlayer};
     BusGraph busGraph;
     std::atomic<bool> audioReady{false};
 

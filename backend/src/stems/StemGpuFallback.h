@@ -26,10 +26,10 @@ private:
 class StemReadyTransaction
 {
 public:
-    explicit StemReadyTransaction(const StemReadyFn& publish);
+  explicit StemReadyTransaction(StemReadyFn publish);
 
-    void stage(const StemResultFile& stem);
-    void commit();
+  void stage(const StemResultFile& stem);
+  void commit();
 
 private:
     StemReadyFn publish;

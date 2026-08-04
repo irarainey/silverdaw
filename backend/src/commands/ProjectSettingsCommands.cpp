@@ -158,6 +158,25 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
                     engine.commitClipOffset(clipId);
                 });
 
+            // Markers and the playhead are musical places too, so they travel with the
+            // material rather than staying put in milliseconds. A marker dropped on the
+            // drop must still be on the drop, and the playhead must stay on the beat it
+            // was parked on — otherwise the one edit that moves everything else leaves
+            // exactly these two behind, pointing at whatever now happens to occupy that
+            // instant.
+            const int markersRetimed = projectState.retimeMarkersForTempoChange(previousBpm, bpm);
+            if (previousBpm > 0.0 && bpm > 0.0 && previousBpm != bpm)
+            {
+                const double positionMs = engine.getPositionMs();
+                if (positionMs > 0.0)
+                {
+                    // Same material under the playhead after the move, so the effect
+                    // tails are still the right ones to carry across.
+                    engine.setPositionMs(positionMs * (previousBpm / bpm),
+                                         /*resetEffects=*/false);
+                }
+            }
+
             // Pinned tempo ratios opt out of project-BPM tracking.
             projectState.forEachWarpClip(
                 [&](const silverdaw::ProjectState::WarpClipInfo& info)
@@ -166,17 +185,35 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
                     const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
                     if (sourceBpm <= 0.0) return;
                     const double ratio = bpm / sourceBpm;
-                    engine.setClipWarp(info.clipId, std::nullopt, std::nullopt,
-                                       ratio, std::nullopt, std::nullopt);
+                    // Say `enabled` rather than leaving it unset: the engine reads an unset
+                    // value as "whatever this clip already is", which for a clip the auto-warp
+                    // above has only just enabled in project state is *not warped* — it would
+                    // take the disable branch, and the clip would play dry at its original
+                    // length while the timeline drew it stretched to the new tempo. Project
+                    // state is the truth here, and every clip this loop visits is warped.
+                    // The tempo a project was seeded from is not special: it only means a clip
+                    // happened to need no stretch at the time, and any later tempo change makes
+                    // it warpable like any other musical clip.
+                    const std::optional<juce::String> mode =
+                        info.warpMode.isNotEmpty() ? std::optional<juce::String>(info.warpMode)
+                                                   : std::nullopt;
+                    if (!engine.setClipWarp(info.clipId, /*enabled=*/true, mode,
+                                            ratio, std::nullopt, std::nullopt))
+                    {
+                        silverdaw::log::warn("warp",
+                                             "engine refused tempo-change warp clipId=" + info.clipId
+                                                 + " — project state and playback are now out of step");
+                    }
                     auto appliedPayload = silverdaw::buildClipWarpAppliedPayload(projectState, info.clipId);
                     bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
                 });
 
-            if (retimed > 0 || autoWarp)
+            if (retimed > 0 || markersRetimed > 0 || autoWarp)
             {
                 silverdaw::log::info("project", "tempo change " + juce::String(previousBpm, 2) + " -> "
                                                     + juce::String(bpm, 2) + " retimed "
-                                                    + juce::String(retimed) + " clip(s)");
+                                                    + juce::String(retimed) + " clip(s) "
+                                                    + juce::String(markersRetimed) + " marker(s)");
             }
         }
     }

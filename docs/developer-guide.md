@@ -1770,6 +1770,36 @@ no longer warps to a whole number of bars. `LIBRARY_REANALYSE` is an explicit
 instruction from the user, runs through `forceLibraryItemAnalysis`, and keeps
 whatever it detects.
 
+"A one-shot has no tempo" is decided by **inheritance** in both
+processes — `ProjectState::isOneShotItemInherited` and
+`libraryItemIsSimple` — and decided *before* any tempo is resolved. An
+unclassified cut of a one-shot is a one-shot, and an item the user has
+explicitly called music still cannot borrow a tempo from a one-shot parent,
+because that parent has none to lend. Applying the rule at different depths on
+the two sides is the same failure ADR 0024 exists to prevent.
+
+**Legacy content is repaired forward, never left to the user.** A project
+saved before these rules can hold shapes they forbid, so
+`ProjectState::replaceTree` runs its migrations on every load:
+`migrateLegacyAudioType` and `migrateLegacyLibraryKind` translate the older
+property names, `migrateOneShotTempo` removes a grid from an item that is a
+one-shot but still stores one, and `repairLibraryItemKinds` restores the
+`kind` of a generated artifact that was demoted to a plain source. Two rules
+make this safe to do silently. First, nothing may change how an existing
+arrangement sounds: before stripping a one-shot's tempo,
+`migrateOneShotTempo` pins the ratio that tempo implied onto every clip that
+was warping against it, so those clips keep exactly the stretch the user saved
+while opting out of project-tempo tracking. Second, the repairs run inside the
+load's `SuppressDirtyScope` and before `clearUndoHistory`, so opening an old
+project neither marks it dirty nor leaves a phantom undo step — it is simply
+correct from that load on, and persists that way on its next save.
+
+Note that `repairLibraryItemKinds` decides "is this a generated artifact?" by
+containment under the project folder rather than by the path *looking*
+relative: `ProjectFile::loadTree` resolves every portable path to an absolute
+one before the tree is installed, so the in-memory tree never holds a relative
+path to test.
+
 **Musical length: how many bars, not how fast.** A derived item also records
 `musicalBeats` — how many whole beats of music its file contains, measured against
 the grid of the item it was cut from by `recordMusicalLength`
@@ -1781,17 +1811,25 @@ recorded only when the cut really is a whole number of beats (a tolerance that k
 the implied stretch under ~1%); anything else records nothing rather than being
 rounded onto the grid. `SampleExport` records it from the **source window** rather
 than the exported file, so a sample saved with its warp baked in still records the
-true count. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
+true count. `inheritAnalysisFromSource` measures the same way, preferring the
+item's recorded `sourceDurationMs` over its own file duration: the source's
+tempo describes the source's audio, so pairing it with a file that was rendered
+stretched would land on the wrong beat count — and since a musical length is
+written once and outranks every later reanalysis, a wrong one would never be
+corrected. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
 explicit override — while a reanalysis deliberately keeps it.
 
 On load, `ProjectState::repairLibraryItemKinds` promotes library items an older
 build persisted with the wrong `kind`: any `sample-`-prefixed item stored as a plain
-source back to `kind: "sample"`, and any item whose project-relative path sits under
-`stems/`, `channels/`, `samples/` or `scratches/` back to the kind that folder
-implies — a reanalysis used to demote a stem to a plain source, which then vanished
-from the import-from-project picker. It runs both from `ProjectFile::load` and from
+source back to `kind: "sample"`, and any item whose path sits under the project
+folder's `stems/`, `channels/`, `samples/` or `scratches/` back to the kind
+that folder implies — a reanalysis used to demote a stem to a plain source, which
+then vanished from the import-from-project picker. It runs from
+`ProjectState::replaceTree`, so it covers `ProjectFile::load`, and separately from
 `loadSourceProjectImport`, which reads a project tree without building a
 `ProjectState`, so an old project imports correctly without being opened first.
+Both callers pass the project's own folder, which is what makes the containment
+test above possible.
 
 **Warping on drop is a question about drift, not about the ratio.** Auto-warp on
 drop engages whenever the mismatch between the source tempo and the project tempo
@@ -1815,10 +1853,23 @@ and spaced its beat markers on the unwarped grid.
 musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
 by `previousBpm / newBpm`, so a clip on bar 9 stays on bar 9. Without it, warped
 clips re-stretch in place while their starts stay in milliseconds and the
-arrangement drifts apart on every tempo edit. When the renderer's **Match project
+arrangement drifts apart on every tempo edit. When the renderer's **Auto-warp clips to project
 tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
 since the preference lives in the renderer — clips that are not warped but whose
-source has a tempo are warped first, so nothing is left behind at the old tempo. The
+source has a tempo are warped first, so nothing is left behind at the old tempo.
+That is the same preference that governs warping a clip *on drop*, deliberately:
+one setting expresses one intent ("keep music at the project tempo"), and it holds
+at every moment the project tempo is established. Widening it rather than minting a
+second key is explicitly sanctioned by [ADR 0019](adr/0019-backward-compatibility-released-product.md) —
+both stored values still mean for the user exactly what they chose, so it is a
+widening and not a repurposing.
+Those clips are then re-stretched through `engine.setClipWarp` with `enabled`
+explicitly `true`: the engine reads an unset `enabled` as "keep the current engine
+state", and a clip that has never been warped has no warp processor, so leaving it
+unset would disable warp on the very clips the auto-warp pass just enabled and they
+would play dry and stop at their unwarped length. Sitting at the project tempo is a
+coincidence of the moment, not a property of the clip — any clip with a source tempo
+stays warp-capable and a tempo change must never turn its warp off. The
 renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
 shared by the transport bar and the project properties dialog. An active timeline
 selection is rescaled by the same factor there
@@ -1827,6 +1878,18 @@ selection is rescaled by the same factor there
 selection drawn around eight bars must still cover them, and Loop Selection reads
 the range live every frame. It is view state only, which is why the retime is a
 renderer concern with no backend counterpart.
+
+Timeline markers and the playhead are rescaled by that factor too. A marker names a
+musical place — the drop, the last bar of the intro — and the playhead is parked on
+a beat, so leaving either in milliseconds strands it against whatever now happens to
+occupy that instant while everything else moves. Markers are persisted state, so the
+backend owns them (`ProjectState::retimeMarkersForTempoChange`, in the same undoable
+transaction as the tempo itself) and `applyProjectBpm` mirrors the new positions
+locally — marker positions otherwise only reach the renderer on a full
+`PROJECT_STATE` snapshot, which a tempo edit does not trigger. The playhead is
+likewise moved on the backend, through the ordinary `setPositionMs` seek: the same
+material sits under it after the move, so the effect tails carry across rather than
+being reset.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
@@ -2774,7 +2837,8 @@ sidebar:
 - **Timeline** — timeline behaviour: follow-playback auto-scroll, **set project
   tempo from first clip** (seed a new project's BPM from the first clip dropped),
   **auto-warp clips to project tempo** (default on, including variable-tempo
-  music), beat-grid alignment after analysis, and the transport **previous /
+  music; governs both the drop and a later project-BPM change), beat-grid
+  alignment after analysis, and the transport **previous /
   next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove** (with a *cannot be
@@ -2982,6 +3046,23 @@ Robustness:
 - **Live unplug** — JUCE's `audioDeviceListChanged` callback fires; the backend reopens
   the next available device automatically so audio keeps flowing. A fresh `AUDIO_DEVICES_LIST`
   goes out to the renderer in the same round-trip.
+- **Stalled device recovery** — a device can also stop delivering audio without
+  ever being removed: JUCE's WASAPI thread exits on a stream error and does not
+  come back, leaving the transport reporting `playing` with a playhead that never
+  moves and no sound. `DeviceCallbackGuard`
+  (`backend/src/engine/DeviceCallbackGuard.{h,cpp}`) wraps the device callback,
+  logs `audioDeviceAboutToStart` / `audioDeviceStopped` / `audioDeviceError`, and
+  exposes `isDeviceRunning()`. Those are device-thread *lifecycle* callbacks, not
+  the block callback, so logging in them is safe; the block callback itself is
+  pure forwarding and adds no real-time work. A message-thread watchdog in
+  `AudioEngineDevice.cpp` (`checkAudioDeviceHealth()`) then polls
+  `MasterClockSource::getCallbackCount()` every `kDeviceWatchdogIntervalMs`; the
+  counter advances on every block regardless of transport state, so a frozen
+  count is an unambiguous stall even while idle. After `kDeviceStallTicks`
+  consecutive ticks with no progress it calls `restartLastAudioDevice()`, capped
+  at `kMaxDeviceRecoveryAttempts` so a genuinely dead device can't spin. A
+  stalled device is now either recovered or, at minimum, named in the log
+  instead of failing silently.
 - **Fast startup** — the first full device-type scan (the slow step on
   machines with ASIO drivers — typically 100–400 ms) is deferred via
   `juce::MessageManager::callAsync` and runs *after* the bridge has shipped
@@ -3524,7 +3605,8 @@ matching Visual Studio Code tasks import the Visual Studio Developer Shell so `c
 `scripts/Setup-Dev.ps1` brings a fresh Windows machine to a buildable checkout in a single
 command. It verifies each prerequisite, offers to install anything missing via `winget`,
 activates `pnpm` via `corepack`, runs `pnpm install` in `frontend/`, and configures the
-backend Debug CMake cache in `backend/build/` (CMake creates that directory itself — no
+backend CMake cache in `backend/build/` with the Visual Studio 17 2022 generator and
+`SILVERDAW_BUILD_TESTS=ON` (CMake creates that directory itself — no
 manual `mkdir` is required).
 
 ```powershell
@@ -3572,7 +3654,7 @@ workspace root:
 ```powershell
 # 1. Configure + build the backend (Debug) — Setup-Dev already ran the configure step
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-  "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+  "cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
   "cmake --build backend/build --config Debug --parallel"
 
@@ -3596,13 +3678,19 @@ before the renderer starts.
 cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't
 reconfigure the Debug cache out from under your dev session.
 
-> **Pick one generator for `backend/build/` and stay with it.** The CLI steps
-> above configure it with `-G Ninja` (single-config, so `CMAKE_BUILD_TYPE`
-> decides the build type and `--config` is ignored), while the
-> `backend: configure` VS Code task configures the same directory with
-> `-G 'Visual Studio 17 2022'` (multi-config, where `--config` decides). Whichever
-> configure ran last wins. If you switch between the two, delete
-> `backend/build/` first rather than reconfiguring over the top.
+> **`backend/build/` is a Visual Studio 17 2022 (multi-config) tree — don't
+> reconfigure it with another generator.** `scripts/Setup-Dev.ps1`, the
+> `backend: configure` VS Code task, and `cmake.generator` in
+> `.vscode/settings.json` all agree on that generator, so `--config` decides the
+> build type and `CMAKE_BUILD_TYPE` is ignored. CMake refuses to reconfigure a
+> tree with a different generator, and CMake Tools treats that refusal as a
+> failed configure — which silently empties the backend tests out of the VS Code
+> Testing panel. If you really must switch, delete `backend/build/` first rather
+> than reconfiguring over the top, and change `cmake.generator` to match.
+>
+> `backend/build-release/` is the **Ninja** tree, and the only one that emits
+> `compile_commands.json` — which is why clangd and `scripts/Invoke-ClangTidy.ps1`
+> both point at it.
 
 ## Packaging for Windows
 
@@ -3755,16 +3843,116 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,
-  `readability-*`). Format with `clang-format` (`backend/.clang-format`). Backend unit
-  tests are gated behind `-DSILVERDAW_BUILD_TESTS=ON`:
+  `readability-*`, less a documented exclusion list). **The backend is at zero
+  clang-tidy warnings — keep it there.** A clean baseline is the whole point:
+  it means any warning a change introduces is visible immediately instead of
+  being lost in a list of hundreds that everyone has learned to scroll past.
+  Fix what a run reports, or — if the check is genuinely wrong for this
+  codebase — exclude it and write down why in the config header. Every
+  exclusion is a style disagreement, a micro-optimisation, or a check that was
+  audited site by site and found not to apply; each records that reasoning.
+  Keep `backend/.clangd` (the IDE-time list) in sync when changing them.
+  Run it with:
 
   ```powershell
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "cmake -S backend -B backend/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSILVERDAW_BUILD_TESTS=ON"
+    "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1"
+  ```
+
+  The outer `Invoke-DevShell.ps1` is what puts the Visual Studio `clang-tidy` on
+  `PATH`. The console gets a per-check summary; the full output goes to
+  `clang-tidy-report.txt` at the repo root (gitignored), because a run emits
+  thousands of lines and would otherwise scroll its own findings out of the
+  terminal. Useful switches:
+
+  - `-Fix` applies the suggested code-mods, including those attached to notes.
+    Rebuild and run the tests afterwards — a code-mod is a change like any
+    other — and follow with `clang-format`.
+  - `-Checks '-*,some-check'` overrides the config for one run, so a code-mod
+    can be applied and reviewed one check at a time.
+  - `-Filter 'regex'` narrows the console summary to matching checks.
+  - `-Strict` turns warnings into errors. Now that the baseline is clean this
+    is viable as a CI gate.
+  - `-Jobs N` sets the parallelism, defaulting to the logical processor count.
+    `-Jobs 1` forces the serial path.
+  - `-NoSystemHeaders` lints against the build's own `compile_commands.json`
+    rather than the derived copy described below. Only needed to diagnose a
+    suspected difference between the two.
+  - `-Changed` lints only what the current changes affect, and `-Since <ref>`
+    picks what they are compared against (default `HEAD`, i.e. uncommitted
+    work; pass a branch point to cover a whole branch).
+
+  A run is parallel by default: when LLVM's `run-clang-tidy` is available
+  alongside `clang-tidy` it fans the 133 sources out across cores. Measured on
+  a 16-core machine, a full run goes from about 400 seconds serial to 85
+  parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the curve
+  flattens at roughly the core count and the default needs no tuning.
+
+  On top of that the script derives its own compile database into
+  `<build>/clang-tidy/`, rewriting every third-party include directory —
+  anything under `_deps/` or `backend/third_party/` — from a `-I` user include
+  to a system include. CMake passes dependencies as plain `-I`, so without this
+  clang treats JUCE, rubberband, ixwebsocket and the rest as first-party code:
+  it runs the whole check set over all of it and `HeaderFilterRegex` then
+  discards the results. Marking them as system headers lets clang skip that
+  work and takes the run from 85 seconds to 47. The derived database is
+  regenerated whenever the real one is newer, and is inside the build tree so
+  it is already gitignored. It was validated by running a deliberately noisy
+  check set over both databases and diffing the output: 5173 diagnostics,
+  byte-identical, so the speedup costs no coverage. Re-run that comparison if
+  you ever widen what counts as third-party.
+
+  Two further consequences of running in parallel. Workers each analyse their
+  own translation unit, so a finding in a shared header is reported once per
+  file that includes it — the summary deduplicates on file, line, column, and
+  check. And `-Fix` always falls back to the serial path, because clang-tidy
+  applies edits by byte offset and concurrent workers rewriting the same header
+  would corrupt each other. `run-clang-tidy` resolves `.clang-tidy` from the
+  working directory rather than from the files it lints, so the script passes
+  `-config-file` explicitly; without it every check is silently disabled.
+
+  `-Changed` narrows the run further. A changed `.cpp` lints itself; a changed
+  header lints every translation unit that includes it, which the script reads
+  from the dependency graph Ninja recorded during the last build rather than by
+  re-scanning `#include` lines. That distinction matters — the recorded graph
+  is what the compiler actually saw, transitive includes included. On a typical
+  branch this is the difference between one file and the whole tree.
+
+  The narrowing is deliberately pessimistic, because a partial run that wrongly
+  reports clean would quietly undermine the baseline the gate depends on.
+  Anything it cannot resolve confidently — no Ninja, no dependency record, a
+  stale record, a header the build has never compiled, or an edit to
+  `.clang-tidy` or `.clangd` themselves, which changes what every file is
+  measured against — abandons the narrowing and lints everything. Prefer a full
+  run for the CI gate and keep `-Changed` for the local edit loop.
+
+  Watch for `compile error(s)` in the summary. clang-tidy stops analysing a
+  translation unit at the first compile error, so errors silently *hide*
+  warnings — a header that Clang rejects but MSVC accepts can mask findings
+  across most of the codebase.
+
+  clang-tidy needs a `compile_commands.json`, which only a **single-config**
+  generator writes — the Visual Studio tree in `backend/build` has none — so
+  the script searches the known build trees and uses the first that has one.
+  Pass `-BuildDir` to pin a specific tree. If no tree has a compile database,
+  configure a Ninja one:
+
+  ```powershell
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+  ```
+
+  Format with `clang-format`
+  (`backend/.clang-format`). Backend unit tests are gated behind
+  `-DSILVERDAW_BUILD_TESTS=ON`:
+
+  ```powershell
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
     "cmake --build backend/build --target SilverdawBackendTests --config Debug --parallel"
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "ctest --test-dir backend/build --output-on-failure"
+    "ctest --test-dir backend/build --build-config Debug --output-on-failure"
   ```
   Each case is a separate CTest test, discovered at build time via the harness's
   `--list` / `--run` flags, so cases appear individually in `ctest` and the VS
@@ -3807,6 +3995,18 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   asserts only on the DOM, the filesystem and saved project files; its rules and
   helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
   type-checked by `pnpm typecheck` through `tsconfig.node.json`.
+
+  The specs launch the *built* app, so anything that invokes the runner
+  directly — `pnpm test:e2e:only`, or the ▶ button in the VS Code Testing panel
+  — skips that build and would otherwise silently test stale bundles.
+  `frontend/e2e/globalSetup.ts` guards against it: before any spec runs it
+  compares `out/{main,preload,renderer}` against `src/` and
+  `electron.vite.config.ts` and aborts with a build hint if the bundles are
+  missing or older. Discovery is unaffected, so the panel always lists the
+  specs. Installing the recommended `ms-playwright.playwright` extension (see
+  `.vscode/extensions.json`) puts them in the Testing panel alongside the
+  CTest-provided backend tests; it finds `frontend/playwright.config.ts` on its
+  own.
 - **Dead code**: a configured `frontend/knip.json` (entry points for the main /
   preload / renderer electron-vite processes) lets `pnpm dlx knip` report unused
   files, exports and dependencies. Treat its output as *candidates* — the zod

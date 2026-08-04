@@ -75,7 +75,7 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             static_cast<int>(juce::jmin(static_cast<juce::int64>(decodeBlockSize), totalSourceSamples - sourcePos));
         if (toRead <= 0) break;
         // ~every 4 MB decoded (large tracks only); cheap clock read, no hot-path cost.
-        if ((sourcePos % (decodeBlockSize * 256)) == 0 && timedOut()) return abortTimedOut("decode");
+        if ((sourcePos % (static_cast<juce::int64>(decodeBlockSize) * 256)) == 0 && timedOut()) return abortTimedOut("decode");
 
         if (!reader->read(&decodeBuffer, 0, toRead, sourcePos, true, true))
         {

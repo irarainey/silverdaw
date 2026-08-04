@@ -69,7 +69,7 @@ void WarpProcessor::prepareToPlay(int maxBlockSamples)
 void WarpProcessor::doReset()
 {
     if (stretcher == nullptr) return;
-    stretcher->reset();
+    (*stretcher).reset();
     // Feed Rubber Band's start pad and discard its priming delay after reset/seek.
     const int pad = static_cast<int>(stretcher->getPreferredStartPad());
     outputDelayToDiscard = static_cast<int>(stretcher->getStartDelay());
@@ -162,7 +162,7 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
         + outputDelayToDiscard + 8;
     while (produced < numOutputSamples && iterations++ < maxIterations)
     {
-        const int available = static_cast<int>(stretcher->available());
+        const int available = stretcher->available();
         if (available > 0 && outputDelayToDiscard > 0)
         {
             const int drop =

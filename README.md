@@ -79,7 +79,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   sits, not nudged to the nearest beat — and `M` again on it to remove it. Jump
   between markers with `Ctrl`+`←`/`→`, drag one along the ruler to move it (hold
   `Alt` for free placement), or clear the lot with **Edit ▸ Clear All Markers**.
-  Markers are saved with the project and survive a tempo change.
+  Markers are saved with the project and keep their place in the bars if you
+  change the project tempo.
 - **Crossfade transitions.** Extend a clip edge over an adjacent clip to create
   a crossfade. Use the clip menu's **Crossfade** group to choose a Smooth or
   Fade out/in recipe, or remove it.

@@ -252,7 +252,7 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
         emitUnit("delayTone", projectState.getProjectDelayTone());
         emitUnit("delayMix", projectState.getProjectDelayMix());
     }
-    return juce::var(obj);
+    return {obj};
 }
 
 juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session,

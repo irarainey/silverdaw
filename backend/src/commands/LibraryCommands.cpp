@@ -46,7 +46,7 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
                                         ? static_cast<double>(payload.getProperty("sourceDurationMs", 0.0))
                                         : -1.0;
     const int collapsedFlag = payload.hasProperty("collapsed")
-                                  ? (bool(payload.getProperty("collapsed", false)) ? 1 : 0)
+                                  ? (static_cast<bool>(payload.getProperty("collapsed", false)) ? 1 : 0)
                                   : -1;
     const juce::String mediaId = readOptionalString(payload, "mediaId").value_or(juce::String{});
     silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);

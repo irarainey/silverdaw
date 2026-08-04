@@ -104,8 +104,8 @@ legitimately not a whole number of bars.
   when the seeded value has not moved, because the renderer needs the flag.
 - Changing the project tempo now rescales every clip's start by
   `previousBpm / newBpm` so the arrangement keeps its musical shape, and warps
-  any unwarped clip that has a source tempo when the Match project tempo
-  preference is on. The preference lives in the renderer, so `PROJECT_SET_BPM`
+  any unwarped clip that has a source tempo when the Auto-warp clips to project
+  tempo preference is on. The preference lives in the renderer, so `PROJECT_SET_BPM`
   carries it as an optional `autoWarp` flag; both are one undoable step.
 - Whether a tempo mismatch counts as a warp at all is judged on the drift it
   produces across the clip, not on a flat ratio epsilon, and both processes use

@@ -249,8 +249,8 @@ private:
     void applyPendingTrackFx(TrackRuntime& runtime);
     void clearPendingTrackFx();
 
-    void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap,
-                              juce::int64 subStartSamples, int numSamples, double rate) noexcept;
+    static void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap, juce::int64 subStartSamples,
+                                     int numSamples, double rate) noexcept;
 
     std::atomic<juce::uint64> skippedBlocks{0};
     std::unique_ptr<RenderSnapshot> currentRenderSnapshot;

@@ -1,9 +1,19 @@
 # Changelog
 
-## 1.5.2
+## 1.5.3
+
+### Changed
+
+- The backend clang-tidy configuration now excludes a documented set of style-only and known-noisy checks, and the lint script finds the build tree it needs on its own, writes its full output to a report file, and summarises findings per check.
+- The backend now builds clean under clang-tidy, so a new warning stands out instead of being lost among existing ones.
+- The backend lint now runs across all cores and no longer analyses third-party headers it was only going to discard the results from, cutting a full clang-tidy pass from around seven minutes to under fifty seconds.
+- The backend lint can now check just the sources affected by your changes, following a changed header through to everything that includes it, and falling back to a full run whenever that cannot be worked out safely.
 
 ### Fixed
 
+- The stem separation dialog no longer names a model while loading, so a drums-only job stops appearing to load a vocal model it was never asked for.
+- Playback that silently stops working is now detected and recovered: if the audio device stops delivering audio, the engine restarts it instead of leaving the transport showing playback with a playhead that never moves and no sound.
+- Audio device start, stop and error events are now recorded in the log, so a device that drops out is visible rather than silent.
 - A clip's original tempo is now resolved the same way everywhere, so stems, saved clips and samples agree with the timeline, the beat grid and playback.
 - A saved sample or clip now keeps the tempo of the track it was cut from instead of detecting one from its own few seconds of audio.
 - A clip cut to a number of bars now stays that number of bars however its tempo is later re-detected.
@@ -12,10 +22,10 @@
 - The first clip dropped into a project that already has a tempo now auto-warps to it.
 - A clip whose tempo only just misses the project tempo now warps on drop, shows the WARP badge and draws its beat markers on the warped grid.
 - Changing the project tempo now keeps the arrangement's musical shape, so a clip on bar 9 stays on bar 9.
-- Changing the project tempo now brings already-placed clips onto the new tempo when Match project tempo is on.
-- An active timeline selection now keeps its place in the bars when the project tempo changes.
+- Changing the project tempo now brings already-placed clips onto the new tempo when Auto-warp clips to project tempo is on.
+- An active timeline selection, the timeline markers and the playhead now keep their place in the bars when the project tempo changes.
 - A hand-set project tempo is no longer seeded over by the next clip analysed.
-- Stretching a clip past its original length now plays and exports in full instead of cutting off where it used to end.
+- A warped clip now plays and exports its full stretched length, however the warp was applied.
 - Changing a clip's stretch during playback now takes effect straight away.
 - The warp stretch percentage now always reads to two decimal places, and the stretch applied is exactly the figure shown.
 - Reanalysing a track now brings the clips already using it onto the new tempo, leaving any clip pinned to a fixed stretch alone.
@@ -25,7 +35,8 @@
 - The Clip Editor now lets you correct the beat grid of a stem or saved clip that takes its tempo from the track it came from.
 - A simple sample no longer carries a BPM or a beat grid anywhere, and Chop to Grid is no longer offered on one.
 - Chop to Grid is now offered on any clip whose beat markers are drawn.
-- Opening a project saved before this release repairs library items stored with the wrong type.
+- A stem or sample created from a saved clip now inherits its beat grid instead of arriving without one.
+- Opening a project saved before this release repairs library items stored with the wrong type or carrying a tempo they should not have, without changing how anything sounds.
 
 ## 1.5.1
 

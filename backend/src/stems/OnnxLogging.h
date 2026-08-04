@@ -51,7 +51,7 @@ inline void ORT_API_CALL ortLogToSilverdaw(void* /*param*/, OrtLoggingLevel seve
 // downgraded inside the callback.
 inline Ort::Env makeOrtEnv(const char* logId)
 {
-    return Ort::Env(ORT_LOGGING_LEVEL_ERROR, logId, &ortLogToSilverdaw, nullptr);
+    return {ORT_LOGGING_LEVEL_ERROR, logId, &ortLogToSilverdaw, nullptr};
 }
 
 } // namespace silverdaw

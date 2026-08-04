@@ -32,14 +32,8 @@ void renderMixdownAsync(MixdownSnapshot snapshot,
     busyFlag.store(true);
     cancelFlag.store(false);
 
-    pool.addJob([snapshot = std::move(snapshot),
-                 options = std::move(options),
-                 &bridge,
-                 &cancelFlag,
-                 &busyFlag]() mutable
-    {
-        runMixdownJob(std::move(snapshot), std::move(options), bridge, cancelFlag, busyFlag);
-    });
+    pool.addJob([snapshot = std::move(snapshot), options = std::move(options), &bridge, &cancelFlag,
+                 &busyFlag]() mutable { runMixdownJob(snapshot, std::move(options), bridge, cancelFlag, busyFlag); });
 }
 
 } // namespace silverdaw

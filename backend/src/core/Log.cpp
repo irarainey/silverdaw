@@ -44,7 +44,7 @@ std::string currentIso8601Ms()
     const auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
     const auto seconds = system_clock::to_time_t(now);
     std::tm tm{};
-#if defined(_WIN32)
+#ifdef _WIN32
     gmtime_s(&tm, &seconds);
 #else
     gmtime_r(&seconds, &tm);
@@ -60,7 +60,7 @@ std::string currentIso8601Ms()
 // which embeds the username; this replaces just the owner segment with `<user>` while
 // keeping the rest of the path intact for debugging. Case-insensitive and slash-style
 // agnostic. Applied at the single sink so every log line is covered.
-std::string redactUserPaths(std::string s)
+std::string redactUserPaths(const std::string& s)
 {
     static const std::regex re(R"(([A-Za-z]:[\\/]Users[\\/])[^\\/\r\n"']+)",
                                std::regex::icase | std::regex::optimize);
@@ -88,7 +88,7 @@ juce::File resolveLogDirectory(const juce::String& override)
 
 void initialise(const juce::String& logDirOverride, Level minLevel, bool truncate, bool startupOnly)
 {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::scoped_lock lock(g_mutex);
     if (g_initialised)
     {
         return;
@@ -114,7 +114,7 @@ void initialise(const juce::String& logDirOverride, Level minLevel, bool truncat
 
 void markStartupComplete()
 {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::scoped_lock lock(g_mutex);
     // Only the always-on diagnostics sink is startup-scoped; the verbose sink keeps
     // logging the whole session. Closing here stops the diagnostics log from ever
     // accumulating runtime chatter — it exists solely to catch a failed startup.
@@ -132,7 +132,7 @@ void markStartupComplete()
 
 void shutdown()
 {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::scoped_lock lock(g_mutex);
     if (!g_initialised)
     {
         return;
@@ -145,7 +145,7 @@ void shutdown()
 
 void write(Level level, const char* tag, const juce::String& message)
 {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    std::scoped_lock lock(g_mutex);
     const auto redacted = redactUserPaths(message.toStdString());
     // Mirror ERRORs to stderr unconditionally — even when the file sink is closed
     // (verbose logging off, the default). The Electron supervisor pipes the backend's

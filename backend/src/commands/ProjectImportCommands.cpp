@@ -51,7 +51,7 @@ juce::var makeResultPayload(bool ok, const juce::String& sourceProjectPath,
     result->setProperty("sourceProjectPath", sourceProjectPath);
     if (error.isNotEmpty())
         result->setProperty("error", error);
-    return juce::var(result);
+    return {result};
 }
 
 bool copyDirectoryOrFileToStaging(const juce::File& sourceFile, const juce::File& sourceRoot,

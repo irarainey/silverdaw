@@ -131,8 +131,7 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
             const float aL = std::abs(pL[i]);
             const float aR = std::abs(pR[i]);
             const float maxA = juce::jmax(aL, aR);
-            if (maxA > result.postGainPeakAmp)
-                result.postGainPeakAmp = maxA;
+            result.postGainPeakAmp = std::max<double>(maxA, result.postGainPeakAmp);
             if (aL > 1.0F || aR > 1.0F) ++result.clippedSamples;
         }
 

@@ -24,10 +24,7 @@ void runStemSeparationAsync(StemSeparationRequest request,
                             std::atomic<bool>& busyFlag);
 
 // Synchronous job body, exposed for the test harness to exercise without a pool.
-void runStemSeparationJob(StemSeparationRequest request,
-                          StemSeparator& separator,
-                          BridgeServer& bridge,
-                          std::atomic<bool>& cancelFlag,
-                          std::atomic<bool>& busyFlag);
+void runStemSeparationJob(const StemSeparationRequest& request, StemSeparator& separator, BridgeServer& bridge,
+                          std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag);
 
 } // namespace silverdaw

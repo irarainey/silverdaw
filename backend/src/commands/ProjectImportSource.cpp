@@ -40,7 +40,7 @@ juce::var libraryItemAsImportData(const juce::ValueTree& item)
 
     if (item.hasProperty(kScratchPatternId))
         data->setProperty("scratchOrigin", true);
-    return juce::var(data);
+    return {data};
 }
 
 std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& item,
@@ -94,7 +94,7 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
     // repair. Apply it here too, or a stem an older build demoted to a plain source stays
     // invisible to this import until that project is opened and re-saved.
     auto library = tree.getChildWithName(kLibrary);
-    ProjectState::repairLibraryItemKinds(library);
+    ProjectState::repairLibraryItemKinds(library, sourceProjectFile.getParentDirectory());
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);
@@ -110,7 +110,7 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
         const auto pattern = patterns.getChild(i);
         if (!pattern.hasType(scratch_ids::kScratchPattern))
             continue;
-        const auto data = pattern.getProperty(scratch_ids::kScratchPatternData);
+        const auto& data = pattern.getProperty(scratch_ids::kScratchPatternData);
         const auto parsed = scratch::parsePattern(data);
         if (parsed && parsed->id.isNotEmpty())
             source.scratchPatterns.emplace(parsed->id, data);

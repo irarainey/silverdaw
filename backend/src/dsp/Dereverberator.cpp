@@ -242,7 +242,7 @@ void Dereverberator::process(juce::AudioBuffer<float>& buffer, double sampleRate
                 const float sm = kGainSmooth * prevGain[static_cast<size_t>(bin)] + (1.0f - kGainSmooth) * raw;
                 prevGain[static_cast<size_t>(bin)] = sm;
                 g = (1.0f - p.wet) + p.wet * sm;
-                if (g > 1.0f) g = 1.0f; // strictly attenuating
+                g = std::min(g, 1.0f); // strictly attenuating
             }
             else
             {

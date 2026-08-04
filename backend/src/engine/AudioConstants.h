@@ -67,7 +67,16 @@ inline constexpr int kWarmHoldMs = 800;
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
 
-inline constexpr bool isSupportedSampleRate(int rate) noexcept
+// Device stall watchdog. The audio callback runs continuously once the device is
+// open, whether or not the transport is rolling, so a frozen callback counter is
+// an unambiguous stall. Two seconds is far longer than any legitimate scheduling
+// gap, and recovery attempts are capped so a genuinely dead endpoint is reported
+// once rather than restarted forever.
+inline constexpr int kDeviceWatchdogIntervalMs = 500;
+inline constexpr int kDeviceStallTicks = 4;
+inline constexpr int kMaxDeviceRecoveryAttempts = 3;
+
+constexpr bool isSupportedSampleRate(int rate) noexcept
 {
     return rate == kDefaultSampleRate || rate == kAltSampleRate;
 }

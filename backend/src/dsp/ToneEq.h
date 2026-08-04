@@ -82,7 +82,7 @@ private:
         float z1[kMaxChannels] = {0.0F, 0.0F};
         float z2[kMaxChannels] = {0.0F, 0.0F};
 
-        inline float process(int ch, float x) noexcept
+        float process(int ch, float x) noexcept
         {
             const float y = b0 * x + z1[ch];
             z1[ch] = b1 * x - a1 * y + z2[ch];

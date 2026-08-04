@@ -45,9 +45,16 @@ std::vector<double> buildRigidBeatGrid(double bpm, double beatAnchorSec, double 
     else
         firstSec += std::ceil(-firstSec / beatSpacingSec) * beatSpacingSec;
     constexpr int kMaxBeats = 100000;
-    int guard = 0;
-    for (double t = firstSec; t <= endSec + 1.0e-6 && guard < kMaxBeats; t += beatSpacingSec, ++guard)
+    // Compute each beat from the first rather than accumulating `t += spacing`:
+    // repeated addition compounds its rounding error along the grid, so the last
+    // beat of a long track drifts off the position the same grid is drawn at
+    // elsewhere. Multiplying is exact for every index and costs nothing here.
+    for (int i = 0; i < kMaxBeats; ++i)
+    {
+        const double t = firstSec + (i * beatSpacingSec);
+        if (t > endSec + 1.0e-6) break;
         beats.push_back(t);
+    }
     if (beats.empty())
         beats.push_back(beatAnchorSec);
     return beats;
@@ -291,7 +298,7 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                 const double ratio = projectBpm / sourceBpm;
                 if (info.pendingAutoWarp)
                 {
-                    projectState.setClipWarp(info.clipId, /*enabled=*/true, juce::String("rhythmic"),
+                    projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
                                              /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
                                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
                     engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
@@ -342,8 +349,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
     silverdaw::BpmAnalysis analysis; // bpm 0 by default → treated as "no tempo"
     if (haveWav)
     {
-        silverdaw::BpmDetector detector;
-        analysis = detector.analyse(cachedFile, engine.getFormatManager());
+        analysis = silverdaw::BpmDetector::analyse(cachedFile, engine.getFormatManager());
     }
     else
     {
@@ -378,7 +384,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                 bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
             });
         {
-            std::lock_guard<std::mutex> lock(bpmJobsMutex);
+            std::scoped_lock lock(bpmJobsMutex);
             bpmJobsInFlight.erase(itemId);
         }
         return;
@@ -391,7 +397,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                                           analysis.lowConfidence, cachedPath, engine, projectState,
                                           bridge);
             {
-                std::lock_guard<std::mutex> lock(bpmJobsMutex);
+                std::scoped_lock lock(bpmJobsMutex);
                 bpmJobsInFlight.erase(itemId);
             }
         });
@@ -450,7 +456,7 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
         {
             silverdaw::log::debug("bpmjob", "skip duplicate in-flight itemId=" + itemId);
@@ -530,7 +536,9 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
             ? juce::jmax(0.0, static_cast<double>(stem.getProperty(juce::Identifier{"sourceInMs"}, 0.0))) / 1000.0
             : 0.0;
 
-    const double bpm = static_cast<double>(source.getProperty(juce::Identifier{"bpm"}, 0.0));
+    // Resolved, not raw (ADR 0024): a source may hold its tempo only through its own
+    // parent, and a one-shot must pass nothing on.
+    const double bpm = projectState.getLibraryItemBpm(sourceItemId);
     const double beatAnchorSec =
         static_cast<double>(source.getProperty(juce::Identifier{"beatAnchorSec"}, 0.0)) - windowStartSec;
     const bool variableTempo = static_cast<bool>(source.getProperty(juce::Identifier{"variableTempo"}, false));
@@ -565,7 +573,20 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
     // this is the one place that knows both the trusted tempo and the window. A later
     // reanalysis of the item's own (often only a few seconds of) audio can then change
     // its detected BPM without changing where it lands on the grid.
-    recordMusicalLength(itemId, bpm, projectState.getLibraryItemDurationMs(itemId), projectState);
+    //
+    // Measure the window in *source* time. The source's BPM describes the source's
+    // audio, so pairing it with the derived file's own duration is only valid when
+    // nothing stretched that file — and a sample saved with its warp baked in is
+    // exactly the case where it did. Multiplying an unstretched tempo by a stretched
+    // duration lands on the wrong beat count, and a musical length is written once and
+    // outranks every later reanalysis, so a wrong one never gets corrected. Fall back
+    // to the file's duration only when there is no recorded window, which means the
+    // derived item spans the whole source and the two are the same number.
+    const double recordedWindowMs =
+        static_cast<double>(stem.getProperty(juce::Identifier{"sourceDurationMs"}, 0.0));
+    const double windowMs = recordedWindowMs > 0.0 ? recordedWindowMs
+                                                   : projectState.getLibraryItemDurationMs(itemId);
+    recordMusicalLength(itemId, bpm, windowMs, projectState);
     // A stem has no independent confidence measurement; leave its lowConfidence
     // unset so it defers its sample/music classification to the source (the stem
     // carries derivedFrom.sourceItemId). This keeps a stem visible as music
@@ -584,7 +605,7 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return;
     {
-        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
         {
             silverdaw::log::debug("bpmjob", "skip duplicate in-flight reanalysis itemId=" + itemId);
@@ -611,8 +632,8 @@ void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine,
         {
             const auto built = decodedCache.ensureDecoded(src, engine.getFormatManager());
             if (!built.existsAsFile()) return;
-            const auto cachePath = built.getFullPathName();
-            const auto sourcePath = src.getFullPathName();
+            const auto& cachePath = built.getFullPathName();
+            const auto& sourcePath = src.getFullPathName();
             juce::MessageManager::callAsync(
                 [&projectState, sourcePath, cachePath]
                 {

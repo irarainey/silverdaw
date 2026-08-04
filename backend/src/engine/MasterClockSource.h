@@ -142,6 +142,13 @@ class MasterClockSource : public juce::AudioSource
         bool playing = false;
     };
 
+    // Message-thread read of the audio-thread callback counter, used by the device
+    // watchdog. Unlike `drainAudioPerf` this consumes nothing.
+    std::uint64_t getCallbackCount() const noexcept
+    {
+        return callbackCount.load(std::memory_order_relaxed);
+    }
+
     // Message-thread drain of the audio-thread timing. Resets the worst-case
     // accumulator so each call reports the peak elapsed time since the last drain.
     AudioPerfSnapshot drainAudioPerf() noexcept

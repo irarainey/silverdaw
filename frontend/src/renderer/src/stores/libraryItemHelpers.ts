@@ -85,7 +85,11 @@ export function libraryItemSourceBpm(
   const sourceId = item.derivedFrom?.sourceItemId
   if (!sourceId) return undefined
   const source = byId[sourceId]
-  return typeof source?.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
+  // An explicit `audioType: 'music'` says this item has a pulse; it does not create
+  // one in the item it was cut from. Inheriting a tempo off a one-shot parent would
+  // have the renderer resolve a BPM the backend refuses (ADR 0024).
+  if (!source || libraryItemIsSimple(source, byId)) return undefined
+  return typeof source.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
 }
 
 /**

@@ -24,7 +24,7 @@ juce::var buildEditUndoStateEnvelope(silverdaw::ProjectState& projectState)
         const auto label = um.getRedoDescription();
         if (label.isNotEmpty()) obj->setProperty("redoLabel", label);
     }
-    return juce::var(obj);
+    return {obj};
 }
 
 void broadcastEditUndoState(silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge)

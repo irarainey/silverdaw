@@ -49,7 +49,7 @@ private:
         double a1{0.0}, a2{0.0};
         std::array<double, 2> z1{0.0, 0.0};
         std::array<double, 2> z2{0.0, 0.0};
-        inline float process(int ch, double x) noexcept
+        float process(int ch, double x) noexcept
         {
             const double y = b0 * x + z1[ch];
             z1[ch] = b1 * x - a1 * y + z2[ch];
@@ -100,7 +100,7 @@ private:
         // 4× polyphase FIR table, packed by phase.
         static constexpr int kPhases = 4;
         static constexpr int kTapsPerPhase = 16;
-        std::array<float, kPhases * kTapsPerPhase> coefs{};
+        std::array<float, static_cast<size_t>(kPhases) * kTapsPerPhase> coefs{};
         std::array<std::array<float, kTapsPerPhase>, 2> history{};
         std::array<int, 2> writeIdx{0, 0};
         double maxAbs{0.0};

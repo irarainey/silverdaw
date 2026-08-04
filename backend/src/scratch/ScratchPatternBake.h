@@ -23,9 +23,8 @@ namespace silverdaw::scratch
 // performed over, at `sampleRate`) into a stereo buffer whose length matches the
 // pattern's cropped duration. Returns an empty buffer when the pattern has no
 // usable keyframes or the source is missing.
-juce::AudioBuffer<float> bakePatternToBuffer(
-    const Pattern& pattern,
-    std::shared_ptr<const juce::AudioBuffer<float>> preparedSource,
-    double sampleRate);
+juce::AudioBuffer<float> bakePatternToBuffer(const Pattern& pattern,
+                                             const std::shared_ptr<const juce::AudioBuffer<float>>& preparedSource,
+                                             double sampleRate);
 
 } // namespace silverdaw::scratch

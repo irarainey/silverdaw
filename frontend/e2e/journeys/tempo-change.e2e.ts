@@ -2,9 +2,10 @@
 //
 // Tempo is the one edit that reaches every layer at once. Setting a BPM makes
 // the engine re-stretch warped clips, move the clips already placed so the
-// arrangement keeps its musical shape, and — since the range a user has
-// selected covers bars rather than seconds — carry the timeline selection with
-// them. The renderer applies the same rules locally so the timeline does not
+// arrangement keeps its musical shape, and — since a selected range and a
+// dropped marker name bars rather than seconds — carry the timeline selection
+// and the markers with them. The renderer applies the same rules locally so the
+// timeline does not
 // wait for a round trip (`projectStore.applyProjectBpm`), which means the two
 // processes each hold their own copy of the arithmetic. Only this tier can
 // prove they still agree, and only the saved document can prove what the engine
@@ -48,6 +49,7 @@ interface SavedProject {
   clipWarpEnabled: boolean
   selectionStartMs: number
   selectionEndMs: number
+  markerPositionMs: number
 }
 
 interface ProjectNode {
@@ -81,12 +83,14 @@ function readSavedProject(projectFile: string): SavedProject | null {
   if (!project) return null
   const clip = findNode(project, 'CLIP')
   if (!clip) return null
+  const marker = findNode(project, 'MARKER')
   return {
     bpm: Number(project['bpm']),
     clipOffsetMs: Number(clip['offsetMs']),
     clipWarpEnabled: clip['warpEnabled'] === true,
     selectionStartMs: Number(project['viewTimelineSelectionStartMs']),
-    selectionEndMs: Number(project['viewTimelineSelectionEndMs'])
+    selectionEndMs: Number(project['viewTimelineSelectionEndMs']),
+    markerPositionMs: marker ? Number(marker['positionMs']) : 0
   }
 }
 
@@ -103,6 +107,11 @@ test('a tempo change warps and retimes what is already placed', async ({ launchA
 
   // ── A clip, placed away from the origin ───────────────────────────────────
   await seekOnRuler(page, 150)
+
+  // A marker at the playhead. It marks a musical place, so the tempo change
+  // below has to carry it along with the clip rather than leave it in
+  // milliseconds. Dropped before the import so the playhead is still off zero.
+  await page.keyboard.press('m')
 
   await stubOpenDialog(first.electronApp, [wavPath])
   await page.getByTitle('Import audio file...').click()
@@ -150,6 +159,7 @@ test('a tempo change warps and retimes what is already placed', async ({ launchA
   expect(before.clipOffsetMs).toBeGreaterThan(0)
   expect(before.selectionStartMs).toBeGreaterThan(0)
   expect(before.selectionEndMs).toBeGreaterThan(before.selectionStartMs)
+  expect(before.markerPositionMs).toBeGreaterThan(0)
   // Nothing is warped yet: the project took its tempo from this very clip, so
   // there is no mismatch to correct.
   expect(before.clipWarpEnabled).toBe(false)
@@ -184,6 +194,10 @@ test('a tempo change warps and retimes what is already placed', async ({ launchA
     RETIME_TOLERANCE_DIGITS
   )
   expect(after.selectionEndMs).toBeCloseTo(before.selectionEndMs * scale, RETIME_TOLERANCE_DIGITS)
+  expect(after.markerPositionMs).toBeCloseTo(
+    before.markerPositionMs * scale,
+    RETIME_TOLERANCE_DIGITS
+  )
 
   await closeSilverdaw(first)
 

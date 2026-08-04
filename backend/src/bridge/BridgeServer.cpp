@@ -45,7 +45,7 @@ bool BridgeServer::start(int port)
             {
             case ix::WebSocketMessageType::Open:
             {
-                std::lock_guard<std::mutex> lock(clientsMutex);
+                std::scoped_lock lock(clientsMutex);
                 for (const auto& c : server->getClients())
                 {
                     if (c.get() == &webSocket)
@@ -66,7 +66,7 @@ bool BridgeServer::start(int port)
 
             case ix::WebSocketMessageType::Close:
             {
-                std::lock_guard<std::mutex> lock(clientsMutex);
+                std::scoped_lock lock(clientsMutex);
                 clients.erase(&webSocket);
                 silverdaw::log::info("bridge", "client disconnected; remaining=" + juce::String(static_cast<int>(clients.size())));
                 break;
@@ -109,7 +109,7 @@ void BridgeServer::stop()
     running.store(false);
 
     {
-        std::lock_guard<std::mutex> lock(clientsMutex);
+        std::scoped_lock lock(clientsMutex);
         clients.clear();
     }
 
@@ -147,7 +147,7 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
 
     // Close unauthenticated clients on anything except a valid first AUTH.
     {
-        std::lock_guard<std::mutex> lock(clientsMutex);
+        std::scoped_lock lock(clientsMutex);
         const auto it = clients.find(&webSocket);
         if (it == clients.end())
         {
@@ -272,7 +272,7 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
         silverdaw::log::info("bridge", "broadcast " + type + " bytes=" + juce::String(static_cast<int>(serialised.size())));
     }
 
-    std::lock_guard<std::mutex> lock(clientsMutex);
+    std::scoped_lock lock(clientsMutex);
     for (const auto& [_, info] : clients)
     {
         if (info.authenticated && info.socket != nullptr)
@@ -284,7 +284,7 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
 
 std::size_t BridgeServer::getClientCount() const
 {
-    std::lock_guard<std::mutex> lock(clientsMutex);
+    std::scoped_lock lock(clientsMutex);
     return clients.size();
 }
 

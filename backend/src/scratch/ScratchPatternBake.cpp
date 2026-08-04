@@ -18,10 +18,9 @@ constexpr int kBakeChannels = 2;
 constexpr std::int64_t kMaxBakeSamples = 96000LL * 60 * 30;
 } // namespace
 
-juce::AudioBuffer<float> bakePatternToBuffer(
-    const Pattern& pattern,
-    std::shared_ptr<const juce::AudioBuffer<float>> preparedSource,
-    double sampleRate)
+juce::AudioBuffer<float> bakePatternToBuffer(const Pattern& pattern,
+                                             const std::shared_ptr<const juce::AudioBuffer<float>>& preparedSource,
+                                             double sampleRate)
 {
     juce::AudioBuffer<float> output;
 

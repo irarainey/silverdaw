@@ -53,12 +53,8 @@ constexpr int kProgressMinIntervalMs = 50;
 
 } // anonymous namespace
 
-
-void runMixdownJob(MixdownSnapshot snapshot,
-                   MixdownOptions options,
-                   BridgeServer& bridge,
-                   std::atomic<bool>& cancelFlag,
-                   std::atomic<bool>& busyFlag)
+void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, BridgeServer& bridge,
+                   std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag)
 {
         struct BusyGuard
         {
@@ -321,18 +317,16 @@ void runMixdownJob(MixdownSnapshot snapshot,
                 }
             }
             appliedGainDb = desiredGainDb;
-            silverdaw::log::info(
-                "mixdown",
-                juce::String("loudness source LUFS=") +
-                    (std::isfinite(sourceLoudness.integratedLufs)
-                         ? juce::String(sourceLoudness.integratedLufs, 2)
-                         : juce::String("-inf")) +
-                    " TP=" + juce::String(sourceLoudness.truePeakDbtp, 2) +
-                    " silent=" + (sourceLoudness.silent ? "true" : "false") +
-                    " unmeasurable=" + (sourceLoudness.unmeasurable ? "true" : "false") +
-                    " blocks=" + juce::String((int) sourceLoudness.gatedBlockCount) +
-                    " appliedGainDb=" + juce::String(appliedGainDb, 3) +
-                    " limited=" + (limitedByTruePeak ? "true" : "false"));
+            silverdaw::log::info("mixdown", juce::String("loudness source LUFS=") +
+                                                (std::isfinite(sourceLoudness.integratedLufs)
+                                                     ? juce::String(sourceLoudness.integratedLufs, 2)
+                                                     : juce::String("-inf")) +
+                                                " TP=" + juce::String(sourceLoudness.truePeakDbtp, 2) +
+                                                " silent=" + (sourceLoudness.silent ? "true" : "false") +
+                                                " unmeasurable=" + (sourceLoudness.unmeasurable ? "true" : "false") +
+                                                " blocks=" + juce::String(sourceLoudness.gatedBlockCount) +
+                                                " appliedGainDb=" + juce::String(appliedGainDb, 3) +
+                                                " limited=" + (limitedByTruePeak ? "true" : "false"));
         }
 
         if (normalizing)

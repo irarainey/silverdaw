@@ -61,8 +61,8 @@ juce::String fromPortablePath(const juce::String& stored, const juce::File& proj
 bool replaceFileAtomically(const juce::File& tempFile, const juce::File& targetFile)
 {
 #if JUCE_WINDOWS
-    const auto tempPath = tempFile.getFullPathName();
-    const auto targetPath = targetFile.getFullPathName();
+    const auto& tempPath = tempFile.getFullPathName();
+    const auto& targetPath = targetFile.getFullPathName();
     return ::MoveFileExW(tempPath.toWideCharPointer(), targetPath.toWideCharPointer(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
@@ -379,7 +379,7 @@ LoadResult loadTree(const juce::File& file, juce::ValueTree& projectTree)
         return result;
     }
 
-    projectTree = std::move(decodedTree);
+    projectTree = decodedTree;
     result.ok = true;
     return result;
 }
@@ -393,17 +393,13 @@ LoadResult load(const juce::File& file, ProjectState& project)
         return result;
     }
 
-    auto replaceResult = project.replaceTree(projectTree);
+    auto replaceResult = project.replaceTree(projectTree, file.getParentDirectory());
     if (!replaceResult.wasOk())
     {
         result.error = replaceResult.getErrorMessage();
         result.ok = false;
         return result;
     }
-
-    // Fix forward on the single ingress for a loaded tree, so every load path
-    // (project open, autosave recovery) repairs old data exactly once.
-    project.repairLegacyLibraryItemKinds();
 
     return result;
 }

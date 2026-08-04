@@ -151,7 +151,7 @@ public:
     // Sends the controller's connect-time init frames (from its Mixxx-sourced
     // profile) to wake it out of demo/standby and request the current positions
     // of physical controls. A no-op when the profile defines none.
-    void sendControllerInit()
+    void sendControllerInit() const
     {
         const auto& frames = controllerMapper.initMessages();
         for (const auto& frame : frames)
@@ -165,7 +165,7 @@ public:
         sendInitMessages(output.get(), frames);
     }
 
-    void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& message) override
+    void handleIncomingMidiMessage(juce::MidiInput* /*source*/, const juce::MidiMessage& message) override
     {
         const auto* raw = message.getRawData();
         const auto size = message.getRawDataSize();
@@ -204,7 +204,7 @@ public:
         return true;
     }
 
-    void sendDeckSelectionLights()
+    void sendDeckSelectionLights() const
     {
         sendControllerMessages(
             output.get(), controllerMapper.deckSelectionLightMessages(
@@ -273,7 +273,7 @@ public:
             inputs.add(juce::var(inputObj));
         }
         obj->setProperty("inputs", juce::var(inputs));
-        return juce::var(obj);
+        return {obj};
     }
 
     // Flushes each input's ~30 Hz relative-control accumulator immediately
@@ -561,10 +561,7 @@ private:
                         }
                         else
                         {
-                            broadcastMappedControl(
-                                *active,
-                                static_cast<juce::int64>(raw.timestampMs),
-                                *mapped);
+                            broadcastMappedControl(*active, raw.timestampMs, *mapped);
                         }
                     }
                 }

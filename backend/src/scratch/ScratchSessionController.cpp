@@ -16,7 +16,7 @@ ScratchSessionController::ScratchSessionController(ScratchAudioSource& source,
 juce::String ScratchSessionController::beginSession(const juce::String& clipId)
 {
     clearSession();
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     Session s;
     s.sessionId = juce::Uuid().toString();
     s.clipId = clipId;
@@ -36,7 +36,7 @@ bool ScratchSessionController::completeSession(
     std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
     double preparedSampleRate)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId
         || preparedAudio == nullptr || preparedAudio->getNumSamples() <= 0
         || preparedAudio->getNumChannels() <= 0 || preparedSampleRate <= 0.0)
@@ -54,7 +54,7 @@ bool ScratchSessionController::completeSession(
 bool ScratchSessionController::setPreparationProgress(
     const juce::String& sessionId, double progress)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId
         || session->status != "preparing")
         return false;
@@ -65,7 +65,7 @@ bool ScratchSessionController::setPreparationProgress(
 bool ScratchSessionController::failSession(const juce::String& sessionId,
                                            const juce::String& error)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId)
         return false;
     // deactivate is safe: it quiesces the callback internally.
@@ -78,7 +78,7 @@ bool ScratchSessionController::failSession(const juce::String& sessionId,
 
 bool ScratchSessionController::closeSession(const juce::String& sessionId)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId)
         return false;
     // Abort any in-progress recording.
@@ -91,7 +91,7 @@ bool ScratchSessionController::closeSession(const juce::String& sessionId)
 
 void ScratchSessionController::clearSession()
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session)
         return;
     recorder.abort();
@@ -102,7 +102,7 @@ void ScratchSessionController::clearSession()
 
 bool ScratchSessionController::hasActiveSession() const
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     return session.has_value();
 }
 
@@ -121,7 +121,7 @@ double ScratchSessionController::preparedSourceSampleRate() const
 
 bool ScratchSessionController::controlSession(const SessionControlPayload& control)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != control.sessionId
         || !scratchSource.isActive())
     {
@@ -337,7 +337,7 @@ void ScratchSessionController::applyPlatterMove(
 
 bool ScratchSessionController::reconcileSourceEnd()
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     return reconcileSourceEndLocked();
 }
 
@@ -414,7 +414,7 @@ void ScratchSessionController::resetOwnerTimestamp()
 std::optional<ScratchSessionController::Snapshot>
 ScratchSessionController::getSnapshot() const
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session)
         return std::nullopt;
     Snapshot result;

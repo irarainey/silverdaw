@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.5.2
+    VERSION 1.5.3
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -472,6 +472,7 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineBeatRepeat.cpp
     src/engine/AudioEngineAudibility.cpp
     src/engine/AudioEngineDevice.cpp
+    src/engine/DeviceCallbackGuard.cpp
     src/engine/AudioEngineTransport.cpp
     src/engine/MasterClockSource.cpp
     src/engine/AudioEngineMix.cpp

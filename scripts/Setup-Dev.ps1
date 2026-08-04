@@ -272,9 +272,17 @@ if (-not $SkipFrontend) {
 
 # 3. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
-    Write-Section '3. Backend CMake configure (Debug)'
+    Write-Section '3. Backend CMake configure'
+    # Visual Studio 17 2022, NOT Ninja: `.vscode/tasks.json` (`backend: configure`)
+    # and `.vscode/settings.json` (`cmake.generator`) both use this generator for
+    # `backend/build`. CMake refuses to reconfigure a tree with a different
+    # generator, so a Ninja cache here would make the first `backend: configure`
+    # fail and leave the CMake Tools Testing panel with no backend tests. The
+    # Ninja tree lives at `backend/build-release` (see scripts/Build-Release.ps1).
+    # SILVERDAW_BUILD_TESTS defaults to OFF, so it is set explicitly here or a
+    # fresh checkout configures with no tests to discover at all.
     & pwsh -NoProfile -ExecutionPolicy Bypass -File $devShell `
-        "cmake -S '$repoRoot/backend' -B '$repoRoot/backend/build' -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+        "cmake -S '$repoRoot/backend' -B '$repoRoot/backend/build' -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed with exit code $LASTEXITCODE."
     }

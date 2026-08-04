@@ -6,10 +6,7 @@
 namespace silverdaw
 {
 
-void runMixdownJob(MixdownSnapshot snapshot,
-                   MixdownOptions options,
-                   BridgeServer& bridge,
-                   std::atomic<bool>& cancelFlag,
-                   std::atomic<bool>& busyFlag);
+void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, BridgeServer& bridge,
+                   std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag);
 
 } // namespace silverdaw

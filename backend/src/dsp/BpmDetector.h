@@ -55,7 +55,7 @@ class BpmDetector
     static constexpr double kAnalysisTimeoutSeconds = 120.0;
 
     /** Blocking; call from a worker, and keep `formatManager` alive for the call. */
-    BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
+    static BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);
 };
 
 // Analysis-internal, exposed for unit testing. Robustly estimates a single

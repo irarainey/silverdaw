@@ -53,7 +53,7 @@ void BeatRepeatProcessor::process(juce::AudioBuffer<float>& buffer, int startSam
         const BeatRepeatRegionSamples* region = nullptr;
         if (snapshot != nullptr && regionIndex < snapshot->regions.size())
         {
-            auto* candidate = &snapshot->regions[regionIndex];
+            const auto* candidate = &snapshot->regions[regionIndex];
             if (timelineSample >= candidate->endSample && ++regionIndex < snapshot->regions.size())
                 candidate = &snapshot->regions[regionIndex];
             if (timelineSample >= candidate->startSample && timelineSample < candidate->endSample)

@@ -330,7 +330,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       e.stopPropagation()
       // The playhead is freely positionable, so the marker lands exactly where it
       // is. Snapping to the beat grid would silently move the marker off the spot
-      // the user chose, and leave markers that a later tempo change stranded.
+      // the user chose. A later tempo change carries it along with the material.
       project.toggleMarkerAt(transport.positionMs)
       return
     }

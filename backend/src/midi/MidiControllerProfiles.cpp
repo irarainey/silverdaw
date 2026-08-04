@@ -83,7 +83,7 @@ bool parseOptionalInt(const juce::DynamicObject& object,
         result = defaultValue;
         return true;
     }
-    const auto value = object.getProperty(property);
+    const auto& value = object.getProperty(property);
     if (!value.isInt() && !value.isInt64()) return false;
     result = static_cast<int>(value);
     return true;
@@ -253,10 +253,9 @@ bool parseOutputBinding(const juce::var& value, MidiOutputBinding& binding)
     if (binding.data1 < 0 || binding.data1 > 127 ||
         !parseIntArray(object->getProperty("channels"), binding.channels, 15))
         return false;
-    if (!binding.data1Values.empty() &&
-        binding.data1Values.size() != binding.channels.size() &&
-        !(binding.purpose == MidiOutputPurpose::hotCueLights &&
-          binding.data1Values.size() == static_cast<std::size_t>(binding.count)))
+    if (!binding.data1Values.empty() && binding.data1Values.size() != binding.channels.size() &&
+        (binding.purpose != MidiOutputPurpose::hotCueLights ||
+         binding.data1Values.size() != static_cast<std::size_t>(binding.count)))
         return false;
     return true;
 }

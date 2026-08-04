@@ -84,7 +84,7 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
         return false;
     }
 
-    auto* data = static_cast<const juce::uint8*>(buf.getData());
+    const auto* data = static_cast<const juce::uint8*>(buf.getData());
     const size_t size = buf.getSize();
     if (size < 12
         || data[0] != 'F' || data[1] != 'O' || data[2] != 'R' || data[3] != 'M'
@@ -112,13 +112,13 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
     auto appendChunk = [&inserted](const char* fourcc, const juce::String& s)
     {
         if (s.isEmpty()) return;
-        const auto utf8 = s.toRawUTF8();
-        const auto len = (juce::uint32) std::strlen(utf8);
+        const auto* const utf8 = s.toRawUTF8();
+        const auto len = static_cast<juce::uint32>(std::strlen(utf8));
         const juce::uint8 hdr[8] = {
-            (juce::uint8) fourcc[0], (juce::uint8) fourcc[1],
-            (juce::uint8) fourcc[2], (juce::uint8) fourcc[3],
-            (juce::uint8) ((len >> 24) & 0xFF), (juce::uint8) ((len >> 16) & 0xFF),
-            (juce::uint8) ((len >> 8)  & 0xFF), (juce::uint8) ( len        & 0xFF),
+            static_cast<juce::uint8>(fourcc[0]),          static_cast<juce::uint8>(fourcc[1]),
+            static_cast<juce::uint8>(fourcc[2]),          static_cast<juce::uint8>(fourcc[3]),
+            static_cast<juce::uint8>((len >> 24) & 0xFF), static_cast<juce::uint8>((len >> 16) & 0xFF),
+            static_cast<juce::uint8>((len >> 8) & 0xFF),  static_cast<juce::uint8>(len & 0xFF),
         };
         inserted.append(hdr, 8);
         inserted.append(utf8, len);
@@ -137,7 +137,7 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
     if (inserted.getSize() == 0)
         return true;
 
-    if (inserted.getSize() > (size_t) std::numeric_limits<juce::uint32>::max() - size)
+    if (inserted.getSize() > static_cast<size_t>(std::numeric_limits<juce::uint32>::max()) - size)
     {
         silverdaw::log::warn("mixdown", "AIFF metadata: insertion would overflow FORM size; skipping tags");
         return false;
@@ -148,12 +148,12 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
     out.append(inserted.getData(), inserted.getSize());
     out.append(data + 12, size - 12);
 
-    const juce::uint32 newFormSize = (juce::uint32) (out.getSize() - 8);
+    const juce::uint32 newFormSize = static_cast<juce::uint32>(out.getSize() - 8);
     auto* outBytes = static_cast<juce::uint8*>(out.getData());
-    outBytes[4] = (juce::uint8) ((newFormSize >> 24) & 0xFF);
-    outBytes[5] = (juce::uint8) ((newFormSize >> 16) & 0xFF);
-    outBytes[6] = (juce::uint8) ((newFormSize >> 8)  & 0xFF);
-    outBytes[7] = (juce::uint8) ( newFormSize        & 0xFF);
+    outBytes[4] = static_cast<juce::uint8>((newFormSize >> 24) & 0xFF);
+    outBytes[5] = static_cast<juce::uint8>((newFormSize >> 16) & 0xFF);
+    outBytes[6] = static_cast<juce::uint8>((newFormSize >> 8) & 0xFF);
+    outBytes[7] = static_cast<juce::uint8>(newFormSize & 0xFF);
 
     auto tmp = aiffFile.getSiblingFile(aiffFile.getFileNameWithoutExtension() + ".tagtmp.aiff");
     if (! tmp.replaceWithData(out.getData(), out.getSize()))
@@ -167,8 +167,8 @@ bool writeAiffTextChunks(const juce::File& aiffFile, const ExportMetadata& md)
         silverdaw::log::warn("mixdown", "AIFF metadata: failed to rename temp over output");
         return false;
     }
-    silverdaw::log::info("mixdown", "AIFF metadata: wrote text chunks ("
-                                       + juce::String((int) inserted.getSize()) + " bytes)");
+    silverdaw::log::info("mixdown", "AIFF metadata: wrote text chunks (" +
+                                        juce::String(static_cast<int>(inserted.getSize())) + " bytes)");
     return true;
 }
 
@@ -184,7 +184,7 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         return false;
     }
 
-    auto* data = static_cast<const juce::uint8*>(buf.getData());
+    const auto* data = static_cast<const juce::uint8*>(buf.getData());
     const size_t size = buf.getSize();
     if (size < 8 || data[0] != 'f' || data[1] != 'L' || data[2] != 'a' || data[3] != 'C')
     {
@@ -202,10 +202,10 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
     {
         const size_t headerPos = pos;
         const bool isLast = (data[pos] & 0x80) != 0;
-        const juce::uint32 blockType = (juce::uint32) (data[pos] & 0x7F);
-        const juce::uint32 blockLen = (juce::uint32(data[pos + 1]) << 16)
-                                    | (juce::uint32(data[pos + 2]) << 8)
-                                    |  juce::uint32(data[pos + 3]);
+        const juce::uint32 blockType = static_cast<juce::uint32>(data[pos] & 0x7F);
+        const juce::uint32 blockLen = (static_cast<juce::uint32>(data[pos + 1]) << 16) |
+                                      (static_cast<juce::uint32>(data[pos + 2]) << 8) |
+                                      static_cast<juce::uint32>(data[pos + 3]);
         const size_t nextPos = pos + 4 + blockLen;
         if (nextPos > size)
         {
@@ -235,9 +235,9 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
     {
         juce::MemoryOutputStream mos;
         const juce::String vendor = "Silverdaw / JUCE FLAC";
-        const auto vendorUtf8 = vendor.toRawUTF8();
-        const auto vendorLen = (juce::uint32) std::strlen(vendorUtf8);
-        mos.writeInt((int) vendorLen);                                   // u32 LE
+        const auto* const vendorUtf8 = vendor.toRawUTF8();
+        const auto vendorLen = static_cast<juce::uint32>(std::strlen(vendorUtf8));
+        mos.writeInt(static_cast<int>(vendorLen)); // u32 LE
         mos.write(vendorUtf8, vendorLen);
 
         struct Field { const char* key; const juce::String* value; };
@@ -254,12 +254,12 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
             if (f.value->isNotEmpty())
                 entries.add(juce::String(f.key) + "=" + *f.value);
 
-        mos.writeInt((int) entries.size());                              // u32 LE
+        mos.writeInt(entries.size()); // u32 LE
         for (const auto& e : entries)
         {
-            const auto utf8 = e.toRawUTF8();
-            const auto len = (juce::uint32) std::strlen(utf8);
-            mos.writeInt((int) len);                                     // u32 LE
+            const auto* const utf8 = e.toRawUTF8();
+            const auto len = static_cast<juce::uint32>(std::strlen(utf8));
+            mos.writeInt(static_cast<int>(len)); // u32 LE
             mos.write(utf8, len);
         }
 
@@ -293,12 +293,12 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         lastFlagPosInOut -= (existingVcEnd - existingVcStart);
     static_cast<juce::uint8*>(out.getData())[lastFlagPosInOut] &= 0x7F;
 
-    const juce::uint32 plen = (juce::uint32) payload.getSize();
+    const juce::uint32 plen = static_cast<juce::uint32>(payload.getSize());
     const juce::uint8 vcHeader[4] = {
-        (juce::uint8) 0x84,
-        (juce::uint8) ((plen >> 16) & 0xFF),
-        (juce::uint8) ((plen >> 8)  & 0xFF),
-        (juce::uint8) ( plen        & 0xFF),
+        static_cast<juce::uint8>(0x84),
+        static_cast<juce::uint8>((plen >> 16) & 0xFF),
+        static_cast<juce::uint8>((plen >> 8) & 0xFF),
+        static_cast<juce::uint8>(plen & 0xFF),
     };
     out.append(vcHeader, 4);
     out.append(payload.getData(), payload.getSize());
@@ -317,8 +317,8 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
         silverdaw::log::warn("mixdown", "FLAC metadata: failed to rename temp over output");
         return false;
     }
-    silverdaw::log::info("mixdown", "FLAC metadata: wrote VORBIS_COMMENT block ("
-                                       + juce::String((int) payload.getSize()) + " bytes)");
+    silverdaw::log::info("mixdown", "FLAC metadata: wrote VORBIS_COMMENT block (" +
+                                        juce::String(static_cast<int>(payload.getSize())) + " bytes)");
     return true;
 }
 
@@ -326,8 +326,8 @@ bool writeFlacVorbisComment(const juce::File& flacFile, const ExportMetadata& md
 bool atomicReplace(const juce::File& tmp, const juce::File& target)
 {
 #if JUCE_WINDOWS
-    const auto tmpPath = tmp.getFullPathName();
-    const auto targetPath = target.getFullPathName();
+    const auto& tmpPath = tmp.getFullPathName();
+    const auto& targetPath = target.getFullPathName();
     return ::MoveFileExW(tmpPath.toWideCharPointer(), targetPath.toWideCharPointer(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else

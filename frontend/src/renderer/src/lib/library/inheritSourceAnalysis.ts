@@ -5,6 +5,7 @@
 // `windowStartSec`). Classification (`audioType`) and the `lowConfidence`
 // auto-flag are deliberately NOT copied — each caller owns those.
 
+import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
 import { useLibraryStore } from '@/stores/libraryStore'
 
 type LibraryStore = ReturnType<typeof useLibraryStore>
@@ -16,7 +17,12 @@ export function inheritSourceAnalysis(
   source: SourceItem,
   windowStartSec: number
 ): void {
-  if (!source || !(source.bpm && source.bpm > 0)) return
+  // Resolved, not raw: a source that holds its own tempo only by inheritance — a
+  // saved clip, a sample, an older stem — must still be able to pass it on, and a
+  // one-shot must pass on nothing. Reading `source.bpm` here left stems separated
+  // from such an item with no grid at all (ADR 0024: one resolver per process).
+  const sourceBpm = source ? libraryItemSourceBpm(source, library.byId) : undefined
+  if (!source || sourceBpm === undefined || !(sourceBpm > 0)) return
   const shift = windowStartSec > 0 ? windowStartSec : 0
   const anchor = (source.beatAnchorSec ?? source.beats?.[0] ?? 0) - shift
   let beats = source.beats ? source.beats.map((b) => b - shift).filter((b) => b >= 0) : []
@@ -29,7 +35,7 @@ export function inheritSourceAnalysis(
   // by extrapolating from those two values, so the synthesised beats restore the
   // markers without changing where they land.
   if (beats.length === 0) {
-    const spacingSec = 60 / source.bpm
+    const spacingSec = 60 / sourceBpm
     const durationSec = Math.max(0, (library.getItem(targetId)?.durationMs ?? 0) / 1000)
     // First on-grid beat at or after local time 0, in phase with `anchor`.
     const firstBeat = anchor + Math.ceil((0 - anchor) / spacingSec) * spacingSec
@@ -41,7 +47,7 @@ export function inheritSourceAnalysis(
   }
   library.setItemAnalysis(
     targetId,
-    source.bpm,
+    sourceBpm,
     anchor,
     beats,
     source.variableTempo === true,

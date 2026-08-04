@@ -300,13 +300,13 @@ juce::String ProjectState::getLibraryItemMediaId(const juce::String& itemId) con
     return {};
 }
 
-int ProjectState::repairLegacyLibraryItemKinds()
+int ProjectState::repairLegacyLibraryItemKinds(const juce::File& projectDir)
 {
     auto library = root.getChildWithName(kLibrary);
-    return repairLibraryItemKinds(library);
+    return repairLibraryItemKinds(library, projectDir);
 }
 
-int ProjectState::repairLibraryItemKinds(juce::ValueTree& library)
+int ProjectState::repairLibraryItemKinds(juce::ValueTree& library, const juce::File& projectDir)
 {
     // Two ways a library item could end up mis-typed in an older project file:
     //
@@ -318,7 +318,12 @@ int ProjectState::repairLibraryItemKinds(juce::ValueTree& library)
     //    reanalyse command re-added the item without a kind. A demoted stem then
     //    vanished from the cross-project import, which only offers "stem" and
     //    "sample" items. Generated artifacts live in a project-relative folder per
-    //    category, so the stored path says what the item is.
+    //    category, so the folder the file sits in says what the item is.
+    //
+    // Membership is decided by containment under the project folder, not by the path
+    // string: a loaded tree always holds absolute paths (they are resolved out of
+    // their portable form at the JSON boundary), so testing for a relative path here
+    // would never match anything a real load produces.
     //
     // Repaired in place wherever a project tree is read, so an old file both opens
     // and imports correctly, and persists correctly on its next save.
@@ -347,10 +352,17 @@ int ProjectState::repairLibraryItemKinds(juce::ValueTree& library)
         // Only a plain source is ambiguous; an explicit stem/sample/clip is trusted.
         if (kind != "source") continue;
         const auto path = item.getProperty(kFilePath, {}).toString();
-        // Generated artifacts are stored project-relative; an absolute path is an
-        // external import that happens to sit in a folder of the same name.
-        if (path.isEmpty() || juce::File::isAbsolutePath(path)) continue;
-        const auto firstSegment = path.upToFirstOccurrenceOf("\\", false, false)
+        if (path.isEmpty() || projectDir.getFullPathName().isEmpty()) continue;
+        // Generated artifacts live under the project folder. An external import that
+        // merely sits in a same-named folder somewhere else is not one, and a path
+        // that escapes the folder comes back from getRelativePathFrom with "..".
+        // Compared as paths rather than by touching the disk: the repair must reach
+        // the same verdict for an item whose file has since been moved or deleted.
+        const juce::File itemFile(path);
+        if (!itemFile.isAChildOf(projectDir)) continue;
+        const auto relative = itemFile.getRelativePathFrom(projectDir);
+        if (relative.startsWith("..")) continue;
+        const auto firstSegment = relative.upToFirstOccurrenceOf("\\", false, false)
                                       .upToFirstOccurrenceOf("/", false, false);
         for (const auto& mapping : kArtifactKinds)
         {
@@ -434,11 +446,11 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("playbackFilePath", item.getProperty(kPlaybackFilePath).toString());
         }
-        if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
+        if (item.hasProperty(kVariableTempo) && static_cast<bool>(item.getProperty(kVariableTempo)))
         {
             obj->setProperty("variableTempo", true);
         }
-        if (item.hasProperty(kLowConfidence) && bool(item.getProperty(kLowConfidence)))
+        if (item.hasProperty(kLowConfidence) && static_cast<bool>(item.getProperty(kLowConfidence)))
         {
             obj->setProperty("lowConfidence", true);
         }
@@ -484,11 +496,11 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("mediaId", item.getProperty(kMediaId).toString());
         }
-        if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
+        if (item.hasProperty(kCollapsed) && static_cast<bool>(item.getProperty(kCollapsed)))
         {
             obj->setProperty("collapsed", true);
         }
-        if (item.hasProperty(kCoverArtHidden) && bool(item.getProperty(kCoverArtHidden)))
+        if (item.hasProperty(kCoverArtHidden) && static_cast<bool>(item.getProperty(kCoverArtHidden)))
         {
             obj->setProperty("coverArtHidden", true);
         }

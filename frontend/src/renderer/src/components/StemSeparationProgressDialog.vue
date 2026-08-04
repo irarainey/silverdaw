@@ -5,30 +5,13 @@
 // Modal with backdrop so the timeline can't be edited mid-separation.
 
 import { computed, ref, watch } from 'vue'
-import { useStemSeparationState, type StemStage } from '@/lib/stemSeparationState'
+import { useStemSeparationState } from '@/lib/stemSeparationState'
 import { cancelActiveStemSeparation } from '@/lib/stems/stemSeparationFlow'
+import { stemStageLabel } from '@/lib/stems/stemStageLabel'
 import { useSmoothProgress } from '@/lib/stems/useSmoothProgress'
 import { log } from '@/lib/log'
 
 const state = useStemSeparationState()
-
-const STAGE_LABELS: Record<StemStage, string> = {
-  prepare: 'Preparing audio...',
-  'load-model': 'Loading separation model...',
-  separate: 'Separating stems...',
-  cleanup: 'Cleaning up stems...',
-  write: 'Writing files...'
-}
-
-// Friendly labels keep backend stem names out of user-facing text.
-const STEM_LABELS: Record<string, string> = {
-  vocals: 'Vocals',
-  drums: 'Drums',
-  bass: 'Bass',
-  other: 'Other',
-  // The rhythm quality pack separates drums and bass in a single pass.
-  'drums+bass': 'Drums and Bass'
-}
 
 const visible = computed(() => state.value !== null)
 // The backend delivers progress in bursts (websocket flushes stall during sustained inference),
@@ -42,27 +25,7 @@ const percent = computed(() => Math.round(displayPercent.value))
 // Once finalising (reading + placing stems), the backend job is done, so there
 // is nothing left to cancel — the button is disabled for that phase.
 const canCancel = computed(() => state.value?.stage !== 'write')
-// Per-stem verbs for the stages that carry a stem name in `detail`.
-const STEM_STAGE_VERBS: Partial<Record<StemStage, string>> = {
-  separate: 'Separating',
-  cleanup: 'Cleaning up'
-}
-const stageLabel = computed(() => {
-  const s = state.value?.stage
-  if (!s) return ''
-  const detail = state.value?.detail
-  if (s === 'prepare' && detail === 'gpu-fallback') {
-    return 'GPU unavailable. Continuing on CPU...'
-  }
-  if (s === 'load-model' && detail && STEM_LABELS[detail]) {
-    return `Loading ${STEM_LABELS[detail]} model...`
-  }
-  const verb = STEM_STAGE_VERBS[s]
-  if (verb && detail && STEM_LABELS[detail]) {
-    return `${verb} ${STEM_LABELS[detail]}...`
-  }
-  return STAGE_LABELS[s]
-})
+const stageLabel = computed(() => stemStageLabel(state.value?.stage, state.value?.detail))
 const sourceName = computed(() => state.value?.target.sourceName ?? '')
 
 // Cancellation can take a moment to unwind on the backend, so give the click

@@ -98,6 +98,7 @@ PatternReplaySnapshot ScratchPatternEvaluator::buildSnapshot(const Pattern& patt
 
     // Build a fully-rebased version of the original platter lane for interpolation.
     std::vector<PlatterKeyframe> originalRebased;
+    originalRebased.reserve(pattern.platter.size());
     for (const auto& kf : pattern.platter)
         originalRebased.push_back({kf.timeUs - pattern.cropStartUs, kf.turns, kf.touched});
 
@@ -127,6 +128,7 @@ PatternReplaySnapshot ScratchPatternEvaluator::buildSnapshot(const Pattern& patt
 
     // Build rebased crossfader lane for interpolation.
     std::vector<CrossfaderKeyframe> originalXfRebased;
+    originalXfRebased.reserve(pattern.crossfader.size());
     for (const auto& kf : pattern.crossfader)
         originalXfRebased.push_back({kf.timeUs - pattern.cropStartUs, kf.value});
 

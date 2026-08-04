@@ -14,7 +14,7 @@ bool ScratchSessionController::midiSetTouch(const juce::String& deviceIdentifier
         return false;
     if (touched)
     {
-        std::lock_guard<std::mutex> lock(sessionMutex);
+        std::scoped_lock lock(sessionMutex);
         if (!session || !scratchSource.isActive()
             || !claimMidiDeck(deviceIdentifier, deck, true))
             return false;
@@ -39,7 +39,7 @@ bool ScratchSessionController::midiMovePlatter(const juce::String& deviceIdentif
                                                double deltaTurns,
                                                double timestampMs)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || !scratchSource.isActive() || scratchSource.isPatternReplaying()
         || !claimMidiDeck(deviceIdentifier, deck, true))
         return false;
@@ -61,7 +61,7 @@ bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdent
                                                  double displayValue,
                                                  bool reverseCrossfader)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || !scratchSource.isActive() || scratchSource.isPatternReplaying()
         || deviceIdentifier.isEmpty())
     {
@@ -94,7 +94,7 @@ bool ScratchSessionController::midiSetCrossfader(const juce::String& deviceIdent
 bool ScratchSessionController::setMidiCrossfaderDirection(
     const juce::String& deviceIdentifier, bool reverseCrossfader)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || !scratchSource.isActive()
         || !session->midiCrossfaderEligibleDeviceIdentifier
         || *session->midiCrossfaderEligibleDeviceIdentifier != deviceIdentifier
@@ -112,7 +112,7 @@ bool ScratchSessionController::setMidiCrossfaderDirection(
 void ScratchSessionController::setSelectedMidiDeck(
     const juce::String& deviceIdentifier, DeckSide deck, bool reverseCrossfader)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session)
         return;
     session->selectedDeck = deck;
@@ -134,7 +134,7 @@ bool ScratchSessionController::releaseMidiOwner(
     const juce::String& deviceIdentifier,
     std::optional<DeckSide> deck)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || !scratchSource.isActive()
         || !session->ownerDeviceIdentifier
         || *session->ownerDeviceIdentifier != deviceIdentifier

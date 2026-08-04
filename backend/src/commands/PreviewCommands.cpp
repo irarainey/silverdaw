@@ -26,7 +26,7 @@ void broadcastPreviewState(AudioEngine& engine, BridgeServer& bridge, bool isPla
     stateObj->setProperty("isPlaying", isPlaying);
     stateObj->setProperty("isLoaded", isLoaded);
     stateObj->setProperty("durationMs", durationMs);
-    stateObj->setProperty("generation", static_cast<juce::int64>(engine.getPreviewGeneration()));
+    stateObj->setProperty("generation", engine.getPreviewGeneration());
     bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
 }
 
@@ -87,7 +87,7 @@ void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectSta
     {
         silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
     }
-    const auto generation = static_cast<juce::int64>(engine.getPreviewGeneration());
+    const auto generation = engine.getPreviewGeneration();
     juce::Timer::callAfterDelay(
         kPreviewReadyDelayMs,
         [&engine, &bridge, libraryItemId, generation]

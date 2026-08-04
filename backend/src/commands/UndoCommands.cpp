@@ -183,8 +183,12 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     }
     else if (type == "PROJECT_SET_MASTER_VOLUME" || type == "PROJECT_SET_SAFETY_LIMITER" ||
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
-             type == "PROJECT_SET_MIX_GLUE")
+             type == "PROJECT_SET_MIX_GLUE" ||
+             type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME" ||
+             type == "PROJECT_SET_BAR_COUNTER_START" || type == "PROJECT_SET_MIXDOWN_START_BAR")
     {
+        // Project-wide settings: there is only one of each, so a constant key
+        // coalesces a drag or a burst of typing into a single undo step.
         idPart = "_";
     }
     else if (type == "PROJECT_MARKER_MOVE")
@@ -195,12 +199,6 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
     {
         // Coalesce rapid grid nudges / BPM steps on one item into a single undo step.
         idPart = readOptionalString(payload, "itemId").value_or(juce::String{});
-    }
-    else if (type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME" ||
-             type == "PROJECT_SET_BAR_COUNTER_START" || type == "PROJECT_SET_MIXDOWN_START_BAR")
-    {
-        // Coalesce field typing into one undo step per edit session.
-        idPart = "_";
     }
 
     const auto gestureId = readOptionalString(payload, "gestureId").value_or(juce::String{});

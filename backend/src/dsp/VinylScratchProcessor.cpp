@@ -41,6 +41,11 @@ void VinylScratchProcessor::prepare(double newSampleRate, Settings newSettings) 
     setTargetRate(targetRate);
 }
 
+void VinylScratchProcessor::prepare(double newSampleRate) noexcept
+{
+    prepare(newSampleRate, Settings{});
+}
+
 void VinylScratchProcessor::reset(double sourcePositionSamples, double initialRate,
                                   float initialGain) noexcept
 {
@@ -127,8 +132,7 @@ double VinylScratchProcessor::secondsForTurns(double turns) noexcept
     return turns * kSecondsPerTurn;
 }
 
-float VinylScratchProcessor::interpolate(const float* source, int sourceSamples,
-                                         double position, double rate) const noexcept
+float VinylScratchProcessor::interpolate(const float* source, int sourceSamples, double position, double rate) noexcept
 {
     if (position < 0.0 || position > static_cast<double>(sourceSamples - 1)) return 0.0F;
 

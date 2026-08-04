@@ -58,7 +58,7 @@ juce::var buildAudioDevicesListEnvelope(const silverdaw::AudioEngine::AudioDevic
     {
         obj->setProperty("scanInProgress", true);
     }
-    return juce::var(obj);
+    return {obj};
 }
 
 // Dedupes spontaneous JUCE hotplug callbacks after the deferred startup scan.

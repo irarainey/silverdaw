@@ -43,7 +43,7 @@ class ScratchActionRecorder
     ScratchActionRecorder() = default;
 
     // Start recording with given config. Returns false if already recording.
-    bool start(const Config& config);
+    bool start(const Config& cfg);
 
     // Stop recording and finalize the pattern. Returns false if not recording.
     // The caller must supply the authoritative final platter/crossfader state

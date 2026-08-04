@@ -22,7 +22,7 @@ std::mutex& decodeLockFor(const juce::String& cachePath)
     static std::mutex mapMutex;
     static std::map<std::string, std::unique_ptr<std::mutex>> locks;
     const auto key = cachePath.toStdString();
-    std::lock_guard<std::mutex> guard(mapMutex);
+    std::scoped_lock guard(mapMutex);
     auto& slot = locks[key];
     if (!slot) slot = std::make_unique<std::mutex>();
     return *slot;
@@ -49,7 +49,7 @@ juce::File DecodedCache::getCacheFilePath(const juce::File& sourceFile) const
 
 juce::File DecodedCache::cacheFileFor(const juce::File& sourceFile) const
 {
-    const auto path = sourceFile.getFullPathName();
+    const auto& path = sourceFile.getFullPathName();
     const auto mtime = sourceFile.getLastModificationTime().toMilliseconds();
     const auto size = sourceFile.getSize();
     const auto key = path + "|" + juce::String(mtime) + "|" + juce::String(size);
@@ -80,7 +80,7 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     // Serialise writers for this cache file (see decodeLockFor). A concurrent
     // caller blocks here, then falls through to the cache-hit check below and
     // reuses the WAV the first caller just wrote.
-    std::lock_guard<std::mutex> decodeLock(decodeLockFor(cachePath.getFullPathName()));
+    std::scoped_lock decodeLock(decodeLockFor(cachePath.getFullPathName()));
     if (cachePath.existsAsFile())
     {
         silverdaw::log::debug("decodedcache", "hit " + sourceFile.getFileName());
@@ -165,7 +165,7 @@ juce::File DecodedCache::recreateDecoded(const juce::File& sourceFile, juce::Aud
     {
         // Delete under the same per-path lock ensureDecoded uses, so a concurrent
         // decode can't observe the cache mid-removal.
-        std::lock_guard<std::mutex> decodeLock(decodeLockFor(cachePath.getFullPathName()));
+        std::scoped_lock decodeLock(decodeLockFor(cachePath.getFullPathName()));
         if (cachePath.existsAsFile())
         {
             cachePath.deleteFile();
