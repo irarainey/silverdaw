@@ -52,6 +52,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Package artwork](#package-artwork)
   - [One-time signing setup](#one-time-signing-setup)
 - [Quality gates](#quality-gates)
+- [Continuous integration](#continuous-integration)
 - [License](#license)
 
 ## Architecture
@@ -3992,9 +3993,20 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   the Playwright journeys under `frontend/e2e/` against a real spawned backend,
   so a run covers the spawn → port → AUTH → handshake chain, the native dialog
   stubs and the saved project format. The tier is deliberately small and wide and
-  asserts only on the DOM, the filesystem and saved project files; its rules and
+  asserts mostly on the DOM, the filesystem and saved project files; its rules and
   helpers are documented in `frontend/e2e/README.md` and ADR 0014. The specs are
   type-checked by `pnpm typecheck` through `tsconfig.node.json`.
+
+  One journey is the exception to "no audio": `playback.e2e.ts` (J17) presses
+  Play and asserts the playhead crosses a bar line. The playhead is advanced by
+  `MasterClockSource` from inside the audio device callback, so a moving
+  position is the only end-to-end proof that a device opened and its callback
+  is firing — the gap that let a frozen-playhead regression through the whole
+  suite. That makes it the one spec needing a real output device: with none,
+  the engine reports `no_device` and the renderer disables Play outright. Its
+  fixture is digital silence (`createToneWav({ amplitude: 0 })`), because the
+  callback fires regardless of sample values and a test suite should not make a
+  noise.
 
   The specs launch the *built* app, so anything that invokes the runner
   directly — `pnpm test:e2e:only`, or the ▶ button in the VS Code Testing panel
@@ -4012,6 +4024,56 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   files, exports and dependencies. Treat its output as *candidates* — the zod
   inbound/outbound schema maps and `.vue`-only usages produce false positives
   that need manual confirmation. Run before large refactors; not wired into CI.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs the gates above on every branch push and on
+demand (**Actions ▸ CI ▸ Run workflow**), so a regression is caught before it
+reaches `main`. Runs are grouped per ref with `cancel-in-progress`, because a
+newer push makes the previous answer irrelevant.
+
+Every job runs on `windows-latest`. Silverdaw is Windows-x64 only, so a green
+result anywhere else would be false signal.
+
+| Job | What it proves |
+| --- | --- |
+| **Frontend lint, typecheck and unit tests** | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
+| **Backend build and unit tests** | Visual Studio generator with `-DSILVERDAW_BUILD_TESTS=ON`, then `ctest` |
+| **Backend clang-tidy (-Strict)** | The zero-warning baseline, as an error gate |
+| **End-to-end journeys** | The Playwright tier against the backend the build job produced |
+
+Five details are worth knowing before changing it:
+
+- **`lame.exe` is not in the repository**, so both C++ jobs run
+  `scripts/Fetch-Lame.ps1` first. A build without it cannot copy the encoder
+  next to the backend.
+- **Two build trees, two generators.** The test job uses the multi-config
+  Visual Studio generator; clang-tidy needs `compile_commands.json`, which only
+  Ninja emits, so it configures `backend/build-release` separately and through
+  `Invoke-DevShell.ps1` (Ninja needs the MSVC environment that the VS generator
+  finds for itself). The lint job configures without building: nothing here is
+  generated at build time, so compiling first would only cost minutes.
+- **The backend is built once.** The build job uploads
+  `SilverdawBackend_artefacts/Debug/` and the e2e job downloads it to the path
+  the Electron main process resolves in a development launch.
+- **clang-tidy is version-pinned.** `-Strict` turns warnings into errors, and
+  different clang-tidy releases disagree about what to warn on, so an unpinned
+  runner would fail the gate on findings nobody can reproduce locally. The
+  workflow installs the exact version the zero-warning baseline was established
+  against (`CLANG_TIDY_VERSION`, currently 22.1.8, from PyPI) and echoes the
+  version both outside and inside the developer shell so a PATH surprise is
+  visible in the log. That build ships without LLVM's `run-clang-tidy`, so the
+  run is serial — parity is worth more than wall time for a gate. **When
+  bumping it, re-run the linter locally first and clear whatever the new
+  version finds.**
+- **A runner has no sound hardware.** `scripts/Install-VirtualAudioDevice.ps1`
+  installs Scream, an open-source virtual sound card, giving JUCE a WASAPI
+  endpoint to open so the audio callback — and therefore the playhead — runs.
+  Because Scream's published driver signature has expired, the script mints a
+  throwaway self-signed certificate, re-signs the catalogue and trusts it for
+  the life of the runner. That is only acceptable on a disposable machine, so
+  the script refuses to run unless `CI=true` or `-AllowLocal` is passed. It is
+  a separate step so a driver problem never reads as a test failure.
 
 ## License
 

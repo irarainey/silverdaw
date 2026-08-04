@@ -20,6 +20,12 @@ export interface ToneOptions {
   sampleRate?: number
   frequencyHz?: number
   channels?: number
+  /**
+   * Peak amplitude as a fraction of full scale, clamped to 0–1. Zero writes
+   * digital silence, which a journey wants when it must drive the audio device
+   * without making a noise on the machine running the suite.
+   */
+  amplitude?: number
 }
 
 const BYTES_PER_SAMPLE = 2
@@ -36,8 +42,11 @@ export function createToneWav(options: ToneOptions = {}): string {
     seconds = 2,
     sampleRate = 44_100,
     frequencyHz = 440,
-    channels = 2
+    channels = 2,
+    amplitude = 0.5
   } = options
+
+  const peak = Math.min(Math.max(amplitude, 0), 1)
 
   const frameCount = Math.floor(seconds * sampleRate)
   const dataBytes = frameCount * channels * BYTES_PER_SAMPLE
@@ -58,10 +67,12 @@ export function createToneWav(options: ToneOptions = {}): string {
   buffer.write('data', 36)
   buffer.writeUInt32LE(dataBytes, 40)
 
-  // Half scale leaves headroom, so a journey that adds gain cannot clip and
+  // The default leaves headroom, so a journey that adds gain cannot clip and
   // turn an assertion about levels into a false negative.
   for (let frame = 0; frame < frameCount; frame++) {
-    const value = Math.round(Math.sin((2 * Math.PI * frequencyHz * frame) / sampleRate) * FULL_SCALE * 0.5)
+    const value = Math.round(
+      Math.sin((2 * Math.PI * frequencyHz * frame) / sampleRate) * FULL_SCALE * peak
+    )
     for (let channel = 0; channel < channels; channel++) {
       buffer.writeInt16LE(value, 44 + (frame * channels + channel) * BYTES_PER_SAMPLE)
     }

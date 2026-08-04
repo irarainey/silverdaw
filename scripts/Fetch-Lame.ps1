@@ -10,10 +10,10 @@
 
         backend/third_party/lame/lame.exe
 
-    and is *committed* to the repo so end users get working MP3 export
-    with no extra install step. This script fetches a fresh copy on
-    demand (e.g., on a brand-new checkout, or when refreshing to a newer
-    LAME release).
+    and is deliberately *not* committed, so the repository stays free of
+    vendored binaries. Only the README beside it is tracked, which means a
+    fresh checkout — a CI runner's included — must run this script before a
+    build that needs MP3 export. `Setup-Dev.ps1` calls it on demand.
 
     The default upstream is the RareWares LAME bundle — the standard
     Windows distribution recommended by the LAME project. Because that

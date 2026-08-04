@@ -73,6 +73,24 @@ Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
 hides exactly the defect the journey exists to find.
 
+### The playback journey needs an audio device
+
+`playback.e2e.ts` is the one spec that depends on hardware. The playhead is
+advanced by `MasterClockSource` from inside the audio device callback, so a
+position that moves is the only end-to-end proof that a device opened and its
+callback is firing — nothing offline can stand in for it, and its absence is
+how a frozen-playhead regression once passed the entire suite.
+
+With no output device the engine reports `no_device` and the renderer disables
+Play, so the spec fails on a disabled button rather than on a stalled playhead.
+On CI, `scripts/Install-VirtualAudioDevice.ps1` provides the device; see the
+developer guide's continuous-integration section.
+
+Its fixture is digital silence — `createToneWav({ amplitude: 0 })`. The
+callback fires regardless of what the samples contain, so silence proves the
+same thing without the suite making an audible noise on whatever machine runs
+it.
+
 ## Isolation
 
 Each launch gets a throwaway `--user-data-dir`, which isolates preferences,
