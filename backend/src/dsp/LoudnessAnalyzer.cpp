@@ -148,9 +148,9 @@ void LoudnessAnalyzer::pushTruePeakSample(int ch, float sample)
                    * static_cast<double>(truePeak_.coefs[static_cast<size_t>(p * N + n)]);
         }
         const double a = std::abs(acc);
-        if (a > localMax) localMax = a;
+        localMax = std::max(a, localMax);
     }
-    if (localMax > truePeak_.maxAbs) truePeak_.maxAbs = localMax;
+    truePeak_.maxAbs = std::max(localMax, truePeak_.maxAbs);
 }
 
 void LoudnessAnalyzer::pushKWeightedSample(double xL, double xR)

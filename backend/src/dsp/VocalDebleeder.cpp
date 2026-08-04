@@ -112,7 +112,7 @@ void VocalDebleeder::process(juce::AudioBuffer<float>& vocal,
                 const float pv = vbuf[re] * vbuf[re] + vbuf[im] * vbuf[im];
                 const float pi = ibuf[re] * ibuf[re] + ibuf[im] * ibuf[im];
                 float g = pv / (pv + params.beta * pi + kEps);
-                if (g < params.gMin) g = params.gMin;
+                g = std::max(g, params.gMin);
                 vbuf[re] *= g;
                 vbuf[im] *= g;
             }

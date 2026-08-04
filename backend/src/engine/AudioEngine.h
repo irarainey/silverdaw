@@ -172,12 +172,8 @@ class AudioEngine : private AudioEngineGraphState,
 
     bool setClipTrim(const juce::String& clipId, double startMs, double inMs, double clipDurationMs);
 
-    bool setClipWarp(const juce::String& clipId,
-                     std::optional<bool> enabled,
-                     std::optional<juce::String> mode,
-                     std::optional<double> tempoRatio,
-                     std::optional<double> semitones,
-                     std::optional<double> cents);
+    bool setClipWarp(const juce::String& clipId, std::optional<bool> enabled, const std::optional<juce::String>& mode,
+                     std::optional<double> tempoRatio, std::optional<double> semitones, std::optional<double> cents);
     bool canWarpClip(const juce::String& clipId) const noexcept;
 
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
@@ -215,11 +211,9 @@ class AudioEngine : private AudioEngineGraphState,
 
     double getClipDurationMs(const juce::String& clipId) const;
 
-
-    bool loadPreview(const juce::File& filePath, double inMs, double durationMs,
-                     juce::String* outError = nullptr,
+    bool loadPreview(const juce::File& filePath, double inMs, double durationMs, juce::String* outError = nullptr,
                      std::optional<bool> initialWarpEnabled = std::nullopt,
-                     std::optional<juce::String> initialWarpMode = std::nullopt,
+                     const std::optional<juce::String>& initialWarpMode = std::nullopt,
                      std::optional<double> initialTempoRatio = std::nullopt,
                      std::optional<double> initialSemitones = std::nullopt,
                      std::optional<double> initialCents = std::nullopt);
@@ -464,8 +458,7 @@ class AudioEngine : private AudioEngineGraphState,
                               double prefetchDeadlineMs,
                               juce::AudioBuffer<float>& prefetchScratch);
     bool isTrackAudible(const juce::String& trackId) const noexcept;
-    bool waitForTrackPrefetch(Track& track, double deadlineMs,
-                              juce::AudioBuffer<float>& scratch);
+    static bool waitForTrackPrefetch(Track& track, double deadlineMs, juce::AudioBuffer<float>& scratch);
 
     class RebuildTimer : public juce::Timer
     {
@@ -482,6 +475,25 @@ class AudioEngine : private AudioEngineGraphState,
     };
     RebuildTimer rebuildTimer{*this};
     static constexpr int kRebuildDebounceMs = 150;
+
+    // Detects an audio callback that has stopped running while the device is still
+    // nominally open, and attempts a bounded recovery. Without it a stalled endpoint
+    // leaves the engine reporting a rolling transport with a frozen playhead.
+    class DeviceWatchdogTimer : public juce::Timer
+    {
+      public:
+        explicit DeviceWatchdogTimer(AudioEngine& e) : engine(e) {}
+        void timerCallback() override { engine.checkAudioDeviceHealth(); }
+
+      private:
+        AudioEngine& engine;
+    };
+    DeviceWatchdogTimer deviceWatchdogTimer{*this};
+    std::uint64_t lastWatchdogCallbackCount = 0;
+    int watchdogStalledTicks = 0;
+    int deviceRecoveryAttempts = 0;
+
+    void checkAudioDeviceHealth();
 
     enum class PendingTransportAction
     {
@@ -602,7 +614,7 @@ class AudioEngine : private AudioEngineGraphState,
     {
       public:
         explicit DeviceChangeListener(AudioEngine& e) : engine(e) {}
-        void changeListenerCallback(juce::ChangeBroadcaster*) override
+        void changeListenerCallback(juce::ChangeBroadcaster* /*source*/) override
         {
             engine.onDeviceListChanged();
         }

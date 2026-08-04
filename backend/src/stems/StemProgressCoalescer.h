@@ -19,7 +19,7 @@ class StemProgressCoalescer
   private:
     static constexpr auto kMinimumInterval = std::chrono::milliseconds(100);
 
-    Clock::time_point lastEmission{};
+    Clock::time_point lastEmission;
     juce::String lastStage;
     juce::String lastDetail;
     bool hasEmitted = false;

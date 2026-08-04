@@ -235,12 +235,12 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
 
 void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& libraryItemId,
                              const juce::String& newItemId, const juce::String& sampleName,
-                             const juce::String& outputDir, const juce::File& sourceFile,
-                             double inMs, double durationMs, silverdaw::AudioEngine& engine,
-                             silverdaw::ProjectState& projectState, juce::ThreadPool& peakPool,
-                             const silverdaw::PeaksCache& cache, silverdaw::BridgeServer& bridge,
-                             std::optional<SampleWarpOptions> warpOptions = std::nullopt,
-                             juce::String audioType = {}, juce::String sourceItemId = {},
+                             const juce::String& outputDir, const juce::File& sourceFile, double inMs,
+                             double durationMs, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
+                             juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
+                             silverdaw::BridgeServer& bridge,
+                             const std::optional<SampleWarpOptions>& warpOptions = std::nullopt,
+                             const juce::String& audioType = {}, const juce::String& sourceItemId = {},
                              int batchIndex = -1, int batchTotal = -1)
 {
     peakPool.addJob(

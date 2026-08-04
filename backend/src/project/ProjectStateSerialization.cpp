@@ -30,7 +30,7 @@ juce::var ProjectState::scratchPatternsAsJson() const
         if (!child.hasType(kScratchPattern))
             continue;
 
-        const auto data = child.getProperty(kScratchPatternData);
+        const auto& data = child.getProperty(kScratchPatternData);
 
         // Revalidate through canonical parsePattern before emitting: a corrupt
         // or incompatible ValueTree child must not poison the whole snapshot.

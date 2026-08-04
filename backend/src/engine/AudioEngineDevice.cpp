@@ -82,8 +82,12 @@ juce::String AudioEngine::openAudioDeviceBlocking(const juce::String& preferredT
 
 void AudioEngine::finaliseAudioDevice(bool fellBack)
 {
-    deviceManager.addAudioCallback(&sourcePlayer);
+    deviceManager.addAudioCallback(&deviceCallbackGuard);
     deviceManager.addChangeListener(&deviceChangeListener);
+    lastWatchdogCallbackCount = master.getCallbackCount();
+    watchdogStalledTicks = 0;
+    deviceRecoveryAttempts = 0;
+    deviceWatchdogTimer.startTimer(kDeviceWatchdogIntervalMs);
     rebuildBeatRepeatSnapshotsForCurrentSampleRate();
 
     // Avoid full device scans on startup; ASIO probing can block for hundreds of ms.
@@ -138,6 +142,7 @@ void AudioEngine::shutdown()
     rebuildTimer.stopTimer();
     trackBypassTimer.stopTimer();
     transportFadeTimer.stopTimer();
+    deviceWatchdogTimer.stopTimer();
     pendingTransportAction = PendingTransportAction::none;
     master.cancelOutputFade();
     master.setPlaying(false);
@@ -145,7 +150,7 @@ void AudioEngine::shutdown()
     stop();
     unloadPreview();
     deviceManager.removeChangeListener(&deviceChangeListener);
-    deviceManager.removeAudioCallback(&sourcePlayer);
+    deviceManager.removeAudioCallback(&deviceCallbackGuard);
     sourcePlayer.setSource(nullptr);
     topMixer.removeAllInputs();
     busGraph.clear();
@@ -158,6 +163,51 @@ void AudioEngine::shutdown()
     trackAudibility.clear();
     deviceManager.closeAudioDevice();
     readAheadThread.stopThread(1000);
+}
+
+// Message-thread watchdog. The callback counter advances on every device block
+// regardless of transport state, so a frozen counter with the device still open
+// means JUCE's device thread has died and will not restart itself.
+void AudioEngine::checkAudioDeviceHealth()
+{
+    auto* device = deviceManager.getCurrentAudioDevice();
+    if (device == nullptr || ! deviceCallbackGuard.isDeviceRunning())
+    {
+        watchdogStalledTicks = 0;
+        lastWatchdogCallbackCount = master.getCallbackCount();
+        return;
+    }
+
+    const auto count = master.getCallbackCount();
+    if (count != lastWatchdogCallbackCount)
+    {
+        lastWatchdogCallbackCount = count;
+        watchdogStalledTicks = 0;
+        deviceRecoveryAttempts = 0;
+        return;
+    }
+
+    if (++watchdogStalledTicks < kDeviceStallTicks) return;
+    watchdogStalledTicks = 0;
+
+    if (deviceRecoveryAttempts >= kMaxDeviceRecoveryAttempts) return;
+    ++deviceRecoveryAttempts;
+
+    silverdaw::log::error("audio",
+                          "audio callback stalled on '" + device->getName() + "' (cb#"
+                              + juce::String(static_cast<juce::int64>(count))
+                              + " unchanged); restarting device, attempt "
+                              + juce::String(deviceRecoveryAttempts) + "/"
+                              + juce::String(kMaxDeviceRecoveryAttempts));
+    deviceManager.restartLastAudioDevice();
+
+    if (deviceRecoveryAttempts >= kMaxDeviceRecoveryAttempts)
+    {
+        silverdaw::log::error("audio",
+                              "audio device did not recover after "
+                                  + juce::String(kMaxDeviceRecoveryAttempts)
+                                  + " attempts; playback needs a device change or restart");
+    }
 }
 
 void AudioEngine::refreshAudioDevices()
@@ -190,7 +240,7 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
 
     if (typeName.isEmpty() || deviceName.isEmpty())
     {
-        return juce::String("typeName and deviceName must both be supplied (or both empty)");
+        return {"typeName and deviceName must both be supplied (or both empty)"};
     }
 
     auto previousSetup = deviceManager.getAudioDeviceSetup();

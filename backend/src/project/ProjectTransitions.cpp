@@ -65,7 +65,7 @@ bool ProjectState::transitionOverlapMs(const juce::ValueTree& track,
 
     // Require tail/head overlap so fades stay on clip edges, not mid-clip.
     constexpr double kEps = 1.0e-6;
-    if (!(leftStart + kEps < rightStart && rightStart + kEps < leftEnd && leftEnd <= rightEnd + kEps))
+    if (leftStart + kEps >= rightStart || rightStart + kEps >= leftEnd || leftEnd > rightEnd + kEps)
         return false;
 
     const double oStart = rightStart;
@@ -235,7 +235,7 @@ bool ProjectState::hasAnyTransition() const
     return false;
 }
 
-juce::var ProjectState::buildTransitionsJson(const juce::ValueTree& track) const
+juce::var ProjectState::buildTransitionsJson(const juce::ValueTree& track)
 {
     juce::Array<juce::var> arr;
     for (int i = 0; i < track.getNumChildren(); ++i)

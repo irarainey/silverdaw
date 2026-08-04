@@ -19,7 +19,7 @@
 #include <windows.h>
 #endif
 
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
 // The DirectML execution provider factory ships only with a DirectML-enabled
 // ONNX Runtime build. It is compiled in solely when the backend is built
 // against such a runtime; the CPU runtime lacks this header.
@@ -49,8 +49,8 @@ constexpr int kModelChannels = 2;
 bool replaceStemFileAtomically(const juce::File& tempFile, const juce::File& outputFile)
 {
 #if JUCE_WINDOWS
-    const auto tempPath = tempFile.getFullPathName();
-    const auto outputPath = outputFile.getFullPathName();
+    const auto& tempPath = tempFile.getFullPathName();
+    const auto& outputPath = outputFile.getFullPathName();
     return ::MoveFileExW(tempPath.toWideCharPointer(), outputPath.toWideCharPointer(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
@@ -165,7 +165,7 @@ juce::AudioBuffer<float> decodeStereo44k(const juce::File& sourceFile, double st
     if (static_cast<int>(reader->sampleRate) == kModelSampleRate)
         return decoded;
 
-    const double ratio = static_cast<double>(reader->sampleRate) / kModelSampleRate;
+    const double ratio = reader->sampleRate / kModelSampleRate;
     const auto resampledLength = static_cast<int>(std::ceil(sourceLength / ratio));
     juce::AudioBuffer<float> resampled(kModelChannels, resampledLength);
     resampled.clear();
@@ -274,7 +274,7 @@ Normalisation computeNormalisation(const juce::AudioBuffer<float>& mixture)
     return {static_cast<float>(mean), static_cast<float>(stddev)};
 }
 
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
 bool isRecoverableGpuFault(const Ort::Exception& e)
 {
     return isRecoverableGpuFaultMessage(e.what());
@@ -301,7 +301,7 @@ class OnnxStemSeparator : public StemSeparator
             silverdaw::log::info("stems", "DirectML is quarantined for this process; using CPU.");
         applyExecutionProvider(effectiveRequest.useGpu);
 
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
         // On a recoverable DirectML fault mid-inference — a GPU reset (Windows TDR)
         // or running out of (often shared, integrated-GPU) memory — transparently
         // retry the whole job on the CPU provider so the user still gets their stems
@@ -770,7 +770,7 @@ class OnnxStemSeparator : public StemSeparator
             {
                 onProgress("cleanup", cleanupBase, stem);
                 auto vocal = std::move(stemBuffer);
-                const auto requestSnapshot = request;
+                const auto& requestSnapshot = request;
                 // Inference leaves two processors free, so this single cleanup
                 // worker uses reserved capacity instead of oversubscribing ORT.
                 vocalCleanup.start(
@@ -886,7 +886,6 @@ class OnnxStemSeparator : public StemSeparator
         return result;
     }
 
-  private:
     // Run one specialist model over a track and reconstruct its source via
     // weighted overlap-add. When `shifts > 1` (vocals, "best" quality) the model
     // is also run on a few small leading-zero time-shifts of the input and the
@@ -982,8 +981,10 @@ class OnnxStemSeparator : public StemSeparator
                     if (contentLen <= 0) continue;
                     const float* src = mixture.getReadPointer(ch) + (contentBegin - sh);
                     std::copy_n(src, contentLen,
-                                inputData.begin() + static_cast<size_t>(ch) * kSegmentSamples +
-                                    static_cast<size_t>(contentBegin - start));
+                                inputData.begin()
+                                    + static_cast<std::ptrdiff_t>(
+                                        static_cast<size_t>(ch) * kSegmentSamples
+                                        + static_cast<size_t>(contentBegin - start)));
                 }
 
                 stems::runCancellable(shouldCancel, [&](Ort::RunOptions& runOptions) {
@@ -1057,7 +1058,7 @@ class OnnxStemSeparator : public StemSeparator
 
         if (useGpu)
         {
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
             // DirectML requires sequential execution and disabled memory pattern
             // optimisation; the EP itself is vendor-generic (any DirectX 12 GPU).
             sessionOptions.DisableMemPattern();

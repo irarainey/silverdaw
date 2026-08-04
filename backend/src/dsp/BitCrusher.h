@@ -129,10 +129,14 @@ public:
                 buffer.setSample(channel, sample, dry + currentMix * (wet - dry));
             }
 
-            if (bitTransitionRemaining > 0 && --bitTransitionRemaining == 0)
+            if (bitTransitionRemaining > 0)
             {
-                currentBits = bitTransitionTargetBits;
-                recomputeDerived();
+                --bitTransitionRemaining;
+                if (bitTransitionRemaining == 0)
+                {
+                    currentBits = bitTransitionTargetBits;
+                    recomputeDerived();
+                }
             }
             capturePhase += currentRate;
         }

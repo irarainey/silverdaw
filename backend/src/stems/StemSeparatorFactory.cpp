@@ -14,10 +14,8 @@ namespace
 class NullStemSeparator : public StemSeparator
 {
   public:
-    StemSeparationResult separate(const StemSeparationRequest&,
-                                  const StemProgressFn&,
-                                  const StemReadyFn&,
-                                  const StemCancelFn&) override
+    StemSeparationResult separate(const StemSeparationRequest& /*request*/, const StemProgressFn& /*onProgress*/,
+                                  const StemReadyFn& /*onStemReady*/, const StemCancelFn& /*shouldCancel*/) override
     {
         throw StemSeparationError(StemFailureCode::Model,
                                   "Stem separation is not available in this build.");

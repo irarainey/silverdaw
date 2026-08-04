@@ -1,6 +1,7 @@
 #include "StemGpuFallback.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace silverdaw
 {
@@ -38,10 +39,7 @@ void StemGpuFallbackState::quarantine() noexcept
     quarantined = true;
 }
 
-StemReadyTransaction::StemReadyTransaction(const StemReadyFn& publishFn)
-    : publish(publishFn)
-{
-}
+StemReadyTransaction::StemReadyTransaction(StemReadyFn publishFn) : publish(std::move(publishFn)) {}
 
 void StemReadyTransaction::stage(const StemResultFile& stem)
 {

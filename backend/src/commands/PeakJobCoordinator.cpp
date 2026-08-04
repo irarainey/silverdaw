@@ -15,7 +15,7 @@ PeakJobTicket PeakJobCoordinator::addWaiter(const juce::File& sourceFile, int pe
                                             PeakJobWaiter waiter)
 {
     auto key = makeKey(sourceFile, peaksPerSecond);
-    const std::lock_guard<std::mutex> lock(mutex);
+    const std::scoped_lock lock(mutex);
     auto [it, inserted] = jobs.try_emplace(key);
     auto& waiters = it->second;
     const auto duplicate = std::find_if(waiters.begin(), waiters.end(), [&waiter](const PeakJobWaiter& existing)
@@ -31,7 +31,7 @@ PeakJobTicket PeakJobCoordinator::addWaiter(const juce::File& sourceFile, int pe
 
 std::vector<PeakJobWaiter> PeakJobCoordinator::takeWaiters(const std::string& key)
 {
-    const std::lock_guard<std::mutex> lock(mutex);
+    const std::scoped_lock lock(mutex);
     const auto it = jobs.find(key);
     if (it == jobs.end())
     {

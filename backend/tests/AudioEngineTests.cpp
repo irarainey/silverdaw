@@ -707,6 +707,119 @@ void testMasterClockTransportFadeOutAndIn()
                 "transport fade-in must restore normal rendering after the ramp");
 }
 
+// Regression cover for the reported "transport says playing, playhead never moves"
+// failure: a play must advance the transport, a pause must freeze it, and a resume
+// must continue from where it stopped.
+void testTransportPlayAdvancesPlayhead()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    silverdaw::OutputKeepAlive keepAlive;
+    keepAlive.setKeepAwakeEnabled(false); // no wake pre-roll, so programme starts on block one
+    ConstantSource child(0.25F);
+    silverdaw::MasterClockSource master(child, keepAlive);
+    master.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    require(master.getPositionSamples() == 0, "transport starts at the origin");
+
+    master.setPlaying(true);
+    for (int b = 1; b <= 10; ++b)
+    {
+        buf.clear();
+        master.getNextAudioBlock(info);
+        require(master.getPositionSamples() == static_cast<juce::int64>(b) * kBlock,
+                "each played block advances the transport by exactly one block");
+    }
+
+    const auto pausedAt = master.getPositionSamples();
+    master.setPlaying(false);
+    for (int b = 0; b < 5; ++b)
+    {
+        buf.clear();
+        master.getNextAudioBlock(info);
+    }
+    require(master.getPositionSamples() == pausedAt, "an idle transport must not advance");
+
+    master.setPlaying(true);
+    buf.clear();
+    master.getNextAudioBlock(info);
+    require(master.getPositionSamples() == pausedAt + kBlock,
+            "resuming continues from the paused position");
+    master.releaseResources();
+}
+
+// Moving the playhead while stopped and then pressing play must roll on from the
+// seek target, not from the origin or the pre-seek position.
+void testSeekThenPlayAdvancesFromSeekPosition()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    constexpr juce::int64 kSeek = 96000;
+    silverdaw::OutputKeepAlive keepAlive;
+    keepAlive.setKeepAwakeEnabled(false);
+    ConstantSource child(0.25F);
+    silverdaw::MasterClockSource master(child, keepAlive);
+    master.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    master.setPositionSamples(kSeek);
+    require(master.getPositionSamples() == kSeek, "a seek moves the playhead while stopped");
+
+    master.setPlaying(true);
+    for (int b = 1; b <= 4; ++b)
+    {
+        buf.clear();
+        master.getNextAudioBlock(info);
+    }
+    require(master.getPositionSamples() == kSeek + 4 * kBlock,
+            "playback resumes from the seek target");
+    master.releaseResources();
+}
+
+// The device watchdog reads this counter to tell a live endpoint from a stalled
+// one, so it must tick on every block (including idle ones) and must survive
+// being read without being consumed.
+void testCallbackCountTracksDeviceBlocksForStallDetection()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    silverdaw::OutputKeepAlive keepAlive;
+    ConstantSource child(0.25F);
+    silverdaw::MasterClockSource master(child, keepAlive);
+    master.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    require(master.getCallbackCount() == 0, "counter starts at zero");
+
+    // Idle blocks must still tick, so a stall is detectable with the transport stopped.
+    for (int b = 0; b < 7; ++b)
+    {
+        buf.clear();
+        master.getNextAudioBlock(info);
+    }
+    require(master.getCallbackCount() == 7, "the counter ticks on idle blocks too");
+    require(master.getCallbackCount() == master.getCallbackCount(),
+            "reading the counter must not consume it");
+
+    // A device that stops calling back leaves the counter frozen: the stall signal.
+    const auto frozen = master.getCallbackCount();
+    require(master.getCallbackCount() == frozen,
+            "the counter stays frozen while no blocks are delivered");
+
+    // Draining perf must not disturb the counter the watchdog samples.
+    const auto snap = master.drainAudioPerf();
+    require(snap.callbackCount == frozen, "the perf drain reports the same count");
+    require(master.getCallbackCount() == frozen, "the perf drain does not reset the counter");
+    master.releaseResources();
+}
+
 // MasterClockSource must publish block timing to atomics for off-thread logging
 // (the audio thread no longer builds strings or touches the file logger).
 void testMasterClockPublishesAudioPerfOffThread()
@@ -1423,6 +1536,9 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"OutputKeepAlive wake burst rouses a cold device then settles", testOutputKeepAliveWakeBurstRousesColdDeviceThenSettles});
     tests.push_back({"MasterClockSource fades transport discontinuities to and from silence", testMasterClockTransportFadeOutAndIn});
     tests.push_back({"MasterClockSource publishes audio-thread timing for off-thread logging", testMasterClockPublishesAudioPerfOffThread});
+    tests.push_back({"Transport play advances the playhead, pause freezes it, resume continues", testTransportPlayAdvancesPlayhead});
+    tests.push_back({"Seek then play advances from the seek position", testSeekThenPlayAdvancesFromSeekPosition});
+    tests.push_back({"Callback count tracks device blocks for stall detection", testCallbackCountTracksDeviceBlocksForStallDetection});
     tests.push_back({"Master gain is settled at play-start (no first-block fade)", testMasterGainIsSettledAtPlayStart});
     tests.push_back({"MasterClockSource wake pre-roll rouses a USB endpoint then plays", testMasterClockWakePrerollRousesUsbThenPlays});
     tests.push_back({"Preview wake pre-roll rouses a USB endpoint then plays", testPreviewWakePrerollRousesUsbThenPlays});

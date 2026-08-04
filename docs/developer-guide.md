@@ -3819,8 +3819,108 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,
-  `readability-*`). Format with `clang-format` (`backend/.clang-format`). Backend unit
-  tests are gated behind `-DSILVERDAW_BUILD_TESTS=ON`:
+  `readability-*`, less a documented exclusion list). **The backend is at zero
+  clang-tidy warnings — keep it there.** A clean baseline is the whole point:
+  it means any warning a change introduces is visible immediately instead of
+  being lost in a list of hundreds that everyone has learned to scroll past.
+  Fix what a run reports, or — if the check is genuinely wrong for this
+  codebase — exclude it and write down why in the config header. Every
+  exclusion is a style disagreement, a micro-optimisation, or a check that was
+  audited site by site and found not to apply; each records that reasoning.
+  Keep `backend/.clangd` (the IDE-time list) in sync when changing them.
+  Run it with:
+
+  ```powershell
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1"
+  ```
+
+  The outer `Invoke-DevShell.ps1` is what puts the Visual Studio `clang-tidy` on
+  `PATH`. The console gets a per-check summary; the full output goes to
+  `clang-tidy-report.txt` at the repo root (gitignored), because a run emits
+  thousands of lines and would otherwise scroll its own findings out of the
+  terminal. Useful switches:
+
+  - `-Fix` applies the suggested code-mods, including those attached to notes.
+    Rebuild and run the tests afterwards — a code-mod is a change like any
+    other — and follow with `clang-format`.
+  - `-Checks '-*,some-check'` overrides the config for one run, so a code-mod
+    can be applied and reviewed one check at a time.
+  - `-Filter 'regex'` narrows the console summary to matching checks.
+  - `-Strict` turns warnings into errors. Now that the baseline is clean this
+    is viable as a CI gate.
+  - `-Jobs N` sets the parallelism, defaulting to the logical processor count.
+    `-Jobs 1` forces the serial path.
+  - `-NoSystemHeaders` lints against the build's own `compile_commands.json`
+    rather than the derived copy described below. Only needed to diagnose a
+    suspected difference between the two.
+  - `-Changed` lints only what the current changes affect, and `-Since <ref>`
+    picks what they are compared against (default `HEAD`, i.e. uncommitted
+    work; pass a branch point to cover a whole branch).
+
+  A run is parallel by default: when LLVM's `run-clang-tidy` is available
+  alongside `clang-tidy` it fans the 133 sources out across cores. Measured on
+  a 16-core machine, a full run goes from about 400 seconds serial to 85
+  parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the curve
+  flattens at roughly the core count and the default needs no tuning.
+
+  On top of that the script derives its own compile database into
+  `<build>/clang-tidy/`, rewriting every third-party include directory —
+  anything under `_deps/` or `backend/third_party/` — from a `-I` user include
+  to a system include. CMake passes dependencies as plain `-I`, so without this
+  clang treats JUCE, rubberband, ixwebsocket and the rest as first-party code:
+  it runs the whole check set over all of it and `HeaderFilterRegex` then
+  discards the results. Marking them as system headers lets clang skip that
+  work and takes the run from 85 seconds to 47. The derived database is
+  regenerated whenever the real one is newer, and is inside the build tree so
+  it is already gitignored. It was validated by running a deliberately noisy
+  check set over both databases and diffing the output: 5173 diagnostics,
+  byte-identical, so the speedup costs no coverage. Re-run that comparison if
+  you ever widen what counts as third-party.
+
+  Two further consequences of running in parallel. Workers each analyse their
+  own translation unit, so a finding in a shared header is reported once per
+  file that includes it — the summary deduplicates on file, line, column, and
+  check. And `-Fix` always falls back to the serial path, because clang-tidy
+  applies edits by byte offset and concurrent workers rewriting the same header
+  would corrupt each other. `run-clang-tidy` resolves `.clang-tidy` from the
+  working directory rather than from the files it lints, so the script passes
+  `-config-file` explicitly; without it every check is silently disabled.
+
+  `-Changed` narrows the run further. A changed `.cpp` lints itself; a changed
+  header lints every translation unit that includes it, which the script reads
+  from the dependency graph Ninja recorded during the last build rather than by
+  re-scanning `#include` lines. That distinction matters — the recorded graph
+  is what the compiler actually saw, transitive includes included. On a typical
+  branch this is the difference between one file and the whole tree.
+
+  The narrowing is deliberately pessimistic, because a partial run that wrongly
+  reports clean would quietly undermine the baseline the gate depends on.
+  Anything it cannot resolve confidently — no Ninja, no dependency record, a
+  stale record, a header the build has never compiled, or an edit to
+  `.clang-tidy` or `.clangd` themselves, which changes what every file is
+  measured against — abandons the narrowing and lints everything. Prefer a full
+  run for the CI gate and keep `-Changed` for the local edit loop.
+
+  Watch for `compile error(s)` in the summary. clang-tidy stops analysing a
+  translation unit at the first compile error, so errors silently *hide*
+  warnings — a header that Clang rejects but MSVC accepts can mask findings
+  across most of the codebase.
+
+  clang-tidy needs a `compile_commands.json`, which only a **single-config**
+  generator writes — the Visual Studio tree in `backend/build` has none — so
+  the script searches the known build trees and uses the first that has one.
+  Pass `-BuildDir` to pin a specific tree. If no tree has a compile database,
+  configure a Ninja one:
+
+  ```powershell
+  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+    "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+  ```
+
+  Format with `clang-format`
+  (`backend/.clang-format`). Backend unit tests are gated behind
+  `-DSILVERDAW_BUILD_TESTS=ON`:
 
   ```powershell
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `

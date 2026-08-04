@@ -692,7 +692,7 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
 
-    juce::var buildTransitionsJson(const juce::ValueTree& track) const;
+    static juce::var buildTransitionsJson(const juce::ValueTree& track);
 
     // Transition math uses warp-scaled timeline footprints.
     bool clipTimelineSpanMs(const juce::String& clipId, double& startMs, double& endMs) const;

@@ -442,12 +442,9 @@ bool AudioEngine::setClipBackspin(const juce::String& clipId, double backspinSec
     return true;
 }
 
-bool AudioEngine::setClipWarp(const juce::String& clipId,
-                              std::optional<bool> enabled,
-                              std::optional<juce::String> mode,
-                              std::optional<double> tempoRatio,
-                              std::optional<double> semitones,
-                              std::optional<double> cents)
+bool AudioEngine::setClipWarp(const juce::String& clipId, std::optional<bool> enabled,
+                              const std::optional<juce::String>& mode, std::optional<double> tempoRatio,
+                              std::optional<double> semitones, std::optional<double> cents)
 {
     auto it = tracks.find(clipId);
     if (it == tracks.end()) return false;

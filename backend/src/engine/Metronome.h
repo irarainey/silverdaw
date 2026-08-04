@@ -1,10 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <vector>
-
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <vector>
 
 namespace silverdaw
 {
@@ -66,7 +66,7 @@ class Metronome
         // is audible while start < blockEnd and start + clickLen > blockStartPos.
         juce::int64 firstBeat =
             static_cast<juce::int64>(std::floor(static_cast<double>(blockStartPos - clickLen + 1) / beatPeriod));
-        if (firstBeat < 0) firstBeat = 0;
+        firstBeat = std::max<juce::int64>(firstBeat, 0);
         const juce::int64 lastBeat =
             static_cast<juce::int64>(std::floor(static_cast<double>(blockEnd - 1) / beatPeriod));
 

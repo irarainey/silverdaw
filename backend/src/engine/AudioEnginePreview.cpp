@@ -8,12 +8,10 @@
 namespace silverdaw
 {
 
-bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double durationMs,
-                              juce::String* outError,
+bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double durationMs, juce::String* outError,
                               std::optional<bool> initialWarpEnabled,
-                              std::optional<juce::String> initialWarpMode,
-                              std::optional<double> initialTempoRatio,
-                              std::optional<double> initialSemitones,
+                              const std::optional<juce::String>& initialWarpMode,
+                              std::optional<double> initialTempoRatio, std::optional<double> initialSemitones,
                               std::optional<double> initialCents)
 {
     unloadPreview();
@@ -60,7 +58,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     {
         const auto modeStr = initialWarpMode.value_or(juce::String("rhythmic"));
         preview.warpMode = modeStr;
-        const int channels = preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
+        const int channels = preview.readerSource ? static_cast<int>(preview.readerSource->getAudioFormatReader()->numChannels) : 2;
         const auto& dm = deviceManager.getAudioDeviceSetup();
         auto wp = makeWarpProcessor(channels, preview.sampleRate,
                                     static_cast<int>(dm.bufferSize), modeStr,
@@ -166,7 +164,7 @@ bool AudioEngine::setPreviewWarp(std::optional<bool> enabled,
         return true;
     }
     const int channels =
-        preview.readerSource ? preview.readerSource->getAudioFormatReader()->numChannels : 2;
+        preview.readerSource ? static_cast<int>(preview.readerSource->getAudioFormatReader()->numChannels) : 2;
     if (!WarpProcessor::supportsChannelCount(channels))
     {
         silverdaw::log::warn(

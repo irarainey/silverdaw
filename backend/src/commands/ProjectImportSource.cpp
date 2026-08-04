@@ -40,7 +40,7 @@ juce::var libraryItemAsImportData(const juce::ValueTree& item)
 
     if (item.hasProperty(kScratchPatternId))
         data->setProperty("scratchOrigin", true);
-    return juce::var(data);
+    return {data};
 }
 
 std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& item,
@@ -110,7 +110,7 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
         const auto pattern = patterns.getChild(i);
         if (!pattern.hasType(scratch_ids::kScratchPattern))
             continue;
-        const auto data = pattern.getProperty(scratch_ids::kScratchPatternData);
+        const auto& data = pattern.getProperty(scratch_ids::kScratchPatternData);
         const auto parsed = scratch::parsePattern(data);
         if (parsed && parsed->id.isNotEmpty())
             source.scratchPatterns.emplace(parsed->id, data);

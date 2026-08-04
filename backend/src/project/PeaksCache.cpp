@@ -1,7 +1,9 @@
 #include "PeaksCache.h"
+
 #include "Log.h"
 
 #include <cstring>
+#include <utility>
 
 namespace silverdaw
 {
@@ -63,7 +65,7 @@ PeaksCache::PeaksCache()
     }
 }
 
-PeaksCache::PeaksCache(const juce::File& cacheDirectory) : cacheDir(cacheDirectory)
+PeaksCache::PeaksCache(juce::File cacheDirectory) : cacheDir(std::move(cacheDirectory))
 {
     const auto created = cacheDir.createDirectory();
     if (!created.wasOk())
@@ -82,7 +84,7 @@ juce::File PeaksCache::getCacheFilePath(const juce::File& sourceFile, int peaksP
 juce::File PeaksCache::cacheFileFor(const juce::File& sourceFile, int peaksPerSecond) const
 {
     // Key includes path, mtime, size, and density so source changes invalidate cache.
-    const auto path = sourceFile.getFullPathName();
+    const auto& path = sourceFile.getFullPathName();
     const auto mtime = sourceFile.getLastModificationTime().toMilliseconds();
     const auto size = sourceFile.getSize();
     const auto key = path + "|" + juce::String(mtime) + "|" + juce::String(size) + "|" + juce::String(peaksPerSecond);
@@ -155,7 +157,7 @@ void PeaksCache::store(const juce::File& sourceFile, const waveform::PeaksResult
         return;
     }
 
-    const std::lock_guard<std::mutex> lock(storeMutex);
+    const std::scoped_lock lock(storeMutex);
     const auto target = cacheFileFor(sourceFile, result.peaksPerSecond);
     // Sibling-temp rename prevents crash-truncated cache files from being honoured.
     const auto tmp = target.getSiblingFile(target.getFileName() + "." + juce::Uuid().toString() + ".tmp");

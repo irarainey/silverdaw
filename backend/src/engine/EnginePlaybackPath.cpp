@@ -36,7 +36,7 @@ juce::String resolveEnginePlaybackPath(const juce::String& sourceFilePath,
     const auto cacheFile = decodedCache.getCacheFilePath(source);
     if (cacheFile.existsAsFile())
     {
-        const auto cachePath = cacheFile.getFullPathName();
+        const auto& cachePath = cacheFile.getFullPathName();
         const auto stored = projectState.getLibraryItemPlaybackPathForSource(sourceFilePath);
         if (stored != cachePath)
         {

@@ -59,11 +59,11 @@ public:
                                   *info.buffer, 0, info.startSample,
                                   info.numSamples);
         }
-        if (! juce::approximatelyEqual(gain, 1.0F))
-        {
-            info.buffer->applyGain(info.startSample, info.numSamples, gain);
-        }
-        else if (gain != 1.0F)
+        // Exact comparison is deliberate: any gain other than unity must be
+        // applied. `approximatelyEqual` would skip near-unity gains, and the
+        // two branches this replaces were identical, so the union of their
+        // conditions was always just "gain is not exactly 1".
+        if (gain != 1.0F)
         {
             info.buffer->applyGain(info.startSample, info.numSamples, gain);
         }

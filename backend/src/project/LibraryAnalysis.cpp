@@ -45,9 +45,16 @@ std::vector<double> buildRigidBeatGrid(double bpm, double beatAnchorSec, double 
     else
         firstSec += std::ceil(-firstSec / beatSpacingSec) * beatSpacingSec;
     constexpr int kMaxBeats = 100000;
-    int guard = 0;
-    for (double t = firstSec; t <= endSec + 1.0e-6 && guard < kMaxBeats; t += beatSpacingSec, ++guard)
+    // Compute each beat from the first rather than accumulating `t += spacing`:
+    // repeated addition compounds its rounding error along the grid, so the last
+    // beat of a long track drifts off the position the same grid is drawn at
+    // elsewhere. Multiplying is exact for every index and costs nothing here.
+    for (int i = 0; i < kMaxBeats; ++i)
+    {
+        const double t = firstSec + (i * beatSpacingSec);
+        if (t > endSec + 1.0e-6) break;
         beats.push_back(t);
+    }
     if (beats.empty())
         beats.push_back(beatAnchorSec);
     return beats;
@@ -291,7 +298,7 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                 const double ratio = projectBpm / sourceBpm;
                 if (info.pendingAutoWarp)
                 {
-                    projectState.setClipWarp(info.clipId, /*enabled=*/true, juce::String("rhythmic"),
+                    projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
                                              /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
                                              std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
                     engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
@@ -342,8 +349,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
     silverdaw::BpmAnalysis analysis; // bpm 0 by default → treated as "no tempo"
     if (haveWav)
     {
-        silverdaw::BpmDetector detector;
-        analysis = detector.analyse(cachedFile, engine.getFormatManager());
+        analysis = silverdaw::BpmDetector::analyse(cachedFile, engine.getFormatManager());
     }
     else
     {
@@ -378,7 +384,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                 bridge.broadcast("LIBRARY_ITEM_ANALYSIS", juce::var(p));
             });
         {
-            std::lock_guard<std::mutex> lock(bpmJobsMutex);
+            std::scoped_lock lock(bpmJobsMutex);
             bpmJobsInFlight.erase(itemId);
         }
         return;
@@ -391,7 +397,7 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                                           analysis.lowConfidence, cachedPath, engine, projectState,
                                           bridge);
             {
-                std::lock_guard<std::mutex> lock(bpmJobsMutex);
+                std::scoped_lock lock(bpmJobsMutex);
                 bpmJobsInFlight.erase(itemId);
             }
         });
@@ -450,7 +456,7 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
         {
             silverdaw::log::debug("bpmjob", "skip duplicate in-flight itemId=" + itemId);
@@ -599,7 +605,7 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return;
     {
-        std::lock_guard<std::mutex> lock(bpmJobsMutex);
+        std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
         {
             silverdaw::log::debug("bpmjob", "skip duplicate in-flight reanalysis itemId=" + itemId);
@@ -626,8 +632,8 @@ void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine,
         {
             const auto built = decodedCache.ensureDecoded(src, engine.getFormatManager());
             if (!built.existsAsFile()) return;
-            const auto cachePath = built.getFullPathName();
-            const auto sourcePath = src.getFullPathName();
+            const auto& cachePath = built.getFullPathName();
+            const auto& sourcePath = src.getFullPathName();
             juce::MessageManager::callAsync(
                 [&projectState, sourcePath, cachePath]
                 {

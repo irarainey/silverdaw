@@ -8,7 +8,7 @@
 
 #include <onnxruntime_cxx_api.h>
 
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
 #include <dml_provider_factory.h>
 #endif
 
@@ -48,7 +48,7 @@ struct MelRoformerVocals::Impl
         sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         if (useGpu)
         {
-#if defined(SILVERDAW_ONNXRUNTIME_DIRECTML)
+#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
             sessionOptions.DisableMemPattern();
             sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
             sessionOptions.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
@@ -70,7 +70,7 @@ struct MelRoformerVocals::Impl
 
     Ort::Session& sessionFor(const juce::File& modelFile)
     {
-        const auto path = modelFile.getFullPathName();
+        const auto& path = modelFile.getFullPathName();
         const bool cacheHit = session != nullptr && sessionPath == path;
         const auto started = std::chrono::steady_clock::now();
         if (session == nullptr || sessionPath != path)
@@ -203,7 +203,10 @@ juce::AudioBuffer<float> MelRoformerVocals::separate(
         for (int ch = 0; ch < Spec::kChannels; ++ch)
         {
             const float* src = mixN.data() + static_cast<size_t>(ch) * numSamples + cstart;
-            std::copy_n(src, clen, chunk.begin() + static_cast<size_t>(ch) * Spec::kChunkSamples);
+            std::copy_n(src, clen,
+                        chunk.begin()
+                            + static_cast<std::ptrdiff_t>(static_cast<size_t>(ch)
+                                                          * Spec::kChunkSamples));
         }
 
         impl->spectral.analyze(chunk.data(), stft.data());

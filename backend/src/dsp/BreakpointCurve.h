@@ -71,7 +71,7 @@ class BreakpointCurve
         if (n == 1) return points[0].value;
 
         const std::size_t lastSeg = n - 2;
-        if (seg > lastSeg) seg = lastSeg;
+        seg = std::min(seg, lastSeg);
         while (seg < lastSeg && ms >= points[seg + 1].timeMs) ++seg;
         while (seg > 0 && ms < points[seg].timeMs) --seg;
 

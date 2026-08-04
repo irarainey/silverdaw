@@ -121,7 +121,7 @@ struct Biquad
     float z1[kMaxChannels] = {0.0f, 0.0f};
     float z2[kMaxChannels] = {0.0f, 0.0f};
 
-    inline float process(int ch, float x) noexcept
+    float process(int ch, float x) noexcept
     {
         const float y = b0 * x + z1[ch];
         z1[ch] = b1 * x - a1 * y + z2[ch];

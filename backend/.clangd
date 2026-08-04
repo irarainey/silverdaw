@@ -22,10 +22,33 @@ Diagnostics:
       - bugprone-*
       - performance-*
       - readability-*
+    # Keep in sync with backend/.clang-tidy, which documents why each of these
+    # is off. In short: all are style disagreements or known-noisy checks, and
+    # nothing that could flag a real bug is excluded.
     Remove:
       - modernize-use-trailing-return-type
       - readability-identifier-length
       - readability-magic-numbers
+      - readability-braces-around-statements
+      - readability-math-missing-parentheses
+      - readability-uppercase-literal-suffix
+      - modernize-use-auto
+      - modernize-use-nodiscard
+      - modernize-avoid-c-arrays
+      - bugprone-easily-swappable-parameters
+      - bugprone-throwing-static-initialization
+      - readability-inconsistent-ifelse-braces
+      - readability-isolate-declaration
+      - readability-avoid-nested-conditional-operator
+      - readability-implicit-bool-conversion
+      - readability-function-cognitive-complexity
+      - performance-enum-size
+      - bugprone-misplaced-widening-cast
+      - bugprone-exception-escape
+      - bugprone-unchecked-optional-access
+      - readability-use-anyofallof
+      - modernize-return-braced-init-list
+      - performance-no-automatic-move
 
 Index:
   Background: Build

@@ -116,11 +116,8 @@ const char* stemFailureCodeToString(StemFailureCode code) noexcept
     return "invalid";
 }
 
-void runStemSeparationJob(StemSeparationRequest request,
-                          StemSeparator& separator,
-                          BridgeServer& bridge,
-                          std::atomic<bool>& cancelFlag,
-                          std::atomic<bool>& busyFlag)
+void runStemSeparationJob(const StemSeparationRequest& request, StemSeparator& separator, BridgeServer& bridge,
+                          std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag)
 {
     const auto jobId = request.jobId;
     const auto clipId = request.clipId;
@@ -167,9 +164,8 @@ void runStemSeparationJob(StemSeparationRequest request,
         auto result = separator.separate(request, onProgress, onStemReady, shouldCancel);
         stem_bridge::broadcastReady(bridge, jobId, clipId, sourceName, result.stems);
         outcome = "ready";
-        silverdaw::log::info("stems",
-                             "STEM_READY job=" + jobId + " clip=" + clipId +
-                                 " stems=" + juce::String((int) result.stems.size()));
+        silverdaw::log::info("stems", "STEM_READY job=" + jobId + " clip=" + clipId +
+                                          " stems=" + juce::String(static_cast<int>(result.stems.size())));
     }
     catch (const StemSeparationError& e)
     {
@@ -226,9 +222,7 @@ void runStemSeparationAsync(StemSeparationRequest request,
     cancelFlag.store(false);
 
     pool.addJob([request = std::move(request), &separator, &bridge, &cancelFlag, &busyFlag]() mutable
-    {
-        runStemSeparationJob(std::move(request), separator, bridge, cancelFlag, busyFlag);
-    });
+                { runStemSeparationJob(request, separator, bridge, cancelFlag, busyFlag); });
 }
 
 } // namespace silverdaw

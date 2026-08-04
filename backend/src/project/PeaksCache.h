@@ -16,7 +16,7 @@ class PeaksCache
   public:
     PeaksCache();
 
-    explicit PeaksCache(const juce::File& cacheDirectory);
+    explicit PeaksCache(juce::File cacheDirectory);
 
     // Empty result means cache miss or failed validation.
     waveform::PeaksResult tryLoad(const juce::File& sourceFile, int peaksPerSecond) const;

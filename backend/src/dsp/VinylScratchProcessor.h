@@ -24,7 +24,12 @@ class VinylScratchProcessor
         double boundaryFadeSeconds = 0.003;
     };
 
-    void prepare(double newSampleRate, Settings newSettings = {}) noexcept;
+    // Two overloads rather than a defaulted `Settings newSettings = {}`: a
+    // default argument may not use the nested struct's member initialisers
+    // from inside this class definition, which MSVC accepts but Clang (and
+    // so clang-tidy) rejects.
+    void prepare(double newSampleRate, Settings newSettings) noexcept;
+    void prepare(double newSampleRate) noexcept;
     void reset(double sourcePositionSamples, double initialRate = 0.0,
                float initialGain = 1.0F) noexcept;
 
@@ -56,8 +61,7 @@ class VinylScratchProcessor
     static constexpr double kSilenceRate = 0.01;
     static constexpr double kFullGainRate = 0.08;
 
-    float interpolate(const float* source, int sourceSamples, double position,
-                      double rate) const noexcept;
+    static float interpolate(const float* source, int sourceSamples, double position, double rate) noexcept;
     float boundaryGain(int sourceSamples) const noexcept;
     static float smoothStep(double value) noexcept;
 

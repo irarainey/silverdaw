@@ -2,8 +2,17 @@
 
 ## 1.5.3
 
+### Changed
+
+- The backend clang-tidy configuration now excludes a documented set of style-only and known-noisy checks, and the lint script finds the build tree it needs on its own, writes its full output to a report file, and summarises findings per check.
+- The backend now builds clean under clang-tidy, so a new warning stands out instead of being lost among existing ones.
+- The backend lint now runs across all cores and no longer analyses third-party headers it was only going to discard the results from, cutting a full clang-tidy pass from around seven minutes to under fifty seconds.
+- The backend lint can now check just the sources affected by your changes, following a changed header through to everything that includes it, and falling back to a full run whenever that cannot be worked out safely.
+
 ### Fixed
 
+- Playback that silently stops working is now detected and recovered: if the audio device stops delivering audio, the engine restarts it instead of leaving the transport showing playback with a playhead that never moves and no sound.
+- Audio device start, stop and error events are now recorded in the log, so a device that drops out is visible rather than silent.
 - A clip's original tempo is now resolved the same way everywhere, so stems, saved clips and samples agree with the timeline, the beat grid and playback.
 - A saved sample or clip now keeps the tempo of the track it was cut from instead of detecting one from its own few seconds of audio.
 - A clip cut to a number of bars now stays that number of bars however its tempo is later re-detected.

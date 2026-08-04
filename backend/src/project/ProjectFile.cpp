@@ -61,8 +61,8 @@ juce::String fromPortablePath(const juce::String& stored, const juce::File& proj
 bool replaceFileAtomically(const juce::File& tempFile, const juce::File& targetFile)
 {
 #if JUCE_WINDOWS
-    const auto tempPath = tempFile.getFullPathName();
-    const auto targetPath = targetFile.getFullPathName();
+    const auto& tempPath = tempFile.getFullPathName();
+    const auto& targetPath = targetFile.getFullPathName();
     return ::MoveFileExW(tempPath.toWideCharPointer(), targetPath.toWideCharPointer(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
@@ -379,7 +379,7 @@ LoadResult loadTree(const juce::File& file, juce::ValueTree& projectTree)
         return result;
     }
 
-    projectTree = std::move(decodedTree);
+    projectTree = decodedTree;
     result.ok = true;
     return result;
 }

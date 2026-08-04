@@ -260,7 +260,7 @@ bool prepareSourceToCache(const SourcePreparationSettings& settings,
     else
     {
         prepared = std::move(source);
-        if (sourceSamples / reader->sampleRate >= kLongUnwarpedClipSeconds)
+        if (static_cast<double>(sourceSamples) / reader->sampleRate >= kLongUnwarpedClipSeconds)
         {
             result.audio =
                 std::make_shared<juce::AudioBuffer<float>>(std::move(prepared));

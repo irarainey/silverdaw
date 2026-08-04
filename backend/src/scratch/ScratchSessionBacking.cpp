@@ -7,7 +7,7 @@ namespace silverdaw::scratch
 
 bool ScratchSessionController::beginBackingPreparation(const juce::String& sessionId)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId || session->status == "recording")
         return false;
     backingSource.deactivate();
@@ -22,7 +22,7 @@ bool ScratchSessionController::completeBacking(
     std::shared_ptr<const juce::AudioBuffer<float>> preparedAudio,
     double preparedSampleRate)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId
         || session->backingStatus != "preparing"
         || preparedAudio == nullptr || preparedAudio->getNumSamples() <= 0
@@ -41,7 +41,7 @@ bool ScratchSessionController::completeBacking(
 bool ScratchSessionController::failBacking(const juce::String& sessionId,
                                            const juce::String& error)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId
         || session->backingStatus != "preparing")
         return false;
@@ -55,7 +55,7 @@ bool ScratchSessionController::failBacking(const juce::String& sessionId,
 
 bool ScratchSessionController::clearBacking(const juce::String& sessionId)
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || session->sessionId != sessionId || session->status == "recording")
         return false;
     backingSource.deactivate();
@@ -83,7 +83,7 @@ void ScratchSessionController::stopBackingLocked()
 
 bool ScratchSessionController::beginReplayBacking()
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!backingReadyLocked())
         return false;
     // A take is recorded with the bed running from its head (beginArmedRecordingLocked
@@ -96,7 +96,7 @@ bool ScratchSessionController::beginReplayBacking()
 
 void ScratchSessionController::endReplayBacking()
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     stopBackingLocked();
     backingSource.seekUs(0);
 }

@@ -94,7 +94,7 @@ std::int64_t ScratchActionRecorder::elapsedUs() const
 
 bool ScratchActionRecorder::start(const Config& cfg)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) == State::recording)
         return false;
 
@@ -114,7 +114,7 @@ bool ScratchActionRecorder::start(const Config& cfg)
 
 bool ScratchActionRecorder::stop(const FinalSnapshot& finalState)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) != State::recording)
         return false;
 
@@ -179,7 +179,7 @@ bool ScratchActionRecorder::stop(const FinalSnapshot& finalState)
 
 void ScratchActionRecorder::abort()
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     platterLane.clear();
     crossfaderLane.clear();
     completedPattern.reset();
@@ -194,7 +194,7 @@ void ScratchActionRecorder::recordPlatter(double absoluteTurns, bool touched)
 void ScratchActionRecorder::recordPlatterAt(
     std::int64_t timeUs, double absoluteTurns, bool touched)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) != State::recording)
         return;
 
@@ -223,7 +223,7 @@ void ScratchActionRecorder::recordPlatterAt(
 
 void ScratchActionRecorder::recordCrossfader(double value)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) != State::recording)
         return;
 
@@ -249,7 +249,7 @@ void ScratchActionRecorder::recordCrossfader(double value)
 
 std::optional<Pattern> ScratchActionRecorder::takeCompletedPattern()
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) != State::completed)
         return std::nullopt;
 
@@ -268,13 +268,13 @@ std::int64_t ScratchActionRecorder::currentDurationUs() const noexcept
 
 bool ScratchActionRecorder::belongsToSession(const juce::String& sessionId) const
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     return config.sessionId == sessionId;
 }
 
 void ScratchActionRecorder::updateOwnerDeck(DeckSide deck)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (currentState.load(std::memory_order_relaxed) == State::recording)
         config.ownerDeck = deck;
 }

@@ -40,7 +40,7 @@ bool ScratchSessionController::beginArmedRecordingLocked()
 
 bool ScratchSessionController::midiRecordToggle()
 {
-    std::lock_guard<std::mutex> lock(sessionMutex);
+    std::scoped_lock lock(sessionMutex);
     if (!session || !scratchSource.isActive())
         return false;
     auto& s = *session;

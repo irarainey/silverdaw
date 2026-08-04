@@ -446,11 +446,11 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("playbackFilePath", item.getProperty(kPlaybackFilePath).toString());
         }
-        if (item.hasProperty(kVariableTempo) && bool(item.getProperty(kVariableTempo)))
+        if (item.hasProperty(kVariableTempo) && static_cast<bool>(item.getProperty(kVariableTempo)))
         {
             obj->setProperty("variableTempo", true);
         }
-        if (item.hasProperty(kLowConfidence) && bool(item.getProperty(kLowConfidence)))
+        if (item.hasProperty(kLowConfidence) && static_cast<bool>(item.getProperty(kLowConfidence)))
         {
             obj->setProperty("lowConfidence", true);
         }
@@ -496,11 +496,11 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("mediaId", item.getProperty(kMediaId).toString());
         }
-        if (item.hasProperty(kCollapsed) && bool(item.getProperty(kCollapsed)))
+        if (item.hasProperty(kCollapsed) && static_cast<bool>(item.getProperty(kCollapsed)))
         {
             obj->setProperty("collapsed", true);
         }
-        if (item.hasProperty(kCoverArtHidden) && bool(item.getProperty(kCoverArtHidden)))
+        if (item.hasProperty(kCoverArtHidden) && static_cast<bool>(item.getProperty(kCoverArtHidden)))
         {
             obj->setProperty("coverArtHidden", true);
         }

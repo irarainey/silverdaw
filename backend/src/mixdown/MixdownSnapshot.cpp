@@ -53,7 +53,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
     static const juce::Identifier kSampleRate{"sampleRate"};
     static const juce::Identifier kChannelCount{"channelCount"};
 
-    const auto root = project.getTree();
+    const auto& root = project.getTree();
     if (!root.isValid()) return snapshot;
 
     for (int t = 0; t < root.getNumChildren(); ++t)

@@ -36,7 +36,7 @@ struct Biquad
 
     void reset() noexcept { x1 = x2 = y1 = y2 = 0.0; }
 
-    inline double process(double x) noexcept
+    double process(double x) noexcept
     {
         const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
         x2 = x1;

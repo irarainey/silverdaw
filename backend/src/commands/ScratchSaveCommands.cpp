@@ -168,8 +168,8 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
     const auto scratchDir =
         projectArtifactsBaseDir(session.currentPath, "scratches")
             .getChildFile(sanitiseScratchFileName(parsed->id));
-    const auto pattern = *parsed;
-    const juce::var notationVar = patternVar;
+    const auto& pattern = *parsed;
+    const juce::var& notationVar = patternVar;
 
     peakPool.addJob(
         [pattern, notationVar, preparedSource, sourceSampleRate, scratchDir, itemId, sampleName,
@@ -221,7 +221,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
             const double durationMs = static_cast<double>(baked.getNumSamples()) * 1000.0
                                     / juce::jmax(1.0, sourceSampleRate);
             const int channels = baked.getNumChannels();
-            const juce::String sourcePath = sourceFile.getFullPathName();
+            const juce::String& sourcePath = sourceFile.getFullPathName();
 
             juce::MessageManager::callAsync(
                 [pattern, itemId, safeName, bakedFile, durationMs, sourceSampleRate, channels,
