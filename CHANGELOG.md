@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- The stem separation dialog no longer names a model while loading, so a drums-only job stops appearing to load a vocal model it was never asked for.
 - Playback that silently stops working is now detected and recovered: if the audio device stops delivering audio, the engine restarts it instead of leaving the transport showing playback with a playhead that never moves and no sound.
 - Audio device start, stop and error events are now recorded in the log, so a device that drops out is visible rather than silent.
 - A clip's original tempo is now resolved the same way everywhere, so stems, saved clips and samples agree with the timeline, the beat grid and playback.
