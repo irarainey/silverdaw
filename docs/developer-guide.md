@@ -4032,8 +4032,16 @@ demand (**Actions ▸ CI ▸ Run workflow**), so a regression is caught before i
 reaches `main`. Runs are grouped per ref with `cancel-in-progress`, because a
 newer push makes the previous answer irrelevant.
 
-Every job runs on `windows-latest`. Silverdaw is Windows-x64 only, so a green
-result anywhere else would be false signal.
+Every job runs on `windows-2022`. Silverdaw is Windows-x64 only, so a green
+result anywhere else would be false signal — and the image is pinned rather
+than `windows-latest` because that label moved to Visual Studio 2026 in June
+2026, which has no VS 2022 instance for the generator to find. The deeper
+reason is parity: releases are built with VS 2022, and a gate on a different
+MSVC would validate a compiler nobody ships from. `windows-2022` is available
+for a transition period only; when it retires, migrate the local toolchain
+first, then bump the image, the generator, `.vscode/settings.json` and
+`scripts/Setup-Dev.ps1` together, deleting both build trees (CMake refuses to
+reuse a tree configured by a different generator).
 
 | Job | What it proves |
 | --- | --- |

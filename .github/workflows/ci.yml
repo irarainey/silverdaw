@@ -5,6 +5,21 @@
 # is a Windows-x64-only product (CONTEXT.md): a green build on another platform
 # would be false signal.
 #
+# The image is pinned to `windows-2022` rather than `windows-latest`, and the
+# pin is load-bearing. `windows-latest` moved to Windows Server 2025 with
+# Visual Studio 2026 in June 2026, which carries no VS 2022 instance, so a
+# `Visual Studio 17 2022` generator cannot be found there. More importantly the
+# toolchain that builds the shipping binaries is VS 2022, so a gate running a
+# different MSVC would validate a compiler nobody releases from and could fail
+# on findings a developer cannot reproduce.
+#
+# GitHub keeps `windows-2022` for a transition period only. When it retires,
+# migrate the local toolchain first — install VS 2026, reconfigure, and clear
+# whatever the newer MSVC and its headers report — then bump this image, the
+# generator below, `.vscode/settings.json` and `scripts/Setup-Dev.ps1`
+# together. Note that CMake refuses to reuse a build tree configured by a
+# different generator, so the trees must be deleted as part of that move.
+#
 # The tiers are separate jobs so a failure names itself in the checks list —
 # "Backend clang-tidy" is a more useful red than a single monolithic "CI" — and
 # so the independent ones run in parallel. Only `e2e` has to wait, because it
@@ -14,11 +29,11 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       run_e2e:
-        description: 'Run the end-to-end tier (installs a virtual audio device)'
+        description: "Run the end-to-end tier (installs a virtual audio device)"
         type: boolean
         default: true
 
@@ -31,26 +46,26 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '24'
+  NODE_VERSION: "24"
   # Pinned deliberately. -Strict turns warnings into errors, and different
   # clang-tidy releases disagree about what to warn on, so an unpinned runner
   # would fail the gate on findings a developer cannot reproduce. This is the
   # version the zero-warning baseline was established against.
-  CLANG_TIDY_VERSION: '22.1.8'
+  CLANG_TIDY_VERSION: "22.1.8"
 
 jobs:
   frontend:
     name: Frontend lint, typecheck and unit tests
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -62,9 +77,9 @@ jobs:
 
       - name: Resolve the pnpm store
         id: store
-        run: "echo \"path=$(pnpm store path --silent)\" >> $env:GITHUB_OUTPUT"
+        run: 'echo "path=$(pnpm store path --silent)" >> $env:GITHUB_OUTPUT'
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ steps.store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
@@ -84,18 +99,18 @@ jobs:
 
   backend:
     name: Backend build and unit tests
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The FetchContent dependencies (JUCE, Rubber Band, ONNX Runtime and the
       # rest) are a large download that changes only when CMakeLists.txt pins a
       # new revision, which is exactly the cache key.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: backend/build/_deps
           key: cmake-deps-vs-${{ hashFiles('backend/CMakeLists.txt') }}
@@ -125,15 +140,15 @@ jobs:
       # Handed to the e2e job so it runs the binary this job proved, and so the
       # backend is built once rather than twice.
       - name: Upload the backend build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-debug
           path: backend/build/SilverdawBackend_artefacts/Debug/
           retention-days: 1
 
   backend-lint:
-    name: Backend clang-tidy (-Strict)
-    runs-on: windows-latest
+    name: Backend linting
+    runs-on: windows-2022
     # Generous because this runs serially: the pinned clang-tidy ships without
     # LLVM's run-clang-tidy, so Invoke-ClangTidy.ps1 takes its single-process
     # path. Version parity is worth more than wall time for a gate.
@@ -142,11 +157,11 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       # Invoke-ClangTidy.ps1 prefers whatever `clang-tidy` is on PATH and only
       # falls back to the copy inside Visual Studio, whose version floats with
@@ -157,7 +172,7 @@ jobs:
           pip install "clang-tidy==${{ env.CLANG_TIDY_VERSION }}"
           clang-tidy --version
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: backend/build-release/_deps
           key: cmake-deps-ninja-${{ hashFiles('backend/CMakeLists.txt') }}
@@ -194,15 +209,15 @@ jobs:
     name: End-to-end journeys
     needs: backend
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_e2e }}
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -212,9 +227,9 @@ jobs:
       - name: Resolve the pnpm store
         id: store
         working-directory: frontend
-        run: "echo \"path=$(pnpm store path --silent)\" >> $env:GITHUB_OUTPUT"
+        run: 'echo "path=$(pnpm store path --silent)" >> $env:GITHUB_OUTPUT'
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ steps.store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
@@ -228,7 +243,7 @@ jobs:
       # development launch, with SILVERDAW_BACKEND_CONFIG=Debug as the fixture
       # sets it.
       - name: Download the backend build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: backend-debug
           path: backend/build/SilverdawBackend_artefacts/Debug/
@@ -249,7 +264,7 @@ jobs:
 
       - name: Upload the Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: |
