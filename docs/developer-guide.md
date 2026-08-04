@@ -4047,10 +4047,10 @@ reuse a tree configured by a different generator).
 | --- | --- |
 | **Frontend lint, typecheck and unit tests** | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | **Backend build and unit tests** | Visual Studio generator with `-DSILVERDAW_BUILD_TESTS=ON`, then `ctest` |
-| **Backend clang-tidy (-Strict)** | The zero-warning baseline, as an error gate |
+| **Backend linting** | The zero-warning clang-tidy baseline, run `-Strict` as an error gate |
 | **End-to-end journeys** | The Playwright tier against the backend the build job produced |
 
-Five details are worth knowing before changing it:
+Six details are worth knowing before changing it:
 
 - **`lame.exe` is not in the repository**, so both C++ jobs run
   `scripts/Fetch-Lame.ps1` first. A build without it cannot copy the encoder
@@ -4081,7 +4081,21 @@ Five details are worth knowing before changing it:
   throwaway self-signed certificate, re-signs the catalogue and trusts it for
   the life of the runner. That is only acceptable on a disposable machine, so
   the script refuses to run unless `CI=true` or `-AllowLocal` is passed. It is
-  a separate step so a driver problem never reads as a test failure.
+  a separate step so a driver problem never reads as a test failure. Both the
+  e2e job and the **backend** job install it: two unit tests drive the
+  transport (one seeks and reads the playhead back, one asserts `play()`
+  reaches `isPlaying()`) and neither names a JUCE device class, so their
+  dependency on an open device is easy to miss until they fail.
+- **The dependency cache is scoped to the runner image, and configure retries
+  once.** `backend/build*/_deps` holds *configured* sub-build trees that bake in
+  an absolute path to `cl.exe`, so a cache written on one image and restored
+  onto another sends CMake looking for a compiler that is not installed — the
+  failure names a missing `cl.exe` and says nothing about the cache, which is
+  why this is worth stating. The image label is therefore part of both the key
+  and the `restore-keys` fallback. A Visual Studio update *within* an image
+  moves that path too, so both configure steps discard the tree and try again
+  on failure, turning a stale cache into a slower green run rather than a
+  baffling red one.
 
 ## License
 

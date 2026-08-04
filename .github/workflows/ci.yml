@@ -110,11 +110,18 @@ jobs:
       # The FetchContent dependencies (JUCE, Rubber Band, ONNX Runtime and the
       # rest) are a large download that changes only when CMakeLists.txt pins a
       # new revision, which is exactly the cache key.
+      #
+      # The image label is part of the key, and the fallback is scoped to it.
+      # `_deps` holds *configured* sub-build trees that bake in an absolute path
+      # to cl.exe, so a cache written on one image and restored onto another
+      # points CMake at a compiler that is not there. That is not theoretical:
+      # a cache saved on the VS 2026 image failed a later run here by demanding
+      # `Visual Studio/18/.../14.51/cl.exe` on a VS 2022 runner.
       - uses: actions/cache@v6
         with:
           path: backend/build/_deps
-          key: cmake-deps-vs-${{ hashFiles('backend/CMakeLists.txt') }}
-          restore-keys: cmake-deps-vs-
+          key: cmake-deps-vs-windows-2022-${{ hashFiles('backend/CMakeLists.txt') }}
+          restore-keys: cmake-deps-vs-windows-2022-
 
       # lame.exe is not in the repository, and CMake copies it next to the
       # backend at build time.
@@ -125,14 +132,39 @@ jobs:
       # developer guide. It is multi-config, which is what the release build
       # needs, and CMake locates MSVC itself so no developer shell is required
       # here. Tests default to OFF, hence the explicit switch.
+      #
+      # The retry makes a stale dependency cache self-healing. Scoping the key
+      # to the image stops the known cross-image case, but a Visual Studio
+      # update *within* an image moves the compiler path too, and the resulting
+      # error names a missing cl.exe rather than the cache that caused it.
+      # Discarding the tree and configuring again turns that into a slower green
+      # run instead of a baffling red one.
       - name: Configure
-        run: >
-          cmake -S backend -B backend/build
-          -G "Visual Studio 17 2022"
-          -DSILVERDAW_BUILD_TESTS=ON
+        run: |
+          $configure = {
+            cmake -S backend -B backend/build `
+              -G "Visual Studio 17 2022" `
+              -DSILVERDAW_BUILD_TESTS=ON
+          }
+          & $configure
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '::warning::Configure failed; discarding the restored dependency cache and retrying from clean.'
+            Remove-Item backend/build -Recurse -Force -ErrorAction SilentlyContinue
+            & $configure
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
 
       - name: Build
         run: cmake --build backend/build --config Debug --parallel
+
+      # Two of the 399 tests drive the transport — one seeks and reads the
+      # playhead back, the other asserts `play()` reaches `isPlaying()`. Neither
+      # names a JUCE device class, so they look device-free, but the position
+      # they check is advanced by the audio callback and a runner has no sound
+      # hardware. Without this they fail, and they are worth keeping honest
+      # rather than skipping.
+      - name: Install a virtual audio device
+        run: pwsh -NoProfile -File scripts/Install-VirtualAudioDevice.ps1
 
       - name: Unit tests
         run: ctest --test-dir backend/build --build-config Debug --output-on-failure
@@ -182,11 +214,14 @@ jobs:
           pip install "clang-tidy==${{ env.CLANG_TIDY_VERSION }}"
           clang-tidy --version
 
+      # Keyed and scoped to the image for the same reason as the build job: the
+      # cached `_deps` sub-build trees bake in an absolute path to cl.exe, and
+      # this is the job that a VS 2026-written cache actually broke.
       - uses: actions/cache@v6
         with:
           path: backend/build-release/_deps
-          key: cmake-deps-ninja-${{ hashFiles('backend/CMakeLists.txt') }}
-          restore-keys: cmake-deps-ninja-
+          key: cmake-deps-ninja-windows-2022-${{ hashFiles('backend/CMakeLists.txt') }}
+          restore-keys: cmake-deps-ninja-windows-2022-
 
       - name: Fetch the LAME encoder
         run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
@@ -198,11 +233,22 @@ jobs:
       # Configure alone is enough: nothing in this project generates a header
       # at build time (no JuceHeader.h includes, and every add_custom_command is
       # POST_BUILD), so compiling first would only cost minutes.
+      #
+      # The retry makes a stale dependency cache self-healing, as in the build
+      # job — this is the exact failure that a VS 2026-written cache produced.
       - name: Configure the Ninja tree
-        run: >
-          pwsh -NoProfile -File scripts/Invoke-DevShell.ps1
-          "cmake -S backend -B backend/build-release -G Ninja
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+        run: |
+          $configure = {
+            pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+              "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+          }
+          & $configure
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host '::warning::Configure failed; discarding the restored dependency cache and retrying from clean.'
+            Remove-Item backend/build-release -Recurse -Force -ErrorAction SilentlyContinue
+            & $configure
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
 
       # The pinned binary has to win inside the developer shell too. Echoing the
       # version here means a PATH surprise shows up as an obvious mismatch in
