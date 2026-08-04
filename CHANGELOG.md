@@ -12,7 +12,7 @@
 - The first clip dropped into a project that already has a tempo now auto-warps to it.
 - A clip whose tempo only just misses the project tempo now warps on drop, shows the WARP badge and draws its beat markers on the warped grid.
 - Changing the project tempo now keeps the arrangement's musical shape, so a clip on bar 9 stays on bar 9.
-- Changing the project tempo now brings already-placed clips onto the new tempo when Match project tempo is on.
+- Changing the project tempo now brings already-placed clips onto the new tempo when Auto-warp clips to project tempo is on.
 - An active timeline selection, the timeline markers and the playhead now keep their place in the bars when the project tempo changes.
 - A hand-set project tempo is no longer seeded over by the next clip analysed.
 - A warped clip now plays and exports its full stretched length, however the warp was applied.
@@ -25,7 +25,8 @@
 - The Clip Editor now lets you correct the beat grid of a stem or saved clip that takes its tempo from the track it came from.
 - A simple sample no longer carries a BPM or a beat grid anywhere, and Chop to Grid is no longer offered on one.
 - Chop to Grid is now offered on any clip whose beat markers are drawn.
-- Opening a project saved before this release repairs library items stored with the wrong type.
+- A stem or sample created from a saved clip now inherits its beat grid instead of arriving without one.
+- Opening a project saved before this release repairs library items stored with the wrong type or carrying a tempo they should not have, without changing how anything sounds.
 
 ## 1.5.1
 

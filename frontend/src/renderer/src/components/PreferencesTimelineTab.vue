@@ -51,9 +51,11 @@ const skipButtonTarget = defineModel<SkipButtonTarget>('skipButtonTarget', { req
       <span class="flex-1">
         <span class="block font-medium text-zinc-200">Auto-warp clips to project tempo</span>
         <span class="mt-0.5 block text-zinc-500">
-          Automatically enable warp when you drop music onto a track, including
-          music with a variable detected tempo. Turn off to keep clips at their
-          native tempo; you can still enable warp via right-click ▸ Warp.
+          Keep music at the project tempo: enable warp when you drop music onto a
+          track, including music with a variable detected tempo, and bring clips
+          already on the timeline onto the new tempo when you change the project
+          BPM. Turn off to keep clips at their native tempo; you can still enable
+          warp via right-click ▸ Warp.
         </span>
       </span>
     </label>

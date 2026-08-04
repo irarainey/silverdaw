@@ -583,9 +583,12 @@ class ProjectState : public juce::ValueTree::Listener
      *  sample demoted to a plain source, or a stem demoted by a reanalyse). Returns how
      *  many items were repaired. Applied wherever a project tree is read; see the
      *  definition. The static overload works on a bare LIBRARY tree so the cross-project
-     *  import — which reads a tree without building a ProjectState — repairs it too. */
-    int repairLegacyLibraryItemKinds();
-    static int repairLibraryItemKinds(juce::ValueTree& library);
+     *  import — which reads a tree without building a ProjectState — repairs it too.
+     *
+     *  `projectDir` is the folder the tree was read from. Generated artifacts are
+     *  identified by living under it, so without it only the id-prefix rule can run. */
+    int repairLegacyLibraryItemKinds(const juce::File& projectDir = {});
+    static int repairLibraryItemKinds(juce::ValueTree& library, const juce::File& projectDir);
 
     // Duration in ms for a library item by id, or 0 when unknown. Used to build
     // a rigid manual beat grid spanning the source.
@@ -650,7 +653,7 @@ class ProjectState : public juce::ValueTree::Listener
     }
 
     // Preserves root node identity for listeners; clears undo because loads are a new baseline.
-    juce::Result replaceTree(const juce::ValueTree& newTree);
+    juce::Result replaceTree(const juce::ValueTree& newTree, const juce::File& projectDir = {});
 
     // Rewrite every absolute filePath/playbackFilePath that lives under `oldRoot`
     // so it points at the same relative location under `newRoot`. Used when a
@@ -778,6 +781,16 @@ class ProjectState : public juce::ValueTree::Listener
      * `ProjectStateLibraryAnalysis.cpp`.
      */
     static bool isOneShotItem(const juce::ValueTree& item);
+
+    /** As {@link isOneShotItem}, but inheriting the classification through
+     *  `sourceItemId` the way the renderer's `libraryItemIsSimple` does. Use this
+     *  wherever a tempo is about to be resolved (ADR 0024). */
+    static bool isOneShotItemInherited(const juce::ValueTree& item, const juce::ValueTree& library);
+
+    /** Strip the grid from one-shot items an older project saved with one, pinning the
+     *  ratio it implied onto any clip that was warping against it so the audio is
+     *  unchanged. Runs inside the load migration; see the definition. */
+    static void migrateOneShotTempo(juce::ValueTree& root);
 
     /**
      * The tempo implied by an item's recorded musical length, or 0 when it has none.

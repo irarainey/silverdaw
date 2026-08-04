@@ -571,6 +571,92 @@ void testLegacySampleModeMigratesToAudioType()
     }
 }
 
+void testLegacyOneShotTempoIsConvertedToPinnedClipRatio()
+{
+    // A one-shot carries no tempo, but a project saved before that rule can hold an
+    // item that is (or migrates to) "simple" while still storing a detected BPM. The
+    // resolver answers 0 for such an item, so a clip warping against it would lose its
+    // ratio and play dry at its original length. The load must instead pin the ratio
+    // that BPM implied onto the clip — same audio, consistent data.
+    juce::ValueTree project(juce::Identifier{"PROJECT"});
+    project.setProperty("name", "LegacyOneShot", nullptr);
+    project.setProperty("bpm", 120.0, nullptr);
+
+    juce::ValueTree library(juce::Identifier{"LIBRARY"});
+    juce::ValueTree hit(juce::Identifier{"ITEM"});
+    hit.setProperty("id", "hit", nullptr);
+    hit.setProperty("filePath", "C:\\audio\\hit.wav", nullptr);
+    hit.setProperty("kind", "audio-file", nullptr);
+    hit.setProperty("sampleMode", "sample", nullptr); // migrates to audioType "simple"
+    hit.setProperty("bpm", 96.0, nullptr);
+    hit.setProperty("beatAnchorSec", 0.25, nullptr);
+    library.appendChild(hit, nullptr);
+    // An unclassified cut of that one-shot inherits the classification, so its own
+    // stored tempo must go the same way.
+    juce::ValueTree cut(juce::Identifier{"ITEM"});
+    cut.setProperty("id", "cut", nullptr);
+    cut.setProperty("filePath", "C:\\audio\\cut.wav", nullptr);
+    cut.setProperty("kind", "sample", nullptr);
+    cut.setProperty("sourceItemId", "hit", nullptr);
+    cut.setProperty("bpm", 128.0, nullptr);
+    library.appendChild(cut, nullptr);
+    // A music item must keep everything it has.
+    juce::ValueTree loop(juce::Identifier{"ITEM"});
+    loop.setProperty("id", "loop", nullptr);
+    loop.setProperty("filePath", "C:\\audio\\loop.wav", nullptr);
+    loop.setProperty("kind", "audio-file", nullptr);
+    loop.setProperty("sampleMode", "music", nullptr);
+    loop.setProperty("bpm", 100.0, nullptr);
+    library.appendChild(loop, nullptr);
+    project.appendChild(library, nullptr);
+
+    juce::ValueTree track(juce::Identifier{"TRACK"});
+    track.setProperty("id", "t1", nullptr);
+    const auto addClip = [&track](const char* id, const char* itemId, bool warp, bool pinned) {
+        juce::ValueTree clip(juce::Identifier{"CLIP"});
+        clip.setProperty("id", id, nullptr);
+        clip.setProperty("libraryItemId", itemId, nullptr);
+        clip.setProperty("startMs", 0.0, nullptr);
+        clip.setProperty("durationMs", 1000.0, nullptr);
+        clip.setProperty("warpEnabled", warp, nullptr);
+        if (pinned) clip.setProperty("tempoRatio", 2.0, nullptr);
+        track.appendChild(clip, nullptr);
+    };
+    addClip("cWarped", "hit", true, false);
+    addClip("cPinned", "hit", true, true);
+    addClip("cDry", "hit", false, false);
+    addClip("cLoop", "loop", true, false);
+    project.appendChild(track, nullptr);
+    project.appendChild(juce::ValueTree(juce::Identifier{"MARKERS"}), nullptr);
+
+    silverdaw::ProjectState state;
+    state.replaceTree(project);
+
+    const auto root = state.getTree();
+    const auto lib = root.getChildWithName(juce::Identifier{"LIBRARY"});
+    const auto itemOf = [&](const char* id) {
+        return lib.getChildWithProperty(juce::Identifier{"id"}, id);
+    };
+    require(!itemOf("hit").hasProperty("bpm"), "a one-shot must not keep a stored tempo");
+    require(!itemOf("hit").hasProperty("beatAnchorSec"), "a one-shot must not keep a beat anchor");
+    require(!itemOf("cut").hasProperty("bpm"), "a cut of a one-shot is a one-shot too");
+    requireNear(static_cast<double>(itemOf("loop").getProperty("bpm", 0.0)), 100.0, 1e-9,
+                "a music item keeps its tempo");
+    require(state.getLibraryItemBpm("hit") == 0.0, "the resolver reports no tempo for a one-shot");
+
+    const auto clips = root.getChildWithProperty(juce::Identifier{"id"}, "t1");
+    const auto clipOf = [&](const char* id) {
+        return clips.getChildWithProperty(juce::Identifier{"id"}, id);
+    };
+    requireNear(static_cast<double>(clipOf("cWarped").getProperty("tempoRatio", 0.0)), 120.0 / 96.0,
+                1e-9, "a warped clip keeps the stretch its one-shot's old tempo implied");
+    requireNear(static_cast<double>(clipOf("cPinned").getProperty("tempoRatio", 0.0)), 2.0, 1e-9,
+                "an already-pinned clip states its own ratio and must be left alone");
+    require(!clipOf("cDry").hasProperty("tempoRatio"), "an unwarped clip must not gain a ratio");
+    require(!clipOf("cLoop").hasProperty("tempoRatio"),
+            "a clip following a music item must keep tracking the project tempo");
+}
+
 void testLegacyLibraryKindMigrates()
 {
     juce::ValueTree project(juce::Identifier{"PROJECT"});
@@ -640,6 +726,8 @@ void addPersistenceTests(std::vector<TestCase>& tests)
     tests.push_back({"CLIP_ADD waveform request defaults to enabled", testClipAddWaveformRequestDefaultsToEnabled});
     tests.push_back({"PeaksCache concurrent stores remain valid", testPeaksCacheConcurrentStoresRemainValid});
     tests.push_back({"legacy sampleMode migrates to audioType", testLegacySampleModeMigratesToAudioType});
+    tests.push_back({"legacy one-shot tempo becomes a pinned clip ratio",
+                     testLegacyOneShotTempoIsConvertedToPinnedClipRatio});
     tests.push_back({"legacy library kind migrates to source/sample/clip", testLegacyLibraryKindMigrates});
 }
 

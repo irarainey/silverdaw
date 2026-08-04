@@ -1992,7 +1992,8 @@ every item corrects behaviour that already shipped. See ADR 0024.
    stretch a clip the project state calls unwarped.
 6. [x] **Changing the project tempo keeps the musical shape.**
    `retimeClipsForTempoChange` rescales every clip start by
-   `previousBpm / newBpm`, the **Match project tempo** preference rides along as
+   `previousBpm / newBpm`, the **Auto-warp clips to project tempo** preference
+   rides along as
    the optional `autoWarp` flag on `PROJECT_SET_BPM`, and an active timeline
    selection is rescaled by the same factor in the renderer
    (`uiStore.retimeTimelineSelectionForTempoChange`) because it is view state

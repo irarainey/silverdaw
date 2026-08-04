@@ -530,7 +530,9 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
             ? juce::jmax(0.0, static_cast<double>(stem.getProperty(juce::Identifier{"sourceInMs"}, 0.0))) / 1000.0
             : 0.0;
 
-    const double bpm = static_cast<double>(source.getProperty(juce::Identifier{"bpm"}, 0.0));
+    // Resolved, not raw (ADR 0024): a source may hold its tempo only through its own
+    // parent, and a one-shot must pass nothing on.
+    const double bpm = projectState.getLibraryItemBpm(sourceItemId);
     const double beatAnchorSec =
         static_cast<double>(source.getProperty(juce::Identifier{"beatAnchorSec"}, 0.0)) - windowStartSec;
     const bool variableTempo = static_cast<bool>(source.getProperty(juce::Identifier{"variableTempo"}, false));
@@ -565,7 +567,20 @@ void inheritAnalysisFromSource(const juce::String& itemId, const juce::String& s
     // this is the one place that knows both the trusted tempo and the window. A later
     // reanalysis of the item's own (often only a few seconds of) audio can then change
     // its detected BPM without changing where it lands on the grid.
-    recordMusicalLength(itemId, bpm, projectState.getLibraryItemDurationMs(itemId), projectState);
+    //
+    // Measure the window in *source* time. The source's BPM describes the source's
+    // audio, so pairing it with the derived file's own duration is only valid when
+    // nothing stretched that file — and a sample saved with its warp baked in is
+    // exactly the case where it did. Multiplying an unstretched tempo by a stretched
+    // duration lands on the wrong beat count, and a musical length is written once and
+    // outranks every later reanalysis, so a wrong one never gets corrected. Fall back
+    // to the file's duration only when there is no recorded window, which means the
+    // derived item spans the whole source and the two are the same number.
+    const double recordedWindowMs =
+        static_cast<double>(stem.getProperty(juce::Identifier{"sourceDurationMs"}, 0.0));
+    const double windowMs = recordedWindowMs > 0.0 ? recordedWindowMs
+                                                   : projectState.getLibraryItemDurationMs(itemId);
+    recordMusicalLength(itemId, bpm, windowMs, projectState);
     // A stem has no independent confidence measurement; leave its lowConfidence
     // unset so it defers its sample/music classification to the source (the stem
     // carries derivedFrom.sourceItemId). This keeps a stem visible as music

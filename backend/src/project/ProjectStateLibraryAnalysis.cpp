@@ -15,6 +15,27 @@ bool ProjectState::isOneShotItem(const juce::ValueTree& item)
     return item.getProperty(kAudioType).toString() == "simple";
 }
 
+// The classification is inherited: an item that says nothing about itself is a
+// one-shot when the item it was cut from is one. Mirrors the renderer's
+// `libraryItemIsSimple` exactly, so both processes answer this the same way before
+// either resolves a tempo (ADR 0024).
+bool ProjectState::isOneShotItemInherited(const juce::ValueTree& item,
+                                          const juce::ValueTree& library)
+{
+    const auto own = item.getProperty(kAudioType).toString();
+    if (own == "simple") return true;
+    if (own == "music") return false;
+    const auto sourceItemId = item.getProperty(kSourceItemId, {}).toString();
+    if (sourceItemId.isEmpty() || !library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto candidate = library.getChild(i);
+        if (candidate.getProperty(kId).toString() == sourceItemId)
+            return candidate.getProperty(kAudioType).toString() == "simple";
+    }
+    return false;
+}
+
 // Beats and duration both describe the file on disk, so this stays correct even for
 // a sample exported with its warp baked in: the export stretches the duration and the
 // beat count is unchanged, which is exactly the ratio that lands it back on the grid.

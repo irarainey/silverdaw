@@ -753,24 +753,35 @@ void testProjectStateRepairsDemotedStemKind()
 {
     // Reanalysing a stem used to re-add it without a kind, demoting it to a plain
     // source. A demoted stem then disappeared from the cross-project import, which
-    // only offers stem and sample items. Generated artifacts are stored under a
-    // project-relative category folder, so the path restores the kind exactly.
+    // only offers stem and sample items. Generated artifacts live under a category
+    // folder inside the project folder, so the path restores the kind exactly.
+    //
+    // Paths are absolute here because that is the only shape this rule ever sees: a
+    // load rewrites every stored portable path to an absolute one before the tree is
+    // installed, so the repair must decide by containment in the project folder, not
+    // by whether the path looks relative.
     silverdaw::ProjectState state;
     const juce::Identifier libraryId{"LIBRARY"};
     const juce::Identifier idId{"id"};
     const juce::Identifier kindId{"kind"};
 
-    const juce::String stemDir = "stems\\02 T Plays It Cool-stems-2\\";
-    require(state.addLibraryItem("l20", stemDir + "T Plays It Cool - drums - 5ccde04d.wav",
+    const auto projectDir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("silverdaw-repair-kinds-test");
+    const auto inProject = [&](const juce::String& relative) {
+        return projectDir.getChildFile(relative).getFullPathName();
+    };
+
+    const juce::String stemDir = "stems/02 T Plays It Cool-stems-2/";
+    require(state.addLibraryItem("l20", inProject(stemDir + "T Plays It Cool - drums - 5ccde04d.wav"),
                                  "drums.wav", 268094.0, 44100, 2, {}, {}, "source", {}, "l1"),
             "demoted drums stem should add");
-    require(state.addLibraryItem("l21", stemDir + "T Plays It Cool - bass - 5ccde04d.wav",
+    require(state.addLibraryItem("l21", inProject(stemDir + "T Plays It Cool - bass - 5ccde04d.wav"),
                                  "bass.wav", 268094.0, 44100, 2, {}, {}, "stem", {}, "l1"),
             "intact bass stem should add");
-    require(state.addLibraryItem("ch1", "channels\\left.wav", "left.wav", 100.0, 44100, 1,
+    require(state.addLibraryItem("ch1", inProject("channels/left.wav"), "left.wav", 100.0, 44100, 1,
                                  {}, {}, "source", {}, "l1"),
             "demoted channel split should add");
-    require(state.addLibraryItem("sc1", "scratches\\bake.wav", "bake.wav", 100.0, 44100, 2,
+    require(state.addLibraryItem("sc1", inProject("scratches/bake.wav"), "bake.wav", 100.0, 44100, 2,
                                  {}, {}, "source"),
             "demoted scratch bake should add");
     require(state.addLibraryItem("l1", "C:\\Music\\02 T Plays It Cool.mp3", "t.mp3", 268094.0,
@@ -780,8 +791,8 @@ void testProjectStateRepairsDemotedStemKind()
                                  44100, 2, {}, {}, "source"),
             "external file under a same-named folder should add");
 
-    require(state.repairLegacyLibraryItemKinds() == 3,
-            "only the three project-relative artifacts should be repaired");
+    require(state.repairLegacyLibraryItemKinds(projectDir) == 3,
+            "only the three artifacts inside the project folder should be repaired");
 
     const auto library = state.getTree().getChildWithName(libraryId);
     const auto kindOf = [&](const char* id) {
@@ -792,9 +803,12 @@ void testProjectStateRepairsDemotedStemKind()
     requireEqual(kindOf("ch1"), "stem", "a channel split reuses the stem kind");
     requireEqual(kindOf("sc1"), "sample", "a scratch bake is a sample");
     requireEqual(kindOf("l1"), "source", "the original source must be left alone");
-    requireEqual(kindOf("ext"), "source", "an absolute path must never be reclassified");
+    requireEqual(kindOf("ext"), "source",
+                 "a file outside the project folder must never be reclassified");
 
-    require(state.repairLegacyLibraryItemKinds() == 0, "repair should be idempotent");
+    require(state.repairLegacyLibraryItemKinds(projectDir) == 0, "repair should be idempotent");
+    require(state.repairLegacyLibraryItemKinds() == 0,
+            "with no project folder there is nothing the folder rule can decide");
 }
 
 void testProjectStateTempoInheritanceSourceId()
@@ -1155,6 +1169,35 @@ void testExplicitSampleDoesNotSeed()
     silverdaw::maybeSeedProjectBpmFor("l1", state, bridge);
     requireNear(state.getBpm(), original, 1e-6, "a user-classified sample must not seed the tempo");
     require(!state.isBpmSeeded(), "a blocked seed must leave the project unseeded");
+}
+
+void testOneShotClassificationIsInheritedByResolver()
+{
+    // Both processes must answer "does this item have a tempo?" identically (ADR 0024),
+    // and the renderer decides one-shot-ness by inheritance before resolving anything.
+    // These are the two shapes where resolving first used to disagree with it.
+    silverdaw::ProjectState state;
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 500.0, 44100, 2),
+            "one-shot source should add");
+    require(state.setLibraryItemAudioType("hit", "simple"), "one-shot classification applies");
+
+    // (a) An unclassified cut of a one-shot that detected a tempo of its own. The
+    // classification is inherited, so that detection must not be handed out.
+    require(state.addLibraryItem("cut", "C:\\audio\\cut.wav", "cut.wav", 250.0, 44100, 2, {}, {},
+                                 "sample", {}, "hit"),
+            "cut of the one-shot should add");
+    require(state.setLibraryItemBpm("cut", 128.0) || true, "detection may or may not be accepted");
+    requireNear(state.getLibraryItemBpm("cut"), 0.0, 1e-9,
+                "a cut of a one-shot reports no tempo even if it stored one");
+
+    // (b) A cut the user explicitly called music. That says this item has a pulse; it
+    // does not give its one-shot parent one to lend.
+    require(state.addLibraryItem("mus", "C:\\audio\\mus.wav", "mus.wav", 250.0, 44100, 2, {}, {},
+                                 "sample", {}, "hit"),
+            "music cut of the one-shot should add");
+    require(state.setLibraryItemAudioType("mus", "music"), "music classification applies");
+    requireNear(state.getLibraryItemBpm("mus"), 0.0, 1e-9,
+                "a music cut inherits no tempo from a one-shot parent");
 }
 
 void testProjectStateScratchLibraryMetadata()
@@ -1737,6 +1780,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Pre-existing library BPMs do not block the first seed", testStemBpmsDoNotBlockFirstSeed});
     tests.push_back({"Seeded project BPM is not overridden by later clips", testSeededProjectIsNotReSeeded});
     tests.push_back({"User-classified sample does not seed project BPM", testExplicitSampleDoesNotSeed});
+    tests.push_back({"One-shot classification is inherited by the BPM resolver",
+                     testOneShotClassificationIsInheritedByResolver});
     tests.push_back({"Library item duration lookup by id", testLibraryItemDurationLookup});
     tests.push_back({"ProjectState scratch library metadata round-trips", testProjectStateScratchLibraryMetadata});
     tests.push_back({"ProjectState rename is not undoable", testProjectStateRenameIsNotUndoable});

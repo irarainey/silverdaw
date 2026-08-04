@@ -1770,6 +1770,36 @@ no longer warps to a whole number of bars. `LIBRARY_REANALYSE` is an explicit
 instruction from the user, runs through `forceLibraryItemAnalysis`, and keeps
 whatever it detects.
 
+"A one-shot has no tempo" is decided by **inheritance** in both
+processes — `ProjectState::isOneShotItemInherited` and
+`libraryItemIsSimple` — and decided *before* any tempo is resolved. An
+unclassified cut of a one-shot is a one-shot, and an item the user has
+explicitly called music still cannot borrow a tempo from a one-shot parent,
+because that parent has none to lend. Applying the rule at different depths on
+the two sides is the same failure ADR 0024 exists to prevent.
+
+**Legacy content is repaired forward, never left to the user.** A project
+saved before these rules can hold shapes they forbid, so
+`ProjectState::replaceTree` runs its migrations on every load:
+`migrateLegacyAudioType` and `migrateLegacyLibraryKind` translate the older
+property names, `migrateOneShotTempo` removes a grid from an item that is a
+one-shot but still stores one, and `repairLibraryItemKinds` restores the
+`kind` of a generated artifact that was demoted to a plain source. Two rules
+make this safe to do silently. First, nothing may change how an existing
+arrangement sounds: before stripping a one-shot's tempo,
+`migrateOneShotTempo` pins the ratio that tempo implied onto every clip that
+was warping against it, so those clips keep exactly the stretch the user saved
+while opting out of project-tempo tracking. Second, the repairs run inside the
+load's `SuppressDirtyScope` and before `clearUndoHistory`, so opening an old
+project neither marks it dirty nor leaves a phantom undo step — it is simply
+correct from that load on, and persists that way on its next save.
+
+Note that `repairLibraryItemKinds` decides "is this a generated artifact?" by
+containment under the project folder rather than by the path *looking*
+relative: `ProjectFile::loadTree` resolves every portable path to an absolute
+one before the tree is installed, so the in-memory tree never holds a relative
+path to test.
+
 **Musical length: how many bars, not how fast.** A derived item also records
 `musicalBeats` — how many whole beats of music its file contains, measured against
 the grid of the item it was cut from by `recordMusicalLength`
@@ -1781,17 +1811,25 @@ recorded only when the cut really is a whole number of beats (a tolerance that k
 the implied stretch under ~1%); anything else records nothing rather than being
 rounded onto the grid. `SampleExport` records it from the **source window** rather
 than the exported file, so a sample saved with its warp baked in still records the
-true count. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
+true count. `inheritAnalysisFromSource` measures the same way, preferring the
+item's recorded `sourceDurationMs` over its own file duration: the source's
+tempo describes the source's audio, so pairing it with a file that was rendered
+stretched would land on the wrong beat count — and since a musical length is
+written once and outranks every later reanalysis, a wrong one would never be
+corrected. A hand-set tempo clears it (`setLibraryItemManualTempo`) — that is the
 explicit override — while a reanalysis deliberately keeps it.
 
 On load, `ProjectState::repairLibraryItemKinds` promotes library items an older
 build persisted with the wrong `kind`: any `sample-`-prefixed item stored as a plain
-source back to `kind: "sample"`, and any item whose project-relative path sits under
-`stems/`, `channels/`, `samples/` or `scratches/` back to the kind that folder
-implies — a reanalysis used to demote a stem to a plain source, which then vanished
-from the import-from-project picker. It runs both from `ProjectFile::load` and from
+source back to `kind: "sample"`, and any item whose path sits under the project
+folder's `stems/`, `channels/`, `samples/` or `scratches/` back to the kind
+that folder implies — a reanalysis used to demote a stem to a plain source, which
+then vanished from the import-from-project picker. It runs from
+`ProjectState::replaceTree`, so it covers `ProjectFile::load`, and separately from
 `loadSourceProjectImport`, which reads a project tree without building a
 `ProjectState`, so an old project imports correctly without being opened first.
+Both callers pass the project's own folder, which is what makes the containment
+test above possible.
 
 **Warping on drop is a question about drift, not about the ratio.** Auto-warp on
 drop engages whenever the mismatch between the source tempo and the project tempo
@@ -1815,10 +1853,16 @@ and spaced its beat markers on the unwarped grid.
 musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
 by `previousBpm / newBpm`, so a clip on bar 9 stays on bar 9. Without it, warped
 clips re-stretch in place while their starts stay in milliseconds and the
-arrangement drifts apart on every tempo edit. When the renderer's **Match project
+arrangement drifts apart on every tempo edit. When the renderer's **Auto-warp clips to project
 tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
 since the preference lives in the renderer — clips that are not warped but whose
 source has a tempo are warped first, so nothing is left behind at the old tempo.
+That is the same preference that governs warping a clip *on drop*, deliberately:
+one setting expresses one intent ("keep music at the project tempo"), and it holds
+at every moment the project tempo is established. Widening it rather than minting a
+second key is explicitly sanctioned by [ADR 0019](adr/0019-backward-compatibility-released-product.md) —
+both stored values still mean for the user exactly what they chose, so it is a
+widening and not a repurposing.
 Those clips are then re-stretched through `engine.setClipWarp` with `enabled`
 explicitly `true`: the engine reads an unset `enabled` as "keep the current engine
 state", and a clip that has never been warped has no warp processor, so leaving it
@@ -2793,7 +2837,8 @@ sidebar:
 - **Timeline** — timeline behaviour: follow-playback auto-scroll, **set project
   tempo from first clip** (seed a new project's BPM from the first clip dropped),
   **auto-warp clips to project tempo** (default on, including variable-tempo
-  music), beat-grid alignment after analysis, and the transport **previous /
+  music; governs both the drop and a later project-BPM change), beat-grid
+  alignment after analysis, and the transport **previous /
   next button target**.
 - **Project** — default Save / Open / Import directories, background autosave
   configuration, and **clean up project files on remove** (with a *cannot be

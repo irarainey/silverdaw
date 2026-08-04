@@ -406,7 +406,83 @@ void migrateLegacyLibraryKind(juce::ValueTree& tree)
 
 } // namespace
 
-juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
+// A one-shot may not carry a tempo (ADR 0024), and classifying one now strips its
+// grid — but projects saved before that rule can hold an item that is "simple" and
+// still has a detected `bpm`, either because it was classified before the strip
+// existed or because `migrateLegacyAudioType` above has just derived "simple" from
+// a legacy `sampleMode`. The resolver would then answer 0 for it, and a clip warped
+// to follow the project tempo against that item would quietly fall back to a ratio
+// of 1.0: drawn and played at its original length, tens of percent out, with
+// everything after it on the track left in the wrong place.
+//
+// So convert rather than reinterpret. Pin the ratio the item's stored tempo implies
+// onto every clip that was following it, which preserves exactly the audio the user
+// saved, and only then strip the grid. A pinned ratio is honoured everywhere and
+// opts out of project-BPM tracking, so those clips keep sounding as they did while
+// the item becomes consistent from this load on.
+void ProjectState::migrateOneShotTempo(juce::ValueTree& root)
+{
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return;
+
+    const auto isSimple = [&library](const juce::ValueTree& item) {
+        const auto own = item.getProperty(kAudioType).toString();
+        if (own == "simple") return true;
+        if (own == "music") return false;
+        // Classification is inherited, so an unclassified cut of a one-shot is one too.
+        const auto sourceId = item.getProperty(kSourceItemId, {}).toString();
+        if (sourceId.isEmpty()) return false;
+        for (int i = 0; i < library.getNumChildren(); ++i)
+        {
+            const auto candidate = library.getChild(i);
+            if (candidate.getProperty(kId).toString() == sourceId)
+                return candidate.getProperty(kAudioType).toString() == "simple";
+        }
+        return false;
+    };
+
+    const double projectBpm = static_cast<double>(root.getProperty(kBpm, 0.0));
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (!item.hasType(kLibraryItem)) continue;
+        if (!isSimple(item)) continue;
+        const double legacyBpm = static_cast<double>(item.getProperty(kBpm, 0.0));
+        const bool hasGrid = item.hasProperty(kBpm) || item.hasProperty(kBeats)
+                             || item.hasProperty(kBeatAnchorSec) || item.hasProperty(kMusicalBeats)
+                             || item.hasProperty(kVariableTempo) || item.hasProperty(kLowConfidence);
+        if (!hasGrid) continue;
+
+        if (legacyBpm > 0.0 && projectBpm > 0.0)
+        {
+            const auto itemId = item.getProperty(kId).toString();
+            for (int t = 0; t < root.getNumChildren(); ++t)
+            {
+                auto track = root.getChild(t);
+                if (!track.hasType(kTrack)) continue;
+                for (int c = 0; c < track.getNumChildren(); ++c)
+                {
+                    auto clip = track.getChild(c);
+                    if (!clip.hasType(kClip)) continue;
+                    if (clip.getProperty(kLibraryItemId, {}).toString() != itemId) continue;
+                    // An already-pinned clip states its own ratio and needs nothing.
+                    if (!static_cast<bool>(clip.getProperty(kWarpEnabled, false))) continue;
+                    if (clip.hasProperty(kTempoRatio)) continue;
+                    clip.setProperty(kTempoRatio, projectBpm / legacyBpm, nullptr);
+                }
+            }
+        }
+
+        item.removeProperty(kBpm, nullptr);
+        item.removeProperty(kBeats, nullptr);
+        item.removeProperty(kBeatAnchorSec, nullptr);
+        item.removeProperty(kMusicalBeats, nullptr);
+        item.removeProperty(kVariableTempo, nullptr);
+        item.removeProperty(kLowConfidence, nullptr);
+    }
+}
+
+juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree, const juce::File& projectDir)
 {
     if (!newTree.isValid() || !newTree.hasType(kProject))
     {
@@ -421,6 +497,7 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         removeLegacyClipFadeProperties(root);
         migrateLegacyAudioType(root);
         migrateLegacyLibraryKind(root);
+        migrateOneShotTempo(root);
         for (int i = 0; i < root.getNumChildren(); ++i)
         {
             auto track = root.getChild(i);
@@ -508,6 +585,14 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree)
         if (!root.getChildWithName(kMarkers).isValid())
         {
             root.appendChild(juce::ValueTree(kMarkers), nullptr);
+        }
+        // Repair old data alongside the other read-old migrations, inside the suppress
+        // scope: done after markClean() instead, opening a legacy project would leave it
+        // dirty and immediately prompt to save. The repaired tree is the clean baseline,
+        // so the fix rides along with the next real edit the user makes.
+        {
+            auto library = root.getChildWithName(kLibrary);
+            repairLibraryItemKinds(library, projectDir);
         }
         undoManager.clearUndoHistory();
     }

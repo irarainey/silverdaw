@@ -94,7 +94,7 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
     // repair. Apply it here too, or a stem an older build demoted to a plain source stays
     // invisible to this import until that project is opened and re-saved.
     auto library = tree.getChildWithName(kLibrary);
-    ProjectState::repairLibraryItemKinds(library);
+    ProjectState::repairLibraryItemKinds(library, sourceProjectFile.getParentDirectory());
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
         const auto item = library.getChild(i);

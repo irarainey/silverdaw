@@ -526,7 +526,13 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
         if (item.getProperty(kId).toString() == itemId)
         {
             foundItem = true;
-            if (isOneShotItem(item)) return 0.0;
+            // Answer "is this a one-shot?" before resolving any tempo, and answer it
+            // the way the renderer's `libraryItemIsSimple` does — by inheritance. Left
+            // to the fallback below, an unclassified cut of a one-shot that carries a
+            // detected BPM of its own would resolve to that BPM here while the renderer
+            // resolved to nothing: the clip played stretched and drawn native, which is
+            // exactly the split ADR 0024 exists to prevent.
+            if (isOneShotItemInherited(item, library)) return 0.0;
             // A recorded musical length is a measurement of the audio itself ("this
             // file is exactly N beats"), so it outranks any tempo opinion — including
             // a reanalysis, whose few seconds of audio are exactly what makes short
@@ -548,9 +554,10 @@ double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
             const auto item = library.getChild(i);
             if (item.getProperty(kId).toString() == sourceItemId)
             {
-                // A one-shot classification is inherited, so a clip cut from a
-                // one-shot has no tempo to borrow either.
-                if (isOneShotItem(item)) return 0.0;
+                // The item itself was already judged above; the source is checked
+                // again here because it may be explicitly "music" over a one-shot
+                // parent of its own.
+                if (isOneShotItemInherited(item, library)) return 0.0;
                 return static_cast<double>(item.getProperty(kBpm, 0.0));
             }
         }
