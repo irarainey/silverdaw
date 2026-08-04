@@ -191,9 +191,6 @@ jobs:
   backend-lint:
     name: Backend linting
     runs-on: windows-2022
-    # Generous because this runs serially: the pinned clang-tidy ships without
-    # LLVM's run-clang-tidy, so Invoke-ClangTidy.ps1 takes its single-process
-    # path. Version parity is worth more than wall time for a gate.
     timeout-minutes: 60
     defaults:
       run:
@@ -250,16 +247,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
 
-      # The pinned binary has to win inside the developer shell too. Echoing the
-      # version here means a PATH surprise shows up as an obvious mismatch in
-      # the log rather than as unexplained findings from the gate below.
-      - name: Confirm clang-tidy inside the developer shell
-        run: pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 "clang-tidy --version"
-
+      # The developer shell puts Visual Studio's own LLVM ahead of everything
+      # else on PATH, so the pinned binary loses unless it is named explicitly.
+      # It is resolved here, outside the shell, and passed in. The echo is kept
+      # because it is what caught the substitution in the first place: the gate
+      # was silently running VS's clang-tidy 19 against a baseline established
+      # with 22.
       - name: clang-tidy
-        run: >
-          pwsh -NoProfile -File scripts/Invoke-DevShell.ps1
-          "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1 -Strict"
+        run: |
+          $tidy = (Get-Command clang-tidy).Source
+          Write-Host "Pinned clang-tidy: $tidy"
+          pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
+            "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1 -Strict -ClangTidyPath '$tidy'"
 
   e2e:
     name: End-to-end journeys

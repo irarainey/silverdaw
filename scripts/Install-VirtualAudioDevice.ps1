@@ -16,19 +16,26 @@
     presents a normal WASAPI render endpoint that discards whatever it is
     given. That is enough for JUCE to open a device and start its callback.
 
-    Kernel-mode drivers will not install unless their catalogue is signed by a
-    certificate the machine trusts, and Scream's published signature has
-    expired. The script therefore mints a throwaway self-signed code-signing
-    certificate, re-signs `Scream.cat` with it, and trusts that certificate in
-    both `Root` (so the chain validates) and `TrustedPublisher` (so the install
-    is non-interactive). The certificate lives and dies with the runner.
+    Kernel-mode drivers will not load unless they carry a valid signature and
+    the machine trusts the publisher. Scream's own signature is intact: the
+    signing certificate expired in 2023, but the signature is timestamped, so
+    Windows still verifies it as valid. The script therefore keeps that
+    signature and simply adds the driver's own signer certificate to
+    `TrustedPublisher`, which is what makes the install non-interactive.
+
+    Re-signing with a locally-minted certificate — the obvious-looking
+    alternative — does not work on a hosted runner: it discards a valid
+    signature and replaces it with one that chains to nothing Windows trusts,
+    which Driver Signature Enforcement rejects unless Secure Boot is off and
+    test-signing is on. Neither can be arranged on a GitHub-hosted image.
 
     This is intended for ephemeral, disposable machines. It installs an
-    unattended kernel driver and trusts a locally-generated root certificate,
-    neither of which belongs on a developer workstation.
+    unattended kernel driver and trusts a third-party publisher, neither of
+    which belongs on a developer workstation.
 
 .PARAMETER Version
-    Scream release to install. Default: 4.0.
+    Scream release to install. Default: 3.6, which is the release this recipe
+    is proven against on `windows-2022` runners.
 
 .PARAMETER Force
     Reinstall even when a working audio render endpoint is already present.
@@ -43,7 +50,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = '4.0',
+    [string] $Version = '3.6',
     [switch] $Force,
     [switch] $AllowLocal
 )
@@ -51,19 +58,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# This installs an unattended kernel-mode driver and trusts a locally-minted
-# root certificate. That bargain is only acceptable on a machine that is
-# destroyed at the end of the job, so refuse anywhere else rather than leaving
-# it to whoever reads the documentation.
+# This installs an unattended kernel-mode driver and trusts a third-party
+# driver publisher machine-wide. That bargain is only acceptable on a machine
+# that is destroyed at the end of the job, so refuse anywhere else rather than
+# leaving it to whoever reads the documentation.
 if ($env:CI -ne 'true' -and -not $AllowLocal) {
     # Write-Host plus an explicit exit rather than Write-Error: with
     # $ErrorActionPreference = 'Stop' the latter terminates the script before
     # `exit 1` runs, and pwsh then reports success — a refusal that CI would
     # read as a pass.
     Write-Host @'
-Refusing to run: this installs a kernel-mode audio driver and trusts a
-self-signed root certificate, which is only appropriate on a disposable CI
-runner. GitHub Actions sets CI=true. Pass -AllowLocal to override.
+Refusing to run: this installs a kernel-mode audio driver and trusts its
+publisher machine-wide, which is only appropriate on a disposable CI runner.
+GitHub Actions sets CI=true. Pass -AllowLocal to override.
 '@ -ForegroundColor Red
     exit 1
 }
@@ -117,40 +124,41 @@ if (-not $inf) { throw "Scream.inf not found under $workDir — the archive layo
 $catalogue = Join-Path $inf.DirectoryName 'Scream.cat'
 if (-not (Test-Path $catalogue)) { throw "Scream.cat not found next to $($inf.FullName)." }
 
-Write-Step 'Creating a throwaway driver-signing certificate'
-$certificate = New-SelfSignedCertificate `
-    -Type Custom `
-    -Subject 'CN=Silverdaw CI Virtual Audio' `
-    -KeyUsage DigitalSignature `
-    -CertStoreLocation 'Cert:\LocalMachine\My' `
-    -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3')
+$driver = Join-Path $inf.DirectoryName 'Scream.sys'
+if (-not (Test-Path $driver)) { throw "Scream.sys not found next to $($inf.FullName)." }
 
-# Root makes the chain valid; TrustedPublisher stops Windows prompting for
-# consent, which would hang an unattended install forever.
-$exported = Join-Path $workDir 'signing.cer'
-Export-Certificate -Cert $certificate -FilePath $exported | Out-Null
-foreach ($store in 'Root', 'TrustedPublisher') {
-    Import-Certificate -FilePath $exported -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null
+# Trust the certificate the driver is already signed with, rather than
+# re-signing it. The signature is timestamped, so it stays valid even though
+# the certificate itself expired in 2023 — and keeping it is what lets the
+# driver load at all under Driver Signature Enforcement.
+Write-Step 'Trusting the driver publisher'
+$signature = Get-AuthenticodeSignature -FilePath $driver
+if ($signature.Status -ne 'Valid') {
+    throw "Scream.sys signature is '$($signature.Status)': $($signature.StatusMessage)"
 }
+$store = [System.Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+$store.Open('ReadWrite')
+try { $store.Add($signature.SignerCertificate) } finally { $store.Close() }
 
-$signtool = Get-ChildItem -Path 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match '\\x64\\' } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1
-if (-not $signtool) { throw 'signtool.exe not found — the Windows SDK is missing from this machine.' }
-
-Write-Step 'Re-signing the driver catalogue'
-& $signtool.FullName sign /v /fd SHA256 /sha1 $certificate.Thumbprint /s My $catalogue
-if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE." }
-
-$devcon = Get-ChildItem -Path $workDir -Filter 'devcon*.exe' -Recurse |
-    Where-Object { $_.Name -match 'x64|amd64' } |
-    Select-Object -First 1
-if (-not $devcon) { throw "devcon (x64) not found under $workDir." }
+# The 3.6 archive ships a single, unsuffixed devcon.exe; other releases have
+# used arch-suffixed names, so prefer an explicitly 64-bit one and fall back to
+# whatever is there.
+$devconCandidates = @(Get-ChildItem -Path $workDir -Filter 'devcon*.exe' -Recurse)
+$devcon = $devconCandidates | Where-Object { $_.Name -match 'x64|amd64|64' } | Select-Object -First 1
+if (-not $devcon) { $devcon = $devconCandidates | Select-Object -First 1 }
+if (-not $devcon) { throw "devcon.exe not found under $workDir." }
 
 Write-Step 'Installing the driver'
-& $devcon.FullName install $inf.FullName '*Scream'
-if ($LASTEXITCODE -ne 0) { throw "devcon install failed with exit code $LASTEXITCODE." }
+# Run from the driver directory. devcon resolves the .sys and .cat referenced
+# by the .inf relative to its own working directory, so installing by absolute
+# path from elsewhere can fail to find the payload it just verified.
+Push-Location $inf.DirectoryName
+try {
+    & $devcon.FullName install $inf.Name '*Scream'
+    if ($LASTEXITCODE -ne 0) { throw "devcon install failed with exit code $LASTEXITCODE." }
+} finally {
+    Pop-Location
+}
 
 # The endpoint is published asynchronously once the audio service notices the
 # new driver, so a bare check straight after install races it.

@@ -3882,12 +3882,18 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   - `-Changed` lints only what the current changes affect, and `-Since <ref>`
     picks what they are compared against (default `HEAD`, i.e. uncommitted
     work; pass a branch point to cover a whole branch).
+  - `-ClangTidyPath <path>` names the executable instead of taking whichever
+    one `PATH` offers. Worth knowing that the developer shell puts Visual
+    Studio's LLVM ahead of anything installed separately, so this is how CI
+    guarantees it runs the pinned version the baseline was set with.
 
-  A run is parallel by default: when LLVM's `run-clang-tidy` is available
-  alongside `clang-tidy` it fans the 133 sources out across cores. Measured on
-  a 16-core machine, a full run goes from about 400 seconds serial to 85
-  parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the curve
-  flattens at roughly the core count and the default needs no tuning.
+  A run is parallel by default: when LLVM's `run-clang-tidy.exe` sits alongside
+  the chosen `clang-tidy` — it does in both the Visual Studio and PyPI
+  distributions — it fans the 133 sources out across cores. Only that copy is
+  used, never one found on `PATH`, so the driver always matches the linter.
+  Measured on a 16-core machine, a full run goes from about 400 seconds serial
+  to 85 parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the
+  curve flattens at roughly the core count and the default needs no tuning.
 
   On top of that the script derives its own compile database into
   `<build>/clang-tidy/`, rewriting every third-party include directory —
@@ -4064,28 +4070,35 @@ Six details are worth knowing before changing it:
 - **The backend is built once.** The build job uploads
   `SilverdawBackend_artefacts/Debug/` and the e2e job downloads it to the path
   the Electron main process resolves in a development launch.
-- **clang-tidy is version-pinned.** `-Strict` turns warnings into errors, and
-  different clang-tidy releases disagree about what to warn on, so an unpinned
-  runner would fail the gate on findings nobody can reproduce locally. The
-  workflow installs the exact version the zero-warning baseline was established
-  against (`CLANG_TIDY_VERSION`, currently 22.1.8, from PyPI) and echoes the
-  version both outside and inside the developer shell so a PATH surprise is
-  visible in the log. That build ships without LLVM's `run-clang-tidy`, so the
-  run is serial — parity is worth more than wall time for a gate. **When
-  bumping it, re-run the linter locally first and clear whatever the new
-  version finds.**
+- **clang-tidy is version-pinned, and named explicitly.** `-Strict` turns
+  warnings into errors, and different clang-tidy releases disagree about what
+  to warn on, so an unpinned runner would fail the gate on findings nobody can
+  reproduce locally. The workflow installs the exact version the zero-warning
+  baseline was established against (`CLANG_TIDY_VERSION`, currently 22.1.8,
+  from PyPI) and passes its path to `-ClangTidyPath`. Naming it is not
+  belt-and-braces: the MSVC developer shell puts Visual Studio's own LLVM ahead
+  of everything else on `PATH`, so relying on `PATH` silently ran the gate with
+  VS's clang-tidy 19 against a baseline established with 22. **When bumping the
+  pin, re-run the linter locally first and clear whatever the new version
+  finds.**
 - **A runner has no sound hardware.** `scripts/Install-VirtualAudioDevice.ps1`
   installs Scream, an open-source virtual sound card, giving JUCE a WASAPI
   endpoint to open so the audio callback — and therefore the playhead — runs.
-  Because Scream's published driver signature has expired, the script mints a
-  throwaway self-signed certificate, re-signs the catalogue and trusts it for
-  the life of the runner. That is only acceptable on a disposable machine, so
-  the script refuses to run unless `CI=true` or `-AllowLocal` is passed. It is
-  a separate step so a driver problem never reads as a test failure. Both the
-  e2e job and the **backend** job install it: two unit tests drive the
-  transport (one seeks and reads the playhead back, one asserts `play()`
-  reaches `isPlaying()`) and neither names a JUCE device class, so their
-  dependency on an open device is easy to miss until they fail.
+  It keeps Scream's own driver signature, which is timestamped and so still
+  verifies as valid despite the signing certificate having expired in 2023, and
+  adds that publisher to `TrustedPublisher` so the install is non-interactive.
+  Re-signing with a locally-minted certificate is the tempting alternative and
+  does not work: it replaces a valid signature with one that chains to nothing
+  Windows trusts, and Driver Signature Enforcement then refuses to load the
+  driver unless Secure Boot is off and test-signing is on, neither of which can
+  be arranged on a hosted image. Trusting a third-party driver publisher
+  machine-wide is only acceptable on a disposable machine, so the script
+  refuses to run unless `CI=true` or `-AllowLocal` is passed. It is a separate
+  step so a driver problem never reads as a test failure. Both the e2e job and
+  the **backend** job install it: two unit tests drive the transport (one seeks
+  and reads the playhead back, one asserts `play()` reaches `isPlaying()`) and
+  neither names a JUCE device class, so their dependency on an open device is
+  easy to miss until they fail.
 - **The dependency cache is scoped to the runner image, and configure retries
   once.** `backend/build*/_deps` holds *configured* sub-build trees that bake in
   an absolute path to `cl.exe`, so a cache written on one image and restored
