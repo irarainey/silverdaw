@@ -18,3 +18,27 @@ allowBuilds:
 # As of pnpm 10+, this setting lives here rather than in `.npmrc`.
 nodeLinker: hoisted
 
+# Security overrides for transitive dependencies that upstream packages pin
+# below their patched versions, so a plain `pnpm update` cannot reach them.
+# Each entry exists solely to clear a published advisory; the dependent that
+# forces the old version is named alongside it. Drop an entry once its
+# dependent has released a version that resolves the fix on its own.
+#
+# As of pnpm 10+, overrides live here rather than under `pnpm` in package.json.
+overrides:
+  # node-gyp pins undici ^6 — patched in 6.28.0. The v7 line reaches 7.29.0
+  # unaided, so scope this to major 6 and leave v7 to normal resolution.
+  undici@6: ^6.28.0
+  # app-builder-lib / builder-util / dmg-builder pin js-yaml 4.1.1.
+  js-yaml: ^4.3.1
+  # electron-publish pins form-data 4.0.5.
+  form-data: ^4.0.6
+  # app-builder-lib and node-gyp pin tar 7.5.15.
+  tar: ^7.5.18
+  # tmp-promise pins tmp 0.2.5.
+  tmp: ^0.2.6
+  # Two independent minimatch majors pull vulnerable brace-expansion lines:
+  # minimatch@5 -> brace-expansion@2, minimatch@10 -> brace-expansion@5.
+  brace-expansion@2: ^2.1.2
+  brace-expansion@5: ^5.0.7
+
