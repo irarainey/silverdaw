@@ -32,7 +32,7 @@ and aborts the run with a build hint if the bundles are missing or older. So
 
 Install the recommended `ms-playwright.playwright` extension (see
 `.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
-own, and the 29 specs appear in the Testing panel next to the CTest-provided
+own, and the 30 specs appear in the Testing panel next to the CTest-provided
 backend tests — no extra configuration.
 
 The panel's ▶ runs the Playwright runner directly, exactly like
@@ -61,19 +61,30 @@ Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
 which a test can only fake by synthesising the events a browser would otherwise
 generate — that asserts the implementation, so specs take the button instead.
 
-Two journeys do drive the mouse over a canvas, where no button reaches the
+Three journeys do drive the mouse over a canvas, where no button reaches the
 gesture. Creating a library sample requires selecting a region in the clip
 editor; a tempo journey needs the playhead off the origin and a range selected,
-which are a press and a drag on the timeline ruler (`helpers/timeline.ts`). Both
+and the markers journey needs the playhead off the origin twice — which are a
+press and a drag on the timeline ruler (`helpers/timeline.ts`). All
 are real pointer input a user performs, rather than synthesised drag-and-drop,
 and the assertions either side are DOM state or the saved project file —
 nothing is read back from the canvas itself. The ruler helper locates itself
 from the header-resize divider, so a resized header column cannot silently move
 the gesture into the track headers.
 
+Markers are the sharpest case of a canvas-only feature: they are placed with a
+bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`
+reads them through Edit ▸ Clear All Markers instead, which is enabled exactly
+when the project holds at least one marker — a signal the user can see, and the
+same one that tells them the command is worth reaching for.
+
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
-hides exactly the defect the journey exists to find.
+hides exactly the defect the journey exists to find. Opening the menu bar is the
+one exception, and only in the markers journey: the bar rebuilds on every
+project-state change and drops whatever was open, so an open issued right after
+a keypress can be discarded before it is read. The open is retried; the item
+state it is opened to read is not.
 
 ### The playback journey needs an audio device
 

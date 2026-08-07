@@ -40,3 +40,14 @@ export function findNode(node: ProjectNode, type: string): ProjectNode | null {
   }
   return null
 }
+
+/**
+ * Every node of a type, in document order. Separate from `findNode` because a
+ * count is often the assertion — "two markers, then none" — and a search that
+ * stopped at the first match could not tell one from three.
+ */
+export function findNodes(node: ProjectNode, type: string): ProjectNode[] {
+  const found: ProjectNode[] = node.$type === type ? [node] : []
+  for (const child of node.$children ?? []) found.push(...findNodes(child, type))
+  return found
+}
