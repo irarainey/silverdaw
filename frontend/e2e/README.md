@@ -32,7 +32,7 @@ and aborts the run with a build hint if the bundles are missing or older. So
 
 Install the recommended `ms-playwright.playwright` extension (see
 `.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
-own, and the 28 specs appear in the Testing panel next to the CTest-provided
+own, and the 29 specs appear in the Testing panel next to the CTest-provided
 backend tests — no extra configuration.
 
 The panel's ▶ runs the Playwright runner directly, exactly like
@@ -51,7 +51,9 @@ saved project document — rather than internal stores. That constraint is what
 keeps the tier honest: it cannot pass by agreeing with the implementation.
 
 The timeline is a PixiJS canvas with no DOM, so clip-level state is verified
-indirectly through the saved `.silverdaw` file instead of by reading pixels.
+indirectly through the saved `.silverdaw` file instead of by reading pixels
+(`helpers/projectDocument.ts` addresses nodes by `$type`, since nesting is by
+container).
 Placing a clip is reachable without touching the canvas: the track header's
 import button imports and places in one click, and it disables itself once its
 track holds a clip, which gives a DOM-observable signal that the clip landed.
