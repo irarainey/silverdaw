@@ -22,7 +22,6 @@
 // nothing — and a drag to select a range. Both are gestures a user performs;
 // nothing is read back from the canvas.
 
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { closeSilverdaw, expect, test } from '../fixtures/silverdaw'
@@ -30,6 +29,7 @@ import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { libraryItem } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
+import { findNode, readProjectDocument } from '../helpers/projectDocument'
 import { startNewProject, waitForStartupReady } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
 import { dragRulerRange, seekOnRuler } from '../helpers/timeline'
@@ -52,34 +52,12 @@ interface SavedProject {
   markerPositionMs: number
 }
 
-interface ProjectNode {
-  $type?: string
-  $children?: ProjectNode[]
-  [key: string]: unknown
-}
-
-/** Depth-first search for the first node of a type, since nesting is by container. */
-function findNode(node: ProjectNode, type: string): ProjectNode | null {
-  if (node.$type === type) return node
-  for (const child of node.$children ?? []) {
-    const found = findNode(child, type)
-    if (found) return found
-  }
-  return null
-}
-
 /**
  * Reads the parts of the saved document this journey is about. Returns null
  * while the file is absent or mid-write, so callers can poll it.
  */
 function readSavedProject(projectFile: string): SavedProject | null {
-  let parsed: { project?: ProjectNode }
-  try {
-    parsed = JSON.parse(readFileSync(projectFile, 'utf8')) as { project?: ProjectNode }
-  } catch {
-    return null
-  }
-  const project = parsed.project
+  const project = readProjectDocument(projectFile)
   if (!project) return null
   const clip = findNode(project, 'CLIP')
   if (!clip) return null
@@ -169,7 +147,7 @@ test('a tempo change warps and retimes what is already placed', async ({ launchA
   await bpmField.press('Enter')
   await expect(bpmField).toHaveValue(TARGET_BPM.toFixed(2))
 
-  await invokeMenuItem(page, 'File', 'Save Ctrl+S') // disambiguated from "Save As…"
+  await invokeMenuItem(page, 'File', 'Save', { exact: true }) // "Save As…" shares the prefix
   await expect(page.getByLabel('Unsaved changes')).toBeHidden({ timeout: 30_000 })
   await expect
     .poll(() => readSavedProject(projectFile)?.bpm ?? 0, {

@@ -32,7 +32,7 @@ and aborts the run with a build hint if the bundles are missing or older. So
 
 Install the recommended `ms-playwright.playwright` extension (see
 `.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
-own, and the 25 specs appear in the Testing panel next to the CTest-provided
+own, and the 31 specs appear in the Testing panel next to the CTest-provided
 backend tests — no extra configuration.
 
 The panel's ▶ runs the Playwright runner directly, exactly like
@@ -51,7 +51,9 @@ saved project document — rather than internal stores. That constraint is what
 keeps the tier honest: it cannot pass by agreeing with the implementation.
 
 The timeline is a PixiJS canvas with no DOM, so clip-level state is verified
-indirectly through the saved `.silverdaw` file instead of by reading pixels.
+indirectly through the saved `.silverdaw` file instead of by reading pixels
+(`helpers/projectDocument.ts` addresses nodes by `$type`, since nesting is by
+container).
 Placing a clip is reachable without touching the canvas: the track header's
 import button imports and places in one click, and it disables itself once its
 track holds a clip, which gives a DOM-observable signal that the clip landed.
@@ -59,19 +61,36 @@ Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
 which a test can only fake by synthesising the events a browser would otherwise
 generate — that asserts the implementation, so specs take the button instead.
 
-Two journeys do drive the mouse over a canvas, where no button reaches the
+Three journeys do drive the mouse over a canvas, where no button reaches the
 gesture. Creating a library sample requires selecting a region in the clip
 editor; a tempo journey needs the playhead off the origin and a range selected,
-which are a press and a drag on the timeline ruler (`helpers/timeline.ts`). Both
+and the markers journey needs the playhead off the origin twice — which are a
+press and a drag on the timeline ruler (`helpers/timeline.ts`). All
 are real pointer input a user performs, rather than synthesised drag-and-drop,
 and the assertions either side are DOM state or the saved project file —
 nothing is read back from the canvas itself. The ruler helper locates itself
 from the header-resize divider, so a resized header column cannot silently move
 the gesture into the track headers.
 
+Markers are the sharpest case of a canvas-only feature: they are placed with a
+bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`
+reads them through Edit ▸ Clear All Markers instead, which is enabled exactly
+when the project holds at least one marker — a signal the user can see, and the
+same one that tells them the command is worth reaching for.
+
+`mixer-state.e2e.ts` addresses track controls by position rather than by a
+per-track hook, because the header rows render in track order and every value it
+sets is per-track. Reading the third fader and finding the second track's value
+is the defect the journey exists to catch, so it uses three tracks and checks the
+neighbours it never touched.
+
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
-hides exactly the defect the journey exists to find.
+hides exactly the defect the journey exists to find. Opening the menu bar is the
+one exception, and only in the markers journey: the bar rebuilds on every
+project-state change and drops whatever was open, so an open issued right after
+a keypress can be discarded before it is read. The open is retried; the item
+state it is opened to read is not.
 
 ### The playback journey needs an audio device
 
@@ -171,7 +190,12 @@ each is read from disk at startup and cannot be reached from the UI beforehand:
 - `autosaveBuckets: [...]` plants crash-recovery buckets under `<userData>/autosave/`
   (`helpers/autosaveFixtures.ts`). Startup decides purely from what it finds there,
   so seeding a bucket is both sufficient and far more controllable than staging a
-  real crash — the spec chooses the exact recovery state under test.
+  real crash — the spec chooses the exact recovery state under test. Seeding covers
+  the *reader* only, so `autosave-write.e2e.ts` deliberately seeds nothing: it makes
+  an edit, waits for the bucket the app itself writes, and restarts onto it. That is
+  the one thing seeding can never show — that the writer's output is something the
+  reader accepts. It needs no timer, because the autosave manager ticks immediately
+  whenever a project becomes dirty (`lib/autosave.ts`).
 
 ## Native dialogs
 

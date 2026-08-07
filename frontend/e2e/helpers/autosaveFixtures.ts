@@ -11,7 +11,9 @@
 // — a half-written `pending` bucket, or an autosave that is older than the file it
 // shadows — and it would make the journey wait on a background timer, which is the
 // brittle timing assertion ADR 0014 warns against. The writer that produces these
-// buckets is covered by a unit spec instead (`tests/renderer/lib/autosave.test.ts`).
+// buckets is covered by a unit spec (`tests/renderer/lib/autosave.test.ts`), and
+// end to end by `journeys/autosave-write.e2e.ts`, which seeds nothing and asserts
+// on the bucket the app writes for itself — the one claim seeding cannot make.
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
