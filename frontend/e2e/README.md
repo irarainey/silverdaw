@@ -32,7 +32,7 @@ and aborts the run with a build hint if the bundles are missing or older. So
 
 Install the recommended `ms-playwright.playwright` extension (see
 `.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
-own, and the 25 specs appear in the Testing panel next to the CTest-provided
+own, and the 28 specs appear in the Testing panel next to the CTest-provided
 backend tests — no extra configuration.
 
 The panel's ▶ runs the Playwright runner directly, exactly like
@@ -171,7 +171,12 @@ each is read from disk at startup and cannot be reached from the UI beforehand:
 - `autosaveBuckets: [...]` plants crash-recovery buckets under `<userData>/autosave/`
   (`helpers/autosaveFixtures.ts`). Startup decides purely from what it finds there,
   so seeding a bucket is both sufficient and far more controllable than staging a
-  real crash — the spec chooses the exact recovery state under test.
+  real crash — the spec chooses the exact recovery state under test. Seeding covers
+  the *reader* only, so `autosave-write.e2e.ts` deliberately seeds nothing: it makes
+  an edit, waits for the bucket the app itself writes, and restarts onto it. That is
+  the one thing seeding can never show — that the writer's output is something the
+  reader accepts. It needs no timer, because the autosave manager ticks immediately
+  whenever a project becomes dirty (`lib/autosave.ts`).
 
 ## Native dialogs
 
