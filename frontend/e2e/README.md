@@ -32,7 +32,7 @@ and aborts the run with a build hint if the bundles are missing or older. So
 
 Install the recommended `ms-playwright.playwright` extension (see
 `.vscode/extensions.json`). It discovers `frontend/playwright.config.ts` on its
-own, and the 30 specs appear in the Testing panel next to the CTest-provided
+own, and the 31 specs appear in the Testing panel next to the CTest-provided
 backend tests — no extra configuration.
 
 The panel's ▶ runs the Playwright runner directly, exactly like
@@ -77,6 +77,12 @@ bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`
 reads them through Edit ▸ Clear All Markers instead, which is enabled exactly
 when the project holds at least one marker — a signal the user can see, and the
 same one that tells them the command is worth reaching for.
+
+`mixer-state.e2e.ts` addresses track controls by position rather than by a
+per-track hook, because the header rows render in track order and every value it
+sets is per-track. Reading the third fader and finding the second track's value
+is the defect the journey exists to catch, so it uses three tracks and checks the
+neighbours it never touched.
 
 Where a journey covers a race — a button pressed the moment it appears — it
 clicks **once**. Retrying a click turns a dropped action into a passing test and
