@@ -40,6 +40,103 @@ describe('previewStore', () => {
     })
   })
 
+  it('loadFile auditions an un-imported path and clears any loaded item', () => {
+    const preview = usePreviewStore()
+    preview.load('lib1', 500, 2_000)
+    sendMock.mockClear()
+
+    preview.loadFile('C:\\music\\Track.mp3')
+
+    expect(preview.itemId).toBeNull()
+    expect(preview.filePath).toBe('C:\\music\\Track.mp3')
+    expect(preview.inMs).toBe(0)
+    expect(preview.durationMs).toBe(0)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_LOAD', {
+      libraryItemId: '',
+      filePath: 'C:\\music\\Track.mp3',
+      inMs: 0,
+      durationMs: 0
+    })
+  })
+
+  it('loadFile with autoPlay starts playback once the backend acks the load', () => {
+    const preview = usePreviewStore()
+    preview.loadFile('C:\\music\\Track.mp3', true)
+    sendMock.mockClear()
+
+    // Loading alone must not play — the engine has nothing ready yet.
+    expect(sendMock).not.toHaveBeenCalledWith('PREVIEW_PLAY')
+
+    preview.applyState({
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 3_000,
+      generation: 1
+    })
+
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_PLAY')
+    expect(preview.pendingPlay).toBe(false)
+  })
+
+  it('loadFile without autoPlay stays paused when the load is acked', () => {
+    const preview = usePreviewStore()
+    preview.loadFile('C:\\music\\Track.mp3')
+    sendMock.mockClear()
+
+    preview.applyState({
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 3_000,
+      generation: 1
+    })
+
+    expect(sendMock).not.toHaveBeenCalledWith('PREVIEW_PLAY')
+  })
+
+  it('a failed load does not leave a pending play armed for the next source', () => {
+    const preview = usePreviewStore()
+    preview.loadFile('C:\\music\\Missing.mp3', true)
+
+    preview.applyState({
+      isPlaying: false,
+      isLoaded: false,
+      durationMs: 0,
+      generation: 1
+    })
+    sendMock.mockClear()
+
+    expect(preview.pendingPlay).toBe(false)
+
+    // A later library preview must not inherit the stale auto-play.
+    preview.applyState({
+      libraryItemId: 'lib1',
+      isPlaying: false,
+      isLoaded: true,
+      durationMs: 1_000,
+      generation: 2
+    })
+    expect(sendMock).not.toHaveBeenCalledWith('PREVIEW_PLAY')
+  })
+
+  it('load clears a file audition so the two preview sources cannot both look active', () => {    const preview = usePreviewStore()
+    preview.loadFile('C:\\music\\Track.mp3')
+    preview.load('lib1', 0, 0)
+
+    expect(preview.filePath).toBeNull()
+    expect(preview.itemId).toBe('lib1')
+  })
+
+  it('unload releases a file audition even with no library item loaded', () => {
+    const preview = usePreviewStore()
+    preview.loadFile('C:\\music\\Track.mp3')
+    sendMock.mockClear()
+
+    preview.unload()
+
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_UNLOAD')
+    expect(preview.filePath).toBeNull()
+  })
+
   it('includes initial warp settings in PREVIEW_LOAD so first play is warped', () => {
     const preview = usePreviewStore()
     preview.load('lib1', 500, 2_000, {

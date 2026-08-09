@@ -15,6 +15,8 @@ import { useScratchTransportControls } from '@/lib/scratch/useScratchTransportCo
 import { virtualKeyboardCutDisplayValue } from '@/lib/scratch/scratchControlHelpers'
 import { useFocusTrap } from '@/lib/useFocusTrap'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -36,6 +38,8 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 
 const ui = useUiStore()
 const project = useProjectStore()
+const projectTransport = useTransportStore()
+const preview = usePreviewStore()
 const library = useLibraryStore()
 const scratchStore = useScratchSessionStore()
 const dialogEl = ref<HTMLDivElement | null>(null)
@@ -171,6 +175,10 @@ const transport = useScratchTransportControls({
   backingReady: backing.isReady,
   isRecording: derived.isRecording,
   isPatternReplaying: replay.isPatternReplaying,
+  isPlaying: session.isPlaying,
+  // The scratch backing, the project and the preview voice all share the audio
+  // output, so only one of them may play at a time.
+  otherPlaybackActive: computed(() => projectTransport.isPlaying || preview.isPlaying),
   togglePlayback: session.togglePlayback,
   sendControl: session.sendControl
 })
@@ -335,6 +343,7 @@ onMounted(() => {
             :monitor-disabled="replay.isPatternReplaying.value"
             :is-playing="session.isPlaying.value"
             :transport-enabled="transport.transportEnabled.value"
+            :play-blocked-reason="transport.playBlockedReason.value"
             @skip-to-start="transport.onSkipToStart"
             @toggle-play="transport.onTogglePlay"
           />

@@ -49,6 +49,7 @@ export function useFxAutomation(trackId: Ref<string | null>) {
     const id = trackId.value
     if (!id) return
     project.selectTrack(id)
+    // Opening a lane reveals the track itself (see `addTrackAutomationLane`).
     ui.toggleTrackAutomationLane(id, paramId)
     ui.requestRevealTrack(id)
   }

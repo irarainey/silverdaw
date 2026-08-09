@@ -15,12 +15,19 @@ export interface ScratchTransportControlsOptions {
   backingReady: Ref<boolean>
   isRecording: Ref<boolean>
   isPatternReplaying: Ref<boolean>
+  /** True while the backing bed is playing, so pause is always reachable. */
+  isPlaying: Ref<boolean>
+  /** True while the project transport or the preview voice owns the audio
+   *  output. Injected rather than read from a store so the composable stays
+   *  free of Pinia, as its callers and tests expect. */
+  otherPlaybackActive: Ref<boolean>
   togglePlayback(): void
   sendControl(payload: ScratchSessionControlPayload): void
 }
 
 export interface ScratchTransportControls {
   transportEnabled: ComputedRef<boolean>
+  playBlockedReason: ComputedRef<string>
   onSkipToStart(): void
   onTogglePlay(): void
 }
@@ -34,12 +41,21 @@ export function useScratchTransportControls(
     backingReady,
     isRecording,
     isPatternReplaying,
+    otherPlaybackActive,
+    isPlaying,
     togglePlayback,
     sendControl
   } = options
 
   const transportEnabled = computed(
     () => canControl.value && backingReady.value && !isRecording.value && !isPatternReplaying.value
+  )
+
+  // Only one source owns the audio output at a time, so the backing cannot
+  // start while the project or a file preview is playing. Pausing stays
+  // allowed, so the backing can never be left stuck playing.
+  const playBlockedReason = computed(() =>
+    !isPlaying.value && otherPlaybackActive.value ? 'Stop other playback to play the backing' : ''
   )
 
   function onSkipToStart(): void {
@@ -49,8 +65,8 @@ export function useScratchTransportControls(
   }
 
   function onTogglePlay(): void {
-    if (transportEnabled.value) togglePlayback()
+    if (transportEnabled.value && !playBlockedReason.value) togglePlayback()
   }
 
-  return { transportEnabled, onSkipToStart, onTogglePlay }
+  return { transportEnabled, playBlockedReason, onSkipToStart, onTogglePlay }
 }

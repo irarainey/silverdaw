@@ -129,6 +129,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // The source grid as it looked when the editor opened, so an uncommitted session
   // (Cancel / close without Save) can restore it exactly.
   let gridSnapshot: LibraryItemGridSnapshot | null = null
+  // The item that snapshot came from, held by id rather than re-resolved on close.
+  // The dialog drives `open` and `item` from the same ref, so both clear in one flush
+  // and the close handler would find no target to restore onto — silently keeping the
+  // draft. An id also restores onto the right item if the target switched mid-session.
+  let gridSnapshotItemId: string | null = null
   // True while the user is typing in the tempo field, so external tempo changes
   // (octave, restore, backend echo) don't overwrite what they are entering.
   let tempoEditing = false
@@ -298,9 +303,8 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   }
 
   function discardIfUncommitted(): void {
-    if (!gridEdited.value || gridCommitted || !gridSnapshot) return
-    const item = deps.sourceItem()
-    if (item) library.restoreItemGridLocal(item.id, gridSnapshot)
+    if (!gridEdited.value || gridCommitted || !gridSnapshot || !gridSnapshotItemId) return
+    library.restoreItemGridLocal(gridSnapshotItemId, gridSnapshot)
     gridEdited.value = false
   }
 
@@ -313,6 +317,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     tempoEditing = false
     const item = deps.sourceItem()
     gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
+    gridSnapshotItemId = item ? item.id : null
     const bpm = currentBpm()
     originalBpm.value = bpm !== undefined ? bpm : null
     syncTempoField()

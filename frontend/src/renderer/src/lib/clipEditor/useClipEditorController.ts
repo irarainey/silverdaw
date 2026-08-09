@@ -409,6 +409,13 @@ export function useClipEditorController(
       sliceEditMode.value = false
       reseedSliceWindow()
       resetZoom()
+      // Switching target ends the previous grid session: roll its uncommitted draft
+      // back onto the item it belongs to, then re-snapshot against the new one. Without
+      // this the snapshot, the edited flag and the captured original tempo all stay
+      // pointed at the previous item, so Cancel restores the wrong clip and Restore
+      // offers the wrong tempo.
+      beatGrid.discardIfUncommitted()
+      beatGrid.reset()
       resetPreviewLoadKey()
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)
@@ -758,8 +765,15 @@ export function useClipEditorController(
     playbackEndMs: () => playbackEndMs.value,
     viewInMs: () => viewInMs.value,
     visibleDurationMs: () => visibleDurationMs.value,
-    maxScrollMs: () => maxScrollMs.value
+    maxScrollMs: () => maxScrollMs.value,
+    playBlocked: () => transport.isPlaying
   })
+
+  // The preview voice and the project share the audio output, so the dialog's
+  // play button reports why it is unavailable rather than silently ignoring it.
+  const playBlockedReason = computed(() =>
+    transport.isPlaying ? 'Stop project playback to preview' : ''
+  )
 
 
   // Dialog-local crop history is non-destructive and discarded on close.
@@ -872,6 +886,7 @@ export function useClipEditorController(
     titleText,
     warpActive,
     loopEnabled,
+    playBlockedReason,
     onSkipToStart,
     onTogglePlay,
     onSkipToEnd,

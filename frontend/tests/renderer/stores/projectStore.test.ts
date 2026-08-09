@@ -483,6 +483,98 @@ describe('projectStore', () => {
     expect(sendMock.mock.calls.some(([type]) => type === 'PROJECT_MARKER_MOVE')).toBe(false)
   })
 
+  it('retimes track automation with the clips when the tempo changes', () => {
+    // Reported: a tempo change moved the clips but left track automation at its
+    // millisecond positions, so a curve written for the drop ended up shaping
+    // whatever now sits at that instant.
+    const project = useProjectStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+    const trackId = project.addTrack()
+    project.setTrackAutomation(trackId, 'filter', [
+      { timeMs: 0, value: 0.2 },
+      { timeMs: 2_000, value: 0.6 },
+      { timeMs: 6_000, value: 1 }
+    ])
+    sendMock.mockClear()
+
+    project.applyProjectBpm(60)
+
+    const lane = project.tracks.find((t) => t.id === trackId)?.automation?.filter
+    expect(lane?.map((p) => p.timeMs)).toEqual([0, 4_000, 12_000])
+    // The shape is a function of the musical position, not of the tempo.
+    expect(lane?.map((p) => p.value)).toEqual([0.2, 0.6, 1])
+    // The backend retimes its own copy on PROJECT_SET_BPM; sending would double it.
+    expect(sendMock.mock.calls.some(([type]) => type === 'TRACK_SET_AUTOMATION')).toBe(false)
+  })
+
+  it('retimes a clip volume shape onto the clip footprint the tempo change gives it', () => {
+    // Reported: a clip's volume shape did not keep its relative position across a
+    // tempo change, so it changed the volume at the wrong point in the clip. The
+    // scale is the clip's own footprint change, not the global tempo scale — a
+    // pinned ratio and an unwarped clip do not re-stretch at all.
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    transport.bpm = 120
+    ui.matchProjectTempoOnDrop = false
+
+    const itemId = library.addItem({
+      filePath: 'C:\\loop.wav',
+      fileName: 'loop.wav',
+      durationMs: 8_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    library.byId[itemId]!.bpm = 120
+
+    const trackId = project.addTrack()
+    const add = (startMs: number): string =>
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: itemId,
+          filePath: 'C:\\loop.wav',
+          fileName: 'loop.wav',
+          durationMs: 8_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        startMs
+      ) ?? ''
+
+    // A fade written across the second half of each clip.
+    const shape = [
+      { timeMs: 0, gain: 1 },
+      { timeMs: 4_000, gain: 1 },
+      { timeMs: 8_000, gain: 0 }
+    ]
+    const following = add(0)
+    const pinned = add(20_000)
+    const dry = add(40_000)
+    project.setClipWarp(following, { warpEnabled: true })
+    project.setClipWarp(pinned, { warpEnabled: true, tempoRatio: 1.5 })
+    for (const id of [following, pinned, dry]) project.setClipEnvelope(id, shape)
+    sendMock.mockClear()
+
+    project.applyProjectBpm(60)
+
+    // Halving the tempo doubles a following clip's footprint, so the fade still
+    // starts at its midpoint and still ends at the end of the clip.
+    expect(project.clips[following]?.envelopePoints?.map((p) => p.timeMs)).toEqual([
+      0, 8_000, 16_000
+    ])
+    expect(project.clips[following]?.envelopePoints?.map((p) => p.gain)).toEqual([1, 1, 0])
+    // Neither of these changed length, so their shapes must not move.
+    expect(project.clips[pinned]?.envelopePoints?.map((p) => p.timeMs)).toEqual([0, 4_000, 8_000])
+    expect(project.clips[dry]?.envelopePoints?.map((p) => p.timeMs)).toEqual([0, 4_000, 8_000])
+    // The backend retimes its own copy on PROJECT_SET_BPM; sending would double it.
+    expect(sendMock.mock.calls.some(([type]) => type === 'CLIP_SET_ENVELOPE')).toBe(false)
+  })
+
   it('leaves the timeline selection alone when the tempo is unchanged', () => {    const project = useProjectStore()
     const transport = useTransportStore()
     const ui = useUiStore()
@@ -721,7 +813,11 @@ describe('projectStore', () => {
 
     expect(ui.timelineRevealTrackRequest).toBeNull()
     const trackId = project.addTrack()
-    expect(ui.timelineRevealTrackRequest).toEqual({ trackId, id: expect.any(Number) })
+    expect(ui.timelineRevealTrackRequest).toEqual({
+      trackId,
+      align: 'nearest',
+      id: expect.any(Number)
+    })
 
     // A second add issues a fresh one-shot request (new id) for the new row.
     const firstId = ui.timelineRevealTrackRequest!.id

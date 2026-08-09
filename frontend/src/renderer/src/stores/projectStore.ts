@@ -26,9 +26,13 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { log } from '@/lib/log'
 import type {
+  AutomationParamId,
+  AutomationPoint,
   DelayNoteValue,
   ProjectStatePayload
 } from '@shared/bridge-protocol'
+import { effectiveDurationMs } from '@/lib/warp'
+import { scaleEnvelopePoints } from '@/lib/envelope'
 
 // Facade re-export: these pure clip-timing helpers now live in
 // `@/lib/clip/clipTiming` but are widely imported from this store
@@ -557,13 +561,51 @@ export const useProjectStore = defineStore('project', {
         if (marker.positionMs > 0) marker.positionMs *= scale
       }
       if (transport.positionMs > 0) transport.setPosition(transport.positionMs * scale)
+      // Track automation is on the same timeline axis as clips and markers, so a curve
+      // written over bar 9 must still be over bar 9 afterwards. Left in milliseconds it
+      // would drift against the material it was drawn for and change the wrong sound.
+      for (const track of this.tracks) {
+        if (!track.automation) continue
+        const retimed: Partial<Record<AutomationParamId, AutomationPoint[]>> = {}
+        for (const [paramId, points] of Object.entries(track.automation)) {
+          if (!points) continue
+          retimed[paramId as AutomationParamId] = points.map((p) => ({
+            timeMs: p.timeMs * scale,
+            value: p.value
+          }))
+        }
+        track.automation = retimed
+      }
       for (const clip of Object.values(this.clips)) {
+        const item = library.byId[clip.libraryItemId]
+        const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
+        const warpBefore = {
+          warpEnabled: clip.warpEnabled,
+          tempoRatio: clip.tempoRatio,
+          sourceBpm,
+          projectBpm: previousBpm
+        }
+        const footprintBefore = effectiveDurationMs(clip.durationMs, warpBefore)
         if (autoWarp && clip.warpEnabled !== true && clip.tempoRatio === undefined) {
-          const item = library.byId[clip.libraryItemId]
-          const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
           if (typeof sourceBpm === 'number' && sourceBpm > 0) clip.warpEnabled = true
         }
         if (clip.startMs > 0) clip.startMs *= scale
+        // A volume shape is measured across the clip's timeline footprint, so it has to
+        // follow that footprint rather than the project scale: a pinned tempo ratio or a
+        // clip left unwarped does not re-stretch, and its shape must stay put.
+        if (clip.envelopePoints && clip.envelopePoints.length >= 2 && footprintBefore > 0) {
+          const footprintAfter = effectiveDurationMs(clip.durationMs, {
+            ...warpBefore,
+            warpEnabled: clip.warpEnabled,
+            projectBpm: nextBpm
+          })
+          if (footprintAfter > 0 && Math.abs(footprintAfter - footprintBefore) > 1e-6) {
+            clip.envelopePoints = scaleEnvelopePoints(
+              clip.envelopePoints,
+              footprintAfter / footprintBefore
+            )
+          }
+        }
       }
       this.timelineRevision++
     },

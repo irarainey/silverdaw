@@ -84,10 +84,79 @@ export interface UiPreferences {
   waveformDisplayMode: WaveformDisplayMode
 
   libraryPanelCollapsed: boolean
+
+  /** Absolute folders the user added to the library file browser, in display order. */
+  fileBrowserFolders: string[]
+}
+
+/** One row in the library file browser: a subfolder, or an importable audio file. */
+export interface FileBrowserEntry {
+  /** Absolute path; also the row's stable identity. */
+  path: string
+  /** Base name as shown in the tree. */
+  name: string
+  kind: 'directory' | 'file'
+}
+
+/**
+ * The searchable tags held for one indexed file. Cover art is deliberately
+ * absent: it is large binary data that would bloat the on-disk index for
+ * something only the handful of rows actually on screen ever display.
+ */
+export interface FileBrowserFileTags {
+  title?: string
+  artist?: string
+  album?: string
+  durationMs?: number
+}
+
+/**
+ * Everything the browser knows about one added root, gathered by a single crawl
+ * and reused from then on. Rendering, expanding and filtering all read this, so
+ * browsing a folder costs no disk access after the root has been indexed.
+ */
+export interface FileBrowserFolderIndex {
+  /** The added root this index covers. */
+  root: string
+  /** Listing for the root and every folder beneath it, keyed by folder path. */
+  folders: Record<string, FileBrowserEntry[]>
+  /** Tags for every audio file beneath the root, keyed by file path. */
+  tags: Record<string, FileBrowserFileTags>
+  /** When the crawl ran, so a stale cache can be reported and refreshed. */
+  indexedAt: number
+  /**
+   * True when the root itself could not be read — a disconnected drive, a
+   * network share that is down, or a folder deleted since it was added. Without
+   * it an unreachable root is indistinguishable from an empty one, and the empty
+   * listing would be cached as though it were the truth.
+   */
+  unavailable?: boolean
+}
+
+/**
+ * A slice of a crawl in progress, sent to the renderer as folders are listed and
+ * files are tagged. Indexing a large library takes seconds, so the tree fills in
+ * as the results arrive rather than staying empty until the whole root is done.
+ *
+ * Each message carries only what has completed since the last one, so applying
+ * them in order rebuilds the same index the crawl finally returns.
+ */
+export interface FileBrowserIndexProgress {
+  /** The added root being crawled. */
+  root: string
+  /** Folder listings completed since the previous message. */
+  folders: Record<string, FileBrowserEntry[]>
+  /** File tags read since the previous message. */
+  tags: Record<string, FileBrowserFileTags>
+  /** Audio files found under the root so far. */
+  fileCount: number
+  /** Files whose tags have been read so far, so progress can be shown as a ratio. */
+  taggedCount: number
+  /** True once the whole root has been listed, so only tag reads remain. */
+  listed: boolean
 }
 
 export type WaveformDisplayMode = 'summary' | 'stereo'
-
 export type SkipButtonTarget = 'timelineEnds' | 'markers'
 
 // Developer diagnostics are sampled at startup when logging, backend env, and DevTools are wired.

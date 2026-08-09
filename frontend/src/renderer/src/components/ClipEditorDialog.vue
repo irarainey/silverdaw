@@ -25,6 +25,7 @@ const {
   titleText,
   warpActive,
   loopEnabled,
+  playBlockedReason,
   onSkipToStart,
   onTogglePlay,
   onSkipToEnd,
@@ -148,6 +149,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             :is-loaded="preview.isLoaded"
             :loop-enabled="loopEnabled"
             :metronome-enabled="clipMetronomeEnabled"
+            :play-blocked-reason="playBlockedReason"
             :show-metronome="editsExistingClip"
             @skip-to-start="onSkipToStart"
             @toggle-play="onTogglePlay"

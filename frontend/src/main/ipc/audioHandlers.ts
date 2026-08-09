@@ -2,10 +2,9 @@
 // and the renderer-PCM -> float-WAV transcode cache. Registered from main/index.ts.
 
 import { ipcMain, dialog, app, type BrowserWindow } from 'electron'
-import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, unlink, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, isAbsolute } from 'node:path'
 import { createHash } from 'node:crypto'
-import { tmpdir } from 'node:os'
 import { parseFile } from 'music-metadata'
 import { IPC } from '../../shared/ipc-channels'
 import { normalizeMetadata } from '../audioMetadata'
@@ -20,6 +19,7 @@ import {
   registerIssuedPath
 } from '../audioPaths'
 import { logMain } from '../log'
+import { transcodeCacheDir, touchTranscodeCacheEntry } from '../transcodeCache'
 
 /** Singletons the audio handlers reach back into main for. */
 export interface AudioHandlersContext {
@@ -28,8 +28,8 @@ export interface AudioHandlersContext {
   setCurrentClipDir(dir: string): void
 }
 
-// Cache renderer-side transcodes by source path and decoded geometry.
-const TRANSCODE_CACHE_DIR = join(tmpdir(), 'silverdaw-transcode-cache')
+// Renderer-side transcodes are cached by source path and decoded geometry; the
+// directory and its eviction live in `main/transcodeCache.ts`.
 
 // Media sidecar: a generated WAV (a separated stem, or a music sample saved from
 // a clip) carries no embedded tags, so we copy the source file's metadata + cover
@@ -515,8 +515,9 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     }
     if (frameCount <= 0) return null
 
+    const cacheDir = transcodeCacheDir()
     try {
-      await mkdir(TRANSCODE_CACHE_DIR, { recursive: true })
+      await mkdir(cacheDir, { recursive: true })
     } catch (err) {
       logMain('ERROR', 'audio:writeTempWav', 'failed to create cache dir:', err)
       return null
@@ -528,7 +529,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       .update(`|sr=${p.sampleRate}|ch=${chans.length}|n=${frameCount}`)
       .digest('hex')
       .slice(0, 16)
-    const outPath = join(TRANSCODE_CACHE_DIR, `${hash}.wav`)
+    const outPath = join(cacheDir, `${hash}.wav`)
 
     // Float WAV avoids quantising already-decoded samples.
     const numChannels = chans.length
@@ -537,7 +538,21 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
     const blockAlign = numChannels * 4
     const dataSize = frameCount * blockAlign
     const headerSize = 44
-    const buf = Buffer.alloc(headerSize + dataSize)
+
+    // A cache hit still arrives here with the decoded PCM, because the renderer
+    // has no way to know the WAV exists. Rewriting it would be tens or hundreds
+    // of megabytes for a file already on disk, so an entry of exactly the
+    // expected size is reused — touched so eviction sees it as recently used
+    // rather than ageing out from its first write.
+    const expectedSize = headerSize + dataSize
+    const existing = await stat(outPath).catch(() => null)
+    if (existing?.isFile() === true && existing.size === expectedSize) {
+      await touchTranscodeCacheEntry(outPath)
+      registerIssuedPath(outPath)
+      return outPath
+    }
+
+    const buf = Buffer.alloc(expectedSize)
 
     let off = 0
     buf.write('RIFF', off)

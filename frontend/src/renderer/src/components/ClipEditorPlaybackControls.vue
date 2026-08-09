@@ -7,6 +7,9 @@ defineProps<{
   isLoaded: boolean
   loopEnabled: boolean
   metronomeEnabled: boolean
+  /** Non-empty when another source owns the audio output: disables play and
+   *  explains why. Pausing stays available so playback is never stranded. */
+  playBlockedReason?: string
   /** Hidden in the read-only source preview, where a beat click serves no purpose. */
   showMetronome?: boolean
 }>()
@@ -39,10 +42,18 @@ defineEmits<{
     <button
       type="button"
       data-borderless-button="true"
-      class="rounded p-2 hover:bg-blue-600 hover:text-white"
+      class="rounded p-2 hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
       :class="isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-      :disabled="!isLoaded"
-      :title="!isLoaded ? 'Preparing preview…' : isPlaying ? 'Pause (Space)' : 'Play (Space)'"
+      :disabled="!isLoaded || (!isPlaying && !!playBlockedReason)"
+      :title="
+        !isPlaying && playBlockedReason
+          ? playBlockedReason
+          : !isLoaded
+            ? 'Preparing preview…'
+            : isPlaying
+              ? 'Pause (Space)'
+              : 'Play (Space)'
+      "
       @click="$emit('toggle-play')"
     >
       <svg

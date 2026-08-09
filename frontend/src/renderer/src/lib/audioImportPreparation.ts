@@ -1,15 +1,6 @@
 import { decodeAudioToPeaks, detectMusicalKey } from '@/lib/audioDecode'
+import { isBackendNativeAudioPath, writePlaybackWav } from '@/lib/audioPlaybackPath'
 import { probeAudioFile } from '@/lib/bridgeService'
-import { log } from '@/lib/log'
-
-const BACKEND_NATIVE_EXTS: ReadonlySet<string> = new Set([
-  '.wav',
-  '.aif',
-  '.aiff',
-  '.flac',
-  '.mp3',
-  '.wma'
-])
 
 export interface GeneratedAudioGeometry {
   sampleRate: number
@@ -17,33 +8,15 @@ export interface GeneratedAudioGeometry {
   channelCount: number
 }
 
-function fileExtensionOf(filePath: string): string {
-  const dot = filePath.lastIndexOf('.')
-  if (dot < 0) return ''
-  return filePath.slice(dot).toLowerCase()
-}
-
+/** Playback path for an import: the source itself when the backend can read it,
+ *  otherwise a cached WAV. Falls back to the source if the transcode fails, so a
+ *  failed cache write still yields an importable item. */
 async function resolvePlaybackPath(
   sourcePath: string,
   decoded: { sampleRate: number; channels: Float32Array[] }
 ): Promise<string> {
-  if (BACKEND_NATIVE_EXTS.has(fileExtensionOf(sourcePath))) return sourcePath
-  log.info('import', `transcode start ${sourcePath}`)
-  try {
-    const wavPath = await window.silverdaw.writeTempWav({
-      sourcePath,
-      channels: decoded.channels,
-      sampleRate: decoded.sampleRate
-    })
-    if (wavPath) {
-      log.info('import', `transcode done -> ${wavPath}`)
-      return wavPath
-    }
-    log.warn('import', `transcode returned null for ${sourcePath}`)
-  } catch (err) {
-    log.error('import', `transcode failed for ${sourcePath}: ${String(err)}`)
-  }
-  return sourcePath
+  if (isBackendNativeAudioPath(sourcePath)) return sourcePath
+  return (await writePlaybackWav(sourcePath, decoded)) ?? sourcePath
 }
 
 export async function prepareAudioImport(

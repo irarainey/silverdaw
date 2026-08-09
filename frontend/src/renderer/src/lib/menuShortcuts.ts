@@ -5,6 +5,7 @@ import { buildMenus } from '@/menu'
 import type { BuildMenusOptions } from '@/menu'
 import { useUiStore } from '@/stores/uiStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { ownsSelectionKeys } from '@/lib/selectionKeys'
 
 interface ParsedAccelerator {
   key: string
@@ -76,11 +77,21 @@ function matches(e: KeyboardEvent, accel: ParsedAccelerator): boolean {
   return true
 }
 
+/** Actions whose key belongs to whichever component owns the current selection,
+ *  when that component opts out via `data-owns-selection-keys`. */
+const SELECTION_DELETE_ACTIONS: ReadonlySet<string> = new Set(['edit.deleteClip'])
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   const tag = target.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
   return target.isContentEditable
+}
+
+/** True when the focused element sits inside a list that deletes its own
+ *  selection, so Delete must not fall through to the timeline's Delete Clip. */
+function ownsDeleteKey(target: EventTarget | null): boolean {
+  return ownsSelectionKeys(target)
 }
 
 export interface ShortcutBinding {
@@ -134,6 +145,10 @@ export function registerMenuShortcuts(
       if (!matches(e, b.accel)) continue
       if (isEditableTarget(e.target) && TEXT_EDIT_ACTIONS.has(b.action)) {
         // Let editable targets keep native text shortcuts.
+        return
+      }
+      if (SELECTION_DELETE_ACTIONS.has(b.action) && ownsDeleteKey(e.target)) {
+        // The focused list deletes its own selection instead.
         return
       }
       e.preventDefault()

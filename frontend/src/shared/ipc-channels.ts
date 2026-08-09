@@ -37,6 +37,14 @@ export const IPC = {
     registerDroppedPath: 'audio:registerDroppedPath',
     writeTempWav: 'audio:writeTempWav'
   },
+  fileBrowser: {
+    addFolder: 'fileBrowser:addFolder',
+    removeFolder: 'fileBrowser:removeFolder',
+    listFolders: 'fileBrowser:listFolders',
+    getIndex: 'fileBrowser:getIndex',
+    refreshIndex: 'fileBrowser:refreshIndex',
+    indexProgress: 'fileBrowser:indexProgress'
+  },
   prefs: {
     getUi: 'prefs:getUi',
     setUi: 'prefs:setUi',

@@ -77,8 +77,37 @@ export function buildTrackRowLayout(
   return rows
 }
 
-/** Find the track row containing the world-space y coordinate `worldY`. */
-export function trackIndexAtWorldY(
+/** Vertical scroll offset that brings a row into the visible band, given the
+ *  current offset. `rowTop` is content-relative (0 = first row's top, i.e. the
+ *  world y minus `RULER_HEIGHT`). Returns the current offset when the row is
+ *  already fully visible, so callers can skip a redraw.
+ *
+ *  `align: 'bottom'` prefers the row's bottom edge. A row expanded by
+ *  automation lanes can be taller than the viewport, and the lanes sit at the
+ *  bottom of the row, so aligning to the top would hide what prompted the
+ *  reveal. */
+export function scrollYToRevealRow(
+  rowTop: number,
+  rowHeight: number,
+  currentScrollY: number,
+  viewHeight: number,
+  maxScrollY: number,
+  align: 'nearest' | 'bottom' = 'nearest'
+): number {
+  const rowBottom = rowTop + rowHeight
+  const viewBottom = currentScrollY + viewHeight
+  const showTop = rowTop < currentScrollY
+  const showBottom = rowBottom > viewBottom
+  let next = currentScrollY
+  if (align === 'bottom') {
+    if (showBottom) next = rowBottom - viewHeight
+    else if (showTop) next = rowTop
+  } else if (showTop) next = rowTop
+  else if (showBottom) next = rowBottom - viewHeight
+  return Math.max(0, Math.min(maxScrollY, next))
+}
+
+/** Find the track row containing the world-space y coordinate `worldY`. */export function trackIndexAtWorldY(
   tracks: readonly TrackLike[],
   worldY: number,
   laneHeightOf?: LaneHeightOf

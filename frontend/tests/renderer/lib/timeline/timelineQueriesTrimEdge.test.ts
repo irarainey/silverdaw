@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed, ref, type Ref } from 'vue'
 import { createTimelineQueries } from '@/lib/timeline/timelineQueries'
+import { RULER_HEIGHT } from '@/lib/timeline/constants'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { GridGeometry } from '@/lib/timeline/useGridGeometry'
@@ -30,8 +31,12 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
   } as Clip
 }
 
-function makeQueries(regions: ClipHitRegion[]) {
-  const host = ref({
+// Track rows begin below the fixed ruler overlay, so a hit region never sits at
+// world y 0. These cases are about the x axis; the y values only have to be real.
+const ROW_Y = RULER_HEIGHT
+const PROBE_Y = RULER_HEIGHT + 25
+
+function makeQueries(regions: ClipHitRegion[]) {  const host = ref({
     getBoundingClientRect: () => ({ left: 0, top: 0 }) as DOMRect
   } as unknown as HTMLElement)
   return createTimelineQueries({
@@ -55,12 +60,12 @@ describe('hitTestTrimEdge boundary resolution', () => {
     project.clips['b'] = makeClip({ id: 'b', startMs: 1_000, inMs: 500, durationMs: 1_000 })
     // B is listed before A so draw-order "last wins" would otherwise pick A.
     const regions: ClipHitRegion[] = [
-      { clipId: 'b', x: 100, y: 0, w: 100, h: 50 },
-      { clipId: 'a', x: 0, y: 0, w: 100, h: 50 }
+      { clipId: 'b', x: 100, y: ROW_Y, w: 100, h: 50 },
+      { clipId: 'a', x: 0, y: ROW_Y, w: 100, h: 50 }
     ]
     const q = makeQueries(regions)
 
-    const hit = q.hitTestTrimEdge(103, 25)
+    const hit = q.hitTestTrimEdge(103, PROBE_Y)
     expect(hit?.region.clipId).toBe('b')
     expect(hit?.edge).toBe('left')
   })
@@ -70,13 +75,13 @@ describe('hitTestTrimEdge boundary resolution', () => {
     project.clips['a'] = makeClip({ id: 'a', startMs: 0, durationMs: 1_000 })
     project.clips['b'] = makeClip({ id: 'b', startMs: 1_000, inMs: 500, durationMs: 1_000 })
     const regions: ClipHitRegion[] = [
-      { clipId: 'a', x: 0, y: 0, w: 100, h: 50 },
-      { clipId: 'b', x: 100, y: 0, w: 100, h: 50 }
+      { clipId: 'a', x: 0, y: ROW_Y, w: 100, h: 50 },
+      { clipId: 'b', x: 100, y: ROW_Y, w: 100, h: 50 }
     ]
     const q = makeQueries(regions)
 
     // Aiming a pixel or two left of the seam still grabs the later clip's start.
-    const seamHit = q.hitTestTrimEdge(98, 25)
+    const seamHit = q.hitTestTrimEdge(98, PROBE_Y)
     expect(seamHit?.region.clipId).toBe('b')
     expect(seamHit?.edge).toBe('left')
   })
@@ -86,13 +91,13 @@ describe('hitTestTrimEdge boundary resolution', () => {
     project.clips['a'] = makeClip({ id: 'a', startMs: 0, durationMs: 1_000 })
     project.clips['b'] = makeClip({ id: 'b', startMs: 1_000, inMs: 500, durationMs: 1_000 })
     const regions: ClipHitRegion[] = [
-      { clipId: 'a', x: 0, y: 0, w: 100, h: 50 },
-      { clipId: 'b', x: 100, y: 0, w: 100, h: 50 }
+      { clipId: 'a', x: 0, y: ROW_Y, w: 100, h: 50 },
+      { clipId: 'b', x: 100, y: ROW_Y, w: 100, h: 50 }
     ]
     const q = makeQueries(regions)
 
     // Deeper inside the previous clip (past the left-bias band) still trims its end.
-    const hit = q.hitTestTrimEdge(95, 25)
+    const hit = q.hitTestTrimEdge(95, PROBE_Y)
     expect(hit?.region.clipId).toBe('a')
     expect(hit?.edge).toBe('right')
   })
@@ -100,18 +105,18 @@ describe('hitTestTrimEdge boundary resolution', () => {
   it('returns null in the clip body away from any edge', () => {
     const project = useProjectStore()
     project.clips['a'] = makeClip({ id: 'a', startMs: 0, durationMs: 1_000 })
-    const regions: ClipHitRegion[] = [{ clipId: 'a', x: 0, y: 0, w: 100, h: 50 }]
+    const regions: ClipHitRegion[] = [{ clipId: 'a', x: 0, y: ROW_Y, w: 100, h: 50 }]
     const q = makeQueries(regions)
 
-    expect(q.hitTestTrimEdge(50, 25)).toBeNull()
+    expect(q.hitTestTrimEdge(50, PROBE_Y)).toBeNull()
   })
 
   it('does not offer a locked clip edge', () => {
     const project = useProjectStore()
     project.clips['a'] = makeClip({ id: 'a', startMs: 0, durationMs: 1_000, locked: true })
-    const regions: ClipHitRegion[] = [{ clipId: 'a', x: 0, y: 0, w: 100, h: 50 }]
+    const regions: ClipHitRegion[] = [{ clipId: 'a', x: 0, y: ROW_Y, w: 100, h: 50 }]
     const q = makeQueries(regions)
 
-    expect(q.hitTestTrimEdge(2, 25)).toBeNull()
+    expect(q.hitTestTrimEdge(2, PROBE_Y)).toBeNull()
   })
 })

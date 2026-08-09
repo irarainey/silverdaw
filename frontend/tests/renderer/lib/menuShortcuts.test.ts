@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 import { collectShortcutBindings, registerMenuShortcuts } from '@/lib/menuShortcuts'
 
 afterEach(() => {
@@ -82,5 +83,49 @@ describe('collectShortcutBindings', () => {
     } as unknown as KeyboardEvent)
 
     expect(menuAction).not.toHaveBeenCalled()
+  })
+
+  it('lets a list that owns the Delete key handle its own selection', () => {
+    setActivePinia(createPinia())
+    // The suite runs on `node`, so stand HTMLElement up just far enough for the
+    // `instanceof` + `closest` check the deferral performs.
+    class FakeElement {
+      constructor(private readonly owns: boolean) {}
+      closest(selector: string): FakeElement | null {
+        return this.owns && selector === '[data-owns-selection-keys="true"]' ? this : null
+      }
+    }
+    vi.stubGlobal('HTMLElement', FakeElement)
+
+    let keydown: ((event: KeyboardEvent) => void) | null = null
+    const menuAction = vi.fn()
+    vi.stubGlobal('window', {
+      silverdaw: { menuAction },
+      addEventListener: vi.fn((type: string, listener: (event: KeyboardEvent) => void): void => {
+        if (type === 'keydown') keydown = listener
+      }),
+      removeEventListener: vi.fn()
+    })
+
+    registerMenuShortcuts({ devToolsEnabled: false }, () => false)
+    const listener = keydown as ((event: KeyboardEvent) => void) | null
+    const pressDelete = (target: unknown): void =>
+      listener?.({
+        key: 'Delete',
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        target
+      } as unknown as KeyboardEvent)
+
+    pressDelete(new FakeElement(true))
+    expect(menuAction).not.toHaveBeenCalled()
+
+    // Anywhere else, Delete still reaches the timeline's Delete Clip.
+    pressDelete(new FakeElement(false))
+    expect(menuAction).toHaveBeenCalledWith('edit.deleteClip')
   })
 })

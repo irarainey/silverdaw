@@ -29,8 +29,15 @@ export type TimelineZoomAction = 'in' | 'out' | 'reset' | 'fit'
 export type TimelineZoomRequest =
   | { kind: 'step'; action: TimelineZoomAction; id: number }
   | { kind: 'absolute'; pxPerSecond: number; id: number }
-/** One-shot request to scroll a track row into the visible vertical band. */
-export type TimelineRevealTrackRequest = { trackId: string; id: number }
+/** One-shot request to scroll a track row into the visible vertical band.
+ *  `align: 'bottom'` reveals the row's bottom edge in preference to its top,
+ *  which is what a newly opened automation lane needs — the lane stack sits at
+ *  the bottom of the row, and an expanded row may be taller than the viewport. */
+export type TimelineRevealTrackRequest = {
+  trackId: string
+  align?: 'nearest' | 'bottom'
+  id: number
+}
 export type { TimelineSelection } from '@/lib/timeline/timelineSelection'
 
 interface UiState {
@@ -74,6 +81,9 @@ interface UiState {
   automationHoverTip: { x: number; y: number; text: string } | null
   /** Global shortcuts defer while the Clip Editor preview dialog is open. */
   clipEditorOpen: boolean
+  /** Files tab selection in the library panel; not persisted, so Library is the
+   *  tab shown on every launch. FX taking over the panel wins over this. */
+  fileBrowserTabActive: boolean
   hydrated: boolean
 }
 
@@ -192,6 +202,7 @@ export const useUiStore = defineStore('ui', {
     selectedAutomationPoint: null,
     automationHoverTip: null,
     clipEditorOpen: false,
+    fileBrowserTabActive: false,
     hydrated: false
   }),
 
@@ -358,10 +369,11 @@ export const useUiStore = defineStore('ui', {
     },
 
     /** Ask the timeline to scroll the given track row into the visible band. */
-    requestRevealTrack(trackId: string): void {
+    requestRevealTrack(trackId: string, align: 'nearest' | 'bottom' = 'nearest'): void {
       if (!trackId) return
       this.timelineRevealTrackRequest = {
         trackId,
+        align,
         id: nextTimelineRevealTrackRequestId++
       }
     },
@@ -448,6 +460,10 @@ export const useUiStore = defineStore('ui', {
       }
       this.automationLaneRevision += 1
       this.persistTrackAutomationLaneView(trackId)
+      // The new lane is appended to the bottom of the row, so a track near the
+      // foot of the viewport would otherwise grow entirely off screen. Revealing
+      // here covers every way a lane is opened rather than each call site.
+      this.requestRevealTrack(trackId, 'bottom')
     },
 
     /** Hide one visible lane while retaining the backend-stored curve. */

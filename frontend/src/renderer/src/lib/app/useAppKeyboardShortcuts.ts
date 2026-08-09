@@ -8,12 +8,14 @@ import type { useTransportStore } from '@/stores/transportStore'
 import type { useProjectStore } from '@/stores/projectStore'
 import type { useUiStore } from '@/stores/uiStore'
 import type { useLibraryStore } from '@/stores/libraryStore'
+import type { usePreviewStore } from '@/stores/previewStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
 import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
 import { startMsForAlignedBeat, stepToGridMs } from '@/lib/musicTime'
+import { SELECTION_KEYS, ownsSelectionKeys } from '@/lib/selectionKeys'
 import {
   nextMarkerCandidateMs,
   previousMarkerCandidateMs,
@@ -25,12 +27,14 @@ type TransportStore = ReturnType<typeof useTransportStore>
 type ProjectStore = ReturnType<typeof useProjectStore>
 type UiStore = ReturnType<typeof useUiStore>
 type LibraryStore = ReturnType<typeof useLibraryStore>
+type PreviewStore = ReturnType<typeof usePreviewStore>
 
 export interface AppKeyboardShortcutsDeps {
   transport: TransportStore
   project: ProjectStore
   ui: UiStore
   library: LibraryStore
+  preview: PreviewStore
   // True when a modal/dialog owns the keyboard; shortcuts are suppressed.
   isModalOpen: () => boolean
   // Opens the Export Mixdown dialog (Ctrl/Cmd+M).
@@ -66,7 +70,7 @@ function isEditableTarget(target: EventTarget | null, e: KeyboardEvent): boolean
 }
 
 export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyboardShortcuts {
-  const { transport, project, ui, library } = deps
+  const { transport, project, ui, library, preview } = deps
 
   // Tracks the exact last arrow-seek target so repeated presses step off the
   // precise value rather than the backend's sub-ms-rounded ack (see the grid
@@ -141,6 +145,9 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
     // Don't fight text fields, and don't trigger before the bridge is up
     // (no point sending TRANSPORT_SEEK that the backend would just drop).
     if (isEditableTarget(e.target, e)) return
+    // A focused list drives its own selection with these keys. This handler runs
+    // in the capture phase, so the list cannot call it off itself.
+    if (SELECTION_KEYS.has(e.key) && ownsSelectionKeys(e.target)) return
     if (deps.isModalOpen()) return
     if (!transport.bridgeReady) return
     // Mid-session engine recovery gates all transport/zoom shortcuts behind
@@ -155,7 +162,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): AppKeyb
       // Shared with the transport bar's Play button and MIDI so Space agrees on
       // everything they handle — notably restarting an armed timeline range from
       // its start (and scrolling it into view) rather than resuming in place.
-      toggleTransportPlayback('shortcut', { project, transport, ui })
+      toggleTransportPlayback('shortcut', { project, transport, ui, preview })
       return
     }
 

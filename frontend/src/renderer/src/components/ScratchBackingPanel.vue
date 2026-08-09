@@ -13,6 +13,8 @@ const props = defineProps<{
   monitorDisabled?: boolean
   isPlaying: boolean
   transportEnabled: boolean
+  /** Non-empty when another source owns the audio output. */
+  playBlockedReason?: string
 }>()
 
 defineEmits<{
@@ -131,6 +133,7 @@ onBeforeUnmount(() => {
         <ScratchTransportBar
           :is-playing="isPlaying"
           :can-control="transportEnabled"
+          :play-blocked-reason="playBlockedReason"
           :loop-enabled="backing.loop.value"
           :loop-disabled="disabled ?? false"
           @skip-to-start="$emit('skip-to-start')"

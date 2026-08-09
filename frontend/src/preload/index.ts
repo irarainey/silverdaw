@@ -3,6 +3,9 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   AudioMetadata,
   DebugPreferences,
+  FileBrowserEntry,
+  FileBrowserFolderIndex,
+  FileBrowserIndexProgress,
   MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
@@ -25,7 +28,7 @@ import type {
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
-export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
+export type { AudioMetadata, DebugPreferences, FileBrowserEntry, OpenedAudioFile, UiPreferences }
 
 const api = {
   menuAction: (action: string): void => {
@@ -53,6 +56,30 @@ const api = {
   /** Same path allow-list as `readAudioFile`; returns display metadata or null. */
   readAudioMetadata: (filePath: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.audio.readMetadata, filePath),
+  /** Folders the user added to the library file browser, in display order. */
+  listFileBrowserFolders: (): Promise<string[]> => ipcRenderer.invoke(IPC.fileBrowser.listFolders),
+  /** Opens the native directory picker; the pick is the consent to browse it. */
+  addFileBrowserFolder: (): Promise<string[]> => ipcRenderer.invoke(IPC.fileBrowser.addFolder),
+  removeFileBrowserFolder: (folder: string): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.fileBrowser.removeFolder, folder),
+  /** The whole indexed contents of one added root: listings plus search tags. */
+  getFileBrowserIndex: (root: string): Promise<FileBrowserFolderIndex> =>
+    ipcRenderer.invoke(IPC.fileBrowser.getIndex, root),
+  /** Re-crawl a root, picking up files added or retagged on disk since. */
+  refreshFileBrowserIndex: (root: string): Promise<FileBrowserFolderIndex> =>
+    ipcRenderer.invoke(IPC.fileBrowser.refreshIndex, root),
+  /**
+   * A crawl in progress, reported folder by folder, so the tree fills in as the
+   * results arrive rather than after a large library has finished.
+   */
+  onFileBrowserIndexProgress: (
+    handler: (progress: FileBrowserIndexProgress) => void
+  ): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, progress: FileBrowserIndexProgress): void =>
+      handler(progress)
+    ipcRenderer.on(IPC.fileBrowser.indexProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.fileBrowser.indexProgress, listener)
+  },
   /** Resolve and register an OS drag-dropped file path for later allowed reads. */
   getPathForFile: (file: File): string => {
     try {

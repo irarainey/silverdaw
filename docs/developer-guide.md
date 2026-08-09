@@ -27,6 +27,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
+  - [File browser (Files tab)](#file-browser-files-tab)
 - [Scratch Editor](#scratch-editor)
 - [Preferences](#preferences)
   - [MIDI controller preferences](#midi-controller-preferences)
@@ -36,6 +37,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Keyboard & mouse reference](#keyboard--mouse-reference)
   - [Application commands](#application-commands)
   - [Dialogs](#dialogs)
+  - [Library file browser](#library-file-browser)
   - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
@@ -179,6 +181,11 @@ Silverdaw currently supports the core arrangement workflow:
   Explorer file directly onto an existing timeline track to import and place it.
   Dropping one file onto empty timeline space creates a fresh track for it, and
   dropping several files creates one new track per file at the drop position.
+- The library panel's **Files** tab browses folders of audio on disk, showing
+  each track's artwork, title, artist, album, type and length. Audition a file
+  through your chosen audio device before importing it. Added folders are
+  remembered between sessions and are the only paths the browser may read. See
+  [File browser (Files tab)](#file-browser-files-tab).
 - **File ▸ Import from Project…** lists saved projects from the configured
   project folder, then lets you select their managed stems and samples. A
   selected scratch sample also imports its linked Scratch pattern and original
@@ -234,8 +241,8 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
-- **Track & project effects.** The bottom panel has three tabs — **Library**,
-  **Track FX**, and **Project FX**. The whole panel collapses / expands from its
+- **Track & project effects.** The bottom panel has four tabs — **Files**,
+  **Library**, **Track FX**, and **Project FX**. The whole panel collapses / expands from its
   header, with `Ctrl+J`, or **View ▸ Toggle Library / FX Panel**. Each track header also has an **Fx** button
   (beside Mute / Solo) that opens **Track FX** for that track — expanding the
   panel first if it is minimised — (pressing it again collapses back to the
@@ -569,6 +576,12 @@ The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
 Clips reference their audio via `libraryItemId` — the source file path lives only on the
 library item itself. The backend resolves the actual on-disk file (always preferring the
 decoded-WAV cache) at the time it loads the clip's audio source.
+
+`PREVIEW_LOAD` is the one exception, and only for auditioning: it accepts an
+optional absolute `filePath` that takes precedence over `libraryItemId`, so the
+[file browser](#file-browser-files-tab) can play a file that has not been
+imported and therefore has no library item. The backend rejects a path that is
+not an existing file, and still resolves the decoded-WAV cache for it.
 
 - `CLIP_ADD.requestWaveform` is optional and defaults to `true`. The renderer
   sends `false` only when a split, duplicate, or pasted clip already has complete
@@ -1431,6 +1444,38 @@ Windows) currently round-trip through the renderer's Web Audio decoder:
 (keyed by a hash of source path + sample rate + channel count + length). The cached WAV path
 is what goes on the wire as `CLIP_ADD.filePath`.
 
+An entry already present at the expected size is reused rather than rewritten,
+so a repeat play does not push tens or hundreds of megabytes back to disk; it is
+touched instead, which keeps eviction treating it as recently used. The cache is
+swept at startup by
+[`transcodeCache.ts`](../frontend/src/main/transcodeCache.ts): entries unused for
+longer than `TRANSCODE_CACHE_MAX_AGE_MS` (7 days) are deleted, and whatever
+remains is trimmed oldest-first until it fits `TRANSCODE_CACHE_MAX_BYTES` (2 GB).
+These are float WAVs — roughly 21 MB per stereo minute at 44.1 kHz — and nothing
+else on the system removes them, so without a sweep auditioning a few albums of
+m4a would leave gigabytes in the user's temp directory indefinitely. Eviction is
+always safe: a transcode deleted while still wanted is simply decoded again on
+the next play.
+
+Note that this is not a matter of the backend picking the wrong format by
+extension. JUCE's Windows codec is the Windows Media Format SDK
+(`IWMSyncReader`), which reads the ASF family only; it cannot decode an MP4
+container whatever the file is called, and content sniffing does not help. Any
+format outside the list above **must** be transcoded before the backend sees it.
+
+The transcode decision lives in
+[`audioPlaybackPath.ts`](../frontend/src/renderer/src/lib/audioPlaybackPath.ts), which owns
+the natively supported extension list, the cache write, and `ensureBackendPlayablePath()`
+for callers holding a raw on-disk path. Two callers need it:
+
+- **Import**, which already has the decoded PCM in hand and reuses the cache write.
+- **The Files tab audition**, which plays files that were never imported and so has no
+  library item or decoded cache to fall back on. It transcodes on first play, caches the
+  result for the session, and keeps its row identity on the browsed file — the preview
+  voice holds the WAV path, so `fileBrowserStore.auditionedPath` maps back to the file the
+  user can see. A decode superseded by another click is abandoned rather than allowed to
+  steal playback when it lands.
+
 The relevant code is in
 [`audioDecode.ts`](../frontend/src/renderer/src/lib/audioDecode.ts),
 [`importAudio.ts`](../frontend/src/renderer/src/lib/importAudio.ts) and the `audio:writeTempWav`
@@ -1891,6 +1936,25 @@ locally — marker positions otherwise only reach the renderer on a full
 likewise moved on the backend, through the ordinary `setPositionMs` seek: the same
 material sits under it after the move, so the effect tails carry across rather than
 being reset.
+
+Track automation is on that same timeline axis, so it is rescaled by the same factor
+(`ProjectState::retimeTrackAutomationForTempoChange`, mirrored in `applyProjectBpm`);
+a filter sweep drawn for the drop must still be over the drop rather than over
+whatever now occupies those milliseconds.
+
+Clip volume shapes are the exception that is *not* on the project scale. Breakpoints
+are clip-local post-warp ms — `OffsetSource::applyClipGain` runs downstream of the
+stretcher and measures from the clip's start — so a shape follows its own clip's
+timeline footprint, and that footprint changes by a different amount per clip. A clip
+following the project tempo re-stretches by `previousBpm / newBpm`; a clip the same
+edit has just auto-warped changes by `sourceBpm / newBpm`; a pinned `tempoRatio` and
+an unwarped clip do not re-stretch at all and their shapes must stay exactly where
+they are. So the backend captures every shaped clip's footprint *before* the edit
+(`ProjectState::snapshotClipFootprints`) and rescales each shape by its own
+before/after ratio once the warp passes have settled
+(`retimeClipEnvelopesForFootprintChange`); `applyProjectBpm` mirrors it with
+`effectiveDurationMs` and `scaleEnvelopePoints`. Applying the project scale here
+instead would drag the shapes off the clips that did not move.
 
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
@@ -2616,6 +2680,214 @@ Within the dialog:
   drags and loops. The renderer coalesces draft updates to roughly 30 Hz so
   Rubber Band isn't re-tuned per pointer event.
 
+### File browser (Files tab)
+
+The bottom panel's **Files** tab browses folders of audio on disk so a track can
+be found, listened to, and imported without leaving the app. Unlike the Library
+tab it is **not project-scoped**: the folders belong to the user and persist
+across projects and sessions.
+
+**Adding folders.** The folder button in the narrow fixed column on the left
+opens the native directory picker. That pick is the **consent step**: it is the
+only way a path enters the browser, and it is what grants read access. Chosen
+folders are stored in `preferences.json` as `ui.fileBrowserFolders` (absolute,
+de-duplicated paths only — `sanitiseFileBrowserFolders` drops anything else, so
+a hand-edited prefs file cannot widen the renderer's reach) and re-trusted at
+startup by `restoreFileBrowserRoots` before the renderer can ask for an index.
+Both the handlers and the crawl refuse any directory that is not a browser root
+or inside one (`isWithinFileBrowserRoot`). `fileBrowserIndex.ts` collects only
+subfolders and files with an importable audio extension, ignores symlinks so a
+link cannot reach outside the folder, and sorts folders before files, each
+natural-order A–Z. **Refresh** on a folder's right-click menu re-crawls its root
+so files added or removed on disk since it was indexed are picked up; **Remove
+Folder** (offered only on a folder the user added — nested folders leave with
+their root) drops the folder, its index, cover URLs and read trust.
+
+**The index.** `fileBrowserIndex.ts` crawls an added root **once**, in the main
+process, and everything downstream reads the result: rendering a row, expanding
+a branch and filtering the tree all answer from it, so the tree touches the disk
+only when a folder is added, when the user asks for a refresh, or once at
+startup to reload the cache. (Cover art is the single exception, read per
+visible row — see **Rows** below.) One crawl produces both halves of what the
+tree needs — every folder's listing (`folders`) and every file's tags (`tags`) —
+because the filter matches on tags, so a lazy per-folder listing could never
+answer a search without walking everything anyway.
+
+The walk is breadth-first over an explicit queue rather than recursion, so a
+deeply nested library cannot exhaust the stack, and tag reads run through a
+worker pool of `INDEX_READ_CONCURRENCY` (8). Tag reads are IO-bound, so some
+overlap is a large win over going one at a time, but an unbounded fan-out over
+tens of thousands of files would open that many handles at once and starve the
+rest of the app. A file whose tags cannot be read still enters the index: it is
+browsable and importable, and its row falls back to the file name.
+
+`isWithinFileBrowserRoot` is re-checked for **every** directory the walk is
+about to descend into, not just the root, so nothing reachable from inside a
+browsed folder can widen what is read. Symlinks are skipped outright — and on
+Windows that covers junctions too, which Node reports as links rather than
+directories — so a link planted inside a browsed folder cannot be followed out
+of it.
+
+**An unreachable root is not an empty one.** A disconnected drive, a share that
+is down or a folder deleted since it was added would otherwise return an empty
+listing that looks exactly like a library with no audio in it — and, worse, get
+cached as though it were the truth. When the *root itself* cannot be read the
+crawl stops and returns `unavailable: true`; `getFolderIndex` then neither
+remembers it in memory nor writes it to the cache, so plugging the drive back in
+and asking again simply crawls. The row says **Unavailable** and offers
+**Retry**. A *subfolder* failing is treated as local damage: it contributes an
+empty listing and the rest of the crawl is kept.
+
+**Progress.** A large library takes seconds to crawl, so the index is reported
+to the renderer *as it is built* rather than only when it is done. `getIndex`
+and `refreshIndex` pass an `onProgress` reporter into the crawl; each slice —
+the folders listed and the tags read since the last message — goes to the
+renderer on `fileBrowser:indexProgress`, and `applyIndexProgress` merges it into
+the same `children` and `info` the finished index would have filled. The tree
+therefore **fills in folder by folder**: because the walk is breadth-first, the
+folders nearest the root, which are the ones on screen, arrive first.
+
+Slices are batched at `INDEX_PROGRESS_INTERVAL_MS` (120 ms) rather than sent per
+folder or per file, which for a large library would put thousands of messages
+across the bridge and cost more than the crawl. Each message carries only what
+completed since the last, so applying them in order rebuilds exactly the index
+the crawl finally returns — which is applied again at the end as the
+authoritative copy. An index served from the cache reports nothing, because
+there is no wait to fill.
+
+The added folder's row shows a spinner and a caption while its crawl runs
+(`indexLabel`). It counts files while the tree is still being walked and
+switches to a ratio once every folder is listed, because until then there is no
+total to count against. Two orderings matter for this to be visible at all: a
+root is marked expanded **before** its crawl starts, not after, and a re-crawl
+clears the old subtree **as it starts** rather than when it finishes — otherwise
+a late wipe would throw away the slices that arrived meanwhile.
+
+**The cache.** Each index is written to `file-browser-index.json` under
+`app.getPath('userData')` and reloaded by `loadFileBrowserIndexCache` at
+startup, after `restoreFileBrowserRoots` has re-trusted the saved folders, so a
+restart shows the user's folders without crawling the disk again. It is written
+to a sibling and renamed over the target, so a crash part-way through leaves the
+previous cache intact rather than truncated JSON. It is a **cache, not user
+data**: a missing or malformed file is not an error, it just means the next
+crawl rebuilds it. Because it is an ordinary file on disk that anything could
+have written, `reviveIndex` re-validates what it restores — a cached root the
+user has since removed is discarded whole, and any folder outside the trusted
+roots is dropped — so a hand-edited cache cannot widen the app's reach.
+
+The read is started at startup but deliberately **not** awaited, because an
+un-cached root is simply crawled on demand and this must not gate window
+creation. That leaves a window in which the renderer could ask for a root before
+the cache has been read, so `getFolderIndex` awaits the same shared promise: a
+root asked for mid-read waits for the cache rather than starting a crawl of a
+library that was already indexed last run.
+
+**Rows.** Each file row shows a cover-art thumbnail (hover it for a larger
+preview, teleported to `body` so the scrolling tree cannot clip it), the track
+name from the file's tags falling back to the file name, artist, album, file
+type, a live playhead while the file is auditioning, and the tagged duration.
+Tags come from the index, so a row costs nothing to display. Cover art is the
+one thing left out of it and read lazily when a row mounts: it is large binary
+data, and eagerly reading a library of tens of thousands of files would create
+that many Blob URLs and bloat the cache file for artwork almost none of which is
+on screen. Cover bytes stay out of reactive state — only the Blob URL is
+exposed, and it is revoked when the folder is removed. Each row carries **Back
+to start**, **Play / Pause**, and **Import** buttons; the same actions are on
+its right-click menu. Import runs through `importAudioPathsIntoLibrary`, the
+same path as a drag-and-drop import, so a browsed file becomes an ordinary
+library item with no special casing downstream.
+
+**Refreshing.** A refresh re-crawls the whole added root, because the index is
+stored and cached per root rather than per folder. The crawl's tags are
+**authoritative and replace** what the store holds, rather than merging into it:
+`FileBrowserFileTags` omits an empty field instead of carrying an explicit
+`undefined`, so a merge would keep showing an artist the user has since cleared
+on disk. `fileBrowserInfoWithTags` carries the already-fetched cover URL across
+that replacement, or a visible row's Blob would be dropped on the floor and
+leaked. `pruneMissing` then drops rows, selection and cover URLs for anything
+the re-crawl no longer lists.
+
+Cover art needs its own step, because it is not part of the index: a refresh
+revokes and clears the cover state for the refreshed subtree and bumps
+`coverEpoch`, which mounted rows watch so they ask again. Without it, artwork
+changed on disk would keep showing the old image for as long as its row stayed
+on screen. The re-read is still driven by the rows, so a refresh pays for the
+covers actually on screen and no more.
+
+**Auditioning.** Playback uses the shared backend preview voice through the
+chosen audio output device. `PREVIEW_LOAD` gained an optional `filePath` for
+this: the file is not a library item, so there is no `libraryItemId` to resolve
+(see [Bridge protocol](#bridge-protocol)). Only one thing plays at a time, so
+starting an audition stops project playback, and removing a folder stops the
+audition. The auditioned file is also shown in a **bar above the tree**,
+outside the scroll container, so what is playing is never lost to scrolling or a
+filter — it reports playback, and the file stays listed in its own folder as
+well.
+
+A format the engine cannot decode is auditioned from a transcoded WAV (see
+[Audio formats](#audio-formats)), so the preview voice does not always hold the
+path shown in the tree. Two consequences shape the store:
+
+- Row identity comes from `auditionSourcePath`, exposed as the `auditionedPath`
+  getter, which is only claimed while the voice still holds the exact path the
+  browser handed it. That makes the claim self-releasing: the Clip Editor or
+  Scratch Editor taking the shared voice clears the browser's playing row
+  instead of leaving a stale one lit. Anything reasoning about "which row is
+  playing" — the pin, `isPlaying`, `positionMs`, `pause`, `restart` and
+  `revealAudition` — must go through it rather than reading `previewStore`.
+- A decode takes seconds, so `prepareAndPlay` holds two claims across it: the
+  browser's own `preparingPath`, and `previewStore.loadSeq`, a counter bumped by
+  every load, audition and unload of the shared voice. If either has moved on by
+  the time the WAV is ready the audition is abandoned, so a slow decode cannot
+  seize a voice something else has since taken.
+
+**Filtering.** The field in the panel header matches a file's tagged title, its
+displayed name, or its artist. Because the index already holds every folder and
+every file's tags, filtering is a **synchronous read of in-memory state** — no
+crawl, no IPC, no disk access — and files in folders the user has never opened
+are still found. Matching folders are force-expanded by the `rows` getter for as
+long as the filter is set, rather than by writing to `expanded`, so the user's
+own disclosure state is never touched and simply reappears when the filter is
+cleared. Clearing it also reopens the audition's folders and reselects it, so
+the view scrolls back to what is playing.
+
+`fileBrowserActiveFilter` treats anything shorter than
+`FILE_BROWSER_FILTER_MIN_LENGTH` (3) as no filter at all, since one or two
+characters match almost every track and so narrow nothing. Everything that hides
+rows reads the active filter rather than the raw text, so a half-typed word
+leaves the tree exactly as it was. No debounce is needed — with the index in
+place a keystroke costs a re-render and nothing more, exactly as the Library
+tab's filter does over its in-memory array.
+
+**Keyboard.** The tree is a single tab stop rather than one per row (list rows
+carry no focus ring — see the UI styling instructions). Switching to another tab
+unmounts the view, so returning to **Files** puts the tree back at the offset it
+was left at (kept in the store, which outlives the component), brings the
+selection into view if that offset does not already show it, and takes focus, so
+the keys below work without a click first. `↑` / `↓` walk the
+visible rows, so filtered and collapsed rows are skipped and both ends stop
+rather than wrap; `Enter` opens or closes a folder and plays or pauses a file;
+`Delete` removes a selected added folder. The same keys work from the filter
+field and drive the tree, and clearing the filter with `Escape` or its clear
+button hands keyboard focus back to the tree. Both app-wide keyboard owners —
+`onGlobalShortcutKey` — listen on `window` in the **capture** phase, so a
+component cannot call them off with `stopPropagation`. `lib/selectionKeys.ts` is
+the single opt-out: a list that drives its own selection marks its container
+`data-owns-selection-keys="true"`, and both owners stand down for the keys in
+`SELECTION_KEYS` (`ArrowUp`, `ArrowDown`, `Enter`) and for the `Delete`
+selection actions. The files tree claims those keys **whenever focus is inside
+it**, not only while a row is selected: the attribute expresses which container
+owns the keyboard, and the tree's own handlers already do nothing without a
+selection. Gating it on the selection instead let `Delete` fall through to the
+timeline's *Delete Clip* while the user was looking at the Files tab, which is
+destructive and invisible from there. `ArrowLeft` / `ArrowRight` are
+deliberately not in the set — no self-navigating list uses them, so they stay
+with the global playhead seek.
+
+Focus stays on the tree container rather than moving row to row, so the tree
+names the selected row with `aria-activedescendant`; without it a screen reader
+announces the tree but never the row the arrow keys are on.
+
 ## Scratch Editor
 
 The **Scratch Editor** is a large modal dialog for performing a vinyl-style
@@ -3218,6 +3490,21 @@ any modified `Enter`, or a dialog that claims the key itself with
 progress dialogs, and the recovery dialog with its per-item **Restore**
 buttons — carry no primary button and so have no default.
 
+### Library file browser
+
+These apply to the bottom panel's **Files** tab, and only while a row is
+selected — see [File browser (Files tab)](#file-browser-files-tab).
+
+| Input | Effect |
+|---|---|
+| `↑` / `↓` | Move the selection through the visible rows. Collapsed and filtered-out rows are skipped; both ends stop rather than wrap. |
+| `Enter` | Open or close the selected folder, or play / pause the selected file. |
+| `Delete` | Remove the selected folder from the browser. Only a folder you added can be removed; nested folders leave with their root. |
+| `Escape` (filter field) | Clear the filter and hand keyboard focus back to the tree. |
+
+The filter field passes `↑`, `↓`, and `Enter` through to the tree, so a file can
+be found and auditioned without leaving the search box.
+
 ### Timeline commands
 
 **Nested clip context menu.** On a single clip, commands are grouped under
@@ -3421,7 +3708,9 @@ renderer-only (never serialised), so it needs no migration.
 
 Each track header has an **A** toggle that opens an automation stack below the clip area; the
 first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
-several curves can be viewed and edited together. Every lane has its own parameter picker and
+several curves can be viewed and edited together. Opening a lane scrolls the track row into
+view, aligned so the new lane at the bottom of the row is visible even when the expanded row
+is taller than the timeline viewport. Every lane has its own parameter picker and
 height; its lower edge resizes only that lane from 80 to 220 px. The picker truncates a name
 too long for the header and names the parameter in its tooltip, and it hands focus back to the
 timeline on change or `Escape`, so the global shortcuts keep working after a lane is
@@ -3497,6 +3786,17 @@ which are then translated by `-scrollX` / `-scrollY` on every scroll change. The
 and auto-follow during playback are O(1) layer translations — no clip iteration, no Graphics
 allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
 move, peaks arrival, zoom, BPM, project length, header-column resize.
+
+**The ruler is not in world space.** Clip hit regions are stored at absolute world
+coordinates, so a pointer is mapped by adding `scrollX` / `scrollY` — but the ruler
+is a fixed overlay that does not scroll with the tracks, so that mapping is only
+meaningful below `RULER_HEIGHT`. Every pointer query that reads world y must reject
+the ruler band first; `timelineQueries.pointerToTracksWorld` is the single guard
+`hitTestClip`, `hitTestTrimEdge` and `pointerToTrackId` share, and
+`useTimelineContextMenu` applies the same test. Skipping it means a press on the
+ruler resolves to whatever row happens to be scrolled under that offset: the playhead
+became ungrabbable from the ruler the moment the view was scrolled down at all,
+starting a clip drag instead, and right-click opened that clip's menu.
 
 **Peaks LOD pyramid.** Each library item carries a small ladder of pre-downsampled
 peak arrays (`peaksLod`) alongside its base peaks. `drawClip` picks the LOD whose

@@ -59,6 +59,13 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   cover art (or a per-kind icon when there's none); right-click a tile to
   **Update Image…** with your own picture, or **Remove** / **Restore** the image —
   all per-tile and non-destructive.
+- **File browser.** The **Files** tab beside the Library browses folders of
+  audio on your own drives, showing each track's cover art, title, artist,
+  album, type and length. Listen to a file through your audio device before
+  deciding, then import it with one click. Add folders with the button on the
+  left — that pick is the only thing that lets Silverdaw read them — and they
+  are remembered the next time you open the app. Filter by track name or artist,
+  and drive the whole list from the keyboard.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
@@ -132,8 +139,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   Turn it on in **Preferences ▸ Project**.
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
-  and a collapsible bottom panel with **Track FX**, **Project FX**, and
-  **Library** tabs.
+  and a collapsible bottom panel with **Files**, **Track FX**, **Project FX**,
+  and **Library** tabs.
   - **Track FX**
     - **Tone:** Bass, Mid, and Treble controls.
     - **Filter:** a single DJ-style sweep from low-pass through off to high-pass.

@@ -646,6 +646,148 @@ void testProjectStateRetimesClipsOnTempoChange()
             "an unknown previous tempo should move nothing");
 }
 
+void testProjectStateRetimesTrackAutomationOnTempoChange()
+{
+    // Reported: a tempo change moved the clips but left track automation at its
+    // millisecond positions, so a filter sweep written for the drop ended up shaping
+    // whatever now happens to sit at that instant. Automation names musical places
+    // just as clips and markers do.
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "track should add");
+
+    const auto makePoint = [](double timeMs, double value) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("value", value);
+        return juce::var(obj);
+    };
+    juce::Array<juce::var> points;
+    points.add(makePoint(0.0, 0.2));
+    points.add(makePoint(4000.0, 0.6));
+    points.add(makePoint(8000.0, 1.0));
+    require(state.setTrackAutomation("t1", "filter", points), "automation lane should apply");
+
+    std::vector<std::pair<juce::String, juce::String>> republished;
+    // Halving the tempo doubles the milliseconds each bar occupies.
+    const int retimed = state.retimeTrackAutomationForTempoChange(
+        120.0, 60.0,
+        [&](const juce::String& trackId, const juce::String& paramId, const juce::Array<juce::var>&)
+        { republished.emplace_back(trackId, paramId); });
+
+    require(retimed == 1, "the one lane holding moved points should be retimed");
+    require(republished.size() == 1 && republished[0].first == "t1"
+                && republished[0].second == "filter",
+            "the changed lane should be reported so the engine snapshot is refreshed");
+
+    const auto stored = state.getTrackAutomation("t1", "filter");
+    require(stored.size() == 3, "every breakpoint should survive the retime");
+    const auto timeAt = [&](int i) {
+        return static_cast<double>(stored.getReference(i).getProperty("timeMs", -1.0));
+    };
+    const auto valueAt = [&](int i) {
+        return static_cast<double>(stored.getReference(i).getProperty("value", -1.0));
+    };
+    requireNear(timeAt(0), 0.0, 1e-9, "a point on bar 1 stays on bar 1");
+    requireNear(timeAt(1), 8000.0, 1e-9, "a breakpoint should scale by oldBpm/newBpm");
+    requireNear(timeAt(2), 16000.0, 1e-9, "every breakpoint should scale identically");
+    // The shape is a function of the musical position, not of the tempo.
+    requireNear(valueAt(0), 0.2, 1e-9, "values must not be touched");
+    requireNear(valueAt(1), 0.6, 1e-9, "values must not be touched");
+    requireNear(valueAt(2), 1.0, 1e-9, "values must not be touched");
+
+    require(state.retimeTrackAutomationForTempoChange(60.0, 60.0, nullptr) == 0,
+            "an unchanged tempo should move nothing");
+    require(state.retimeTrackAutomationForTempoChange(0.0, 60.0, nullptr) == 0,
+            "an unknown previous tempo should move nothing");
+}
+
+void testProjectStateRetimesClipEnvelopesOnTempoChange()
+{
+    // Reported: a clip's volume shape did not keep its relative position across a
+    // tempo change, so it changed the volume at the wrong point in the clip. The
+    // breakpoints are post-warp clip-local ms, so they follow the clip's timeline
+    // footprint — which is per clip, not the global tempo scale.
+    silverdaw::ProjectState state;
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\loop.wav", "loop.wav", 8000.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 120.0), "source BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+
+    const auto makePoint = [](double timeMs, double gain) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("gain", gain);
+        return juce::var(obj);
+    };
+    juce::Array<juce::var> shape;
+    shape.add(makePoint(0.0, 1.0));
+    // A fade written across the second half of the clip.
+    shape.add(makePoint(4000.0, 1.0));
+    shape.add(makePoint(8000.0, 0.0));
+
+    // Follows the project tempo, so halving it doubles this clip's footprint.
+    require(state.addClip("t1", "following", "src", 0.0, 8000.0), "following clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "following clip should warp to the project tempo");
+    require(state.setClipEnvelope("following", shape), "shape should apply to the following clip");
+
+    // A pinned ratio opts out of project-BPM tracking, so this clip does not re-stretch.
+    require(state.addClip("t1", "pinned", "src", 20000.0, 8000.0), "pinned clip should add");
+    require(state.setClipWarp("pinned", true, std::nullopt, 1.5, false, std::nullopt, std::nullopt,
+                              std::nullopt),
+            "pinned clip should hold its own ratio");
+    require(state.setClipEnvelope("pinned", shape), "shape should apply to the pinned clip");
+
+    // An unwarped clip plays at its native length whatever the project tempo is.
+    require(state.addClip("t1", "dry", "src", 40000.0, 8000.0), "unwarped clip should add");
+    require(state.setClipEnvelope("dry", shape), "shape should apply to the unwarped clip");
+
+    const auto before = state.snapshotClipFootprints();
+    require(before.size() == 3, "only clips carrying a shape need measuring");
+
+    state.setBpm(60.0);
+
+    std::vector<juce::String> republished;
+    const int retimed = state.retimeClipEnvelopesForFootprintChange(
+        before, [&](const juce::String& clipId, const juce::Array<juce::var>&)
+        { republished.push_back(clipId); });
+
+    require(retimed == 1, "only the clip that actually re-stretched should be retimed");
+    require(republished.size() == 1 && republished[0] == "following",
+            "the changed clip should be reported so the engine snapshot is refreshed");
+
+    const auto timeAt = [&](const juce::String& clipId, int i) {
+        const auto pts = state.getClipEnvelope(clipId);
+        return static_cast<double>(pts.getReference(i).getProperty("timeMs", -1.0));
+    };
+    const auto gainAt = [&](const juce::String& clipId, int i) {
+        const auto pts = state.getClipEnvelope(clipId);
+        return static_cast<double>(pts.getReference(i).getProperty("gain", -1.0));
+    };
+
+    // The clip now occupies 16000 ms, and the fade still starts at its midpoint.
+    requireNear(state.getClipEffectiveTiming("following").durationMs, 16000.0, 1e-9,
+                "halving the tempo should double a following clip's footprint");
+    requireNear(timeAt("following", 0), 0.0, 1e-9, "a breakpoint at the clip start stays there");
+    requireNear(timeAt("following", 1), 8000.0, 1e-9,
+                "a breakpoint should keep its relative position in the clip");
+    requireNear(timeAt("following", 2), 16000.0, 1e-9,
+                "the shape should still end at the end of the clip");
+    requireNear(gainAt("following", 2), 0.0, 1e-9, "gains must not be touched");
+
+    // Neither of these clips changed length, so their shapes must not move.
+    requireNear(timeAt("pinned", 2), 8000.0, 1e-9,
+                "a pinned ratio does not re-stretch, so its shape must stay put");
+    requireNear(timeAt("dry", 2), 8000.0, 1e-9,
+                "an unwarped clip does not re-stretch, so its shape must stay put");
+
+    require(state.retimeClipEnvelopesForFootprintChange({}, nullptr) == 0,
+            "no captured footprints should move nothing");
+}
+
 void testProjectStateRetimesMarkersOnTempoChange()
 {
     // Reported: markers stayed at their millisecond positions across a tempo change,
@@ -1765,6 +1907,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState musical length outranks detected bpm", testProjectStateMusicalLengthOutranksDetectedBpm});
     tests.push_back({"ProjectState retimes clips on tempo change", testProjectStateRetimesClipsOnTempoChange});
     tests.push_back({"ProjectState retimes markers on tempo change", testProjectStateRetimesMarkersOnTempoChange});
+    tests.push_back({"ProjectState retimes track automation on tempo change", testProjectStateRetimesTrackAutomationOnTempoChange});
+    tests.push_back({"ProjectState retimes clip envelopes on tempo change", testProjectStateRetimesClipEnvelopesOnTempoChange});
     tests.push_back({"ProjectState derived items inherit tempo instead of detecting", testProjectStateTempoInheritanceSourceId});
     tests.push_back({"ProjectState cover-art hidden override persists and marks dirty", testProjectStateCoverArtHiddenOverride});
     tests.push_back({"ProjectState suppressed property drift clears on undo", testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo});

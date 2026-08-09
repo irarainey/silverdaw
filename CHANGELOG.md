@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.6.0
+
+### Added
+
+- A Files tab in the library panel browses folders of audio on disk, so a track can be found, auditioned and imported without leaving the app.
+
+### Changed
+
+- MP3 files are now read by the JUCE decoder, with the system codec used only for the formats it alone can handle.
+
+### Fixed
+
+- An imported MP3 whose length the system codec misreported now plays in full in the preview and clip editor, and analyses to the correct tempo and beat grid, instead of stopping after a fraction of a second with a default tempo.
+- Opening or adding a track automation lane now scrolls it into view instead of leaving it below the bottom of the timeline.
+- Changing the project tempo now carries clip volume shapes and track automation with the music, instead of leaving them at fixed millisecond positions where they shaped the wrong part of the track.
+- The playhead can now be grabbed from the ruler while the timeline is scrolled down, instead of starting a clip drag on whichever clip happened to sit under that point.
+- Cancelling the Clip Editor after moving a clip's beat markers now discards the change instead of leaving the moved grid on the clip.
+- Scrollbars in the library panel and dialogs are now drawn at the same width as the timeline's, instead of appearing noticeably thinner than the rest of the app.
+- Importing audio in a format the engine cannot read no longer leaves its converted copies in the temporary folder for good; they are now cleaned up, and re-importing a file reuses its copy instead of writing it again.
+
 ## 1.5.3
 
 ### Changed
