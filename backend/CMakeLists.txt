@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.5.3
+    VERSION 1.6.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -538,6 +538,7 @@ target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
+    JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_USE_LAME_AUDIO_FORMAT=1
     JUCE_STANDALONE_APPLICATION=1)
 
