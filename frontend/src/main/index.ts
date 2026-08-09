@@ -26,6 +26,7 @@ import { destroyAllWindowsAndExit, handleMenuAction } from './menu'
 import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerFileBrowserHandlers, restoreFileBrowserRoots } from './ipc/fileBrowserHandlers'
 import { loadFileBrowserIndexCache } from './fileBrowserIndex'
+import { sweepTranscodeCache } from './transcodeCache'
 import { registerAutosaveHandlers } from './ipc/autosaveHandlers'
 import { registerWindowHandlers } from './ipc/windowHandlers'
 import { registerPreferencesHandlers } from './ipc/preferencesHandlers'
@@ -290,6 +291,10 @@ app.whenReady().then(async () => {
   // them is discarded. Fire-and-forget: an un-cached root is simply crawled on
   // demand, so this must not gate window creation.
   void loadFileBrowserIndexCache()
+  // Evict aged and over-cap audition transcodes. Fire-and-forget for the same
+  // reason: a sweep is housekeeping, and a decode that finds its WAV gone
+  // simply transcodes again.
+  void sweepTranscodeCache()
   registerFileBrowserHandlers({ getMainWindow: () => mainWindow, prefs })
 
   registerPreferencesHandlers({

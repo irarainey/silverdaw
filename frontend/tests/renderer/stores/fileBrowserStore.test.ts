@@ -619,6 +619,95 @@ describe('useFileBrowserStore refresh', () => {
     expect(browser.selectedPath).toBeNull()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:deep')
   })
+
+  it('drops a tag the file no longer carries on disk', async () => {
+    const browser = useFileBrowserStore()
+    indexTags = { [TOP_FILE]: { title: 'Old Title', artist: 'Old Artist' } }
+    await browser.hydrate()
+    expect(browser.info[TOP_FILE]?.artist).toBe('Old Artist')
+
+    // The artist has been cleared in the file's tags since the last crawl. The
+    // index omits an empty field rather than sending an explicit undefined, so
+    // merging would keep showing the old value forever.
+    refreshIndex.mockImplementation(async (root: string) => ({
+      root,
+      folders: { ...listing },
+      tags: { [TOP_FILE]: { title: 'New Title' } },
+      indexedAt: 2
+    }))
+    await browser.refresh(ROOT)
+
+    expect(browser.info[TOP_FILE]?.title).toBe('New Title')
+    expect(browser.info[TOP_FILE]?.artist).toBeUndefined()
+  })
+
+  it('keeps a cover already fetched when the index replaces the tags', async () => {
+    const browser = useFileBrowserStore()
+    indexTags = { [TOP_FILE]: { title: 'Track' } }
+    await browser.hydrate()
+    browser.info[TOP_FILE] = { title: 'Track', coverArtUrl: 'blob:art' }
+
+    // Applying the finished index over the streamed slices must not throw away
+    // artwork a visible row has already loaded, or the Blob leaks.
+    await browser.loadIndex(ROOT)
+
+    expect(browser.info[TOP_FILE]?.coverArtUrl).toBe('blob:art')
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:art')
+  })
+
+  it('drops cover art on refresh so changed artwork is read again', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    browser.info[TOP_FILE] = { title: 'Track', coverArtUrl: 'blob:old-art' }
+    browser.coverRequested[TOP_FILE] = true
+    const epoch = browser.coverEpoch
+
+    await browser.refresh(ROOT)
+
+    // Tags come back with the crawl but artwork does not, so the cover state is
+    // cleared and the rows asked to fetch again.
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old-art')
+    expect(browser.info[TOP_FILE]?.coverArtUrl).toBeUndefined()
+    expect(browser.coverRequested[TOP_FILE]).toBeUndefined()
+    expect(browser.coverEpoch).toBe(epoch + 1)
+  })
+
+  it('leaves cover art outside the refreshed root alone', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    const other = 'D:\\other\\Song.mp3'
+    browser.info[other] = { coverArtUrl: 'blob:other' }
+    browser.coverRequested[other] = true
+
+    await browser.refresh(ROOT)
+
+    expect(browser.info[other]?.coverArtUrl).toBe('blob:other')
+    expect(browser.coverRequested[other]).toBe(true)
+  })
+
+  it('flags a root that could not be read and clears the flag when it returns', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    expect(browser.unavailable[ROOT]).toBeUndefined()
+
+    // The drive holding the folder has been disconnected.
+    refreshIndex.mockImplementation(async (root: string) => ({
+      root,
+      folders: {},
+      tags: {},
+      indexedAt: 2,
+      unavailable: true
+    }))
+    await browser.refresh(ROOT)
+    expect(browser.unavailable[ROOT]).toBe(true)
+
+    // Plugged back in: a retry has to clear the flag, not leave the row stuck
+    // saying the folder is unavailable.
+    refreshIndex.mockImplementation(async (root: string) => buildIndex(root))
+    await browser.refresh(ROOT)
+
+    expect(browser.unavailable[ROOT]).toBeUndefined()
+  })
 })
 
 describe('useFileBrowserStore index progress', () => {

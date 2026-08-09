@@ -4,6 +4,7 @@ import type {
   AudioMetadata as SharedAudioMetadata,
   DebugPreferences as SharedDebugPreferences,
   FileBrowserEntry as SharedFileBrowserEntry,
+  FileBrowserFileTags as SharedFileBrowserFileTags,
   FileBrowserFolderIndex as SharedFileBrowserFolderIndex,
   FileBrowserIndexProgress as SharedFileBrowserIndexProgress,
   OpenedAudioFile as SharedOpenedAudioFile,
@@ -40,6 +41,7 @@ declare global {
   type UiPreferences = SharedUiPreferences
   type DebugPreferences = SharedDebugPreferences
   type FileBrowserEntry = SharedFileBrowserEntry
+  type FileBrowserFileTags = SharedFileBrowserFileTags
   type FileBrowserFolderIndex = SharedFileBrowserFolderIndex
   type FileBrowserIndexProgress = SharedFileBrowserIndexProgress
 

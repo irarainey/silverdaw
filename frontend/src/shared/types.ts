@@ -124,6 +124,13 @@ export interface FileBrowserFolderIndex {
   tags: Record<string, FileBrowserFileTags>
   /** When the crawl ran, so a stale cache can be reported and refreshed. */
   indexedAt: number
+  /**
+   * True when the root itself could not be read — a disconnected drive, a
+   * network share that is down, or a folder deleted since it was added. Without
+   * it an unreachable root is indistinguishable from an empty one, and the empty
+   * listing would be cached as though it were the truth.
+   */
+  unavailable?: boolean
 }
 
 /**

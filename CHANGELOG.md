@@ -18,6 +18,7 @@
 - The playhead can now be grabbed from the ruler while the timeline is scrolled down, instead of starting a clip drag on whichever clip happened to sit under that point.
 - Cancelling the Clip Editor after moving a clip's beat markers now discards the change instead of leaving the moved grid on the clip.
 - Scrollbars in the library panel and dialogs are now drawn at the same width as the timeline's, instead of appearing noticeably thinner than the rest of the app.
+- Importing audio in a format the engine cannot read no longer leaves its converted copies in the temporary folder for good; they are now cleaned up, and re-importing a file reuses its copy instead of writing it again.
 
 ## 1.5.3
 

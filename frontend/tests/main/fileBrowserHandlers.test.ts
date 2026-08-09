@@ -355,12 +355,54 @@ describe('file browser IPC', () => {
     expect(index.tags).toEqual({})
   })
 
-  it('returns an empty listing when the folder cannot be read', async () => {
+  it('reports a root it cannot read as unavailable rather than as empty', async () => {
     const folder = abs('Gone')
     await addRoot(folder)
     readdirMock.mockRejectedValue(new Error('ENOENT'))
 
-    expect((await getIndex(folder)).folders[folder]).toEqual([])
+    const index = await getIndex(folder)
+
+    // An empty listing would be indistinguishable from a folder with no audio
+    // in it, and would be cached as though it were the truth.
+    expect(index.unavailable).toBe(true)
+    expect(index.folders).toEqual({})
+  })
+
+  it('retries an unavailable root instead of serving the failure from memory', async () => {
+    const folder = abs('Offline')
+    await addRoot(folder)
+    readdirMock.mockRejectedValue(new Error('ENOENT'))
+    expect((await getIndex(folder)).unavailable).toBe(true)
+
+    // The drive comes back: asking again has to crawl, not return the failure
+    // a successful crawl would have been allowed to cache.
+    readdirMock.mockReset()
+    readdirMock.mockImplementation(async (dir: string) =>
+      dir === folder ? [file('song.mp3')] : []
+    )
+
+    const index = await getIndex(folder)
+
+    expect(index.unavailable).toBeUndefined()
+    expect(index.folders[folder]?.map((entry) => entry.name)).toEqual(['song'])
+  })
+
+  it('keeps the folders it did read when only a subfolder is unreadable', async () => {
+    const folder = abs('Partial')
+    await addRoot(folder)
+    const broken = abs('Partial', 'Broken')
+    readdirMock.mockImplementation(async (dir: string) => {
+      if (dir === folder) return [dir_('Broken'), file('good.mp3')]
+      if (dir === broken) throw new Error('EACCES')
+      return []
+    })
+
+    const index = await getIndex(folder)
+
+    // One damaged subfolder is local damage, not a missing library.
+    expect(index.unavailable).toBeUndefined()
+    expect(index.folders[folder]?.map((entry) => entry.name)).toEqual(['Broken', 'good'])
+    expect(index.folders[broken]).toEqual([])
   })
 
   it('withdraws read access and forgets the index when a folder is removed', async () => {

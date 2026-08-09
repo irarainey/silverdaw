@@ -256,6 +256,23 @@ onMounted(async () => {
                 role="status"
               >{{ browser.indexLabel(row.path) }}</span>
             </template>
+            <!-- A folder that cannot be read at all — a disconnected drive, or
+                 one deleted since it was added — would otherwise be indistinguishable
+                 from a folder with no audio in it. -->
+            <template v-else-if="browser.unavailable[row.path] === true">
+              <span
+                class="shrink-0 text-[11px] text-amber-400"
+                role="status"
+              >Unavailable</span>
+              <button
+                type="button"
+                class="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
+                title="Look for this folder again"
+                @click.stop="void browser.refresh(row.path)"
+              >
+                Retry
+              </button>
+            </template>
           </div>
 
           <FileBrowserFileRow

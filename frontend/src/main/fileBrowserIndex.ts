@@ -61,8 +61,8 @@ function compareEntries(a: FileBrowserEntry, b: FileBrowserEntry): number {
   return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
 }
 
-/** Read one directory, or an empty listing if it cannot be read. */
-async function listOne(dir: string): Promise<FileBrowserEntry[]> {
+/** Read one directory. `ok` is false when it could not be read at all. */
+async function listOne(dir: string): Promise<{ entries: FileBrowserEntry[]; ok: boolean }> {
   try {
     const dirents = await readdir(dir, { withFileTypes: true })
     const entries: FileBrowserEntry[] = []
@@ -79,10 +79,10 @@ async function listOne(dir: string): Promise<FileBrowserEntry[]> {
         })
       }
     }
-    return entries.sort(compareEntries)
+    return { entries: entries.sort(compareEntries), ok: true }
   } catch (err) {
     logMain('WARN ', 'fileBrowser:index', 'read failed:', dir, String(err))
-    return []
+    return { entries: [], ok: false }
   }
 }
 
@@ -203,7 +203,16 @@ export async function buildFolderIndex(
   while (pending.length > 0) {
     const dir = pending.shift() as string
     if (index.folders[dir] !== undefined) continue
-    const entries = await listOne(dir)
+    const { entries, ok } = await listOne(dir)
+    // The root failing is not an empty library: the drive is disconnected, the
+    // share is down, or the folder has been deleted. Reported as such so the
+    // caller neither caches it nor shows the user an empty folder. A subfolder
+    // failing is local damage and leaves the rest of the crawl worth keeping.
+    if (!ok && dir === canonical) {
+      index.unavailable = true
+      logMain('WARN ', 'fileBrowser:index', 'root unavailable, not caching:', canonical)
+      return index
+    }
     index.folders[dir] = entries
     let found = 0
     for (const entry of entries) {
@@ -378,6 +387,11 @@ export async function getFolderIndex(
   if (cached && options?.refresh !== true) return cached
 
   const index = await buildFolderIndex(root, options?.onProgress)
+  // An unreachable root is not a result worth keeping: remembering it would show
+  // the user an empty folder for the rest of the session, and caching it would
+  // do so after a restart too. Left out of both, so plugging the drive back in
+  // and asking again simply works.
+  if (index.unavailable === true) return index
   indexes.set(key, index)
   await saveFileBrowserIndexCache()
   return index

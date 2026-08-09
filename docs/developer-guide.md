@@ -1444,6 +1444,19 @@ Windows) currently round-trip through the renderer's Web Audio decoder:
 (keyed by a hash of source path + sample rate + channel count + length). The cached WAV path
 is what goes on the wire as `CLIP_ADD.filePath`.
 
+An entry already present at the expected size is reused rather than rewritten,
+so a repeat play does not push tens or hundreds of megabytes back to disk; it is
+touched instead, which keeps eviction treating it as recently used. The cache is
+swept at startup by
+[`transcodeCache.ts`](../frontend/src/main/transcodeCache.ts): entries unused for
+longer than `TRANSCODE_CACHE_MAX_AGE_MS` (7 days) are deleted, and whatever
+remains is trimmed oldest-first until it fits `TRANSCODE_CACHE_MAX_BYTES` (2 GB).
+These are float WAVs — roughly 21 MB per stereo minute at 44.1 kHz — and nothing
+else on the system removes them, so without a sweep auditioning a few albums of
+m4a would leave gigabytes in the user's temp directory indefinitely. Eviction is
+always safe: a transcode deleted while still wanted is simply decoded again on
+the next play.
+
 Note that this is not a matter of the backend picking the wrong format by
 extension. JUCE's Windows codec is the Windows Media Format SDK
 (`IWMSyncReader`), which reads the ASF family only; it cannot decode an MP4
@@ -2710,7 +2723,20 @@ browsable and importable, and its row falls back to the file name.
 
 `isWithinFileBrowserRoot` is re-checked for **every** directory the walk is
 about to descend into, not just the root, so nothing reachable from inside a
-browsed folder can widen what is read.
+browsed folder can widen what is read. Symlinks are skipped outright — and on
+Windows that covers junctions too, which Node reports as links rather than
+directories — so a link planted inside a browsed folder cannot be followed out
+of it.
+
+**An unreachable root is not an empty one.** A disconnected drive, a share that
+is down or a folder deleted since it was added would otherwise return an empty
+listing that looks exactly like a library with no audio in it — and, worse, get
+cached as though it were the truth. When the *root itself* cannot be read the
+crawl stops and returns `unavailable: true`; `getFolderIndex` then neither
+remembers it in memory nor writes it to the cache, so plugging the drive back in
+and asking again simply crawls. The row says **Unavailable** and offers
+**Retry**. A *subfolder* failing is treated as local damage: it contributes an
+empty listing and the rest of the crawl is kept.
 
 **Progress.** A large library takes seconds to crawl, so the index is reported
 to the renderer *as it is built* rather than only when it is done. `getIndex`
@@ -2770,6 +2796,23 @@ to start**, **Play / Pause**, and **Import** buttons; the same actions are on
 its right-click menu. Import runs through `importAudioPathsIntoLibrary`, the
 same path as a drag-and-drop import, so a browsed file becomes an ordinary
 library item with no special casing downstream.
+
+**Refreshing.** A refresh re-crawls the whole added root, because the index is
+stored and cached per root rather than per folder. The crawl's tags are
+**authoritative and replace** what the store holds, rather than merging into it:
+`FileBrowserFileTags` omits an empty field instead of carrying an explicit
+`undefined`, so a merge would keep showing an artist the user has since cleared
+on disk. `fileBrowserInfoWithTags` carries the already-fetched cover URL across
+that replacement, or a visible row's Blob would be dropped on the floor and
+leaked. `pruneMissing` then drops rows, selection and cover URLs for anything
+the re-crawl no longer lists.
+
+Cover art needs its own step, because it is not part of the index: a refresh
+revokes and clears the cover state for the refreshed subtree and bumps
+`coverEpoch`, which mounted rows watch so they ask again. Without it, artwork
+changed on disk would keep showing the old image for as long as its row stayed
+on screen. The re-read is still driven by the rows, so a refresh pays for the
+covers actually on screen and no more.
 
 **Auditioning.** Playback uses the shared backend preview voice through the
 chosen audio output device. `PREVIEW_LOAD` gained an optional `filePath` for

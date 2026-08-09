@@ -60,6 +60,13 @@ interface FileBrowserState {
    */
   indexing: Record<string, FileBrowserIndexStatus>
   /**
+   * Roots whose last crawl could not read them at all — a disconnected drive or
+   * a folder since deleted. Tracked so the row can say so and offer a retry,
+   * rather than showing an empty folder that looks like a library with nothing
+   * in it.
+   */
+  unavailable: Record<string, boolean>
+  /**
    * Tags for every indexed file, plus cover art for the rows that have asked for
    * it. Tags arrive with the index; artwork is fetched per visible row, because
    * it is large binary data and only the handful of rows on screen display one.
@@ -67,6 +74,14 @@ interface FileBrowserState {
   info: Record<string, FileBrowserFileInfo>
   /** Paths whose cover-art read is done or in flight, so rows request it once. */
   coverRequested: Record<string, boolean>
+  /**
+   * Bumped by a refresh once its subtree's cover state has been dropped. A row
+   * is already mounted when the user refreshes, so nothing else would ask it to
+   * re-read: artwork changed on disk would keep showing the old image for as
+   * long as the row stayed on screen. Rows watch this and fetch again, which
+   * keeps covers as lazy as they were — only what is on screen is re-read.
+   */
+  coverEpoch: number
   /** The file whose name was last clicked, or null when nothing is selected. */
   /** Path of the selected file or folder row, or null. Selecting a folder the
    *  user added arms the Delete key to remove it. */
@@ -123,6 +138,23 @@ export function fileBrowserFileMatchesFilter(
   const fields = [info?.title ?? '', name, info?.artist ?? '']
   return fields.some((field) => field.toLocaleLowerCase().includes(needle))
 }
+
+/**
+ * Fold a file's indexed tags into what the store already holds. The index is
+ * authoritative for the four tag fields, so they are *replaced* rather than
+ * merged: a spread would keep an artist the user has since cleared on disk,
+ * because `FileBrowserFileTags` omits an empty field instead of carrying an
+ * explicit `undefined`. The cover Blob URL is not part of the index and is
+ * carried across, or a row would lose the artwork it has already fetched.
+ */
+export function fileBrowserInfoWithTags(
+  existing: FileBrowserFileInfo | undefined,
+  tags: FileBrowserFileTags
+): FileBrowserFileInfo {
+  const next: FileBrowserFileInfo = { ...tags }
+  if (existing?.coverArtUrl !== undefined) next.coverArtUrl = existing.coverArtUrl
+  return next
+}
 /**
  * Unsubscribe for the crawl-progress listener. Module-level rather than store
  * state because it is a live IPC handle, not something the tree renders, and one
@@ -162,8 +194,10 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     expanded: {},
     children: {},
     indexing: {},
+    unavailable: {},
     info: {},
     coverRequested: {},
+    coverEpoch: 0,
     selectedPath: null,
     auditionSourcePath: null,
     preparingPath: null,
@@ -363,7 +397,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
         this.children[dir] = entries
       }
       for (const [filePath, tags] of Object.entries(progress.tags)) {
-        this.info[filePath] = { ...this.info[filePath], ...tags }
+        this.info[filePath] = fileBrowserInfoWithTags(this.info[filePath], tags)
       }
       this.indexing[root] = {
         fileCount: progress.fileCount,
@@ -401,10 +435,16 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
         for (const [dir, entries] of Object.entries(index.folders)) {
           this.children[dir] = entries
         }
+        // A root that could not be read at all is flagged rather than left
+        // looking like an empty folder; a crawl that worked clears the flag.
+        if (index.unavailable === true) this.unavailable[root] = true
+        else delete this.unavailable[root]
         for (const [filePath, tags] of Object.entries(index.tags)) {
-          // Merge rather than replace: a cover URL already fetched for a visible
-          // row would otherwise be dropped on the floor, leaking the Blob.
-          this.info[filePath] = { ...this.info[filePath], ...tags }
+          // The index is authoritative for tags, so these replace rather than
+          // merge — a tag cleared on disk has to disappear from the row too.
+          // Any cover URL already fetched is carried across by the helper, so
+          // the Blob is not dropped on the floor and leaked.
+          this.info[filePath] = fileBrowserInfoWithTags(this.info[filePath], tags)
         }
       } catch (err) {
         log.warn('fileBrowser', `index failed for ${root}: ${String(err)}`)
@@ -465,6 +505,9 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       }
       for (const path of Object.keys(this.indexing)) {
         if (path === folder || isUnder(path, folder)) delete this.indexing[path]
+      }
+      for (const path of Object.keys(this.unavailable)) {
+        if (path === folder || isUnder(path, folder)) delete this.unavailable[path]
       }
       for (const path of Object.keys(this.playbackPaths)) {
         if (path === folder || isUnder(path, folder)) delete this.playbackPaths[path]
@@ -584,6 +627,25 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       if (root === undefined) return
       await this.loadIndex(root, { refresh: true })
       this.pruneMissing(root)
+      this.invalidateCovers(root)
+    },
+
+    /**
+     * Drop the cover art held for a refreshed subtree so it is read again. Tags
+     * come back with the crawl, but artwork does not — without this, artwork
+     * changed on disk would keep showing the old image for as long as its row
+     * stayed mounted. Only the state is dropped here; the re-read is left to the
+     * rows, so a refresh still pays for the covers on screen and no more.
+     */
+    invalidateCovers(root: string): void {
+      for (const path of Object.keys(this.coverRequested)) {
+        if (path !== root && !isUnder(path, root)) continue
+        const url = this.info[path]?.coverArtUrl
+        if (url) URL.revokeObjectURL(url)
+        if (this.info[path] !== undefined) delete this.info[path].coverArtUrl
+        delete this.coverRequested[path]
+      }
+      this.coverEpoch += 1
     },
 
     /**

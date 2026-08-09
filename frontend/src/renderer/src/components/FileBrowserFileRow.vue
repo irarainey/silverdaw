@@ -85,6 +85,17 @@ watch(
     void browser.ensureInfo(path)
   }
 )
+
+// A refresh drops the covers it re-crawled, so an already-mounted row asks for
+// its artwork again — otherwise a cover changed on disk would stay stale until
+// the row happened to be recycled.
+watch(
+  () => browser.coverEpoch,
+  () => {
+    hideCoverPreview()
+    void browser.ensureInfo(props.row.path)
+  }
+)
 </script>
 
 <template>
