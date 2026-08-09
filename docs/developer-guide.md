@@ -2680,28 +2680,96 @@ only way a path enters the browser, and it is what grants read access. Chosen
 folders are stored in `preferences.json` as `ui.fileBrowserFolders` (absolute,
 de-duplicated paths only — `sanitiseFileBrowserFolders` drops anything else, so
 a hand-edited prefs file cannot widen the renderer's reach) and re-trusted at
-startup by `restoreFileBrowserRoots` before the renderer can ask for a listing.
-`fileBrowserHandlers.ts` refuses to list any directory that is not a browser
-root or inside one (`isWithinFileBrowserRoot`), returns only subfolders and
-files with an importable audio extension, ignores symlinks so a link cannot
-reach outside the folder, and sorts folders before files, each natural-order
-A–Z. Listing is lazy per folder: added folders open on first mount, nested ones
-stay shut until opened. **Refresh** on a folder's right-click menu re-reads it
-so files added on disk since it was opened appear; **Remove Folder** (offered
-only on a folder the user added — nested folders leave with their root) drops
-the folder, its cached listings, tags and cover URLs, and its read trust.
+startup by `restoreFileBrowserRoots` before the renderer can ask for an index.
+Both the handlers and the crawl refuse any directory that is not a browser root
+or inside one (`isWithinFileBrowserRoot`). `fileBrowserIndex.ts` collects only
+subfolders and files with an importable audio extension, ignores symlinks so a
+link cannot reach outside the folder, and sorts folders before files, each
+natural-order A–Z. **Refresh** on a folder's right-click menu re-crawls its root
+so files added or removed on disk since it was indexed are picked up; **Remove
+Folder** (offered only on a folder the user added — nested folders leave with
+their root) drops the folder, its index, cover URLs and read trust.
+
+**The index.** `fileBrowserIndex.ts` crawls an added root **once**, in the main
+process, and everything downstream reads the result: rendering a row, expanding
+a branch and filtering the tree all answer from it, so the tree touches the disk
+only when a folder is added, when the user asks for a refresh, or once at
+startup to reload the cache. (Cover art is the single exception, read per
+visible row — see **Rows** below.) One crawl produces both halves of what the
+tree needs — every folder's listing (`folders`) and every file's tags (`tags`) —
+because the filter matches on tags, so a lazy per-folder listing could never
+answer a search without walking everything anyway.
+
+The walk is breadth-first over an explicit queue rather than recursion, so a
+deeply nested library cannot exhaust the stack, and tag reads run through a
+worker pool of `INDEX_READ_CONCURRENCY` (8). Tag reads are IO-bound, so some
+overlap is a large win over going one at a time, but an unbounded fan-out over
+tens of thousands of files would open that many handles at once and starve the
+rest of the app. A file whose tags cannot be read still enters the index: it is
+browsable and importable, and its row falls back to the file name.
+
+`isWithinFileBrowserRoot` is re-checked for **every** directory the walk is
+about to descend into, not just the root, so nothing reachable from inside a
+browsed folder can widen what is read.
+
+**Progress.** A large library takes seconds to crawl, so the index is reported
+to the renderer *as it is built* rather than only when it is done. `getIndex`
+and `refreshIndex` pass an `onProgress` reporter into the crawl; each slice —
+the folders listed and the tags read since the last message — goes to the
+renderer on `fileBrowser:indexProgress`, and `applyIndexProgress` merges it into
+the same `children` and `info` the finished index would have filled. The tree
+therefore **fills in folder by folder**: because the walk is breadth-first, the
+folders nearest the root, which are the ones on screen, arrive first.
+
+Slices are batched at `INDEX_PROGRESS_INTERVAL_MS` (120 ms) rather than sent per
+folder or per file, which for a large library would put thousands of messages
+across the bridge and cost more than the crawl. Each message carries only what
+completed since the last, so applying them in order rebuilds exactly the index
+the crawl finally returns — which is applied again at the end as the
+authoritative copy. An index served from the cache reports nothing, because
+there is no wait to fill.
+
+The added folder's row shows a spinner and a caption while its crawl runs
+(`indexLabel`). It counts files while the tree is still being walked and
+switches to a ratio once every folder is listed, because until then there is no
+total to count against. Two orderings matter for this to be visible at all: a
+root is marked expanded **before** its crawl starts, not after, and a re-crawl
+clears the old subtree **as it starts** rather than when it finishes — otherwise
+a late wipe would throw away the slices that arrived meanwhile.
+
+**The cache.** Each index is written to `file-browser-index.json` under
+`app.getPath('userData')` and reloaded by `loadFileBrowserIndexCache` at
+startup, after `restoreFileBrowserRoots` has re-trusted the saved folders, so a
+restart shows the user's folders without crawling the disk again. It is written
+to a sibling and renamed over the target, so a crash part-way through leaves the
+previous cache intact rather than truncated JSON. It is a **cache, not user
+data**: a missing or malformed file is not an error, it just means the next
+crawl rebuilds it. Because it is an ordinary file on disk that anything could
+have written, `reviveIndex` re-validates what it restores — a cached root the
+user has since removed is discarded whole, and any folder outside the trusted
+roots is dropped — so a hand-edited cache cannot widen the app's reach.
+
+The read is started at startup but deliberately **not** awaited, because an
+un-cached root is simply crawled on demand and this must not gate window
+creation. That leaves a window in which the renderer could ask for a root before
+the cache has been read, so `getFolderIndex` awaits the same shared promise: a
+root asked for mid-read waits for the cache rather than starting a crawl of a
+library that was already indexed last run.
 
 **Rows.** Each file row shows a cover-art thumbnail (hover it for a larger
 preview, teleported to `body` so the scrolling tree cannot clip it), the track
 name from the file's tags falling back to the file name, artist, album, file
 type, a live playhead while the file is auditioning, and the tagged duration.
-Tags and artwork are read once per file, when its row mounts, so a folder of
-hundreds of files only pays for what is on screen. Cover bytes stay out of
-reactive state — only the Blob URL is exposed, and it is revoked when the folder
-is removed. Each row carries **Back to start**, **Play / Pause**, and **Import**
-buttons; the same actions are on its right-click menu. Import runs through
-`importAudioPathsIntoLibrary`, the same path as a drag-and-drop import, so a
-browsed file becomes an ordinary library item with no special casing downstream.
+Tags come from the index, so a row costs nothing to display. Cover art is the
+one thing left out of it and read lazily when a row mounts: it is large binary
+data, and eagerly reading a library of tens of thousands of files would create
+that many Blob URLs and bloat the cache file for artwork almost none of which is
+on screen. Cover bytes stay out of reactive state — only the Blob URL is
+exposed, and it is revoked when the folder is removed. Each row carries **Back
+to start**, **Play / Pause**, and **Import** buttons; the same actions are on
+its right-click menu. Import runs through `importAudioPathsIntoLibrary`, the
+same path as a drag-and-drop import, so a browsed file becomes an ordinary
+library item with no special casing downstream.
 
 **Auditioning.** Playback uses the shared backend preview voice through the
 chosen audio output device. `PREVIEW_LOAD` gained an optional `filePath` for
@@ -2713,12 +2781,40 @@ outside the scroll container, so what is playing is never lost to scrolling or a
 filter — it reports playback, and the file stays listed in its own folder as
 well.
 
+A format the engine cannot decode is auditioned from a transcoded WAV (see
+[Audio formats](#audio-formats)), so the preview voice does not always hold the
+path shown in the tree. Two consequences shape the store:
+
+- Row identity comes from `auditionSourcePath`, exposed as the `auditionedPath`
+  getter, which is only claimed while the voice still holds the exact path the
+  browser handed it. That makes the claim self-releasing: the Clip Editor or
+  Scratch Editor taking the shared voice clears the browser's playing row
+  instead of leaving a stale one lit. Anything reasoning about "which row is
+  playing" — the pin, `isPlaying`, `positionMs`, `pause`, `restart` and
+  `revealAudition` — must go through it rather than reading `previewStore`.
+- A decode takes seconds, so `prepareAndPlay` holds two claims across it: the
+  browser's own `preparingPath`, and `previewStore.loadSeq`, a counter bumped by
+  every load, audition and unload of the shared voice. If either has moved on by
+  the time the WAV is ready the audition is abandoned, so a slow decode cannot
+  seize a voice something else has since taken.
+
 **Filtering.** The field in the panel header matches a file's tagged title, its
-displayed name, or its artist. Because it matches on tags, filtering lists and
-expands the whole tree, so files in folders the user has never opened are still
-found; the pre-filter disclosure state is snapshotted on the first keystroke and
-restored when the filter is cleared, which also reopens the audition's folders
-and reselects it so the view scrolls back to it.
+displayed name, or its artist. Because the index already holds every folder and
+every file's tags, filtering is a **synchronous read of in-memory state** — no
+crawl, no IPC, no disk access — and files in folders the user has never opened
+are still found. Matching folders are force-expanded by the `rows` getter for as
+long as the filter is set, rather than by writing to `expanded`, so the user's
+own disclosure state is never touched and simply reappears when the filter is
+cleared. Clearing it also reopens the audition's folders and reselects it, so
+the view scrolls back to what is playing.
+
+`fileBrowserActiveFilter` treats anything shorter than
+`FILE_BROWSER_FILTER_MIN_LENGTH` (3) as no filter at all, since one or two
+characters match almost every track and so narrow nothing. Everything that hides
+rows reads the active filter rather than the raw text, so a half-typed word
+leaves the tree exactly as it was. No debounce is needed — with the index in
+place a keystroke costs a re-render and nothing more, exactly as the Library
+tab's filter does over its in-memory array.
 
 **Keyboard.** The tree is a single tab stop rather than one per row (list rows
 carry no focus ring — see the UI styling instructions). Switching to another tab
@@ -2736,10 +2832,18 @@ component cannot call them off with `stopPropagation`. `lib/selectionKeys.ts` is
 the single opt-out: a list that drives its own selection marks its container
 `data-owns-selection-keys="true"`, and both owners stand down for the keys in
 `SELECTION_KEYS` (`ArrowUp`, `ArrowDown`, `Enter`) and for the `Delete`
-selection actions. The files tree sets the attribute only while a row is
-selected, so with nothing selected the global shortcuts behave exactly as they
-do anywhere else. `ArrowLeft` / `ArrowRight` are deliberately not in the set —
-no self-navigating list uses them, so they stay with the global playhead seek.
+selection actions. The files tree claims those keys **whenever focus is inside
+it**, not only while a row is selected: the attribute expresses which container
+owns the keyboard, and the tree's own handlers already do nothing without a
+selection. Gating it on the selection instead let `Delete` fall through to the
+timeline's *Delete Clip* while the user was looking at the Files tab, which is
+destructive and invisible from there. `ArrowLeft` / `ArrowRight` are
+deliberately not in the set — no self-navigating list uses them, so they stay
+with the global playhead seek.
+
+Focus stays on the tree container rather than moving row to row, so the tree
+names the selected row with `aria-activedescendant`; without it a screen reader
+announces the tree but never the row the arrow keys are on.
 
 ## Scratch Editor
 

@@ -71,6 +71,16 @@ function onFolderClick(path: string): void {
   void browser.toggle(path)
 }
 
+// Focus stays on the tree container so one keydown handler drives the whole
+// list, which means the active row has to be named for a screen reader or only
+// the tree itself is announced. Rows are addressed by path, which is unique.
+function rowDomId(path: string): string {
+  return `file-browser-row-${encodeURIComponent(path)}`
+}
+const activeRowId = computed(() =>
+  browser.selectedPath === null ? undefined : rowDomId(browser.selectedPath)
+)
+
 // Arrow-key navigation can land on a row that is scrolled out of sight, so the
 // selection is always brought back into view. `nearest` makes this a no-op for
 // rows already on screen, leaving click selection undisturbed.
@@ -163,7 +173,8 @@ onMounted(async () => {
         role="tree"
         tabindex="0"
         aria-label="Browsed folders and files"
-        :data-owns-selection-keys="browser.selectedPath !== null ? 'true' : undefined"
+        :aria-activedescendant="activeRowId"
+        data-owns-selection-keys="true"
         @scroll.passive="onTreeScroll"
         @keydown.down.prevent.stop="browser.selectStep(1)"
         @keydown.up.prevent.stop="browser.selectStep(-1)"
@@ -189,6 +200,7 @@ onMounted(async () => {
         >
           <div
             v-if="row.kind === 'directory'"
+            :id="rowDomId(row.path)"
             class="flex h-7 cursor-pointer items-center gap-1.5 rounded pr-2 text-xs text-zinc-300 hover:bg-zinc-800/60"
             :class="browser.selectedPath === row.path ? 'bg-sky-500/15' : ''"
             :style="{ paddingLeft: fileBrowserRowIndentPx(row.depth) + 'px' }"
@@ -231,10 +243,24 @@ onMounted(async () => {
               "
               :title="row.path"
             >{{ row.name }}</span>
+            <!-- Indexing a large folder takes seconds; the tree fills in as it
+                 goes, so the row says what is still happening rather than
+                 leaving a half-populated folder looking finished. -->
+            <template v-if="browser.indexLabel(row.path) !== null">
+              <span
+                class="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-zinc-700 border-t-sky-400"
+                aria-hidden="true"
+              />
+              <span
+                class="truncate text-[11px] tabular-nums text-zinc-500"
+                role="status"
+              >{{ browser.indexLabel(row.path) }}</span>
+            </template>
           </div>
 
           <FileBrowserFileRow
             v-else
+            :id="rowDomId(row.path)"
             :row="row"
             @context-menu="openContextMenu($event.event, $event.path, 'file', false)"
           />

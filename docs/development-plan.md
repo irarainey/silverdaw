@@ -2043,16 +2043,17 @@ every item corrects behaviour that already shipped. See ADR 0024.
 without leaving the app, and without widening what Silverdaw is allowed to read.
 
 1. [x] **Files tab.** A user-scoped tree beside the project Library, listing
-   subfolders and importable audio files only. Listing is lazy per folder, and
-   folders sort before files, each natural-order A–Z.
+   subfolders and importable audio files only. Each added folder is crawled once
+   into an index that everything else reads, and folders sort before files, each
+   natural-order A–Z.
 2. [x] **Folders are the consent boundary.** A folder enters the browser only
    through the native directory picker, is persisted as
-   `ui.fileBrowserFolders`, is re-trusted at startup, and is the only place
-   `fileBrowserHandlers.ts` will list or read. Symlinks are ignored so a link
-   cannot reach out of a browsed folder.
+   `ui.fileBrowserFolders`, is re-trusted at startup, and is the only place the
+   crawl will read. Symlinks are ignored so a link cannot reach out of a browsed
+   folder.
 3. [x] **Rows carry what the choice needs:** cover art with a hover preview,
-   tagged title / artist / album, file type, live playhead and duration, read
-   once per file as its row mounts.
+   tagged title / artist / album, file type, live playhead and duration. Tags
+   come from the index; cover art alone is read per row as it mounts.
 4. [x] **Audition before import.** `PREVIEW_LOAD` accepts an explicit `filePath`
    so the shared preview voice can play a file that is not a library item.
    Starting an audition stops project playback; removing a folder stops the

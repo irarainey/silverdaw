@@ -4,6 +4,8 @@ import type {
   AudioMetadata,
   DebugPreferences,
   FileBrowserEntry,
+  FileBrowserFolderIndex,
+  FileBrowserIndexProgress,
   MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
@@ -60,9 +62,24 @@ const api = {
   addFileBrowserFolder: (): Promise<string[]> => ipcRenderer.invoke(IPC.fileBrowser.addFolder),
   removeFileBrowserFolder: (folder: string): Promise<string[]> =>
     ipcRenderer.invoke(IPC.fileBrowser.removeFolder, folder),
-  /** Subfolders and importable audio files directly inside an added folder. */
-  listFileBrowserDirectory: (dir: string): Promise<FileBrowserEntry[]> =>
-    ipcRenderer.invoke(IPC.fileBrowser.listDirectory, dir),
+  /** The whole indexed contents of one added root: listings plus search tags. */
+  getFileBrowserIndex: (root: string): Promise<FileBrowserFolderIndex> =>
+    ipcRenderer.invoke(IPC.fileBrowser.getIndex, root),
+  /** Re-crawl a root, picking up files added or retagged on disk since. */
+  refreshFileBrowserIndex: (root: string): Promise<FileBrowserFolderIndex> =>
+    ipcRenderer.invoke(IPC.fileBrowser.refreshIndex, root),
+  /**
+   * A crawl in progress, reported folder by folder, so the tree fills in as the
+   * results arrive rather than after a large library has finished.
+   */
+  onFileBrowserIndexProgress: (
+    handler: (progress: FileBrowserIndexProgress) => void
+  ): (() => void) => {
+    const listener = (_evt: IpcRendererEvent, progress: FileBrowserIndexProgress): void =>
+      handler(progress)
+    ipcRenderer.on(IPC.fileBrowser.indexProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.fileBrowser.indexProgress, listener)
+  },
   /** Resolve and register an OS drag-dropped file path for later allowed reads. */
   getPathForFile: (file: File): string => {
     try {

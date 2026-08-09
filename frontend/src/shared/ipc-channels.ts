@@ -41,7 +41,9 @@ export const IPC = {
     addFolder: 'fileBrowser:addFolder',
     removeFolder: 'fileBrowser:removeFolder',
     listFolders: 'fileBrowser:listFolders',
-    listDirectory: 'fileBrowser:listDirectory'
+    getIndex: 'fileBrowser:getIndex',
+    refreshIndex: 'fileBrowser:refreshIndex',
+    indexProgress: 'fileBrowser:indexProgress'
   },
   prefs: {
     getUi: 'prefs:getUi',

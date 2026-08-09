@@ -2,10 +2,17 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   useFileBrowserStore,
+  fileBrowserActiveFilter,
   fileBrowserFileMatchesFilter,
-  fileBrowserFileTypeLabel
+  fileBrowserFileTypeLabel,
+  resetFileBrowserIndexProgress
 } from '@/stores/fileBrowserStore'
 import { usePreviewStore } from '@/stores/previewStore'
+import type {
+  FileBrowserFileTags,
+  FileBrowserFolderIndex,
+  FileBrowserIndexProgress
+} from '@shared/types'
 
 const sendMock = vi.hoisted(() => vi.fn())
 const importPathsMock = vi.hoisted(() => vi.fn())
@@ -23,38 +30,77 @@ vi.mock('@/lib/log', () => ({
 
 const ROOT = 'C:\\music'
 const NESTED = 'C:\\music\\Album'
+const TOP_FILE = 'C:\\music\\Top.mp3'
+const DEEP_FILE = 'C:\\music\\Album\\Deep.mp3'
 
-// One shallow listing per directory, mirroring the lazy main-process handler.
+// The folder structure a crawl of ROOT would find, keyed by folder path.
 const listing: Record<string, FileBrowserEntry[]> = {
   [ROOT]: [
     { path: NESTED, name: 'Album', kind: 'directory' },
-    { path: 'C:\\music\\Top.mp3', name: 'Top', kind: 'file' }
+    { path: TOP_FILE, name: 'Top', kind: 'file' }
   ],
-  [NESTED]: [{ path: 'C:\\music\\Album\\Deep.mp3', name: 'Deep', kind: 'file' }]
+  [NESTED]: [{ path: DEEP_FILE, name: 'Deep', kind: 'file' }]
+}
+
+/** Tags the indexer would have read, keyed by file path; overridden per test. */
+let indexTags: Record<string, FileBrowserFileTags> = {}
+
+function buildIndex(root: string): FileBrowserFolderIndex {
+  return { root, folders: { ...listing }, tags: { ...indexTags }, indexedAt: 1 }
 }
 
 const listFolders = vi.fn<() => Promise<string[]>>()
 const addFolder = vi.fn<() => Promise<string[]>>()
 const removeFolder = vi.fn<(folder: string) => Promise<string[]>>()
-const listDirectory = vi.fn<(dir: string) => Promise<FileBrowserEntry[]>>()
+const getIndex = vi.fn<(root: string) => Promise<FileBrowserFolderIndex>>()
+const refreshIndex = vi.fn<(root: string) => Promise<FileBrowserFolderIndex>>()
 const readAudioMetadata = vi.fn<(path: string) => Promise<AudioMetadata | null>>()
+
+/** Handlers registered for streamed crawl progress, so tests can drive them. */
+let progressHandlers: ((progress: FileBrowserIndexProgress) => void)[] = []
+const onIndexProgress = vi.fn((handler: (progress: FileBrowserIndexProgress) => void) => {
+  progressHandlers.push(handler)
+  return () => {
+    progressHandlers = progressHandlers.filter((h) => h !== handler)
+  }
+})
+
+/** Deliver one slice of a crawl, as the main process would mid-index. */
+function emitProgress(progress: Partial<FileBrowserIndexProgress> & { root: string }): void {
+  const message: FileBrowserIndexProgress = {
+    folders: {},
+    tags: {},
+    fileCount: 0,
+    taggedCount: 0,
+    listed: false,
+    ...progress
+  }
+  for (const handler of [...progressHandlers]) handler(message)
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  resetFileBrowserIndexProgress()
+  progressHandlers = []
   sendMock.mockClear()
   importPathsMock.mockClear()
   ensurePlayableMock.mockReset().mockResolvedValue(null)
+  indexTags = {}
   listFolders.mockReset().mockResolvedValue([ROOT])
   addFolder.mockReset().mockResolvedValue([ROOT])
   removeFolder.mockReset().mockResolvedValue([])
-  listDirectory.mockReset().mockImplementation(async (dir: string) => listing[dir] ?? [])
+  getIndex.mockReset().mockImplementation(async (root: string) => buildIndex(root))
+  refreshIndex.mockReset().mockImplementation(async (root: string) => buildIndex(root))
   readAudioMetadata.mockReset().mockResolvedValue(null)
+  onIndexProgress.mockClear()
   vi.stubGlobal('window', {
     silverdaw: {
       listFileBrowserFolders: listFolders,
       addFileBrowserFolder: addFolder,
       removeFileBrowserFolder: removeFolder,
-      listFileBrowserDirectory: listDirectory,
+      getFileBrowserIndex: getIndex,
+      refreshFileBrowserIndex: refreshIndex,
+      onFileBrowserIndexProgress: onIndexProgress,
       readAudioMetadata
     }
   })
@@ -70,9 +116,11 @@ describe('useFileBrowserStore tree', () => {
     await browser.hydrate()
 
     expect(browser.roots).toEqual([ROOT])
-    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, 'C:\\music\\Top.mp3'])
-    // The nested folder is listed but stays shut until the user opens it.
-    expect(listDirectory).toHaveBeenCalledTimes(1)
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, TOP_FILE])
+    // One index call brings back the whole root; the nested folder is already
+    // known but stays shut until the user opens it.
+    expect(getIndex).toHaveBeenCalledTimes(1)
+    expect(getIndex).toHaveBeenCalledWith(ROOT)
   })
 
   it('retries hydrating after a failed folder read', async () => {
@@ -86,22 +134,19 @@ describe('useFileBrowserStore tree', () => {
     expect(browser.roots).toEqual([ROOT])
   })
 
-  it('lists a nested folder only when it is first expanded, then reuses the cache', async () => {
+  it('opens a nested folder without going back to disk for its contents', async () => {
     const browser = useFileBrowserStore()
     await browser.hydrate()
+    getIndex.mockClear()
 
     await browser.toggle(NESTED)
-    expect(browser.rows.map((row) => row.path)).toEqual([
-      ROOT,
-      NESTED,
-      'C:\\music\\Album\\Deep.mp3',
-      'C:\\music\\Top.mp3'
-    ])
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, DEEP_FILE, TOP_FILE])
 
     await browser.toggle(NESTED)
     await browser.toggle(NESTED)
-    // Two directories listed in total; re-expanding does not re-read the disk.
-    expect(listDirectory).toHaveBeenCalledTimes(2)
+    // The crawl at hydrate already knew what was inside, so opening and closing
+    // a folder is a state change and nothing more.
+    expect(getIndex).not.toHaveBeenCalled()
   })
 
   it('marks only added folders as removable', async () => {
@@ -404,83 +449,122 @@ describe('useFileBrowserStore filter', () => {
 
   it('hides non-matching files and folders left with nothing beneath them', async () => {
     const browser = useFileBrowserStore()
-    readAudioMetadata.mockImplementation(async (path: string) =>
-      path === 'C:\\music\\Top.mp3' ? { title: 'Night Drive', artist: 'The Band' } : { title: 'Deep Cut' }
-    )
+    indexTags = {
+      [TOP_FILE]: { title: 'Night Drive', artist: 'The Band' },
+      [DEEP_FILE]: { title: 'Deep Cut' }
+    }
     await browser.hydrate()
 
-    await browser.setFilter('night')
+    browser.setFilter('night')
 
     // The nested folder holds no match, so it drops out of the tree.
-    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, 'C:\\music\\Top.mp3'])
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, TOP_FILE])
   })
 
   it('keeps a folder whose match is nested deeper inside it', async () => {
     const browser = useFileBrowserStore()
-    readAudioMetadata.mockImplementation(async (path: string) =>
-      path === 'C:\\music\\Album\\Deep.mp3' ? { title: 'Deep Cut' } : { title: 'Night Drive' }
-    )
+    indexTags = {
+      [TOP_FILE]: { title: 'Night Drive' },
+      [DEEP_FILE]: { title: 'Deep Cut' }
+    }
     await browser.hydrate()
 
-    await browser.setFilter('deep')
+    browser.setFilter('deep')
 
-    expect(browser.rows.map((row) => row.path)).toEqual([
-      ROOT,
-      NESTED,
-      'C:\\music\\Album\\Deep.mp3'
-    ])
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, DEEP_FILE])
   })
 
   it('hides every folder when nothing matches anywhere', async () => {
     const browser = useFileBrowserStore()
-    readAudioMetadata.mockResolvedValue({ title: 'Night Drive' })
+    indexTags = { [TOP_FILE]: { title: 'Night Drive' }, [DEEP_FILE]: { title: 'Night Drive' } }
     await browser.hydrate()
 
-    await browser.setFilter('nothing here')
+    browser.setFilter('nothing here')
 
     expect(browser.rows).toEqual([])
     expect(browser.filterHidesEverything).toBe(true)
   })
 
-  it('opens every folder while filtering and restores the tree when cleared', async () => {
+  it('shows a match inside a folder the user never opened', async () => {
     const browser = useFileBrowserStore()
-    readAudioMetadata.mockResolvedValue({ title: 'Deep Cut' })
+    indexTags = { [DEEP_FILE]: { title: 'Deep Cut' } }
     await browser.hydrate()
 
     // Hydrate opens the roots only, leaving the nested folder shut.
     expect(browser.expanded[NESTED]).not.toBe(true)
 
-    await browser.setFilter('deep')
-    expect(browser.expanded[NESTED]).toBe(true)
+    browser.setFilter('deep')
 
-    await browser.setFilter('')
-    expect(browser.expanded[NESTED]).not.toBe(true)
-    expect(browser.expanded[ROOT]).toBe(true)
+    // The row is shown even though its folder is shut, because the index knows
+    // what is inside without anything having to open it.
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, DEEP_FILE])
   })
 
-  it('restores the disclosure state from before the search, not mid-search', async () => {
+  it('leaves the arranged tree untouched, so clearing the filter restores it', async () => {
     const browser = useFileBrowserStore()
-    readAudioMetadata.mockResolvedValue({ title: 'Deep Cut' })
+    indexTags = { [DEEP_FILE]: { title: 'Deep Cut' } }
+    await browser.hydrate()
+    const arranged = { ...browser.expanded }
+
+    browser.setFilter('deep')
+
+    // Showing a buried match must not cost the user the layout they arranged:
+    // the disclosure state is not written to at all, so there is nothing to
+    // snapshot, nothing to put back, and no way for the two to drift apart.
+    expect(browser.expanded).toEqual(arranged)
+    expect(browser.expanded[NESTED]).not.toBe(true)
+
+    browser.setFilter('')
+    expect(browser.expanded).toEqual(arranged)
+  })
+
+  it('treats a query shorter than the minimum as no filter at all', async () => {
+    const browser = useFileBrowserStore()
     await browser.hydrate()
 
-    await browser.setFilter('d')
-    await browser.setFilter('de')
-    await browser.setFilter('dee')
-    await browser.setFilter('')
+    browser.setFilter('de')
 
-    expect(browser.expanded[NESTED]).not.toBe(true)
+    expect(fileBrowserActiveFilter('de')).toBe('')
+    expect(browser.filterHidesEverything).toBe(false)
+    // Nothing hidden, and no folder the user had left shut has been opened.
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, TOP_FILE])
   })
 
-  it('reads tags for files that have never been rendered so they can match', async () => {
+  it('filters without going back to disk, however much is typed', async () => {
     const browser = useFileBrowserStore()
+    indexTags = { [DEEP_FILE]: { title: 'Deep Cut' } }
+    await browser.hydrate()
+    getIndex.mockClear()
+    refreshIndex.mockClear()
+    readAudioMetadata.mockClear()
+
+    for (const query of ['dee', 'deep', 'deep ', 'deep c', 'deep cu', 'deep cut']) {
+      browser.setFilter(query)
+    }
+
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, DEEP_FILE])
+    // Everything a search needs came from the index, so no keystroke reaches
+    // the filesystem however long the query gets.
+    expect(getIndex).not.toHaveBeenCalled()
+    expect(refreshIndex).not.toHaveBeenCalled()
+    expect(readAudioMetadata).not.toHaveBeenCalled()
+  })
+
+  it('matches files in folders the user never opened, from the index alone', async () => {
+    const browser = useFileBrowserStore()
+    indexTags = {
+      [TOP_FILE]: { artist: 'The Band' },
+      [DEEP_FILE]: { artist: 'The Band' }
+    }
     await browser.hydrate()
     readAudioMetadata.mockClear()
 
-    await browser.setFilter('band')
+    browser.setFilter('band')
 
-    expect(readAudioMetadata).toHaveBeenCalledWith('C:\\music\\Top.mp3')
-    // Reached only by listing a folder the user never opened.
-    expect(readAudioMetadata).toHaveBeenCalledWith('C:\\music\\Album\\Deep.mp3')
+    // Both rows match on a tag, including one in a folder that was never opened
+    // — and no tag read happens now, because the crawl already did them all.
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, DEEP_FILE, TOP_FILE])
+    expect(readAudioMetadata).not.toHaveBeenCalled()
   })
 
   it('does not report an empty result while no filter is set', async () => {
@@ -488,6 +572,201 @@ describe('useFileBrowserStore filter', () => {
     await browser.hydrate()
 
     expect(browser.filterHidesEverything).toBe(false)
+  })
+})
+
+describe('useFileBrowserStore refresh', () => {
+  it('re-crawls the added root that contains the folder asked for', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+
+    await browser.refresh(NESTED)
+
+    // The index is stored per added root, so refreshing anything inside one
+    // re-reads that root rather than the single folder.
+    expect(refreshIndex).toHaveBeenCalledWith(ROOT)
+  })
+
+  it('ignores a refresh for a folder outside every added root', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+
+    await browser.refresh('D:\\elsewhere')
+
+    expect(refreshIndex).not.toHaveBeenCalled()
+  })
+
+  it('drops rows, selection and cover art for files a re-crawl no longer finds', async () => {
+    const browser = useFileBrowserStore()
+    indexTags = { [DEEP_FILE]: { title: 'Deep Cut' } }
+    await browser.hydrate()
+    browser.info[DEEP_FILE] = { title: 'Deep Cut', coverArtUrl: 'blob:deep' }
+    browser.select(DEEP_FILE)
+
+    // The nested file has been deleted on disk since the last crawl.
+    refreshIndex.mockImplementation(async (root: string) => ({
+      root,
+      folders: { [ROOT]: [{ path: TOP_FILE, name: 'Top', kind: 'file' }] },
+      tags: {},
+      indexedAt: 2
+    }))
+    await browser.refresh(ROOT)
+
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, TOP_FILE])
+    // Left behind, the deleted file would linger as a stale selection and its
+    // cover Blob would never be revoked.
+    expect(browser.info[DEEP_FILE]).toBeUndefined()
+    expect(browser.selectedPath).toBeNull()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:deep')
+  })
+})
+
+describe('useFileBrowserStore index progress', () => {
+  /** A crawl that only finishes when the test says so. */
+  function pendingIndex(): { resolve: () => void } {
+    let release = (): void => {}
+    getIndex.mockImplementation(async (root: string) => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      return buildIndex(root)
+    })
+    return { resolve: () => release() }
+  }
+
+  it('shows folders as the crawl reports them, before it has finished', async () => {
+    const browser = useFileBrowserStore()
+    const crawl = pendingIndex()
+    const hydrating = browser.hydrate()
+    await Promise.resolve()
+
+    emitProgress({ root: ROOT, folders: { [ROOT]: listing[ROOT] ?? [] }, fileCount: 1 })
+
+    // The index call has not returned, yet the user can already see the folder.
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, NESTED, TOP_FILE])
+    crawl.resolve()
+    await hydrating
+  })
+
+  it('reports how far an indexing folder has got, and stops once it is done', async () => {
+    const browser = useFileBrowserStore()
+    const crawl = pendingIndex()
+    const hydrating = browser.hydrate()
+    await Promise.resolve()
+
+    expect(browser.indexLabel(ROOT)).toBe('Indexing…')
+
+    // Still walking the tree: there is no total to count against yet.
+    emitProgress({ root: ROOT, fileCount: 12 })
+    expect(browser.indexLabel(ROOT)).toBe('Indexing… 12 files')
+
+    // Every folder listed, so the remaining work is a known number of tag reads.
+    emitProgress({ root: ROOT, fileCount: 12, taggedCount: 5, listed: true })
+    expect(browser.indexLabel(ROOT)).toBe('Indexing… 5 of 12')
+
+    crawl.resolve()
+    await hydrating
+    expect(browser.indexLabel(ROOT)).toBeNull()
+  })
+
+  it('brings tags in as they are read, so rows fill in during the crawl', async () => {
+    const browser = useFileBrowserStore()
+    const crawl = pendingIndex()
+    const hydrating = browser.hydrate()
+    await Promise.resolve()
+
+    emitProgress({ root: ROOT, tags: { [TOP_FILE]: { title: 'Streamed In' } } })
+
+    expect(browser.info[TOP_FILE]?.title).toBe('Streamed In')
+    crawl.resolve()
+    await hydrating
+  })
+
+  it('ignores progress for a folder that is not being indexed', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    const before = browser.rows.length
+
+    // A crawl finishing after its folder was removed must not put rows back.
+    emitProgress({
+      root: 'D:\\gone',
+      folders: { 'D:\\gone': [{ path: 'D:\\gone\\x.mp3', name: 'x', kind: 'file' }] }
+    })
+    emitProgress({ root: ROOT, folders: { 'C:\\music\\Ghost': [] } })
+
+    expect(browser.rows).toHaveLength(before)
+    expect(browser.children['D:\\gone']).toBeUndefined()
+    expect(browser.children['C:\\music\\Ghost']).toBeUndefined()
+  })
+
+  it('keeps what a re-crawl reports rather than clearing it when the crawl ends', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+
+    let release = (): void => {}
+    refreshIndex.mockImplementation(async () => {
+      await new Promise<void>((r) => {
+        release = r
+      })
+      // The re-crawl found only the top-level file; the nested folder is gone.
+      return {
+        root: ROOT,
+        folders: { [ROOT]: [{ path: TOP_FILE, name: 'Top', kind: 'file' }] },
+        tags: {},
+        indexedAt: 2
+      }
+    })
+    const refreshing = browser.refresh(ROOT)
+    await Promise.resolve()
+
+    // The stale subtree is cleared as the re-crawl starts, so it is the streamed
+    // slice — not a wipe at the end — that puts the tree back.
+    emitProgress({
+      root: ROOT,
+      folders: { [ROOT]: [{ path: TOP_FILE, name: 'Top', kind: 'file' }] },
+      fileCount: 1
+    })
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, TOP_FILE])
+
+    release()
+    await refreshing
+    expect(browser.rows.map((row) => row.path)).toEqual([ROOT, TOP_FILE])
+  })
+
+  it('subscribes once however many times the browser is hydrated', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    await browser.hydrate()
+    browser.subscribeToIndexProgress()
+
+    expect(onIndexProgress).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a newly added folder filling in while it is still being crawled', async () => {
+    const browser = useFileBrowserStore()
+    await browser.hydrate()
+    const NEW_ROOT = 'D:\\added'
+    addFolder.mockResolvedValue([ROOT, NEW_ROOT])
+    const crawl = pendingIndex()
+
+    const adding = browser.addFolder()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    emitProgress({
+      root: NEW_ROOT,
+      folders: { [NEW_ROOT]: [{ path: 'D:\\added\\New.mp3', name: 'New', kind: 'file' }] },
+      fileCount: 1
+    })
+
+    // Adding a large folder is exactly when the wait is longest, so its contents
+    // must appear as they are found rather than only once the crawl returns.
+    expect(browser.rows.map((row) => row.path)).toContain('D:\\added\\New.mp3')
+    expect(browser.indexLabel(NEW_ROOT)).toBe('Indexing… 1 files')
+
+    crawl.resolve()
+    await adding
+    expect(browser.indexLabel(NEW_ROOT)).toBeNull()
   })
 })
 
@@ -502,7 +781,7 @@ describe('useFileBrowserStore audition bar', () => {
 
     expect(browser.pinnedAudition).toMatchObject({ path: TOP, kind: 'file', pinned: true })
 
-    await browser.setFilter('nothing here')
+    browser.setFilter('nothing here')
 
     // The bar is the handle on playback a filter can no longer take away.
     expect(browser.pinnedAudition).toMatchObject({ path: TOP, pinned: true })
@@ -531,10 +810,10 @@ describe('useFileBrowserStore audition bar', () => {
     readAudioMetadata.mockResolvedValue({ title: 'Deep Cut' })
     await browser.hydrate()
     const deep = 'C:\\music\\Album\\Deep.mp3'
-    await browser.setFilter('deep')
+    browser.setFilter('deep')
     browser.play(deep)
 
-    await browser.setFilter('')
+    browser.setFilter('')
 
     // Restoring the pre-search tree would otherwise fold the playing file away.
     expect(browser.expanded[NESTED]).toBe(true)
@@ -542,40 +821,89 @@ describe('useFileBrowserStore audition bar', () => {
     expect(browser.rows.some((row) => row.path === deep)).toBe(true)
   })
 
+  it('reopens and selects a transcoded audition when the filter is cleared', async () => {
+    const browser = useFileBrowserStore()
+    const deep = 'C:\\music\\Album\\Deep.m4a'
+    getIndex.mockImplementation(
+      async (root: string): Promise<FileBrowserFolderIndex> => ({
+        root,
+        folders: {
+          [ROOT]: listing[ROOT] ?? [],
+          [NESTED]: [{ path: deep, name: 'Deep', kind: 'file' }]
+        },
+        tags: { [deep]: { title: 'Deep Cut' } },
+        indexedAt: 1
+      })
+    )
+    await browser.hydrate()
+    ensurePlayableMock.mockResolvedValue('C:\\cache\\deep.wav')
+    browser.setFilter('deep')
+    await browser.prepareAndPlay(deep)
+
+    browser.setFilter('')
+
+    // The voice holds the cache WAV, which sits outside every browsed root, so
+    // revealing has to work from the browsed path or it finds nothing at all.
+    expect(browser.expanded[NESTED]).toBe(true)
+    expect(browser.selectedPath).toBe(deep)
+  })
+
   it('leaves the selection alone when nothing is being auditioned', async () => {
     const browser = useFileBrowserStore()
     await browser.hydrate()
     browser.select(ROOT)
 
-    await browser.setFilter('')
+    browser.setFilter('')
 
     expect(browser.selectedPath).toBe(ROOT)
   })
 })
 
 describe('useFileBrowserStore metadata', () => {
-  it('reads a file\'s tags once however many times a row asks', async () => {
+  it('reads a visible row\'s artwork once however many times it asks', async () => {
     const browser = useFileBrowserStore()
     readAudioMetadata.mockResolvedValue({ title: 'Song', artist: 'Band', album: 'Record' })
 
-    await browser.ensureInfo('C:\\music\\Top.mp3')
-    await browser.ensureInfo('C:\\music\\Top.mp3')
+    await browser.ensureInfo(TOP_FILE)
+    await browser.ensureInfo(TOP_FILE)
 
     expect(readAudioMetadata).toHaveBeenCalledTimes(1)
-    expect(browser.info['C:\\music\\Top.mp3']).toEqual({
+    expect(browser.info[TOP_FILE]).toEqual({
       title: 'Song',
       artist: 'Band',
       album: 'Record'
     })
   })
 
-  it('records an empty entry for an unreadable file so the row stops retrying', async () => {
+  it('stops retrying a file whose artwork cannot be read', async () => {
     const browser = useFileBrowserStore()
     readAudioMetadata.mockRejectedValue(new Error('nope'))
 
     await browser.ensureInfo('C:\\music\\Bad.mp3')
+    await browser.ensureInfo('C:\\music\\Bad.mp3')
 
-    expect(browser.info['C:\\music\\Bad.mp3']).toEqual({})
+    expect(readAudioMetadata).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the indexed tags when a row reads its artwork', async () => {
+    const browser = useFileBrowserStore()
+    indexTags = { [TOP_FILE]: { title: 'Night Drive', artist: 'The Band', durationMs: 1000 } }
+    await browser.hydrate()
+    // A file whose artwork is embedded but whose tags the row already has.
+    readAudioMetadata.mockResolvedValue({
+      coverArt: { data: new Uint8Array([1]).buffer, mimeType: 'image/jpeg' }
+    })
+
+    await browser.ensureInfo(TOP_FILE)
+
+    // The artwork read must add to what the index found rather than replace it,
+    // or a row would lose its title the moment its cover arrived.
+    expect(browser.info[TOP_FILE]).toMatchObject({
+      title: 'Night Drive',
+      artist: 'The Band',
+      durationMs: 1000,
+      coverArtUrl: 'blob:cover'
+    })
   })
 })
 
@@ -649,6 +977,45 @@ describe('useFileBrowserStore playback and import', () => {
     ensurePlayableMock.mockResolvedValue(null)
 
     await browser.prepareAndPlay(M4A)
+
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(browser.auditionedPath).toBeNull()
+  })
+
+  it('releases the audition when the shared preview voice is pointed elsewhere', async () => {
+    const browser = useFileBrowserStore()
+    const preview = usePreviewStore()
+    ensurePlayableMock.mockResolvedValue(CACHED_WAV)
+    await browser.prepareAndPlay(M4A)
+    preview.isPlaying = true
+    expect(browser.auditionedPath).toBe(M4A)
+
+    // The voice is shared: whoever loads into it next owns it, so the browser
+    // must stop claiming a row rather than wait to be told.
+    preview.loadFile('D:\\elsewhere\\Backing.wav')
+
+    expect(browser.auditionedPath).toBeNull()
+    expect(browser.isPlaying(M4A)).toBe(false)
+    expect(browser.pinnedAudition).toBeNull()
+  })
+
+  it('abandons a transcode if another consumer takes the shared voice meanwhile', async () => {
+    const browser = useFileBrowserStore()
+    const preview = usePreviewStore()
+    const gate: { release?: (path: string | null) => void } = {}
+    ensurePlayableMock.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          gate.release = resolve
+        })
+    )
+    const pending = browser.prepareAndPlay(M4A)
+
+    // The Clip Editor opens and seizes the voice while the decode is running.
+    preview.load('item-1', 0, 1_000)
+    sendMock.mockClear()
+    gate.release?.(CACHED_WAV)
+    await pending
 
     expect(sendMock).not.toHaveBeenCalled()
     expect(browser.auditionedPath).toBeNull()

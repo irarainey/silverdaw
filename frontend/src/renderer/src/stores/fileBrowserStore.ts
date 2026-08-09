@@ -8,7 +8,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { toggleTransportPlayback } from '@/lib/transport/useTransportSkip'
 
-/** Tag data resolved lazily for one browsed file, plus its cover Blob URL. */
+/** Tag data for one browsed file, plus its cover Blob URL. */
 export interface FileBrowserFileInfo {
   title?: string
   artist?: string
@@ -33,15 +33,40 @@ export interface FileBrowserRow {
   pinned?: boolean
 }
 
+/** How far a root's crawl has got, for the progress shown against its row. */
+export interface FileBrowserIndexStatus {
+  /** Audio files found under the root so far. */
+  fileCount: number
+  /** Files whose tags have been read so far. */
+  taggedCount: number
+  /** True once every folder has been listed, so only tag reads remain. */
+  listed: boolean
+}
+
 interface FileBrowserState {
   /** Added folders, in the order the user added them. */
   roots: string[]
   expanded: Record<string, boolean>
+  /**
+   * Listing for every folder under every added root, taken wholesale from that
+   * root's index. Rendering, expanding and filtering all read this, so browsing
+   * costs no disk access once a root is indexed.
+   */
   children: Record<string, FileBrowserEntry[]>
-  loading: Record<string, boolean>
+  /**
+   * Roots whose crawl is in flight, with how far it has got. A large library
+   * takes seconds to index, so its row reports progress instead of the tree
+   * sitting empty with nothing to explain the wait.
+   */
+  indexing: Record<string, FileBrowserIndexStatus>
+  /**
+   * Tags for every indexed file, plus cover art for the rows that have asked for
+   * it. Tags arrive with the index; artwork is fetched per visible row, because
+   * it is large binary data and only the handful of rows on screen display one.
+   */
   info: Record<string, FileBrowserFileInfo>
-  /** Paths whose metadata read is done or in flight, so rows request it once. */
-  infoRequested: Record<string, boolean>
+  /** Paths whose cover-art read is done or in flight, so rows request it once. */
+  coverRequested: Record<string, boolean>
   /** The file whose name was last clicked, or null when nothing is selected. */
   /** Path of the selected file or folder row, or null. Selecting a folder the
    *  user added arms the Delete key to remove it. */
@@ -58,13 +83,28 @@ interface FileBrowserState {
   playbackPaths: Record<string, string>
   /** Free-text filter applied to files; folders with no match are hidden too. */
   filter: string
-  /** Disclosure state captured when a search began, restored when it ends. */
-  expandedBeforeFilter: Record<string, boolean> | null
   /** Bumped to ask the tree to take keyboard focus back from the filter box. */
   treeFocusRequest: number
   /** Tree scroll offset, kept here so switching tabs and back restores the view. */
   scrollTop: number
   hydrated: boolean
+}
+
+/**
+ * Shortest query that actually filters. One or two characters match almost
+ * every track, so filtering on them narrows nothing while making the whole tree
+ * jump about as the user types the first letters of a word.
+ */
+export const FILE_BROWSER_FILTER_MIN_LENGTH = 3
+
+/**
+ * The query actually being applied, which is empty while the box holds too
+ * little to search with. Everything that hides rows goes through this rather
+ * than the raw text, so a half-typed word leaves the tree exactly as it was.
+ */
+export function fileBrowserActiveFilter(filter: string): string {
+  const query = filter.trim()
+  return query.length >= FILE_BROWSER_FILTER_MIN_LENGTH ? query : ''
 }
 
 /**
@@ -83,7 +123,20 @@ export function fileBrowserFileMatchesFilter(
   const fields = [info?.title ?? '', name, info?.artist ?? '']
   return fields.some((field) => field.toLocaleLowerCase().includes(needle))
 }
-/** A path is inside `dir` when it starts with `dir` plus a separator. */
+/**
+ * Unsubscribe for the crawl-progress listener. Module-level rather than store
+ * state because it is a live IPC handle, not something the tree renders, and one
+ * listener serves the whole app for as long as it runs.
+ */
+let unsubscribeIndexProgress: (() => void) | null = null
+
+/** Test seam: drop the progress listener so each test starts unsubscribed. */
+export function resetFileBrowserIndexProgress(): void {
+  unsubscribeIndexProgress?.()
+  unsubscribeIndexProgress = null
+}
+
+/** A path is inside `dir` when it starts with `dir` plus a separator. */
 function isUnder(path: string, dir: string): boolean {
   const prefix = dir.endsWith('\\') || dir.endsWith('/') ? dir : `${dir}\\`
   return path.toLowerCase().startsWith(prefix.toLowerCase())
@@ -108,15 +161,14 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     roots: [],
     expanded: {},
     children: {},
-    loading: {},
+    indexing: {},
     info: {},
-    infoRequested: {},
+    coverRequested: {},
     selectedPath: null,
     auditionSourcePath: null,
     preparingPath: null,
     playbackPaths: {},
     filter: '',
-    expandedBeforeFilter: null,
     treeFocusRequest: 0,
     scrollTop: 0,
     hydrated: false
@@ -128,15 +180,22 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
      * row markup non-recursive and makes the disclosure logic directly testable.
      * A filter hides non-matching files, and any folder left with nothing matching
      * anywhere beneath it, so a search narrows to just the folders worth opening.
+     *
+     * A filter also opens every folder it keeps, so a match buried in a branch the
+     * user never opened is still shown. That is done here, by treating folders as
+     * open while filtering, rather than by writing to `expanded`: the tree the
+     * user arranged is never touched, so clearing the filter restores it exactly
+     * with nothing to snapshot and nothing to put back.
      */
     rows(state): FileBrowserRow[] {
       const out: FileBrowserRow[] = []
-      const filtering = state.filter.trim().length > 0
+      const query = fileBrowserActiveFilter(state.filter)
+      const filtering = query.length > 0
 
       /**
-       * A folder whose contents have never been listed cannot be proven empty of
-       * matches, so it stays visible rather than hiding files the user has not
-       * opened yet.
+       * A folder whose contents are not indexed yet cannot be proven empty of
+       * matches, so it stays visible rather than hiding files that are still
+       * being crawled.
        */
       const hasMatchBeneath = (dir: string): boolean => {
         const entries = state.children[dir]
@@ -144,20 +203,20 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
         return entries.some((entry) =>
           entry.kind === 'directory'
             ? hasMatchBeneath(entry.path)
-            : fileBrowserFileMatchesFilter(state.filter, entry.name, state.info[entry.path])
+            : fileBrowserFileMatchesFilter(query, entry.name, state.info[entry.path])
         )
       }
 
       const walk = (dir: string, depth: number, isRoot: boolean, name: string): void => {
         if (filtering && !hasMatchBeneath(dir)) return
-        const expanded = state.expanded[dir] === true
+        const expanded = filtering || state.expanded[dir] === true
         out.push({ path: dir, name, kind: 'directory', depth, isRoot, expanded })
         if (!expanded) return
         for (const entry of state.children[dir] ?? []) {
           if (entry.kind === 'directory') {
             walk(entry.path, depth + 1, false, entry.name)
           } else {
-            if (!fileBrowserFileMatchesFilter(state.filter, entry.name, state.info[entry.path])) {
+            if (!fileBrowserFileMatchesFilter(query, entry.name, state.info[entry.path])) {
               continue
             }
             out.push({
@@ -179,9 +238,18 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
      * The browsed file in the preview voice, or null when nothing is auditioned.
      * A transcoded file plays from a cached WAV, so the preview store's own path
      * cannot be compared against a tree row directly.
+     *
+     * The comparison is against the path actually handed to the preview voice
+     * rather than merely "something is loaded", so the audition releases itself
+     * as soon as another consumer of the shared voice — the Clip Editor or
+     * Scratch Editor — takes it over, instead of leaving a browsed row showing as
+     * playing while a different file is heard.
      */
     auditionedPath(state): string | null {
-      return usePreviewStore().filePath === null ? null : state.auditionSourcePath
+      const source = state.auditionSourcePath
+      if (source === null) return null
+      const loaded = state.playbackPaths[source] ?? source
+      return usePreviewStore().filePath === loaded ? source : null
     },
 
     /**
@@ -202,7 +270,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
 
     /** True when a filter is hiding every file the tree would otherwise show. */
     filterHidesEverything(state): boolean {
-      if (state.filter.trim().length === 0) return false
+      if (fileBrowserActiveFilter(state.filter).length === 0) return false
       return !this.rows.some((row) => row.kind === 'file')
     },
 
@@ -221,6 +289,25 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       const preview = usePreviewStore()
       return (filePath: string): number | null =>
         this.auditionedPath === filePath ? preview.positionMs : null
+    },
+
+    /**
+     * What to show against an added folder while it is being indexed, or null
+     * once it is done. Counting files while the tree is still being walked and
+     * switching to a ratio once it is means the caption is honest at both
+     * stages: there is no total to count against until every folder is listed.
+     */
+    indexLabel() {
+      return (root: string): string | null => {
+        const status = this.indexing[root]
+        if (status === undefined) return null
+        if (!status.listed) {
+          return status.fileCount === 0
+            ? 'Indexing…'
+            : `Indexing… ${status.fileCount.toLocaleString()} files`
+        }
+        return `Indexing… ${status.taggedCount.toLocaleString()} of ${status.fileCount.toLocaleString()}`
+      }
     }
   },
 
@@ -228,6 +315,9 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     async hydrate(): Promise<void> {
       if (this.hydrated) return
       this.hydrated = true
+      // Subscribed before the first crawl is asked for, so no slice of it is
+      // missed, and only once because the store outlives every view that uses it.
+      this.subscribeToIndexProgress()
       try {
         this.roots = await window.silverdaw.listFileBrowserFolders()
       } catch (err) {
@@ -236,8 +326,91 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
         this.hydrated = false
         return
       }
-      // Show each added folder's contents straight away; nested folders stay shut.
-      await Promise.all(this.roots.map((root) => this.expand(root)))
+      // Expanded before the crawl, not after, so a root that has to be indexed
+      // shows its progress and fills in as folders arrive.
+      for (const root of this.roots) this.expanded[root] = true
+      // Each root's whole contents arrive in one call, usually straight from the
+      // cache written by a previous run, so the tree is ready without any crawl.
+      await Promise.all(this.roots.map((root) => this.loadIndex(root)))
+    },
+
+    /**
+     * Listen for crawls in progress. Registered once for the life of the app:
+     * the store is what holds the tree, so it is what has to receive the slices,
+     * and a view mounting or unmounting must not interrupt an indexing folder.
+     */
+    subscribeToIndexProgress(): void {
+      if (unsubscribeIndexProgress !== null) return
+      unsubscribeIndexProgress = window.silverdaw.onFileBrowserIndexProgress((progress) => {
+        this.applyIndexProgress(progress)
+      })
+    },
+
+    /**
+     * Apply one slice of a crawl. Each message carries only what completed since
+     * the last, so this merges rather than replaces — the subtree was already
+     * cleared before a refresh started, precisely so these can be applied as
+     * they arrive instead of being wiped at the end.
+     */
+    applyIndexProgress(progress: FileBrowserIndexProgress): void {
+      const root = this.roots.find(
+        (candidate) => candidate.toLowerCase() === progress.root.toLowerCase()
+      )
+      // A crawl for a folder the user has since removed has nothing to fill in.
+      if (root === undefined || this.indexing[root] === undefined) return
+
+      for (const [dir, entries] of Object.entries(progress.folders)) {
+        this.children[dir] = entries
+      }
+      for (const [filePath, tags] of Object.entries(progress.tags)) {
+        this.info[filePath] = { ...this.info[filePath], ...tags }
+      }
+      this.indexing[root] = {
+        fileCount: progress.fileCount,
+        taggedCount: progress.taggedCount,
+        listed: progress.listed
+      }
+    },
+
+    /**
+     * Pull one root's index into the store: the listing for every folder beneath
+     * it and the tags for every file. This is the only thing that reads the
+     * filesystem — everything the tree then does is served from what it returns.
+     *
+     * The crawl reports back as it goes, so the tree fills in while this is
+     * still running; the returned index is the same data, applied again as the
+     * authoritative copy once the walk is done.
+     */
+    async loadIndex(root: string, options?: { refresh?: boolean }): Promise<void> {
+      if (this.indexing[root] !== undefined) return
+      this.indexing[root] = { fileCount: 0, taggedCount: 0, listed: false }
+      // A re-crawl replaces the subtree rather than merging into it, or a folder
+      // deleted on disk would survive as a listing nothing overwrites. Cleared
+      // before the crawl starts, not after it finishes, so the slices arriving
+      // meanwhile are kept rather than thrown away by a late wipe.
+      if (options?.refresh === true) {
+        for (const dir of Object.keys(this.children)) {
+          if (dir === root || isUnder(dir, root)) delete this.children[dir]
+        }
+      }
+      try {
+        const index =
+          options?.refresh === true
+            ? await window.silverdaw.refreshFileBrowserIndex(root)
+            : await window.silverdaw.getFileBrowserIndex(root)
+        for (const [dir, entries] of Object.entries(index.folders)) {
+          this.children[dir] = entries
+        }
+        for (const [filePath, tags] of Object.entries(index.tags)) {
+          // Merge rather than replace: a cover URL already fetched for a visible
+          // row would otherwise be dropped on the floor, leaking the Blob.
+          this.info[filePath] = { ...this.info[filePath], ...tags }
+        }
+      } catch (err) {
+        log.warn('fileBrowser', `index failed for ${root}: ${String(err)}`)
+      } finally {
+        delete this.indexing[root]
+      }
     },
 
     /** Open the native picker and add the chosen folder, already expanded. */
@@ -251,7 +424,12 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       }
       const added = next.filter((folder) => !this.roots.includes(folder))
       this.roots = next
-      for (const folder of added) await this.expand(folder)
+      // Crawling here is what makes everything afterwards free: adding the
+      // folder is the one moment the user expects the app to go and read it.
+      // Expanded first, so the new folder shows its progress and fills in as
+      // the crawl reports back rather than appearing only once it has finished.
+      for (const folder of added) this.expanded[folder] = true
+      await Promise.all(added.map((folder) => this.loadIndex(folder)))
     },
 
     async removeFolder(folder: string): Promise<void> {
@@ -277,7 +455,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
         const url = this.info[path]?.coverArtUrl
         if (url) URL.revokeObjectURL(url)
         delete this.info[path]
-        delete this.infoRequested[path]
+        delete this.coverRequested[path]
       }
       for (const path of Object.keys(this.children)) {
         if (path === folder || isUnder(path, folder)) delete this.children[path]
@@ -285,8 +463,11 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       for (const path of Object.keys(this.expanded)) {
         if (path === folder || isUnder(path, folder)) delete this.expanded[path]
       }
-      for (const path of Object.keys(this.loading)) {
-        if (path === folder || isUnder(path, folder)) delete this.loading[path]
+      for (const path of Object.keys(this.indexing)) {
+        if (path === folder || isUnder(path, folder)) delete this.indexing[path]
+      }
+      for (const path of Object.keys(this.playbackPaths)) {
+        if (path === folder || isUnder(path, folder)) delete this.playbackPaths[path]
       }
       // A selection inside a removed folder would otherwise outlive its row.
       const selected = this.selectedPath
@@ -336,40 +517,30 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     },
 
     /**
-     * Filtering matches on tags, and searches folders the user has never opened,
-     * so the whole tree is listed and expanded while a filter is active. The
-     * pre-filter disclosure state is put back when the filter is cleared, so
-     * searching never costs the user the tree layout they had arranged.
+     * Apply a filter. Everything it needs is already in the index, so this is a
+     * plain state write: no crawl, nothing to await, and no debounce to hide a
+     * cost that is no longer there. Matching folders are opened by the `rows`
+     * getter rather than here, so the user's own disclosure state is untouched
+     * and clearing the filter puts the tree back exactly as it was.
      */
-    async setFilter(query: string): Promise<void> {
-      const wasFiltering = this.filter.trim().length > 0
-      const nowFiltering = query.trim().length > 0
+    setFilter(query: string): void {
       this.filter = query
-
-      if (!nowFiltering) {
-        if (this.expandedBeforeFilter !== null) {
-          this.expanded = this.expandedBeforeFilter
-          this.expandedBeforeFilter = null
-        }
-        this.revealAudition()
-        return
-      }
-
-      // Snapshot only on the first keystroke of a search, so later ones don't
-      // capture the fully-expanded tree as the state to restore.
-      if (!wasFiltering) this.expandedBeforeFilter = { ...this.expanded }
-      await this.expandAllForFilter()
+      if (fileBrowserActiveFilter(query).length === 0) this.revealAudition()
     },
 
     /**
      * Keep the audition on screen once a filter is cleared. The pin that held it
-     * above the tree disappears with the filter, and restoring the pre-filter
-     * disclosure state can fold its folders shut, so they are reopened and the
-     * row reselected — the view scrolls to the selection, and the arrow and
-     * Enter keys carry on from there.
+     * above the tree disappears with the filter, and the folders a search had
+     * opened to show it fold shut again, so they are reopened and the row
+     * reselected — the view scrolls to the selection, and the arrow and Enter
+     * keys carry on from there.
+     *
+     * Uses the browsed path rather than the preview voice's own: a transcoded
+     * file plays from a cached WAV that lives outside every browsed root, so
+     * asking the voice would never find a row to reveal.
      */
     revealAudition(): void {
-      const path = usePreviewStore().filePath
+      const path = this.auditionedPath
       if (path === null) return
       const root = this.roots.find((candidate) => isUnder(path, candidate))
       if (root === undefined) return
@@ -389,66 +560,89 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       this.scrollTop = Number.isFinite(offset) && offset > 0 ? offset : 0
     },
 
-    /**
-     * List and open every folder, reading each file's tags on the way. `expand`
-     * and `ensureInfo` both de-duplicate, so repeated keystrokes cost nothing
-     * beyond the first crawl.
-     */
-    async expandAllForFilter(): Promise<void> {
-      const visit = async (dir: string): Promise<void> => {
-        await this.expand(dir)
-        for (const entry of this.children[dir] ?? []) {
-          if (entry.kind === 'directory') await visit(entry.path)
-          else void this.ensureInfo(entry.path)
-        }
-      }
-      for (const root of this.roots) await visit(root)
-    },
-
     async toggle(dir: string): Promise<void> {
       if (this.expanded[dir] === true) this.expanded[dir] = false
       else await this.expand(dir)
     },
 
-    /** Expand a folder, listing its contents the first time it is opened. */
+    /**
+     * Open a folder. Its contents are already indexed, so this only sets the
+     * disclosure flag — no listing, and nothing to wait for. Kept async because
+     * the tree and keyboard handlers await it alongside actions that do.
+     */
     async expand(dir: string): Promise<void> {
       this.expanded[dir] = true
-      if (this.children[dir] !== undefined || this.loading[dir] === true) return
-      this.loading[dir] = true
-      try {
-        this.children[dir] = await window.silverdaw.listFileBrowserDirectory(dir)
-      } catch (err) {
-        log.warn('fileBrowser', `listDirectory failed for ${dir}: ${String(err)}`)
-        this.children[dir] = []
-      } finally {
-        delete this.loading[dir]
-      }
-    },
-
-    /** Re-read a folder so files added on disk since it was opened appear. */
-    async refresh(dir: string): Promise<void> {
-      delete this.children[dir]
-      await this.expand(dir)
     },
 
     /**
-     * Resolve a file's tags and artwork once. Rows call this when they mount, so
-     * a folder of hundreds of files only pays for what is actually on screen.
+     * Re-crawl the added folder containing `dir`, picking up files added, removed
+     * or retagged on disk since it was indexed. The whole root is re-read because
+     * the index is stored and cached per root, not per folder.
+     */
+    async refresh(dir: string): Promise<void> {
+      const root = this.roots.find((candidate) => candidate === dir || isUnder(dir, candidate))
+      if (root === undefined) return
+      await this.loadIndex(root, { refresh: true })
+      this.pruneMissing(root)
+    },
+
+    /**
+     * Drop state for files and folders a re-crawl no longer lists, so a deleted
+     * file cannot linger as a row, a stale selection, or a cover URL that is
+     * never revoked.
+     */
+    pruneMissing(root: string): void {
+      const present = new Set<string>([root])
+      for (const [dir, entries] of Object.entries(this.children)) {
+        if (dir !== root && !isUnder(dir, root)) continue
+        for (const entry of entries) present.add(entry.path)
+      }
+      const gone = (path: string): boolean =>
+        (path === root || isUnder(path, root)) && !present.has(path)
+
+      for (const path of Object.keys(this.info)) {
+        if (!gone(path)) continue
+        const url = this.info[path]?.coverArtUrl
+        if (url) URL.revokeObjectURL(url)
+        delete this.info[path]
+        delete this.coverRequested[path]
+      }
+      for (const path of Object.keys(this.children)) {
+        if (gone(path)) delete this.children[path]
+      }
+      for (const path of Object.keys(this.expanded)) {
+        if (gone(path)) delete this.expanded[path]
+      }
+      for (const path of Object.keys(this.playbackPaths)) {
+        if (gone(path)) delete this.playbackPaths[path]
+      }
+      if (this.selectedPath !== null && gone(this.selectedPath)) this.selectedPath = null
+    },
+
+    /**
+     * Fetch a visible row's cover art. Tags already arrived with the index, so
+     * this is the one read a row still makes, and only for artwork: a folder of
+     * hundreds of files pays for the covers actually on screen and no more.
      */
     async ensureInfo(filePath: string): Promise<void> {
-      if (this.infoRequested[filePath] === true) return
-      this.infoRequested[filePath] = true
+      if (this.coverRequested[filePath] === true) return
+      this.coverRequested[filePath] = true
       const metadata = await window.silverdaw.readAudioMetadata(filePath).catch((err) => {
         log.warn('fileBrowser', `readAudioMetadata failed for ${filePath}: ${String(err)}`)
         return null
       })
-      if (!metadata) {
-        this.info[filePath] = {}
-        return
-      }
+      if (!metadata) return
       // Cover bytes stay out of reactive state; only the Blob URL is exposed.
       const { coverArt, title, artist, album, durationMs } = metadata
-      const entry: FileBrowserFileInfo = { title, artist, album, durationMs }
+      // Merged field by field rather than spread: a file whose tags this read
+      // cannot see would otherwise write `undefined` over the ones the index
+      // already found, and the row would lose its title the moment its cover
+      // arrived.
+      const entry: FileBrowserFileInfo = { ...this.info[filePath] }
+      if (title !== undefined) entry.title = title
+      if (artist !== undefined) entry.artist = artist
+      if (album !== undefined) entry.album = album
+      if (durationMs !== undefined) entry.durationMs = durationMs
       if (coverArt) {
         entry.coverArtUrl = URL.createObjectURL(
           new Blob([coverArt.data], { type: coverArt.mimeType })
@@ -486,15 +680,23 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
 
     /**
      * Decode a file the engine cannot read into the cached WAV it will be
-     * auditioned from, then start it. The pending path doubles as a claim on the
-     * preview voice, so clicking another file mid-decode abandons this one rather
-     * than stealing playback once its transcode lands.
+     * auditioned from, then start it. A decode takes seconds, so the claim it
+     * has to survive is twofold: another row clicked in the browser (tracked by
+     * `preparingPath`), and another consumer of the shared preview voice taking
+     * it over meanwhile (tracked by the voice's own `loadSeq`). Either abandons
+     * this audition rather than letting a finished decode seize playback.
      */
     async prepareAndPlay(filePath: string): Promise<void> {
+      const preview = usePreviewStore()
       this.preparingPath = filePath
+      const claimedSeq = preview.loadSeq
       const wavPath = await ensureBackendPlayablePath(filePath)
       if (this.preparingPath !== filePath) return
       this.preparingPath = null
+      if (preview.loadSeq !== claimedSeq) {
+        log.info('fileBrowser', `audition of ${filePath} abandoned: preview voice taken over`)
+        return
+      }
       if (wavPath === null) {
         log.warn('fileBrowser', `cannot audition ${filePath}: could not decode`)
         return

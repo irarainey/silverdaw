@@ -1,21 +1,19 @@
 // File-browser IPC handlers: the folders the user has added to the library file
-// browser, and lazy per-directory listings of subfolders and importable audio
-// files. Adding a folder is the consent step — it is the only way a path enters
-// the browser's allow-list, so listings and reads stay confined to folders the
-// user picked in the native dialog. Registered from main/index.ts.
+// browser, and the index of each one. Adding a folder is the consent step — it
+// is the only way a path enters the browser's allow-list, so crawling and reads
+// stay confined to folders the user picked in the native dialog. The crawl runs
+// once per folder and is cached to disk; everything the tree shows is answered
+// from that index rather than from the filesystem. Registered from main/index.ts.
 
 import { ipcMain, dialog, type BrowserWindow } from 'electron'
-import { readdir } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import type { FileBrowserEntry } from '../../shared/types'
+import type { FileBrowserFolderIndex, FileBrowserIndexProgress } from '../../shared/types'
 import {
-  AUDIO_FILE_EXTENSIONS,
   canonicalisePath,
-  isWithinFileBrowserRoot,
   registerFileBrowserRoot,
   unregisterFileBrowserRoot
 } from '../audioPaths'
+import { forgetFolderIndex, getFolderIndex } from '../fileBrowserIndex'
 import { logMain } from '../log'
 import type { PrefsService } from '../prefsService'
 
@@ -24,22 +22,9 @@ export interface FileBrowserHandlersContext {
   prefs: PrefsService
 }
 
-const AUDIO_EXTENSIONS_SET: ReadonlySet<string> = new Set<string>(AUDIO_FILE_EXTENSIONS)
-
-function isImportableAudioFile(name: string): boolean {
-  return AUDIO_EXTENSIONS_SET.has(extname(name).replace(/^\./, '').toLowerCase())
-}
-
-// Folders first, then files; both A-Z so the tree reads predictably. Uses locale
-// compare so accented titles sort where a user expects them to.
-function compareEntries(a: FileBrowserEntry, b: FileBrowserEntry): number {
-  if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
-  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-}
-
 /**
  * Re-trust folders persisted from a previous run. Called during startup, before
- * the renderer can ask for a listing.
+ * the renderer can ask for an index.
  */
 export function restoreFileBrowserRoots(folders: readonly string[]): void {
   for (const folder of folders) registerFileBrowserRoot(folder)
@@ -55,6 +40,21 @@ export function registerFileBrowserHandlers(ctx: FileBrowserHandlersContext): vo
   function persistFolders(folders: string[]): void {
     prefs.get().ui.fileBrowserFolders = folders
     prefs.flushSaveSync()
+  }
+
+  function emptyIndex(root: string): FileBrowserFolderIndex {
+    return { root, folders: {}, tags: {}, indexedAt: 0 }
+  }
+
+  /**
+   * Forward a crawl to the renderer as it happens, so the tree fills in folder
+   * by folder instead of staying empty until a large library is finished. The
+   * window can close mid-crawl, so the send is guarded rather than assumed.
+   */
+  function reportProgress(progress: FileBrowserIndexProgress): void {
+    const win = ctx.getMainWindow()
+    if (!win || win.isDestroyed()) return
+    win.webContents.send(IPC.fileBrowser.indexProgress, progress)
   }
 
   ipcMain.handle(IPC.fileBrowser.listFolders, () => savedFolders())
@@ -78,40 +78,31 @@ export function registerFileBrowserHandlers(ctx: FileBrowserHandlersContext): vo
     return next
   })
 
-  ipcMain.handle(IPC.fileBrowser.removeFolder, (_evt, folder: unknown): string[] => {
+  ipcMain.handle(IPC.fileBrowser.removeFolder, async (_evt, folder: unknown): Promise<string[]> => {
     if (typeof folder !== 'string' || folder === '') return savedFolders()
     const target = canonicalisePath(folder).toLowerCase()
     const next = savedFolders().filter((f) => canonicalisePath(f).toLowerCase() !== target)
     unregisterFileBrowserRoot(folder)
     persistFolders(next)
+    // After un-registering, so a cached listing cannot outlive the consent.
+    await forgetFolderIndex(folder)
     return next
   })
 
-  ipcMain.handle(IPC.fileBrowser.listDirectory, async (_evt, dir: unknown): Promise<FileBrowserEntry[]> => {
-    if (!isWithinFileBrowserRoot(dir)) {
-      logMain('WARN ', 'fileBrowser:listDirectory', 'rejected path outside browser roots:', dir)
-      return []
-    }
-    try {
-      const dirents = await readdir(dir, { withFileTypes: true })
-      const entries: FileBrowserEntry[] = []
-      for (const dirent of dirents) {
-        // Ignore symlinks: following them would let a link inside a browsed
-        // folder reach arbitrary parts of the filesystem.
-        if (dirent.isDirectory()) {
-          entries.push({ path: join(dir, dirent.name), name: dirent.name, kind: 'directory' })
-        } else if (dirent.isFile() && isImportableAudioFile(dirent.name)) {
-          entries.push({
-            path: join(dir, dirent.name),
-            name: basename(dirent.name, extname(dirent.name)),
-            kind: 'file'
-          })
-        }
-      }
-      return entries.sort(compareEntries)
-    } catch (err) {
-      logMain('WARN ', 'fileBrowser:listDirectory', 'read failed:', dir, String(err))
-      return []
-    }
+  /**
+   * The index for one added root, crawled on first use and reused from then on.
+   * The renderer holds the result for the session, so this is answered once per
+   * folder per launch — or served straight from the startup cache.
+   */
+  ipcMain.handle(IPC.fileBrowser.getIndex, async (_evt, root: unknown) => {
+    if (typeof root !== 'string' || root === '') return emptyIndex('')
+    return await getFolderIndex(root, { onProgress: reportProgress })
+  })
+
+  /** Re-crawl a root, picking up files added or retagged on disk since. */
+  ipcMain.handle(IPC.fileBrowser.refreshIndex, async (_evt, root: unknown) => {
+    if (typeof root !== 'string' || root === '') return emptyIndex('')
+    logMain('INFO ', 'fileBrowser:refreshIndex', 're-crawling:', root)
+    return await getFolderIndex(root, { refresh: true, onProgress: reportProgress })
   })
 }

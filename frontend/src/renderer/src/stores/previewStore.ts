@@ -29,6 +29,15 @@ export const usePreviewStore = defineStore('preview', {
     /** Mirror of the backend's preview generation. Inbound envelopes with a
      *  lower generation are discarded. */
     generation: 0,
+    /**
+     * Bumped locally whenever ownership of the shared voice changes — a load, an
+     * audition or an unload. The voice is shared by the Clip Editor, the Scratch
+     * Editor and the file browser, so a caller that has to do async work before
+     * it can load (decoding a compressed file, say) captures this first and
+     * abandons its load if the value has moved on, rather than seizing a voice
+     * someone else has since taken.
+     */
+    loadSeq: 0,
     /** True while the engine holds an armed loop window for this voice. */
     loopEnabled: false,
     /** Last loop window sent, so re-arming an unchanged window costs no bridge traffic. */
@@ -56,6 +65,7 @@ export const usePreviewStore = defineStore('preview', {
       this.itemId = itemId
       this.filePath = null
       this.pendingPlay = false
+      this.loadSeq += 1
       this.inMs = inMs
       this.durationMs = durationMs
       this.positionMs = 0
@@ -85,6 +95,7 @@ export const usePreviewStore = defineStore('preview', {
     loadFile(filePath: string, autoPlay = false): void {
       this.itemId = null
       this.filePath = filePath
+      this.loadSeq += 1
       this.inMs = 0
       this.durationMs = 0
       this.positionMs = 0
@@ -152,6 +163,7 @@ export const usePreviewStore = defineStore('preview', {
       sendBridge('PREVIEW_UNLOAD')
       this.itemId = null
       this.filePath = null
+      this.loadSeq += 1
       this.pendingPlay = false
       this.isLoaded = false
       this.isPlaying = false

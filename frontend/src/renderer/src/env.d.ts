@@ -4,6 +4,8 @@ import type {
   AudioMetadata as SharedAudioMetadata,
   DebugPreferences as SharedDebugPreferences,
   FileBrowserEntry as SharedFileBrowserEntry,
+  FileBrowserFolderIndex as SharedFileBrowserFolderIndex,
+  FileBrowserIndexProgress as SharedFileBrowserIndexProgress,
   OpenedAudioFile as SharedOpenedAudioFile,
   UiPreferences as SharedUiPreferences,
   EnsureStemModelResult as SharedEnsureStemModelResult,
@@ -38,6 +40,8 @@ declare global {
   type UiPreferences = SharedUiPreferences
   type DebugPreferences = SharedDebugPreferences
   type FileBrowserEntry = SharedFileBrowserEntry
+  type FileBrowserFolderIndex = SharedFileBrowserFolderIndex
+  type FileBrowserIndexProgress = SharedFileBrowserIndexProgress
 
   interface Window {
     silverdaw: {
@@ -53,7 +57,11 @@ declare global {
       listFileBrowserFolders(): Promise<string[]>
       addFileBrowserFolder(): Promise<string[]>
       removeFileBrowserFolder(folder: string): Promise<string[]>
-      listFileBrowserDirectory(dir: string): Promise<FileBrowserEntry[]>
+      getFileBrowserIndex(root: string): Promise<FileBrowserFolderIndex>
+      refreshFileBrowserIndex(root: string): Promise<FileBrowserFolderIndex>
+      onFileBrowserIndexProgress(
+        handler: (progress: FileBrowserIndexProgress) => void
+      ): () => void
       getPathForFile(file: File): string
       onMenuAction(handler: (action: string) => void): () => void
       getUiPreferences(): Promise<UiPreferences>
