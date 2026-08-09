@@ -1410,6 +1410,32 @@ void testDecodedCacheSkipsWavSources()
     dir.deleteRecursively();
 }
 
+// The file browser auditions files straight off disk, so loadPreview sees the raw
+// source. JUCE picks a format by extension alone, which drops containers it can
+// decode but does not advertise (.m4a via Media Foundation); a mislabelled WAV
+// stands in for that here because it fails the same extension lookup.
+void testLoadPreviewFallsBackToContentSniffing()
+{
+    const auto dir = makeTempDir("preview-unclaimed-extension");
+    silverdaw::AudioEngine engine;
+    engine.initialiseGraph();
+
+    const auto file = writeTestWav(dir, "audition.m4a", 0.5);
+
+    juce::AudioFormatManager extensionOnly;
+    extensionOnly.registerBasicFormats();
+    require(extensionOnly.createReaderFor(file) == nullptr,
+            "the extension lookup must miss for this fixture, or the test proves nothing");
+
+    juce::String previewError;
+    require(engine.loadPreview(file, 0.0, 0.0, &previewError),
+            "loadPreview should sniff the content when the extension is unclaimed");
+
+    engine.unloadPreview();
+    engine.shutdown();
+    dir.deleteRecursively();
+}
+
 // Metronome: clicks land exactly on beat boundaries (phase-locked to absolute transport position),
 // stay silent off-beat, and produce nothing when disabled or when a block "didn't advance".
 void testMetronomeClicksOnBeatBoundaries()
@@ -1546,6 +1572,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"Primed mixer delivers the first played block", testPrimedMixerDeliversFirstBlock});
     tests.push_back({"Primed OffsetSource delivers the first played block", testPrimedOffsetSourceDeliversFirstBlock});
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
+    tests.push_back({"loadPreview sniffs content when the extension is unclaimed", testLoadPreviewFallsBackToContentSniffing});
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
 }
 

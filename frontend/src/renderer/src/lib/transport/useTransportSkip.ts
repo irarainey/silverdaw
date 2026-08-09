@@ -6,6 +6,7 @@
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 
@@ -23,6 +24,7 @@ export interface TransportPlaybackStores {
   project: ReturnType<typeof useProjectStore>
   transport: ReturnType<typeof useTransportStore>
   ui: ReturnType<typeof useUiStore>
+  preview: ReturnType<typeof usePreviewStore>
 }
 
 // Everything the marker-stepping lookups need, so they stay pure and usable
@@ -144,8 +146,16 @@ export function toggleTransportPlayback(source = 'click', stores?: TransportPlay
   const project = stores?.project ?? useProjectStore()
   const transport = stores?.transport ?? useTransportStore()
   const ui = stores?.ui ?? useUiStore()
+  const preview = stores?.preview ?? usePreviewStore()
   if (!transport.isPlaying && transport.audioState !== 'ready') {
     log.info('transport', `${source} play ignored (audio output unavailable)`)
+    return
+  }
+  // One thing plays at a time: an active preview audition owns the output, so
+  // starting project playback is blocked until it stops. Pausing stays allowed
+  // so the transport can never be left stuck playing.
+  if (!transport.isPlaying && preview.isPlaying) {
+    log.info('transport', `${source} play ignored (preview is playing)`)
     return
   }
   if (transport.midiPlaybackHoldActive) {

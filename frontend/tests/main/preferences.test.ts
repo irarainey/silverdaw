@@ -18,7 +18,8 @@ const base: UiPrefs = {
   defaultProjectSampleRate: 44100,
   skipButtonTarget: 'timelineEnds',
   waveformDisplayMode: 'summary',
-  libraryPanelCollapsed: false
+  libraryPanelCollapsed: false,
+  fileBrowserFolders: []
 }
 
 describe('sanitiseUiPrefs', () => {
@@ -35,8 +36,36 @@ describe('sanitiseUiPrefs', () => {
     expect(result.defaultProjectSampleRate).toBe(44100)
   })
 
-  it('clamps trackHeaderWidth into range and rounds', () => {
-    expect(sanitiseUiPrefs({ trackHeaderWidth: 10 }, base).trackHeaderWidth).toBe(180)
+  it('preserves added file browser folders when an unrelated field is pushed', () => {
+    // The renderer's UI-prefs push never carries fileBrowserFolders, so a routine
+    // panel-resize save must not wipe the browsed folders off disk.
+    const withFolders: UiPrefs = { ...base, fileBrowserFolders: ['C:\\Music', 'D:\\Samples'] }
+
+    const result = sanitiseUiPrefs({ libraryPanelHeight: 240 }, withFolders)
+
+    expect(result.libraryPanelHeight).toBe(240)
+    expect(result.fileBrowserFolders).toEqual(['C:\\Music', 'D:\\Samples'])
+  })
+
+  it('drops non-absolute and non-string file browser folders', () => {
+    const result = sanitiseUiPrefs(
+      { fileBrowserFolders: ['C:\\Music', 'relative\\path', 42, null, ''] },
+      base
+    )
+
+    expect(result.fileBrowserFolders).toEqual(['C:\\Music'])
+  })
+
+  it('replaces the folder list when a valid one is supplied', () => {
+    const withFolders: UiPrefs = { ...base, fileBrowserFolders: ['C:\\Music'] }
+
+    expect(sanitiseUiPrefs({ fileBrowserFolders: [] }, withFolders).fileBrowserFolders).toEqual([])
+    expect(
+      sanitiseUiPrefs({ fileBrowserFolders: ['D:\\Samples'] }, withFolders).fileBrowserFolders
+    ).toEqual(['D:\\Samples'])
+  })
+
+  it('clamps trackHeaderWidth into range and rounds', () => {    expect(sanitiseUiPrefs({ trackHeaderWidth: 10 }, base).trackHeaderWidth).toBe(180)
     expect(sanitiseUiPrefs({ trackHeaderWidth: 9999 }, base).trackHeaderWidth).toBe(480)
     expect(sanitiseUiPrefs({ trackHeaderWidth: 200.7 }, base).trackHeaderWidth).toBe(201)
   })

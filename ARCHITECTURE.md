@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-08-03 · Owner: @irarainey_
+_Last reviewed: 2026-08-09 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -27,6 +27,10 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
 - **Electron main** — spawns/supervises the backend, picks a free loopback port
   in `[8765, 8784]`, mints the AUTH token, owns OS dialogs, native menu,
   `preferences.json`, autosave, recents, and all disk-read IPC for bulk data.
+  It also owns the **path allow-list**: a folder becomes readable only when the
+  user picks it in a native dialog (or it is restored from prefs main itself
+  wrote), which is what confines the library file browser to folders the user
+  chose. See `docs/developer-guide.md#file-browser-files-tab`.
 - **Preload** — least-privilege `contextBridge` surface (`window.silverdaw`).
 - **Renderer (Vue 3 + Pinia + PixiJS)** — all UI, drag-and-drop, timeline
   rendering, key detection (Web Audio chroma). Mirrors backend state and owns

@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-04 · Owner: @irarainey_
+_Last reviewed: 2026-08-09 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -39,6 +39,9 @@ the markers and the playhead all move with it; a reanalysis likewise brings the
 clips already using that source onto its new tempo. It also detects an audio
 device that has silently stopped delivering audio and restarts it, rather than
 leaving the transport showing playback with a playhead that never moves.
+**Unreleased, in the working tree:** a user-scoped **file browser** (the library
+panel's Files tab) for browsing folders of audio on disk, auditioning a file
+before importing it, and importing it — see `docs/development-plan.md` §1.6.0.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

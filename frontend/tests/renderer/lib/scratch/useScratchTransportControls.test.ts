@@ -8,12 +8,16 @@ function setup(overrides: {
   backingReady?: boolean
   isRecording?: boolean
   isPatternReplaying?: boolean
+  isPlaying?: boolean
+  otherPlaybackActive?: boolean
 } = {}) {
   const activeSessionId = ref(overrides.activeSessionId ?? 'sid-1')
   const canControl = ref(overrides.canControl ?? true)
   const backingReady = ref(overrides.backingReady ?? true)
   const isRecording = ref(overrides.isRecording ?? false)
   const isPatternReplaying = ref(overrides.isPatternReplaying ?? false)
+  const isPlaying = ref(overrides.isPlaying ?? false)
+  const otherPlaybackActive = ref(overrides.otherPlaybackActive ?? false)
   const togglePlayback = vi.fn()
   const sendControl = vi.fn()
 
@@ -23,6 +27,8 @@ function setup(overrides: {
     backingReady,
     isRecording,
     isPatternReplaying,
+    isPlaying,
+    otherPlaybackActive,
     togglePlayback,
     sendControl
   })
@@ -34,6 +40,8 @@ function setup(overrides: {
     backingReady,
     isRecording,
     isPatternReplaying,
+    isPlaying,
+    otherPlaybackActive,
     togglePlayback,
     sendControl
   }
@@ -76,5 +84,25 @@ describe('useScratchTransportControls', () => {
     const { transport, togglePlayback } = setup({ backingReady: false })
     transport.onTogglePlay()
     expect(togglePlayback).not.toHaveBeenCalled()
+  })
+
+  it('blocks starting the backing while another source owns the audio output', () => {
+    const { transport, togglePlayback } = setup({ otherPlaybackActive: true })
+
+    expect(transport.playBlockedReason.value).not.toBe('')
+    transport.onTogglePlay()
+
+    expect(togglePlayback).not.toHaveBeenCalled()
+    // Skipping is unaffected: it moves a stopped backing, it does not sound.
+    expect(transport.transportEnabled.value).toBe(true)
+  })
+
+  it('still allows pausing the backing when another source starts playing', () => {
+    const { transport, togglePlayback } = setup({ otherPlaybackActive: true, isPlaying: true })
+
+    expect(transport.playBlockedReason.value).toBe('')
+    transport.onTogglePlay()
+
+    expect(togglePlayback).toHaveBeenCalledTimes(1)
   })
 })

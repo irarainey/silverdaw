@@ -20,6 +20,8 @@ export interface ClipEditorTransportDeps {
   viewInMs: () => number
   visibleDurationMs: () => number
   maxScrollMs: () => number
+  /** True while another source owns the audio output, blocking a play start. */
+  playBlocked: () => boolean
 }
 
 export interface ClipEditorTransport {
@@ -38,6 +40,10 @@ export function useClipEditorTransport(deps: ClipEditorTransportDeps): ClipEdito
       preview.pause()
       return
     }
+    // One thing plays at a time. Pausing above stays allowed regardless, so the
+    // preview can never be left stuck playing. Guarded here rather than on the
+    // button alone, because Space reaches this directly.
+    if (deps.playBlocked()) return
     const hasSel = deps.hasPlaybackSelection()
     // Bound playback by the selection if narrowed, or by the full clip
     // when looping a saved clip with no selection.

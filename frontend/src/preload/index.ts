@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   AudioMetadata,
   DebugPreferences,
+  FileBrowserEntry,
   MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
@@ -25,7 +26,7 @@ import type {
 } from '../shared/types'
 import { IPC, type BackendStatus } from '../shared/ipc-channels'
 
-export type { AudioMetadata, DebugPreferences, OpenedAudioFile, UiPreferences }
+export type { AudioMetadata, DebugPreferences, FileBrowserEntry, OpenedAudioFile, UiPreferences }
 
 const api = {
   menuAction: (action: string): void => {
@@ -53,6 +54,15 @@ const api = {
   /** Same path allow-list as `readAudioFile`; returns display metadata or null. */
   readAudioMetadata: (filePath: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.audio.readMetadata, filePath),
+  /** Folders the user added to the library file browser, in display order. */
+  listFileBrowserFolders: (): Promise<string[]> => ipcRenderer.invoke(IPC.fileBrowser.listFolders),
+  /** Opens the native directory picker; the pick is the consent to browse it. */
+  addFileBrowserFolder: (): Promise<string[]> => ipcRenderer.invoke(IPC.fileBrowser.addFolder),
+  removeFileBrowserFolder: (folder: string): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.fileBrowser.removeFolder, folder),
+  /** Subfolders and importable audio files directly inside an added folder. */
+  listFileBrowserDirectory: (dir: string): Promise<FileBrowserEntry[]> =>
+    ipcRenderer.invoke(IPC.fileBrowser.listDirectory, dir),
   /** Resolve and register an OS drag-dropped file path for later allowed reads. */
   getPathForFile: (file: File): string => {
     try {

@@ -3,6 +3,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
@@ -18,6 +19,7 @@ export function useTransportBarController() {
   const library = useLibraryStore()
   const transport = useTransportStore()
   const ui = useUiStore()
+  const preview = usePreviewStore()
   const audioDevices = useAudioDeviceStore()
   const notifications = useNotificationsStore()
 
@@ -155,6 +157,7 @@ export function useTransportBarController() {
   const playDisabled = computed(() => {
     if (transport.isPlaying) return false
     if (!audioReady.value) return true
+    if (preview.isPlaying) return true
     if (ui.timelineSelection) return false
     const end = project.durationMs
     return end > 0 && transport.positionMs >= end
@@ -168,6 +171,7 @@ export function useTransportBarController() {
     }
     if (transport.audioState === 'failed') return 'Audio engine failed to start'
     if (!audioReady.value) return 'Starting audio engine…'
+    if (preview.isPlaying) return 'Stop the preview to play the project'
     if (ui.timelineSelection) {
       return ui.loopTimelineSelection ? 'Loop Selection' : 'Play Selection'
     }

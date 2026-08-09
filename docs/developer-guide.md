@@ -27,6 +27,7 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
 - [Library panel](#library-panel)
+  - [File browser (Files tab)](#file-browser-files-tab)
 - [Scratch Editor](#scratch-editor)
 - [Preferences](#preferences)
   - [MIDI controller preferences](#midi-controller-preferences)
@@ -36,6 +37,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Keyboard & mouse reference](#keyboard--mouse-reference)
   - [Application commands](#application-commands)
   - [Dialogs](#dialogs)
+  - [Library file browser](#library-file-browser)
   - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
@@ -179,6 +181,11 @@ Silverdaw currently supports the core arrangement workflow:
   Explorer file directly onto an existing timeline track to import and place it.
   Dropping one file onto empty timeline space creates a fresh track for it, and
   dropping several files creates one new track per file at the drop position.
+- The library panel's **Files** tab browses folders of audio on disk, showing
+  each track's artwork, title, artist, album, type and length. Audition a file
+  through your chosen audio device before importing it. Added folders are
+  remembered between sessions and are the only paths the browser may read. See
+  [File browser (Files tab)](#file-browser-files-tab).
 - **File ▸ Import from Project…** lists saved projects from the configured
   project folder, then lets you select their managed stems and samples. A
   selected scratch sample also imports its linked Scratch pattern and original
@@ -234,8 +241,8 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
-- **Track & project effects.** The bottom panel has three tabs — **Library**,
-  **Track FX**, and **Project FX**. The whole panel collapses / expands from its
+- **Track & project effects.** The bottom panel has four tabs — **Files**,
+  **Library**, **Track FX**, and **Project FX**. The whole panel collapses / expands from its
   header, with `Ctrl+J`, or **View ▸ Toggle Library / FX Panel**. Each track header also has an **Fx** button
   (beside Mute / Solo) that opens **Track FX** for that track — expanding the
   panel first if it is minimised — (pressing it again collapses back to the
@@ -569,6 +576,12 @@ The bridge is **text only**. Every envelope is a JSON `{ type, payload }` frame:
 Clips reference their audio via `libraryItemId` — the source file path lives only on the
 library item itself. The backend resolves the actual on-disk file (always preferring the
 decoded-WAV cache) at the time it loads the clip's audio source.
+
+`PREVIEW_LOAD` is the one exception, and only for auditioning: it accepts an
+optional absolute `filePath` that takes precedence over `libraryItemId`, so the
+[file browser](#file-browser-files-tab) can play a file that has not been
+imported and therefore has no library item. The backend rejects a path that is
+not an existing file, and still resolves the decoded-WAV cache for it.
 
 - `CLIP_ADD.requestWaveform` is optional and defaults to `true`. The renderer
   sends `false` only when a split, duplicate, or pasted clip already has complete
@@ -2616,6 +2629,80 @@ Within the dialog:
   drags and loops. The renderer coalesces draft updates to roughly 30 Hz so
   Rubber Band isn't re-tuned per pointer event.
 
+### File browser (Files tab)
+
+The bottom panel's **Files** tab browses folders of audio on disk so a track can
+be found, listened to, and imported without leaving the app. Unlike the Library
+tab it is **not project-scoped**: the folders belong to the user and persist
+across projects and sessions.
+
+**Adding folders.** The folder button in the narrow fixed column on the left
+opens the native directory picker. That pick is the **consent step**: it is the
+only way a path enters the browser, and it is what grants read access. Chosen
+folders are stored in `preferences.json` as `ui.fileBrowserFolders` (absolute,
+de-duplicated paths only — `sanitiseFileBrowserFolders` drops anything else, so
+a hand-edited prefs file cannot widen the renderer's reach) and re-trusted at
+startup by `restoreFileBrowserRoots` before the renderer can ask for a listing.
+`fileBrowserHandlers.ts` refuses to list any directory that is not a browser
+root or inside one (`isWithinFileBrowserRoot`), returns only subfolders and
+files with an importable audio extension, ignores symlinks so a link cannot
+reach outside the folder, and sorts folders before files, each natural-order
+A–Z. Listing is lazy per folder: added folders open on first mount, nested ones
+stay shut until opened. **Refresh** on a folder's right-click menu re-reads it
+so files added on disk since it was opened appear; **Remove Folder** (offered
+only on a folder the user added — nested folders leave with their root) drops
+the folder, its cached listings, tags and cover URLs, and its read trust.
+
+**Rows.** Each file row shows a cover-art thumbnail (hover it for a larger
+preview, teleported to `body` so the scrolling tree cannot clip it), the track
+name from the file's tags falling back to the file name, artist, album, file
+type, a live playhead while the file is auditioning, and the tagged duration.
+Tags and artwork are read once per file, when its row mounts, so a folder of
+hundreds of files only pays for what is on screen. Cover bytes stay out of
+reactive state — only the Blob URL is exposed, and it is revoked when the folder
+is removed. Each row carries **Back to start**, **Play / Pause**, and **Import**
+buttons; the same actions are on its right-click menu. Import runs through
+`importAudioPathsIntoLibrary`, the same path as a drag-and-drop import, so a
+browsed file becomes an ordinary library item with no special casing downstream.
+
+**Auditioning.** Playback uses the shared backend preview voice through the
+chosen audio output device. `PREVIEW_LOAD` gained an optional `filePath` for
+this: the file is not a library item, so there is no `libraryItemId` to resolve
+(see [Bridge protocol](#bridge-protocol)). Only one thing plays at a time, so
+starting an audition stops project playback, and removing a folder stops the
+audition. The auditioned file is also shown in a **bar above the tree**,
+outside the scroll container, so what is playing is never lost to scrolling or a
+filter — it reports playback, and the file stays listed in its own folder as
+well.
+
+**Filtering.** The field in the panel header matches a file's tagged title, its
+displayed name, or its artist. Because it matches on tags, filtering lists and
+expands the whole tree, so files in folders the user has never opened are still
+found; the pre-filter disclosure state is snapshotted on the first keystroke and
+restored when the filter is cleared, which also reopens the audition's folders
+and reselects it so the view scrolls back to it.
+
+**Keyboard.** The tree is a single tab stop rather than one per row (list rows
+carry no focus ring — see the UI styling instructions). Switching to another tab
+unmounts the view, so returning to **Files** puts the tree back at the offset it
+was left at (kept in the store, which outlives the component), brings the
+selection into view if that offset does not already show it, and takes focus, so
+the keys below work without a click first. `↑` / `↓` walk the
+visible rows, so filtered and collapsed rows are skipped and both ends stop
+rather than wrap; `Enter` opens or closes a folder and plays or pauses a file;
+`Delete` removes a selected added folder. The same keys work from the filter
+field and drive the tree, and clearing the filter with `Escape` or its clear
+button hands keyboard focus back to the tree. Both app-wide keyboard owners —
+`onGlobalShortcutKey` — listen on `window` in the **capture** phase, so a
+component cannot call them off with `stopPropagation`. `lib/selectionKeys.ts` is
+the single opt-out: a list that drives its own selection marks its container
+`data-owns-selection-keys="true"`, and both owners stand down for the keys in
+`SELECTION_KEYS` (`ArrowUp`, `ArrowDown`, `Enter`) and for the `Delete`
+selection actions. The files tree sets the attribute only while a row is
+selected, so with nothing selected the global shortcuts behave exactly as they
+do anywhere else. `ArrowLeft` / `ArrowRight` are deliberately not in the set —
+no self-navigating list uses them, so they stay with the global playhead seek.
+
 ## Scratch Editor
 
 The **Scratch Editor** is a large modal dialog for performing a vinyl-style
@@ -3217,6 +3304,21 @@ any modified `Enter`, or a dialog that claims the key itself with
 `preventDefault()`. Dialogs whose footer offers no single safe accept — the
 progress dialogs, and the recovery dialog with its per-item **Restore**
 buttons — carry no primary button and so have no default.
+
+### Library file browser
+
+These apply to the bottom panel's **Files** tab, and only while a row is
+selected — see [File browser (Files tab)](#file-browser-files-tab).
+
+| Input | Effect |
+|---|---|
+| `↑` / `↓` | Move the selection through the visible rows. Collapsed and filtered-out rows are skipped; both ends stop rather than wrap. |
+| `Enter` | Open or close the selected folder, or play / pause the selected file. |
+| `Delete` | Remove the selected folder from the browser. Only a folder you added can be removed; nested folders leave with their root. |
+| `Escape` (filter field) | Clear the filter and hand keyboard focus back to the tree. |
+
+The filter field passes `↑`, `↓`, and `Enter` through to the tree, so a file can
+be found and auditioned without leaving the search box.
 
 ### Timeline commands
 

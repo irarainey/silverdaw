@@ -4,6 +4,7 @@ import { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, stemP
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
+import { formatTrackTime } from '@/lib/library/trackTime'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
 
@@ -357,13 +358,7 @@ function formatPartTotal(value: number | undefined, total: number | undefined): 
 }
 
 function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  return h > 0
-    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-    : `${m}:${String(s).padStart(2, '0')}`
+  return formatTrackTime(ms)
 }
 
 function formatPreciseDuration(ms: number): string {

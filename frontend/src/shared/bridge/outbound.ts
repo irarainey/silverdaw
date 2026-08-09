@@ -1033,7 +1033,13 @@ export interface ProjectMarkerRemovePayload {
 /** Start a preview voice, optionally windowed (`inMs`/`durationMs` rel. to source; 0 = to end).
  *  Initial warp is applied atomically before PREVIEW_STATE so the first Play can't run un-warped. */
 export interface PreviewLoadPayload extends PreviewSetWarpPayload {
+  /** Library item to preview; empty when auditioning an un-imported file by path. */
   libraryItemId: string
+  /**
+   * Absolute source path, used by the file browser to audition a file before it
+   * is imported. Takes precedence over `libraryItemId` when both are supplied.
+   */
+  filePath?: string
   inMs?: number
   durationMs?: number
 }

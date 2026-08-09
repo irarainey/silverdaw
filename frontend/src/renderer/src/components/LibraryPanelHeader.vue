@@ -1,5 +1,7 @@
 <script setup lang="ts">
-type LibraryPanelTab = 'library' | 'trackfx' | 'projectfx'
+import PanelFilterInput from '@/components/PanelFilterInput.vue'
+
+type LibraryPanelTab = 'files' | 'library' | 'trackfx' | 'projectfx'
 
 const props = defineProps<{
   collapsed: boolean
@@ -9,14 +11,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggleCollapsed'): void
   (e: 'import'): void
+  (e: 'filesNavigate', delta: 1 | -1): void
+  (e: 'filesActivate'): void
+  (e: 'filesCleared'): void
 }>()
 
 const activeTab = defineModel<LibraryPanelTab>('activeTab', { required: true })
 const filterQuery = defineModel<string>('filterQuery', { required: true })
-
-function clearFilter(): void {
-  filterQuery.value = ''
-}
+const filesFilterQuery = defineModel<string>('filesFilterQuery', { required: true })
 </script>
 
 <template>
@@ -42,6 +44,15 @@ function clearFilter(): void {
         >
           <path d="M7 10l5 5 5-5H7z" />
         </svg>
+      </button>
+      <button
+        type="button"
+        class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+        :class="activeTab === 'files' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'"
+        :aria-pressed="activeTab === 'files'"
+        @click="activeTab = 'files'"
+      >
+        Files
       </button>
       <button
         type="button"
@@ -79,38 +90,12 @@ function clearFilter(): void {
       v-if="activeTab === 'library'"
       class="flex shrink-0 items-center gap-2"
     >
-      <div class="relative">
-        <input
-          v-model="filterQuery"
-          type="text"
-          placeholder="Filter library"
-          aria-label="Filter library by name, BPM, or artist"
-          class="w-48 rounded border border-zinc-700 bg-zinc-950 py-0.5 pl-2 pr-7 text-xs normal-case tracking-normal text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-sky-500"
-          @keydown.escape.prevent.stop="clearFilter"
-        >
-        <button
-          v-if="filterQuery.length > 0"
-          type="button"
-          data-borderless-button="true"
-          class="absolute right-1 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-700 text-zinc-300 hover:bg-zinc-600 hover:text-zinc-100 focus:bg-zinc-600 focus:outline-none"
-          aria-label="Clear library filter"
-          title="Clear filter"
-          @click="clearFilter"
-        >
-          <svg
-            viewBox="0 0 16 16"
-            class="h-3 w-3"
-            aria-hidden="true"
-          >
-            <path
-              d="M5 5l6 6m0-6l-6 6"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-      </div>
+      <PanelFilterInput
+        v-model="filterQuery"
+        placeholder="Filter library"
+        input-label="Filter library by name, BPM, or artist"
+        clear-label="Clear library filter"
+      />
       <button
         type="button"
         class="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100"
@@ -119,6 +104,21 @@ function clearFilter(): void {
       >
         Import
       </button>
+    </div>
+
+    <div
+      v-else-if="activeTab === 'files'"
+      class="flex shrink-0 items-center gap-2"
+    >
+      <PanelFilterInput
+        v-model="filesFilterQuery"
+        placeholder="Filter files"
+        input-label="Filter files by track name or artist"
+        clear-label="Clear files filter"
+        @navigate="emit('filesNavigate', $event)"
+        @activate="emit('filesActivate')"
+        @cleared="emit('filesCleared')"
+      />
     </div>
   </header>
 </template>

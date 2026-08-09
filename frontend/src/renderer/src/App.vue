@@ -26,6 +26,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
@@ -70,6 +71,7 @@ const project = useProjectStore()
 const transport = useTransportStore()
 const ui = useUiStore()
 const library = useLibraryStore()
+const preview = usePreviewStore()
 const scratchEditor = useScratchEditorStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
@@ -211,6 +213,7 @@ const { onGlobalShortcutKey } = useAppKeyboardShortcuts({
   project,
   ui,
   library,
+  preview,
   isModalOpen: isInteractionBlocked,
   openExportMixdown: () => {
     exportMixdownOpen.value = true

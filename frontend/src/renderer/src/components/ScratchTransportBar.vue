@@ -8,6 +8,9 @@ defineProps<{
   canControl: boolean
   loopEnabled: boolean
   loopDisabled: boolean
+  /** Non-empty when another source owns the audio output: disables play and
+   *  explains why. Pausing stays available so playback is never stranded. */
+  playBlockedReason?: string
 }>()
 
 defineEmits<{
@@ -40,8 +43,8 @@ defineEmits<{
       data-borderless-button="true"
       class="rounded p-1.5 hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
       :class="isPlaying ? 'bg-blue-600 text-white' : 'text-zinc-100'"
-      :disabled="!canControl"
-      :title="isPlaying ? 'Pause backing (Space)' : 'Play backing (Space)'"
+      :disabled="!canControl || !!playBlockedReason"
+      :title="playBlockedReason ? playBlockedReason : isPlaying ? 'Pause backing (Space)' : 'Play backing (Space)'"
       :aria-label="isPlaying ? 'Pause backing' : 'Play backing'"
       @click="$emit('toggle-play')"
     >

@@ -765,8 +765,15 @@ export function useClipEditorController(
     playbackEndMs: () => playbackEndMs.value,
     viewInMs: () => viewInMs.value,
     visibleDurationMs: () => visibleDurationMs.value,
-    maxScrollMs: () => maxScrollMs.value
+    maxScrollMs: () => maxScrollMs.value,
+    playBlocked: () => transport.isPlaying
   })
+
+  // The preview voice and the project share the audio output, so the dialog's
+  // play button reports why it is unavailable rather than silently ignoring it.
+  const playBlockedReason = computed(() =>
+    transport.isPlaying ? 'Stop project playback to preview' : ''
+  )
 
 
   // Dialog-local crop history is non-destructive and discarded on close.
@@ -879,6 +886,7 @@ export function useClipEditorController(
     titleText,
     warpActive,
     loopEnabled,
+    playBlockedReason,
     onSkipToStart,
     onTogglePlay,
     onSkipToEnd,

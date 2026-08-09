@@ -74,6 +74,9 @@ interface UiState {
   automationHoverTip: { x: number; y: number; text: string } | null
   /** Global shortcuts defer while the Clip Editor preview dialog is open. */
   clipEditorOpen: boolean
+  /** Files tab selection in the library panel; not persisted, so Library is the
+   *  tab shown on every launch. FX taking over the panel wins over this. */
+  fileBrowserTabActive: boolean
   hydrated: boolean
 }
 
@@ -192,6 +195,7 @@ export const useUiStore = defineStore('ui', {
     selectedAutomationPoint: null,
     automationHoverTip: null,
     clipEditorOpen: false,
+    fileBrowserTabActive: false,
     hydrated: false
   }),
 

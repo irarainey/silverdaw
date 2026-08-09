@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '../shared/types'
 import type {
   DebugPreferences,
@@ -39,6 +39,8 @@ export interface UiPrefs {
   skipButtonTarget: SkipButtonTarget
   waveformDisplayMode: WaveformDisplayMode
   libraryPanelCollapsed: boolean
+  /** Absolute folders the user added to the library file browser, in display order. */
+  fileBrowserFolders: string[]
 }
 
 export type DebugPrefs = DebugPreferences
@@ -239,7 +241,8 @@ export function buildDefaultPrefs(): Preferences {
       defaultProjectSampleRate: 44100,
       skipButtonTarget: 'markers',
       waveformDisplayMode: 'stereo',
-      libraryPanelCollapsed: false
+      libraryPanelCollapsed: false,
+      fileBrowserFolders: []
     },
     debug: {
       loggingEnabled: false,
@@ -555,6 +558,23 @@ export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
     waveformDisplayMode: WAVEFORM_DISPLAY_MODES.has(p.waveformDisplayMode as WaveformDisplayMode)
       ? (p.waveformDisplayMode as WaveformDisplayMode)
       : base.waveformDisplayMode,
-    libraryPanelCollapsed: boolOr(p.libraryPanelCollapsed, base.libraryPanelCollapsed)
+    libraryPanelCollapsed: boolOr(p.libraryPanelCollapsed, base.libraryPanelCollapsed),
+    fileBrowserFolders: sanitiseFileBrowserFolders(p.fileBrowserFolders, base.fileBrowserFolders)
   }
+}
+
+// Absolute, de-duplicated folder paths only; anything else is dropped so a
+// hand-edited or corrupt prefs file cannot widen the renderer's read access.
+function sanitiseFileBrowserFolders(value: unknown, base: string[]): string[] {
+  if (!Array.isArray(value)) return [...base]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry === '' || !isAbsolute(entry)) continue
+    const key = entry.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(entry)
+  }
+  return out
 }

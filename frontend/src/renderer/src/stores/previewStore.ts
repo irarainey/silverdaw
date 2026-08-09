@@ -13,6 +13,9 @@ export const usePreviewStore = defineStore('preview', {
   state: () => ({
     /** Library item currently loaded into the preview voice, or null when idle. */
     itemId: null as string | null,
+    /** Source path currently auditioned from the file browser, or null. Set instead
+     *  of `itemId` for files that have not been imported into the library. */
+    filePath: null as string | null,
     /** Selection start (ms in source). */
     inMs: 0,
     /** Selection length (ms). 0 means "to end of source". */
@@ -29,7 +32,10 @@ export const usePreviewStore = defineStore('preview', {
     /** True while the engine holds an armed loop window for this voice. */
     loopEnabled: false,
     /** Last loop window sent, so re-arming an unchanged window costs no bridge traffic. */
-    loopKey: ''
+    loopKey: '',
+    /** Start playing as soon as the pending load is acknowledged. Set by an
+     *  audition, where loading and playing are one user action. */
+    pendingPlay: false
   }),
   actions: {
     /** Begin a new preview session for `itemId`, windowed to [inMs, inMs+durationMs].
@@ -48,6 +54,8 @@ export const usePreviewStore = defineStore('preview', {
       }
     ): void {
       this.itemId = itemId
+      this.filePath = null
+      this.pendingPlay = false
       this.inMs = inMs
       this.durationMs = durationMs
       this.positionMs = 0
@@ -70,6 +78,22 @@ export const usePreviewStore = defineStore('preview', {
             }
           : {})
       })
+    },
+    /** Audition a file that is not a library item, played whole through the same
+     *  preview voice so the file browser uses the configured audio device.
+     *  With `autoPlay`, playback starts as soon as the backend acks the load. */
+    loadFile(filePath: string, autoPlay = false): void {
+      this.itemId = null
+      this.filePath = filePath
+      this.inMs = 0
+      this.durationMs = 0
+      this.positionMs = 0
+      this.isPlaying = false
+      this.isLoaded = false
+      this.loopEnabled = false
+      this.loopKey = ''
+      this.pendingPlay = autoPlay
+      sendBridge('PREVIEW_LOAD', { libraryItemId: '', filePath, inMs: 0, durationMs: 0 })
     },
     /** Update the preview voice's volume shape (gain envelope) while
      *  loaded. Called by the Clip Editor when the user edits the
@@ -124,9 +148,11 @@ export const usePreviewStore = defineStore('preview', {
     /** Tear down the current preview session and tell the backend to release
      *  its reader. Safe to call when already unloaded. */
     unload(): void {
-      if (!this.itemId && !this.isLoaded) return
+      if (!this.itemId && !this.filePath && !this.isLoaded) return
       sendBridge('PREVIEW_UNLOAD')
       this.itemId = null
+      this.filePath = null
+      this.pendingPlay = false
       this.isLoaded = false
       this.isPlaying = false
       this.positionMs = 0
@@ -190,6 +216,14 @@ export const usePreviewStore = defineStore('preview', {
       if (!payload.isLoaded) {
         this.positionMs = 0
         this.itemId = null
+        this.filePath = null
+        this.pendingPlay = false
+        return
+      }
+      // An audition asked to play the moment the source finished loading.
+      if (this.pendingPlay) {
+        this.pendingPlay = false
+        this.play()
       }
     },
     /** Apply an inbound `PREVIEW_POSITION` envelope. */

@@ -4,6 +4,7 @@ import { useTransportSkip, seekToNextMarker, seekToPreviousMarker } from '@/lib/
 import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
+import { usePreviewStore } from '@/stores/previewStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bridgeService', () => ({ send: sendMock }))
@@ -217,6 +218,38 @@ describe('useTransportSkip', () => {
     onPlay()
 
     expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.isPlaying).toBe(false)
+  })
+
+  it('does not start project playback while a preview is auditioning', () => {
+    const transport = useTransportStore()
+    const preview = usePreviewStore()
+    transport.isPlaying = false
+    transport.audioState = 'ready'
+    seedTrackLength(5000)
+    transport.positionMs = 0
+    preview.isPlaying = true
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(transport.isPlaying).toBe(false)
+  })
+
+  it('still allows pausing the project while a preview is auditioning', () => {
+    // Blocking pause too could strand the transport playing against a preview.
+    const transport = useTransportStore()
+    const preview = usePreviewStore()
+    transport.isPlaying = true
+    transport.audioState = 'ready'
+    seedTrackLength(5000)
+    preview.isPlaying = true
+    const { onPlay } = useTransportSkip()
+
+    onPlay()
+
+    expect(sendMock).toHaveBeenCalledWith('TRANSPORT_PAUSE')
     expect(transport.isPlaying).toBe(false)
   })
 

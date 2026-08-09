@@ -22,7 +22,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
         return false;
     }
 
-    auto* reader = formatManager.createReaderFor(filePath);
+    auto reader = createReaderForClip(filePath);
     if (reader == nullptr)
     {
         if (outError != nullptr) *outError = "could not decode: " + filePath.getFullPathName();
@@ -34,7 +34,6 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
         if (outError != nullptr)
             *outError = "Warp supports audio with up to "
                       + juce::String(WarpProcessor::kMaxChannels) + " channels";
-        delete reader;
         return false;
     }
 
@@ -45,7 +44,7 @@ bool AudioEngine::loadPreview(const juce::File& filePath, double inMs, double du
     const double remaining = juce::jmax(0.0, preview.sourceDurationMs - preview.inMs);
     preview.durationMs = durationMs > 0.0 ? juce::jmin(durationMs, remaining) : remaining;
 
-    preview.readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, /*deleteReader=*/true);
+    preview.readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), /*deleteReader=*/true);
 
     preview.offsetSource = std::make_unique<OffsetSource>(preview.readerSource.get());
     preview.offsetSource->setOffsetSamples(0);

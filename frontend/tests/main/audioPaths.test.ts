@@ -3,14 +3,17 @@ import {
   getProjectMediaDirs,
   isAllowedAudioPath,
   isPrunableArtifactSubdir,
+  isWithinFileBrowserRoot,
   isWithinSamplesWriteRoot,
   isWithinStemsWriteRoot,
   registerChannelsWriteRoot,
+  registerFileBrowserRoot,
   registerIssuedPath,
   registerProjectMediaRoots,
   registerSamplesWriteRoot,
   registerStemsWriteRoot,
-  registerTrustedReadRoot
+  registerTrustedReadRoot,
+  unregisterFileBrowserRoot
 } from '@main/audioPaths'
 
 // Platform-appropriate absolute roots so the test is valid on Windows and POSIX.
@@ -150,5 +153,56 @@ describe('audioPaths allow-list', () => {
     const otherDir = abs('Mixes', 'Other')
     registerProjectMediaRoots(otherDir)
     expect(getProjectMediaDirs()?.metadataDir).toBe(abs('Mixes', 'Other', 'metadata'))
+  })
+})
+
+describe('file browser roots', () => {
+  it('confines listings to an added folder and its descendants', () => {
+    const browsed = abs('Browsed')
+    expect(isWithinFileBrowserRoot(browsed)).toBe(false)
+
+    registerFileBrowserRoot(browsed)
+    expect(isWithinFileBrowserRoot(browsed)).toBe(true)
+    expect(isWithinFileBrowserRoot(abs('Browsed', 'Album'))).toBe(true)
+    expect(isWithinFileBrowserRoot(abs('Elsewhere'))).toBe(false)
+    // A sibling whose name merely starts with the root's must not be listable.
+    expect(isWithinFileBrowserRoot(abs('BrowsedOther'))).toBe(false)
+  })
+
+  it('rejects traversal out of an added folder', () => {
+    registerFileBrowserRoot(abs('Traversal'))
+    expect(isWithinFileBrowserRoot(abs('Traversal', '..', 'Secret'))).toBe(false)
+  })
+
+  it('rejects relative and non-string directories', () => {
+    expect(isWithinFileBrowserRoot('Browsed')).toBe(false)
+    expect(isWithinFileBrowserRoot(undefined)).toBe(false)
+    expect(isWithinFileBrowserRoot('')).toBe(false)
+  })
+
+  it('grants audio reads inside an added folder and withdraws them on removal', () => {
+    const browsed = abs('Readable')
+    const track = abs('Readable', 'song.mp3')
+    expect(isAllowedAudioPath(track)).toBe(false)
+
+    registerFileBrowserRoot(browsed)
+    expect(isAllowedAudioPath(track)).toBe(true)
+    // Read trust never extends past the audio extensions.
+    expect(isAllowedAudioPath(abs('Readable', 'notes.txt'))).toBe(false)
+
+    unregisterFileBrowserRoot(browsed)
+    expect(isWithinFileBrowserRoot(browsed)).toBe(false)
+    expect(isAllowedAudioPath(track)).toBe(false)
+  })
+
+  it('keeps read trust when a removed browser folder is also a stems output root', () => {
+    const shared = abs('Shared')
+    registerStemsWriteRoot(shared)
+    registerFileBrowserRoot(shared)
+
+    unregisterFileBrowserRoot(shared)
+
+    expect(isWithinFileBrowserRoot(shared)).toBe(false)
+    expect(isAllowedAudioPath(abs('Shared', 'stem.wav'))).toBe(true)
   })
 })

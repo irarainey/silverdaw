@@ -6,10 +6,21 @@ import TrackFxPanel from '@/components/TrackFxPanel.vue'
 import ProjectFxPanel from '@/components/ProjectFxPanel.vue'
 import LibraryPanelHeader from '@/components/LibraryPanelHeader.vue'
 import LibraryPanelLibraryView from '@/components/LibraryPanelLibraryView.vue'
+import LibraryPanelFilesView from '@/components/LibraryPanelFilesView.vue'
 import { useLibraryPanelController, type LibraryPanelEmit, type LibraryPanelProps } from '@/lib/library/useLibraryPanelController'
+import { useFileBrowserStore } from '@/stores/fileBrowserStore'
+import { computed } from 'vue'
 
 const props = defineProps<LibraryPanelProps>()
 const emit = defineEmits<LibraryPanelEmit>()
+
+const fileBrowser = useFileBrowserStore()
+// Routed through the action so typing also lists and opens the whole tree, and
+// pulls in the tags the filter matches against.
+const filesFilterQuery = computed({
+  get: () => fileBrowser.filter,
+  set: (value: string) => void fileBrowser.setFilter(value)
+})
 
 const {
   library,
@@ -82,18 +93,27 @@ const {
     <LibraryPanelHeader
       v-model:active-tab="activeTab"
       v-model:filter-query="filterQuery"
+      v-model:files-filter-query="filesFilterQuery"
       :collapsed="ui.libraryPanelCollapsed"
       :item-count="itemCount"
       @toggle-collapsed="ui.toggleLibraryPanelCollapsed()"
       @import="onImportClick"
+      @files-navigate="fileBrowser.selectStep($event)"
+      @files-activate="fileBrowser.activateSelected()"
+      @files-cleared="fileBrowser.requestTreeFocus()"
     />
 
     <div
       class="flex min-h-0 flex-1 flex-col overflow-hidden"
       :inert="ui.libraryPanelCollapsed"
     >
+      <LibraryPanelFilesView
+        v-if="activeTab === 'files'"
+        class="min-h-0 flex-1"
+      />
+
       <LibraryPanelLibraryView
-        v-if="activeTab === 'library'"
+        v-else-if="activeTab === 'library'"
         v-model:editing-value="editingValue"
         :item-count="library.items.length"
         :filtered-item-count="filteredItemCount"

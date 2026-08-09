@@ -49,15 +49,25 @@ void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectSta
                        BridgeServer& bridge, const DecodedCache& decodedCache)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
+    const juce::String requestedPath = payload.getProperty("filePath", juce::var{}).toString();
     const double inMs = static_cast<double>(payload.getProperty("inMs", 0.0));
     const double durationMs = static_cast<double>(payload.getProperty("durationMs", 0.0));
     silverdaw::log::info("bridge", "recv PREVIEW_LOAD libraryItemId=" + libraryItemId +
+                                        " filePath=" + requestedPath +
                                         " inMs=" + juce::String(inMs) +
                                         " durationMs=" + juce::String(durationMs));
-    const juce::String sourcePath = projectState.getLibraryItemFilePath(libraryItemId);
+    // The file browser auditions files that are not library items, so an explicit
+    // path wins; otherwise the item id resolves to its source as before.
+    const juce::String sourcePath =
+        requestedPath.isNotEmpty() ? requestedPath : projectState.getLibraryItemFilePath(libraryItemId);
     if (sourcePath.isEmpty())
     {
         silverdaw::log::warn("preview", "PREVIEW_LOAD unknown libraryItemId=" + libraryItemId);
+        return;
+    }
+    if (requestedPath.isNotEmpty() && !juce::File(requestedPath).existsAsFile())
+    {
+        silverdaw::log::warn("preview", "PREVIEW_LOAD missing file: " + requestedPath);
         return;
     }
     // Prefer the decoded WAV cache so compressed sources preview promptly.

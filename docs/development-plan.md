@@ -1370,7 +1370,18 @@ Wire: `TRACK_SET_AUTOMATION { trackId, paramId, points }` +
 persists the open lane order and heights.
 
 ### 7.12 Sample Browser & Library
-- Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items; user-scoped folder scanning is deferred to Phase 8
+- Current implementation is a project-scoped **LibraryPanel** of source, stem, sample, and clip items, plus a user-scoped **file browser** on its own tab
+- **File browser (Files tab):** browses folders of audio on disk, so a track can
+  be found, auditioned and imported without leaving the app. Folders are added
+  through the native directory picker — the pick is the consent step and the
+  only way a path becomes readable — persist in `preferences.json`
+  (`ui.fileBrowserFolders`), and are re-trusted at startup. Rows show cover art,
+  tagged title / artist / album, file type, live playhead and duration; a file
+  auditions through the shared preview voice (`PREVIEW_LOAD` with an explicit
+  `filePath`) and imports through the ordinary import path. A now-playing bar
+  above the tree keeps the audition visible through scrolling and filtering, the
+  filter matches tags as well as names, and the tree is fully keyboard-driven.
+  Tag filtering, sorting, and preview-at-project-BPM remain Phase 8.
 - **Library filter:** a field beside **Import** filters displayed names, artists,
   and BPM values; its circled clear button or **Escape** while focused restores
   the full Library.
@@ -2025,6 +2036,34 @@ every item corrects behaviour that already shipped. See ADR 0024.
 13. [x] **Two more e2e journeys** (ADR 0014): a tempo change retiming clips and
     the timeline selection through a save/reopen round trip, and drop-time warp
     into an established project tempo.
+
+### 1.6.0 - Library File Browser *(in development)*
+
+**Goal:** let a user find, listen to, and import a track from their own folders
+without leaving the app, and without widening what Silverdaw is allowed to read.
+
+1. [x] **Files tab.** A user-scoped tree beside the project Library, listing
+   subfolders and importable audio files only. Listing is lazy per folder, and
+   folders sort before files, each natural-order A–Z.
+2. [x] **Folders are the consent boundary.** A folder enters the browser only
+   through the native directory picker, is persisted as
+   `ui.fileBrowserFolders`, is re-trusted at startup, and is the only place
+   `fileBrowserHandlers.ts` will list or read. Symlinks are ignored so a link
+   cannot reach out of a browsed folder.
+3. [x] **Rows carry what the choice needs:** cover art with a hover preview,
+   tagged title / artist / album, file type, live playhead and duration, read
+   once per file as its row mounts.
+4. [x] **Audition before import.** `PREVIEW_LOAD` accepts an explicit `filePath`
+   so the shared preview voice can play a file that is not a library item.
+   Starting an audition stops project playback; removing a folder stops the
+   audition. Import goes through the ordinary import path.
+5. [x] **The audition is never lost.** A now-playing bar sits above the tree,
+   outside the scroller, so scrolling or filtering cannot hide what is playing;
+   clearing the filter reopens its folders and reselects it.
+6. [x] **Keyboard-driven.** `↑` / `↓` / `Enter` / `Delete` drive the tree, and
+   work from the filter field too. `lib/selectionKeys.ts` gives a list that owns
+   these keys a single opt-out from both capture-phase global keyboard owners,
+   so a component shortcut can no longer double-fire an app-wide one.
 
 ### Phase 1 — Backend Foundation & Bridge
 

@@ -24,6 +24,7 @@ import { createWindow } from './window'
 import { applyChromiumSecuritySwitches, hardenDefaultSession } from './sessionSecurity'
 import { destroyAllWindowsAndExit, handleMenuAction } from './menu'
 import { registerAudioHandlers } from './ipc/audioHandlers'
+import { registerFileBrowserHandlers, restoreFileBrowserRoots } from './ipc/fileBrowserHandlers'
 import { registerAutosaveHandlers } from './ipc/autosaveHandlers'
 import { registerWindowHandlers } from './ipc/windowHandlers'
 import { registerPreferencesHandlers } from './ipc/preferencesHandlers'
@@ -280,6 +281,10 @@ app.whenReady().then(async () => {
   })
 
   registerWindowHandlers({ getMainWindow: () => mainWindow })
+
+  // Re-trust previously added browser folders before the renderer can list them.
+  restoreFileBrowserRoots(prefs.get().ui.fileBrowserFolders)
+  registerFileBrowserHandlers({ getMainWindow: () => mainWindow, prefs })
 
   registerPreferencesHandlers({
     getMainWindow: () => mainWindow,

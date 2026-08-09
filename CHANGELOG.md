@@ -2,6 +2,10 @@
 
 ## 1.6.0
 
+### Added
+
+- A Files tab in the library panel browses folders of audio on disk, so a track can be found, auditioned and imported without leaving the app.
+
 ### Changed
 
 - MP3 files are now read by the JUCE decoder, with the system codec used only for the formats it alone can handle.

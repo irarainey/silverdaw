@@ -212,6 +212,17 @@ ever see that on a control, the control is wrong and must be fixed.
   matters. Do not add focus rings to form fields, list rows, sliders, menu
   items, or timeline controls.
 
+**A list that drives its own selection must claim its keys.** Both app-wide
+keyboard owners (`registerMenuShortcuts` and `onGlobalShortcutKey`) listen on
+`window` in the **capture** phase, so they run before your component and
+`stopPropagation` cannot call them off. Mark the container
+`data-owns-selection-keys="true"` — via `SELECTION_KEYS_ATTRIBUTE` in
+`lib/selectionKeys.ts` — and both owners stand down for `ArrowUp`, `ArrowDown`,
+`Enter`, and the `Delete` selection actions. Set the attribute only while the
+list actually has a selection, so the global shortcuts are unaffected the rest
+of the time. Give the list one `tabindex="0"` container rather than a tab stop
+per row, so rows still need no focus ring.
+
 ## 7. Spacing & sizing
 
 - Use the Tailwind spacing scale (0.25rem steps). Don't use arbitrary `px`

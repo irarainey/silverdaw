@@ -31,16 +31,17 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   const project = useProjectStore()
 
   // Tab state bridges persisted FX panel state with the local Library tab.
-  const activeTab = computed<'library' | 'trackfx' | 'projectfx'>({
+  const activeTab = computed<'files' | 'library' | 'trackfx' | 'projectfx'>({
     get: () => {
-      if (!project.fxPanelOpen) return 'library'
-      // Track FX remains selectable so the panel can show its empty-state hint.
-      return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
+      // FX opened from anywhere else (e.g. a track's FX button) takes the panel.
+      if (project.fxPanelOpen) return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
+      return ui.fileBrowserTabActive ? 'files' : 'library'
     },
     set: (tab) => {
       // Tab clicks reveal the minimised panel.
       ui.setLibraryPanelCollapsed(false)
-      if (tab === 'library') {
+      ui.fileBrowserTabActive = tab === 'files'
+      if (tab === 'library' || tab === 'files') {
         project.setFxPanelOpen(false)
         return
       }

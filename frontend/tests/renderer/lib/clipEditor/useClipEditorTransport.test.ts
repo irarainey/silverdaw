@@ -17,6 +17,7 @@ interface Bounds {
   viewInMs: number
   visibleDurationMs: number
   maxScrollMs: number
+  playBlocked: boolean
 }
 
 function setup(bounds: Partial<Bounds> = {}) {
@@ -31,6 +32,7 @@ function setup(bounds: Partial<Bounds> = {}) {
     viewInMs: 0,
     visibleDurationMs: 500,
     maxScrollMs: 500,
+    playBlocked: false,
     ...bounds
   }
   const t = useClipEditorTransport({
@@ -43,9 +45,10 @@ function setup(bounds: Partial<Bounds> = {}) {
     playbackEndMs: () => b.playbackEndMs,
     viewInMs: () => b.viewInMs,
     visibleDurationMs: () => b.visibleDurationMs,
-    maxScrollMs: () => b.maxScrollMs
+    maxScrollMs: () => b.maxScrollMs,
+    playBlocked: () => b.playBlocked
   })
-  return { preview, loopEnabled, scrollMs, t }
+  return { preview, loopEnabled, scrollMs, t, bounds: b }
 }
 
 describe('useClipEditorTransport', () => {
@@ -61,8 +64,29 @@ describe('useClipEditorTransport', () => {
     expect(play).not.toHaveBeenCalled()
   })
 
-  it('onTogglePlay pauses when already playing', () => {
-    const { preview, t } = setup()
+  it('onTogglePlay does nothing while the project owns the audio output', () => {
+    const { preview, t } = setup({ playBlocked: true })
+    preview.isLoaded = true
+    preview.isPlaying = false
+    const play = vi.spyOn(preview, 'play').mockImplementation(() => {})
+
+    t.onTogglePlay()
+
+    expect(play).not.toHaveBeenCalled()
+  })
+
+  it('onTogglePlay still pauses the preview when the project starts playing', () => {
+    const { preview, t } = setup({ playBlocked: true })
+    preview.isLoaded = true
+    preview.isPlaying = true
+    const pause = vi.spyOn(preview, 'pause').mockImplementation(() => {})
+
+    t.onTogglePlay()
+
+    expect(pause).toHaveBeenCalledOnce()
+  })
+
+  it('onTogglePlay pauses when already playing', () => {    const { preview, t } = setup()
     preview.isLoaded = true
     preview.isPlaying = true
     const pause = vi.spyOn(preview, 'pause').mockImplementation(() => {})

@@ -160,6 +160,35 @@ export async function openAndImportAudioFilesIntoLibrary(): Promise<void> {
   })
 }
 
+/** Import already-known audio paths (e.g. rows picked in the library file browser)
+ *  as one batch, reusing the same sample-rate preflight, progress reporting and
+ *  single undo step as the file-picker import. */
+export async function importAudioPathsIntoLibrary(paths: readonly string[]): Promise<void> {
+  if (paths.length === 0) return
+  const library = useLibraryStore()
+  const opened: { filePath: string; fileName: string; data: ArrayBuffer }[] = []
+  for (const filePath of paths) {
+    const file = await window.silverdaw.readAudioFile(filePath).catch((err) => {
+      log.error('library', `readAudioFile failed for ${filePath}: ${String(err)}`)
+      return null
+    })
+    if (file) opened.push(file)
+    else log.warn('library', `skipping unreadable file: ${filePath}`)
+  }
+  if (opened.length === 0) return
+  const decision = await preflightSampleRates(opened.map((f) => f.filePath))
+  if (decision === 'cancel') {
+    log.info('library', 'file browser import cancelled at sample-rate prompt')
+    return
+  }
+  library.beginImportBatch(opened.length)
+  await runInUndoGroupAsync('Import audio', async () => {
+    for (const file of opened) {
+      await importAudioIntoLibrary(file)
+    }
+  })
+}
+
 /** Map a library item to the placement payload `addClipFromLibrary` expects, so
  *  warp, library-clip, and tempo handling stay aligned across every caller. */
 export function libraryItemToClipPlacement(audio: LibraryItem): {

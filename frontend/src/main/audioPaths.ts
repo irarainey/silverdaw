@@ -30,6 +30,11 @@ const samplesWriteRoots: Set<string> = new Set<string>()
 // stems/samples so the renderer can import the produced WAVs on CHANNEL_SPLIT_READY.
 const channelsWriteRoots: Set<string> = new Set<string>()
 
+// Folders the user explicitly added to the file browser through the native
+// directory picker. Listing is confined to these, and they are read-trusted so
+// the browser can show tags/artwork and audition files before importing them.
+const fileBrowserRoots: Set<string> = new Set<string>()
+
 export function canonicalisePath(p: string): string {
   return pathResolve(p)
 }
@@ -170,6 +175,42 @@ export function getProjectMediaDirs(): { metadataDir: string; coversDir: string 
   return currentMetadataDir !== null && currentCoversDir !== null
     ? { metadataDir: currentMetadataDir, coversDir: currentCoversDir }
     : null
+}
+
+// Trust a file-browser root. Only called for folders the user picked in the
+// native directory dialog, or restored from prefs the app itself wrote.
+export function registerFileBrowserRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute file browser root:', dir)
+    return
+  }
+  const canonical = canonicalisePath(dir)
+  fileBrowserRoots.add(canonical)
+  trustedReadRoots.add(canonical)
+}
+
+// Drop a removed browser root, keeping read trust only where another registrar
+// (stems/samples/channels output folders) still claims the same folder.
+export function unregisterFileBrowserRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '') return
+  const canonical = canonicalisePath(dir)
+  fileBrowserRoots.delete(canonical)
+  const claimedElsewhere =
+    stemsWriteRoots.has(canonical) ||
+    samplesWriteRoots.has(canonical) ||
+    channelsWriteRoots.has(canonical)
+  if (!claimedElsewhere) trustedReadRoots.delete(canonical)
+}
+
+// A directory may only be listed when it is a browser root or sits inside one.
+export function isWithinFileBrowserRoot(dir: unknown): dir is string {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
+  const canonical = canonicalisePath(dir)
+  for (const root of fileBrowserRoots) {
+    const rel = relative(root, canonical)
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
+  }
+  return false
 }
 
 // Re-check the audio extension at read time as defence in depth.

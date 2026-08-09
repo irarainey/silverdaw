@@ -84,6 +84,18 @@ export interface UiPreferences {
   waveformDisplayMode: WaveformDisplayMode
 
   libraryPanelCollapsed: boolean
+
+  /** Absolute folders the user added to the library file browser, in display order. */
+  fileBrowserFolders: string[]
+}
+
+/** One row in the library file browser: a subfolder, or an importable audio file. */
+export interface FileBrowserEntry {
+  /** Absolute path; also the row's stable identity. */
+  path: string
+  /** Base name as shown in the tree. */
+  name: string
+  kind: 'directory' | 'file'
 }
 
 export type WaveformDisplayMode = 'summary' | 'stereo'

@@ -44,6 +44,7 @@ interface FakeStores {
     selectClip: ReturnType<typeof vi.fn>
     selectTrack: ReturnType<typeof vi.fn>
     clearClipSelection: ReturnType<typeof vi.fn>
+    nudgeAutomationPoint: ReturnType<typeof vi.fn>
     setMetronomeEnabled: ReturnType<typeof vi.fn>
     toggleMute: ReturnType<typeof vi.fn>
     toggleSolo: ReturnType<typeof vi.fn>
@@ -64,9 +65,12 @@ interface FakeStores {
     byId: Record<string, unknown>
     items: unknown[]
   }
+  preview: {
+    isPlaying: boolean
+  }
 }
 
-function makeDeps(overrides: { modalOpen?: boolean } = {}): {
+function makeDeps(overrides: { modalOpen?: boolean; previewPlaying?: boolean } = {}): {
   deps: AppKeyboardShortcutsDeps
   stores: FakeStores
   openExportMixdown: ReturnType<typeof vi.fn>
@@ -100,6 +104,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
       selectClip: vi.fn(),
       selectTrack: vi.fn(),
       clearClipSelection: vi.fn(),
+      nudgeAutomationPoint: vi.fn(),
       setMetronomeEnabled: vi.fn(),
       toggleMute: vi.fn(),
       toggleSolo: vi.fn()
@@ -119,6 +124,9 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     library: {
       byId: {},
       items: []
+    },
+    preview: {
+      isPlaying: overrides.previewPlaying === true
     }
   }
   const openExportMixdown = vi.fn()
@@ -127,6 +135,7 @@ function makeDeps(overrides: { modalOpen?: boolean } = {}): {
     project: stores.project as unknown as AppKeyboardShortcutsDeps['project'],
     ui: stores.ui as unknown as AppKeyboardShortcutsDeps['ui'],
     library: stores.library as unknown as AppKeyboardShortcutsDeps['library'],
+    preview: stores.preview as unknown as AppKeyboardShortcutsDeps['preview'],
     isModalOpen: () => overrides.modalOpen === true,
     openExportMixdown
   }
@@ -188,6 +197,14 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     kb.onGlobalShortcutKey(e)
     expect(sendBridge).toHaveBeenCalledWith('TRANSPORT_PAUSE')
     expect(h.stores.transport.setPlaybackState).toHaveBeenCalledWith(false)
+  })
+
+  it('Space does not start playback while a preview is auditioning', () => {
+    h = makeDeps({ previewPlaying: true })
+    kb = useAppKeyboardShortcuts(h.deps)
+    kb.onGlobalShortcutKey(makeKey({ code: 'Space' }).e)
+    expect(sendBridge).not.toHaveBeenCalledWith('TRANSPORT_PLAY')
+    expect(h.stores.transport.setPlaybackState).not.toHaveBeenCalled()
   })
 
   it('Space does not start playback without an audio output', () => {
@@ -262,8 +279,7 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     expect(h.stores.transport.setPlaybackState).not.toHaveBeenCalled()
   })
 
-  it('suppresses shortcuts while a modal is open', () => {
-    h = makeDeps({ modalOpen: true })
+  it('suppresses shortcuts while a modal is open', () => {    h = makeDeps({ modalOpen: true })
     kb = useAppKeyboardShortcuts(h.deps)
     kb.onGlobalShortcutKey(makeKey({ code: 'Space' }).e)
     kb.onGlobalShortcutKey(makeKey({ key: 'm' }).e)
@@ -417,6 +433,45 @@ describe('useAppKeyboardShortcuts — onGlobalShortcutKey', () => {
     kb.onGlobalShortcutKey(e)
     expect(h.stores.project.clearClipSelection).not.toHaveBeenCalled()
     expect(h.stores.project.selectTrack).not.toHaveBeenCalled()
+  })
+
+  // This handler runs in the capture phase, so a focused list cannot call it off
+  // with stopPropagation — it has to stand aside for the keys the list owns.
+  describe('lists that own their selection keys', () => {
+    class FakeElement {
+      constructor(private readonly owns: boolean) {}
+      closest(selector: string): FakeElement | null {
+        return this.owns && selector === '[data-owns-selection-keys="true"]' ? this : null
+      }
+    }
+
+    function pressArrowUp(owns: boolean): void {
+      const { e } = makeKey({ key: 'ArrowUp' })
+      ;(e as { target: unknown }).target = new FakeElement(owns)
+      kb.onGlobalShortcutKey(e)
+    }
+
+    beforeEach(() => {
+      vi.stubGlobal('HTMLElement', FakeElement)
+      h.stores.ui.selectedAutomationPoint = { trackId: 't1', paramId: 'pan', index: 1 }
+    })
+
+    it('leaves ArrowUp alone inside a list that owns it', () => {
+      pressArrowUp(true)
+      expect(h.stores.project.nudgeAutomationPoint).not.toHaveBeenCalled()
+    })
+
+    it('still handles ArrowUp anywhere else', () => {
+      pressArrowUp(false)
+      expect(h.stores.project.nudgeAutomationPoint).toHaveBeenCalled()
+    })
+
+    it('keeps keys the list does not own, so seeking still works', () => {
+      const { e } = makeKey({ key: 'ArrowLeft' })
+      ;(e as { target: unknown }).target = new FakeElement(true)
+      kb.onGlobalShortcutKey(e)
+      expect(h.stores.project.nudgeAutomationPoint).toHaveBeenCalled()
+    })
   })
 
   it('K toggles the project metronome', () => {
