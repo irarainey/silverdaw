@@ -4,11 +4,12 @@
 
 ### Changed
 
-- MP3 files are now read by Silverdaw's own decoder, with the system codec used only for the formats it alone can handle.
+- MP3 files are now read by the JUCE decoder, with the system codec used only for the formats it alone can handle.
 
 ### Fixed
 
 - An imported MP3 whose length the system codec misreported now plays in full in the preview and clip editor, and analyses to the correct tempo and beat grid, instead of stopping after a fraction of a second with a default tempo.
+- Cancelling the Clip Editor after moving a clip's beat markers now discards the change instead of leaving the moved grid on the clip.
 
 ## 1.5.3
 

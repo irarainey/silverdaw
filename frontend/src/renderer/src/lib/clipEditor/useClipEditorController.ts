@@ -409,6 +409,13 @@ export function useClipEditorController(
       sliceEditMode.value = false
       reseedSliceWindow()
       resetZoom()
+      // Switching target ends the previous grid session: roll its uncommitted draft
+      // back onto the item it belongs to, then re-snapshot against the new one. Without
+      // this the snapshot, the edited flag and the captured original tempo all stay
+      // pointed at the previous item, so Cancel restores the wrong clip and Restore
+      // offers the wrong tempo.
+      beatGrid.discardIfUncommitted()
+      beatGrid.reset()
       resetPreviewLoadKey()
       initSelectionForItem()
       initialiseWarpDraft(timelineClip.value ?? editorItem.value, editsExistingClip.value)

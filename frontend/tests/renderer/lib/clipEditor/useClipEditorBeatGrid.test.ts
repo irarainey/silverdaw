@@ -18,10 +18,14 @@ vi.mock('@/lib/audioDecode', () => ({
 }))
 
 function addSource(bpm?: number, beatAnchorSec?: number): LibraryItem {
+  return addNamedSource('grid.wav', bpm, beatAnchorSec)
+}
+
+function addNamedSource(fileName: string, bpm?: number, beatAnchorSec?: number): LibraryItem {
   const library = useLibraryStore()
   const id = library.addItem({
-    filePath: 'C:\\audio\\grid.wav',
-    fileName: 'grid.wav',
+    filePath: `C:\\audio\\${fileName}`,
+    fileName,
     durationMs: 4_000,
     sampleRate: 44_100,
     channelCount: 2,
@@ -416,5 +420,78 @@ describe('useClipEditorBeatGrid', () => {
         beatAnchorSec: 0.6
       })
     })
+
+    // Closing the dialog clears its `open` and `item` props in the same flush, so the
+    // close handler runs with no target left to resolve. The rollback must still find
+    // the item it snapshotted, or a cancelled session keeps its grid edit.
+    it('rolls back on cancel even though the target clears as the dialog closes', () => {
+      const item = addStem(128, 0.25)
+      let target: LibraryItem | null = item
+      const grid = useClipEditorBeatGrid({ sourceItem: () => target })
+      grid.reset()
+      sendMock.mockClear()
+
+      grid.commitAnchorSec(0.6)
+      expect(item.bpm).toBe(128)
+      expect(item.beatAnchorSec).toBe(0.6)
+
+      target = null
+      grid.discardIfUncommitted()
+
+      expect(item.bpm).toBeUndefined()
+      expect(item.beatAnchorSec).toBeUndefined()
+      expect(grid.hasGridChanged()).toBe(false)
+      expect(sendMock).not.toHaveBeenCalled()
+    })
+  })
+
+  it('rolls back a source edit when the target clears as the dialog closes', () => {
+    const item = addSource(120, 0.4)
+    let target: LibraryItem | null = item
+    const grid = useClipEditorBeatGrid({ sourceItem: () => target })
+    grid.reset()
+
+    grid.commitAnchorSec(0.9)
+    grid.nudgeAnchorMs(50)
+    expect(item.beatAnchorSec).toBeCloseTo(0.95, 6)
+
+    target = null
+    grid.discardIfUncommitted()
+
+    expect(item.bpm).toBe(120)
+    expect(item.beatAnchorSec).toBe(0.4)
+    expect(grid.hasGridChanged()).toBe(false)
+  })
+
+  // The editor can switch target without closing. That ends the previous grid session:
+  // its draft belongs to the item it was made against, and the new target must start
+  // from its own snapshot rather than inherit the previous one.
+  it('ends the previous grid session when the editor switches target', () => {
+    const first = addNamedSource('grid-a.wav', 120, 0.4)
+    const second = addNamedSource('grid-b.wav', 90, 0.2)
+    let target: LibraryItem = first
+    const grid = useClipEditorBeatGrid({ sourceItem: () => target })
+    grid.reset()
+
+    grid.commitAnchorSec(0.9)
+    expect(first.beatAnchorSec).toBe(0.9)
+
+    // What the controller's target-change watcher does.
+    grid.discardIfUncommitted()
+    target = second
+    grid.reset()
+
+    expect(first.beatAnchorSec).toBe(0.4)
+    expect(grid.hasGridChanged()).toBe(false)
+    expect(grid.originalBpm.value).toBe(90)
+
+    grid.commitAnchorSec(0.7)
+    grid.discardIfUncommitted()
+
+    expect(second.beatAnchorSec).toBe(0.2)
+    expect(second.bpm).toBe(90)
+    // The second session's rollback must not reach back into the first item.
+    expect(first.beatAnchorSec).toBe(0.4)
+    expect(first.bpm).toBe(120)
   })
 })
