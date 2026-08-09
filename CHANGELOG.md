@@ -17,6 +17,7 @@
 - Changing the project tempo now carries clip volume shapes and track automation with the music, instead of leaving them at fixed millisecond positions where they shaped the wrong part of the track.
 - The playhead can now be grabbed from the ruler while the timeline is scrolled down, instead of starting a clip drag on whichever clip happened to sit under that point.
 - Cancelling the Clip Editor after moving a clip's beat markers now discards the change instead of leaving the moved grid on the clip.
+- Scrollbars in the library panel and dialogs are now drawn at the same width as the timeline's, instead of appearing noticeably thinner than the rest of the app.
 
 ## 1.5.3
 

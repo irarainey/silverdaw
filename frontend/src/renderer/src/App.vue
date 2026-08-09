@@ -738,12 +738,16 @@ button[data-borderless-button="true"]:focus-visible {
   outline: none !important;
 }
 
-/* Shared dark scrollbar chrome for scrollable panels and dialogs. */
-.silverdaw-scroll {
-  scrollbar-color: rgb(113 113 122) rgb(24 24 27 / 0.8);
-  scrollbar-width: thin;
-}
+/* Shared dark scrollbar chrome for scrollable panels and dialogs, sized to match
+   the timeline's own hand-drawn scrollbars (`SCROLLBAR_WIDTH`): a 12px lane with
+   an 8px thumb, so a panel and the arrangement above it agree.
 
+   Deliberately styled through `::-webkit-scrollbar` alone. Since Chrome 121,
+   setting `scrollbar-width` or `scrollbar-color` makes Chromium ignore *every*
+   `::-webkit-scrollbar` rule on the element and fall back to the native thin
+   scrollbar — which is how these panels silently became thinner than the
+   timeline. Do not add the standard properties here without also removing the
+   rules below, or they will quietly stop applying again. */
 .silverdaw-scroll::-webkit-scrollbar {
   width: 12px;
   height: 12px;
@@ -755,7 +759,10 @@ button[data-borderless-button="true"]:focus-visible {
 
 .silverdaw-scroll::-webkit-scrollbar-thumb {
   background-color: rgb(113 113 122);
-  border: 3px solid rgb(24 24 27 / 0.8);
+  /* 2px each side of a 12px lane leaves an 8px thumb, the timeline's width.
+     Clipping to the padding box keeps the thumb colour out of that inset. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
   border-radius: 9999px;
 }
 
@@ -764,12 +771,10 @@ button[data-borderless-button="true"]:focus-visible {
 }
 
 /* Scrolls programmatically but hides its native scrollbars — used where a
-   custom overlay scrollbar (matching the waveform window) is drawn instead. */
+   custom overlay scrollbar (matching the waveform window) is drawn instead.
+   The standard property is enough on its own, and per the note above a
+   `::-webkit-scrollbar` rule alongside it would be ignored anyway. */
 .no-native-scrollbar {
   scrollbar-width: none;
-}
-
-.no-native-scrollbar::-webkit-scrollbar {
-  display: none;
 }
 </style>
