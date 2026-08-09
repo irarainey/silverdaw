@@ -3621,6 +3621,17 @@ and auto-follow during playback are O(1) layer translations — no clip iteratio
 allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
 move, peaks arrival, zoom, BPM, project length, header-column resize.
 
+**The ruler is not in world space.** Clip hit regions are stored at absolute world
+coordinates, so a pointer is mapped by adding `scrollX` / `scrollY` — but the ruler
+is a fixed overlay that does not scroll with the tracks, so that mapping is only
+meaningful below `RULER_HEIGHT`. Every pointer query that reads world y must reject
+the ruler band first; `timelineQueries.pointerToTracksWorld` is the single guard
+`hitTestClip`, `hitTestTrimEdge` and `pointerToTrackId` share, and
+`useTimelineContextMenu` applies the same test. Skipping it means a press on the
+ruler resolves to whatever row happens to be scrolled under that offset: the playhead
+became ungrabbable from the ruler the moment the view was scrolled down at all,
+starting a clip drag instead, and right-click opened that clip's menu.
+
 **Peaks LOD pyramid.** Each library item carries a small ladder of pre-downsampled
 peak arrays (`peaksLod`) alongside its base peaks. `drawClip` picks the LOD whose
 `peaksPerSecond` is closest to the current draw scale so the waveform stays crisp

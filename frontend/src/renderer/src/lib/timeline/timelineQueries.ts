@@ -105,12 +105,31 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     )
   }
 
-  function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
+  /**
+   * Host-local pointer to world (content) coordinates, or `null` in the ruler band.
+   *
+   * The ruler is a fixed overlay — it does not scroll with the tracks — while clip
+   * hit regions are stored in world space. Adding `scrollY` to a pointer sitting in
+   * the ruler therefore lands it inside whatever row happens to be scrolled under
+   * that offset, so once the view was scrolled down at all, a press on the ruler
+   * grabbed a clip instead of the playhead. Rejecting the ruler band here is the
+   * same guard `pointerToTrackId` already applies.
+   */
+  function pointerToTracksWorld(
+    clientX: number,
+    clientY: number
+  ): { worldX: number; worldY: number } | null {
     if (!host.value) return null
     const rect = host.value.getBoundingClientRect()
-    // Hit regions are stored in world coordinates.
-    const worldX = (clientX - rect.left) + scrollX.value
-    const worldY = (clientY - rect.top) + scrollY.value
+    const y = clientY - rect.top
+    if (y < RULER_HEIGHT) return null
+    return { worldX: clientX - rect.left + scrollX.value, worldY: y + scrollY.value }
+  }
+
+  function hitTestClip(clientX: number, clientY: number): ClipHitRegion | null {
+    const world = pointerToTracksWorld(clientX, clientY)
+    if (!world) return null
+    const { worldX, worldY } = world
     const regions = getClipHitRegions()
     // Last drawn clip wins overlaps.
     for (let i = regions.length - 1; i >= 0; i--) {
@@ -205,10 +224,9 @@ export function createTimelineQueries(ctx: TimelineQueriesContext) {
     clientX: number,
     clientY: number
   ): { region: ClipHitRegion; edge: 'left' | 'right' } | null {
-    if (!host.value) return null
-    const rect = host.value.getBoundingClientRect()
-    const worldX = (clientX - rect.left) + scrollX.value
-    const worldY = (clientY - rect.top) + scrollY.value
+    const world = pointerToTracksWorld(clientX, clientY)
+    if (!world) return null
+    const { worldX, worldY } = world
     const regions = getClipHitRegions()
     let best: { region: ClipHitRegion; edge: 'left' | 'right'; dist: number } | null = null
     for (const region of regions) {

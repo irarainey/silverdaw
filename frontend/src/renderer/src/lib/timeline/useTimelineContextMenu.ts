@@ -23,6 +23,7 @@ import {
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { trackIndexAtWorldY } from '@/lib/timeline/trackLayout'
+import { RULER_HEIGHT } from '@/lib/timeline/constants'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import {
   beatRepeatRegionsForClip,
@@ -520,12 +521,17 @@ export function useTimelineContextMenu(
       return
     }
     const rect = host.getBoundingClientRect()
+    const localY = e.clientY - rect.top
     const worldX = e.clientX - rect.left + inputs.scrollX.value
-    const worldY = e.clientY - rect.top + inputs.scrollY.value
+    const worldY = localY + inputs.scrollY.value
+    // The ruler is a fixed overlay, so a pointer in it has no world position: adding
+    // `scrollY` would land it in whatever row is scrolled under that offset and open
+    // that clip's menu (see `pointerToTracksWorld`).
+    const inTracks = localY >= RULER_HEIGHT
     snapContextMenuBeatToPlayhead()
     const regions = inputs.getClipHitRegions()
     // Reverse iterate so the visually top-most clip wins on overlap.
-    for (let i = regions.length - 1; i >= 0; i--) {
+    for (let i = regions.length - 1; inTracks && i >= 0; i--) {
       const r = regions[i]
       if (!r) continue
       if (worldX >= r.x && worldX <= r.x + r.w && worldY >= r.y && worldY <= r.y + r.h) {
@@ -547,7 +553,7 @@ export function useTimelineContextMenu(
     // track lane (past the pinned header column, on a real track row). The
     // header column hosts its own controls, so anything left of it is ignored.
     const localX = e.clientX - rect.left
-    if (localX >= inputs.headerWidth()) {
+    if (inTracks && localX >= inputs.headerWidth()) {
       const hit = trackIndexAtWorldY(project.tracks, worldY, makeLaneHeightOf())
       const trackId = hit ? (project.tracks[hit.index]?.id ?? null) : null
       if (trackId) {

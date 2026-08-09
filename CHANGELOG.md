@@ -15,6 +15,7 @@
 - An imported MP3 whose length the system codec misreported now plays in full in the preview and clip editor, and analyses to the correct tempo and beat grid, instead of stopping after a fraction of a second with a default tempo.
 - Opening or adding a track automation lane now scrolls it into view instead of leaving it below the bottom of the timeline.
 - Changing the project tempo now carries clip volume shapes and track automation with the music, instead of leaving them at fixed millisecond positions where they shaped the wrong part of the track.
+- The playhead can now be grabbed from the ruler while the timeline is scrolled down, instead of starting a clip drag on whichever clip happened to sit under that point.
 - Cancelling the Clip Editor after moving a clip's beat markers now discards the change instead of leaving the moved grid on the clip.
 
 ## 1.5.3
