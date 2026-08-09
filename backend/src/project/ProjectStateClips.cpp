@@ -727,4 +727,67 @@ juce::Array<juce::var> ProjectState::getClipEnvelope(const juce::String& clipId)
     if (!clip.isValid()) return {};
     return readEnvelopeArray(clip, kEnvelopePoints);
 }
+
+std::unordered_map<juce::String, double> ProjectState::snapshotClipFootprints() const
+{
+    std::unordered_map<juce::String, double> out;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (!clip.hasType(kClip)) continue;
+            // Only clips carrying a shape can need retiming, and the map is only ever
+            // read for those, so skip the rest rather than measure the whole timeline.
+            if (!clip.hasProperty(kEnvelopePoints)) continue;
+            const auto clipId = clip.getProperty(kId).toString();
+            out[clipId] = getClipEffectiveTiming(clipId).durationMs;
+        }
+    }
+    return out;
+}
+
+int ProjectState::retimeClipEnvelopesForFootprintChange(
+    const std::unordered_map<juce::String, double>& previousFootprints,
+    const std::function<void(const juce::String&, const juce::Array<juce::var>&)>& visitor)
+{
+    if (previousFootprints.empty()) return 0;
+    int count = 0;
+    for (const auto& [clipId, before] : previousFootprints)
+    {
+        if (before <= 0.0) continue;
+        auto clip = findClip(clipId);
+        if (!clip.isValid()) continue;
+        const auto points = readEnvelopeArray(clip, kEnvelopePoints);
+        if (points.size() < 2) continue;
+
+        const double after = getClipEffectiveTiming(clipId).durationMs;
+        if (after <= 0.0) continue;
+        const double scale = after / before;
+        // Below this the shape has not measurably moved; rewriting it would only churn
+        // the tree and the engine snapshot.
+        if (std::abs(scale - 1.0) <= 1.0e-9) continue;
+
+        juce::Array<juce::var> scaled;
+        scaled.ensureStorageAllocated(points.size());
+        for (const auto& p : points)
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty(kEnvelopeTimeMs,
+                             juce::jmax(0.0, static_cast<double>(
+                                                 p.getProperty(kEnvelopeTimeMs, 0.0)) * scale));
+            obj->setProperty(kEnvelopeGain,
+                             static_cast<double>(p.getProperty(kEnvelopeGain, 1.0)));
+            scaled.add(juce::var(obj));
+        }
+        // Part of the same undoable "Change tempo" transaction as the BPM itself.
+        clip.setProperty(kEnvelopePoints, juce::var(scaled), &undoManager);
+        ++count;
+        if (visitor) visitor(clipId, getClipEnvelope(clipId));
+    }
+    if (count > 0) markDirty();
+    return count;
+}
 } // namespace silverdaw

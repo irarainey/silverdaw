@@ -120,6 +120,10 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
         if (bpm >= 20.0 && bpm <= 300.0)
         {
             const double previousBpm = projectState.getBpm();
+            // Captured before anything moves: the envelope retime below needs to know
+            // how far each clip actually re-stretched, and that is only knowable by
+            // comparing against the footprints the shapes were drawn against.
+            const auto previousFootprints = projectState.snapshotClipFootprints();
             projectState.setBpm(bpm);
             // Setting the tempo by hand is the strongest statement that it is
             // established: without this the flag stays false and the next analysed
@@ -165,6 +169,15 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
             // exactly these two behind, pointing at whatever now happens to occupy that
             // instant.
             const int markersRetimed = projectState.retimeMarkersForTempoChange(previousBpm, bpm);
+
+            // Track automation shares the timeline axis with clips and markers, so a
+            // curve drawn over bar 9 has to stay over bar 9. Left in milliseconds it
+            // drifts against the material it was written for and shapes the wrong sound.
+            const int automationRetimed = projectState.retimeTrackAutomationForTempoChange(
+                previousBpm, bpm,
+                [&](const juce::String& trackId, const juce::String& paramId,
+                    const juce::Array<juce::var>& points)
+                { engine.setTrackAutomation(trackId, paramId, points); });
             if (previousBpm > 0.0 && bpm > 0.0 && previousBpm != bpm)
             {
                 const double positionMs = engine.getPositionMs();
@@ -208,12 +221,24 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
                     bridge.broadcast("CLIP_WARP_APPLIED", juce::var(appliedPayload.release()));
                 });
 
-            if (retimed > 0 || markersRetimed > 0 || autoWarp)
+            // Last, so it measures the footprints the warp loops above have settled on.
+            // A volume shape is measured across the clip's timeline footprint, so it has
+            // to follow that footprint rather than the project scale: a pinned ratio or a
+            // clip left unwarped does not re-stretch, and its shape must stay put.
+            const int envelopesRetimed = projectState.retimeClipEnvelopesForFootprintChange(
+                previousFootprints,
+                [&](const juce::String& clipId, const juce::Array<juce::var>& points)
+                { engine.setClipEnvelope(clipId, points); });
+
+            if (retimed > 0 || markersRetimed > 0 || automationRetimed > 0
+                || envelopesRetimed > 0 || autoWarp)
             {
                 silverdaw::log::info("project", "tempo change " + juce::String(previousBpm, 2) + " -> "
                                                     + juce::String(bpm, 2) + " retimed "
                                                     + juce::String(retimed) + " clip(s) "
-                                                    + juce::String(markersRetimed) + " marker(s)");
+                                                    + juce::String(markersRetimed) + " marker(s) "
+                                                    + juce::String(automationRetimed) + " automation lane(s) "
+                                                    + juce::String(envelopesRetimed) + " envelope(s)");
             }
         }
     }

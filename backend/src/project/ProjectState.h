@@ -3,6 +3,7 @@
 #include <atomic>
 #include <functional>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
@@ -157,6 +158,19 @@ class ProjectState : public juce::ValueTree::Listener
     bool setTrackAutomationLaneView(const juce::String& trackId, const juce::Array<juce::var>& lanes);
     juce::Array<juce::var> getTrackAutomationLaneView(const juce::String& trackId) const;
 
+    /**
+     * Scale every automation breakpoint by `previousBpm / newBpm`.
+     *
+     * Automation is on the timeline axis, like clip offsets and markers, so a curve
+     * drawn over bar 9 must still be over bar 9 after a tempo edit. `visitor` is
+     * called per changed lane so the caller can republish the engine snapshot.
+     * Returns the number of lanes retimed.
+     */
+    int retimeTrackAutomationForTempoChange(
+        double previousBpm, double newBpm,
+        const std::function<void(const juce::String& trackId, const juce::String& paramId,
+                                 const juce::Array<juce::var>& points)>& visitor);
+
     // Transitions store partners only; overlap is derived from live clip geometry.
 
     // Derived edge fades are ready for AudioEngine::setClipEdgeFade.
@@ -297,6 +311,33 @@ class ProjectState : public juce::ValueTree::Listener
                                   const std::function<void(const juce::String&, double)>& moved);
 
     using EffectiveClipTiming = silverdaw::EffectiveClipTiming;
+
+    /**
+     * Every clip's current timeline footprint, keyed by clip id.
+     *
+     * Captured before a tempo edit so {@link retimeClipEnvelopesForFootprintChange}
+     * can tell how far each clip actually re-stretched. The scale is per clip, not
+     * global: a pinned tempo ratio, an unwarped clip, and a clip the same edit has
+     * only just auto-warped all move by different amounts (or not at all).
+     */
+    std::unordered_map<juce::String, double> snapshotClipFootprints() const;
+
+    /**
+     * Rescale clip volume envelopes onto their new timeline footprints.
+     *
+     * Breakpoints are measured in post-warp clip-local ms (OffsetSource applies them
+     * downstream of the stretcher), so a clip that re-stretches drags the audio out
+     * from under a shape left in milliseconds — a fade written across the last bar
+     * ends up somewhere in the middle. Keeps each breakpoint at the same relative
+     * position instead.
+     *
+     * `previousFootprints` comes from {@link snapshotClipFootprints}, taken before
+     * the edit. `visitor` is called per changed clip so the caller can republish the
+     * engine snapshot. Returns the number of envelopes retimed.
+     */
+    int retimeClipEnvelopesForFootprintChange(
+        const std::unordered_map<juce::String, double>& previousFootprints,
+        const std::function<void(const juce::String&, const juce::Array<juce::var>&)>& visitor);
 
     // Effective duration is timeline/output time; stored duration remains source time.
     EffectiveClipTiming getClipEffectiveTiming(const juce::String& clipId) const;

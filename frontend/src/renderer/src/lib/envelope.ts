@@ -112,8 +112,26 @@ export function splitEnvelopeAtMs(
   }
 }
 
-/** True when an envelope has no audible shape and should not be persisted. */
-export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
+/**
+ * Rescale a volume shape onto a new clip footprint, keeping each breakpoint at the
+ * same relative position within the clip.
+ *
+ * Breakpoints live on the clip's *timeline footprint* (see `splitEnvelopeAtMs`), so
+ * anything that re-stretches the clip — a project tempo change re-deriving the warp
+ * ratio, most of all — moves the audio out from under a shape left in milliseconds.
+ * A fade written across the last bar would end up somewhere in the middle.
+ *
+ * Gains are untouched: only the time axis is a function of the clip's length.
+ */
+export function scaleEnvelopePoints(
+  points: readonly ClipEnvelopePoint[],
+  scale: number
+): ClipEnvelopePoint[] {
+  if (!Number.isFinite(scale) || scale <= 0) return sanitizeEnvelopePoints(points)
+  return sanitizeEnvelopePoints(points.map((p) => ({ timeMs: p.timeMs * scale, gain: p.gain })))
+}
+
+/** True when an envelope has no audible shape and should not be persisted. */export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
   if (points.length < 2) return true
   return points.every((p) => Math.abs(p.gain - 1) <= 1e-4)
 }

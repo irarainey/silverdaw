@@ -148,6 +148,68 @@ bool ProjectState::setTrackAutomation(const juce::String& trackId, const juce::S
     return true;
 }
 
+int ProjectState::retimeTrackAutomationForTempoChange(
+    double previousBpm, double newBpm,
+    const std::function<void(const juce::String&, const juce::String&,
+                             const juce::Array<juce::var>&)>& visitor)
+{
+    if (previousBpm <= 0.0 || newBpm <= 0.0 || previousBpm == newBpm) return 0;
+    const double scale = previousBpm / newBpm;
+    int count = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        const auto lanes = readLanes(track, kAutomation);
+        if (lanes.isEmpty()) continue;
+
+        juce::Array<juce::var> nextLanes;
+        nextLanes.ensureStorageAllocated(lanes.size());
+        juce::Array<juce::String> changedParams;
+        for (const auto& lane : lanes)
+        {
+            const auto paramId = lane.getProperty(kAutomationParamId, juce::var()).toString();
+            const auto& ptsVar = lane.getProperty(kAutomationPoints, juce::var());
+            const juce::Array<juce::var> pts =
+                ptsVar.isArray() ? *ptsVar.getArray() : juce::Array<juce::var>{};
+
+            juce::Array<juce::var> scaled;
+            scaled.ensureStorageAllocated(pts.size());
+            bool moved = false;
+            for (const auto& p : pts)
+            {
+                const double time = static_cast<double>(p.getProperty(kAutomationTimeMs, 0.0));
+                // A point at zero is already at the origin; scaling it is a no-op.
+                const double next = juce::jmax(0.0, time * scale);
+                if (std::abs(next - time) > 1.0e-6) moved = true;
+                auto* obj = new juce::DynamicObject();
+                obj->setProperty(kAutomationTimeMs, next);
+                obj->setProperty(kAutomationValue,
+                                 static_cast<double>(p.getProperty(kAutomationValue, 0.0)));
+                scaled.add(juce::var(obj));
+            }
+
+            auto* laneObj = new juce::DynamicObject();
+            laneObj->setProperty(kAutomationParamId, paramId);
+            laneObj->setProperty(kAutomationPoints, juce::var(scaled));
+            nextLanes.add(juce::var(laneObj));
+            if (moved && paramId.isNotEmpty()) changedParams.add(paramId);
+        }
+
+        if (changedParams.isEmpty()) continue;
+        // Part of the same undoable "Change tempo" transaction as the BPM itself.
+        track.setProperty(kAutomation, juce::var(nextLanes), &undoManager);
+        const auto trackId = track.getProperty(kId).toString();
+        for (const auto& paramId : changedParams)
+        {
+            ++count;
+            if (visitor) visitor(trackId, paramId, getTrackAutomation(trackId, paramId));
+        }
+    }
+    if (count > 0) markDirty();
+    return count;
+}
+
 juce::Array<juce::var> ProjectState::getTrackAutomation(const juce::String& trackId,
                                                         const juce::String& paramId) const
 {

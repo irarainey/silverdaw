@@ -1905,6 +1905,25 @@ likewise moved on the backend, through the ordinary `setPositionMs` seek: the sa
 material sits under it after the move, so the effect tails carry across rather than
 being reset.
 
+Track automation is on that same timeline axis, so it is rescaled by the same factor
+(`ProjectState::retimeTrackAutomationForTempoChange`, mirrored in `applyProjectBpm`);
+a filter sweep drawn for the drop must still be over the drop rather than over
+whatever now occupies those milliseconds.
+
+Clip volume shapes are the exception that is *not* on the project scale. Breakpoints
+are clip-local post-warp ms — `OffsetSource::applyClipGain` runs downstream of the
+stretcher and measures from the clip's start — so a shape follows its own clip's
+timeline footprint, and that footprint changes by a different amount per clip. A clip
+following the project tempo re-stretches by `previousBpm / newBpm`; a clip the same
+edit has just auto-warped changes by `sourceBpm / newBpm`; a pinned `tempoRatio` and
+an unwarped clip do not re-stretch at all and their shapes must stay exactly where
+they are. So the backend captures every shaped clip's footprint *before* the edit
+(`ProjectState::snapshotClipFootprints`) and rescales each shape by its own
+before/after ratio once the warp passes have settled
+(`retimeClipEnvelopesForFootprintChange`); `applyProjectBpm` mirrors it with
+`effectiveDurationMs` and `scaleEnvelopePoints`. Applying the project scale here
+instead would drag the shapes off the clips that did not move.
+
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
 builds a rigid grid across the item's duration on the backend and re-broadcasts
