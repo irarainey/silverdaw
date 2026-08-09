@@ -62,6 +62,43 @@ describe('uiStore automation lanes', () => {
     expect(ui.automationLanes['track-1']?.[0]?.heightPx).toBe(80)
   })
 
+  // A lane is appended below the track's clips, so a track sitting at the foot
+  // of the viewport would otherwise expand entirely off screen.
+  it('asks the timeline to reveal the row bottom whenever a lane opens', () => {
+    const ui = useUiStore()
+
+    expect(ui.timelineRevealTrackRequest).toBeNull()
+
+    ui.addTrackAutomationLane('track-1', 'filter')
+    expect(ui.timelineRevealTrackRequest).toEqual({
+      trackId: 'track-1',
+      align: 'bottom',
+      id: expect.any(Number)
+    })
+
+    // Every further lane issues a fresh one-shot request for the taller row.
+    const firstId = ui.timelineRevealTrackRequest!.id
+    ui.addTrackAutomationLane('track-1', 'pan')
+    expect(ui.timelineRevealTrackRequest!.id).not.toBe(firstId)
+
+    // Expanding a collapsed stack from the track header goes through the same
+    // action, so it reveals too.
+    ui.toggleTrackAutomationLanes('track-2')
+    expect(ui.timelineRevealTrackRequest!.trackId).toBe('track-2')
+  })
+
+  it('does not reveal a track when a lane is closed or a duplicate is opened', () => {
+    const ui = useUiStore()
+    ui.addTrackAutomationLane('track-1', 'filter')
+    const openedId = ui.timelineRevealTrackRequest!.id
+
+    ui.addTrackAutomationLane('track-1', 'filter')
+    expect(ui.timelineRevealTrackRequest!.id).toBe(openedId)
+
+    ui.removeTrackAutomationLane('track-1', 'filter')
+    expect(ui.timelineRevealTrackRequest!.id).toBe(openedId)
+  })
+
   it('bumps the lane revision when a visible parameter changes', () => {
     const ui = useUiStore()
     ui.addTrackAutomationLane('track-1', 'filter')

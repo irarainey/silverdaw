@@ -3523,7 +3523,9 @@ renderer-only (never serialised), so it needs no migration.
 
 Each track header has an **A** toggle that opens an automation stack below the clip area; the
 first lane defaults to Filter. **Add automation lane** adds another distinct parameter, so
-several curves can be viewed and edited together. Every lane has its own parameter picker and
+several curves can be viewed and edited together. Opening a lane scrolls the track row into
+view, aligned so the new lane at the bottom of the row is visible even when the expanded row
+is taller than the timeline viewport. Every lane has its own parameter picker and
 height; its lower edge resizes only that lane from 80 to 220 px. The picker truncates a name
 too long for the header and names the parameter in its tooltip, and it hands focus back to the
 timeline on change or `Escape`, so the global shortcuts keep working after a lane is

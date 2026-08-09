@@ -721,7 +721,11 @@ describe('projectStore', () => {
 
     expect(ui.timelineRevealTrackRequest).toBeNull()
     const trackId = project.addTrack()
-    expect(ui.timelineRevealTrackRequest).toEqual({ trackId, id: expect.any(Number) })
+    expect(ui.timelineRevealTrackRequest).toEqual({
+      trackId,
+      align: 'nearest',
+      id: expect.any(Number)
+    })
 
     // A second add issues a fresh one-shot request (new id) for the new row.
     const firstId = ui.timelineRevealTrackRequest!.id

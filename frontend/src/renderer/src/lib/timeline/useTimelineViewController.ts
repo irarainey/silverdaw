@@ -9,7 +9,7 @@ import { isWarpPending } from '@/lib/warp'
 import { SCROLLBAR_HEIGHT, SCROLLBAR_WIDTH, RULER_HEIGHT } from '@/lib/timeline/constants'
 import { useGridGeometry } from '@/lib/timeline/useGridGeometry'
 import { useTimelineScroll } from '@/lib/timeline/useTimelineScroll'
-import { tracksContentHeight as tracksContentHeight_, buildTrackRowLayout } from '@/lib/timeline/trackLayout'
+import { tracksContentHeight as tracksContentHeight_, buildTrackRowLayout, scrollYToRevealRow } from '@/lib/timeline/trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import { usePixiApp } from '@/lib/timeline/usePixiApp'
 import { useDragHandlers, type ClipHitRegion } from '@/lib/timeline/useDragHandlers'
@@ -460,14 +460,14 @@ export function useTimelineViewController(
       const slot = buildTrackRowLayout(project.tracks, makeLaneHeightOf())[index]
       if (!slot) return
       // Content-relative bounds: 0 = first track top (just below the ruler).
-      const rowTop = slot.top - RULER_HEIGHT
-      const rowBottom = rowTop + slot.height
-      const viewTop = scrollY.value
-      const viewBottom = scrollY.value + trackAreaHeight.value
-      let next = scrollY.value
-      if (rowTop < viewTop) next = rowTop
-      else if (rowBottom > viewBottom) next = rowBottom - trackAreaHeight.value
-      next = Math.max(0, Math.min(maxScrollY.value, next))
+      const next = scrollYToRevealRow(
+        slot.top - RULER_HEIGHT,
+        slot.height,
+        scrollY.value,
+        trackAreaHeight.value,
+        maxScrollY.value,
+        request.align
+      )
       if (Math.abs(next - scrollY.value) < 0.5) return
       scrollY.value = next
       applyScroll()
