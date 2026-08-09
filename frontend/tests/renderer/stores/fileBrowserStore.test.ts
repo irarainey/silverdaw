@@ -9,9 +9,14 @@ import { usePreviewStore } from '@/stores/previewStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
 const importPathsMock = vi.hoisted(() => vi.fn())
+const ensurePlayableMock = vi.hoisted(() => vi.fn<(path: string) => Promise<string | null>>())
 
 vi.mock('@/lib/bridgeService', () => ({ send: sendMock }))
 vi.mock('@/lib/importAudio', () => ({ importAudioPathsIntoLibrary: importPathsMock }))
+vi.mock('@/lib/audioPlaybackPath', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/audioPlaybackPath')>()),
+  ensureBackendPlayablePath: ensurePlayableMock
+}))
 vi.mock('@/lib/log', () => ({
   log: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() }
 }))
@@ -38,6 +43,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   sendMock.mockClear()
   importPathsMock.mockClear()
+  ensurePlayableMock.mockReset().mockResolvedValue(null)
   listFolders.mockReset().mockResolvedValue([ROOT])
   addFolder.mockReset().mockResolvedValue([ROOT])
   removeFolder.mockReset().mockResolvedValue([])
@@ -574,6 +580,80 @@ describe('useFileBrowserStore metadata', () => {
 })
 
 describe('useFileBrowserStore playback and import', () => {
+  const M4A = 'C:\\music\\Hooked.m4a'
+  const CACHED_WAV = 'C:\\cache\\abc123.wav'
+
+  it('auditions a format the engine cannot decode from a transcoded WAV', async () => {
+    const browser = useFileBrowserStore()
+    ensurePlayableMock.mockResolvedValue(CACHED_WAV)
+
+    await browser.prepareAndPlay(M4A)
+
+    // The engine is handed the WAV, never the undecodable source path.
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_LOAD', {
+      libraryItemId: '',
+      filePath: CACHED_WAV,
+      inMs: 0,
+      durationMs: 0
+    })
+    expect(ensurePlayableMock).toHaveBeenCalledWith(M4A)
+  })
+
+  it('keeps row identity on the browsed file while auditioning its transcode', async () => {
+    const browser = useFileBrowserStore()
+    const preview = usePreviewStore()
+    ensurePlayableMock.mockResolvedValue(CACHED_WAV)
+
+    await browser.prepareAndPlay(M4A)
+    preview.isPlaying = true
+
+    expect(browser.auditionedPath).toBe(M4A)
+    expect(browser.isPlaying(M4A)).toBe(true)
+    expect(browser.isPlaying(CACHED_WAV)).toBe(false)
+  })
+
+  it('reuses a transcode so a second audition starts without decoding again', async () => {
+    const browser = useFileBrowserStore()
+    ensurePlayableMock.mockResolvedValue(CACHED_WAV)
+    await browser.prepareAndPlay(M4A)
+    browser.play('C:\\music\\Top.mp3')
+    sendMock.mockClear()
+
+    browser.play(M4A)
+
+    expect(ensurePlayableMock).toHaveBeenCalledTimes(1)
+    expect(sendMock).toHaveBeenCalledWith('PREVIEW_LOAD', {
+      libraryItemId: '',
+      filePath: CACHED_WAV,
+      inMs: 0,
+      durationMs: 0
+    })
+  })
+
+  it('abandons a transcode superseded by a newer audition', async () => {
+    const browser = useFileBrowserStore()
+    ensurePlayableMock.mockResolvedValue(CACHED_WAV)
+    const pending = browser.prepareAndPlay(M4A)
+
+    // The user clicks a directly playable row before the decode lands.
+    browser.play('C:\\music\\Top.mp3')
+    sendMock.mockClear()
+    await pending
+
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(browser.auditionedPath).toBe('C:\\music\\Top.mp3')
+  })
+
+  it('does not load anything when a file cannot be decoded', async () => {
+    const browser = useFileBrowserStore()
+    ensurePlayableMock.mockResolvedValue(null)
+
+    await browser.prepareAndPlay(M4A)
+
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(browser.auditionedPath).toBeNull()
+  })
+
   it('play loads the file through the preview voice', () => {
     const browser = useFileBrowserStore()
     browser.play('C:\\music\\Top.mp3')

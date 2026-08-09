@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
+import { ensureBackendPlayablePath, isBackendNativeAudioPath } from '@/lib/audioPlaybackPath'
 import { importAudioPathsIntoLibrary } from '@/lib/importAudio'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -45,6 +46,16 @@ interface FileBrowserState {
   /** Path of the selected file or folder row, or null. Selecting a folder the
    *  user added arms the Delete key to remove it. */
   selectedPath: string | null
+  /**
+   * Browsed file currently loaded into the preview voice. Held separately from
+   * the preview store's own path because a transcoded file is auditioned from a
+   * cached WAV, which is not the path shown in the tree.
+   */
+  auditionSourcePath: string | null
+  /** Browsed file being decoded for audition, or null when nothing is pending. */
+  preparingPath: string | null
+  /** Source path to engine-playable path, so a transcode happens once per session. */
+  playbackPaths: Record<string, string>
   /** Free-text filter applied to files; folders with no match are hidden too. */
   filter: string
   /** Disclosure state captured when a search began, restored when it ends. */
@@ -101,6 +112,9 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     info: {},
     infoRequested: {},
     selectedPath: null,
+    auditionSourcePath: null,
+    preparingPath: null,
+    playbackPaths: {},
     filter: '',
     expandedBeforeFilter: null,
     treeFocusRequest: 0,
@@ -162,13 +176,22 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     },
 
     /**
+     * The browsed file in the preview voice, or null when nothing is auditioned.
+     * A transcoded file plays from a cached WAV, so the preview store's own path
+     * cannot be compared against a tree row directly.
+     */
+    auditionedPath(state): string | null {
+      return usePreviewStore().filePath === null ? null : state.auditionSourcePath
+    },
+
+    /**
      * The auditioned file, shown in a bar above the tree so what is playing is
      * never lost to scrolling or a filter. Null when nothing is loaded or the
      * file is not in a browsed folder. It stays listed in its folder too: the
      * bar reports playback, it does not move the file out of the tree.
      */
     pinnedAudition(state): FileBrowserRow | null {
-      const path = usePreviewStore().filePath
+      const path = this.auditionedPath
       if (path === null) return null
       const cut = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
       if (cut <= 0) return null
@@ -186,7 +209,8 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     /** True only for the row whose file is currently being auditioned. */
     isPlaying() {
       const preview = usePreviewStore()
-      return (filePath: string): boolean => preview.filePath === filePath && preview.isPlaying
+      return (filePath: string): boolean =>
+        this.auditionedPath === filePath && preview.isPlaying
     },
 
     /**
@@ -196,7 +220,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     positionMs() {
       const preview = usePreviewStore()
       return (filePath: string): number | null =>
-        preview.filePath === filePath ? preview.positionMs : null
+        this.auditionedPath === filePath ? preview.positionMs : null
     }
   },
 
@@ -235,6 +259,8 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       // playing from a folder the user has just taken out of the browser.
       const preview = usePreviewStore()
       if (preview.filePath !== null) preview.unload()
+      this.auditionSourcePath = null
+      this.preparingPath = null
       try {
         this.roots = await window.silverdaw.removeFileBrowserFolder(folder)
       } catch (err) {
@@ -431,7 +457,13 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       this.info[filePath] = entry
     },
 
-    /** Audition a browsed file through the shared preview voice. */
+    /**
+     * Audition a browsed file through the shared preview voice. A format the
+     * engine cannot decode is transcoded to a cached WAV first, so the preview
+     * voice may hold a different path from the row; `auditionSourcePath` maps it
+     * back to the browsed file. A natively playable or already-transcoded file
+     * starts immediately; only a first transcode defers.
+     */
     play(filePath: string): void {
       const preview = usePreviewStore()
       // Only one thing plays at a time, so an audition stops project playback.
@@ -439,16 +471,47 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       if (transport.isPlaying) {
         toggleTransportPlayback('preview', { project: useProjectStore(), transport, ui: useUiStore(), preview })
       }
-      if (preview.filePath === filePath && preview.isLoaded) {
+      if (this.auditionedPath === filePath && preview.isLoaded) {
         preview.play()
         return
       }
-      preview.loadFile(filePath, true)
+      const ready = isBackendNativeAudioPath(filePath) ? filePath : this.playbackPaths[filePath]
+      if (ready !== undefined) {
+        this.preparingPath = null
+        this.startAudition(filePath, ready)
+        return
+      }
+      void this.prepareAndPlay(filePath)
+    },
+
+    /**
+     * Decode a file the engine cannot read into the cached WAV it will be
+     * auditioned from, then start it. The pending path doubles as a claim on the
+     * preview voice, so clicking another file mid-decode abandons this one rather
+     * than stealing playback once its transcode lands.
+     */
+    async prepareAndPlay(filePath: string): Promise<void> {
+      this.preparingPath = filePath
+      const wavPath = await ensureBackendPlayablePath(filePath)
+      if (this.preparingPath !== filePath) return
+      this.preparingPath = null
+      if (wavPath === null) {
+        log.warn('fileBrowser', `cannot audition ${filePath}: could not decode`)
+        return
+      }
+      this.playbackPaths[filePath] = wavPath
+      this.startAudition(filePath, wavPath)
+    },
+
+    /** Load an engine-playable path into the preview voice for a browsed row. */
+    startAudition(filePath: string, playbackPath: string): void {
+      this.auditionSourcePath = filePath
+      usePreviewStore().loadFile(playbackPath, true)
     },
 
     pause(filePath: string): void {
       const preview = usePreviewStore()
-      if (preview.filePath !== filePath) return
+      if (this.auditionedPath !== filePath) return
       preview.pause()
     },
 
@@ -461,7 +524,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     /** Return the auditioned file to its start, leaving the transport as it is. */
     restart(filePath: string): void {
       const preview = usePreviewStore()
-      if (preview.filePath !== filePath) return
+      if (this.auditionedPath !== filePath) return
       preview.seek(0)
     },
 

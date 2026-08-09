@@ -1444,6 +1444,25 @@ Windows) currently round-trip through the renderer's Web Audio decoder:
 (keyed by a hash of source path + sample rate + channel count + length). The cached WAV path
 is what goes on the wire as `CLIP_ADD.filePath`.
 
+Note that this is not a matter of the backend picking the wrong format by
+extension. JUCE's Windows codec is the Windows Media Format SDK
+(`IWMSyncReader`), which reads the ASF family only; it cannot decode an MP4
+container whatever the file is called, and content sniffing does not help. Any
+format outside the list above **must** be transcoded before the backend sees it.
+
+The transcode decision lives in
+[`audioPlaybackPath.ts`](../frontend/src/renderer/src/lib/audioPlaybackPath.ts), which owns
+the natively supported extension list, the cache write, and `ensureBackendPlayablePath()`
+for callers holding a raw on-disk path. Two callers need it:
+
+- **Import**, which already has the decoded PCM in hand and reuses the cache write.
+- **The Files tab audition**, which plays files that were never imported and so has no
+  library item or decoded cache to fall back on. It transcodes on first play, caches the
+  result for the session, and keeps its row identity on the browsed file — the preview
+  voice holds the WAV path, so `fileBrowserStore.auditionedPath` maps back to the file the
+  user can see. A decode superseded by another click is abandoned rather than allowed to
+  steal playback when it lands.
+
 The relevant code is in
 [`audioDecode.ts`](../frontend/src/renderer/src/lib/audioDecode.ts),
 [`importAudio.ts`](../frontend/src/renderer/src/lib/importAudio.ts) and the `audio:writeTempWav`

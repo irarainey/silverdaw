@@ -26,6 +26,8 @@ const title = computed(() => {
   return tagged && tagged.length > 0 ? tagged : props.row.name
 })
 const isPlaying = computed(() => browser.isPlaying(props.row.path))
+// A format the engine cannot read is decoded on demand, so the click has a delay.
+const isPreparing = computed(() => browser.preparingPath === props.row.path)
 const isSelected = computed(() => browser.selectedPath === props.row.path)
 const typeLabel = computed(() => fileBrowserFileTypeLabel(props.row.path))
 
@@ -164,9 +166,10 @@ watch(
       </button>
       <button
         type="button"
-        class="flex h-5 w-5 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
-        :title="isPlaying ? 'Pause' : 'Play'"
-        :aria-label="isPlaying ? 'Pause' : 'Play'"
+        class="flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-zinc-700 hover:text-zinc-100"
+        :class="isPreparing ? 'text-sky-400' : 'text-zinc-400'"
+        :title="isPreparing ? 'Preparing…' : isPlaying ? 'Pause' : 'Play'"
+        :aria-label="isPreparing ? 'Preparing…' : isPlaying ? 'Pause' : 'Play'"
         @click.stop="browser.togglePlay(props.row.path)"
       >
         <svg

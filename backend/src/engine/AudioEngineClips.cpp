@@ -20,7 +20,11 @@ std::unique_ptr<juce::AudioFormatReader> AudioEngine::createReaderForClip(const 
     auto* reader = formatManager.createReaderFor(filePath);
     if (reader == nullptr)
     {
-        // Windows Media Foundation support comes from JUCE built-in format registration.
+        // The File overload picks a format by extension, so a file whose name does
+        // not match its contents is missed. Sniffing the stream recovers it. This
+        // cannot rescue a format JUCE has no codec for at all: its Windows codec is
+        // the Windows Media Format SDK, which reads the ASF family only, so an MP4
+        // container such as .m4a must be transcoded in the renderer beforehand.
         if (auto stream = filePath.createInputStream())
         {
             reader = formatManager.createReaderFor(std::move(stream));
