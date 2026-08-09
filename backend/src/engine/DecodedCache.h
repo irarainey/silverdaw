@@ -20,6 +20,7 @@ class DecodedCache
 
   private:
     juce::File cacheFileFor(const juce::File& sourceFile) const;
+    juce::Array<juce::File> supersededCacheFilesFor(const juce::File& sourceFile) const;
     juce::File cacheDir;
 };
 

@@ -27,6 +27,34 @@ std::mutex& decodeLockFor(const juce::String& cachePath)
     if (!slot) slot = std::make_unique<std::mutex>();
     return *slot;
 }
+
+// Bump when a decoding change could invalidate every entry written before it — a new or
+// replaced reader, or a change to the cached format.
+//
+// The key is the source's path, mtime and size, none of which change when a file is
+// re-imported, so without this a bad decode is served for the life of that file: even
+// deleting and re-adding the item hits the same entry. The generation gives us a way to
+// abandon a whole vintage of entries, and the superseded file is deleted once its source
+// is decoded again, so nothing is orphaned that we could have cleaned up.
+//
+//  1: original key; MP3 was read by Windows Media Foundation, which mis-reported the
+//     length of at least one file and cached a decode truncated to a fraction of a second.
+//  2: MP3 read by JUCE's own decoder.
+constexpr int kDecodedCacheGeneration = 2;
+
+// The identity half of the key, shared by the current and superseded generations.
+juce::String decodedCacheKeyFor(const juce::File& sourceFile)
+{
+    return sourceFile.getFullPathName() + "|"
+           + juce::String(sourceFile.getLastModificationTime().toMilliseconds()) + "|"
+           + juce::String(sourceFile.getSize());
+}
+
+juce::File cacheFileForKey(const juce::File& cacheDir, const juce::String& key)
+{
+    const auto hashHex = juce::String::toHexString(static_cast<juce::int64>(key.hashCode64()));
+    return cacheDir.getChildFile(hashHex + ".wav");
+}
 } // namespace
 
 DecodedCache::DecodedCache()
@@ -49,12 +77,22 @@ juce::File DecodedCache::getCacheFilePath(const juce::File& sourceFile) const
 
 juce::File DecodedCache::cacheFileFor(const juce::File& sourceFile) const
 {
-    const auto& path = sourceFile.getFullPathName();
-    const auto mtime = sourceFile.getLastModificationTime().toMilliseconds();
-    const auto size = sourceFile.getSize();
-    const auto key = path + "|" + juce::String(mtime) + "|" + juce::String(size);
-    const auto hashHex = juce::String::toHexString(static_cast<juce::int64>(key.hashCode64()));
-    return cacheDir.getChildFile(hashHex + ".wav");
+    const auto key = decodedCacheKeyFor(sourceFile) + "|g" + juce::String(kDecodedCacheGeneration);
+    return cacheFileForKey(cacheDir, key);
+}
+
+// Every older generation's entry for this source. Generation 1 predates the marker and
+// so carries the bare key.
+juce::Array<juce::File> DecodedCache::supersededCacheFilesFor(const juce::File& sourceFile) const
+{
+    const auto base = decodedCacheKeyFor(sourceFile);
+    juce::Array<juce::File> files;
+    files.add(cacheFileForKey(cacheDir, base));
+    for (int generation = 2; generation < kDecodedCacheGeneration; ++generation)
+    {
+        files.add(cacheFileForKey(cacheDir, base + "|g" + juce::String(generation)));
+    }
+    return files;
 }
 
 juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::AudioFormatManager& formatManager) const
@@ -155,6 +193,17 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     silverdaw::log::info("decodedcache",
                          "wrote " + sourceFile.getFileName() + " -> " + cachePath.getFileName() +
                              " (" + juce::String(cachePath.getSize() / 1024) + " KB)");
+    // Only once the replacement is committed, so a failed decode never leaves the
+    // source with no cached entry at all.
+    for (const auto& superseded : supersededCacheFilesFor(sourceFile))
+    {
+        if (superseded.existsAsFile() && superseded.deleteFile())
+        {
+            silverdaw::log::info("decodedcache",
+                                 "removed superseded entry " + superseded.getFileName() + " for "
+                                     + sourceFile.getFileName());
+        }
+    }
     return cachePath;
 }
 
