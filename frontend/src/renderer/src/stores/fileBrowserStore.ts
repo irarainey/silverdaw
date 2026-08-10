@@ -287,14 +287,20 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     },
 
     /**
-     * The auditioned file, shown in a bar above the tree so what is playing is
-     * never lost to scrolling or a filter. Null when nothing is loaded or the
-     * file is not in a browsed folder. It stays listed in its folder too: the
-     * bar reports playback, it does not move the file out of the tree.
+     * The audition to show in a bar above the tree, or null when there is nothing to
+     * show. The bar exists so a file that is *sounding* can always be stopped, whatever
+     * the filter or the scroll position — so it appears only while playback is live, not
+     * for the whole time the preview voice happens to hold a file. A paused or finished
+     * audition would otherwise sit on top of a filtered list as a leftover the filter
+     * cannot clear. `pendingPlay` keeps the bar steady across the gap between the load
+     * and the engine's first playing report. The file also stays listed in its own
+     * folder: the bar reports playback, it does not move the file out of the tree.
      */
     pinnedAudition(state): FileBrowserRow | null {
       const path = this.auditionedPath
       if (path === null) return null
+      const preview = usePreviewStore()
+      if (!preview.isPlaying && !preview.pendingPlay) return null
       const cut = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
       if (cut <= 0) return null
       const entry = state.children[path.slice(0, cut)]?.find((child) => child.path === path)

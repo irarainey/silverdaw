@@ -100,7 +100,7 @@ watch(
 
 <template>
   <div
-    class="group flex h-8 select-none items-center gap-2 rounded pr-2 text-xs text-zinc-300 hover:bg-zinc-800/60"
+    class="group flex h-8 cursor-pointer select-none items-center gap-2 rounded pr-2 text-xs text-zinc-300 hover:bg-zinc-800/60"
     :class="[
       isSelected && !props.row.pinned ? 'bg-sky-500/15' : isPlaying ? 'bg-zinc-800/60' : '',
       props.row.pinned ? 'rounded-none' : ''
@@ -110,6 +110,8 @@ watch(
     :aria-level="props.row.pinned ? undefined : props.row.depth + 1"
     :aria-selected="props.row.pinned ? undefined : isSelected"
     :data-selected="props.row.pinned ? undefined : isSelected"
+    @click="browser.select(props.row.path)"
+    @dblclick="browser.togglePlay(props.row.path)"
     @contextmenu.prevent.stop="emit('contextMenu', { event: $event, path: props.row.path })"
   >
     <div
@@ -137,16 +139,14 @@ watch(
     </div>
 
     <span
-      class="min-w-0 flex-1 cursor-default truncate"
+      class="min-w-0 flex-1 truncate"
       :class="isPlaying ? 'text-sky-400' : isSelected ? 'text-sky-200' : 'text-zinc-200'"
       :title="props.row.path"
-      @click="browser.select(props.row.path)"
-      @dblclick="browser.togglePlay(props.row.path)"
     >{{ title }}</span>
     <span
       v-if="props.row.pinned"
       class="shrink-0 rounded bg-sky-500/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-300"
-    >{{ isPlaying ? 'Playing' : 'Paused' }}</span>
+    >Playing</span>
     <span class="w-40 shrink-0 truncate text-zinc-500">{{ fileInfo?.artist ?? '' }}</span>
     <span class="w-40 shrink-0 truncate text-zinc-500">{{ fileInfo?.album ?? '' }}</span>
     <span class="w-12 shrink-0 truncate text-zinc-500">{{ typeLabel }}</span>
@@ -158,7 +158,12 @@ watch(
       class="w-12 shrink-0 text-right font-mono tabular-nums text-zinc-500"
     >{{ durationLabel }}</span>
 
-    <div class="flex shrink-0 items-center gap-1">
+    <!-- The row's own double-click plays the file; the buttons here have their own
+         meaning, so a quick second click on one must not also start playback. -->
+    <div
+      class="flex shrink-0 items-center gap-1"
+      @dblclick.stop
+    >
       <button
         type="button"
         class="flex h-5 w-5 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-100"

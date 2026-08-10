@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const lengthInput = defineModel<string>('lengthInput', { required: true })
-const bpmInput = defineModel<string>('bpmInput', { required: true })
+const bpmInput = defineModel<string | number>('bpmInput', { required: true })
 const isEditingLength = defineModel<boolean>('isEditingLength', { required: true })
 const isEditingBpm = defineModel<boolean>('isEditingBpm', { required: true })
 
@@ -23,6 +23,34 @@ const emit = defineEmits<{
   bumpBpm: [delta: number]
   toggleMetronome: []
 }>()
+
+/** Pointer travel still treated as a click rather than a drag-select. */
+const CLICK_SLOP_PX = 3
+
+// Entering the BPM box selects the tempo so it can be overtyped. Selecting on focus alone
+// is not enough for a mouse: the click that focuses the box drops a caret afterwards and
+// collapses it, so a plain click re-selects on mouse-up. A drag is left alone — that is a
+// deliberate partial pick.
+let bpmClickOrigin: { x: number; y: number } | null = null
+
+function onBpmFocus(e: FocusEvent): void {
+  isEditingBpm.value = true
+  ;(e.target as HTMLInputElement).select()
+}
+
+function onBpmMouseDown(e: MouseEvent): void {
+  const input = e.currentTarget as HTMLInputElement
+  bpmClickOrigin = document.activeElement === input ? null : { x: e.clientX, y: e.clientY }
+}
+
+function onBpmMouseUp(e: MouseEvent): void {
+  const origin = bpmClickOrigin
+  bpmClickOrigin = null
+  if (origin === null) return
+  const moved =
+    Math.abs(e.clientX - origin.x) > CLICK_SLOP_PX || Math.abs(e.clientY - origin.y) > CLICK_SLOP_PX
+  if (!moved) (e.currentTarget as HTMLInputElement).select()
+}
 
 /** BPM step for a modifier state: whole integer by default, fine 0.01 with Alt
  *  (the app's fine-adjust modifier). */
@@ -144,7 +172,9 @@ function onBpmWheel(e: WheelEvent): void {
                 ? 'animate-pulse bg-blue-500/10 px-1 text-blue-200 ring-1 ring-blue-400/40'
                 : 'text-zinc-100'
             ]"
-            @focus="isEditingBpm = true"
+            @focus="onBpmFocus"
+            @mousedown="onBpmMouseDown"
+            @mouseup="onBpmMouseUp"
             @blur="emit('bpmCommit')"
             @keydown="emit('bpmKeydown', $event)"
             @wheel="onBpmWheel"

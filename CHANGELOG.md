@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.1
+
+### Changed
+
+- The file browser's now-playing bar now shows only what is actually playing, and holds its place when nothing is.
+- Clicking into the project tempo box now selects its contents.
+
+### Fixed
+
+- The project tempo now retimes the arrangement once the edit settles, instead of on every arrow or spinner step.
+- A file in the file browser can now be selected and played from anywhere on its row, instead of only from its name.
+
 ## 1.6.0
 
 ### Added

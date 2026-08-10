@@ -1956,6 +1956,25 @@ before/after ratio once the warp passes have settled
 `effectiveDurationMs` and `scaleEnvelopePoints`. Applying the project scale here
 instead would drag the shapes off the clips that did not move.
 
+**When a tempo edit applies.** The retime above is a whole-arrangement pass, so
+running it per keystroke made the transport bar's BPM box animate the timeline —
+and lag behind — as the arrows or the spinner were held.
+`useProjectBpmEditor` (`lib/transport/`) owns the box's text and *when* a tempo
+reaches `applyProjectBpm`: a step updates the displayed number immediately but
+only schedules the apply, `BPM_SETTLE_MS` (250 ms) after the last one, so a run
+of steps costs one retime across a single old→new ratio rather than one per
+tick. `Enter` and blur cancel that timer and apply at once, and a tempo arriving
+from anywhere else — a project load, Project Properties, first-clip seeding —
+cancels a pending edit instead of being overwritten by it, since the box is a
+proposal and `transport.bpm` is the fact. A pending target is held at full
+precision and rounded only for display. Two details are easy to get wrong: a
+`v-model` on `<input type="number">` hands the parser a `number`, not a string,
+so it must accept either; and a number input has no `selectionStart`, so
+select-on-entry re-selects on `mouseup` only when the pointer travelled less
+than `CLICK_SLOP_PX`, leaving a genuine drag-select alone. The tempo range
+itself lives once in `lib/musicTime.ts` (`MIN_BPM` / `MAX_BPM` / `clampBpm`),
+shared by the editor, `transportStore.setBpm` and the clip editor's beat grid.
+
 **Manual tempo.** When detection is wrong or absent the user can set a BPM by hand
 on a source item. `LIBRARY_ITEM_SET_MANUAL_TEMPO { itemId, bpm, beatAnchorSec }`
 builds a rigid grid across the item's duration on the backend and re-broadcasts
@@ -2795,7 +2814,11 @@ exposed, and it is revoked when the folder is removed. Each row carries **Back
 to start**, **Play / Pause**, and **Import** buttons; the same actions are on
 its right-click menu. Import runs through `importAudioPathsIntoLibrary`, the
 same path as a drag-and-drop import, so a browsed file becomes an ordinary
-library item with no special casing downstream.
+library item with no special casing downstream. The **whole row** is the click
+target — a click selects it and a double-click plays it, wherever on the strip
+of columns it lands, matching how folder rows already behaved. The button
+cluster stops double-clicks so a quick second press on Play or Import cannot
+also toggle row playback.
 
 **Refreshing.** A refresh re-crawls the whole added root, because the index is
 stored and cached per root rather than per folder. The crawl's tags are
@@ -2819,10 +2842,19 @@ chosen audio output device. `PREVIEW_LOAD` gained an optional `filePath` for
 this: the file is not a library item, so there is no `libraryItemId` to resolve
 (see [Bridge protocol](#bridge-protocol)). Only one thing plays at a time, so
 starting an audition stops project playback, and removing a folder stops the
-audition. The auditioned file is also shown in a **bar above the tree**,
-outside the scroll container, so what is playing is never lost to scrolling or a
-filter — it reports playback, and the file stays listed in its own folder as
-well.
+audition. The file being auditioned is also shown in a **bar above the tree**,
+outside the scroll container, so a file that is *sounding* is never lost to
+scrolling or a filter. The bar is a handle on live playback rather than a
+history: it carries a row only while the audition plays, so pausing it — or
+letting it finish — empties the bar instead of leaving a stale row sitting on top
+of a filtered list. The strip itself is always rendered and keeps a row's height
+whether or not anything is playing, so starting and stopping an audition cannot
+shunt the tree up and down under the pointer. Idle it holds a **Nothing playing**
+label and the same transport and Import controls in their disabled state, so the
+reserved space reads as the audition slot rather than as a gap. The strip is its
+own component, `FileBrowserAuditionBar.vue`, which reads `pinnedAudition`
+directly rather than taking it as a prop. The file stays
+listed in its own folder throughout.
 
 A format the engine cannot decode is auditioned from a transcoded WAV (see
 [Audio formats](#audio-formats)), so the preview voice does not always hold the

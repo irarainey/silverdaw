@@ -3,10 +3,11 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useFileBrowserStore, fileBrowserRowIndentPx } from '@/stores/fileBrowserStore'
 import FileBrowserFileRow from '@/components/FileBrowserFileRow.vue'
+import FileBrowserAuditionBar from '@/components/FileBrowserAuditionBar.vue'
 import ClipContextMenu, { type ClipContextMenuItem } from '@/components/ClipContextMenu.vue'
 
 const browser = useFileBrowserStore()
-const { roots, rows, filterHidesEverything, pinnedAudition } = storeToRefs(browser)
+const { roots, rows, filterHidesEverything } = storeToRefs(browser)
 
 const contextMenu = ref<{ path: string; isRoot: boolean; kind: 'directory' | 'file'; x: number; y: number } | null>(
   null
@@ -155,17 +156,9 @@ onMounted(async () => {
     </div>
 
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <!-- Outside the scroller so what is playing is never lost to scrolling or
-           a filter. The file also stays listed in its own folder. -->
-      <div
-        v-if="pinnedAudition"
-        class="shrink-0 border-b border-zinc-800 bg-zinc-900/60 py-0.5"
-      >
-        <FileBrowserFileRow
-          :row="pinnedAudition"
-          @context-menu="openContextMenu($event.event, $event.path, 'file', false)"
-        />
-      </div>
+      <FileBrowserAuditionBar
+        @context-menu="openContextMenu($event.event, $event.path, 'file', false)"
+      />
 
       <div
         ref="treeEl"
