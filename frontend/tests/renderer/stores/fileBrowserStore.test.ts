@@ -877,6 +877,38 @@ describe('useFileBrowserStore audition bar', () => {
     expect(browser.filterHidesEverything).toBe(true)
   })
 
+  it('clears the bar when the audition is paused', async () => {
+    const browser = useFileBrowserStore()
+    const preview = usePreviewStore()
+    await browser.hydrate()
+    browser.play(TOP)
+    preview.pendingPlay = false
+    preview.isPlaying = true
+
+    expect(browser.pinnedAudition).toMatchObject({ path: TOP, pinned: true })
+
+    preview.isPlaying = false
+
+    // The bar is a handle on live playback, not a history: a stopped audition is
+    // reachable in its folder like any other file, and must not sit on top of a
+    // filtered list as a leftover the filter cannot clear.
+    expect(browser.pinnedAudition).toBeNull()
+    expect(browser.auditionedPath).toBe(TOP)
+  })
+
+  it('keeps the bar across the gap between loading a file and hearing it', async () => {
+    const browser = useFileBrowserStore()
+    const preview = usePreviewStore()
+    await browser.hydrate()
+    browser.play(TOP)
+
+    // The engine has not reported playback yet, but the file is on its way to
+    // being heard, so the bar must not flicker in only once the ack lands.
+    expect(preview.pendingPlay).toBe(true)
+    expect(preview.isPlaying).toBe(false)
+    expect(browser.pinnedAudition).toMatchObject({ path: TOP, pinned: true })
+  })
+
   it('reports nothing while no file is being auditioned', async () => {
     const browser = useFileBrowserStore()
     await browser.hydrate()

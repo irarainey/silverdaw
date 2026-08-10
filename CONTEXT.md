@@ -25,8 +25,8 @@ exact-position markers, Clear All Markers, smooth playhead-follow scrolling,
 `Enter` to accept a dialog, restyled dropdowns, an immediate timeline paint on
 project open, and a set of beat-grid, marker, MIDI-jog, audio-driver and
 loop-playback fixes. **1.5.1** was a patch covering undo and clip-split
-correctness and performance. The current release is **1.5.3**, a patch fixing
-warped clips: a stretched clip now plays and exports for its full stretched
+correctness and performance. **1.5.3** was a patch fixing warped clips: a
+stretched clip now plays and exports for its full stretched
 length, and saved music samples auto-warp to the project tempo on drop and offer
 Follow project BPM / Pin in the warp controls. It also settles what a one-shot
 is: a simple sample cannot hold a BPM at all, and no surface draws a beat grid
@@ -39,9 +39,14 @@ the markers and the playhead all move with it; a reanalysis likewise brings the
 clips already using that source onto its new tempo. It also detects an audio
 device that has silently stopped delivering audio and restarts it, rather than
 leaving the transport showing playback with a playhead that never moves.
-**Unreleased, in the working tree:** a user-scoped **file browser** (the library
-panel's Files tab) for browsing folders of audio on disk, auditioning a file
-before importing it, and importing it — see `docs/development-plan.md` §1.6.0.
+**1.6.0** added a user-scoped **file browser** (the library panel's Files tab)
+for browsing folders of audio on disk, auditioning a file before importing it,
+and importing it — see `docs/development-plan.md` §1.6.0.
+The current release is **1.6.1**, a patch settling the project tempo box — a
+tempo applies once the edit settles rather than on every spinner tick, typing a
+tempo commits, and entering the box selects what is there — and tidying the file
+browser, where the now-playing bar clears when the audition stops and a whole
+row is the click target.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
@@ -134,7 +139,9 @@ Match the existing harness — **never introduce a new test framework**. This bi
 within a tier: no second unit framework beside Vitest, no second backend harness
 beside `SilverdawBackendTests`. The backend uses a custom `SilverdawBackendTests`
 harness wired into **CTest** (no Catch2/GoogleTest); the frontend uses **Vitest**
-with Vue Test Utils; **Playwright** (`frontend/e2e/`, `pnpm test:e2e`) drives the
+in a `node` environment (Vue Test Utils is not installed, so component behaviour
+belongs to the e2e tier, not to a unit spec); **Playwright**
+(`frontend/e2e/`, `pnpm test:e2e`) drives the
 built app against a real backend for end-to-end journeys. The e2e tier
 supplements the other two and replaces neither — keep it few, wide, and asserted
 on the DOM, the filesystem, and saved project files, never on canvas pixels.

@@ -125,9 +125,11 @@ maintainability gate. Vue specifics:
 
 Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
 
-- Vue Test Utils + Vitest; test behaviour, not implementation detail.
-- `mount` / `shallowMount` for component isolation; mock router / Pinia as needed.
-- Playwright for e2e (planned); test accessibility with axe-core.
+- Vitest runs in a `node` environment and Vue Test Utils is **not** installed, so
+  test composables and stores directly (`effectScope()` for a composable that
+  registers scope hooks) and leave rendered-component behaviour to the e2e tier.
+- Playwright (`frontend/e2e/`) is the tier that drives real components in the
+  built app; a DOM-level defect belongs there.
 
 ### Security
 

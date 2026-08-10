@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.5.3" } }
+{ "type": "READY", "payload": { "version": "1.6.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1970,7 +1970,7 @@ already done, and show that one is running. No new user-facing concepts.
    from the clip start (`OffsetSource`: `timelineSample - clipStart`), so it
    splits on the timeline axis regardless of reverse.
 
-### 1.5.3 - Tempo, Warp & Sample Correctness *(current release)*
+### 1.5.3 - Tempo, Warp & Sample Correctness *(released)*
 
 **Goal:** make one clip have one tempo, and make every surface that draws,
 snaps, warps or plays it agree on that tempo. No new user-facing concepts —
@@ -2037,7 +2037,7 @@ every item corrects behaviour that already shipped. See ADR 0024.
     the timeline selection through a save/reopen round trip, and drop-time warp
     into an established project tempo.
 
-### 1.6.0 - Library File Browser *(in development)*
+### 1.6.0 - Library File Browser *(released)*
 
 **Goal:** let a user find, listen to, and import a track from their own folders
 without leaving the app, and without widening what Silverdaw is allowed to read.
@@ -2059,12 +2059,41 @@ without leaving the app, and without widening what Silverdaw is allowed to read.
    Starting an audition stops project playback; removing a folder stops the
    audition. Import goes through the ordinary import path.
 5. [x] **The audition is never lost.** A now-playing bar sits above the tree,
-   outside the scroller, so scrolling or filtering cannot hide what is playing;
-   clearing the filter reopens its folders and reselects it.
+   outside the scroller, so scrolling or filtering cannot hide a file that is
+   playing; it clears when playback stops, and clearing the filter reopens the
+   audition's folders and reselects it.
 6. [x] **Keyboard-driven.** `↑` / `↓` / `Enter` / `Delete` drive the tree, and
    work from the filter field too. `lib/selectionKeys.ts` gives a list that owns
    these keys a single opt-out from both capture-phase global keyboard owners,
    so a component shortcut can no longer double-fire an app-wide one.
+
+### 1.6.1 - Tempo Box & File Browser Polish *(current release)*
+
+**Goal:** make editing the project tempo feel settled rather than animated, and
+make the file browser's now-playing bar and rows behave the way they read.
+
+1. [x] **A tempo applies when the edit settles.** `useProjectBpmEditor` owns the
+   tempo box's text and *when* a tempo applies: a spinner or arrow step updates
+   the box at once but retimes the arrangement once, 250 ms after the last step,
+   so a run of steps costs one retime across a single old→new ratio instead of
+   one per tick. `Enter` and blur commit immediately, and a tempo arriving from
+   anywhere else — project load, Project Properties, first-clip seeding —
+   cancels a pending edit rather than being overwritten by it. Pending targets
+   are kept at full precision and rounded only for display.
+2. [x] **Typing a tempo commits it.** `v-model` on a number input hands the
+   parser a `number`, not a string, so parsing accepts either.
+3. [x] **Entering the tempo box selects its contents**, so it can be overtyped
+   without clearing it first, while a drag to select still selects a range.
+4. [x] **The now-playing bar means playing.** `pinnedAudition` requires a live
+   audition, so the bar empties when playback stops instead of holding a stopped
+   file above the tree; a file that can still be stopped is still always shown.
+   The strip holding it is always rendered at a row's height, so an audition
+   starting or stopping no longer shunts the tree under the pointer; idle it
+   shows a **Nothing playing** label and disabled controls rather than a gap.
+5. [x] **A whole row is the click target.** Selecting and auditioning a file no
+   longer depends on hitting its name, matching how folder rows already behaved.
+6. [x] **One more e2e journey** (ADR 0014): a file browser audition, from adding
+   a folder through playing a row to the bar clearing on pause.
 
 ### Phase 1 — Backend Foundation & Bridge
 
