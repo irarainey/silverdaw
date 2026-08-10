@@ -11,6 +11,7 @@ import { log } from '@/lib/log'
 import { MAX_MASTER_DB, taperPositionToLinear } from '@/lib/audio/db'
 import { barPositionDisplay, formatTime, parseTime } from '@/lib/musicTime'
 import { useAudioQuickSwitch } from '@/lib/transport/useAudioQuickSwitch'
+import { useProjectBpmEditor } from '@/lib/transport/useProjectBpmEditor'
 import { useTransportSkip } from '@/lib/transport/useTransportSkip'
 import { playbackBoundaryAction } from '@/lib/transport/playbackBoundary'
 
@@ -52,10 +53,6 @@ export function useTransportBarController() {
   })
 
   // User edits update local state and persist to the backend.
-  function applyBpm(bpm: number): void {
-    project.applyProjectBpm(bpm)
-  }
-
   function applyProjectLength(ms: number): void {
     const minLengthMs = project.longestClipEndMs
     const requestedMs = Math.max(0, Math.floor(ms))
@@ -133,15 +130,8 @@ export function useTransportBarController() {
     }
   )
 
-  // BPM mirrors the store while not focused.
-  const bpmInput = ref(transport.bpm.toFixed(2))
-  const isEditingBpm = ref(false)
-  watch(
-    () => transport.bpm,
-    (bpm) => {
-      if (!isEditingBpm.value) bpmInput.value = bpm.toFixed(2)
-    }
-  )
+  // BPM edits debounce into a single retime; see useProjectBpmEditor.
+  const { bpmInput, isEditingBpm, bumpBpm, onBpmCommit, onBpmKeydown } = useProjectBpmEditor()
 
   const lengthEditable = computed(() => project.tracks.length > 0)
   /** Timing readouts are disabled until the project has playable content. */
@@ -235,40 +225,7 @@ export function useTransportBarController() {
     lengthInput.value = formatTime(project.durationMs)
   }
 
-  function onBpmCommit(): void {
-    isEditingBpm.value = false
-    const n = Number(bpmInput.value)
-    if (!Number.isFinite(n)) {
-      bpmInput.value = transport.bpm.toFixed(2)
-      return
-    }
-    applyBpm(n)
-    bpmInput.value = transport.bpm.toFixed(2)
-  }
 
-  function onBpmKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-    else if (e.key === 'Escape') {
-      bpmInput.value = transport.bpm.toFixed(2)
-        ; (e.target as HTMLInputElement).blur()
-    }
-    else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      bumpBpm(e.altKey ? 0.01 : 1)
-    }
-    else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      bumpBpm(e.altKey ? -0.01 : -1)
-    }
-  }
-
-  /** Bump BPM; `setBpm` clamps and rounds. */
-  function bumpBpm(delta: number): void {
-    const base = isEditingBpm.value ? Number(bpmInput.value) : transport.bpm
-    const start = Number.isFinite(base) ? base : transport.bpm
-    applyBpm(start + delta)
-    bpmInput.value = transport.bpm.toFixed(2)
-  }
 
   // ─── Transport navigation ────────────────────────────────────────────────
   const { onSkipBack, onPlay, onSkipForward } = useTransportSkip()

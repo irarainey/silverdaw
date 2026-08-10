@@ -12,6 +12,7 @@ import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
 import { libraryItemIsSimple } from '@/stores/libraryItemHelpers'
 import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 
 export interface ClipEditorBeatGridDeps {
   /** The source library item backing the clip, or null when unavailable. */
@@ -94,9 +95,6 @@ export interface ClipEditorBeatGrid {
    *  freshly opened editor, recapturing the current source tempo as the baseline. */
   reset: () => void
 }
-
-const MIN_BPM = 20
-const MAX_BPM = 300
 
 export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorBeatGrid {
   const library = useLibraryStore()

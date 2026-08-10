@@ -143,7 +143,11 @@ test('a tempo change warps and retimes what is already placed', async ({ launchA
   expect(before.clipWarpEnabled).toBe(false)
 
   // ── Change the tempo ──────────────────────────────────────────────────────
-  await bpmField.fill(TARGET_BPM.toFixed(2))
+  // Typed the way a user types it: click in, overtype, Enter. `fill` would replace the
+  // value wholesale and prove neither that entering the box selects the seeded tempo nor
+  // that Enter commits it.
+  await bpmField.click()
+  await bpmField.pressSequentially(TARGET_BPM.toFixed(2))
   await bpmField.press('Enter')
   await expect(bpmField).toHaveValue(TARGET_BPM.toFixed(2))
 

@@ -9,6 +9,15 @@ const GRID_STEP_EPSILON_MS = 1e-6
 export const DEFAULT_SUBS_PER_BEAT = 4
 export const DEFAULT_BEATS_PER_BAR = 4
 
+/** Editable tempo range, shared by the project tempo and clip beat grids. */
+export const MIN_BPM = 20
+export const MAX_BPM = 300
+
+/** Clamps to the editable tempo range, keeping full precision for timeline math. */
+export function clampBpm(bpm: number): number {
+  return Math.min(MAX_BPM, Math.max(MIN_BPM, bpm))
+}
+
 /** Milliseconds per sub-beat; clamps BPM to avoid infinite timeline geometry. */
 export function msPerSubBeat(bpm: number, subsPerBeat: number = DEFAULT_SUBS_PER_BEAT): number {
   return 60000 / (Math.max(1, bpm) * subsPerBeat)

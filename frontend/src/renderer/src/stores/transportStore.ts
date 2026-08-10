@@ -2,6 +2,7 @@
 
 import { defineStore } from 'pinia'
 import { log } from '@/lib/log'
+import { clampBpm } from '@/lib/musicTime'
 
 interface TransportState {
   isPlaying: boolean
@@ -100,7 +101,7 @@ export const useTransportStore = defineStore('transport', {
     },
     setBpm(bpm: number): void {
       // Clamp away invalid grid math, but keep full precision to avoid timeline drift.
-      this.bpm = Math.min(300, Math.max(20, bpm))
+      this.bpm = clampBpm(bpm)
     },
     setBpmSeeded(seeded: boolean): void {
       this.bpmSeeded = seeded

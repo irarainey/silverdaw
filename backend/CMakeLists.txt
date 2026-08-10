@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.6.0
+    VERSION 1.6.1
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 

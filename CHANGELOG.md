@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.1
+
+### Changed
+
+- Clicking into the project tempo box now selects the tempo, so it can be overtyped without clearing it first.
+
+### Fixed
+
+- Holding the arrow keys or the spinner on the project tempo now retimes the arrangement once, when the tempo settles, instead of rescaling the timeline and every clip on each step and lagging behind a large change.
+
 ## 1.6.0
 
 ### Added
