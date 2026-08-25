@@ -126,6 +126,60 @@ void broadcastPluginList(AudioEngine& engine, BridgeServer& bridge)
     bridge.broadcast("PLUGIN_LIST", buildPluginListEnvelope(engine));
 }
 
+juce::String buildUnresolvedPluginNotice(const ProjectState& projectState,
+                                        const std::function<bool(const juce::String&)>& isInstalled)
+{
+    juce::StringArray missing;
+    juce::StringArray seenIdentifiers;
+
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+
+        for (const auto& slot : projectState.getTrackPlugins(track.getProperty("id").toString()))
+        {
+            if (isInstalled(slot.identifier)) continue;
+            // The same plugin on several tracks is one problem, so it is named once.
+            if (seenIdentifiers.contains(slot.identifier)) continue;
+
+            seenIdentifiers.add(slot.identifier);
+            missing.add(slot.name);
+        }
+    }
+
+    if (missing.isEmpty()) return {};
+
+    if (missing.size() == 1)
+    {
+        return missing[0] + " is not installed on this computer, so that insert plays "
+                            "unprocessed. Its settings are kept, and return if you install it again.";
+    }
+
+    const auto leading = missing.joinIntoString(", ", 0, missing.size() - 1);
+    return leading + " and " + missing[missing.size() - 1] +
+           " are not installed on this computer, so those inserts play unprocessed. Their "
+           "settings are kept, and return if you install them again.";
+}
+
+void notifyUnresolvedTrackPlugins(AudioEngine& engine, const ProjectState& projectState, BridgeServer& bridge)
+{
+    // A missing plugin degrades silently: the slot passes audio through, so the only symptom
+    // is that a track sounds unprocessed. The Plugins panel does flag it, but only once the
+    // user selects that particular track — which they have no reason to do if they do not
+    // already suspect anything. Unlike a missing audio file, which is visible on the timeline
+    // the moment a project opens, this is invisible, so it is worth saying out loud once.
+    auto& catalogue = engine.pluginCatalogue();
+    const auto notice = buildUnresolvedPluginNotice(
+        projectState, [&catalogue](const juce::String& identifier) { return catalogue.hasPlugin(identifier); });
+
+    if (notice.isEmpty()) return;
+
+    broadcastPluginNotice(bridge, notice, "info");
+    log::info("plugins", "project references uninstalled plugins: " + notice);
+}
+
 void handlePluginListRequest(AudioEngine& engine, BridgeServer& bridge)
 {
     broadcastPluginList(engine, bridge);

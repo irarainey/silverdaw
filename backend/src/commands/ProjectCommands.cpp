@@ -6,6 +6,7 @@
 #include "DecodedCache.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
+#include "PluginCommands.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
 
@@ -110,6 +111,8 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     session.currentPath = filePath;
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    // After the snapshot, so the notice lands on a project the user can already see.
+    silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
     silverdaw::log::info("project", "PROJECT_LOAD ok path=" + filePath);
 }
 
@@ -382,6 +385,8 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     session.currentPath = originalPath;
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    // After the snapshot, so the notice lands on a project the user can already see.
+    silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
 
     // ProjectFile::load marks clean, so re-dirty recovered projects explicitly.
     projectState.markDirty();

@@ -1,9 +1,11 @@
 // Per-track VST3 insert slots in ProjectState (ADR 0025): CRUD, chain ordering when clips share
 // the child list, and the PROJECT_STATE shape the renderer's Plugins panel reads — including the
-// unresolved flag, which is derived from the machine and must never be persisted.
+// unresolved flag, which is derived from the machine and must never be persisted. Also covers the
+// load-time notice that names inserts missing from this computer.
 
 #include "TestRegistry.h"
 
+#include "PluginCommands.h"
 #include "ProjectState.h"
 #include "ProjectStateTypes.h"
 
@@ -141,6 +143,47 @@ void testTrackPluginJsonExposesUnresolvedWithoutPersistingIt()
     }
 }
 
+void testUnresolvedPluginNoticeNamesEachMissingPluginOnce()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t-a") && state.addTrack("t-b"), "both tracks should be added");
+
+    require(state.addTrackPlugin("t-a", makeSlot("s1", "id-present", "Present EQ")), "s1 added");
+    require(state.addTrackPlugin("t-a", makeSlot("s2", "id-gone", "Vocoder")), "s2 added");
+    // The same missing plugin on a second track is still one problem for the user.
+    require(state.addTrackPlugin("t-b", makeSlot("s3", "id-gone", "Vocoder")), "s3 added");
+
+    const auto installed = [](const juce::String& identifier) { return identifier == "id-present"; };
+
+    const auto notice = silverdaw::buildUnresolvedPluginNotice(state, installed);
+    require(notice.contains("Vocoder"), "the missing plugin should be named");
+    require(!notice.contains("Present EQ"), "an installed plugin must not be named");
+    require(notice.indexOf("Vocoder") == notice.lastIndexOf("Vocoder"),
+            "a plugin missing on two tracks should be named once, not once per slot");
+    require(notice.contains(" is not installed"), "a single missing plugin reads in the singular");
+
+    require(state.addTrackPlugin("t-b", makeSlot("s4", "id-also-gone", "Tape Sim")), "s4 added");
+    const auto plural = silverdaw::buildUnresolvedPluginNotice(state, installed);
+    require(plural.contains("Vocoder and Tape Sim"), "several missing plugins are listed together");
+    require(plural.contains(" are not installed"), "several missing plugins read in the plural");
+}
+
+void testUnresolvedPluginNoticeIsSilentWhenEverythingResolves()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t-a"), "track should be added");
+    require(state.addTrackPlugin("t-a", makeSlot("s1", "id-present", "Present EQ")), "s1 added");
+
+    require(silverdaw::buildUnresolvedPluginNotice(state, [](const juce::String&) { return true; })
+                .isEmpty(),
+            "a project whose inserts all resolve must not nag the user");
+
+    silverdaw::ProjectState empty;
+    require(silverdaw::buildUnresolvedPluginNotice(empty, [](const juce::String&) { return false; })
+                .isEmpty(),
+            "a project with no inserts has nothing to report");
+}
+
 } // namespace
 
 void addProjectStateTrackPluginTests(std::vector<TestCase>& tests)
@@ -150,6 +193,10 @@ void addProjectStateTrackPluginTests(std::vector<TestCase>& tests)
                      testTrackPluginReorderIgnoresOtherChildren});
     tests.push_back({"ProjectState track plugins expose unresolved without persisting it",
                      testTrackPluginJsonExposesUnresolvedWithoutPersistingIt});
+    tests.push_back({"Unresolved plugin notice names each missing plugin once",
+                     testUnresolvedPluginNoticeNamesEachMissingPluginOnce});
+    tests.push_back({"Unresolved plugin notice is silent when every insert resolves",
+                     testUnresolvedPluginNoticeIsSilentWhenEverythingResolves});
 }
 
 } // namespace silverdaw::tests

@@ -851,7 +851,11 @@ Behaviours to state plainly rather than let a user discover:
   interruption, unlike a scanner crash.
 - **A missing plugin is preserved, not dropped.** The slot keeps its position
   and saved state, passes audio through untouched, and is written back on save
-  (ADR 0019).
+  (ADR 0019). Opening a project that references one raises a single
+  `PLUGIN_NOTICE` naming each missing plugin once, because unlike a missing
+  audio file — which is visibly broken on the timeline — an insert that has
+  quietly stopped processing is otherwise only discoverable by selecting that
+  track and opening the Plugins panel.
 
 ### Where plugins are found
 
