@@ -68,16 +68,58 @@ describe('project bridge handlers', () => {
     expect(applyMidiInputs).toHaveBeenCalledTimes(2)
   })
 
-  it('clears transient MIDI playback holds on a project snapshot', () => {
+  it('clears playback and transient MIDI holds when a snapshot replaces the project', () => {
     const transport = useTransportStore()
     transport.setPlaybackState(true)
     transport.beginMidiPlaybackHold('ddj-rb:2')
 
-    projectBridgeHandlers.PROJECT_STATE(emptySnapshot)
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, reset: true })
 
     expect(transport.isPlaying).toBe(false)
     expect(transport.midiPlaybackHoldActive).toBe(false)
     expect(transport.midiPlaybackHoldSources).toEqual([])
+    // Adopted from the backend, not requested locally, so nothing is left in flight to
+    // make the next PLAYHEAD_UPDATE wait out the settle window.
+    expect(transport.playIntentAt).toBeNull()
+  })
+
+  it('clears playback after an undo/redo rebuild, which stops the engine', () => {
+    // The full-rebuild undo path calls engine.stop() and then broadcasts a soft-replace
+    // snapshot. PlayheadEmitter would re-assert the stop anyway, but not before the UI
+    // had shown playback that had already ended.
+    const transport = useTransportStore()
+    transport.setPlaybackState(true)
+
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, softReplace: true })
+
+    expect(transport.isPlaying).toBe(false)
+  })
+
+  it('leaves live playback alone for an edit snapshot', () => {
+    // Reported: bypassing a plugin mid-playback flipped the UI to stopped and rewound
+    // the ruler, then caught up ~2s later. The plugin commands re-broadcast the whole
+    // project, and every snapshot used to be treated as a transport event.
+    const transport = useTransportStore()
+    transport.setBridgeReady(true)
+    transport.setPlaybackState(true)
+    transport.setPosition(30_000)
+    transport.beginMidiPlaybackHold('ddj-rb:2')
+
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, playheadMs: 0 })
+
+    expect(transport.isPlaying).toBe(true)
+    expect(transport.positionMs).toBe(30_000)
+    expect(transport.midiPlaybackHoldSources).toEqual(['ddj-rb:2'])
+  })
+
+  it('restores the persisted playhead on the first snapshot of a connection', () => {
+    // The connect contract: a renderer reload rejoins the engine and has to get its
+    // position back from the snapshot rather than waiting for playback to move it.
+    const transport = useTransportStore()
+
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, playheadMs: 12_000 })
+
+    expect(transport.positionMs).toBe(12_000)
   })
 
   it('closes and clears the scratch editor on a project reset', () => {

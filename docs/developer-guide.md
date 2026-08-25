@@ -1489,6 +1489,23 @@ user just created, so a race between an early user action and the snapshot arriv
 lose work. On a load / new-project the same envelope carries `reset: true` and the renderer
 wipes its mirror before applying.
 
+**Not every snapshot is a transport event.** Only a `reset: true` replacement and an
+undo/redo `softReplace: true` rebuild stop playback and clear MIDI platter holds,
+because both stop the engine backend-side — the undo full-rebuild path calls
+`engine.stop()` before it broadcasts — and adopting that at once beats waiting for
+`PlayheadEmitter` to re-assert it. An ordinary edit snapshot leaves the transport
+alone. The plugin commands re-broadcast the whole project to change one field, so
+treating every snapshot as a stop made bypassing a plugin mid-playback flip the
+transport to stopped and rewind the ruler to the persisted playhead, then catch up
+seconds later. The persisted playhead is likewise adopted only on a replacement or on
+the first snapshot of a connection, which is what restores the position after a
+renderer reload. `resetPlaybackForProjectChange` clears `playIntentAt` instead of
+stamping it, since the stop is the backend's, not a local intent, and a stamped intent
+would make the next `PLAYHEAD_UPDATE` wait out the settle window. Any other path that
+stops the engine without a replacement snapshot — a first Save As that relocates temp
+artifacts, say — is caught by the emitter's stop edge and 1 Hz stopped heartbeat, which
+is what keeps the UI self-correcting rather than edge-dependent.
+
 Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (then the Vue
 `StartupScreen` once it mounts) blocks all input so the user can't act on state that
 hasn't been reconciled yet. `StartupScreen` is the single boot-and-landing surface — it

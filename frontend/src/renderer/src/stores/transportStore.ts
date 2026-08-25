@@ -92,6 +92,24 @@ export const useTransportStore = defineStore('transport', {
     },
 
     /**
+     * Adopt "stopped" after the backend replaced the project or rebuilt the graph for
+     * undo/redo, both of which stop the engine.
+     *
+     * This is authoritative state, not local intent, so it clears `playIntentAt` rather
+     * than stamping it. Stamping made the next `PLAYHEAD_UPDATE` wait out the settle
+     * window before it could correct anything, which is why the transport sat wrong for
+     * two seconds after a snapshot instead of being reconciled at once.
+     */
+    resetPlaybackForProjectChange(): void {
+      if (this.isPlaying) {
+        log.info('transport', 'playback state -> paused (project replaced)')
+      }
+      this.isPlaying = false
+      this.playIntentAt = null
+      this.clearMidiPlaybackHolds()
+    },
+
+    /**
      * Adopt the backend's playback state from `PLAYHEAD_UPDATE`.
      *
      * Local intent is optimistic, so it can be left stranded: a socket blip clears

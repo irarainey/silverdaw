@@ -19,6 +19,7 @@
 ### Fixed
 
 - The transport controls no longer get stuck showing stopped while the project is still playing if the engine has to reconnect.
+- Editing a track while it is playing — adding a beat repeat region, dropping in a transition, or importing to the library — no longer makes the transport briefly show stopped and the timeline jump back to the last saved position before catching up.
 - Starting a new project no longer keeps looping the previous project's loop range, and no longer inherits its reverb, delay or beat repeat settings.
 
 ## 1.6.1
