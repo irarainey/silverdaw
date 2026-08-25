@@ -853,6 +853,28 @@ Behaviours to state plainly rather than let a user discover:
   and saved state, passes audio through untouched, and is written back on save
   (ADR 0019).
 
+### Where plugins are found
+
+Scanning searches the two locations the VST3 specification defines on Windows,
+and nothing else:
+
+| Scope | Path |
+| --- | --- |
+| Per user | `%LOCALAPPDATA%\Programs\Common\VST3` |
+| Machine-wide | `C:\Program Files\Common Files\VST3` |
+
+These come from JUCE's `VST3PluginFormat::getDefaultLocationsToSearch()`, which
+Silverdaw passes to `PluginCatalogue::startScan` unmodified. There is
+deliberately **no preference for adding folders**: both paths are the standard
+every VST3 installer targets by default, so a configurable search path would add
+a setting that almost nobody needs and give a support burden — a plugin "missing"
+because it was installed somewhere non-standard — to everybody. A plugin
+installed outside them is not found; the fix is to install it to a standard
+location, not to point Silverdaw elsewhere.
+
+Note the paths are read at scan time, not cached, so a plugin installed while
+Silverdaw is running is picked up by the next **Scan for plugins**.
+
 ### Catalogue storage
 
 The catalogue is machine-scoped, not project-scoped, and lives in
@@ -866,6 +888,28 @@ loses only the scan results, and the next scan rebuilds it. Scanning runs the
 backend binary again as a child worker, and that worker is reused across files —
 it is replaced only when a plugin kills it, so isolation is "out of the engine
 process", not one process per plugin.
+
+A scan **reconciles** the cache rather than only adding to it. JUCE's
+`KnownPluginList` never removes anything, so a plugin uninstalled from the
+machine would otherwise stay in the picker forever, offering the user something
+that can no longer load. `PluginCatalogue::removeUninstalledPlugins` therefore
+drops every cached entry whose binary has gone, and runs **at load as well as
+after a scan** — at load the user has not asked for anything, so a plugin
+uninstalled between runs is gone from the picker immediately instead of lingering
+until someone thinks to rescan. It is affordable there precisely because it is
+not a scan: it asks the filesystem whether each cached path still exists and
+never loads or instantiates a binary, so it adds nothing measurable to startup,
+unlike a real scan which runs a child process over every plugin and takes
+minutes. The result is written back only when something actually went, so a
+normal launch does no extra disk work.
+
+Existence is the only test applied, which is sound precisely because the search
+paths are two fixed local folders — a path that has gone really has gone, rather
+than being a removable drive that happens to be unplugged; cached entries whose
+identifier is not an absolute path are left alone rather than guessed at. A
+project still using a dropped plugin is unaffected: the slot becomes
+`unresolved`, keeps its position and saved state, and is written back on save
+(ADR 0019).
 
 ## MIDI controller architecture
 

@@ -26,8 +26,8 @@ class PluginCatalogue
     /** True when a plugin with this `fileOrIdentifier` is installed and scanned. */
     bool hasPlugin(const juce::String& fileOrIdentifier) const;
 
+    /** The standard VST3 install locations, which are not user-configurable by design. */
     juce::FileSearchPath getSearchPaths() const;
-    void setUserSearchPaths(const juce::FileSearchPath& paths);
 
     // False when a scan is already running. Callbacks arrive on the scan thread; a caller
     // that needs the message thread marshals there itself.
@@ -47,11 +47,13 @@ class PluginCatalogue
     juce::File knownPluginsFile() const;
     juce::File deadMansPedalFile() const;
     void saveKnownPlugins() const;
+    // Drops cached entries whose binary is no longer installed, and answers how many went.
+    // Runs at load and at the end of a scan; it only tests for existence, never loads anything.
+    int removeUninstalledPlugins();
 
     juce::File dataDir;
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
-    juce::FileSearchPath userSearchPaths;
     // Declared before `scanJob` so the job's finished callback, which may fire while the job
     // is being destroyed, never touches a member that has already gone.
     // Not derived from the scan thread's liveness: the finished callback fires from inside
