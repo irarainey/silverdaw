@@ -141,6 +141,11 @@ class AudioEngine : private AudioEngineGraphState,
 
     std::vector<plugins::PluginSlotDescriptor> getTrackPluginSlots(const juce::String& trackId);
 
+    /** Message thread. What the slot's plugin negotiated, for the advisory shown when a
+     *  plugin asks for inputs or MIDI that Silverdaw does not send (ADR 0025). */
+    plugins::PluginSlotIo getTrackPluginIo(const juce::String& trackId,
+                                           const juce::String& slotId);
+
     /** The slot's live state chunk, for saving. Empty when the slot is unknown. */
     juce::MemoryBlock getTrackPluginState(const juce::String& trackId,
                                           const juce::String& slotId);

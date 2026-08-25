@@ -125,6 +125,45 @@ CLAP, and AU formats are out of scope. Plugin-parameter automation in
 particular needs a dynamic replacement for the fixed `AutomationParam` enum and
 is a decision of its own.
 
+**Sidechain inputs and MIDI to plugins are excluded on purpose, not deferred.**
+Inserts are fed stereo audio and an empty MIDI buffer, so a plugin that needs a
+carrier — a vocoder, a MIDI-triggered gate — produces little or no sound. That
+is a real limit and is reported rather than hidden: see *Telling the user what a
+plugin is missing* below. Lifting it is not a small change. Sidechaining would
+need arbitrary track-to-track routing, and today `TrackRuntime` carries only
+fixed `reverbSend` and `delaySend` atomics into two fixed project buses; real
+routing would have to guarantee a source renders before its consumer, reject
+cycles, and reconcile the two ends sitting at different chain latencies under
+ADR 0026. Feeding plugins notes would need sequenced MIDI — a note data model, a
+track type, an editor, project persistence, and a path through the offline
+mixdown snapshot. Live controller notes alone would be cheap, since
+`MidiDeviceCommands` already lands input in the engine, but mixdown renders from
+a snapshot, so the result would sound right while playing and export silence.
+
+Both belong to a different kind of product. Silverdaw is a studio tool for
+remixes and mashups built on recorded audio, and adding sequencing and a
+modular routing matrix would dilute that focus rather than sharpen it. Treat
+this as settled: propose it only alongside a change of product direction, and
+expect plain stereo effect plugins to stay the supported case.
+
+### Telling the user what a plugin is missing
+
+Because the limit above is permanent, it is surfaced rather than left to be
+discovered. A plugin that wants a carrier still loads, prepares, and runs
+correctly — it simply has nothing to voice, so the track goes quiet, which is
+indistinguishable from a crash or a routing bug. `PluginSlot::prepare` therefore
+logs the negotiated layout, and on a successful `TRACK_ADD_PLUGIN` the backend
+inspects the prepared slot and, when it reports more than two input channels or
+accepts MIDI, broadcasts `PLUGIN_NOTICE { message, severity }` naming what is
+missing.
+
+`PLUGIN_NOTICE` exists because `ENGINE_ERROR` carries raw handler faults and is
+deliberately shown behind one fixed, generic message, so any text routed through
+it is discarded. Plugin messages are written for the user and are shown
+verbatim, so they need an envelope of their own. The check reads the *prepared*
+slot rather than the scanned description, since the channel count that matters
+is the one bus negotiation actually settled on.
+
 ## Why
 
 - Placing inserts before level, sends, and pan keeps every existing mix control

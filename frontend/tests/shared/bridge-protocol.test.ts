@@ -109,7 +109,8 @@ const INBOUND_TYPES = {
   SCRATCH_PATTERN_RECORDED: true,
   SCRATCH_SOURCE_PEAKS_READY: true,
   PLUGIN_LIST: true,
-  PLUGIN_SCAN_PROGRESS: true
+  PLUGIN_SCAN_PROGRESS: true,
+  PLUGIN_NOTICE: true
 } satisfies Record<BridgeInboundType, true>
 
 describe('isBridgeInboundType', () => {

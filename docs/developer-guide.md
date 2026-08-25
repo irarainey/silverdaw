@@ -684,6 +684,19 @@ the backend draws in its own native window. A slot flagged `unresolved` names a
 plugin that is not installed on *this* machine; the flag is derived per broadcast
 from the catalogue and is never written to the project file.
 
+Inserts are fed **stereo audio and no MIDI**, which ADR 0025 excludes by design
+rather than defers — see its Scope section before proposing otherwise.
+A plugin that wanted more still loads and runs, so the only symptom is that it
+sounds thin, wrong, or silent — a vocoder driven by MIDI notes, for instance,
+has no carrier and outputs nothing. `PluginSlot::prepare` therefore logs the
+negotiated layout (`in`, `out`, `acceptsMidi`, `latency`), and `TRACK_ADD_PLUGIN`
+answers with `PLUGIN_NOTICE { message, severity }` naming what is missing
+whenever the prepared slot reports more than two input channels or accepts MIDI.
+Extra input buses that a plugin refuses to disable are padded with silence.
+`PLUGIN_NOTICE` carries strings written **for the user** and shown verbatim,
+which is why it is not `ENGINE_ERROR` — that reports a raw handler fault behind
+a fixed, generic toast, so anything routed through it loses its wording.
+
 `restoreTrackPlugins` (`backend/src/engine/TrackPluginRestore.cpp`) is shared by
 project load, undo/redo rebuilds and offline render. It keeps a live instance
 whenever the slot id and identifier still match, because a saved state chunk is

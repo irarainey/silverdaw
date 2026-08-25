@@ -62,11 +62,20 @@ void broadcastProjectState(ProjectState& projectState, BridgeServer& bridge,
     bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
 }
 
-void broadcastPluginError(BridgeServer& bridge, const juce::String& message)
+void broadcastPluginNotice(BridgeServer& bridge, const juce::String& message,
+                          const char* severity)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("message", message);
-    bridge.broadcast("ENGINE_ERROR", juce::var(obj));
+    obj->setProperty("severity", juce::String(severity));
+    bridge.broadcast("PLUGIN_NOTICE", juce::var(obj));
+}
+
+// These are curated, user-facing strings, unlike the raw handler faults ENGINE_ERROR
+// carries — so they get their own envelope and are shown verbatim.
+void broadcastPluginError(BridgeServer& bridge, const juce::String& message)
+{
+    broadcastPluginNotice(bridge, message, "error");
 }
 
 struct SlotRef
@@ -75,6 +84,28 @@ struct SlotRef
     juce::String slotId;
     bool valid = false;
 };
+
+// Inserts are fed stereo audio and no MIDI (ADR 0025). A plugin that wanted more still
+// loads and runs, so the only symptom is that it sounds wrong or not at all — which is
+// indistinguishable from a fault unless the user is told which input is missing.
+void warnIfUnderfed(BridgeServer& bridge, const juce::String& name,
+                    const plugins::PluginSlotIo& io)
+{
+    if (!io.resolved) return;
+
+    const bool needsSideChain = io.inputChannels > 2;
+    if (!needsSideChain && !io.acceptsMidi) return;
+
+    juce::StringArray wanted;
+    if (io.acceptsMidi) wanted.add("MIDI notes");
+    if (needsSideChain) wanted.add("a side-chain input");
+
+    broadcastPluginNotice(bridge, name + " expects " + wanted.joinIntoString(" and ") +
+                                      ", which Silverdaw does not send to plugins, so it may "
+                                      "produce little or no sound. Effects that work on the "
+                                      "track audio alone are unaffected.",
+                          "info");
+}
 
 SlotRef readSlotRef(const juce::var& payload)
 {
@@ -173,6 +204,10 @@ void handleTrackAddPlugin(const juce::var& payload, AudioEngine& engine,
     if (errorMessage.isNotEmpty())
     {
         broadcastPluginError(bridge, description->name + " could not be loaded: " + errorMessage);
+    }
+    else
+    {
+        warnIfUnderfed(bridge, description->name, engine.getTrackPluginIo(trackId, slotId));
     }
 
     broadcastProjectState(projectState, bridge, session);

@@ -111,6 +111,16 @@ std::vector<plugins::PluginSlotDescriptor> AudioEngine::getTrackPluginSlots(
     return chain != nullptr ? chain->getDescriptors() : std::vector<plugins::PluginSlotDescriptor>{};
 }
 
+plugins::PluginSlotIo AudioEngine::getTrackPluginIo(const juce::String& trackId,
+                                                    const juce::String& slotId)
+{
+    auto* chain = busGraph.getTrackPlugins(trackId);
+    if (chain == nullptr) return {};
+
+    auto* slot = chain->findSlot(slotId);
+    return slot != nullptr ? slot->getIo() : plugins::PluginSlotIo{};
+}
+
 juce::MemoryBlock AudioEngine::getTrackPluginState(const juce::String& trackId,
                                                    const juce::String& slotId)
 {

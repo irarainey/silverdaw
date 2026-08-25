@@ -27,6 +27,16 @@ struct PluginSlotDescriptor
     bool bypassed = false;
 };
 
+/** What a prepared slot actually negotiated. Inserts are fed stereo audio and no MIDI in
+ *  v1 (ADR 0025), so a plugin asking for more is one Silverdaw cannot fully drive. */
+struct PluginSlotIo
+{
+    bool resolved = false;
+    bool acceptsMidi = false;
+    int inputChannels = 0;
+    int outputChannels = 0;
+};
+
 // One insert. Instantiation, preparation and destruction are message-thread only; the
 // audio thread sees a prepared slot through PluginChain's published snapshot and calls
 // nothing but `process`.
@@ -68,6 +78,10 @@ public:
 
     /** Message thread. Null when the slot is unresolved. */
     juce::AudioPluginInstance* getInstance() const noexcept { return instance.get(); }
+
+    /** Message thread. The negotiated layout and MIDI appetite, so a caller can tell the
+     *  user when Silverdaw cannot feed the plugin everything it asked for. */
+    PluginSlotIo getIo() const noexcept;
 
     int getLatencySamples() const noexcept;
 
@@ -145,7 +159,7 @@ public:
     std::size_t size() const noexcept { return slots.size(); }
     bool isEmpty() const noexcept { return slots.empty(); }
 
-    /** Worst-case latency the chain adds, in samples. Not yet compensated for. */
+    /** Worst-case latency the chain adds, in samples. Compensated by BusGraph (ADR 0026). */
     int getLatencySamples() const noexcept;
 
 private:

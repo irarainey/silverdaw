@@ -399,6 +399,15 @@ export const PluginScanProgressPayloadSchema = z.object({
 })
 export type PluginScanProgressPayload = z.infer<typeof PluginScanProgressPayloadSchema>
 
+/** A curated, user-facing message about a plugin, shown verbatim. Distinct from
+ *  ENGINE_ERROR, which reports a raw handler fault the user cannot act on. */
+export const PluginNoticePayloadSchema = z.object({
+  message: z.string(),
+  severity: z.enum(['error', 'info'])
+})
+export type PluginNoticePayload = z.infer<typeof PluginNoticePayloadSchema>
+
+
 
 
 export const ProjectStateTrackSchema = z.object({
@@ -1079,6 +1088,7 @@ export interface BridgeInboundMap {
   ENGINE_AUDIO_STATUS: EngineAudioStatusPayload
   PLUGIN_LIST: PluginListPayload
   PLUGIN_SCAN_PROGRESS: PluginScanProgressPayload
+  PLUGIN_NOTICE: PluginNoticePayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1159,7 +1169,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'ENGINE_ERROR',
   'ENGINE_AUDIO_STATUS',
   'PLUGIN_LIST',
-  'PLUGIN_SCAN_PROGRESS'
+  'PLUGIN_SCAN_PROGRESS',
+  'PLUGIN_NOTICE'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1179,6 +1190,10 @@ export function isPluginListPayload(value: unknown): value is PluginListPayload 
 
 export function isPluginScanProgressPayload(value: unknown): value is PluginScanProgressPayload {
   return PluginScanProgressPayloadSchema.safeParse(value).success
+}
+
+export function isPluginNoticePayload(value: unknown): value is PluginNoticePayload {
+  return PluginNoticePayloadSchema.safeParse(value).success
 }
 
 export function isPlayheadUpdatePayload(value: unknown): value is PlayheadUpdatePayload {

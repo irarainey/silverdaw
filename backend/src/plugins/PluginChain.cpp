@@ -1,5 +1,7 @@
 #include "PluginChain.h"
 
+#include "Log.h"
+
 #include <algorithm>
 
 namespace silverdaw::plugins
@@ -84,6 +86,27 @@ void PluginSlot::prepare(double sampleRate, int maxBlockSize)
     midiScratch.ensureSize(256);
     midiScratch.clear();
     wetGain = bypassed.load(std::memory_order_relaxed) ? 0.0F : 1.0F;
+
+    // The negotiated layout is the first thing to check when a plugin loads but sounds
+    // wrong: extra inputs are fed silence and MIDI is never sent, so either can leave a
+    // plugin quiet for reasons that look like a fault.
+    log::debug("plugins", "slot prepared name=" + descriptor.name + " in=" +
+                              juce::String(instance->getTotalNumInputChannels()) + " out=" +
+                              juce::String(instance->getTotalNumOutputChannels()) +
+                              " acceptsMidi=" + (instance->acceptsMidi() ? "1" : "0") +
+                              " latency=" + juce::String(instance->getLatencySamples()));
+}
+
+PluginSlotIo PluginSlot::getIo() const noexcept
+{
+    PluginSlotIo io;
+    if (instance == nullptr) return io;
+
+    io.resolved = true;
+    io.acceptsMidi = instance->acceptsMidi();
+    io.inputChannels = instance->getTotalNumInputChannels();
+    io.outputChannels = instance->getTotalNumOutputChannels();
+    return io;
 }
 
 void PluginSlot::release()
