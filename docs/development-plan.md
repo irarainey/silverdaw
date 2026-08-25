@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.6.1" } }
+{ "type": "READY", "payload": { "version": "1.7.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -2065,7 +2065,7 @@ without leaving the app, and without widening what Silverdaw is allowed to read.
    these keys a single opt-out from both capture-phase global keyboard owners,
    so a component shortcut can no longer double-fire an app-wide one.
 
-### 1.6.1 - Tempo Box & File Browser Polish *(current release)*
+### 1.6.1 - Tempo Box & File Browser Polish *(released)*
 
 **Goal:** make editing the project tempo feel settled rather than animated, and
 make the file browser's now-playing bar and rows behave the way they read.
@@ -2093,7 +2093,7 @@ make the file browser's now-playing bar and rows behave the way they read.
 6. [x] **One more e2e journey** (ADR 0014): a file browser audition, from adding
    a folder through playing a row to the bar clearing on pause.
 
-### 1.7.0 - VST3 Effect Plugins *(in development)*
+### 1.7.0 - VST3 Effect Plugins *(current release)*
 
 **Goal:** let a track carry the user's own VST3 effects alongside the built-in
 Track FX, without giving up export parity or a responsive transport. Full
