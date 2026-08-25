@@ -29,6 +29,9 @@ class OutputKeepAlive
     void setPlaying(bool p) noexcept { playing.store(p, std::memory_order_release); }
     bool isPlaying() const noexcept { return playing.load(std::memory_order_acquire); }
 
+    /** For observers that must read the transport state on the audio thread. */
+    const std::atomic<bool>& playingAtomicRef() const noexcept { return playing; }
+
     void setContentLoaded(bool loaded) noexcept
     {
         contentLoaded.store(loaded, std::memory_order_release);

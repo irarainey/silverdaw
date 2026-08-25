@@ -181,7 +181,7 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
                            double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
                            bool metronomeEnabled, bool clipEditorMetronomeEnabled,
                            std::optional<ProjectState::TimelineSelectionView> timelineSelection,
-                           const juce::String& snapGrid)
+                           const juce::String& snapGrid, const juce::String& fxTab)
 {
     if (!file.existsAsFile())
     {
@@ -219,6 +219,11 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     if (snapGrid.isNotEmpty())
     {
         projectObj->setProperty("viewSnapGrid", snapGrid);
+    }
+    // Same reasoning as the grid above.
+    if (fxTab.isNotEmpty())
+    {
+        projectObj->setProperty("viewFxTab", fxTab);
     }
     if (timelineSelection.has_value())
     {

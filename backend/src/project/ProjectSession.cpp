@@ -172,6 +172,11 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
     obj->setProperty("viewFxPanelOpen", projectState.getViewFxPanelOpen());
+    // Omit an unset tab so the renderer applies its own default, as for the grid below.
+    {
+        const auto fxTab = projectState.getViewFxTab();
+        if (fxTab.isNotEmpty()) obj->setProperty("viewFxTab", fxTab);
+    }
     // Omit an unset grid so the renderer applies its own default.
     {
         const auto snapGrid = projectState.getViewSnapGrid();
@@ -266,13 +271,63 @@ juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session,
     return envelope;
 }
 
+void captureTrackPluginStates(silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState)
+{
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+
+        const auto trackId = track.getProperty("id").toString();
+        for (const auto& slot : projectState.getTrackPlugins(trackId))
+        {
+            const auto chunk = engine.getTrackPluginState(trackId, slot.slotId);
+            // An unresolved slot has nothing live to read, so leave its saved chunk alone.
+            if (chunk.isEmpty()) continue;
+
+            projectState.setTrackPluginState(trackId, slot.slotId,
+                                             silverdaw::plugins::encodeStateChunk(chunk));
+        }
+    }
+}
+
+void syncEngineProjectSettings(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
+{
+    // Every project-scoped engine setting that does not depend on clips, in one place.
+    // A new project realigns the same settings a load does, so it must not be a
+    // hand-maintained second list: when it was, a timeline loop armed in the previous
+    // project survived PROJECT_NEW and silently wrapped playback in the new one.
+    engine.setMasterGain(projectState.getMasterVolume());
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
+
+    // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
+    engine.setMetronomeBpm(projectState.getBpm());
+    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    syncBeatRepeatRegions(engine, projectState);
+    // A loaded/undone project brings its own saved loop range with it; a new one has
+    // none, which disarms whatever the previous project left armed.
+    syncTimelineLoop(engine, projectState);
+
+    // Always reset shared FX on new/load so projects never inherit prior settings.
+    engine.setProjectReverb(projectState.getProjectReverbSize(),
+                            projectState.getProjectReverbDecay(),
+                            projectState.getProjectReverbTone(),
+                            projectState.getProjectReverbMix(), /*snap*/ true);
+    engine.setProjectDelay(
+        silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
+        projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
+        projectState.getProjectDelayMix(), /*snap*/ true);
+}
+
 void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                               juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     const auto& root = projectState.getTree();
     int rebuilt = 0;
     int failed = 0;
-
     // Open every clip's audio reader up front, in parallel, BEFORE the serial attach loop below.
     // Per-clip opens (file header reads) are I/O-bound and, done one-at-a-time on the message
     // thread, dominate cold-load latency — especially for cloud-synced project directories.
@@ -381,6 +436,8 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             engine.setTrackSends(toneTrackId, projectState.getTrackReverbSend(toneTrackId),
                                  projectState.getTrackDelaySend(toneTrackId));
             engine.setTrackPan(toneTrackId, projectState.getTrackPan(toneTrackId));
+            engine.setTrackPluginsFromState(toneTrackId,
+                                            projectState.getTrackPlugins(toneTrackId));
 
             // Reapply the project's current automation lanes on top of the restored static state.
             const auto lanes = projectState.getTrackAutomationLanes(toneTrackId);
@@ -460,27 +517,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     projectState.reconcileTransitions(/*useUndo*/ false);
     silverdaw::syncClipEdgeFades(engine, projectState);
 
-    // Keep live master gain aligned with loaded, recovered, and undo/redo state.
-    engine.setMasterGain(projectState.getMasterVolume());
-    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
-    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
-
-    // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
-    engine.setMetronomeBpm(projectState.getBpm());
-    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
-    syncBeatRepeatRegions(engine, projectState);
-    // A loaded/undone project brings its own saved loop range with it.
-    syncTimelineLoop(engine, projectState);
-
-    // Always reset shared FX on new/load so projects never inherit prior settings.
-    engine.setProjectReverb(projectState.getProjectReverbSize(),
-                            projectState.getProjectReverbDecay(),
-                            projectState.getProjectReverbTone(),
-                            projectState.getProjectReverbMix(), /*snap*/ true);
-    engine.setProjectDelay(
-        silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
-        projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
-        projectState.getProjectDelayMix(), /*snap*/ true);
+    syncEngineProjectSettings(engine, projectState);
 }
 
 juce::File tempArtifactsRoot()

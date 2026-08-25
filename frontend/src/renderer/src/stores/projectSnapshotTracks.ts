@@ -17,7 +17,7 @@ import {
   newTrackLengthMs
 } from './projectTypes'
 import type { AutomationParamId, AutomationPoint, Clip } from './projectTypes'
-import { filePathToDisplayName, hydrateBeatRepeats, hydrateTransitions } from './projectHelpers'
+import { filePathToDisplayName, hydrateBeatRepeats, hydrateTrackPlugins, hydrateTransitions } from './projectHelpers'
 import type { SnapshotTarget } from './projectSnapshotTypes'
 
 /** Rebuild a track's automation map from the snapshot lanes (sanitised, lanes with
@@ -171,6 +171,7 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
     // Timeline effects are backend-authoritative and cleared by absent snapshot data.
     track.transitions = hydrateTransitions(t.transitions)
     track.beatRepeats = hydrateBeatRepeats(t.beatRepeats)
+    track.plugins = hydrateTrackPlugins(t.plugins)
     // Automation lanes are backend-authoritative too.
     track.automation = hydrateAutomation(t.automation)
     for (const c of t.clips) {
@@ -331,7 +332,11 @@ export function finalizeProjectSnapshot(
         ? savedSelected
         : null
     target.fxPanelOpen = snapshot.viewFxPanelOpen === true
-    target.fxTab = 'track'
+    // Stored opaquely by the backend, so an unknown or absent tab falls back here.
+    target.fxTab =
+      snapshot.viewFxTab === 'project' || snapshot.viewFxTab === 'plugins'
+        ? snapshot.viewFxTab
+        : 'track'
     target.timelineRevision++
     ui.applyTimelineSelectionView(
       snapshot.timelineSelection ?? null,

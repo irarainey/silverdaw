@@ -11,6 +11,9 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project layout](#project-layout)
 - [Current status and roadmap](#current-status-and-roadmap)
 - [Bridge protocol](#bridge-protocol)
+- [VST3 plugins](#vst3-plugins)
+  - [Limitations](#limitations)
+  - [Catalogue storage](#catalogue-storage)
 - [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
@@ -89,7 +92,8 @@ and AUTH token, so the renderer's WebSocket reconnects transparently (see
 Threading invariants:
 
 - **Audio thread**: no allocations, no locks, no exceptions. Mutated state is reached via
-  `std::atomic` (master clock, OffsetSource).
+  `std::atomic` (master clock, OffsetSource). A hosted plugin's own `processBlock` is the one
+  exception, accepted as a bounded risk by ADR 0025; it relaxes nothing for our own code.
 - **JUCE message thread**: owns every mutation of `AudioEngine`, `ProjectState`, the project
   `ValueTree`, and the audio source graph. The bridge marshals every incoming envelope onto this
   thread via `juce::MessageManager::callAsync`.
@@ -241,8 +245,10 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
-- **Track & project effects.** The bottom panel has four tabs — **Files**,
-  **Library**, **Track FX**, and **Project FX**. The whole panel collapses / expands from its
+- **Track & project effects.** The bottom panel has five tabs — **Files**,
+  **Library**, **Track FX**, **Plugins**, and **Project FX**. The per-track surfaces sit
+  together: **Plugins** (the selected track's VST3 inserts, ADR 0025) follows **Track FX**,
+  and **Project FX** comes last as the only project-wide one. The whole panel collapses / expands from its
   header, with `Ctrl+J`, or **View ▸ Toggle Library / FX Panel**. Each track header also has an **Fx** button
   (beside Mute / Solo) that opens **Track FX** for that track — expanding the
   panel first if it is minimised — (pressing it again collapses back to the
@@ -666,6 +672,56 @@ Project FX uses `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`,
 `PROJECT_SET_MIX_GLUE`, and `PROJECT_SET_SAFETY_LIMITER`; Reverb, Delay, and
 Glue Compressor similarly return canonical `PROJECT_*_APPLIED` state.
 
+VST3 inserts (ADR 0025) use `PLUGIN_LIST_REQUEST` (no payload) and `PLUGIN_SCAN
+{ clearBlacklist? }`, answered by `PLUGIN_LIST { plugins, blacklisted, scanning }`
+and, while a scan runs, a stream of `PLUGIN_SCAN_PROGRESS { currentFile, scanned,
+total, finished? }`. Because a scan runs on its own thread, its callbacks hop back
+to the message thread before touching the bridge. Chain edits are
+`TRACK_ADD_PLUGIN { trackId, identifier }`, `TRACK_REMOVE_PLUGIN`,
+`TRACK_REORDER_PLUGIN { …, index }`, `TRACK_SET_PLUGIN_BYPASS { …, bypassed }` and
+`TRACK_OPEN_PLUGIN_EDITOR`, all keyed by the backend-minted `slotId`; each mutates
+the project tree *and* the live chain. Add, remove and reorder then republish
+`PROJECT_STATE`, where a track's inserts appear in chain order in its optional
+`plugins` array — only a whole snapshot is self-consistent when the backend has
+minted a `slotId` or clamped chain order. Bypass instead acks narrowly with
+`TRACK_PLUGIN_BYPASS_APPLIED { trackId, slotId, bypassed, ok }`, because it can
+change neither, and re-sending every track and clip to flip one boolean made the
+renderer repaint the whole timeline on each click — dropped frames in the middle
+of playback. The renderer still applies only what the backend reports, so the panel
+stays non-optimistic; `ok: false` means the slot had gone, and the mirror is left
+untouched. Two things
+deliberately never cross the bridge: a plugin's opaque **state chunk** (ADR 0003 —
+it is stored inline in the project file and nowhere else) and any plugin UI, which
+the backend draws in its own native window. A slot flagged `unresolved` names a
+plugin that is not installed on *this* machine; the flag is derived per broadcast
+from the catalogue and is never written to the project file.
+
+`PLUGIN_NOTICE` carries strings written **for the user** and shown verbatim,
+which is why it is not `ENGINE_ERROR` — that reports a raw handler fault behind
+a fixed, generic toast, so anything routed through it loses its wording. What
+Silverdaw does and does not accept, and what each notice means, is set out under
+[VST3 plugins](#vst3-plugins).
+
+`restoreTrackPlugins` (`backend/src/engine/TrackPluginRestore.cpp`) is shared by
+project load, undo/redo rebuilds and offline render. It keeps a live instance
+whenever the slot id and identifier still match, because a saved state chunk is
+only refreshed on save — reloading unconditionally would reset a plugin to its
+last-saved settings as a side effect of an unrelated undo. Slots it *will*
+destroy are reported through its `onSlotDestroyed` callback first, which the
+engine uses to close the editor window whose content the instance owns.
+
+Hosted plugins share one read-only `plugins::PluginPlayHead`, so tempo-synced
+effects follow the transport. It does not mirror the transport — it holds
+pointers to the engine's own position, sample-rate and play-state atomics, so a
+plugin cannot drift from what the renderer is rendering; the mixdown builds an
+equivalent play head over the offline position for export parity. Plugin
+latency is **compensated** (ADR 0026): `BusGraph` delays every track to the
+largest chain latency in the project, so nothing shifts against its siblings,
+and the residual constant is folded into the reported playhead and trimmed
+from the mixdown. The fixed 4/4 is not a limit — 4/4 is the app's assumption
+throughout, stated once as `BEATS_PER_BAR` in `shared/snapGrid.ts`, so the play
+head states it rather than guessing it.
+
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
 a liveness probe — the backend answers `PONG` **on the JUCE message thread**, so
@@ -743,6 +799,121 @@ Backend → renderer:
 
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
+
+## VST3 plugins
+
+Silverdaw hosts **VST3 effect plugins that process stereo audio**, as per-track
+inserts. Everything outside that sentence is unsupported, and ADR 0025 is the
+binding scope. Support is enforced in three layers that behave differently, and
+the difference matters when diagnosing a report:
+
+| Requirement | How it is enforced | What the user sees |
+| --- | --- | --- |
+| VST3 format | Compile time — `JUCE_PLUGINHOST_VST=0`, `AU=0`, `LV2=0`, `ARA=0` (`backend/CMakeLists.txt`) | VST2, AU, LV2 and CLAP plugins are never scanned, so they never appear |
+| Effect, not instrument | Rejected at add (`PluginCommands.cpp`, `description->isInstrument`) and filtered from the picker | "…is an instrument, and Silverdaw currently hosts effect plugins only." |
+| Audio only — no MIDI, no side-chain | **Not blocked.** Detected after `prepare` and reported | `PLUGIN_NOTICE` naming what is missing |
+
+That third row is the one that surprises people. A plugin's declared category
+does not decide it: a MIDI-driven vocoder typically declares itself an `Fx` with
+`isInstrument="0"`, so it passes both blocking checks, loads, prepares, and
+runs — and then outputs little or nothing, because `PluginSlot::process` clears
+`midiScratch` before every `processBlock` and `negotiateStereoLayout` pads any
+input bus the plugin refuses to disable with silence. The plugin is behaving
+correctly on the inputs it is given; it simply is not given a carrier.
+
+So `PluginSlot::prepare` logs the negotiated layout (`in`, `out`, `acceptsMidi`,
+`latency`), and `TRACK_ADD_PLUGIN` answers with `PLUGIN_NOTICE` whenever the
+prepared slot reports more than two input channels or accepts MIDI. Read the
+**prepared** slot, never the scanned description — the channel count that
+matters is the one bus negotiation actually settled on.
+
+### Limitations
+
+Behaviours to state plainly rather than let a user discover:
+
+- **Effects only.** Instruments are rejected outright.
+- **No MIDI to plugins and no side-chain input**, permanently and by design.
+  See ADR 0025 §Scope before proposing either — the reasoning covers why each
+  is a large change, not an oversight.
+- **No plugin-parameter automation.** Track-parameter automation does not
+  extend to plugin parameters; that needs a dynamic replacement for the fixed
+  `AutomationParam` enum and is a decision of its own.
+- **Per-track inserts only.** There is no project-wide, master or per-clip
+  plugin slot.
+- **Latency compensation is bounded at one second**
+  (`kMaxLatencyCompensationSeconds`). A plugin reporting more is treated as
+  misreporting and clamped rather than allowed to desync the project (ADR 0026).
+- **No cap on chain length**, but each insert costs CPU on the audio thread and
+  may add latency that every other track is then delayed to match.
+- **Hosting is in-process.** A plugin that crashes takes the engine with it.
+  That is a recoverable event under ADR 0008 — the supervisor respawns the
+  backend and the recovery coordinator reloads the project — but it is a visible
+  interruption, unlike a scanner crash.
+- **A missing plugin is preserved, not dropped.** The slot keeps its position
+  and saved state, passes audio through untouched, and is written back on save
+  (ADR 0019). Opening a project that references one raises a single
+  `PLUGIN_NOTICE` naming each missing plugin once, because unlike a missing
+  audio file — which is visibly broken on the timeline — an insert that has
+  quietly stopped processing is otherwise only discoverable by selecting that
+  track and opening the Plugins panel.
+
+### Where plugins are found
+
+Scanning searches the two locations the VST3 specification defines on Windows,
+and nothing else:
+
+| Scope | Path |
+| --- | --- |
+| Per user | `%LOCALAPPDATA%\Programs\Common\VST3` |
+| Machine-wide | `C:\Program Files\Common Files\VST3` |
+
+These come from JUCE's `VST3PluginFormat::getDefaultLocationsToSearch()`, which
+Silverdaw passes to `PluginCatalogue::startScan` unmodified. There is
+deliberately **no preference for adding folders**: both paths are the standard
+every VST3 installer targets by default, so a configurable search path would add
+a setting that almost nobody needs and give a support burden — a plugin "missing"
+because it was installed somewhere non-standard — to everybody. A plugin
+installed outside them is not found; the fix is to install it to a standard
+location, not to point Silverdaw elsewhere.
+
+Note the paths are read at scan time, not cached, so a plugin installed while
+Silverdaw is running is picked up by the next **Scan for plugins**.
+
+### Catalogue storage
+
+The catalogue is machine-scoped, not project-scoped, and lives in
+`%APPDATA%/Silverdaw/plugins/`: `known-plugins.xml` holds the scanned
+descriptions and the blacklist, and `scan-crashes.txt` is JUCE's dead-man's
+pedal — the file a scan writes before loading a plugin so a crash can be
+attributed to it. Both are replayed at the start of every scan, which is why
+**Clear blacklist** deletes the pedal file as well as clearing the list; leaving
+it would let the next scan restore what was just cleared. Deleting the folder
+loses only the scan results, and the next scan rebuilds it. Scanning runs the
+backend binary again as a child worker, and that worker is reused across files —
+it is replaced only when a plugin kills it, so isolation is "out of the engine
+process", not one process per plugin.
+
+A scan **reconciles** the cache rather than only adding to it. JUCE's
+`KnownPluginList` never removes anything, so a plugin uninstalled from the
+machine would otherwise stay in the picker forever, offering the user something
+that can no longer load. `PluginCatalogue::removeUninstalledPlugins` therefore
+drops every cached entry whose binary has gone, and runs **at load as well as
+after a scan** — at load the user has not asked for anything, so a plugin
+uninstalled between runs is gone from the picker immediately instead of lingering
+until someone thinks to rescan. It is affordable there precisely because it is
+not a scan: it asks the filesystem whether each cached path still exists and
+never loads or instantiates a binary, so it adds nothing measurable to startup,
+unlike a real scan which runs a child process over every plugin and takes
+minutes. The result is written back only when something actually went, so a
+normal launch does no extra disk work.
+
+Existence is the only test applied, which is sound precisely because the search
+paths are two fixed local folders — a path that has gone really has gone, rather
+than being a removable drive that happens to be unplugged; cached entries whose
+identifier is not an absolute path are left alone rather than guessed at. A
+project still using a dropped plugin is unaffected: the slot becomes
+`unresolved`, keeps its position and saved state, and is written back on save
+(ADR 0019).
 
 ## MIDI controller architecture
 
@@ -1000,7 +1171,7 @@ and without the user enabling anything.
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
-        viewSelectedTrack?, viewFxPanelOpen?,
+        viewSelectedTrack?, viewFxPanelOpen?, viewFxTab?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         metronomeEnabled?, clipEditorMetronomeEnabled?,
@@ -1163,8 +1334,10 @@ in beat space; older projects simply have none. `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
-shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
-bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
+shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` / `viewFxTab` are view
+state for the bottom-panel FX tabs — the tab is stored opaquely, like the snap
+grid, so a value a build does not recognise falls back to Track FX rather than
+rejecting the snapshot; `viewTimelineSelectionStartMs`,
 `viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
 timeline range and Loop Selection state. All are round-tripped through
 `PROJECT_SET_VIEW`, which also arms the engine's transport loop (see
@@ -1373,6 +1546,23 @@ On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 user just created, so a race between an early user action and the snapshot arriving doesn't
 lose work. On a load / new-project the same envelope carries `reset: true` and the renderer
 wipes its mirror before applying.
+
+**Not every snapshot is a transport event.** Only a `reset: true` replacement and an
+undo/redo `softReplace: true` rebuild stop playback and clear MIDI platter holds,
+because both stop the engine backend-side — the undo full-rebuild path calls
+`engine.stop()` before it broadcasts — and adopting that at once beats waiting for
+`PlayheadEmitter` to re-assert it. An ordinary edit snapshot leaves the transport
+alone. The plugin commands re-broadcast the whole project to change one field, so
+treating every snapshot as a stop made bypassing a plugin mid-playback flip the
+transport to stopped and rewind the ruler to the persisted playhead, then catch up
+seconds later. The persisted playhead is likewise adopted only on a replacement or on
+the first snapshot of a connection, which is what restores the position after a
+renderer reload. `resetPlaybackForProjectChange` clears `playIntentAt` instead of
+stamping it, since the stop is the backend's, not a local intent, and a stamped intent
+would make the next `PLAYHEAD_UPDATE` wait out the settle window. Any other path that
+stops the engine without a replacement snapshot — a first Save As that relocates temp
+artifacts, say — is caught by the emitter's stop edge and 1 Hz stopped heartbeat, which
+is what keeps the UI self-correcting rather than edge-dependent.
 
 Until the first `PROJECT_STATE` arrives, an inline splash inside `index.html` (then the Vue
 `StartupScreen` once it mounts) blocks all input so the user can't act on state that
@@ -2819,6 +3009,27 @@ target — a click selects it and a double-click plays it, wherever on the strip
 of columns it lands, matching how folder rows already behaved. The button
 cluster stops double-clicks so a quick second press on Play or Import cannot
 also toggle row playback.
+
+**Dragging a row onto a track.** A file row is `draggable`, so a browsed file can
+be imported and placed in one gesture. The row is not a library item yet, so the
+drag cannot use `useDropZone`'s library path; it is handled by
+`useTimelineFileDrop`, which already had to import-then-place for an Explorer
+drop and now treats a browsed row as a second source of paths. The row's path
+travels as `application/x-silverdaw-file-path` and is mirrored into
+`fileBrowserStore.draggingPath`, because `dragover` cannot read `dataTransfer` —
+the same constraint, and the same remedy, as `library.currentDragItemId`. On
+drop, the path is imported through `importDroppedAudioPaths` (shared with the
+Explorer drop, and de-duplicating against an already-imported path) and the
+resulting item is placed on the track under the pointer, or on a new track when
+the drop lands below the last one. The drag shows the **same drop ghost** a
+library drag does: `useTimelineFileDrop` feeds `useDropZone`'s
+`previewExternalDrop`, so one renderer draws every timeline drop and the gesture
+cannot look like two different features. Length is whatever the drag can supply:
+a browsed row uses the duration already read from its tags, while an Explorer
+drag has none, because `dragover` hides the file until drop. When there is none,
+`DropPreview.durationMs` is `null` and the ghost runs to the edge of the view
+rather than changing shape — a clip that long has its end off-screen anyway, so
+it still reads like any other drop.
 
 **Refreshing.** A refresh re-crawls the whole added root, because the index is
 stored and cached per root rather than per folder. The crawl's tags are

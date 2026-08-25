@@ -18,6 +18,19 @@ struct BeatRepeatRegion
     juce::String division{"1/8"};
 };
 
+// One VST3 insert on a track, in chain order (ADR 0025). `state` is the plugin's own opaque
+// chunk, base64-encoded so it stays inline in the single-file project.
+struct TrackPluginSlot
+{
+    juce::String slotId;
+    juce::String identifier;
+    juce::String formatName{"VST3"};
+    juce::String name;
+    juce::String manufacturer;
+    bool bypassed{false};
+    juce::String state;
+};
+
 // Per-warp-clip snapshot returned by `ProjectState::forEachWarpClip`.
 struct WarpClipInfo
 {

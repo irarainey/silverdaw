@@ -73,7 +73,20 @@ export function applyProjectTransport(
   // Mirror the backend's seeded flag rather than guessing from clip count; a saved
   // project can carry an established tempo with nothing yet on the timeline.
   useTransportStore().setBpmSeeded(snapshot.bpmSeeded === true)
-  if (typeof snapshot.playheadMs === 'number' && snapshot.playheadMs >= 0) {
+  // A snapshot carries an authoritative playhead when it replaces the project (load /
+  // new) or when it is the first of a bridge connection — the connect contract in the
+  // developer guide, which restores the persisted position after a renderer reload.
+  // An ordinary edit snapshot does not: bypassing a plugin re-broadcasts the project,
+  // and adopting its stored position rewound a playing transport until the next
+  // PLAYHEAD_UPDATE dragged it forward again. PROJECT_STATE applies the snapshot
+  // before it marks the bridge ready, so `bridgeReady` still reads false here on the
+  // first snapshot of a connection.
+  const carriesPlayhead = snapshot.reset === true || !useTransportStore().bridgeReady
+  if (
+    carriesPlayhead &&
+    typeof snapshot.playheadMs === 'number' &&
+    snapshot.playheadMs >= 0
+  ) {
     useTransportStore().setPosition(snapshot.playheadMs)
   }
   if (typeof snapshot.projectLengthMs === 'number' && snapshot.projectLengthMs > 0) {

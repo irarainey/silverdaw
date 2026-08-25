@@ -47,6 +47,7 @@ void AudioEngine::setPositionMsNow(double ms, bool resetEffects)
     if (resetEffects)
     {
         busGraph.resetSharedFx();
+        busGraph.resetLatencyCompensation();
     }
     // A loop keeps Reverb and Delay tails, but Beat Repeat captures timeline
     // input and must restart at the new transport position.

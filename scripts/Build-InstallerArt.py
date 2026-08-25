@@ -1,4 +1,5 @@
-"""Generate the MSIX/AppX logo assets and the .silverdaw file-type icon.
+"""Generate the MSIX/AppX logo assets, the .silverdaw file-type icon, and the
+plugin-host icon embedded in the backend executable.
 
 Outputs (relative to repo root), all under frontend/resources/:
   appx/StoreLogo.png            50x50    tile logo on white (+ scale-100..400)
@@ -7,6 +8,7 @@ Outputs (relative to repo root), all under frontend/resources/:
   appx/Wide310x150Logo.png      310x150  tile logo on white (+ scale-100..400)
   appx/Square44x44Logo.targetsize-<N>[.altform].png   taskbar/list/App-Installer
   icons/silverdaw-file.ico      multi-resolution document icon for .silverdaw
+  icons/silverdaw-plugin.ico    multi-resolution backend/plugin-host icon
 
 Tiles bake an opaque white plate (APPX_TILE_BG) matching `appx.backgroundColor`
 in electron-builder.yml, so Start tiles look consistent.
@@ -41,6 +43,11 @@ SOURCE_LOGO = ICON_DIR / "256x256.png"
 # and this matches the Windows 11 light App Installer dialog surface (#F3F3F3)
 # so the tile plate blends into the dialog rather than showing as a square.
 APPX_TILE_BG = (243, 243, 243)
+
+# Plug badge baked into the plugin-host icon. Sky is the app's accent colour;
+# white ring and glyph so the badge separates from the jackdaw behind it.
+PLUG_BADGE_BG = (14, 165, 233)
+PLUG_BADGE_FG = (255, 255, 255)
 
 # Target-size icon sizes. 44 matters most: the App Installer dialog asks for
 # `targetsize-44[_altform-unplated]` first and plates with the accent colour if
@@ -169,6 +176,58 @@ def _make_file_icon(logo: Image.Image, size: int) -> Image.Image:
     return img
 
 
+def _draw_plug(draw: ImageDraw.ImageDraw, left: float, top: float, size: float,
+               colour: tuple[int, int, int, int]) -> None:
+    """Draw a filled power-plug glyph in a `size`-square box at (left, top).
+
+    Filled rather than stroked: a stroked outline disappears once the icon is
+    downscaled to the 16px frame the taskbar and title bar actually use."""
+    unit = size / 24.0
+
+    def x(v: float) -> float:
+        return left + v * unit
+
+    def y(v: float) -> float:
+        return top + v * unit
+
+    prong_radius = 1.6 * unit
+    for centre in (8.6, 15.4):
+        draw.rounded_rectangle([x(centre - 1.7), y(1.0), x(centre + 1.7), y(9.0)],
+                               radius=prong_radius, fill=colour)
+    draw.rounded_rectangle([x(4.6), y(7.0), x(19.4), y(17.4)], radius=4.4 * unit, fill=colour)
+    draw.rounded_rectangle([x(10.3), y(16.0), x(13.7), y(23.0)],
+                           radius=prong_radius, fill=colour)
+
+
+def _make_plugin_icon(logo: Image.Image, size: int) -> Image.Image:
+    """Render the jackdaw with a plug badge in the bottom-right corner.
+
+    Drawn at 4x and downscaled so the badge's circle stays smooth at the small
+    frames, where nearly all of this icon's use happens."""
+    supersample = 4
+    canvas = size * supersample
+    img = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
+
+    logo_h = round(logo.height * (canvas / logo.width))
+    resized = logo.resize((canvas, logo_h), Image.LANCZOS)
+    img.paste(resized, (0, (canvas - logo_h) // 2), resized)
+
+    draw = ImageDraw.Draw(img)
+    diameter = canvas * 0.50
+    centre = canvas - diameter / 2 - canvas * 0.015
+    ring = diameter * 0.09
+    half = diameter / 2
+    draw.ellipse([centre - half, centre - half, centre + half, centre + half],
+                 fill=(255, 255, 255, 255))
+    draw.ellipse([centre - half + ring, centre - half + ring,
+                  centre + half - ring, centre + half - ring],
+                 fill=(*PLUG_BADGE_BG, 255))
+
+    glyph = diameter * 0.56
+    _draw_plug(draw, centre - glyph / 2, centre - glyph / 2, glyph, (*PLUG_BADGE_FG, 255))
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def main() -> None:
     if not SOURCE_LOGO.exists():
         raise SystemExit(f"missing source logo: {SOURCE_LOGO}")
@@ -200,8 +259,21 @@ def main() -> None:
         _make_file_icon(logo, ts).save(out, "PNG")
         file_logo_written.append(out)
 
+    # Plugin-host icon: embedded in the backend executable. A plugin editor is a
+    # native window owned by the backend, so Windows takes its taskbar and
+    # title-bar icon from that executable — it needs to read as Silverdaw while
+    # staying distinguishable from the shell app's own taskbar button beside it.
+    plugin_layers = [_make_plugin_icon(logo, s) for s in file_sizes]
+    plugin_layers[-1].save(
+        ICON_DIR / "silverdaw-plugin.ico",
+        format="ICO",
+        sizes=[(s, s) for s in file_sizes],
+        append_images=plugin_layers[:-1],
+    )
+
     print("wrote:")
-    for p in [*appx_assets, *file_logo_written, ICON_DIR / "silverdaw-file.ico"]:
+    for p in [*appx_assets, *file_logo_written, ICON_DIR / "silverdaw-file.ico",
+              ICON_DIR / "silverdaw-plugin.ico"]:
         print(f"  {p.relative_to(REPO_ROOT)}")
 
 

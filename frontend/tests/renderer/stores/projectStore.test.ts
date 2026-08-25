@@ -460,6 +460,29 @@ describe('projectStore', () => {
     )
   })
 
+  it('clears a looping timeline selection when a new project resets the snapshot', () => {
+    // Reported: a loop range armed in one project kept wrapping playback after
+    // starting a new project, with nothing drawn on the ruler to explain it. The
+    // engine owns the wrap, so the two halves have to clear together: this pins
+    // the renderer half, and the backend half is covered by the AudioEngine test
+    // "A new project disarms the previous project's timeline loop".
+    const project = useProjectStore()
+    const ui = useUiStore()
+    ui.setTimelineSelection({ startMs: 2_448, endMs: 12_244 })
+    ui.setLoopTimelineSelection(true)
+
+    // The shape PROJECT_NEW sends: a reset with no selection fields at all.
+    project.applyProjectStateSnapshot({
+      filePath: null,
+      name: 'Untitled',
+      reset: true,
+      tracks: []
+    })
+
+    expect(ui.timelineSelection).toBeNull()
+    expect(ui.loopTimelineSelection).toBe(false)
+  })
+
   it('retimes markers and the playhead with the clips when the tempo changes', () => {
     // Reported: markers and the playhead were pinned to their millisecond positions,
     // so a tempo change slid them off the material they marked while everything else

@@ -1,9 +1,45 @@
 // Track FX target caching and lock-free parameter publication.
 
 #include "BusGraph.h"
+#include "AudioConstants.h"
+
+#include <cmath>
 
 namespace silverdaw
 {
+
+void BusGraph::resetLatencyCompensation() noexcept
+{
+    const juce::ScopedLock sl(lock);
+    for (auto& [trackId, runtime] : runtimes)
+        if (runtime != nullptr) runtime->compensationDelay.requestReset();
+}
+
+void BusGraph::updateLatencyCompensation() noexcept
+{
+    const int bound = preparedRate > 0.0
+                          ? static_cast<int>(kMaxLatencyCompensationSeconds * preparedRate)
+                          : 0;
+
+    int alignment = 0;
+    for (const auto& [trackId, chain] : trackPlugins)
+    {
+        if (chain == nullptr) continue;
+        alignment = juce::jmax(alignment, juce::jlimit(0, bound, chain->getLatencySamples()));
+    }
+
+    latencyCompensationSamples.store(alignment, std::memory_order_relaxed);
+
+    for (auto& [trackId, runtime] : runtimes)
+    {
+        if (runtime == nullptr) continue;
+        const auto chain = trackPlugins.find(trackId);
+        const int own = chain != trackPlugins.end() && chain->second != nullptr
+                            ? juce::jlimit(0, bound, chain->second->getLatencySamples())
+                            : 0;
+        runtime->compensationDelay.setDelaySamples(alignment - own);
+    }
+}
 
 void BusGraph::applyPendingTrackFx(TrackRuntime& runtime)
 {
@@ -41,6 +77,53 @@ void BusGraph::applyPendingTrackFx(TrackRuntime& runtime)
     {
         runtime.pan.store(pan->second, std::memory_order_relaxed);
     }
+
+    const auto chain = trackPlugins.find(trackId);
+    runtime.chain.setInserts(chain != trackPlugins.end() ? chain->second.get() : nullptr);
+}
+
+void BusGraph::mutateTrackPlugins(const juce::String& trackId,
+                                  const std::function<void(plugins::PluginChain&)>& mutation)
+{
+    if (trackId.isEmpty() || mutation == nullptr) return;
+
+    const juce::ScopedLock sl(lock);
+
+    auto entry = trackPlugins.find(trackId);
+    if (entry == trackPlugins.end())
+    {
+        auto created = std::make_unique<plugins::PluginChain>();
+        created->setPlayHead(pluginPlayHead);
+        if (preparedMax > 0) created->prepare(preparedRate, preparedMax);
+        entry = trackPlugins.emplace(trackId, std::move(created)).first;
+    }
+
+    auto& chain = *entry->second;
+    mutation(chain);
+    chain.publish();
+
+    if (const auto runtime = runtimes.find(trackId); runtime != runtimes.end())
+        runtime->second->chain.setInserts(&chain);
+
+    // Republishing the render snapshot waits out any callback still using the previous
+    // one, which is also the barrier that makes destroying removed slots safe.
+    publishRenderSnapshot();
+    chain.collectRetired();
+    updateLatencyCompensation();
+}
+
+plugins::PluginChain* BusGraph::getTrackPlugins(const juce::String& trackId) noexcept
+{
+    const auto entry = trackPlugins.find(trackId);
+    return entry != trackPlugins.end() ? entry->second.get() : nullptr;
+}
+
+void BusGraph::setPluginPlayHead(juce::AudioPlayHead* playHead)
+{
+    const juce::ScopedLock sl(lock);
+    pluginPlayHead = playHead;
+    for (auto& entry : trackPlugins)
+        entry.second->setPlayHead(playHead);
 }
 
 void BusGraph::setTrackTone(const juce::String& trackId,
@@ -137,6 +220,14 @@ void BusGraph::retireTrackFxState(const juce::String& trackId)
     pendingBitCrusher.erase(trackId);
     pendingSends.erase(trackId);
     pendingPans.erase(trackId);
+
+    if (const auto runtime = runtimes.find(trackId); runtime != runtimes.end())
+        runtime->second->chain.setInserts(nullptr);
+
+    // Detach from the audio thread before the chain and its plugin instances are destroyed.
+    publishRenderSnapshot();
+    trackPlugins.erase(trackId);
+    updateLatencyCompensation();
 }
 
 void BusGraph::restoreAutomationParam(const juce::String& trackId, AutomationParam param) noexcept

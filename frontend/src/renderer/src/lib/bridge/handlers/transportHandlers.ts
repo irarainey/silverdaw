@@ -28,8 +28,11 @@ export const transportBridgeHandlers: BridgeInboundHandlers<
   },
 
   PLAYHEAD_UPDATE: (payload) => {
-    // Position only: local play intent wins, and <2 ms sample-rounding acks are ignored.
+    // The engine is the authority on whether it is playing; local intent only wins
+    // briefly after a click (see `reconcilePlaybackState`). Position is applied
+    // separately, ignoring <2 ms sample-rounding acks.
     const t = useTransportStore()
+    t.reconcilePlaybackState(payload.isPlaying)
     if (Math.abs(payload.positionMs - t.positionMs) < 2) return
     t.setPosition(payload.positionMs)
   },

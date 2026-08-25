@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PanelFilterInput from '@/components/PanelFilterInput.vue'
 
-type LibraryPanelTab = 'files' | 'library' | 'trackfx' | 'projectfx'
+type LibraryPanelTab = 'files' | 'library' | 'trackfx' | 'projectfx' | 'plugins'
 
 const props = defineProps<{
   collapsed: boolean
@@ -71,6 +71,15 @@ const filesFilterQuery = defineModel<string>('filesFilterQuery', { required: tru
         @click="activeTab = 'trackfx'"
       >
         Track FX
+      </button>
+      <button
+        type="button"
+        class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+        :class="activeTab === 'plugins' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'"
+        :aria-pressed="activeTab === 'plugins'"
+        @click="activeTab = 'plugins'"
+      >
+        Plugins
       </button>
       <button
         type="button"

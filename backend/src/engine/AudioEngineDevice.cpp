@@ -153,6 +153,9 @@ void AudioEngine::shutdown()
     deviceManager.removeAudioCallback(&deviceCallbackGuard);
     sourcePlayer.setSource(nullptr);
     topMixer.removeAllInputs();
+    // Before the graph: every open editor's content component is owned by a plugin
+    // instance that busGraph.clear() is about to destroy.
+    pluginEditors.clear();
     busGraph.clear();
     automationCurrent.clear();
     retiredAutomation.clear();

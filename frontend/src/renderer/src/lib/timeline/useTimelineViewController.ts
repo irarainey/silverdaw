@@ -97,10 +97,11 @@ export function useTimelineViewController(
     tryBeginRangeSelection: rangeSelection.tryBegin
   })
 
-  const { dropPreview, resolveDropTarget, startMsForItem } = useDropZone({
-    host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
-    onPreviewChanged: () => { updatePlayhead() }
-  })
+  const { dropPreview, resolveDropTarget, startMsForItem, previewExternalDrop, clearExternalDrop } =
+    useDropZone({
+      host, app: pixi.app, scrollX, scrollY, maxScrollX, showScrollbar, geometry,
+      onPreviewChanged: () => { updatePlayhead() }
+    })
 
   const drawing = useTimelineDrawing({
     app: pixi.app,
@@ -128,10 +129,12 @@ export function useTimelineViewController(
   const applyScroll = drawing.applyScroll
   const setDisplayPositionMs = drawing.setDisplayPositionMs
 
-  const { isFileDragOver, dispose: disposeFileDrop } = useTimelineFileDrop({
+  const { dispose: disposeFileDrop } = useTimelineFileDrop({
     host,
     resolveDropTarget,
     startMsForItem,
+    previewExternalDrop,
+    clearExternalDrop,
     onPlaced: () => {
       redraw()
       updatePlayhead()
@@ -523,7 +526,6 @@ export function useTimelineViewController(
     project,
     host,
     hoverCursor,
-    isFileDragOver,
     scrollY,
     onWheel,
     renameOverlayStyle,

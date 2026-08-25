@@ -42,7 +42,6 @@ export function hasDroppedFiles(event: DragEvent): boolean {
 
 /** Import Explorer-dropped files through the same preflight and decode path as Library import. */
 export async function importDroppedAudioFiles(files: readonly File[]): Promise<LibraryItem[]> {
-  const library = useLibraryStore()
   const paths: string[] = []
 
   for (const file of files) {
@@ -54,6 +53,16 @@ export async function importDroppedAudioFiles(files: readonly File[]): Promise<L
     paths.push(path)
   }
 
+  return importDroppedAudioPaths(paths)
+}
+
+/** Import dropped paths and return the resulting library items so the caller can
+ *  place them. Shared by the Explorer drop, which resolves paths from `File`
+ *  handles, and the file-browser row drag, which already knows the path.
+ *  Unlike `importAudioPathsIntoLibrary` this hands back the items, because a
+ *  drop has to go on to create the clips. */
+export async function importDroppedAudioPaths(paths: readonly string[]): Promise<LibraryItem[]> {
+  const library = useLibraryStore()
   if (paths.length === 0) return []
   if (await preflightSampleRates(paths) === 'cancel') {
     log.info('import', 'drag/drop import cancelled at sample-rate prompt')

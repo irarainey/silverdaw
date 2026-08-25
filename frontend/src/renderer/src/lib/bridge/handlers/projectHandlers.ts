@@ -46,8 +46,16 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
     if (payload.reset === true) useAppStore().finishProjectAction()
     const transport = useTransportStore()
     const isInitialBridgeSnapshot = !transport.bridgeReady
-    transport.setPlaybackState(false)
-    transport.clearMidiPlaybackHolds()
+    // Only a snapshot that replaces the project (load / new) or that follows an
+    // undo/redo rebuild is a transport event — both stop the engine backend-side. An
+    // ordinary edit snapshot is not: the plugin commands re-broadcast the whole project,
+    // so bypassing a plugin mid-playback used to flip the UI to stopped and rewind the
+    // ruler, then let PLAYHEAD_UPDATE drag both back a couple of seconds later. A
+    // reconnect needs neither, because losing the socket already reset playback and
+    // cleared any hold; re-stamping an intent here would only delay the reconcile.
+    if (payload.reset === true || payload.softReplace === true) {
+      transport.resetPlaybackForProjectChange()
+    }
     transport.setBridgeReady(true)
     // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
     if (payload.reset === true && payload.filePath) {

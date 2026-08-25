@@ -9,15 +9,56 @@ satisfy the attribution requirements of those licences.
 
 ### JUCE 8 — © Raw Material Software Limited
 
-- **Licence**: GNU General Public License v3 (free / open-source option).
+- **Licence**: GNU Affero General Public License v3 (the free / open-source
+  option of JUCE's dual licence; the alternative is a commercial JUCE licence).
 - **Project**: <https://juce.com>
 - **Source**: <https://github.com/juce-framework/JUCE>
 - **Notice**: Silverdaw's audio engine is powered by JUCE, used under the
-  terms of the GPLv3. Silverdaw uses only headless audio modules
+  terms of the AGPLv3. Silverdaw uses the headless audio modules
   (`juce_audio_basics`, `juce_audio_devices`, `juce_audio_formats`,
-  `juce_core`, `juce_data_structures`, `juce_dsp`, `juce_events`); no JUCE
-  GUI components are linked. A copy of the GPLv3 is included with the JUCE
-  source obtained via CMake `FetchContent` (`backend/build/_deps/juce-src/`).
+  `juce_audio_processors`, `juce_audio_utils`, `juce_core`,
+  `juce_data_structures`, `juce_dsp`, `juce_events`) plus `juce_gui_basics`,
+  which exists solely to host the native editor window of a VST3 plugin; the
+  Silverdaw interface itself is drawn by the Electron frontend. A copy of the
+  licence is included with the JUCE source obtained via CMake `FetchContent`
+  (`backend/build/_deps/juce-src/LICENSE.md`).
+
+### VST3 SDK — © 2025 Steinberg Media Technologies GmbH
+
+- **Licence**: MIT.
+- **Project**: <https://www.steinberg.net/developers/>
+- **Notice**: Silverdaw hosts third-party VST3 effect plugins (ADR 0025). The
+  SDK is not vendored here — it ships inside the JUCE source fetched by CMake
+  (`backend/build/_deps/juce-src/modules/juce_audio_processors_headless/format_types/VST3_SDK/`)
+  and is compiled in only because `JUCE_PLUGINHOST_VST3=1`. VST is a trademark
+  of Steinberg Media Technologies GmbH, registered in Europe and other
+  countries. The MIT licence requires its copyright and permission notice to be
+  reproduced, so it is included in full:
+
+```text
+MIT License
+
+Copyright (c) 2025, Steinberg Media Technologies GmbH
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 
 ### IXWebSocket — © Machine Zone Inc. and contributors
 

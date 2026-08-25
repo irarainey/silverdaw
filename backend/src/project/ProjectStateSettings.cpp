@@ -67,6 +67,18 @@ void ProjectState::setViewFxPanelOpen(bool open)
     setNonDirtyRootProperty(kViewFxPanelOpen, open);
 }
 
+juce::String ProjectState::getViewFxTab() const
+{
+    return root.getProperty(kViewFxTab, juce::String{}).toString();
+}
+
+void ProjectState::setViewFxTab(const juce::String& tab)
+{
+    // Stored opaquely like the snap grid: the renderer owns the tab vocabulary and
+    // falls back to its own default for anything it does not recognise.
+    setNonDirtyRootProperty(kViewFxTab, tab);
+}
+
 juce::String ProjectState::getViewSnapGrid() const
 {
     return root.getProperty(kViewSnapGrid, juce::String{}).toString();

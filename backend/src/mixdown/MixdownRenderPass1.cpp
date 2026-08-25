@@ -5,9 +5,11 @@
 #include "Log.h"
 #include "Leveler.h"
 #include "MixdownBroadcast.h"
+#include "PluginPlayHead.h"
 #include "SafetyLimiter.h"
 #include "SharedFx.h"  // delayNoteToMs
 #include "TrackAutomationSnapshot.h"
+#include "TrackPluginRestore.h"
 
 #include <algorithm>
 #include <atomic>
@@ -78,7 +80,20 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     }
 
     // Snapshot live per-track parameters so offline render stays in parity with playback.
+    // Declaration order is deliberate: everything the graph's plugin chains point at — the
+    // catalogue their instances came from, and the transport the play head reads — is
+    // declared *before* the graph, so an early `return fail(...)` destroys the graph first
+    // and no chain is torn down while its dependencies are already gone.
+    std::unique_ptr<silverdaw::plugins::PluginCatalogue> offlinePluginCatalogue;
+    std::atomic<juce::int64> mixdownPos{0};
+    const std::atomic<double> offlineRate{static_cast<double>(snapshot.projectSampleRate)};
+    const std::atomic<bool> offlinePlaying{true};
+    silverdaw::plugins::PluginPlayHead offlinePlayHead;
     silverdaw::BusGraph busGraph;
+
+    offlinePlayHead.setTransportSources(&mixdownPos, &offlineRate, &offlinePlaying);
+    offlinePlayHead.setBpm(snapshot.bpm);
+    busGraph.setPluginPlayHead(&offlinePlayHead);
     busGraph.prepareToPlay(kBlockFrames, static_cast<double>(snapshot.projectSampleRate));
     for (auto& cp : clips)
     {
@@ -98,6 +113,18 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                                     trackSnap.bitCrusherMix, /*snap*/ true);
         busGraph.setTrackSends(trackSnap.id, trackSnap.reverbSend, trackSnap.delaySend);
         busGraph.setTrackPan(trackSnap.id, trackSnap.pan);
+        if (!trackSnap.plugins.empty())
+        {
+            // The export instantiates its own plugin copies from the same saved state, so a
+            // render can never diverge from playback (ADR 0022).
+            if (offlinePluginCatalogue == nullptr)
+                offlinePluginCatalogue = std::make_unique<silverdaw::plugins::PluginCatalogue>();
+
+            silverdaw::restoreTrackPlugins(busGraph, *offlinePluginCatalogue, trackSnap.id,
+                                           trackSnap.plugins,
+                                           static_cast<double>(snapshot.projectSampleRate),
+                                           kBlockFrames);
+        }
     }
 
     // Per-track automation: build immutable snapshots (owned here for the render's
@@ -106,7 +133,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     // tracks the curves identically to live playback (same control quantum).
     std::vector<std::unique_ptr<silverdaw::TrackAutomationSnapshot>> automationSnaps;
     std::vector<std::unique_ptr<silverdaw::BeatRepeatSnapshot>> beatRepeatSnaps;
-    std::atomic<juce::int64> mixdownPos{0};
     busGraph.setTimelineSamplesSource(&mixdownPos);
     for (const auto& trackSnap : snapshot.tracks)
     {
@@ -176,12 +202,16 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     const int64_t userTailFrames = static_cast<int64_t>(
         std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
     totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
+    // Every track leaves the graph aligned by this much, so shift the whole render window to
+    // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
+    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
+    totalProjectFrames += alignmentFrames;
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
     // Render from frame 0 so clip positions and FX tails advance correctly, but only
     // push frames at/after the start offset into the output (earlier audio discarded).
     const int64_t startFrames = juce::jlimit<int64_t>(
         0, juce::jmax<int64_t>(0, totalProjectFrames),
-        static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)));
+        static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)) + alignmentFrames);
     int64_t projectFramesRendered = 0;
     int64_t outputFramesWritten = 0;
     double peakAmplitude = 0.0;

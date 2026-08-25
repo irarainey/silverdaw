@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BitCrusher.h"
+#include "InsertProcessor.h"
 #include "Leveler.h"
 #include "Punch.h"
 #include "Saturation.h"
@@ -41,6 +42,7 @@ public:
         punch.reset();
         saturation.reset();
         bitCrusher.reset();
+        if (auto* i = inserts.load(std::memory_order_acquire)) i->resetInserts();
         levelGain = targetLevelGain.load(std::memory_order_relaxed);
         levelSnapRequested.store(false, std::memory_order_relaxed);
     }
@@ -104,6 +106,13 @@ public:
         if (snap) levelSnapRequested.store(true, std::memory_order_release);
     }
 
+    /** Message-thread setter, published for the audio thread. Null detaches the inserts;
+     *  the caller must keep the processor alive until the audio thread has left it. */
+    void setInserts(InsertProcessor* processor) noexcept
+    {
+        inserts.store(processor, std::memory_order_release);
+    }
+
     /** Processes only the active buffer region; identity params remain sample-transparent. */
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples) noexcept
     {
@@ -112,6 +121,10 @@ public:
         saturation.process(buffer, startSample, numSamples);
         bitCrusher.process(buffer, startSample, numSamples);
         punch.process(buffer, startSample, numSamples);
+        // Inserts sit at the end of tonal shaping and upstream of level, sends and pan,
+        // so a plugin cannot change what mute, solo or a send amount means (ADR 0025).
+        if (auto* i = inserts.load(std::memory_order_acquire))
+            i->processInserts(buffer, startSample, numSamples);
         const float target = targetLevelGain.load(std::memory_order_relaxed);
         if (levelSnapRequested.exchange(false, std::memory_order_acquire))
             levelGain = target;
@@ -139,6 +152,7 @@ private:
     Saturation saturation;
     BitCrusher bitCrusher;
     float levelGain = 1.0F;
+    std::atomic<InsertProcessor*> inserts{nullptr};
     std::atomic<float> targetLevelGain{1.0F};
     std::atomic<bool> levelSnapRequested{false};
 

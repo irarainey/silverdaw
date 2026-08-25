@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-08-09 · Owner: @irarainey_
+_Last reviewed: 2026-08-25 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -8,9 +8,17 @@ and per-area sections rather than growing this file.
 
 ## Shape at a glance
 
-Two processes. The Electron app owns the UI, OS integration, and the backend's
-lifecycle; the headless JUCE engine owns audio, DSP, file I/O, and the canonical
-project state. They speak a text-only JSON bridge; bulk bytes go via disk.
+Two long-lived processes. The Electron app owns the UI, OS integration, and the
+backend's lifecycle; the headless JUCE engine owns audio, DSP, file I/O, and the
+canonical project state. They speak a text-only JSON bridge; bulk bytes go via
+disk.
+
+Two things qualify "two" and "headless", both from ADR 0025 and neither a third
+architectural peer. A **plugin scan** runs the backend binary again in a
+transient child worker, so an unknown VST3 is loaded outside the engine; the
+worker is reused across files and replaced when a plugin crashes it. And the
+engine links `juce_gui_basics` purely to own the **native editor window** of a
+hosted plugin — it still draws no Silverdaw interface of its own.
 
 ```text
 +-----------------------------+   ws://127.0.0.1:<port>   +-----------------------------+
@@ -51,7 +59,10 @@ project state. They speak a text-only JSON bridge; bulk bytes go via disk.
 
 - `CRITICAL` — **Audio thread:** no allocation, locks, or exceptions. Reaches
   mutated state via `std::atomic` (master clock, offsets, double-buffered
-  envelope/breakpoint lists swapped by an atomic pointer). See ADR 0006.
+  envelope/breakpoint lists swapped by an atomic pointer). See ADR 0006. A
+  hosted plugin's own `processBlock` is the sole exception — third-party code
+  cannot be held to the rule, which ADR 0025 accepts as a bounded risk. It
+  relaxes nothing for Silverdaw's own audio code.
 - **JUCE message thread:** owns every mutation of `AudioEngine`, `ProjectState`,
   the `ValueTree`, and the source graph. The bridge `callAsync`s onto it.
 - **IXWebSocket I/O threads:** parse JSON, gate AUTH, then `callAsync`.
@@ -106,6 +117,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks) | — |
+| `backend/src/plugins/` | VST3 catalogue and out-of-process scanning, hosted per-track insert chains, plugin play head, native editor windows | ADR 0025 |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |
 | `backend/src/mixdown/` | Offline render/export on the canonical chain | — |
 | `backend/src/project/` | `ValueTree` state, UndoManager, save/load, peaks cache | ADR 0002 |

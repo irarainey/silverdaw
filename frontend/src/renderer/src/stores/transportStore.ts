@@ -40,7 +40,21 @@ interface TransportState {
    */
   audioState: 'starting' | 'ready' | 'failed' | 'no_device'
   hasBeenReady: boolean
+  /**
+   * `performance.now()` of the last local play/pause intent the engine has not yet
+   * confirmed, or null when there is none outstanding. `PLAYHEAD_UPDATE` is reconciled
+   * against it so an update still describing the pre-click state cannot undo the click.
+   */
+  playIntentAt: number | null
 }
+
+/**
+ * How long an unconfirmed local play/pause intent outranks the engine's reported state.
+ * The intent is normally cleared the moment the engine agrees, so this is only the cap for
+ * a command that never lands — long enough to cover a badly delayed round trip, short
+ * enough that a UI left out of step self-corrects before the user notices.
+ */
+const PLAY_INTENT_SETTLE_MS = 2000
 
 export const useTransportStore = defineStore('transport', {
   state: (): TransportState => ({
@@ -55,7 +69,8 @@ export const useTransportStore = defineStore('transport', {
     bridgeFailureMessage: null,
     engineRecovery: 'ok',
     audioState: 'starting',
-    hasBeenReady: false
+    hasBeenReady: false,
+    playIntentAt: null
   }),
 
   getters: {
@@ -72,7 +87,58 @@ export const useTransportStore = defineStore('transport', {
           (typeof positionMs === 'number' ? ` @ ${positionMs.toFixed(0)}ms` : ''))
       }
       this.isPlaying = isPlaying
+      this.playIntentAt = performance.now()
       if (typeof positionMs === 'number') this.positionMs = positionMs
+    },
+
+    /**
+     * Adopt "stopped" after the backend replaced the project or rebuilt the graph for
+     * undo/redo, both of which stop the engine.
+     *
+     * This is authoritative state, not local intent, so it clears `playIntentAt` rather
+     * than stamping it. Stamping made the next `PLAYHEAD_UPDATE` wait out the settle
+     * window before it could correct anything, which is why the transport sat wrong for
+     * two seconds after a snapshot instead of being reconciled at once.
+     */
+    resetPlaybackForProjectChange(): void {
+      if (this.isPlaying) {
+        log.info('transport', 'playback state -> paused (project replaced)')
+      }
+      this.isPlaying = false
+      this.playIntentAt = null
+      this.clearMidiPlaybackHolds()
+    },
+
+    /**
+     * Adopt the backend's playback state from `PLAYHEAD_UPDATE`.
+     *
+     * Local intent is optimistic, so it can be left stranded: a socket blip clears
+     * `isPlaying` while the audio thread plays on, and a command dropped because the
+     * socket was not open sets it without the engine ever agreeing. Nothing used to
+     * put those back in step, so the UI could sit at "stopped" over audible playback
+     * until the user clicked again. The engine already reports the truth 60 times a
+     * second — this takes it, except in the two cases where the UI is knowingly ahead
+     * of the engine: inside the settle window after a click, and while a MIDI platter
+     * hold pauses the engine but keeps the transport armed.
+     */
+    reconcilePlaybackState(isPlaying: boolean): void {
+      if (this.isPlaying === isPlaying) {
+        // The engine agrees, so there is no longer an intent in flight to protect. Clearing
+        // it here is what stops a slow round trip from being adopted as a disagreement once
+        // the window lapses, which would show as the transport flicking back and forth.
+        this.playIntentAt = null
+        return
+      }
+      if (this.midiPlaybackHoldActive) return
+      if (
+        this.playIntentAt !== null &&
+        performance.now() - this.playIntentAt < PLAY_INTENT_SETTLE_MS
+      ) {
+        return
+      }
+      log.info('transport', `playback state reconciled -> ${isPlaying ? 'playing' : 'paused'}`)
+      this.isPlaying = isPlaying
+      this.playIntentAt = null
     },
     setPosition(positionMs: number): void {
       this.positionMs = positionMs
@@ -110,6 +176,9 @@ export const useTransportStore = defineStore('transport', {
       this.connected = connected
       if (!connected) {
         this.isPlaying = false
+        // The drop is not a play/pause intent: leaving one pending would block the
+        // reconcile that puts the UI back in step once the socket returns.
+        this.playIntentAt = null
         this.clearMidiPlaybackHolds()
         this.bridgeReady = false
         this.handshakeReady = false

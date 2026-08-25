@@ -11,6 +11,10 @@ import {
   isBridgeInboundType,
   isAudioDeviceChangedPayload,
   isAudioDevicesListPayload,
+  isPluginListPayload,
+  isPluginNoticePayload,
+  isTrackPluginBypassAppliedPayload,
+  isPluginScanProgressPayload,
   isMidiDevicesListPayload,
   isMidiMessagePayload,
   isMidiControlPayload,
@@ -168,6 +172,16 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isAudioDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'AUDIO_DEVICE_CHANGED':
       return isAudioDeviceChangedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PLUGIN_LIST':
+      return isPluginListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PLUGIN_SCAN_PROGRESS':
+      return isPluginScanProgressPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'PLUGIN_NOTICE':
+      return isPluginNoticePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_PLUGIN_BYPASS_APPLIED':
+      return isTrackPluginBypassAppliedPayload(payload)
+        ? { type, payload }
+        : payloadMismatch(type, payload)
     case 'MIDI_DEVICES_LIST':
       return isMidiDevicesListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MIDI_MESSAGE':

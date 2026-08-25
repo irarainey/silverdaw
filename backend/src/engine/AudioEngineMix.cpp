@@ -29,6 +29,8 @@ void AudioEngine::setMetronomeEnabled(bool enabled)
 void AudioEngine::setMetronomeBpm(double bpm)
 {
     metronome.setBpm(bpm);
+    // The project tempo is also what tempo-synced hosted plugins follow (ADR 0025).
+    pluginPlayHead.setBpm(bpm);
 }
 
 void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
@@ -82,6 +84,11 @@ void AudioEngine::setTrackPan(const juce::String& trackId, float pan)
 
 void AudioEngine::retireTrackFxState(const juce::String& trackId)
 {
+    // Retiring the track destroys its plugin instances, and an open editor's content
+    // component belongs to the instance — so the windows have to go first.
+    for (const auto& descriptor : getTrackPluginSlots(trackId))
+        closeTrackPluginEditor(descriptor.slotId);
+
     busGraph.retireTrackFxState(trackId);
 }
 

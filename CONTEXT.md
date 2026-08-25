@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-09 · Owner: @irarainey_
+_Last reviewed: 2026-08-25 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -42,11 +42,18 @@ leaving the transport showing playback with a playhead that never moves.
 **1.6.0** added a user-scoped **file browser** (the library panel's Files tab)
 for browsing folders of audio on disk, auditioning a file before importing it,
 and importing it — see `docs/development-plan.md` §1.6.0.
-The current release is **1.6.1**, a patch settling the project tempo box — a
-tempo applies once the edit settles rather than on every spinner tick, typing a
-tempo commits, and entering the box selects what is there — and tidying the file
-browser, where the now-playing bar clears when the audition stops and a whole
-row is the click target.
+**1.6.1** settled the project tempo box — a tempo applies once the edit settles
+rather than on every spinner tick, typing a tempo commits, and entering the box
+selects what is there — and tidied the file browser, where the now-playing bar
+clears when the audition stops and a whole row is the click target.
+The current release is **1.7.0**, which lets a track carry the user's own
+**VST3 effect plugins** as per-track inserts from a new Plugins tab: scanned out
+of process so a plugin that fails to load cannot take the app down, saved with
+the project and held in place when one is not installed, and rendered on export
+exactly as the arrangement plays, with delay compensation and tempo/playhead
+sync keeping them in time — see `docs/development-plan.md` §1.7.0. It also
+drags a file from the Files tab straight onto a track, and reopens the lower
+panel on the tab it was left on.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
@@ -67,6 +74,9 @@ and saved projects must keep working across every update (see ADR 0019).
 
 - `CRITICAL` — **Audio thread is real-time.** No allocation, locking, throwing,
   or blocking I/O in the audio callback. Publish to it lock-free. See ADR 0006.
+  The **one** exception is a hosted VST3 plugin's own `processBlock`, which
+  Silverdaw cannot police — ADR 0025 accepts that as a bounded risk. It licenses
+  nothing in Silverdaw's own audio code, which stays strictly bound by ADR 0006.
 - `CRITICAL` — **Backend `ValueTree` is the single source of truth** for project
   state; the renderer mirrors it. See ADR 0002.
 - `CRITICAL` — **A clip has one original BPM and one warp target.** The renderer

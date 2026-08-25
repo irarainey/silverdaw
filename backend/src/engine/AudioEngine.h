@@ -117,6 +117,53 @@ class AudioEngine : private AudioEngineGraphState,
     void setTrackPan(const juce::String& trackId, float pan);
     void retireTrackFxState(const juce::String& trackId);
 
+    // ── VST3 plugin inserts (ADR 0025) ──────────────────────────────────
+    // All of these are message-thread only. The audio thread never sees a plugin except
+    // through the chain snapshot BusGraph publishes for it.
+
+    /** The scanned plugin catalogue, created on first use. */
+    plugins::PluginCatalogue& pluginCatalogue();
+
+    /** Appends an insert to `trackId` and returns its new slot id, or an empty string when
+     *  the track id is invalid. A plugin that cannot be instantiated still produces a slot:
+     *  it becomes an unresolved pass-through that keeps `state`, so opening a project on a
+     *  machine without the plugin can never silently discard the user's settings (ADR 0019).
+     *  `errorMessage` is set when that happens. */
+    juce::String addTrackPlugin(const juce::String& trackId,
+                                const juce::PluginDescription& description,
+                                const juce::MemoryBlock& state, bool bypassed,
+                                juce::String& errorMessage);
+
+    bool removeTrackPlugin(const juce::String& trackId, const juce::String& slotId);
+    bool moveTrackPlugin(const juce::String& trackId, const juce::String& slotId, int newIndex);
+    bool setTrackPluginBypassed(const juce::String& trackId, const juce::String& slotId,
+                                bool bypassed);
+
+    std::vector<plugins::PluginSlotDescriptor> getTrackPluginSlots(const juce::String& trackId);
+
+    /** Message thread. What the slot's plugin negotiated, for the advisory shown when a
+     *  plugin asks for inputs or MIDI that Silverdaw does not send (ADR 0025). */
+    plugins::PluginSlotIo getTrackPluginIo(const juce::String& trackId,
+                                           const juce::String& slotId);
+
+    /** The slot's live state chunk, for saving. Empty when the slot is unknown. */
+    juce::MemoryBlock getTrackPluginState(const juce::String& trackId,
+                                          const juce::String& slotId);
+
+    /** Replaces a track's whole insert chain from persisted slots. Idempotent, so load,
+     *  undo/redo, and a full engine rebuild can all share it. Slots whose plugin is not in
+     *  the catalogue become unresolved pass-throughs that keep their saved state. */
+    void setTrackPluginsFromState(const juce::String& trackId,
+                                  const std::vector<TrackPluginSlot>& slots);
+
+    /** Opens (or refocuses) the plugin's own native editor window, which the backend owns.
+     *  False when the slot is unknown or unresolved. */
+    bool openTrackPluginEditor(const juce::String& trackId, const juce::String& slotId,
+                               const juce::String& windowTitle);
+
+    /** Closes an open editor window. Called before a slot's instance is destroyed. */
+    void closeTrackPluginEditor(const juce::String& slotId);
+
     // Per-track effect automation: builds an immutable snapshot for `trackId`
     // (merging this param's curve with the track's other lanes), publishes it to
     // the BusGraph lock-free, and retires the previous snapshot. `points` is the
@@ -166,6 +213,12 @@ class AudioEngine : private AudioEngineGraphState,
      *  seek — is what makes the restart seamless: the engine reacts on its own uncompensated
      *  clock and reuses the immediate seek path, so there is no round trip and no output fade. */
     void setTimelineLoop(std::optional<LoopRange> range);
+
+    /** True while a timeline loop range is armed. Mirrors `isPreviewLoopArmed` and lets a
+     *  caller confirm a project change disarmed the previous project's range — an armed
+     *  loop is otherwise invisible from outside the engine, which is how one survived
+     *  PROJECT_NEW and silently wrapped playback in the next project. */
+    bool isTimelineLoopArmed() const noexcept { return timelineLoop.has_value(); }
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
     bool commitClipOffset(const juce::String& clipId);
@@ -365,6 +418,11 @@ class AudioEngine : private AudioEngineGraphState,
 
     double getHeuristicExtraLatencyMs() const;
 
+    // Plugin delay compensation makes the whole mix uniformly late, so the reported
+    // playhead subtracts it alongside device latency (ADR 0026). Kept separate from
+    // getOutputLatencyMs, which reports a device property to the UI.
+    double getPluginLatencyMs() const;
+
     juce::AudioFormatManager& getFormatManager() noexcept
     {
         return formatManager;
@@ -459,6 +517,11 @@ class AudioEngine : private AudioEngineGraphState,
                               juce::AudioBuffer<float>& prefetchScratch);
     bool isTrackAudible(const juce::String& trackId) const noexcept;
     static bool waitForTrackPrefetch(Track& track, double deadlineMs, juce::AudioBuffer<float>& scratch);
+
+    /** Message thread, master gated. Pushes the compensation alignment through every chain
+     *  and discards it, so play and seek stay responsive instead of opening with silence
+     *  the size of the alignment (ADR 0026). */
+    void primePluginPipeline();
 
     class RebuildTimer : public juce::Timer
     {

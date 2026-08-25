@@ -2,6 +2,7 @@
 // automation sampling. Message-thread setters live in BusGraph.cpp.
 
 #include "BusGraph.h"
+#include "AudioConstants.h"
 
 namespace silverdaw
 {
@@ -17,6 +18,9 @@ void BusGraph::TrackRuntime::prepareToPlay(int samplesPerBlockExpected, double s
     BusGraph::equalPowerPanGains(pan.load(std::memory_order_relaxed),
                                  currentPanGainL, currentPanGainR);
     beatRepeatProcessor.prepare(sampleRate);
+    compensationDelay.prepare(2,
+                              static_cast<int>(kMaxLatencyCompensationSeconds * sampleRate),
+                              preparedBlockSize);
     for (auto* source : clips)
         if (source != nullptr) source->prepareToPlay(preparedBlockSize, preparedRate);
     chain.prepare(sampleRate, samplesPerBlockExpected, /*numChannels*/ 2);
@@ -27,6 +31,7 @@ void BusGraph::TrackRuntime::releaseResources()
     for (auto* source : clips)
         if (source != nullptr) source->releaseResources();
     chain.reset();
+    compensationDelay.reset();
 }
 
 void BusGraph::TrackRuntime::getNextAudioBlock(const juce::AudioSourceChannelInfo& info)
@@ -74,6 +79,9 @@ void BusGraph::TrackRuntime::renderClips(const std::vector<juce::AudioSource*>& 
         beatRepeatProcessor.reset();
     beatRepeatProcessor.process(*info.buffer, info.startSample, info.numSamples, timelineStart, beatRepeat);
     chain.process(*info.buffer, info.startSample, info.numSamples);
+    // Aligns this track with every other one before the meters and the send taps read it,
+    // so a plugin's latency cannot change what a meter or a send amount means (ADR 0026).
+    compensationDelay.process(*info.buffer, info.startSample, info.numSamples);
 
     const int numCh = info.buffer->getNumChannels();
     if (numCh > 0)

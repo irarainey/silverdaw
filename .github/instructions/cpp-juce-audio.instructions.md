@@ -69,6 +69,11 @@ or compact code.
   - blocking JUCE message-thread calls.
 - If message-thread state must affect audio, publish small immutable values
   through atomics or an existing lock-free handoff pattern.
+- These rules bind **Silverdaw's own code**. Calling a hosted VST3 plugin's
+  `processBlock` from the audio thread is the sole sanctioned exception, since a
+  third-party binary cannot be held to them — ADR 0025 accepts it as a bounded
+  risk. Do not "fix" that call, and do not cite it to justify allocating,
+  locking, or logging in code we control.
 - When swapping processors or audio sources, use a publish-then-replace
   discipline consistent with the existing engine code.
 - Rebuild expensive processors only when required. Prefer atomic parameter

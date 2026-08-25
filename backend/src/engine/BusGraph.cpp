@@ -25,8 +25,11 @@ void BusGraph::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
     reverbSendBuf.clear();
     delaySendBuf.clear();
     sharedFx.prepare(preparedRate, preparedMax);
+    for (auto& kv : trackPlugins)
+        kv.second->prepare(preparedRate, preparedMax);
     for (auto& kv : runtimes)
         kv.second->prepareToPlay(preparedMax, preparedRate);
+    updateLatencyCompensation();
 }
 
 void BusGraph::releaseResources()
@@ -34,6 +37,8 @@ void BusGraph::releaseResources()
     const juce::ScopedLock sl(lock);
     for (auto& kv : runtimes)
         kv.second->releaseResources();
+    for (auto& kv : trackPlugins)
+        kv.second->release();
 }
 
 void BusGraph::attachClip(const juce::String& trackId,
@@ -84,6 +89,7 @@ void BusGraph::attachClip(const juce::String& trackId,
             rt->publishedBeatRepeat = beatRepeatIt->second;
 
         applyPendingTrackFx(*rt);
+        updateLatencyCompensation();
 
         publishRenderSnapshot();
     }
@@ -356,6 +362,7 @@ void BusGraph::clear()
         kv.second->releaseResources();
     runtimes.clear();
     clipToTrack.clear();
+    trackPlugins.clear();
     clearPendingTrackFx();
     pendingAutomation.clear();
     pendingBeatRepeats.clear();

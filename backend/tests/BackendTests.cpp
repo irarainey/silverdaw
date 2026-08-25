@@ -4,6 +4,8 @@
 
 #include "TestRegistry.h"
 
+#include "PluginScanWorker.h"
+
 #include <iostream>
 #include <set>
 #include <string>
@@ -29,6 +31,7 @@ struct DomainRegistrar
 constexpr DomainRegistrar kRegistrars[] = {
     {"ProjectState", addProjectStateTests},
     {"ProjectStateFx", addProjectStateFxTests},
+    {"ProjectStateTrackPlugins", addProjectStateTrackPluginTests},
     {"Persistence", addPersistenceTests},
     {"Bridge", addBridgeTests},
     {"MidiControllerMapping", addMidiControllerMappingTests},
@@ -60,6 +63,9 @@ constexpr DomainRegistrar kRegistrars[] = {
     {"ScratchPatternPersistence", addScratchPatternPersistenceTests},
     {"ScratchPatternEvaluator", addScratchPatternEvaluatorTests},
     {"ScratchPatternReplayProjectState", addScratchPatternReplayProjectStateTests},
+    {"PluginCatalogue", addPluginCatalogueTests},
+    {"PluginChain", addPluginChainTests},
+    {"PluginLatency", addPluginLatencyTests},
 };
 
 // Structural validation of the assembled registry. Guards the failures that
@@ -110,6 +116,19 @@ std::vector<TestCase> buildRegistry(std::vector<std::pair<const char*, std::size
 int main(int argc, char** argv)
 {
     using namespace silverdaw::tests;
+
+    // The scan coordinator relaunches whichever executable is running, which under test is
+    // this harness. Answering the worker command line here keeps the child-process scan path
+    // testable instead of the child failing as an unknown argument.
+    {
+        juce::StringArray commandLineArgs;
+        for (int i = 1; i < argc; ++i)
+            commandLineArgs.add(juce::String{argv[i]});
+        const auto commandLine = commandLineArgs.joinIntoString(" ");
+
+        if (silverdaw::plugins::isScanWorkerCommandLine(commandLine))
+            return silverdaw::plugins::runScanWorker(commandLine);
+    }
 
     std::vector<std::pair<const char*, std::size_t>> perDomainCounts;
     const auto tests = buildRegistry(perDomainCounts);

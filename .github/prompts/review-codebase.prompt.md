@@ -50,8 +50,10 @@ checks analytically and proceed.
    dead/commented code, stray `console.*` / `std::cout`, orphan IPC handlers.
 4. **Correctness & robustness** — edge cases, error propagation, exception/RAII
    safety, exhaustive union narrowing, deterministic teardown.
-5. **Threading** — audio thread does no allocation/locking/throwing/blocking I/O;
-   lock-free hand-off; no races / use-after-free across threads.
+5. **Threading** — audio thread does no allocation/locking/throwing/blocking I/O
+   (a hosted plugin's own `processBlock` is the sole sanctioned exception, ADR
+   0025 — do not report it); lock-free hand-off; no races / use-after-free
+   across threads.
 6. **Types & contracts** — strengthen end-to-end; backend validates `juce::var`
    shapes; preload `contextBridge` surface matches renderer ambient types.
 7. **Security** — Electron hardening, validated IPC, path traversal on import,

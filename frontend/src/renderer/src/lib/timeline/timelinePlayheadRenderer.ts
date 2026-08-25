@@ -258,9 +258,11 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
 
       // Clip ghost at the snapped landing position within the new lane.
       const absLeft = headerWidth() + (dp.startMs / 1000) * pxPerSecond.value
-      const width = Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
       const ghostLeft = Math.max(bandLeft, absLeft - scrollX.value)
-      const ghostRight = Math.min(rightEdge, absLeft - scrollX.value + width)
+      const ghostRight =
+        dp.durationMs === null
+          ? rightEdge
+          : Math.min(rightEdge, absLeft - scrollX.value + Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value))
       if (ghostRight > ghostLeft) {
         g.rect(ghostLeft, clippedTop, ghostRight - ghostLeft, bandH).fill({ color: colour, alpha: 0.28 })
       }
@@ -295,9 +297,14 @@ export function createTimelinePlayheadRenderer(deps: TimelinePlayheadRendererDep
     if (yTop >= a.renderer.screen.height - (showScrollbar.value ? SCROLLBAR_HEIGHT : 0)) return
 
     const absLeft = headerWidth() + (dp.startMs / 1000) * pxPerSecond.value
-    const width = Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
     const xLeft = absLeft - scrollX.value
-    const xRight = xLeft + width
+    // A file that is not in the library yet has no length until it is imported, so its
+    // ghost runs to the edge of the view instead of switching to a different shape. The
+    // end of a clip that long is off-screen either way, so it reads like any other drop.
+    const xRight =
+      dp.durationMs === null
+        ? rightEdge
+        : xLeft + Math.max(2, (dp.durationMs / 1000) * pxPerSecond.value)
     if (xRight <= headerWidth() || xLeft >= rightEdge) return
 
     // Clip to the header and scrollbar lanes.

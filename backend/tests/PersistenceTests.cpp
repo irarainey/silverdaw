@@ -77,6 +77,7 @@ void testProjectFileSaveLoadAndViewState()
     state.setPlayheadMs(34.0);
     state.setViewSelectedTrack("t1");
     state.setViewFxPanelOpen(true);
+    state.setViewFxTab("plugins");
     state.setViewSnapGrid("half");
     state.setViewTimelineSelection(
         silverdaw::ProjectState::TimelineSelectionView{1000.0, 2500.0, true});
@@ -160,6 +161,7 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(loaded.getClipName("c1"), "Verse chop", "clip name should persist through save/load");
     requireEqual(loaded.getViewSelectedTrack(), "t1", "selected track should persist through save/load");
     require(loaded.getViewFxPanelOpen(), "fx-panel-open flag should persist through save/load");
+    requireEqual(loaded.getViewFxTab(), "plugins", "fx tab should persist through save/load");
     requireEqual(loaded.getViewSnapGrid(), "half", "snap grid should persist through save/load");
     const auto loadedSelection = loaded.getViewTimelineSelection();
     require(loadedSelection.has_value(), "timeline selection should persist through save/load");
@@ -169,7 +171,7 @@ void testProjectFileSaveLoadAndViewState()
 
     const auto viewStateResult = silverdaw::ProjectFile::saveViewState(
         file, -10.0, 240.0, 99.0, "t1", true, true, true,
-        silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false}, "bar");
+        silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false}, "bar", "project");
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
@@ -179,6 +181,7 @@ void testProjectFileSaveLoadAndViewState()
     requireEqual(reloaded.getViewSelectedTrack(), "t1", "saveViewState should persist selected track");
     require(reloaded.getViewFxPanelOpen(), "saveViewState should persist fx-panel-open flag");
     requireEqual(reloaded.getViewSnapGrid(), "bar", "saveViewState should persist the snap grid");
+    requireEqual(reloaded.getViewFxTab(), "project", "saveViewState should persist the fx tab");
     const auto updatedSelection = reloaded.getViewTimelineSelection();
     require(updatedSelection.has_value(), "saveViewState should persist a timeline selection");
     requireNear(updatedSelection->startMs, 3000.0, 0.0001,
@@ -204,6 +207,8 @@ void testProjectFileSaveLoadAndViewState()
     // silently rewriting it, so a legacy caller cannot wipe the setting.
     requireEqual(reloadedOff.getViewSnapGrid(), "bar",
                  "saveViewState should leave an omitted snap grid untouched");
+    requireEqual(reloadedOff.getViewFxTab(), "project",
+                 "saveViewState should leave an omitted fx tab untouched");
 
     const auto missing = dir.getChildFile("missing.silverdaw");
     silverdaw::ProjectState untouched;

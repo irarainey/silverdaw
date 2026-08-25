@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0
+
+### Added
+
+- VST3 effect plugins can be added to a track from a new Plugins tab in the lower panel, and run as a chain that can be reordered, bypassed, and opened for editing in the plugin's own window.
+- Installed plugins are found by a scan that runs outside the app, so a plugin that fails to load cannot take the app down with it.
+- A project remembers its plugins and their settings, keeps them in place when one is not installed on the computer opening it, and exports the same chain the arrangement plays.
+- Plugins that sync to the beat, such as tempo-matched delays, follow the project tempo and playhead.
+- Plugins that need time to work ahead, such as linear-phase equalisers and lookahead limiters, are kept in time with the rest of the mix in both playback and export.
+- Adding a plugin that needs MIDI notes or a side-chain input says so, instead of leaving the track quiet with no explanation.
+- A file can be dragged from the Files tab straight onto a track, which imports it into the library and places it in one action, or onto empty space below the tracks to get a new track for it.
+
+### Changed
+
+- The lower panel now reopens on the tab it was left on when the project was closed, instead of always returning to Track FX.
+- Dragging a file onto the timeline now shows the same drop position marker as dragging from the library, instead of a plain highlight over the whole timeline.
+
+### Fixed
+
+- The transport controls no longer get stuck showing stopped while the project is still playing if the engine has to reconnect.
+- Editing a track while it is playing — adding a beat repeat region, dropping in a transition, or importing to the library — no longer makes the transport briefly show stopped and the timeline jump back to the last saved position before catching up.
+- Starting a new project no longer keeps looping the previous project's loop range, and no longer inherits its reverb, delay or beat repeat settings.
+
 ## 1.6.1
 
 ### Changed

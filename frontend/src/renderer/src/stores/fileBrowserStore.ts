@@ -86,6 +86,10 @@ interface FileBrowserState {
   /** Path of the selected file or folder row, or null. Selecting a folder the
    *  user added arms the Delete key to remove it. */
   selectedPath: string | null
+  /** Path of the row being dragged onto the timeline, or null. Mirrors the drag
+   *  because `dragover` cannot read `dataTransfer`, so the timeline has no other
+   *  way to recognise the drag before the drop. */
+  draggingPath: string | null
   /**
    * Browsed file currently loaded into the preview voice. Held separately from
    * the preview store's own path because a transcoded file is auditioned from a
@@ -199,6 +203,7 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
     coverRequested: {},
     coverEpoch: 0,
     selectedPath: null,
+    draggingPath: null,
     auditionSourcePath: null,
     preparingPath: null,
     playbackPaths: {},
@@ -531,6 +536,12 @@ export const useFileBrowserStore = defineStore('fileBrowser', {
       this.selectedPath = path
     },
 
+    /** Mirrors the dragged row's path for the duration of a drag onto the
+     *  timeline. See `draggingPath` for why the DataTransfer alone is not enough. */
+    setDragPath(path: string | null): void {
+      this.draggingPath = path
+    },
+
     /** Move the selection through the visible rows, so the arrow keys walk the
      *  tree exactly as it reads on screen: filtered and collapsed rows are not
      *  in `rows`, so they are skipped. Both ends stop rather than wrap. */
@@ -824,6 +835,11 @@ export function fileBrowserFileTypeLabel(path: string): string {
   if (dot <= 0 || dot === leaf.length - 1) return ''
   return leaf.slice(dot + 1).toLocaleUpperCase()
 }
+
+/** DataTransfer type carrying a browsed file's path when a row is dragged onto
+ *  the timeline. Distinct from the `Files` type an Explorer drag uses, so the
+ *  timeline can tell an in-app row drag from an OS one. */
+export const MIME_FILE_BROWSER_PATH = 'application/x-silverdaw-file-path'
 
 /** Left inset for a tree row. Shared so folder and file rows always line up. */
 export function fileBrowserRowIndentPx(depth: number): number {

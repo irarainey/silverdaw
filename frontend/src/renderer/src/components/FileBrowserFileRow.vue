@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useFileBrowserStore, fileBrowserRowIndentPx, fileBrowserFileTypeLabel } from '@/stores/fileBrowserStore'
+import { useFileBrowserStore, fileBrowserRowIndentPx, fileBrowserFileTypeLabel, MIME_FILE_BROWSER_PATH } from '@/stores/fileBrowserStore'
 import { formatTrackTime } from '@/lib/library/trackTime'
 
 const props = defineProps<{
@@ -70,12 +70,33 @@ function hideCoverPreview(): void {
   coverPreview.value = null
 }
 
+// Dragging a row onto a track imports the file and places it in one gesture, so
+// the path travels on the DataTransfer and is mirrored into the store for the
+// dragover phase, which cannot read it.
+function onDragStart(event: DragEvent): void {
+  if (!event.dataTransfer) return
+  hideCoverPreview()
+  event.dataTransfer.effectAllowed = 'copy'
+  event.dataTransfer.setData(MIME_FILE_BROWSER_PATH, props.row.path)
+  // Plain text helps identify drags that escape the app.
+  event.dataTransfer.setData('text/plain', props.row.name)
+  browser.setDragPath(props.row.path)
+}
+
+function onDragEnd(): void {
+  browser.setDragPath(null)
+}
+
 onMounted(() => {
   void browser.ensureInfo(props.row.path)
 })
 
-// A teleported preview would outlive a row removed while hovered.
-onBeforeUnmount(hideCoverPreview)
+// A teleported preview would outlive a row removed while hovered, and a row
+// removed mid-drag never fires `dragend`, which would strand the drag flag.
+onBeforeUnmount(() => {
+  hideCoverPreview()
+  if (browser.draggingPath === props.row.path) browser.setDragPath(null)
+})
 
 // A folder refresh can reuse a row for a different file.
 watch(
@@ -110,8 +131,12 @@ watch(
     :aria-level="props.row.pinned ? undefined : props.row.depth + 1"
     :aria-selected="props.row.pinned ? undefined : isSelected"
     :data-selected="props.row.pinned ? undefined : isSelected"
+    draggable="true"
+    title="Drag onto a track to add it. Double-click to preview."
     @click="browser.select(props.row.path)"
     @dblclick="browser.togglePlay(props.row.path)"
+    @dragstart="onDragStart"
+    @dragend="onDragEnd"
     @contextmenu.prevent.stop="emit('contextMenu', { event: $event, path: props.row.path })"
   >
     <div

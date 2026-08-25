@@ -133,7 +133,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.6.1" } }
+{ "type": "READY", "payload": { "version": "1.7.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -979,8 +979,6 @@ diverges from mixdown in real conditions.
 - Bus / send routing UI as a first-class surface.
 - Sidechain routing: any track can feed a sidechain input to any Leveler.
 - Per-track insert reverb / delay (alternative to the shared sends above).
-- VST3 plugin hosting via JUCE `AudioPluginHost` — track-vs-clip scope
-  decided in Phase 8 once we've lived with the per-track model.
 - Utility (gain / phase / mono) effects — only added if real
   usage shows the need; the simple ethos is to ship fewer, well-explained
   effects.
@@ -1168,14 +1166,14 @@ silence.
 
 **Deferred to Phase 8** (and explicitly NOT in Phase 5):
 
-- VST3 plugin hosting via JUCE `AudioPluginHost`. Hosting scope
-  (per-track vs per-clip) is decided in Phase 8 once the per-track
-  model has shipped.
 - Per-track insert reverb / delay (so a single track can have its own
   unique room without the shared one).
 - Sidechain compression.
 - Utility (gain / phase / mono).
 - Master Limiter.
+
+VST3 plugin hosting was also deferred here and has since been implemented in
+1.7.0 as per-track inserts (ADR 0025); see §1.7.0.
 
 ### 7.11 Clip Volume Shape
 
@@ -2067,7 +2065,7 @@ without leaving the app, and without widening what Silverdaw is allowed to read.
    these keys a single opt-out from both capture-phase global keyboard owners,
    so a component shortcut can no longer double-fire an app-wide one.
 
-### 1.6.1 - Tempo Box & File Browser Polish *(current release)*
+### 1.6.1 - Tempo Box & File Browser Polish *(released)*
 
 **Goal:** make editing the project tempo feel settled rather than animated, and
 make the file browser's now-playing bar and rows behave the way they read.
@@ -2094,6 +2092,47 @@ make the file browser's now-playing bar and rows behave the way they read.
    longer depends on hitting its name, matching how folder rows already behaved.
 6. [x] **One more e2e journey** (ADR 0014): a file browser audition, from adding
    a folder through playing a row to the bar clearing on pause.
+
+### 1.7.0 - VST3 Effect Plugins *(current release)*
+
+**Goal:** let a track carry the user's own VST3 effects alongside the built-in
+Track FX, without giving up export parity or a responsive transport. Full
+reasoning in ADR 0025 (hosting) and ADR 0026 (delay compensation).
+
+1. [x] **VST3 effect plugins as per-track inserts.** A **Plugins** tab sits
+   directly after Track FX, showing the selected track's chain: add, reorder,
+   bypass, remove, and open a plugin in its own backend-owned native window. A
+   plugin already on the track is greyed out in the picker so it cannot be
+   added twice. Inserts run inside `TrackChain` after the built-in effects and
+   before track level, sends and pan, so every existing mix control keeps its
+   meaning (ADR 0022).
+2. [x] **Out-of-process scanning behind a persistent blacklist.** Unknown
+   binaries are loaded by a child worker rather than the engine, so a plugin
+   that crashes on load cannot take the app down; the crash is recorded and the
+   plugin is not retried. The worker is reused across files and replaced only
+   when it dies.
+3. [x] **State persists, unresolved-tolerant.** A project stores each slot's
+   plugin identity and opaque state inline. Opening it on a machine without
+   that plugin keeps the slot, its position and its saved state, passes audio
+   through untouched, and writes it back on save (ADR 0019).
+4. [x] **Tempo-aware plugins follow the project.** `PluginPlayHead` publishes
+   the project tempo and transport position, so beat-synced plugins line up.
+   The time signature is always reported as 4/4, which is all the app supports.
+5. [x] **Plugin delay compensation (ADR 0026).** Every track is delayed to a
+   common alignment `Lmax`, bounded at one second, immediately after its insert
+   chain — so a latent plugin no longer drags its own track late and nothing
+   shifts *within* a track. The residual joins device latency in the reported
+   playhead, and the mixdown trims it. `play()` primes the pipeline first, so
+   starting playback stays immediate.
+6. [x] **Unsupported inputs are reported, not silent.** Inserts get stereo
+   audio and no MIDI. A plugin wanting MIDI notes or a side-chain still loads
+   and runs but has nothing to voice, so `TRACK_ADD_PLUGIN` answers with a
+   `PLUGIN_NOTICE` naming what is missing. Both inputs are permanently out of
+   scope by design — see ADR 0025 §Scope.
+
+Still open, and deliberately so: plugin-parameter automation, which needs a
+dynamic replacement for the fixed `AutomationParam` enum and is a decision of
+its own.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -2177,7 +2216,7 @@ library, transport, UI layout and per-clip edits — from a single
 - [x] Persist transport playhead position. The loop region and metronome flag
   followed once those features shipped, and now persist alongside it.
 - [x] Persist project metadata: name (with rename), BPM (2 d.p.), project
-  length, savedAt ISO timestamp. Time signature is fixed 4/4 today.
+  length, savedAt ISO timestamp. Time signature is fixed at 4/4 by design.
 - [x] Persist library catalogue as a `LIBRARY > ITEM[...]` sub-tree
   of `PROJECT`, including id, source path, display file name, duration,
   sample rate, channel count, detected key, decoded playback cache path,
@@ -2430,8 +2469,9 @@ playable at every point):
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
   Track FX (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, and
   Reverb/Delay sends) or the project-wide Project FX (shared Reverb, Delay,
-  Glue Compressor, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
-  back to Track FX on reload, keeping the per-track and project-scoped effects
+  Glue Compressor, and Safety Limiter) or the Plugins rack — is persisted the
+  same way (`viewFxTab`, stored opaquely so an unrecognised value falls back to
+  Track FX), keeping the per-track and project-scoped effects
   on clearly separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
   Track FX arranges the modules in five responsive columns: Tone; Filter above
@@ -2538,12 +2578,12 @@ playable at every point):
 - Sidechain Leveler routing.
 - Per-track insert reverb / delay.
 - Utility effects.
-- VST3 hosting (scope decided then — per-track or per-clip).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
 - Plugin-param envelopes (track-parameter automation — Pan / send / tone /
   filter / compressor / gain — shipped in §7.11.1; **plugin**-parameter envelopes
-  still await VST3 hosting).
+  await a dynamic replacement for the fixed `AutomationParam` enum, which ADR
+  0025 leaves as a decision of its own. VST3 hosting itself shipped in 1.7.0).
 
 ### Phase 6 — Stem Separation, Loop Slicing & Fine-Clip Editor
 
@@ -2773,7 +2813,14 @@ robustness without changing the core editing model.
   regenerates those caches and resumes transport behind a transcode-generation
   counter for stale-ack safety, sample-bake at the project rate, and a throttled
   probe-on-load batch for older projects that stored a wrong renderer-side rate.
-- [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
+- [x] VST3 effect-plugin scanning and hosting as per-track inserts: scanning in
+  a child process behind a persistent blacklist, hosting in the engine process,
+  and a **Plugins** tab directly after Track FX. See ADR 0025. *(implemented in
+  1.7.0.)*
+- [x] Plugin delay compensation: align every track to a common latency so a
+  latent plugin no longer shifts its track late, folding the residual constant
+  into the reported playhead and trimming it from the mixdown. See ADR 0026.
+  *(implemented in 1.7.0.)*
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 
@@ -2818,7 +2865,7 @@ robustness without changing the core editing model.
 | Demucs model download UX                    | Stem features visibly disabled until model is present; clear download progress UI                                                                 |
 | Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction to post-core hardening      |
 | Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
-| VST3 plugin crashes                         | Sandbox plugins via JUCE `AudioPluginHost` separate process                                                                                       |
+| VST3 plugin crashes                         | Scanning runs in a child process behind a persistent blacklist; a crash while hosting is recovered by the existing engine supervisor (ADR 0025)                                                    |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
 | Audio device stops delivering audio         | Implemented: `DeviceCallbackGuard` logs device start/stop/error, and a message-thread watchdog restarts a device whose callback count has stopped advancing (bounded attempts), so a stalled stream can no longer show playback with a frozen playhead and silence (see Developer Guide → Audio devices, Robustness) |
 | Project file forward/backward compat        | Versioned JSON with a schema-version field; backend reads any older version, writes the latest                                                    |

@@ -9,6 +9,7 @@
 #include "PeakJobCoordinator.h"
 #include "PeaksCache.h"
 #include "PlayheadEmitter.h"
+#include "PluginScanWorker.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
 #include "Version.h"
@@ -263,6 +264,12 @@ int runBackend(int argc, char* argv[])
     silverdaw::ProjectState projectState;
     silverdaw::ProjectSession session;
 
+    // Lets PROJECT_STATE flag slots whose plugin is missing on this machine, without that
+    // machine-specific fact ever reaching the project file (ADR 0025).
+    projectState.setPluginAvailabilityProbe([&engine](const juce::String& identifier) {
+        return engine.pluginCatalogue().hasPlugin(identifier);
+    });
+
     // Disk-backed peaks cache avoids recomputing the same file across reloads.
     const silverdaw::PeaksCache peaksCache;
 
@@ -434,6 +441,16 @@ int main(int argc, char* argv[])
 {
     try
     {
+        // The plugin scan child re-launches this executable, so it is answered before any
+        // engine setup — it takes no --port and must never open the bridge (ADR 0025).
+        juce::StringArray commandLineArgs;
+        for (int i = 1; i < argc; ++i)
+            commandLineArgs.add(juce::String{argv[i]});
+        const auto commandLine = commandLineArgs.joinIntoString(" ");
+
+        if (silverdaw::plugins::isScanWorkerCommandLine(commandLine))
+            return silverdaw::plugins::runScanWorker(commandLine);
+
         return runBackend(argc, argv);
     }
     catch (const std::exception& e)

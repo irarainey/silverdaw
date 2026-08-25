@@ -13,6 +13,7 @@ namespace silverdaw::tests
 
 void addProjectStateTests(std::vector<TestCase>& tests);
 void addProjectStateFxTests(std::vector<TestCase>& tests);
+void addProjectStateTrackPluginTests(std::vector<TestCase>& tests);
 void addPersistenceTests(std::vector<TestCase>& tests);
 void addBridgeTests(std::vector<TestCase>& tests);
 void addMidiControllerMappingTests(std::vector<TestCase>& tests);
@@ -44,5 +45,8 @@ void addLibraryCleanupTests(std::vector<TestCase>& tests);
 void addScratchPatternPersistenceTests(std::vector<TestCase>& tests);
 void addScratchPatternEvaluatorTests(std::vector<TestCase>& tests);
 void addScratchPatternReplayProjectStateTests(std::vector<TestCase>& tests);
+void addPluginCatalogueTests(std::vector<TestCase>& tests);
+void addPluginChainTests(std::vector<TestCase>& tests);
+void addPluginLatencyTests(std::vector<TestCase>& tests);
 
 } // namespace silverdaw::tests

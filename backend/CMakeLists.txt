@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.6.1
+    VERSION 1.7.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -404,6 +404,7 @@ add_library(silverdaw_backend_core STATIC
     # commands
     src/commands/AudioDeviceCommands.cpp
     src/commands/BeatRepeatCommands.cpp
+    src/commands/PluginCommands.cpp
     src/commands/ClipCommands.cpp
     src/commands/LibraryCommands.cpp
     src/commands/MarkerCommands.cpp
@@ -479,6 +480,8 @@ add_library(silverdaw_backend_core STATIC
     src/engine/AudioEngineClipEdit.cpp
     src/engine/AudioEngineClips.cpp
     src/engine/AudioEnginePreview.cpp
+    src/engine/AudioEnginePlugins.cpp
+    src/engine/TrackPluginRestore.cpp
     src/engine/AudioEngineScratch.cpp
     src/engine/AudioEnginePatternReplay.cpp
     src/engine/BusGraph.cpp
@@ -509,6 +512,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectState.cpp
     src/project/ProjectStateAutomation.cpp
     src/project/ProjectStateBeatRepeat.cpp
+    src/project/ProjectStateTrackPlugins.cpp
     src/project/ProjectStateClips.cpp
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
@@ -522,6 +526,13 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectTransitions.cpp
     src/project/SampleExport.cpp
     src/project/ValueTreeJson.cpp
+    # plugins (VST3 hosting — ADR 0025)
+    src/plugins/PluginCatalogue.cpp
+    src/plugins/PluginChain.cpp
+    src/plugins/PluginEditorWindow.cpp
+    src/plugins/PluginScanCoordinator.cpp
+    src/plugins/PluginScanJob.cpp
+    src/plugins/PluginScanWorker.cpp
     # stems (bridge/job plumbing — ONNX-free, always built)
     src/stems/RoformerPerformance.cpp
     src/stems/StemAudioPreparation.cpp
@@ -540,7 +551,15 @@ target_compile_definitions(silverdaw_backend_core PUBLIC
     JUCE_USE_WINDOWS_MEDIA_FORMAT=1
     JUCE_USE_MP3AUDIOFORMAT=1
     JUCE_USE_LAME_AUDIO_FORMAT=1
-    JUCE_STANDALONE_APPLICATION=1)
+    JUCE_STANDALONE_APPLICATION=1
+    # VST3 is the only hosted plugin format (ADR 0025). The remaining host
+    # backends are pinned off so their SDKs are never compiled in, rather than
+    # left to JUCE's defaults where a module-header change could enable one.
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_VST=0
+    JUCE_PLUGINHOST_AU=0
+    JUCE_PLUGINHOST_LV2=0
+    JUCE_PLUGINHOST_ARA=0)
 
 target_include_directories(silverdaw_backend_core PUBLIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -551,6 +570,7 @@ target_include_directories(silverdaw_backend_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mixdown
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins
     ${CMAKE_CURRENT_SOURCE_DIR}/src/project
     ${CMAKE_CURRENT_SOURCE_DIR}/src/stems)
 
@@ -564,6 +584,9 @@ target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_audio_processors
     juce::juce_audio_utils
     juce::juce_dsp
+    # Plugin editors are native windows owned by this process (ADR 0025), so
+    # the GUI module is a direct dependency rather than a transitive one.
+    juce::juce_gui_basics
     ixwebsocket
     btrack_local
     rubberband_local
@@ -633,6 +656,28 @@ target_sources(SilverdawBackend PRIVATE
 
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
+
+# ─── Windows application icon ────────────────────────────────────────────
+# Plugin editor windows are real desktop windows owned by this process, so Windows takes
+# their title-bar and taskbar icon from the running executable — JUCE registers its window
+# class with `ExtractAssociatedIcon` on the module path. A console app carries no icon
+# resource, which is why those windows show the generic executable glyph. Use the plug-badged
+# variant of the app icon rather than the app icon itself: an editor's taskbar button sits
+# next to the shell app's own, and two identical buttons read as one window opened twice.
+# `scripts/Build-InstallerArt.py` derives it from the same source logo, so the two stay in step.
+if(WIN32)
+    set(SILVERDAW_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/resources/icons/silverdaw-plugin.ico")
+    if(EXISTS "${SILVERDAW_APP_ICON}")
+        set(SILVERDAW_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/SilverdawBackendIcon.rc")
+        file(GENERATE OUTPUT "${SILVERDAW_ICON_RC}"
+             CONTENT "1 ICON \"${SILVERDAW_APP_ICON}\"\n")
+        set_source_files_properties("${SILVERDAW_ICON_RC}" PROPERTIES GENERATED TRUE)
+        target_sources(SilverdawBackend PRIVATE "${SILVERDAW_ICON_RC}")
+    else()
+        message(WARNING "Backend icon not found at ${SILVERDAW_APP_ICON}; "
+                        "plugin editor windows will use the default executable icon")
+    endif()
+endif()
 
 set(SILVERDAW_MIDI_MAPPING_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/midi-mappings")
@@ -756,6 +801,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/BackendTests.cpp
         tests/ProjectStateTests.cpp
         tests/ProjectStateFxTests.cpp
+        tests/ProjectStateTrackPluginTests.cpp
         tests/PersistenceTests.cpp
         tests/BridgeTests.cpp
         tests/MidiControllerMappingTests.cpp
@@ -768,6 +814,9 @@ if(SILVERDAW_BUILD_TESTS)
         tests/ScratchPatternPersistenceTests.cpp
         tests/ScratchPatternEvaluatorTests.cpp
         tests/ScratchPatternReplayProjectStateTests.cpp
+        tests/PluginCatalogueTests.cpp
+        tests/PluginChainTests.cpp
+        tests/PluginLatencyTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp

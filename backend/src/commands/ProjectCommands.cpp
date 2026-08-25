@@ -6,6 +6,7 @@
 #include "DecodedCache.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
+#include "PluginCommands.h"
 #include "ProjectFile.h"
 #include "ProjectState.h"
 
@@ -43,13 +44,11 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // temp workspace so stray stems/samples never leak into the next save.
     silverdaw::tempArtifactsRoot().deleteRecursively();
 
-    // replaceTree does not touch the live engine, so align master gain with the
-    // new project's default (rebuildEngineFromProject only runs on load/clip ops).
-    engine.setMasterGain(projectState.getMasterVolume());
-    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
-    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
-    engine.setMetronomeBpm(projectState.getBpm());
-    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    // replaceTree does not touch the live engine, so realign every project-scoped
+    // setting with the new project's defaults. Shared with load/undo rather than
+    // listed again here, so a setting added to one path can never be missed on the
+    // other (rebuildEngineFromProject itself only runs on load/clip ops).
+    silverdaw::syncEngineProjectSettings(engine, projectState);
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
 }
@@ -112,6 +111,8 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     session.currentPath = filePath;
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    // After the snapshot, so the notice lands on a project the user can already see.
+    silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
     silverdaw::log::info("project", "PROJECT_LOAD ok path=" + filePath);
 }
 
@@ -189,6 +190,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         }
     }
 
+    silverdaw::captureTrackPluginStates(engine, projectState);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();
     p->setProperty("filePath", filePath);
@@ -259,7 +261,8 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
                                                               projectState.getMetronomeEnabled(),
                                                               projectState.getClipEditorMetronomeEnabled(),
                                                               timelineSelection,
-                                                              projectState.getViewSnapGrid());
+                                                              projectState.getViewSnapGrid(),
+                                                              projectState.getViewFxTab());
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {
@@ -310,6 +313,7 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
     }
     projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
 
+    silverdaw::captureTrackPluginStates(engine, projectState);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
@@ -382,6 +386,8 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     session.currentPath = originalPath;
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    // After the snapshot, so the notice lands on a project the user can already see.
+    silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
 
     // ProjectFile::load marks clean, so re-dirty recovered projects explicitly.
     projectState.markDirty();
