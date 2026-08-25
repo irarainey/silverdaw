@@ -11,6 +11,12 @@ per-clip envelope/breakpoint lists, an `atomic<const T*>` pointer swapped at edi
 time on the message thread with a retire queue for the old buffer. Never hand
 data to the audio thread via `shared_ptr` swaps.
 
+This binds all code Silverdaw controls. ADR 0025 later carved the single
+exception: a hosted VST3 plugin's own `processBlock` runs on this thread and
+cannot be held to the rule, because it is a third-party binary. That is a
+bounded, accepted risk scoped to that one call — it does not relax anything
+here.
+
 ## Why
 
 - Any allocation, lock, or syscall in the callback risks priority inversion and

@@ -139,8 +139,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   Turn it on in **Preferences ▸ Project**.
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
-  and a collapsible bottom panel with **Files**, **Track FX**, **Project FX**,
-  and **Library** tabs.
+  and a collapsible bottom panel with **Files**, **Library**, **Track FX**,
+  **Plugins**, and **Project FX** tabs.
   - **Track FX**
     - **Tone:** Bass, Mid, and Treble controls.
     - **Filter:** a single DJ-style sweep from low-pass through off to high-pass.
@@ -161,6 +161,22 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
     hover explanation. Track FX keeps five responsive columns: Tone; Filter
     above Reverb & Delay; Compressor above Punch; Saturation; and Bit Crusher.
   - Drag to resize and reorder tracks, and use the master output's live metering.
+- **VST3 effect plugins.** Add your own installed **VST3 effects that process
+  stereo audio** to any track from the **Plugins** tab, on top of the built-in
+  Track FX. Build up a chain, reorder it, bypass any plugin, and open a plugin
+  in its own editor window to dial it in. Silverdaw finds your plugins with a
+  scan that runs outside the app, so a plugin that fails to load can't take
+  Silverdaw down with it. Your projects remember which plugins they use and how
+  each one is set, and export exactly the chain you hear. Plugins that work
+  ahead, like linear-phase EQs and lookahead limiters, stay in time with the
+  rest of the mix. Open a project on a machine that's missing a plugin and the
+  slot is kept, greyed out, with its settings intact until you install it.
+
+  Not supported: other plugin formats (VST2, CLAP, AU), instruments, and
+  effects that need MIDI notes or a side-chain feed — so vocoders,
+  MIDI-triggered gates and side-chain compressors won't work as intended. A
+  plugin's own description can't always be trusted here, so Silverdaw checks
+  after loading and tells you when a plugin wants something it can't be given.
 - **Track effect automation.** Open a collapsible automation stack under any
   track, then add distinct parameter lanes to view and edit several breakpoint
   curves together. Lanes cover Filter, Pan, Tone Bass / Mid / Treble,

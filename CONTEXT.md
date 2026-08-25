@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-09 · Owner: @irarainey_
+_Last reviewed: 2026-08-25 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -67,6 +67,9 @@ and saved projects must keep working across every update (see ADR 0019).
 
 - `CRITICAL` — **Audio thread is real-time.** No allocation, locking, throwing,
   or blocking I/O in the audio callback. Publish to it lock-free. See ADR 0006.
+  The **one** exception is a hosted VST3 plugin's own `processBlock`, which
+  Silverdaw cannot police — ADR 0025 accepts that as a bounded risk. It licenses
+  nothing in Silverdaw's own audio code, which stays strictly bound by ADR 0006.
 - `CRITICAL` — **Backend `ValueTree` is the single source of truth** for project
   state; the renderer mirrors it. See ADR 0002.
 - `CRITICAL` — **A clip has one original BPM and one warp target.** The renderer

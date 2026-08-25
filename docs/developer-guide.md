@@ -11,6 +11,9 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Project layout](#project-layout)
 - [Current status and roadmap](#current-status-and-roadmap)
 - [Bridge protocol](#bridge-protocol)
+- [VST3 plugins](#vst3-plugins)
+  - [Limitations](#limitations)
+  - [Catalogue storage](#catalogue-storage)
 - [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
 - [Project state model](#project-state-model)
@@ -89,7 +92,8 @@ and AUTH token, so the renderer's WebSocket reconnects transparently (see
 Threading invariants:
 
 - **Audio thread**: no allocations, no locks, no exceptions. Mutated state is reached via
-  `std::atomic` (master clock, OffsetSource).
+  `std::atomic` (master clock, OffsetSource). A hosted plugin's own `processBlock` is the one
+  exception, accepted as a bounded risk by ADR 0025; it relaxes nothing for our own code.
 - **JUCE message thread**: owns every mutation of `AudioEngine`, `ProjectState`, the project
   `ValueTree`, and the audio source graph. The bridge marshals every incoming envelope onto this
   thread via `juce::MessageManager::callAsync`.
@@ -684,18 +688,11 @@ the backend draws in its own native window. A slot flagged `unresolved` names a
 plugin that is not installed on *this* machine; the flag is derived per broadcast
 from the catalogue and is never written to the project file.
 
-Inserts are fed **stereo audio and no MIDI**, which ADR 0025 excludes by design
-rather than defers — see its Scope section before proposing otherwise.
-A plugin that wanted more still loads and runs, so the only symptom is that it
-sounds thin, wrong, or silent — a vocoder driven by MIDI notes, for instance,
-has no carrier and outputs nothing. `PluginSlot::prepare` therefore logs the
-negotiated layout (`in`, `out`, `acceptsMidi`, `latency`), and `TRACK_ADD_PLUGIN`
-answers with `PLUGIN_NOTICE { message, severity }` naming what is missing
-whenever the prepared slot reports more than two input channels or accepts MIDI.
-Extra input buses that a plugin refuses to disable are padded with silence.
 `PLUGIN_NOTICE` carries strings written **for the user** and shown verbatim,
 which is why it is not `ENGINE_ERROR` — that reports a raw handler fault behind
-a fixed, generic toast, so anything routed through it loses its wording.
+a fixed, generic toast, so anything routed through it loses its wording. What
+Silverdaw does and does not accept, and what each notice means, is set out under
+[VST3 plugins](#vst3-plugins).
 
 `restoreTrackPlugins` (`backend/src/engine/TrackPluginRestore.cpp`) is shared by
 project load, undo/redo rebuilds and offline render. It keeps a live instance
@@ -794,6 +791,73 @@ Backend → renderer:
 
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
+
+## VST3 plugins
+
+Silverdaw hosts **VST3 effect plugins that process stereo audio**, as per-track
+inserts. Everything outside that sentence is unsupported, and ADR 0025 is the
+binding scope. Support is enforced in three layers that behave differently, and
+the difference matters when diagnosing a report:
+
+| Requirement | How it is enforced | What the user sees |
+| --- | --- | --- |
+| VST3 format | Compile time — `JUCE_PLUGINHOST_VST=0`, `AU=0`, `LV2=0`, `ARA=0` (`backend/CMakeLists.txt`) | VST2, AU, LV2 and CLAP plugins are never scanned, so they never appear |
+| Effect, not instrument | Rejected at add (`PluginCommands.cpp`, `description->isInstrument`) and filtered from the picker | "…is an instrument, and Silverdaw currently hosts effect plugins only." |
+| Audio only — no MIDI, no side-chain | **Not blocked.** Detected after `prepare` and reported | `PLUGIN_NOTICE` naming what is missing |
+
+That third row is the one that surprises people. A plugin's declared category
+does not decide it: a MIDI-driven vocoder typically declares itself an `Fx` with
+`isInstrument="0"`, so it passes both blocking checks, loads, prepares, and
+runs — and then outputs little or nothing, because `PluginSlot::process` clears
+`midiScratch` before every `processBlock` and `negotiateStereoLayout` pads any
+input bus the plugin refuses to disable with silence. The plugin is behaving
+correctly on the inputs it is given; it simply is not given a carrier.
+
+So `PluginSlot::prepare` logs the negotiated layout (`in`, `out`, `acceptsMidi`,
+`latency`), and `TRACK_ADD_PLUGIN` answers with `PLUGIN_NOTICE` whenever the
+prepared slot reports more than two input channels or accepts MIDI. Read the
+**prepared** slot, never the scanned description — the channel count that
+matters is the one bus negotiation actually settled on.
+
+### Limitations
+
+Behaviours to state plainly rather than let a user discover:
+
+- **Effects only.** Instruments are rejected outright.
+- **No MIDI to plugins and no side-chain input**, permanently and by design.
+  See ADR 0025 §Scope before proposing either — the reasoning covers why each
+  is a large change, not an oversight.
+- **No plugin-parameter automation.** Track-parameter automation does not
+  extend to plugin parameters; that needs a dynamic replacement for the fixed
+  `AutomationParam` enum and is a decision of its own.
+- **Per-track inserts only.** There is no project-wide, master or per-clip
+  plugin slot.
+- **Latency compensation is bounded at one second**
+  (`kMaxLatencyCompensationSeconds`). A plugin reporting more is treated as
+  misreporting and clamped rather than allowed to desync the project (ADR 0026).
+- **No cap on chain length**, but each insert costs CPU on the audio thread and
+  may add latency that every other track is then delayed to match.
+- **Hosting is in-process.** A plugin that crashes takes the engine with it.
+  That is a recoverable event under ADR 0008 — the supervisor respawns the
+  backend and the recovery coordinator reloads the project — but it is a visible
+  interruption, unlike a scanner crash.
+- **A missing plugin is preserved, not dropped.** The slot keeps its position
+  and saved state, passes audio through untouched, and is written back on save
+  (ADR 0019).
+
+### Catalogue storage
+
+The catalogue is machine-scoped, not project-scoped, and lives in
+`%APPDATA%/Silverdaw/plugins/`: `known-plugins.xml` holds the scanned
+descriptions and the blacklist, and `scan-crashes.txt` is JUCE's dead-man's
+pedal — the file a scan writes before loading a plugin so a crash can be
+attributed to it. Both are replayed at the start of every scan, which is why
+**Clear blacklist** deletes the pedal file as well as clearing the list; leaving
+it would let the next scan restore what was just cleared. Deleting the folder
+loses only the scan results, and the next scan rebuilds it. Scanning runs the
+backend binary again as a child worker, and that worker is reused across files —
+it is replaced only when a plugin kills it, so isolation is "out of the engine
+process", not one process per plugin.
 
 ## MIDI controller architecture
 
