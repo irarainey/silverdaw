@@ -6,6 +6,7 @@ import type {
   ClipWarpMode,
   BeatRepeatDivision,
   DelayNoteValue,
+  PluginCatalogueEntry,
   ScratchPattern,
   TransitionRecipe
 } from '@shared/bridge-protocol'
@@ -95,6 +96,20 @@ export interface BeatRepeatRegion {
   division: BeatRepeatDivision
 }
 
+/**
+ * One VST3 insert on a track. Backend-authoritative: the renderer shows what PROJECT_STATE
+ * reports and never edits a slot locally. `unresolved` means the plugin is not installed on
+ * this machine, so the slot passes audio through while keeping its saved settings.
+ */
+export interface TrackPluginSlot {
+  readonly slotId: string
+  name: string
+  manufacturer?: string
+  format?: string
+  bypassed: boolean
+  unresolved: boolean
+}
+
 export function beatRepeatDivisionBeats(division: BeatRepeatDivision): number {
   switch (division) {
     case '1/4':
@@ -147,6 +162,8 @@ export interface Track {
   transitions?: Transition[]
   /** Persisted beat-aligned stutter regions for this track. */
   beatRepeats?: BeatRepeatRegion[]
+  /** VST3 inserts on this track, in chain order (ADR 0025). */
+  plugins?: TrackPluginSlot[]
   /** Per-track effect automation curves, keyed by parameter id. A lane is present
    *  only when it has a drawn curve (>= 2 breakpoints). */
   automation?: Partial<Record<AutomationParamId, AutomationPoint[]>>
@@ -302,8 +319,15 @@ export interface ProjectState {
   /** Bottom panel shows Track FX (vs Library). Persisted as non-dirty view state. */
   fxPanelOpen: boolean
 
-  /** Which FX rack the bottom panel shows: per-track or project-wide. UI-only (not persisted). */
-  fxTab: 'track' | 'project'
+  /** Which FX rack the bottom panel shows: per-track, project-wide, or VST3 plugins. UI-only (not persisted). */
+  fxTab: 'track' | 'project' | 'plugins'
+
+  /** Scanned VST3 plugins, newest scan wins. Backend-owned; UI-only mirror. */
+  pluginCatalogue: PluginCatalogueEntry[]
+  /** True while a scan is running, so the Plugins panel can disable its rescan button. */
+  pluginScanning: boolean
+  /** Human-readable progress of the running scan, or null when idle. */
+  pluginScanStatus: string | null
 
   /** Selected clip id (UI-only). The primary/anchor of the selection: the Cut/Copy target and
    *  the anchor for Shift-click range selection. Always a member of `selectedClipIds` when set. */

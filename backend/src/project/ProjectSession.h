@@ -46,6 +46,11 @@ juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session, Pr
 void rebuildEngineFromProject(AudioEngine& engine, ProjectState& projectState,
                               juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 
+// Copies every hosted plugin's live state chunk back into the project tree, so a save writes
+// what the plugins currently sound like rather than what they sounded like when loaded
+// (ADR 0025). Call immediately before serialising.
+void captureTrackPluginStates(AudioEngine& engine, ProjectState& projectState);
+
 // Incremental undo/redo fast path: reconcile only the touched clips' engine state (position,
 // trim, gain, warp, envelope, reverse, brake, backspin) in place, without tearing down and
 // re-adding every clip (which re-opens a reader per clip). Returns false if any touched clip is

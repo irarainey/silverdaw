@@ -138,6 +138,22 @@ class ProjectState : public juce::ValueTree::Listener
     bool removeBeatRepeatRegion(const juce::String& trackId, const juce::String& regionId);
     std::vector<BeatRepeatRegion> getBeatRepeatRegions(const juce::String& trackId) const;
 
+    // Per-track VST3 inserts, held in chain order (ADR 0025). A slot whose plugin is missing
+    // on this machine is still stored and written back out, so a reload never drops it.
+    bool addTrackPlugin(const juce::String& trackId, const TrackPluginSlot& slot);
+    bool removeTrackPlugin(const juce::String& trackId, const juce::String& slotId);
+    bool moveTrackPlugin(const juce::String& trackId, const juce::String& slotId, int newIndex);
+    bool setTrackPluginBypassed(const juce::String& trackId, const juce::String& slotId,
+                                bool bypassed);
+    bool setTrackPluginState(const juce::String& trackId, const juce::String& slotId,
+                             const juce::String& base64State);
+    std::vector<TrackPluginSlot> getTrackPlugins(const juce::String& trackId) const;
+
+    /** Tells the serialiser whether a plugin identifier is installed on this machine, so an
+     *  unresolved slot can be flagged to the renderer without that (machine-specific) fact
+     *  ever being stored in the project file. Unset means "assume every slot resolves". */
+    void setPluginAvailabilityProbe(std::function<bool(const juce::String& identifier)> probe);
+
     // One array property keeps envelope drags atomic and default suppression simple.
     bool setClipEnvelope(const juce::String& clipId, const juce::Array<juce::var>& points);
     juce::Array<juce::var> getClipEnvelope(const juce::String& clipId) const;
@@ -770,6 +786,9 @@ class ProjectState : public juce::ValueTree::Listener
     juce::ValueTree cleanSnapshot;
     juce::UndoManager undoManager;
     bool dirty{false};
+    // Runtime-only: resolves a plugin identifier against the installed catalogue. Never
+    // serialised, because which plugins exist is a property of the machine, not the project.
+    std::function<bool(const juce::String&)> pluginAvailabilityProbe;
     // App-level preference (default on): whether the first clip seeds project tempo.
     // Runtime-only; re-pushed by the renderer on connect and on change.
     bool seedProjectTempoFromFirstClip_{true};

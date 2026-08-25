@@ -666,6 +666,40 @@ Project FX uses `PROJECT_SET_REVERB`, `PROJECT_SET_DELAY`,
 `PROJECT_SET_MIX_GLUE`, and `PROJECT_SET_SAFETY_LIMITER`; Reverb, Delay, and
 Glue Compressor similarly return canonical `PROJECT_*_APPLIED` state.
 
+VST3 inserts (ADR 0025) use `PLUGIN_LIST_REQUEST` (no payload) and `PLUGIN_SCAN
+{ clearBlacklist? }`, answered by `PLUGIN_LIST { plugins, blacklisted, scanning }`
+and, while a scan runs, a stream of `PLUGIN_SCAN_PROGRESS { currentFile, scanned,
+total, finished? }`. Because a scan runs on its own thread, its callbacks hop back
+to the message thread before touching the bridge. Chain edits are
+`TRACK_ADD_PLUGIN { trackId, identifier }`, `TRACK_REMOVE_PLUGIN`,
+`TRACK_REORDER_PLUGIN { …, index }`, `TRACK_SET_PLUGIN_BYPASS { …, bypassed }` and
+`TRACK_OPEN_PLUGIN_EDITOR`, all keyed by the backend-minted `slotId`; each mutates
+the project tree *and* the live chain, then republishes `PROJECT_STATE`, where a
+track's inserts appear in chain order in its optional `plugins` array. Two things
+deliberately never cross the bridge: a plugin's opaque **state chunk** (ADR 0003 —
+it is stored inline in the project file and nowhere else) and any plugin UI, which
+the backend draws in its own native window. A slot flagged `unresolved` names a
+plugin that is not installed on *this* machine; the flag is derived per broadcast
+from the catalogue and is never written to the project file.
+
+`restoreTrackPlugins` (`backend/src/engine/TrackPluginRestore.cpp`) is shared by
+project load, undo/redo rebuilds and offline render. It keeps a live instance
+whenever the slot id and identifier still match, because a saved state chunk is
+only refreshed on save — reloading unconditionally would reset a plugin to its
+last-saved settings as a side effect of an unrelated undo. Slots it *will*
+destroy are reported through its `onSlotDestroyed` callback first, which the
+engine uses to close the editor window whose content the instance owns.
+
+Hosted plugins share one read-only `plugins::PluginPlayHead`, so tempo-synced
+effects follow the transport. It does not mirror the transport — it holds
+pointers to the engine's own position, sample-rate and play-state atomics, so a
+plugin cannot drift from what the renderer is rendering; the mixdown builds an
+equivalent play head over the offline position for export parity. Two v1 limits
+are worth knowing: plugin latency is **reported but not compensated**
+(`PluginChain::getLatencySamples()` is exposed but nothing delays sibling
+tracks, so a latent plugin shifts its track late), and the play head always
+reports 4/4 because the project has no time-signature track yet.
+
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
 a liveness probe — the backend answers `PONG` **on the JUCE message thread**, so

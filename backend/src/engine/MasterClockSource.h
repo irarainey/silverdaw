@@ -126,6 +126,9 @@ class MasterClockSource : public juce::AudioSource
      *  child renders, so the child sees the block-start position. */
     const std::atomic<juce::int64>& positionAtomicRef() const noexcept { return positionSamples; }
 
+    /** The active device rate, for observers that read it on the audio thread. */
+    const std::atomic<double>& sampleRateAtomicRef() const noexcept { return sampleRate; }
+
     double getSampleRate() const noexcept
     {
         return sampleRate.load(std::memory_order_acquire);

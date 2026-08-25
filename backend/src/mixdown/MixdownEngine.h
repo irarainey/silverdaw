@@ -85,6 +85,8 @@ struct MixdownSnapshot
         };
         std::vector<AutomationLane> automation;
         std::vector<BeatRepeatRegion> beatRepeats;
+        // VST3 inserts, in chain order, with the state the project saved (ADR 0025).
+        std::vector<TrackPluginSlot> plugins;
         std::vector<ClipSnapshot> clips;
     };
 

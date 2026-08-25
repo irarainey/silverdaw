@@ -117,6 +117,48 @@ class AudioEngine : private AudioEngineGraphState,
     void setTrackPan(const juce::String& trackId, float pan);
     void retireTrackFxState(const juce::String& trackId);
 
+    // ── VST3 plugin inserts (ADR 0025) ──────────────────────────────────
+    // All of these are message-thread only. The audio thread never sees a plugin except
+    // through the chain snapshot BusGraph publishes for it.
+
+    /** The scanned plugin catalogue, created on first use. */
+    plugins::PluginCatalogue& pluginCatalogue();
+
+    /** Appends an insert to `trackId` and returns its new slot id, or an empty string when
+     *  the track id is invalid. A plugin that cannot be instantiated still produces a slot:
+     *  it becomes an unresolved pass-through that keeps `state`, so opening a project on a
+     *  machine without the plugin can never silently discard the user's settings (ADR 0019).
+     *  `errorMessage` is set when that happens. */
+    juce::String addTrackPlugin(const juce::String& trackId,
+                                const juce::PluginDescription& description,
+                                const juce::MemoryBlock& state, bool bypassed,
+                                juce::String& errorMessage);
+
+    bool removeTrackPlugin(const juce::String& trackId, const juce::String& slotId);
+    bool moveTrackPlugin(const juce::String& trackId, const juce::String& slotId, int newIndex);
+    bool setTrackPluginBypassed(const juce::String& trackId, const juce::String& slotId,
+                                bool bypassed);
+
+    std::vector<plugins::PluginSlotDescriptor> getTrackPluginSlots(const juce::String& trackId);
+
+    /** The slot's live state chunk, for saving. Empty when the slot is unknown. */
+    juce::MemoryBlock getTrackPluginState(const juce::String& trackId,
+                                          const juce::String& slotId);
+
+    /** Replaces a track's whole insert chain from persisted slots. Idempotent, so load,
+     *  undo/redo, and a full engine rebuild can all share it. Slots whose plugin is not in
+     *  the catalogue become unresolved pass-throughs that keep their saved state. */
+    void setTrackPluginsFromState(const juce::String& trackId,
+                                  const std::vector<TrackPluginSlot>& slots);
+
+    /** Opens (or refocuses) the plugin's own native editor window, which the backend owns.
+     *  False when the slot is unknown or unresolved. */
+    bool openTrackPluginEditor(const juce::String& trackId, const juce::String& slotId,
+                               const juce::String& windowTitle);
+
+    /** Closes an open editor window. Called before a slot's instance is destroyed. */
+    void closeTrackPluginEditor(const juce::String& slotId);
+
     // Per-track effect automation: builds an immutable snapshot for `trackId`
     // (merging this param's curve with the track's other lanes), publishes it to
     // the BusGraph lock-free, and retires the previous snapshot. `points` is the

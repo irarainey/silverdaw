@@ -471,6 +471,45 @@ export interface TrackBeatRepeatDeletePayload {
   regionId: string
 }
 
+/**
+ * VST3 inserts (ADR 0025). The backend owns instantiation, ordering and state; the renderer
+ * only ever names a plugin by its catalogue `identifier` and a slot by its backend-minted
+ * `slotId`. State chunks never cross the bridge (ADR 0003).
+ */
+export interface TrackAddPluginPayload {
+  trackId: string
+  identifier: string
+}
+
+export interface TrackRemovePluginPayload {
+  trackId: string
+  slotId: string
+}
+
+/** `index` is the slot's new position within the track's inserts, counted from zero. */
+export interface TrackReorderPluginPayload {
+  trackId: string
+  slotId: string
+  index: number
+}
+
+export interface TrackSetPluginBypassPayload {
+  trackId: string
+  slotId: string
+  bypassed: boolean
+}
+
+/** Opens the plugin's own native window, which the backend owns and positions. */
+export interface TrackOpenPluginEditorPayload {
+  trackId: string
+  slotId: string
+}
+
+/** Rescan the plugin folders. `clearBlacklist` retries plugins that previously failed. */
+export interface PluginScanPayload {
+  clearBlacklist?: boolean
+}
+
 /** Project-shared Reverb bus. Scalars linear [0,1]; all optional (partial-update). */
 export interface ProjectSetReverbPayload extends GestureHints {
   size?: number
@@ -578,6 +617,13 @@ export interface BridgeOutboundMap {
   TRANSITION_SET_RECIPE: TransitionSetRecipePayload
   TRACK_BEAT_REPEAT_ADD: TrackBeatRepeatAddPayload
   TRACK_BEAT_REPEAT_DELETE: TrackBeatRepeatDeletePayload
+  TRACK_ADD_PLUGIN: TrackAddPluginPayload
+  TRACK_REMOVE_PLUGIN: TrackRemovePluginPayload
+  TRACK_REORDER_PLUGIN: TrackReorderPluginPayload
+  TRACK_SET_PLUGIN_BYPASS: TrackSetPluginBypassPayload
+  TRACK_OPEN_PLUGIN_EDITOR: TrackOpenPluginEditorPayload
+  PLUGIN_SCAN: PluginScanPayload
+  PLUGIN_LIST_REQUEST: undefined
   PROJECT_SET_REVERB: ProjectSetReverbPayload
   PROJECT_SET_DELAY: ProjectSetDelayPayload
   PROJECT_SET_MIX_GLUE: ProjectSetMixGluePayload
@@ -1250,6 +1296,13 @@ export const bridgeOutboundPayloadKinds: {
   TRANSITION_SET_RECIPE: 'payload',
   TRACK_BEAT_REPEAT_ADD: 'payload',
   TRACK_BEAT_REPEAT_DELETE: 'payload',
+  TRACK_ADD_PLUGIN: 'payload',
+  TRACK_REMOVE_PLUGIN: 'payload',
+  TRACK_REORDER_PLUGIN: 'payload',
+  TRACK_SET_PLUGIN_BYPASS: 'payload',
+  TRACK_OPEN_PLUGIN_EDITOR: 'payload',
+  PLUGIN_SCAN: 'payload',
+  PLUGIN_LIST_REQUEST: 'none',
   PROJECT_SET_REVERB: 'payload',
   PROJECT_SET_DELAY: 'payload',
   PROJECT_SET_MIX_GLUE: 'payload',

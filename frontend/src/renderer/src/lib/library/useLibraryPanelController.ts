@@ -31,10 +31,13 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
   const project = useProjectStore()
 
   // Tab state bridges persisted FX panel state with the local Library tab.
-  const activeTab = computed<'files' | 'library' | 'trackfx' | 'projectfx'>({
+  const activeTab = computed<'files' | 'library' | 'trackfx' | 'projectfx' | 'plugins'>({
     get: () => {
       // FX opened from anywhere else (e.g. a track's FX button) takes the panel.
-      if (project.fxPanelOpen) return project.fxTab === 'project' ? 'projectfx' : 'trackfx'
+      if (project.fxPanelOpen) {
+        if (project.fxTab === 'project') return 'projectfx'
+        return project.fxTab === 'plugins' ? 'plugins' : 'trackfx'
+      }
       return ui.fileBrowserTabActive ? 'files' : 'library'
     },
     set: (tab) => {
@@ -45,7 +48,7 @@ export function useLibraryPanelController(props: Readonly<LibraryPanelProps>, em
         project.setFxPanelOpen(false)
         return
       }
-      project.setFxTab(tab === 'projectfx' ? 'project' : 'track')
+      project.setFxTab(tab === 'projectfx' ? 'project' : tab === 'plugins' ? 'plugins' : 'track')
       project.setFxPanelOpen(true)
     }
   })

@@ -38,12 +38,23 @@ void PlayheadEmitter::timerCallback()
     sendMidiMarkerLights(project.hasMarkerNear(posMs), project.getMarkerCount());
 
     // Reuse payload storage to avoid 60 Hz message-thread heap churn.
-    if (playing || posMs != lastPosMs)
+    // A stopped, idle transport would otherwise say nothing at all, leaving the renderer's
+    // optimistic play state with nothing to reconcile against — and a single stop edge is
+    // not enough, because the renderer legitimately ignores updates inside its settle window
+    // and while a MIDI platter hold is armed. So a stopped transport re-asserts itself at
+    // 1 Hz, which is cheap and makes the UI self-correcting rather than edge-dependent.
+    const double tickMs = juce::Time::getMillisecondCounterHiRes();
+    const bool stoppedHeartbeatDue =
+        ! playing && (tickMs - lastStoppedHeartbeatMs) >= kStoppedHeartbeatMs;
+
+    if (playing || posMs != lastPosMs || playing != lastPlaying || stoppedHeartbeatDue)
     {
         payloadObject->setProperty("positionMs", posMs);
         payloadObject->setProperty("isPlaying", playing);
         bridge.broadcast("PLAYHEAD_UPDATE", payload);
         lastPosMs = posMs;
+        lastPlaying = playing;
+        if (! playing) lastStoppedHeartbeatMs = tickMs;
     }
 
     // Preview transport is independent. A trimmed clip/library-clip preview keeps

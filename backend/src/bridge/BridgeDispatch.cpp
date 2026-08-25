@@ -16,6 +16,7 @@
 #include "PayloadHelpers.h"
 #include "PeakJobCoordinator.h"
 #include "PeaksCache.h"
+#include "PluginCommands.h"
 #include "PreviewCommands.h"
 #include "ProjectCommands.h"
 #include "ProjectFxCommands.h"
@@ -557,6 +558,34 @@ bool dispatchTrack(const DispatchContext& ctx)
     {
         silverdaw::applyBeatRepeatDelete(payload, projectState);
         silverdaw::finishBeatRepeatEdit(engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "PLUGIN_LIST_REQUEST")
+    {
+        silverdaw::handlePluginListRequest(engine, bridge);
+    }
+    else if (type == "PLUGIN_SCAN")
+    {
+        silverdaw::handlePluginScan(payload, engine, bridge);
+    }
+    else if (type == "TRACK_ADD_PLUGIN")
+    {
+        silverdaw::handleTrackAddPlugin(payload, engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_REMOVE_PLUGIN")
+    {
+        silverdaw::handleTrackRemovePlugin(payload, engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_REORDER_PLUGIN")
+    {
+        silverdaw::handleTrackReorderPlugin(payload, engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_SET_PLUGIN_BYPASS")
+    {
+        silverdaw::handleTrackSetPluginBypass(payload, engine, projectState, bridge, ctx.session);
+    }
+    else if (type == "TRACK_OPEN_PLUGIN_EDITOR")
+    {
+        silverdaw::handleTrackOpenPluginEditor(payload, engine, projectState, bridge);
     }
     else
     {

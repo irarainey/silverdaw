@@ -56,6 +56,7 @@ import { clipActions } from './projectClipActions'
 import { clipLibraryActions } from './projectClipLibraryActions'
 import { transitionActions } from './projectTransitionActions'
 import { beatRepeatActions } from './projectBeatRepeatActions'
+import { pluginActions } from './projectPluginActions'
 import { scratchPatternActions } from './scratchPatternActions'
 import { useTransportStore } from './transportStore'
 import { useUiStore } from './uiStore'
@@ -96,6 +97,9 @@ export const useProjectStore = defineStore('project', {
     viewScrollX: null,
     fxPanelOpen: false,
     fxTab: 'track',
+    pluginCatalogue: [],
+    pluginScanning: false,
+    pluginScanStatus: null,
     selectedClipId: null,
     selectedClipIds: new Set(),
     selectedTrackId: null,
@@ -172,6 +176,7 @@ export const useProjectStore = defineStore('project', {
     ...clipLibraryActions,
     ...transitionActions,
     ...beatRepeatActions,
+    ...pluginActions,
     ...scratchPatternActions,
 
     selectClip(clipId: string | null): void {
@@ -321,7 +326,7 @@ export const useProjectStore = defineStore('project', {
     },
 
     /** UI-only FX tab; never touches bridge or dirty state. */
-    setFxTab(tab: 'track' | 'project'): void {
+    setFxTab(tab: 'track' | 'project' | 'plugins'): void {
       this.fxTab = tab
     },
 

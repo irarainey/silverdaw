@@ -4,6 +4,7 @@ import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import TrackFxPanel from '@/components/TrackFxPanel.vue'
 import ProjectFxPanel from '@/components/ProjectFxPanel.vue'
+import PluginsPanel from '@/components/PluginsPanel.vue'
 import LibraryPanelHeader from '@/components/LibraryPanelHeader.vue'
 import LibraryPanelLibraryView from '@/components/LibraryPanelLibraryView.vue'
 import LibraryPanelFilesView from '@/components/LibraryPanelFilesView.vue'
@@ -153,6 +154,11 @@ const {
       />
 
       <ProjectFxPanel
+        v-else-if="activeTab === 'projectfx'"
+        class="min-h-0 flex-1"
+      />
+
+      <PluginsPanel
         v-else
         class="min-h-0 flex-1"
       />

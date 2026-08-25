@@ -41,6 +41,52 @@ void BusGraph::applyPendingTrackFx(TrackRuntime& runtime)
     {
         runtime.pan.store(pan->second, std::memory_order_relaxed);
     }
+
+    const auto chain = trackPlugins.find(trackId);
+    runtime.chain.setInserts(chain != trackPlugins.end() ? chain->second.get() : nullptr);
+}
+
+void BusGraph::mutateTrackPlugins(const juce::String& trackId,
+                                  const std::function<void(plugins::PluginChain&)>& mutation)
+{
+    if (trackId.isEmpty() || mutation == nullptr) return;
+
+    const juce::ScopedLock sl(lock);
+
+    auto entry = trackPlugins.find(trackId);
+    if (entry == trackPlugins.end())
+    {
+        auto created = std::make_unique<plugins::PluginChain>();
+        created->setPlayHead(pluginPlayHead);
+        if (preparedMax > 0) created->prepare(preparedRate, preparedMax);
+        entry = trackPlugins.emplace(trackId, std::move(created)).first;
+    }
+
+    auto& chain = *entry->second;
+    mutation(chain);
+    chain.publish();
+
+    if (const auto runtime = runtimes.find(trackId); runtime != runtimes.end())
+        runtime->second->chain.setInserts(&chain);
+
+    // Republishing the render snapshot waits out any callback still using the previous
+    // one, which is also the barrier that makes destroying removed slots safe.
+    publishRenderSnapshot();
+    chain.collectRetired();
+}
+
+plugins::PluginChain* BusGraph::getTrackPlugins(const juce::String& trackId) noexcept
+{
+    const auto entry = trackPlugins.find(trackId);
+    return entry != trackPlugins.end() ? entry->second.get() : nullptr;
+}
+
+void BusGraph::setPluginPlayHead(juce::AudioPlayHead* playHead)
+{
+    const juce::ScopedLock sl(lock);
+    pluginPlayHead = playHead;
+    for (auto& entry : trackPlugins)
+        entry.second->setPlayHead(playHead);
 }
 
 void BusGraph::setTrackTone(const juce::String& trackId,
@@ -137,6 +183,13 @@ void BusGraph::retireTrackFxState(const juce::String& trackId)
     pendingBitCrusher.erase(trackId);
     pendingSends.erase(trackId);
     pendingPans.erase(trackId);
+
+    if (const auto runtime = runtimes.find(trackId); runtime != runtimes.end())
+        runtime->second->chain.setInserts(nullptr);
+
+    // Detach from the audio thread before the chain and its plugin instances are destroyed.
+    publishRenderSnapshot();
+    trackPlugins.erase(trackId);
 }
 
 void BusGraph::restoreAutomationParam(const juce::String& trackId, AutomationParam param) noexcept

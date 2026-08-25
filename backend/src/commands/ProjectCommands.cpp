@@ -189,6 +189,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         }
     }
 
+    silverdaw::captureTrackPluginStates(engine, projectState);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();
     p->setProperty("filePath", filePath);
@@ -310,6 +311,7 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
     }
     projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
 
+    silverdaw::captureTrackPluginStates(engine, projectState);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())

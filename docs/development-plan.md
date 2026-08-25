@@ -979,8 +979,8 @@ diverges from mixdown in real conditions.
 - Bus / send routing UI as a first-class surface.
 - Sidechain routing: any track can feed a sidechain input to any Leveler.
 - Per-track insert reverb / delay (alternative to the shared sends above).
-- VST3 plugin hosting via JUCE `AudioPluginHost` — track-vs-clip scope
-  decided in Phase 8 once we've lived with the per-track model.
+- VST3 plugin hosting via JUCE — hosted as **per-track inserts**
+  (scope settled in ADR 0025).
 - Utility (gain / phase / mono) effects — only added if real
   usage shows the need; the simple ethos is to ship fewer, well-explained
   effects.
@@ -1168,9 +1168,8 @@ silence.
 
 **Deferred to Phase 8** (and explicitly NOT in Phase 5):
 
-- VST3 plugin hosting via JUCE `AudioPluginHost`. Hosting scope
-  (per-track vs per-clip) is decided in Phase 8 once the per-track
-  model has shipped.
+- VST3 plugin hosting via JUCE. Hosting scope is **per-track
+  inserts**, settled in ADR 0025.
 - Per-track insert reverb / delay (so a single track can have its own
   unique room without the shared one).
 - Sidechain compression.
@@ -2538,7 +2537,7 @@ playable at every point):
 - Sidechain Leveler routing.
 - Per-track insert reverb / delay.
 - Utility effects.
-- VST3 hosting (scope decided then — per-track or per-clip).
+- VST3 hosting (per-track inserts; ADR 0025).
 - Master Limiter, LUFS / RMS readouts.
 - Live delay-time changes during playback (BPM sweep).
 - Plugin-param envelopes (track-parameter automation — Pan / send / tone /
@@ -2773,7 +2772,9 @@ robustness without changing the core editing model.
   regenerates those caches and resumes transport behind a transcode-generation
   counter for stale-ack safety, sample-bake at the project rate, and a throttled
   probe-on-load batch for older projects that stored a wrong renderer-side rate.
-- [ ] VST3 plugin scanning and hosting via a sandboxed child process. (issue #14)
+- [ ] VST3 effect-plugin scanning and hosting as per-track inserts: scanning in
+  a child process behind a persistent blacklist, hosting in the engine process,
+  and a **Plugins** tab beside Track FX and Project FX. See ADR 0025.
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 
@@ -2818,7 +2819,7 @@ robustness without changing the core editing model.
 | Demucs model download UX                    | Stem features visibly disabled until model is present; clear download progress UI                                                                 |
 | Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction to post-core hardening      |
 | Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
-| VST3 plugin crashes                         | Sandbox plugins via JUCE `AudioPluginHost` separate process                                                                                       |
+| VST3 plugin crashes                         | Scanning runs in a child process behind a persistent blacklist; a crash while hosting is recovered by the existing engine supervisor (ADR 0025)                                                    |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
 | Audio device stops delivering audio         | Implemented: `DeviceCallbackGuard` logs device start/stop/error, and a message-thread watchdog restarts a device whose callback count has stopped advancing (bounded attempts), so a stalled stream can no longer show playback with a frozen playhead and silence (see Developer Guide → Audio devices, Robustness) |
 | Project file forward/backward compat        | Versioned JSON with a schema-version field; backend reads any older version, writes the latest                                                    |

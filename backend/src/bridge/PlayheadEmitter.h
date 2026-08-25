@@ -31,6 +31,10 @@ class PlayheadEmitter : public juce::Timer
     juce::DynamicObject::Ptr payloadObject;
     juce::var payload;
     double lastPosMs = -1.0;
+    bool lastPlaying = false;
+    // Wall-clock throttle for re-asserting a stopped transport (see timerCallback).
+    static constexpr double kStoppedHeartbeatMs = 1000.0;
+    double lastStoppedHeartbeatMs = 0.0;
     juce::DynamicObject::Ptr previewPayloadObject{new juce::DynamicObject()};
     juce::var previewPayload{previewPayloadObject.get()};
     double lastPreviewPosMs = -1.0;

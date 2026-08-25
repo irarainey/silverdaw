@@ -266,13 +266,34 @@ juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session,
     return envelope;
 }
 
+void captureTrackPluginStates(silverdaw::AudioEngine& engine,
+                              silverdaw::ProjectState& projectState)
+{
+    const auto& root = projectState.getTree();
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(juce::Identifier{"TRACK"})) continue;
+
+        const auto trackId = track.getProperty("id").toString();
+        for (const auto& slot : projectState.getTrackPlugins(trackId))
+        {
+            const auto chunk = engine.getTrackPluginState(trackId, slot.slotId);
+            // An unresolved slot has nothing live to read, so leave its saved chunk alone.
+            if (chunk.isEmpty()) continue;
+
+            projectState.setTrackPluginState(trackId, slot.slotId,
+                                             silverdaw::plugins::encodeStateChunk(chunk));
+        }
+    }
+}
+
 void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                               juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
     const auto& root = projectState.getTree();
     int rebuilt = 0;
     int failed = 0;
-
     // Open every clip's audio reader up front, in parallel, BEFORE the serial attach loop below.
     // Per-clip opens (file header reads) are I/O-bound and, done one-at-a-time on the message
     // thread, dominate cold-load latency — especially for cloud-synced project directories.
@@ -381,6 +402,8 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
             engine.setTrackSends(toneTrackId, projectState.getTrackReverbSend(toneTrackId),
                                  projectState.getTrackDelaySend(toneTrackId));
             engine.setTrackPan(toneTrackId, projectState.getTrackPan(toneTrackId));
+            engine.setTrackPluginsFromState(toneTrackId,
+                                            projectState.getTrackPlugins(toneTrackId));
 
             // Reapply the project's current automation lanes on top of the restored static state.
             const auto lanes = projectState.getTrackAutomationLanes(toneTrackId);

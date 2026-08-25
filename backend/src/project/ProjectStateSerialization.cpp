@@ -220,6 +220,26 @@ juce::var ProjectState::tracksAsJson() const
             trackObj->setProperty("beatRepeats", regions);
         }
 
+        // Descriptors only — a plugin's opaque state chunk never crosses the bridge (ADR 0003).
+        const auto pluginSlots = getTrackPlugins(track.getProperty(kId).toString());
+        if (!pluginSlots.empty())
+        {
+            juce::Array<juce::var> slotsArray;
+            for (const auto& slot : pluginSlots)
+            {
+                auto* slotObj = new juce::DynamicObject();
+                slotObj->setProperty("slotId", slot.slotId);
+                slotObj->setProperty("name", slot.name);
+                slotObj->setProperty("manufacturer", slot.manufacturer);
+                slotObj->setProperty("format", slot.formatName);
+                slotObj->setProperty("bypassed", slot.bypassed);
+                if (pluginAvailabilityProbe && !pluginAvailabilityProbe(slot.identifier))
+                    slotObj->setProperty("unresolved", true);
+                slotsArray.add(juce::var(slotObj));
+            }
+            trackObj->setProperty("plugins", slotsArray);
+        }
+
         juce::Array<juce::var> clipsArray;
         for (int c = 0; c < track.getNumChildren(); ++c)
         {

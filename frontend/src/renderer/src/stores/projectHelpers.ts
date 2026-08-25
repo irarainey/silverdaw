@@ -1,8 +1,9 @@
 import type {
   ProjectStateBeatRepeatRegion,
+  ProjectStatePluginSlot,
   ProjectStateTransition
 } from '@shared/bridge-protocol'
-import type { BeatRepeatRegion, Transition } from './projectTypes'
+import type { BeatRepeatRegion, TrackPluginSlot, Transition } from './projectTypes'
 
 /**
  * Stable `projectId` from an absolute path, used to bucket autosave artefacts.
@@ -76,6 +77,21 @@ export function hydrateBeatRepeats(
     startBeat: region.startBeat,
     lengthBeats: region.lengthBeats,
     division: region.division
+  }))
+}
+
+/** Backend-authoritative insert list; an absent or empty array clears the track's chain. */
+export function hydrateTrackPlugins(
+  raw: readonly ProjectStatePluginSlot[] | undefined
+): TrackPluginSlot[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  return raw.map((slot) => ({
+    slotId: slot.slotId,
+    name: slot.name,
+    manufacturer: slot.manufacturer,
+    format: slot.format,
+    bypassed: slot.bypassed === true,
+    unresolved: slot.unresolved === true
   }))
 }
 

@@ -13,11 +13,27 @@ satisfy the attribution requirements of those licences.
 - **Project**: <https://juce.com>
 - **Source**: <https://github.com/juce-framework/JUCE>
 - **Notice**: Silverdaw's audio engine is powered by JUCE, used under the
-  terms of the GPLv3. Silverdaw uses only headless audio modules
+  terms of the GPLv3. Silverdaw uses the headless audio modules
   (`juce_audio_basics`, `juce_audio_devices`, `juce_audio_formats`,
-  `juce_core`, `juce_data_structures`, `juce_dsp`, `juce_events`); no JUCE
-  GUI components are linked. A copy of the GPLv3 is included with the JUCE
-  source obtained via CMake `FetchContent` (`backend/build/_deps/juce-src/`).
+  `juce_audio_processors`, `juce_audio_utils`, `juce_core`,
+  `juce_data_structures`, `juce_dsp`, `juce_events`) plus `juce_gui_basics`,
+  which exists solely to host the native editor window of a VST3 plugin; the
+  Silverdaw interface itself is drawn by the Electron frontend. A copy of the
+  GPLv3 is included with the JUCE source obtained via CMake `FetchContent`
+  (`backend/build/_deps/juce-src/`).
+
+### VST3 SDK — © Steinberg Media Technologies GmbH
+
+- **Licence**: GNU General Public License v3 (the free / open-source option of
+  Steinberg's dual licence).
+- **Project**: <https://www.steinberg.net/developers/>
+- **Notice**: Silverdaw hosts third-party VST3 effect plugins (ADR 0025). The
+  SDK is not vendored here — it ships inside the JUCE source fetched by CMake
+  (`backend/build/_deps/juce-src/modules/juce_audio_processors/format_types/VST3_SDK/`)
+  and is compiled in only because `JUCE_PLUGINHOST_VST3=1`. GPLv3 code may be
+  combined into this AGPL-3.0-or-later work, so the open-source option is the
+  one Silverdaw uses. VST is a trademark of Steinberg Media Technologies GmbH,
+  registered in Europe and other countries.
 
 ### IXWebSocket — © Machine Zone Inc. and contributors
 

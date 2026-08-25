@@ -354,6 +354,51 @@ export const ProjectStateBeatRepeatRegionSchema = z.object({
 })
 export type ProjectStateBeatRepeatRegion = z.infer<typeof ProjectStateBeatRepeatRegionSchema>
 
+/**
+ * One VST3 insert on a track (ADR 0025). `unresolved` marks a plugin that is not installed
+ * on this machine: the slot keeps its place and its saved settings and passes audio through,
+ * so opening a project without the plugin never discards the user's work.
+ */
+export const ProjectStatePluginSlotSchema = z.object({
+  slotId: z.string(),
+  name: z.string(),
+  manufacturer: z.string().optional(),
+  format: z.string().optional(),
+  bypassed: z.boolean().optional(),
+  unresolved: z.boolean().optional()
+})
+export type ProjectStatePluginSlot = z.infer<typeof ProjectStatePluginSlotSchema>
+
+/** A plugin the backend has scanned and can instantiate. */
+export const PluginCatalogueEntrySchema = z.object({
+  identifier: z.string(),
+  name: z.string(),
+  manufacturer: z.string().optional(),
+  category: z.string().optional(),
+  format: z.string().optional(),
+  isInstrument: z.boolean().optional()
+})
+export type PluginCatalogueEntry = z.infer<typeof PluginCatalogueEntrySchema>
+
+/** The full scanned catalogue, sent on request and after every scan. */
+export const PluginListPayloadSchema = z.object({
+  plugins: z.array(PluginCatalogueEntrySchema),
+  blacklisted: z.array(z.string()).optional(),
+  scanning: z.boolean().optional()
+})
+export type PluginListPayload = z.infer<typeof PluginListPayloadSchema>
+
+/** Progress of a running scan. `finished` arrives once, with the final counts. */
+export const PluginScanProgressPayloadSchema = z.object({
+  currentFile: z.string().optional(),
+  scanned: z.number().nonnegative(),
+  total: z.number().nonnegative(),
+  finished: z.boolean().optional()
+})
+export type PluginScanProgressPayload = z.infer<typeof PluginScanProgressPayloadSchema>
+
+
+
 export const ProjectStateTrackSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
@@ -395,7 +440,9 @@ export const ProjectStateTrackSchema = z.object({
   automationLaneView: z.array(AutomationLaneViewSchema).optional(),
   clips: z.array(ProjectStateClipSchema),
   transitions: z.array(ProjectStateTransitionSchema).optional(),
-  beatRepeats: z.array(ProjectStateBeatRepeatRegionSchema).optional()
+  beatRepeats: z.array(ProjectStateBeatRepeatRegionSchema).optional(),
+  /** VST3 inserts in chain order. Descriptors only — state chunks never cross the bridge. */
+  plugins: z.array(ProjectStatePluginSlotSchema).optional()
 })
 export type ProjectStateTrack = z.infer<typeof ProjectStateTrackSchema>
 
@@ -1028,6 +1075,8 @@ export interface BridgeInboundMap {
   PONG: PongPayload
   ENGINE_ERROR: EngineErrorPayload
   ENGINE_AUDIO_STATUS: EngineAudioStatusPayload
+  PLUGIN_LIST: PluginListPayload
+  PLUGIN_SCAN_PROGRESS: PluginScanProgressPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1106,7 +1155,9 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'TRACK_LEVELS',
   'PONG',
   'ENGINE_ERROR',
-  'ENGINE_AUDIO_STATUS'
+  'ENGINE_AUDIO_STATUS',
+  'PLUGIN_LIST',
+  'PLUGIN_SCAN_PROGRESS'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1118,6 +1169,14 @@ export function isBridgeInboundType(value: unknown): value is BridgeInboundType 
 
 export function isReadyPayload(value: unknown): value is ReadyPayload {
   return ReadyPayloadSchema.safeParse(value).success
+}
+
+export function isPluginListPayload(value: unknown): value is PluginListPayload {
+  return PluginListPayloadSchema.safeParse(value).success
+}
+
+export function isPluginScanProgressPayload(value: unknown): value is PluginScanProgressPayload {
+  return PluginScanProgressPayloadSchema.safeParse(value).success
 }
 
 export function isPlayheadUpdatePayload(value: unknown): value is PlayheadUpdatePayload {

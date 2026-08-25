@@ -7,6 +7,9 @@
 #include "MeteringSource.h"
 #include "Metronome.h"
 #include "OutputKeepAlive.h"
+#include "PluginCatalogue.h"
+#include "PluginEditorWindow.h"
+#include "PluginPlayHead.h"
 #include "ProjectStateTypes.h"
 #include "TrackAutomationSnapshot.h"
 
@@ -51,6 +54,14 @@ protected:
     Metronome metronome;
     MeteringSource masterMeter{topMixer, outputKeepAlive, master, metronome};
     juce::AudioFormatManager formatManager;
+    // Created on first use: constructing it touches the on-disk plugin catalogue, which a
+    // headless run that never mentions plugins has no reason to read or write.
+    std::unique_ptr<plugins::PluginCatalogue> pluginCatalogueInstance;
+    // Open native plugin editors, keyed by slot id, so a second open request refocuses the
+    // existing window and removing a slot can close its window before the instance dies.
+    std::unordered_map<std::string, std::unique_ptr<plugins::PluginEditorWindow>> pluginEditors;
+    // Shared by every hosted plugin — one transport, read on the audio thread.
+    plugins::PluginPlayHead pluginPlayHead;
 };
 
 } // namespace silverdaw
