@@ -1,11 +1,16 @@
 <script setup lang="ts">
-// Plugins surface in the bottom panel, beside Library, Track FX and Project FX. Shows the
-// selected track's VST3 inserts in chain order and lets the user add, reorder, bypass, open
-// and remove them (ADR 0025).
+// Plugins surface in the bottom panel, immediately after Track FX: these inserts belong to the
+// selected track, so the tab sits with the other per-track surfaces rather than beside the
+// project-wide ones. Shows the selected track's VST3 inserts in chain order and lets the user
+// add, reorder, bypass, open and remove them (ADR 0025).
 //
 // The backend owns the chain, so every control here is fire-and-forget: rows only change when
 // a PROJECT_STATE broadcast says they did. Plugin parameters are edited in the plugin's own
 // window, which the backend opens and draws — this panel never renders plugin UI.
+//
+// A plugin already on the track stays in the chooser but is disabled, greyed out by
+// `.app-select option:disabled`, so the user can see it is present rather than wondering
+// where it went.
 
 import { computed, onMounted, ref } from 'vue'
 import { useProjectStore } from '@/stores/projectStore'
@@ -20,11 +25,18 @@ const selectedTrack = computed(
 
 const slots = computed(() => selectedTrack.value?.plugins ?? [])
 
+const usedIdentifiers = computed(() => new Set(slots.value.map((slot) => slot.identifier)))
+
 const catalogue = computed(() =>
   [...project.pluginCatalogue].sort((a, b) => a.name.localeCompare(b.name))
 )
 
-const canAdd = computed(() => selectedTrack.value !== null && selectedIdentifier.value.length > 0)
+const canAdd = computed(
+  () =>
+    selectedTrack.value !== null &&
+    selectedIdentifier.value.length > 0 &&
+    !usedIdentifiers.value.has(selectedIdentifier.value)
+)
 
 onMounted(() => {
   // Cheap on the backend and always current: the catalogue is only read from memory.
@@ -33,8 +45,11 @@ onMounted(() => {
 
 function addSelected(): void {
   const track = selectedTrack.value
-  if (!track || selectedIdentifier.value.length === 0) return
+  if (!track || !canAdd.value) return
   project.addTrackPlugin(track.id, selectedIdentifier.value)
+  // The chosen entry is about to become unavailable, so return the chooser to its prompt
+  // rather than leaving it pointing at an option the user can no longer act on.
+  selectedIdentifier.value = ''
 }
 
 function move(slotId: string, delta: number): void {
@@ -66,6 +81,7 @@ function move(slotId: string, delta: number): void {
           v-for="entry in catalogue"
           :key="entry.identifier"
           :value="entry.identifier"
+          :disabled="usedIdentifiers.has(entry.identifier)"
         >
           {{ entry.name }}{{ entry.manufacturer ? ` — ${entry.manufacturer}` : '' }}
         </option>
@@ -155,7 +171,7 @@ function move(slotId: string, delta: number): void {
           class="rounded px-2 py-0.5 text-[11px] font-medium"
           :class="
             slot.bypassed
-              ? 'border border-sky-500 bg-sky-500/15 text-sky-200'
+              ? 'border border-amber-500 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
               : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
           "
           :aria-pressed="slot.bypassed"
@@ -165,7 +181,7 @@ function move(slotId: string, delta: number): void {
         </button>
         <button
           type="button"
-          class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+          class="rounded bg-sky-600 px-2 py-0.5 text-[11px] font-medium text-zinc-50 hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
           :disabled="slot.unresolved"
           @click="project.openTrackPluginEditor(selectedTrack.id, slot.slotId)"
         >
@@ -173,7 +189,7 @@ function move(slotId: string, delta: number): void {
         </button>
         <button
           type="button"
-          class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-red-700 hover:text-zinc-50"
+          class="rounded bg-red-700 px-2 py-0.5 text-[11px] font-medium text-zinc-50 hover:bg-red-600"
           @click="project.removeTrackPlugin(selectedTrack.id, slot.slotId)"
         >
           Remove

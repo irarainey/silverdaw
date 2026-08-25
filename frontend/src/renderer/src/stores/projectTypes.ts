@@ -103,6 +103,8 @@ export interface BeatRepeatRegion {
  */
 export interface TrackPluginSlot {
   readonly slotId: string
+  /** Catalogue key of the hosted plugin; matches `PluginCatalogueEntry.identifier`. */
+  identifier: string
   name: string
   manufacturer?: string
   format?: string

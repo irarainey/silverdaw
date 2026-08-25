@@ -241,8 +241,10 @@ Silverdaw currently supports the core arrangement workflow:
   readout to type a value. The master gain is persisted with the project,
   marks the project dirty and is applied to both live playback and mixdown
   export so the rendered file matches what the user hears.
-- **Track & project effects.** The bottom panel has four tabs — **Files**,
-  **Library**, **Track FX**, and **Project FX**. The whole panel collapses / expands from its
+- **Track & project effects.** The bottom panel has five tabs — **Files**,
+  **Library**, **Track FX**, **Plugins**, and **Project FX**. The per-track surfaces sit
+  together: **Plugins** (the selected track's VST3 inserts, ADR 0025) follows **Track FX**,
+  and **Project FX** comes last as the only project-wide one. The whole panel collapses / expands from its
   header, with `Ctrl+J`, or **View ▸ Toggle Library / FX Panel**. Each track header also has an **Fx** button
   (beside Mute / Solo) that opens **Track FX** for that track — expanding the
   panel first if it is minimised — (pressing it again collapses back to the

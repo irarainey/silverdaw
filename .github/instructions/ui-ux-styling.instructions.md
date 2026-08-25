@@ -137,6 +137,12 @@ class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-10
   surface, so it takes the lighter panel colour (the library panel background)
   and lets its border and chevron carry the affordance. Its option list matches,
   so the control reads as one surface open or shut.
+- **An unavailable choice is a disabled `<option>`, not a relabelled one.** Leave
+  it in the list so the user can see the choice exists; `.app-select
+  option:disabled` greys it (`zinc-500`). Do not append an explanatory suffix to
+  the option text — the grey is the explanation. (The explicit option `color` on
+  `.app-select` overrides the platform's own greying, which is why the primitive
+  restates it.)
 - **A dropdown in app chrome must release focus after a choice** — call `blur()`
   in its `@change` handler (see `StatusBar.vue` and
   `TrackAutomationLaneHeaders.vue`). A native select keeps focus once used, and a
@@ -256,6 +262,12 @@ Selected/active items use the `sky` accent consistently:
   (or `bg-sky-600/30` for a stronger fill); selected track row uses
   `!border-sky-400`.
 - Connection/status "good" dot: `bg-emerald-500`; idle/off: `bg-zinc-600`.
+- **A toggle that takes something *out* of the signal path** — the plugin
+  **Bypass** button in `PluginsPanel.vue` — engages in `amber`
+  (`border-amber-500 bg-amber-500/15 text-amber-200`), the same shape as the
+  `sky` pattern above with the accent swapped. It is an advisory "this is doing
+  nothing right now" state rather than a selection, and keeping it off `sky`
+  leaves the accent free for the row's primary action (Open) sitting next to it.
 - Don't invent a second "selected" colour — accent tint + accent border + accent
   text is the pattern.
 

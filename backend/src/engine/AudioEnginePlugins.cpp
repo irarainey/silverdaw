@@ -141,7 +141,7 @@ bool AudioEngine::openTrackPluginEditor(const juce::String& trackId, const juce:
     const auto key = slotId.toStdString();
     if (auto existing = pluginEditors.find(key); existing != pluginEditors.end())
     {
-        existing->second->toFront(true);
+        existing->second->bringToFrontAndFocus();
         return true;
     }
 

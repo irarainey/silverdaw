@@ -26,7 +26,7 @@ PluginCatalogue::PluginCatalogue(juce::File dataDirectory) : dataDir(resolveData
                                   + created.getErrorMessage());
     }
 
-    formatManager.addFormat(new juce::VST3PluginFormat());
+    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
     knownPlugins.setCustomScanner(std::make_unique<PluginScanCoordinator>());
 
     if (const auto cached = juce::parseXML(knownPluginsFile()); cached != nullptr)
@@ -89,9 +89,13 @@ bool PluginCatalogue::startScan(juce::FileSearchPath pathsToScan, PluginScanJob:
         [this, finished = std::move(onFinished)](bool completed)
         {
             saveKnownPlugins();
+            // Cleared before the caller's callback so anything that callback broadcasts —
+            // notably the refreshed plugin list — already reports the scan as over.
+            scanning.store(false, std::memory_order_release);
             if (finished) finished(completed);
         });
 
+    scanning.store(true, std::memory_order_release);
     scanJob->start();
     return true;
 }
@@ -103,7 +107,7 @@ void PluginCatalogue::cancelScan()
 
 bool PluginCatalogue::isScanning() const
 {
-    return scanJob != nullptr && scanJob->isRunning();
+    return scanning.load(std::memory_order_acquire);
 }
 
 void PluginCatalogue::clearBlacklist()

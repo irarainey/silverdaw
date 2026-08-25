@@ -4,6 +4,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
 #include <memory>
 
 namespace silverdaw::plugins
@@ -51,6 +52,12 @@ class PluginCatalogue
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
     juce::FileSearchPath userSearchPaths;
+    // Declared before `scanJob` so the job's finished callback, which may fire while the job
+    // is being destroyed, never touches a member that has already gone.
+    // Not derived from the scan thread's liveness: the finished callback fires from inside
+    // `run()`, so a thread that is merely on its way out would still report itself as
+    // running and leave the renderer's scan indicator stuck on.
+    std::atomic<bool> scanning{false};
     std::unique_ptr<PluginScanJob> scanJob;
 };
 

@@ -126,6 +126,46 @@ void testScanWorkerCommandLineRecognition()
     require(!plugins::isScanWorkerCommandLine({}), "an empty command line must not be a scan worker");
 }
 
+// The renderer clears its scan indicator from a plugin-list broadcast sent by the finished
+// callback, so `isScanning()` has to already read false by the time that callback runs. It
+// used to be derived from the scan thread's liveness, which is still true at that point.
+void testScanIsReportedFinishedInsideTheCallback()
+{
+    const auto pluginDir = makeTempDir("plugin-scan-state");
+    const auto dataDir = makeTempDir("plugin-data-state");
+    writeBogusPlugin(pluginDir);
+
+    plugins::PluginCatalogue catalogue{dataDir};
+
+    std::atomic<bool> finished{false};
+    std::atomic<bool> scanningWhenFinished{true};
+    std::atomic<bool> scanningWhileRunning{false};
+
+    const auto started = catalogue.startScan(
+        juce::FileSearchPath{pluginDir.getFullPathName()},
+        [&catalogue, &scanningWhileRunning](plugins::ScanProgress)
+        { scanningWhileRunning.store(catalogue.isScanning()); },
+        [&catalogue, &finished, &scanningWhenFinished](bool)
+        {
+            scanningWhenFinished.store(catalogue.isScanning());
+            finished.store(true);
+        });
+    require(started, "startScan must accept the scan");
+
+    const auto deadline = juce::Time::getMillisecondCounter() + 60000;
+    while (!finished.load() && juce::Time::getMillisecondCounter() < deadline)
+        juce::Thread::sleep(25);
+
+    require(finished.load(), "the scan must finish");
+    require(scanningWhileRunning.load(), "a scan in flight must report itself as scanning");
+    require(!scanningWhenFinished.load(),
+            "the scan must report itself finished before the finished callback runs");
+    require(!catalogue.isScanning(), "the catalogue must be idle once the scan has finished");
+
+    pluginDir.deleteRecursively();
+    dataDir.deleteRecursively();
+}
+
 } // namespace
 
 void addPluginCatalogueTests(std::vector<TestCase>& tests)
@@ -133,6 +173,8 @@ void addPluginCatalogueTests(std::vector<TestCase>& tests)
     tests.push_back({"PluginCatalogue blacklists a binary that fails to scan", testScanBlacklistsUnloadableBinary});
     tests.push_back({"PluginCatalogue restores its blacklist from the cache", testBlacklistSurvivesReload});
     tests.push_back({"PluginCatalogue clearBlacklist forgets the crash record", testClearBlacklistForgetsCrashRecord});
+    tests.push_back({"PluginCatalogue reports the scan finished before the finished callback",
+                     testScanIsReportedFinishedInsideTheCallback});
     tests.push_back({"Plugin scan worker command line is distinguished from the engine's",
                      testScanWorkerCommandLineRecognition});
 }

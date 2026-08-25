@@ -83,6 +83,18 @@ A VST3 editor is a native window and cannot be embedded in an Electron
 usable editor of its own, that window falls back to a generic parameter list
 built from the plugin's own parameters, so every plugin stays controllable.
 
+Because that window belongs to the backend and not to the process the user just
+clicked, Windows refuses it the foreground and it would open behind the app.
+The backend therefore briefly attaches to the foreground thread's input queue
+before raising the window — a deliberate, Windows-only concession applied only
+in direct response to an explicit user request to open or re-open an editor.
+For the same reason the backend executable carries an icon resource: Windows
+takes an editor window's taskbar and title-bar icon from the executable that
+owns it. It carries a plug-badged variant of the app icon, not the app icon
+itself, because an editor's taskbar button sits beside the shell app's own and
+two identical buttons read as one window opened twice. Both are derived from
+the same source logo by `scripts/Build-InstallerArt.py`.
+
 ### Persistence
 
 A plugin slot persists additively on its track: identifier, format, display

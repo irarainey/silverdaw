@@ -153,12 +153,12 @@ const {
         class="min-h-0 flex-1"
       />
 
-      <ProjectFxPanel
-        v-else-if="activeTab === 'projectfx'"
+      <PluginsPanel
+        v-else-if="activeTab === 'plugins'"
         class="min-h-0 flex-1"
       />
 
-      <PluginsPanel
+      <ProjectFxPanel
         v-else
         class="min-h-0 flex-1"
       />

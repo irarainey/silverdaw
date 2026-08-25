@@ -141,4 +141,10 @@
     background-color: #18181b;
     color: #f4f4f5;
   }
+  /* A disabled option stays in the list so the user can see the choice exists
+   * and is simply unavailable. The explicit colour above overrides the greying
+   * the platform would otherwise apply, so restate it here. */
+  .app-select option:disabled {
+    color: #71717a;
+  }
 }

@@ -21,13 +21,28 @@ vi.mock('@/lib/log', () => ({
 
 describe('plugin wire schemas', () => {
   it('treats the optional slot flags as absent-means-false', () => {
-    const parsed = ProjectStatePluginSlotSchema.parse({ slotId: 's1', name: 'Reverb' })
+    const parsed = ProjectStatePluginSlotSchema.parse({
+      slotId: 's1',
+      identifier: 'C:/VST3/Reverb.vst3',
+      name: 'Reverb'
+    })
     expect(parsed.bypassed).toBeUndefined()
     expect(parsed.unresolved).toBeUndefined()
   })
 
   it('rejects a slot without an id', () => {
-    expect(ProjectStatePluginSlotSchema.safeParse({ name: 'Reverb' }).success).toBe(false)
+    expect(
+      ProjectStatePluginSlotSchema.safeParse({ identifier: 'C:/VST3/Reverb.vst3', name: 'Reverb' })
+        .success
+    ).toBe(false)
+  })
+
+  // The chooser disables what is already on the track by identifier, so a slot that arrived
+  // without one would silently let the same plugin be added twice.
+  it('rejects a slot without an identifier', () => {
+    expect(ProjectStatePluginSlotSchema.safeParse({ slotId: 's1', name: 'Reverb' }).success).toBe(
+      false
+    )
   })
 
   it('guards the plugin list payload', () => {
@@ -52,10 +67,18 @@ describe('hydrateTrackPlugins', () => {
 
   it('defaults the optional flags to false and preserves chain order', () => {
     const slots = hydrateTrackPlugins([
-      { slotId: 's1', name: 'First' },
-      { slotId: 's2', name: 'Second', manufacturer: 'Acme', bypassed: true, unresolved: true }
+      { slotId: 's1', identifier: 'id-1', name: 'First' },
+      {
+        slotId: 's2',
+        identifier: 'id-2',
+        name: 'Second',
+        manufacturer: 'Acme',
+        bypassed: true,
+        unresolved: true
+      }
     ])
     expect(slots?.map((s) => s.slotId)).toEqual(['s1', 's2'])
+    expect(slots?.map((s) => s.identifier)).toEqual(['id-1', 'id-2'])
     expect(slots?.[0]).toMatchObject({ bypassed: false, unresolved: false })
     expect(slots?.[1]).toMatchObject({ manufacturer: 'Acme', bypassed: true, unresolved: true })
   })

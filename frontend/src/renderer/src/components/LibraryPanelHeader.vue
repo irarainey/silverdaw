@@ -75,20 +75,20 @@ const filesFilterQuery = defineModel<string>('filesFilterQuery', { required: tru
       <button
         type="button"
         class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
-        :class="activeTab === 'projectfx' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'"
-        :aria-pressed="activeTab === 'projectfx'"
-        @click="activeTab = 'projectfx'"
-      >
-        Project FX
-      </button>
-      <button
-        type="button"
-        class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
         :class="activeTab === 'plugins' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'"
         :aria-pressed="activeTab === 'plugins'"
         @click="activeTab = 'plugins'"
       >
         Plugins
+      </button>
+      <button
+        type="button"
+        class="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors"
+        :class="activeTab === 'projectfx' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'"
+        :aria-pressed="activeTab === 'projectfx'"
+        @click="activeTab = 'projectfx'"
+      >
+        Project FX
       </button>
       <span
         v-if="activeTab === 'library'"

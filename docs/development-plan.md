@@ -2774,7 +2774,7 @@ robustness without changing the core editing model.
   probe-on-load batch for older projects that stored a wrong renderer-side rate.
 - [ ] VST3 effect-plugin scanning and hosting as per-track inserts: scanning in
   a child process behind a persistent blacklist, hosting in the engine process,
-  and a **Plugins** tab beside Track FX and Project FX. See ADR 0025.
+  and a **Plugins** tab directly after Track FX. See ADR 0025.
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 

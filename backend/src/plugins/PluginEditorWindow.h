@@ -20,6 +20,9 @@ class PluginEditorWindow final : public juce::DocumentWindow
                        std::function<void()> onClosed);
     ~PluginEditorWindow() override;
 
+    /** Raises and focuses the window, working around the OS foreground lock (see the .cpp). */
+    void bringToFrontAndFocus();
+
     void closeButtonPressed() override;
 
   private:

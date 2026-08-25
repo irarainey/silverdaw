@@ -229,6 +229,7 @@ juce::var ProjectState::tracksAsJson() const
             {
                 auto* slotObj = new juce::DynamicObject();
                 slotObj->setProperty("slotId", slot.slotId);
+                slotObj->setProperty("identifier", slot.identifier);
                 slotObj->setProperty("name", slot.name);
                 slotObj->setProperty("manufacturer", slot.manufacturer);
                 slotObj->setProperty("format", slot.formatName);

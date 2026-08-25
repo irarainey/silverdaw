@@ -657,6 +657,28 @@ target_sources(SilverdawBackend PRIVATE
 target_link_libraries(SilverdawBackend PRIVATE
     silverdaw_backend_core)
 
+# ─── Windows application icon ────────────────────────────────────────────
+# Plugin editor windows are real desktop windows owned by this process, so Windows takes
+# their title-bar and taskbar icon from the running executable — JUCE registers its window
+# class with `ExtractAssociatedIcon` on the module path. A console app carries no icon
+# resource, which is why those windows show the generic executable glyph. Use the plug-badged
+# variant of the app icon rather than the app icon itself: an editor's taskbar button sits
+# next to the shell app's own, and two identical buttons read as one window opened twice.
+# `scripts/Build-InstallerArt.py` derives it from the same source logo, so the two stay in step.
+if(WIN32)
+    set(SILVERDAW_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/resources/icons/silverdaw-plugin.ico")
+    if(EXISTS "${SILVERDAW_APP_ICON}")
+        set(SILVERDAW_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/SilverdawBackendIcon.rc")
+        file(GENERATE OUTPUT "${SILVERDAW_ICON_RC}"
+             CONTENT "1 ICON \"${SILVERDAW_APP_ICON}\"\n")
+        set_source_files_properties("${SILVERDAW_ICON_RC}" PROPERTIES GENERATED TRUE)
+        target_sources(SilverdawBackend PRIVATE "${SILVERDAW_ICON_RC}")
+    else()
+        message(WARNING "Backend icon not found at ${SILVERDAW_APP_ICON}; "
+                        "plugin editor windows will use the default executable icon")
+    endif()
+endif()
+
 set(SILVERDAW_MIDI_MAPPING_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/midi-mappings")
 target_compile_definitions(silverdaw_backend_core PRIVATE

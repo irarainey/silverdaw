@@ -1,18 +1,18 @@
 # Changelog
 
-## Unreleased
+## 1.7.0
 
 ### Added
 
-- VST3 effect plugins can now be added to a track from a new Plugins tab in the lower panel, alongside Track FX and Project FX. Plugins are found once by a scan that runs each one in a separate process, so a plugin that fails to load cannot take the app down with it.
-- A track's plugins run as a chain in the order shown, and each one can be reordered, bypassed, removed, or opened in its own window to adjust its controls.
-- A project remembers its plugins and their settings, and exports them with the same chain the arrangement plays, so a mixdown sounds like what was heard.
-- Opening a project on a computer where one of its plugins isn't installed now keeps that plugin in place, with its saved settings, and passes the audio through it untouched — so the plugin comes back the next time the project is opened where it is installed.
-- Plugins that sync to the beat, such as tempo-matched delays, now follow the project tempo and playhead, both while playing and when exporting.
+- VST3 effect plugins can be added to a track from a new Plugins tab in the lower panel, and run as a chain that can be reordered, bypassed, and opened for editing in the plugin's own window.
+- Installed plugins are found by a scan that runs each one in a separate process, so a plugin that fails to load cannot take the app down with it.
+- A project remembers its plugins and their settings, keeps them in place when one is not installed on the computer opening it, and exports the same chain the arrangement plays.
+- Plugins that sync to the beat, such as tempo-matched delays, follow the project tempo and playhead.
 
 ### Fixed
 
-- The transport controls no longer get stuck showing stopped while the project is still playing; the play state now corrects itself from the engine.
+- The transport controls no longer get stuck showing stopped while the project is still playing.
+
 ## 1.6.1
 
 ### Changed

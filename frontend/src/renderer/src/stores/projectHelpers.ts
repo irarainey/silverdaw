@@ -87,6 +87,7 @@ export function hydrateTrackPlugins(
   if (!Array.isArray(raw) || raw.length === 0) return undefined
   return raw.map((slot) => ({
     slotId: slot.slotId,
+    identifier: slot.identifier,
     name: slot.name,
     manufacturer: slot.manufacturer,
     format: slot.format,

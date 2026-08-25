@@ -361,6 +361,8 @@ export type ProjectStateBeatRepeatRegion = z.infer<typeof ProjectStateBeatRepeat
  */
 export const ProjectStatePluginSlotSchema = z.object({
   slotId: z.string(),
+  /** The plugin's catalogue key, so the chooser can tell what is already on the track. */
+  identifier: z.string(),
   name: z.string(),
   manufacturer: z.string().optional(),
   format: z.string().optional(),
