@@ -1,12 +1,16 @@
 // VST3 insert commands (ADR 0025). The project tree is the authority for what a track's
 // chain contains; the engine is the authority for the live plugin instances and their state.
-// Every handler here mutates both, then rebroadcasts PROJECT_STATE so the renderer's view is
-// never derived from an optimistic local guess.
+// Every handler here mutates both, then tells the renderer what changed — never an optimistic
+// local guess. Adding, removing and reordering rebroadcast PROJECT_STATE because they mint
+// slot ids and clamp chain order backend-side, so only a full snapshot is self-consistent.
+// Bypass instead acks narrowly: it cannot change slot identity or order, and resending the
+// whole project to flip one boolean forced a full timeline repaint on every click.
 
 #include "PluginCommands.h"
 
 #include "AudioEngine.h"
 #include "BridgeServer.h"
+#include "CommandHelpers.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
 #include "PluginChain.h"
@@ -242,17 +246,21 @@ void handleTrackReorderPlugin(const juce::var& payload, AudioEngine& engine,
 }
 
 void handleTrackSetPluginBypass(const juce::var& payload, AudioEngine& engine,
-                                ProjectState& projectState, BridgeServer& bridge,
-                                ProjectSession& session)
+                                ProjectState& projectState, BridgeServer& bridge)
 {
     const auto ref = readSlotRef(payload);
     const auto bypassed = bridge::readOptionalBool(payload, "bypassed");
     if (!ref.valid || !bypassed.has_value()) return;
 
     engine.setTrackPluginBypassed(ref.trackId, ref.slotId, *bypassed);
-    if (!projectState.setTrackPluginBypassed(ref.trackId, ref.slotId, *bypassed)) return;
-
-    broadcastProjectState(projectState, bridge, session);
+    const bool stored = projectState.setTrackPluginBypassed(ref.trackId, ref.slotId, *bypassed);
+    // A narrow ack, not a project snapshot: bypass leaves the chain's shape untouched, so the
+    // renderer needs one flag rather than a rebuild of every track and clip. `stored` false
+    // means the slot vanished between the click and the command, and the renderer leaves its
+    // mirror alone.
+    broadcastApplied(bridge, "TRACK_PLUGIN_BYPASS_APPLIED",
+                     {{"trackId", ref.trackId}, {"slotId", ref.slotId}, {"bypassed", *bypassed}},
+                     stored);
 }
 
 void handleTrackOpenPluginEditor(const juce::var& payload, AudioEngine& engine,

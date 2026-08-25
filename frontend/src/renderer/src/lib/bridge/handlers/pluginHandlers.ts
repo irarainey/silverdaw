@@ -3,10 +3,11 @@
 
 import { useProjectStore } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 export const pluginBridgeHandlers: BridgeInboundHandlers<
-  'PLUGIN_LIST' | 'PLUGIN_SCAN_PROGRESS' | 'PLUGIN_NOTICE'
+  'PLUGIN_LIST' | 'PLUGIN_SCAN_PROGRESS' | 'PLUGIN_NOTICE' | 'TRACK_PLUGIN_BYPASS_APPLIED'
 > = {
   PLUGIN_LIST: (payload) => {
     const project = useProjectStore()
@@ -33,5 +34,18 @@ export const pluginBridgeHandlers: BridgeInboundHandlers<
   PLUGIN_NOTICE: (payload) => {
     // Already written for the user by the backend, so it is shown as-is.
     useNotificationsStore().push(payload.severity, payload.message, 10000)
+  },
+
+  TRACK_PLUGIN_BYPASS_APPLIED: (payload) => {
+    if (!payload.ok) {
+      // The slot went away between the click and the command, so the mirror is already
+      // right — or about to be corrected by the snapshot that removed it.
+      log.warn(
+        'plugins',
+        `TRACK_PLUGIN_BYPASS_APPLIED ok=false for ${payload.trackId} slot=${payload.slotId}`
+      )
+      return
+    }
+    useProjectStore().applyTrackPluginBypassed(payload.trackId, payload.slotId, payload.bypassed)
   }
 }

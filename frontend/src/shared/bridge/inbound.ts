@@ -407,6 +407,21 @@ export const PluginNoticePayloadSchema = z.object({
 })
 export type PluginNoticePayload = z.infer<typeof PluginNoticePayloadSchema>
 
+/** Ack for `TRACK_SET_PLUGIN_BYPASS` — echoes the bypass flag the backend persisted.
+ *  Bypass is the one insert edit that cannot change slot identity or chain order, so it
+ *  acks narrowly instead of re-broadcasting the whole project. ADR 0002 still holds: the
+ *  value applied to the mirror is the backend's, never an optimistic local guess.
+ *  `ok: false` means the slot no longer exists, and the mirror is left untouched. */
+export const TrackPluginBypassAppliedPayloadSchema = z.object({
+  trackId: z.string(),
+  slotId: z.string(),
+  bypassed: z.boolean(),
+  ok: z.boolean()
+})
+export type TrackPluginBypassAppliedPayload = z.infer<
+  typeof TrackPluginBypassAppliedPayloadSchema
+>
+
 
 
 
@@ -1089,6 +1104,7 @@ export interface BridgeInboundMap {
   PLUGIN_LIST: PluginListPayload
   PLUGIN_SCAN_PROGRESS: PluginScanProgressPayload
   PLUGIN_NOTICE: PluginNoticePayload
+  TRACK_PLUGIN_BYPASS_APPLIED: TrackPluginBypassAppliedPayload
 }
 
 export type BridgeInboundType = keyof BridgeInboundMap
@@ -1170,7 +1186,8 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'ENGINE_AUDIO_STATUS',
   'PLUGIN_LIST',
   'PLUGIN_SCAN_PROGRESS',
-  'PLUGIN_NOTICE'
+  'PLUGIN_NOTICE',
+  'TRACK_PLUGIN_BYPASS_APPLIED'
 ])
 
 /** Narrow an unknown string to the inbound type union. */
@@ -1194,6 +1211,12 @@ export function isPluginScanProgressPayload(value: unknown): value is PluginScan
 
 export function isPluginNoticePayload(value: unknown): value is PluginNoticePayload {
   return PluginNoticePayloadSchema.safeParse(value).success
+}
+
+export function isTrackPluginBypassAppliedPayload(
+  value: unknown
+): value is TrackPluginBypassAppliedPayload {
+  return TrackPluginBypassAppliedPayloadSchema.safeParse(value).success
 }
 
 export function isPlayheadUpdatePayload(value: unknown): value is PlayheadUpdatePayload {

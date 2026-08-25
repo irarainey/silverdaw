@@ -30,8 +30,7 @@ void handleTrackReorderPlugin(const juce::var& payload, AudioEngine& engine,
                               ProjectState& projectState, BridgeServer& bridge,
                               ProjectSession& session);
 void handleTrackSetPluginBypass(const juce::var& payload, AudioEngine& engine,
-                                ProjectState& projectState, BridgeServer& bridge,
-                                ProjectSession& session);
+                                ProjectState& projectState, BridgeServer& bridge);
 void handleTrackOpenPluginEditor(const juce::var& payload, AudioEngine& engine,
                                  ProjectState& projectState, BridgeServer& bridge);
 

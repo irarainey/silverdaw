@@ -680,8 +680,16 @@ to the message thread before touching the bridge. Chain edits are
 `TRACK_ADD_PLUGIN { trackId, identifier }`, `TRACK_REMOVE_PLUGIN`,
 `TRACK_REORDER_PLUGIN { …, index }`, `TRACK_SET_PLUGIN_BYPASS { …, bypassed }` and
 `TRACK_OPEN_PLUGIN_EDITOR`, all keyed by the backend-minted `slotId`; each mutates
-the project tree *and* the live chain, then republishes `PROJECT_STATE`, where a
-track's inserts appear in chain order in its optional `plugins` array. Two things
+the project tree *and* the live chain. Add, remove and reorder then republish
+`PROJECT_STATE`, where a track's inserts appear in chain order in its optional
+`plugins` array — only a whole snapshot is self-consistent when the backend has
+minted a `slotId` or clamped chain order. Bypass instead acks narrowly with
+`TRACK_PLUGIN_BYPASS_APPLIED { trackId, slotId, bypassed, ok }`, because it can
+change neither, and re-sending every track and clip to flip one boolean made the
+renderer repaint the whole timeline on each click — dropped frames in the middle
+of playback. The renderer still applies only what the backend reports, so the panel
+stays non-optimistic; `ok: false` means the slot had gone, and the mirror is left
+untouched. Two things
 deliberately never cross the bridge: a plugin's opaque **state chunk** (ADR 0003 —
 it is stored inline in the project file and nowhere else) and any plugin UI, which
 the backend draws in its own native window. A slot flagged `unresolved` names a

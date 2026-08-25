@@ -581,7 +581,7 @@ bool dispatchTrack(const DispatchContext& ctx)
     }
     else if (type == "TRACK_SET_PLUGIN_BYPASS")
     {
-        silverdaw::handleTrackSetPluginBypass(payload, engine, projectState, bridge, ctx.session);
+        silverdaw::handleTrackSetPluginBypass(payload, engine, projectState, bridge);
     }
     else if (type == "TRACK_OPEN_PLUGIN_EDITOR")
     {

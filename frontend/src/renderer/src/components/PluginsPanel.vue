@@ -5,7 +5,9 @@
 // add, reorder, bypass, open and remove them (ADR 0025).
 //
 // The backend owns the chain, so every control here is fire-and-forget: rows only change when
-// a PROJECT_STATE broadcast says they did. Plugin parameters are edited in the plugin's own
+// the backend confirms them — a PROJECT_STATE broadcast for add, remove and reorder, and the
+// narrower TRACK_PLUGIN_BYPASS_APPLIED ack for bypass, which avoids repainting the timeline
+// mid-playback just to tick a checkbox. Plugin parameters are edited in the plugin's own
 // window, which the backend opens and draws — this panel never renders plugin UI.
 //
 // A plugin already on the track stays in the chooser but is disabled, greyed out by

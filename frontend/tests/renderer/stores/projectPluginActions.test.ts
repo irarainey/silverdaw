@@ -6,6 +6,7 @@ import { pluginBridgeHandlers } from '@/lib/bridge/handlers/pluginHandlers'
 import {
   isPluginListPayload,
   isPluginScanProgressPayload,
+  isTrackPluginBypassAppliedPayload,
   ProjectStatePluginSlotSchema
 } from '@shared/bridge-protocol'
 
@@ -56,6 +57,19 @@ describe('plugin wire schemas', () => {
     expect(isPluginScanProgressPayload({ scanned: 1, total: 4 })).toBe(true)
     expect(isPluginScanProgressPayload({ scanned: -1, total: 4 })).toBe(false)
     expect(isPluginScanProgressPayload({ scanned: 1 })).toBe(false)
+  })
+
+  it('guards the bypass ack payload', () => {
+    expect(
+      isTrackPluginBypassAppliedPayload({ trackId: 't1', slotId: 's1', bypassed: true, ok: true })
+    ).toBe(true)
+    // `ok` is what distinguishes an applied bypass from one the backend could not store.
+    expect(isTrackPluginBypassAppliedPayload({ trackId: 't1', slotId: 's1', bypassed: true })).toBe(
+      false
+    )
+    expect(
+      isTrackPluginBypassAppliedPayload({ trackId: 't1', slotId: 's1', bypassed: 'yes', ok: true })
+    ).toBe(false)
   })
 })
 
@@ -176,5 +190,83 @@ describe('plugin bridge handlers', () => {
   it('falls back to a generic message when the total is unknown', () => {
     pluginBridgeHandlers.PLUGIN_SCAN_PROGRESS({ scanned: 0, total: 0 })
     expect(useProjectStore().pluginScanStatus).toBe('Scanning plugins…')
+  })
+})
+
+// Bypass is acked narrowly rather than by a whole-project snapshot, because re-sending every
+// track and clip to flip one boolean forced a full timeline repaint on each click — visible as
+// dropped frames while playing. These tests pin both halves: the click stays non-optimistic,
+// and the ack alone is what moves the mirror.
+describe('plugin bypass ack', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sendMock.mockClear()
+  })
+
+  const trackWithSlot = (bypassed: boolean): unknown => [
+    {
+      id: 't1',
+      name: 'Track 1',
+      gain: 1,
+      plugins: [{ slotId: 's1', identifier: 'id-1', name: 'Reverb', bypassed, unresolved: false }]
+    }
+  ]
+
+  it('sends the command without changing local state', () => {
+    const project = useProjectStore()
+    project.tracks = trackWithSlot(false) as never
+    project.setTrackPluginBypassed('t1', 's1', true)
+    expect(sendMock).toHaveBeenCalledWith('TRACK_SET_PLUGIN_BYPASS', {
+      trackId: 't1',
+      slotId: 's1',
+      bypassed: true
+    })
+    expect(project.tracks[0]?.plugins?.[0]?.bypassed).toBe(false)
+  })
+
+  it('applies the backend flag when the ack confirms it', () => {
+    const project = useProjectStore()
+    project.tracks = trackWithSlot(false) as never
+    pluginBridgeHandlers.TRACK_PLUGIN_BYPASS_APPLIED({
+      trackId: 't1',
+      slotId: 's1',
+      bypassed: true,
+      ok: true
+    })
+    expect(project.tracks[0]?.plugins?.[0]?.bypassed).toBe(true)
+    // Mirroring must never echo a command back, or the bypass would bounce forever.
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves the mirror alone when the backend could not store the flag', () => {
+    const project = useProjectStore()
+    project.tracks = trackWithSlot(false) as never
+    pluginBridgeHandlers.TRACK_PLUGIN_BYPASS_APPLIED({
+      trackId: 't1',
+      slotId: 's1',
+      bypassed: true,
+      ok: false
+    })
+    expect(project.tracks[0]?.plugins?.[0]?.bypassed).toBe(false)
+  })
+
+  it('ignores an ack for a track or slot it no longer holds', () => {
+    const project = useProjectStore()
+    project.tracks = trackWithSlot(false) as never
+    expect(() => {
+      pluginBridgeHandlers.TRACK_PLUGIN_BYPASS_APPLIED({
+        trackId: 'gone',
+        slotId: 's1',
+        bypassed: true,
+        ok: true
+      })
+      pluginBridgeHandlers.TRACK_PLUGIN_BYPASS_APPLIED({
+        trackId: 't1',
+        slotId: 'gone',
+        bypassed: true,
+        ok: true
+      })
+    }).not.toThrow()
+    expect(project.tracks[0]?.plugins?.[0]?.bypassed).toBe(false)
   })
 })
