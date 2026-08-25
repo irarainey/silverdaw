@@ -18,7 +18,7 @@ juce::File resolveDataDir(const juce::File& requested)
 }
 } // namespace
 
-PluginCatalogue::PluginCatalogue(juce::File dataDirectory) : dataDir(resolveDataDir(dataDirectory))
+PluginCatalogue::PluginCatalogue(const juce::File& dataDirectory) : dataDir(resolveDataDir(dataDirectory))
 {
     if (const auto created = dataDir.createDirectory(); !created.wasOk())
     {
@@ -76,8 +76,9 @@ juce::FileSearchPath PluginCatalogue::getSearchPaths() const
     return format != nullptr ? format->getDefaultLocationsToSearch() : juce::FileSearchPath{};
 }
 
-bool PluginCatalogue::startScan(juce::FileSearchPath pathsToScan, PluginScanJob::ProgressCallback onProgress,
-                               PluginScanJob::FinishedCallback onFinished)
+bool PluginCatalogue::startScan(const juce::FileSearchPath& pathsToScan,
+                                PluginScanJob::ProgressCallback onProgress,
+                                PluginScanJob::FinishedCallback onFinished)
 {
     if (isScanning()) return false;
 
@@ -85,7 +86,7 @@ bool PluginCatalogue::startScan(juce::FileSearchPath pathsToScan, PluginScanJob:
     if (format == nullptr) return false;
 
     scanJob = std::make_unique<PluginScanJob>(
-        knownPlugins, *format, std::move(pathsToScan), deadMansPedalFile(), std::move(onProgress),
+        knownPlugins, *format, pathsToScan, deadMansPedalFile(), std::move(onProgress),
         [this, finished = std::move(onFinished)](bool completed)
         {
             removeUninstalledPlugins();

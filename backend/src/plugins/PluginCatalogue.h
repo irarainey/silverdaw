@@ -17,7 +17,7 @@ class PluginCatalogue
   public:
     // The data directory defaults to %APPDATA%/Silverdaw/plugins; tests override it so a run
     // cannot disturb the user's real catalogue.
-    explicit PluginCatalogue(juce::File dataDirectory = {});
+    explicit PluginCatalogue(const juce::File& dataDirectory = {});
     ~PluginCatalogue();
 
     juce::Array<juce::PluginDescription> getKnownPlugins() const;
@@ -31,7 +31,7 @@ class PluginCatalogue
 
     // False when a scan is already running. Callbacks arrive on the scan thread; a caller
     // that needs the message thread marshals there itself.
-    bool startScan(juce::FileSearchPath pathsToScan, PluginScanJob::ProgressCallback onProgress,
+    bool startScan(const juce::FileSearchPath& pathsToScan, PluginScanJob::ProgressCallback onProgress,
                    PluginScanJob::FinishedCallback onFinished);
     void cancelScan();
     bool isScanning() const;

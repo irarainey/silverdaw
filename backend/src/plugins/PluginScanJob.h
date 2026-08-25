@@ -25,7 +25,7 @@ class PluginScanJob final : private juce::Thread
     using FinishedCallback = std::function<void(bool completed)>;
 
     PluginScanJob(juce::KnownPluginList& listToAddTo, juce::AudioPluginFormat& formatToScan,
-                  juce::FileSearchPath pathsToSearch, juce::File deadMansPedalFile,
+                  const juce::FileSearchPath& pathsToSearch, juce::File deadMansPedalFile,
                   ProgressCallback onProgress, FinishedCallback onFinished);
     ~PluginScanJob() override;
 

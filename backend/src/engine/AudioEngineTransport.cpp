@@ -155,9 +155,7 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
             }
         }
     }
-    if (! notReady.empty()) return false;
-
-    return true;
+    return notReady.empty();
 }
 
 // The master is gated here, so MasterClockSource never pulls the graph and this is the only

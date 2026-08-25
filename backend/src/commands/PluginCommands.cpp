@@ -194,7 +194,7 @@ void handlePluginScan(const juce::var& payload, AudioEngine& engine, BridgeServe
     // thread before touching the bridge.
     const bool started = catalogue.startScan(
         catalogue.getSearchPaths(),
-        [enginePtr = &engine, bridgePtr = &bridge](plugins::ScanProgress progress) {
+        [enginePtr = &engine, bridgePtr = &bridge](const plugins::ScanProgress& progress) {
             juce::MessageManager::callAsync([bridgePtr, progress]() {
                 auto* obj = new juce::DynamicObject();
                 obj->setProperty("currentFile", progress.currentPlugin);

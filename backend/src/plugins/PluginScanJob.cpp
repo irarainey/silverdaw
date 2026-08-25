@@ -6,10 +6,10 @@ namespace silverdaw::plugins
 {
 
 PluginScanJob::PluginScanJob(juce::KnownPluginList& listToAddTo, juce::AudioPluginFormat& formatToScan,
-                             juce::FileSearchPath pathsToSearch, juce::File deadMansPedal,
+                             const juce::FileSearchPath& pathsToSearch, juce::File deadMansPedal,
                              ProgressCallback onProgress, FinishedCallback onFinished)
     : juce::Thread("silverdaw-plugin-scan"), knownPlugins(listToAddTo), format(formatToScan),
-      searchPaths(std::move(pathsToSearch)), deadMansPedalFile(std::move(deadMansPedal)),
+      searchPaths(pathsToSearch), deadMansPedalFile(std::move(deadMansPedal)),
       progressCallback(std::move(onProgress)), finishedCallback(std::move(onFinished))
 {
 }
