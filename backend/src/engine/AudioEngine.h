@@ -214,6 +214,12 @@ class AudioEngine : private AudioEngineGraphState,
      *  clock and reuses the immediate seek path, so there is no round trip and no output fade. */
     void setTimelineLoop(std::optional<LoopRange> range);
 
+    /** True while a timeline loop range is armed. Mirrors `isPreviewLoopArmed` and lets a
+     *  caller confirm a project change disarmed the previous project's range — an armed
+     *  loop is otherwise invisible from outside the engine, which is how one survived
+     *  PROJECT_NEW and silently wrapped playback in the next project. */
+    bool isTimelineLoopArmed() const noexcept { return timelineLoop.has_value(); }
+
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
     bool commitClipOffset(const juce::String& clipId);
 

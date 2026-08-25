@@ -43,13 +43,11 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // temp workspace so stray stems/samples never leak into the next save.
     silverdaw::tempArtifactsRoot().deleteRecursively();
 
-    // replaceTree does not touch the live engine, so align master gain with the
-    // new project's default (rebuildEngineFromProject only runs on load/clip ops).
-    engine.setMasterGain(projectState.getMasterVolume());
-    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
-    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
-    engine.setMetronomeBpm(projectState.getBpm());
-    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    // replaceTree does not touch the live engine, so realign every project-scoped
+    // setting with the new project's defaults. Shared with load/undo rather than
+    // listed again here, so a setting added to one path can never be missed on the
+    // other (rebuildEngineFromProject itself only runs on load/clip ops).
+    silverdaw::syncEngineProjectSettings(engine, projectState);
 
     bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
 }

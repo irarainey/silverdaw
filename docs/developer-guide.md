@@ -2935,6 +2935,27 @@ of columns it lands, matching how folder rows already behaved. The button
 cluster stops double-clicks so a quick second press on Play or Import cannot
 also toggle row playback.
 
+**Dragging a row onto a track.** A file row is `draggable`, so a browsed file can
+be imported and placed in one gesture. The row is not a library item yet, so the
+drag cannot use `useDropZone`'s library path; it is handled by
+`useTimelineFileDrop`, which already had to import-then-place for an Explorer
+drop and now treats a browsed row as a second source of paths. The row's path
+travels as `application/x-silverdaw-file-path` and is mirrored into
+`fileBrowserStore.draggingPath`, because `dragover` cannot read `dataTransfer` —
+the same constraint, and the same remedy, as `library.currentDragItemId`. On
+drop, the path is imported through `importDroppedAudioPaths` (shared with the
+Explorer drop, and de-duplicating against an already-imported path) and the
+resulting item is placed on the track under the pointer, or on a new track when
+the drop lands below the last one. The drag shows the **same drop ghost** a
+library drag does: `useTimelineFileDrop` feeds `useDropZone`'s
+`previewExternalDrop`, so one renderer draws every timeline drop and the gesture
+cannot look like two different features. Length is whatever the drag can supply:
+a browsed row uses the duration already read from its tags, while an Explorer
+drag has none, because `dragover` hides the file until drop. When there is none,
+`DropPreview.durationMs` is `null` and the ghost runs to the edge of the view
+rather than changing shape — a clip that long has its end off-screen anyway, so
+it still reads like any other drop.
+
 **Refreshing.** A refresh re-crawls the whole added root, because the index is
 stored and cached per root rather than per folder. The crawl's tags are
 **authoritative and replace** what the store holds, rather than merging into it:

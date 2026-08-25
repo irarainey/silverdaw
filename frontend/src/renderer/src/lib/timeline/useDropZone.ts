@@ -26,7 +26,11 @@ import type { GridGeometry } from './useGridGeometry'
 export interface DropPreview {
   trackIndex: number
   startMs: number
-  durationMs: number
+  /** Null when the drag carries no length yet, which is every drop of a file that
+   *  is not in the library. The ghost then runs to the edge of the view rather than
+   *  changing shape: a clip that long has its end off-screen either way, so it reads
+   *  exactly like any other drop. */
+  durationMs: number | null
   /** False if the drop would overlap an existing clip on the same track. */
   valid: boolean
   /** True when the pointer is in the empty area below the tracks: dropping here
@@ -35,12 +39,21 @@ export interface DropPreview {
 }
 
 export interface DropZone {
-  /** Current ghost preview (null when no library drag is over the canvas). */
+  /** Current ghost preview (null when no drag is over the canvas). */
   dropPreview: Ref<DropPreview | null>
   /** Resolve a pointer position before an external file is imported. */
   resolveDropTarget: (clientX: number, clientY: number) => TimelineDropTarget | null
   /** Convert a raw timeline position to a beat-aware clip start for an imported item. */
   startMsForItem: (rawMs: number, item: LibraryItem) => number
+  /** Drive the same ghost for a drag that is not a library item yet (a file being
+   *  imported). `durationMs` is null when the length is not known until import. */
+  previewExternalDrop: (
+    clientX: number,
+    clientY: number,
+    durationMs: number | null
+  ) => 'copy' | 'none'
+  /** End an external drag, clearing its ghost and any edge auto-scroll. */
+  clearExternalDrop: () => void
 }
 
 export type TimelineDropTarget =
@@ -77,6 +90,15 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
 
   function isLibraryDrag(): boolean {
     return library.currentDragItemId !== null
+  }
+
+  // A file dragged in from Explorer or the Files tab drives the same ghost. Its length
+  // is unknown until it is imported, which the preview reports as a null duration.
+  let externalDragActive = false
+  let externalDragDurationMs: number | null = null
+
+  function isDragActive(): boolean {
+    return isLibraryDrag() || externalDragActive
   }
 
   /** The item currently being dragged from the library (from the live store id). */
@@ -189,10 +211,26 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   }
 
   function clearPreview(): void {
-    if (dropPreview.value !== null) {
-      dropPreview.value = null
-      onPreviewChanged()
+    commitPreview(null)
+  }
+
+  /** Publish a preview, skipping the repaint when nothing about it changed. */
+  function commitPreview(next: DropPreview | null): void {
+    const cur = dropPreview.value
+    if (cur === null && next === null) return
+    if (
+      cur !== null &&
+      next !== null &&
+      cur.trackIndex === next.trackIndex &&
+      cur.startMs === next.startMs &&
+      cur.durationMs === next.durationMs &&
+      cur.valid === next.valid &&
+      (cur.createNewTrack ?? false) === (next.createNewTrack ?? false)
+    ) {
+      return
     }
+    dropPreview.value = next
+    onPreviewChanged()
   }
 
   function onDragEnter(e: DragEvent): void {
@@ -255,19 +293,56 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
       valid: !overlaps,
       createNewTrack: target.createNewTrack
     }
-    const cur = dropPreview.value
-    if (
-      cur === null ||
-      cur.trackIndex !== next.trackIndex ||
-      cur.startMs !== next.startMs ||
-      cur.durationMs !== next.durationMs ||
-      cur.valid !== next.valid ||
-      (cur.createNewTrack ?? false) !== (next.createNewTrack ?? false)
-    ) {
-      dropPreview.value = next
-      onPreviewChanged()
-    }
+    commitPreview(next)
     return overlaps ? 'none' : 'copy'
+  }
+
+  /** The same ghost for a file drag. There is no library item to read a beat grid or
+   *  drop-time warp from, so the start is plainly snapped and the length is whatever
+   *  the drag could tell us — often nothing until the file is imported. */
+  function refreshExternalPreview(clientX: number, clientY: number): 'copy' | 'none' {
+    const target = resolveDropTarget(clientX, clientY)
+    if (!target) {
+      clearPreview()
+      return 'none'
+    }
+    const startMs = geometry.snapTimelineMs(target.rawMs, false)
+    const durationMs = externalDragDurationMs
+    // A new track is always empty, and an unknown length cannot be collision-tested.
+    const overlaps =
+      target.createNewTrack || durationMs === null
+        ? false
+        : project.wouldClipOverlap(project.tracks[target.trackIndex]!.id, startMs, durationMs)
+    commitPreview({
+      trackIndex: target.createNewTrack ? -1 : target.trackIndex,
+      startMs,
+      durationMs,
+      valid: !overlaps,
+      createNewTrack: target.createNewTrack
+    })
+    return overlaps ? 'none' : 'copy'
+  }
+
+  function previewExternalDrop(
+    clientX: number,
+    clientY: number,
+    durationMs: number | null
+  ): 'copy' | 'none' {
+    externalDragActive = true
+    externalDragDurationMs = durationMs
+    lastDragClientX = clientX
+    lastDragClientY = clientY
+    const effect = refreshExternalPreview(clientX, clientY)
+    if (edgeDelta(clientX) !== 0) startAutoScroll()
+    else stopAutoScroll()
+    return effect
+  }
+
+  function clearExternalDrop(): void {
+    externalDragActive = false
+    externalDragDurationMs = null
+    stopAutoScroll()
+    clearPreview()
   }
 
   /** Edge auto-scroll pressure for a client x (0 in the clear middle, non-zero near an edge). */
@@ -292,18 +367,19 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
   }
 
   // While the drag pointer hovers near a horizontal edge, keep scrolling the timeline so a
-  // library clip can be dropped at the very start (or anywhere), not just within the current
-  // view. dragover doesn't fire for a stationary pointer, so this rAF loop drives it; the
-  // ghost is refreshed each step because the timeline moves under the still pointer.
+  // clip can be dropped at the very start (or anywhere), not just within the current view.
+  // dragover doesn't fire for a stationary pointer, so this rAF loop drives it; the ghost is
+  // refreshed each step because the timeline moves under the still pointer.
   function runAutoScroll(): void {
     autoScrollFrame = null
-    if (!isLibraryDrag()) return
+    if (!isDragActive()) return
     const delta = edgeDelta(lastDragClientX)
     if (delta === 0) return
     const nextScroll = Math.max(0, Math.min(maxScrollX.value, scrollX.value + delta))
     if (nextScroll === scrollX.value) return // clamped at the start/end — nothing more to scroll
     scrollX.value = nextScroll
-    refreshPreview(lastDragClientX, lastDragClientY)
+    if (externalDragActive) refreshExternalPreview(lastDragClientX, lastDragClientY)
+    else refreshPreview(lastDragClientX, lastDragClientY)
     autoScrollFrame = window.requestAnimationFrame(runAutoScroll)
   }
 
@@ -402,5 +478,5 @@ export function useDropZone(opts: DropZoneOptions): DropZone {
     }
   })
 
-  return { dropPreview, resolveDropTarget, startMsForItem }
+  return { dropPreview, resolveDropTarget, startMsForItem, previewExternalDrop, clearExternalDrop }
 }

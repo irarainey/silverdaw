@@ -62,7 +62,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 - **File browser.** The **Files** tab beside the Library browses folders of
   audio on your own drives, showing each track's cover art, title, artist,
   album, type and length. Listen to a file through your audio device before
-  deciding, then import it with one click. Add folders with the button on the
+  deciding, then import it with one click. Drag a file straight onto a track to
+  import it and place it in one go, or drop it below the last track to get a new
+  track for it. Add folders with the button on the
   left — that pick is the only thing that lets Silverdaw read them — and they
   are remembered the next time you open the app. Filter by track name or artist,
   and drive the whole list from the keyboard.

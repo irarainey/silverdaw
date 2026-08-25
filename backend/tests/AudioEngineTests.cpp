@@ -17,6 +17,7 @@
 #include "PeaksCache.h"
 #include "PreviewMetronomeSource.h"
 #include "ProjectFile.h"
+#include "ProjectSession.h"
 #include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
@@ -1547,6 +1548,32 @@ void testTempoChangeWarpsPreviouslyUnwarpedClipInEngine()
             "the playhead should keep its beat rather than its millisecond");
 }
 
+// A timeline loop lives in the engine, not the project tree (ADR 0023), so a new project
+// has to disarm the previous one's range explicitly. When PROJECT_NEW hand-maintained its
+// own list of engine realignments and left this one out, the old range kept wrapping
+// playback in the new project while the renderer — which had correctly cleared its own
+// selection — drew nothing to explain it.
+void testNewProjectDisarmsPreviousProjectTimelineLoop()
+{
+    silverdaw::AudioEngine engine;
+    silverdaw::ProjectState state;
+
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{2448.0, 12244.0, /*loop*/ true});
+    silverdaw::syncTimelineLoop(engine, state);
+    require(engine.isTimelineLoopArmed(),
+            "a saved looping selection should arm the engine's timeline loop");
+
+    // What PROJECT_NEW does to the tree before realigning the engine.
+    juce::ValueTree fresh(juce::Identifier{"PROJECT"});
+    fresh.setProperty(juce::Identifier{"name"}, silverdaw::ProjectState::kDefaultName, nullptr);
+    state.replaceTree(fresh);
+
+    silverdaw::syncEngineProjectSettings(engine, state);
+    require(!engine.isTimelineLoopArmed(),
+            "a new project must disarm the previous project's timeline loop");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
@@ -1574,6 +1601,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
     tests.push_back({"loadPreview sniffs content when the extension is unclaimed", testLoadPreviewFallsBackToContentSniffing});
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
+    tests.push_back({"A new project disarms the previous project's timeline loop", testNewProjectDisarmsPreviousProjectTimelineLoop});
 }
 
 } // namespace silverdaw::tests

@@ -288,6 +288,35 @@ void captureTrackPluginStates(silverdaw::AudioEngine& engine,
     }
 }
 
+void syncEngineProjectSettings(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState)
+{
+    // Every project-scoped engine setting that does not depend on clips, in one place.
+    // A new project realigns the same settings a load does, so it must not be a
+    // hand-maintained second list: when it was, a timeline loop armed in the previous
+    // project survived PROJECT_NEW and silently wrapped playback in the new one.
+    engine.setMasterGain(projectState.getMasterVolume());
+    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
+    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
+
+    // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
+    engine.setMetronomeBpm(projectState.getBpm());
+    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
+    syncBeatRepeatRegions(engine, projectState);
+    // A loaded/undone project brings its own saved loop range with it; a new one has
+    // none, which disarms whatever the previous project left armed.
+    syncTimelineLoop(engine, projectState);
+
+    // Always reset shared FX on new/load so projects never inherit prior settings.
+    engine.setProjectReverb(projectState.getProjectReverbSize(),
+                            projectState.getProjectReverbDecay(),
+                            projectState.getProjectReverbTone(),
+                            projectState.getProjectReverbMix(), /*snap*/ true);
+    engine.setProjectDelay(
+        silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
+        projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
+        projectState.getProjectDelayMix(), /*snap*/ true);
+}
+
 void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                               juce::ThreadPool& peakPool, const silverdaw::DecodedCache& decodedCache)
 {
@@ -483,27 +512,7 @@ void rebuildEngineFromProject(silverdaw::AudioEngine& engine, silverdaw::Project
     projectState.reconcileTransitions(/*useUndo*/ false);
     silverdaw::syncClipEdgeFades(engine, projectState);
 
-    // Keep live master gain aligned with loaded, recovered, and undo/redo state.
-    engine.setMasterGain(projectState.getMasterVolume());
-    engine.setSafetyLimiterEnabled(projectState.getSafetyLimiterEnabled(), /*snap*/ true);
-    engine.setProjectMixGlue(projectState.getProjectMixGlueAmount(), /*snap*/ true);
-
-    // Keep the monitoring metronome aligned with the loaded tempo + toggle state.
-    engine.setMetronomeBpm(projectState.getBpm());
-    engine.setMetronomeEnabled(projectState.getMetronomeEnabled());
-    syncBeatRepeatRegions(engine, projectState);
-    // A loaded/undone project brings its own saved loop range with it.
-    syncTimelineLoop(engine, projectState);
-
-    // Always reset shared FX on new/load so projects never inherit prior settings.
-    engine.setProjectReverb(projectState.getProjectReverbSize(),
-                            projectState.getProjectReverbDecay(),
-                            projectState.getProjectReverbTone(),
-                            projectState.getProjectReverbMix(), /*snap*/ true);
-    engine.setProjectDelay(
-        silverdaw::delayNoteToMs(projectState.getProjectDelayNoteValue(), projectState.getBpm()),
-        projectState.getProjectDelayFeedback(), projectState.getProjectDelayTone(),
-        projectState.getProjectDelayMix(), /*snap*/ true);
+    syncEngineProjectSettings(engine, projectState);
 }
 
 juce::File tempArtifactsRoot()

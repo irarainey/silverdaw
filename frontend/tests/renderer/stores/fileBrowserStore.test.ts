@@ -253,6 +253,18 @@ describe('useFileBrowserStore removal', () => {
     expect(browser.selectedPath).toBe('D:\\other\\Song.mp3')
   })
 
+  it('tracks the dragged row path so the timeline can see the drag before the drop', () => {
+    const browser = useFileBrowserStore()
+
+    expect(browser.draggingPath).toBeNull()
+
+    browser.setDragPath('C:\\music\\Top.mp3')
+    expect(browser.draggingPath).toBe('C:\\music\\Top.mp3')
+
+    browser.setDragPath(null)
+    expect(browser.draggingPath).toBeNull()
+  })
+
   it('clears a selection that lived inside a removed folder', async () => {
     const browser = useFileBrowserStore()
     await browser.hydrate()

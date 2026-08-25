@@ -10,10 +10,16 @@
 - Plugins that sync to the beat, such as tempo-matched delays, follow the project tempo and playhead.
 - Plugins that need time to work ahead, such as linear-phase equalisers and lookahead limiters, are kept in time with the rest of the mix in both playback and export.
 - Adding a plugin that needs MIDI notes or a side-chain input says so, instead of leaving the track quiet with no explanation.
+- A file can be dragged from the Files tab straight onto a track, which imports it into the library and places it in one action, or onto empty space below the tracks to get a new track for it.
+
+### Changed
+
+- Dragging a file onto the timeline now shows the same drop position marker as dragging from the library, instead of a plain highlight over the whole timeline.
 
 ### Fixed
 
-- The transport controls no longer get stuck showing stopped while the project is still playing.
+- The transport controls no longer get stuck showing stopped while the project is still playing if the engine has to reconnect.
+- Starting a new project no longer keeps looping the previous project's loop range, and no longer inherits its reverb, delay or beat repeat settings.
 
 ## 1.6.1
 

@@ -42,6 +42,11 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const Project
 // Undo/redo uses softReplace to reconcile removed entities without resetting renderer-local state.
 juce::var buildSoftReplaceProjectStateEnvelope(const ProjectSession& session, ProjectState& projectState);
 
+// Realigns every project-scoped engine setting that does not depend on clips (master gain,
+// safety limiter, mix glue, metronome, beat repeat, timeline loop, shared reverb/delay).
+// Shared by load/undo/redo and by PROJECT_NEW so the two can never drift apart.
+void syncEngineProjectSettings(AudioEngine& engine, ProjectState& projectState);
+
 // Caller must drop existing engine clips before rebuilding from project state.
 void rebuildEngineFromProject(AudioEngine& engine, ProjectState& projectState,
                               juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
