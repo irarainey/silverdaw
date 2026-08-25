@@ -57,6 +57,11 @@ void handleProjectSetView(const juce::var& payload, silverdaw::AudioEngine& engi
     {
         projectState.setViewFxPanelOpen(static_cast<bool>(fxVar));
     }
+    const auto fxTabVar = payload.getProperty("fxTab", juce::var());
+    if (fxTabVar.isString())
+    {
+        projectState.setViewFxTab(fxTabVar.toString());
+    }
     // Stored opaquely: the renderer owns the snap vocabulary and falls back to
     // its own default for anything it does not recognise.
     const auto snapVar = payload.getProperty("snapGrid", juce::var());

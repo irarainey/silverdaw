@@ -412,6 +412,12 @@ class ProjectState : public juce::ValueTree::Listener
 
     void setViewFxPanelOpen(bool open);
 
+    /** Which lower-panel FX tab was showing (e.g. "plugins"); empty when never set.
+     *  Stored opaquely — the renderer owns the vocabulary and its fallback. */
+    juce::String getViewFxTab() const;
+
+    void setViewFxTab(const juce::String& tab);
+
     /** Timeline snap grid identifier (e.g. "quarter"); empty when never set.
      *  Stored opaquely — the renderer owns the vocabulary and its fallback. */
     juce::String getViewSnapGrid() const;
@@ -890,6 +896,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kViewScrollX;
     static const juce::Identifier kViewSelectedTrack;
     static const juce::Identifier kViewFxPanelOpen;
+    static const juce::Identifier kViewFxTab;
     static const juce::Identifier kViewSnapGrid;
     static const juce::Identifier kViewTimelineSelectionStartMs;
     static const juce::Identifier kViewTimelineSelectionEndMs;

@@ -1171,7 +1171,7 @@ and without the user enabling anything.
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
-        viewSelectedTrack?, viewFxPanelOpen?,
+        viewSelectedTrack?, viewFxPanelOpen?, viewFxTab?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         metronomeEnabled?, clipEditorMetronomeEnabled?,
@@ -1334,8 +1334,10 @@ in beat space; older projects simply have none. `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
 (sorted, clamped, de-duplicated) backend-side and removed entirely when the
-shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` are view state for the
-bottom-panel FX tabs; `viewTimelineSelectionStartMs`,
+shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` / `viewFxTab` are view
+state for the bottom-panel FX tabs — the tab is stored opaquely, like the snap
+grid, so a value a build does not recognise falls back to Track FX rather than
+rejecting the snapshot; `viewTimelineSelectionStartMs`,
 `viewTimelineSelectionEndMs`, and `viewTimelineSelectionLoop` store the optional
 timeline range and Loop Selection state. All are round-tripped through
 `PROJECT_SET_VIEW`, which also arms the engine's transport loop (see

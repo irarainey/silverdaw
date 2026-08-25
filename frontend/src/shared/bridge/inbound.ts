@@ -569,6 +569,9 @@ export const ProjectStatePayloadSchema = z.object({
   viewScrollX: z.number().optional(),
   viewSelectedTrack: z.string().optional(),
   viewFxPanelOpen: z.boolean().optional(),
+  // Kept loose on purpose: the backend stores the tab opaquely, so a value this
+  // build does not know must fall back rather than reject the whole snapshot.
+  viewFxTab: z.string().optional(),
   timelineSelection: z
     .object({
       startMs: z.number().finite().nonnegative(),

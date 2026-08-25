@@ -332,7 +332,11 @@ export function finalizeProjectSnapshot(
         ? savedSelected
         : null
     target.fxPanelOpen = snapshot.viewFxPanelOpen === true
-    target.fxTab = 'track'
+    // Stored opaquely by the backend, so an unknown or absent tab falls back here.
+    target.fxTab =
+      snapshot.viewFxTab === 'project' || snapshot.viewFxTab === 'plugins'
+        ? snapshot.viewFxTab
+        : 'track'
     target.timelineRevision++
     ui.applyTimelineSelectionView(
       snapshot.timelineSelection ?? null,

@@ -172,6 +172,11 @@ juce::var buildProjectStateEnvelope(const ProjectSession& session, const silverd
     obj->setProperty("viewScrollX", projectState.getViewScrollX());
     obj->setProperty("viewSelectedTrack", projectState.getViewSelectedTrack());
     obj->setProperty("viewFxPanelOpen", projectState.getViewFxPanelOpen());
+    // Omit an unset tab so the renderer applies its own default, as for the grid below.
+    {
+        const auto fxTab = projectState.getViewFxTab();
+        if (fxTab.isNotEmpty()) obj->setProperty("viewFxTab", fxTab);
+    }
     // Omit an unset grid so the renderer applies its own default.
     {
         const auto snapGrid = projectState.getViewSnapGrid();

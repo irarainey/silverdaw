@@ -14,6 +14,7 @@
 
 ### Changed
 
+- The lower panel now reopens on the tab it was left on when the project was closed, instead of always returning to Track FX.
 - Dragging a file onto the timeline now shows the same drop position marker as dragging from the library, instead of a plain highlight over the whole timeline.
 
 ### Fixed

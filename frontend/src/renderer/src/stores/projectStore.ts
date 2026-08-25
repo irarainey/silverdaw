@@ -325,9 +325,11 @@ export const useProjectStore = defineStore('project', {
       sendBridge('PROJECT_SET_VIEW', { fxPanelOpen: open })
     },
 
-    /** UI-only FX tab; never touches bridge or dirty state. */
+    /** FX tab choice, persisted as non-dirty view state so it survives a reopen. */
     setFxTab(tab: 'track' | 'project' | 'plugins'): void {
+      if (this.fxTab === tab) return
       this.fxTab = tab
+      sendBridge('PROJECT_SET_VIEW', { fxTab: tab })
     },
 
     /** Update project Reverb; localOnly reconciles backend acks. */

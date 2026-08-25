@@ -2469,8 +2469,9 @@ playable at every point):
   `uiStore` (global-preference) plan. Which rack is showing — the per-track
   Track FX (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, and
   Reverb/Delay sends) or the project-wide Project FX (shared Reverb, Delay,
-  Glue Compressor, and Safety Limiter) — is a UI-only `fxTab` selection that defaults
-  back to Track FX on reload, keeping the per-track and project-scoped effects
+  Glue Compressor, and Safety Limiter) or the Plugins rack — is persisted the
+  same way (`viewFxTab`, stored opaquely so an unrecognised value falls back to
+  Track FX), keeping the per-track and project-scoped effects
   on clearly separate tabs rather than mixing both on one panel. The Library
   keeps its resizable `:height` / `@update:height` API.
   Track FX arranges the modules in five responsive columns: Tone; Filter above

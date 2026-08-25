@@ -788,6 +788,8 @@ export interface ProjectSetViewPayload {
   selectedTrackId?: string | null
   /** Bottom panel shows Track FX. Persisted as non-dirty view state. */
   fxPanelOpen?: boolean
+  /** Which FX tab the bottom panel shows. Persisted as non-dirty view state. */
+  fxTab?: 'track' | 'project' | 'plugins'
   /** Selected range, or null to clear. Persisted as non-dirty view state. */
   timelineSelection?: { startMs: number; endMs: number } | null
   /** Whether transport loops the persisted selected range. */
