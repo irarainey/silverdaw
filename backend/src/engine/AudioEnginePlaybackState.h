@@ -46,7 +46,6 @@ protected:
         std::shared_ptr<const scratch::PatternReplaySnapshot> patternSnapshot;
         double sampleRate = 44100.0;
         int numChannels = 2;
-        juce::int64 latencySamples = 0;
         bool prefetchDirty = false;
     };
 

@@ -67,6 +67,11 @@ inline constexpr int kWarmHoldMs = 800;
 inline constexpr int kDefaultSampleRate = 44100;
 inline constexpr int kAltSampleRate = 48000;
 
+// Plugin delay compensation bound (ADR 0026). Latency is self-reported by code we do not
+// own, so a plugin claiming more than this is treated as misreporting rather than allowed
+// to desync the project.
+inline constexpr double kMaxLatencyCompensationSeconds = 1.0;
+
 // Device stall watchdog. The audio callback runs continuously once the device is
 // open, whether or not the transport is rolling, so a frozen callback counter is
 // an unambiguous stall. Two seconds is far longer than any legitimate scheduling

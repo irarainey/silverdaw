@@ -202,12 +202,16 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     const int64_t userTailFrames = static_cast<int64_t>(
         std::round(clampedTailSeconds * static_cast<double>(snapshot.projectSampleRate)));
     totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
+    // Every track leaves the graph aligned by this much, so shift the whole render window to
+    // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
+    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
+    totalProjectFrames += alignmentFrames;
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
     // Render from frame 0 so clip positions and FX tails advance correctly, but only
     // push frames at/after the start offset into the output (earlier audio discarded).
     const int64_t startFrames = juce::jlimit<int64_t>(
         0, juce::jmax<int64_t>(0, totalProjectFrames),
-        static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)));
+        static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)) + alignmentFrames);
     int64_t projectFramesRendered = 0;
     int64_t outputFramesWritten = 0;
     double peakAmplitude = 0.0;

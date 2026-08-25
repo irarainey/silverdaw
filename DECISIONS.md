@@ -32,3 +32,4 @@ decision and add its line here.
 | D-0023 | `IMPORTANT` | Engine owns every loop wrap — timeline and Clip Editor preview (immediate, unfaded, uncompensated restart) | `docs/adr/0023-engine-owned-timeline-loop.md` |
 | D-0024 | `CRITICAL` | One original BPM per clip and one warp target, resolved by a single function per process that share the same rules | `docs/adr/0024-single-source-bpm-resolver.md` |
 | D-0025 | `CRITICAL` | VST3 effect plugins as per-track inserts: out-of-process scanning, in-process hosting, a bounded real-time exception for third-party `processBlock`, backend-owned editor windows, and state persisted inline as an unresolved-tolerant slot | `docs/adr/0025-vst3-plugin-hosting.md` |
+| D-0026 | `IMPORTANT` | Plugin delay compensation by delaying every track to a common alignment, so the whole mix is uniformly late by one bounded constant | `docs/adr/0026-plugin-delay-compensation.md` |

@@ -33,7 +33,9 @@ void PlayheadEmitter::timerCallback()
     const double rawPosMs = engine.getPositionMs();
 
     // Compensate only during playback so the playhead matches heard audio without moving seek anchors.
-    const double latencyMs = playing ? engine.getOutputLatencyMs() : 0.0;
+    const double latencyMs = playing
+        ? engine.getOutputLatencyMs() + engine.getPluginLatencyMs()
+        : 0.0;
     const double posMs = playing ? juce::jmax(0.0, rawPosMs - latencyMs) : rawPosMs;
     sendMidiMarkerLights(project.hasMarkerNear(posMs), project.getMarkerCount());
 

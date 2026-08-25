@@ -816,6 +816,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/ScratchPatternReplayProjectStateTests.cpp
         tests/PluginCatalogueTests.cpp
         tests/PluginChainTests.cpp
+        tests/PluginLatencyTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp

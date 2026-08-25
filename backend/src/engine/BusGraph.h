@@ -2,6 +2,7 @@
 
 #include "SharedFx.h"
 #include "BeatRepeatProcessor.h"
+#include "LatencyDelayLine.h"
 #include "PluginChain.h"
 #include "TrackAutomationSnapshot.h"
 #include "TrackChain.h"
@@ -29,6 +30,8 @@ public:
     {
         juce::String trackId;
         TrackChain chain;
+        // Aligns this track with every other one when a plugin reports latency (ADR 0026).
+        LatencyDelayLine compensationDelay;
         // Message-thread-owned source list. The audio thread reads an immutable copy
         // from RenderSnapshot, never this vector directly.
         std::vector<juce::AudioSource*> clips;
@@ -188,6 +191,20 @@ public:
     /** Message thread. Null until the track has an insert chain. */
     plugins::PluginChain* getTrackPlugins(const juce::String& trackId) noexcept;
 
+    int getPreparedBlockSize() const noexcept { return preparedMax; }
+
+    /** Message thread, lock-free. Drops the compensation tails on a seek that discards
+     *  continuity. Never call on a loop wrap: that would punch a hole the size of the
+     *  alignment into the seam (ADR 0026). */
+    void resetLatencyCompensation() noexcept;
+
+    /** Worst-case chain latency across tracks, in samples. Every track is delayed to this
+     *  common alignment, so the whole mix is uniformly this late (ADR 0026). */
+    int getLatencyCompensationSamples() const noexcept
+    {
+        return latencyCompensationSamples.load(std::memory_order_relaxed);
+    }
+
     /** Wire the transport hosted plugins follow (once, at setup). Chains are created
      *  lazily, so this is stored and applied to each one as it appears. */
     void setPluginPlayHead(juce::AudioPlayHead* playHead);
@@ -265,6 +282,11 @@ private:
     void applyPendingTrackFx(TrackRuntime& runtime);
     void clearPendingTrackFx();
 
+    /** Message thread, under `lock`. Recomputes the common alignment and republishes each
+     *  track's compensating delay. Publishes atomics only, so the audio thread keeps
+     *  rendering throughout (ADR 0026). */
+    void updateLatencyCompensation() noexcept;
+
     static void applyTrackAutomation(TrackRuntime& rt, const TrackAutomationSnapshot* snap, juce::int64 subStartSamples,
                                      int numSamples, double rate) noexcept;
 
@@ -325,6 +347,7 @@ private:
     juce::AudioBuffer<float> scratch;
     int preparedMax = 0;
     double preparedRate = 0.0;
+    std::atomic<int> latencyCompensationSamples{0};
 
     // Fixed automation sampling granularity (frames). Keeps live and offline render
     // sampling the curves identically regardless of their differing block sizes.

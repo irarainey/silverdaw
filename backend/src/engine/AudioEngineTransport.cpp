@@ -37,6 +37,10 @@ void AudioEngine::play()
     // heard as a stall on the first beat, so it is logged to make that measurable.
     const double primeMs = juce::Time::getMillisecondCounterHiRes() - primeStart;
 
+    // Fill the plugin delay lines before the gate opens, so the first block already carries
+    // audio instead of the alignment's worth of silence (ADR 0026).
+    primePluginPipeline();
+
     // On a sleep-prone (USB) endpoint, MasterClockSource runs a short audio-thread wake pre-roll
     // here (it emits the louder wake burst without advancing the transport) so the DAC's auto-mute
     // amp is roused before the downbeat — the opening beat is never swallowed. The holding dither
@@ -151,7 +155,38 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
             }
         }
     }
-    return notReady.empty();
+    if (! notReady.empty()) return false;
+
+    return true;
+}
+
+// The master is gated here, so MasterClockSource never pulls the graph and this is the only
+// thread rendering it. Advancing the transport per block keeps automation and the plugin
+// play head in step with the audio being pushed through (ADR 0026).
+void AudioEngine::primePluginPipeline()
+{
+    const int alignment = busGraph.getLatencyCompensationSamples();
+    if (alignment <= 0) return;
+    // Only safe with the gate closed; anything else would race the audio thread.
+    if (master.isPlaying()) return;
+
+    const int block = juce::jmax(1, busGraph.getPreparedBlockSize());
+    const juce::int64 startSamples = master.getPositionSamples();
+    juce::AudioBuffer<float> discard(2, block);
+
+    for (int primed = 0; primed < alignment;)
+    {
+        const int n = juce::jmin(block, alignment - primed);
+        master.setPositionSamples(startSamples + primed);
+        discard.clear();
+        juce::AudioSourceChannelInfo info(&discard, 0, n);
+        busGraph.getNextAudioBlock(info);
+        primed += n;
+    }
+
+    // The render cursor now leads the audible one by the alignment, exactly as it already
+    // leads by the device's own output latency.
+    master.setPositionSamples(startSamples + alignment);
 }
 
 bool AudioEngine::waitForTrackPrefetch(Track& track, double deadlineMs,

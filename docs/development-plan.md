@@ -2176,7 +2176,7 @@ library, transport, UI layout and per-clip edits — from a single
 - [x] Persist transport playhead position. The loop region and metronome flag
   followed once those features shipped, and now persist alongside it.
 - [x] Persist project metadata: name (with rename), BPM (2 d.p.), project
-  length, savedAt ISO timestamp. Time signature is fixed 4/4 today.
+  length, savedAt ISO timestamp. Time signature is fixed at 4/4 by design.
 - [x] Persist library catalogue as a `LIBRARY > ITEM[...]` sub-tree
   of `PROJECT`, including id, source path, display file name, duration,
   sample rate, channel count, detected key, decoded playback cache path,
@@ -2775,6 +2775,9 @@ robustness without changing the core editing model.
 - [ ] VST3 effect-plugin scanning and hosting as per-track inserts: scanning in
   a child process behind a persistent blacklist, hosting in the engine process,
   and a **Plugins** tab directly after Track FX. See ADR 0025.
+- [ ] Plugin delay compensation: align every track to a common latency so a
+  latent plugin no longer shifts its track late, folding the residual constant
+  into the reported playhead and trimming it from the mixdown. See ADR 0026.
 - [x] Pan, send-level, tone, filter, compressor and **Gain** track automation
   (timeline lanes; §7.11.1). Plugin-parameter automation remains for Phase 8.
 

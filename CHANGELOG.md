@@ -8,6 +8,7 @@
 - Installed plugins are found by a scan that runs each one in a separate process, so a plugin that fails to load cannot take the app down with it.
 - A project remembers its plugins and their settings, keeps them in place when one is not installed on the computer opening it, and exports the same chain the arrangement plays.
 - Plugins that sync to the beat, such as tempo-matched delays, follow the project tempo and playhead.
+- Plugins that need time to work ahead, such as linear-phase equalisers and lookahead limiters, are kept in time with the rest of the mix in both playback and export.
 
 ### Fixed
 

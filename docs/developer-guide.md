@@ -696,11 +696,13 @@ Hosted plugins share one read-only `plugins::PluginPlayHead`, so tempo-synced
 effects follow the transport. It does not mirror the transport — it holds
 pointers to the engine's own position, sample-rate and play-state atomics, so a
 plugin cannot drift from what the renderer is rendering; the mixdown builds an
-equivalent play head over the offline position for export parity. Two v1 limits
-are worth knowing: plugin latency is **reported but not compensated**
-(`PluginChain::getLatencySamples()` is exposed but nothing delays sibling
-tracks, so a latent plugin shifts its track late), and the play head always
-reports 4/4 because the project has no time-signature track yet.
+equivalent play head over the offline position for export parity. Plugin
+latency is **compensated** (ADR 0026): `BusGraph` delays every track to the
+largest chain latency in the project, so nothing shifts against its siblings,
+and the residual constant is folded into the reported playhead and trimmed
+from the mixdown. The fixed 4/4 is not a limit — 4/4 is the app's assumption
+throughout, stated once as `BEATS_PER_BAR` in `shared/snapGrid.ts`, so the play
+head states it rather than guessing it.
 
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form

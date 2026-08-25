@@ -9,7 +9,7 @@ namespace silverdaw
 {
 double AudioEngine::trackSeekSecondsFor(const Track& track, juce::int64 masterSamples) const
 {
-    const juce::int64 compensated = juce::jmax(static_cast<juce::int64>(0), masterSamples - track.latencySamples);
+    const juce::int64 compensated = juce::jmax(static_cast<juce::int64>(0), masterSamples);
     const double sr = master.getSampleRate() > 0.0 ? master.getSampleRate() : track.sampleRate;
     return sr > 0.0 ? static_cast<double>(compensated) / sr : 0.0;
 }

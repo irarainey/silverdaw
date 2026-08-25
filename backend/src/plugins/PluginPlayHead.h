@@ -49,8 +49,8 @@ class PluginPlayHead final : public juce::AudioPlayHead
         info.setTimeInSamples(samples);
         info.setTimeInSeconds(seconds);
         info.setBpm(tempo);
-        // Silverdaw has no time-signature track yet, so 4/4 is stated rather than guessed:
-        // a plugin that syncs to bars needs *some* signature, and this is the project default.
+        // Silverdaw is 4/4 by design, so the signature is stated rather than guessed: a
+        // plugin that syncs to bars needs *some* signature, and this is the only one.
         info.setTimeSignature(TimeSignature{4, 4});
         info.setPpqPosition(seconds * tempo / 60.0);
         info.setIsPlaying(loadOr<bool>(playingSource, false));

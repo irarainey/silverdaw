@@ -407,6 +407,11 @@ class AudioEngine : private AudioEngineGraphState,
 
     double getHeuristicExtraLatencyMs() const;
 
+    // Plugin delay compensation makes the whole mix uniformly late, so the reported
+    // playhead subtracts it alongside device latency (ADR 0026). Kept separate from
+    // getOutputLatencyMs, which reports a device property to the UI.
+    double getPluginLatencyMs() const;
+
     juce::AudioFormatManager& getFormatManager() noexcept
     {
         return formatManager;
@@ -501,6 +506,11 @@ class AudioEngine : private AudioEngineGraphState,
                               juce::AudioBuffer<float>& prefetchScratch);
     bool isTrackAudible(const juce::String& trackId) const noexcept;
     static bool waitForTrackPrefetch(Track& track, double deadlineMs, juce::AudioBuffer<float>& scratch);
+
+    /** Message thread, master gated. Pushes the compensation alignment through every chain
+     *  and discards it, so play and seek stay responsive instead of opening with silence
+     *  the size of the alignment (ADR 0026). */
+    void primePluginPipeline();
 
     class RebuildTimer : public juce::Timer
     {

@@ -17,6 +17,13 @@ plugins::PluginCatalogue& AudioEngine::pluginCatalogue()
     return *pluginCatalogueInstance;
 }
 
+double AudioEngine::getPluginLatencyMs() const
+{
+    const double sr = master.getSampleRate();
+    if (sr <= 0.0) return 0.0;
+    return static_cast<double>(busGraph.getLatencyCompensationSamples()) * 1000.0 / sr;
+}
+
 juce::String AudioEngine::addTrackPlugin(const juce::String& trackId,
                                          const juce::PluginDescription& description,
                                          const juce::MemoryBlock& state, bool bypassed,

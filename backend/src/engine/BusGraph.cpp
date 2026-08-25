@@ -29,6 +29,7 @@ void BusGraph::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         kv.second->prepare(preparedRate, preparedMax);
     for (auto& kv : runtimes)
         kv.second->prepareToPlay(preparedMax, preparedRate);
+    updateLatencyCompensation();
 }
 
 void BusGraph::releaseResources()
@@ -88,6 +89,7 @@ void BusGraph::attachClip(const juce::String& trackId,
             rt->publishedBeatRepeat = beatRepeatIt->second;
 
         applyPendingTrackFx(*rt);
+        updateLatencyCompensation();
 
         publishRenderSnapshot();
     }

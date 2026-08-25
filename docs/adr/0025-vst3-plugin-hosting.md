@@ -57,13 +57,13 @@ play-state atomics rather than copies of them, so a plugin cannot drift from
 what the renderer is doing, and the offline render points an equivalent play
 head at the mixdown position for export parity.
 
-Plugin latency is **reported but not compensated** in v1: `PluginChain` sums
-`getLatencySamples()` and exposes it, but nothing delays the other tracks to
-match. Per-track delay compensation touches every timing-sensitive path in the
-engine — clip scheduling, automation sampling, metering and the mixdown's
-sample-accurate parity guarantee — and is a change large enough to deserve its
-own decision. Until then, a latent plugin shifts its track late relative to the
-rest of the mix; the limitation is documented for the user rather than hidden.
+Plugin latency was **reported but not compensated** in v1: `PluginChain` sums
+`getLatencySamples()` and exposes it, but nothing realigned the track against
+its siblings. Per-track delay compensation touches every timing-sensitive path
+in the engine — clip scheduling, automation sampling, metering and the
+mixdown's sample-accurate parity guarantee — and is a change large enough to
+deserve its own decision. **Superseded by ADR 0026**, which compensates by
+aligning every track to the largest chain latency in the project.
 
 ### Process model
 
