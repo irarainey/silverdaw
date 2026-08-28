@@ -98,6 +98,25 @@ describe('splitClipAt carries per-clip playback state', () => {
     expect(payloadFor('CLIP_SET_REVERSED', 'right')).toBeUndefined()
   })
 
+  // Each half is independently editable afterwards, but the split itself must be
+  // invisible on the beat markers, so the right half inherits the parent's phase.
+  it('inherits the beat-grid phase onto the right half', () => {
+    const project = setup(makeClip({ beatOffsetMs: 120 }))
+
+    project.splitClipAt('c1', 400)
+
+    expect(project.clips.right?.beatOffsetMs).toBe(120)
+    expect(payloadFor('CLIP_SET_BEAT_OFFSET', 'right')).toMatchObject({ beatOffsetMs: 120 })
+  })
+
+  it('sends no phase for a clip on the unshifted source grid', () => {
+    const project = setup(makeClip())
+
+    project.splitClipAt('c1', 400)
+
+    expect(payloadFor('CLIP_SET_BEAT_OFFSET', 'right')).toBeUndefined()
+  })
+
   it('hands an end-of-clip brake to the right half only', () => {
     const project = setup(makeClip({ brake: true }))
 

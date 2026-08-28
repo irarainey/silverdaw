@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Sliding a clip's beat markers now changes only that clip. Every clip cut from the same file keeps its own alignment, so correcting one piece no longer pushes the markers off every other piece. Splitting, duplicating or pasting a clip carries its alignment over, so the copies still line up with each other.
 - Editing a clip's beat markers now moves the audio inside the clip rather than moving the clip, so a clip already cut to the bar keeps its place in the arrangement instead of being pushed off the grid.
 - Pasting a clip now lines its beat up with the playhead the same way dragging it does, so a pasted clip no longer jumps the first time it is nudged. A pasted group keeps its internal spacing exactly as copied.
 
@@ -14,6 +15,7 @@
 - Splitting, duplicating or pasting a clip that is still waiting on its tempo analysis now keeps the new clip in time with the original.
 - Duplicating a clip that was trimmed on the grid now keeps every copy on the grid, instead of each copy drifting a little further off it.
 - A clip cut exactly on a beat no longer loses its first beat marker, or jumps a beat when snapped to a bar.
+- Sliding a clip's beat markers onto the beat now always works. Where the slide runs past the start or end of the audio the clip holds its place on the timeline and the missing part plays as silence, instead of the adjustment being refused.
 - Importing some MP3s no longer silently fails to find a tempo, which also left every stem separated from them without one. Such a file could not report its true length, so the last fraction of a second was refused and the whole import was thrown away with it.
 
 ## 1.7.0

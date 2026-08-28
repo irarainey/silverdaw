@@ -301,6 +301,17 @@ export const ProjectStateClipSchema = z.object({
   backspin: z.boolean().optional(),
   /** Scratch pattern applied non-destructively; absent = no pattern. */
   scratchPatternId: z.string().optional(),
+  /**
+   * Per-clip beat-grid phase, in SOURCE milliseconds, added to the library item's
+   * grid anchor for this clip alone. Absent (every project saved before this existed)
+   * means the unshifted source grid, so old projects load exactly as they always did.
+   *
+   * A split makes two independent clips, and correcting where beat one falls in one of
+   * them must not move the markers on the other, nor on anything else cut from the same
+   * file. Phase is the only part of the grid that can be per-clip — spacing comes from
+   * the source BPM, which stays single-sourced (ADR 0024).
+   */
+  beatOffsetMs: z.number().optional(),
   name: z.string().optional(),
   /** Source file is missing; engine skips playback. */
   unresolved: z.boolean().optional(),

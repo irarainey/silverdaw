@@ -324,7 +324,10 @@ export const clipPlacementActions = {
       // Store-level lock guard keeps trim inert too.
       if (clip.locked) return
       const safeStart = Math.max(0, startMs)
-      const safeIn = Math.max(0, inMs)
+      // `inMs` is deliberately NOT clamped: a window that starts before the file is how a
+      // clip holds its place on the timeline when its audio slides off the head, and the
+      // overhang plays as silence.
+      const safeIn = inMs
       const safeDur = Math.max(0, durationMs)
       if (clip.startMs === safeStart && clip.inMs === safeIn && clip.durationMs === safeDur) return
       clip.startMs = safeStart
@@ -433,6 +436,20 @@ export const clipPlacementActions = {
       return 'moved'
     },
 
+    /** Set this clip's beat-grid phase, in source ms, relative to the library item's grid.
+     *  Clip-local by design: the source grid, and so every other clip cut from the same
+     *  file, is left exactly as it was. Applied optimistically. */
+    setClipBeatOffset(clipId: string, beatOffsetMs: number): void {
+      const clip = this.clips[clipId]
+      if (!clip || !Number.isFinite(beatOffsetMs)) return
+      const next = beatOffsetMs === 0 ? undefined : beatOffsetMs
+      if ((clip.beatOffsetMs ?? 0) === (next ?? 0)) return
+      clip.beatOffsetMs = next
+      this.timelineRevision++
+      sendBridge('CLIP_SET_BEAT_OFFSET', { clipId, beatOffsetMs })
+      log.debug('project', `setClipBeatOffset ${clipId} beatOffsetMs=${beatOffsetMs.toFixed(3)}`)
+    },
+
     /** Align a clip to the project beat grid by sliding the AUDIO inside a clip that
      *  does not move — the counterpart to `alignClipToBarGrid`, which moves the clip.
      *
@@ -445,9 +462,11 @@ export const clipPlacementActions = {
      *  stays valid, no neighbour can be in the way, and the arrangement the user built
      *  survives a grid correction — while the audio moves under the new beat lines.
      *
-     *  Returns `blocked` when the source runs out of audio to slide into (the shift is at
-     *  most half a beat, so this only bites at the very ends of a file). */
-    alignClipAudioToBarGrid(clipId: string): 'moved' | 'blocked' | 'skip' {
+     *  A window that runs off either end of the source is allowed: the engine renders the
+     *  overhang as silence, so the audio always lands on the beat rather than the edit
+     *  being refused. Whole-beat steps are preferred first, since they buy the same
+     *  alignment while keeping real audio. */
+    alignClipAudioToBarGrid(clipId: string): 'moved' | 'skip' {
       const aligned = resolveClipBeatAlignment(this, clipId)
       if (!aligned) return 'skip'
       const { clip, shiftMs, ratio, sourceSpacingMs } = aligned
@@ -462,10 +481,15 @@ export const clipPlacementActions = {
       const origInMs = clip.inMs
       let newInMs = origInMs - sourceDeltaMsFromTimeline(shiftMs, ratio)
       // A whole source beat either way lands on the same grid, so stepping by one buys
-      // room at the head or tail of the file without losing the alignment.
-      if (newInMs < 0) newInMs += sourceSpacingMs
-      if (newInMs + clip.durationMs > sourceDurationMs) newInMs -= sourceSpacingMs
-      if (newInMs < 0 || newInMs + clip.durationMs > sourceDurationMs) return 'blocked'
+      // room at the head or tail of the file without losing the alignment. Only step when
+      // it actually helps — otherwise the overhang is unavoidable and silence is better
+      // than trading one end's overhang for the other's.
+      if (newInMs < 0 && newInMs + sourceSpacingMs + clip.durationMs <= sourceDurationMs) {
+        newInMs += sourceSpacingMs
+      }
+      if (newInMs + clip.durationMs > sourceDurationMs && newInMs - sourceSpacingMs >= 0) {
+        newInMs -= sourceSpacingMs
+      }
       if (Math.abs(newInMs - origInMs) < GRID_ALIGNED_EPSILON_MS) return 'skip'
 
       this.trimClip(clipId, clip.startMs, newInMs, clip.durationMs)

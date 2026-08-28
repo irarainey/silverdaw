@@ -33,6 +33,7 @@ function clipToClipboardEntry(clip: Clip): ClipboardEntry {
     semitones: clip.semitones,
     cents: clip.cents,
     pendingAutoWarp: clip.pendingAutoWarp,
+    beatOffsetMs: clip.beatOffsetMs,
     effectiveDurationMs: clip.effectiveDurationMs,
     effectiveTempoRatio: clip.effectiveTempoRatio,
     effectiveWarpActive: clip.effectiveWarpActive
@@ -89,6 +90,7 @@ function insertPastedClip(
     semitones: entry.semitones,
     cents: entry.cents,
     pendingAutoWarp: entry.pendingAutoWarp,
+    beatOffsetMs: entry.beatOffsetMs,
     effectiveDurationMs: entry.effectiveDurationMs,
     effectiveTempoRatio: entry.effectiveTempoRatio,
     effectiveWarpActive: entry.effectiveWarpActive
@@ -125,6 +127,9 @@ function replayPastedClipBridge(
   }
   // Replay active (or still-pending) warp so the backend builds the pasted processor.
   replayClipWarpToNewClip(entry, newId)
+  if (entry.beatOffsetMs) {
+    sendBridge('CLIP_SET_BEAT_OFFSET', { clipId: newId, beatOffsetMs: entry.beatOffsetMs })
+  }
 }
 
 export const clipClipboardActions = {

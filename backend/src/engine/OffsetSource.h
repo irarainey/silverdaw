@@ -37,11 +37,13 @@ class OffsetSource : public juce::PositionableAudioSource
         return offsetSamples.load();
     }
 
+    // A negative in-point is legal: it means the clip window starts before the file, and
+    // the overhanging head renders as silence (see `readChildReversibleBlock`). Sliding a
+    // clip's beat grid onto the beat can push the window off the head of a source.
     void setInSourceSamples(juce::int64 samples)
     {
-        const juce::int64 clamped = juce::jmax(static_cast<juce::int64>(0), samples);
         beginWindowWrite();
-        inSourceSamples.store(clamped, std::memory_order_relaxed);
+        inSourceSamples.store(samples, std::memory_order_relaxed);
         endWindowWrite();
     }
     juce::int64 getInSourceSamples() const

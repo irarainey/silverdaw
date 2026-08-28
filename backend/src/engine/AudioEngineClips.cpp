@@ -112,9 +112,10 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
     const double clampedInitialMs = juce::jmax(0.0, initialOffsetMs);
     track->offsetSource->setOffsetSamples(
         static_cast<juce::int64>(clampedInitialMs * track->sampleRate / 1000.0));
-    const double clampedInMs = juce::jmax(0.0, inMs);
+    // A negative in-point is a window that overhangs the head of the file; the engine
+    // renders that part as silence, so pass it through rather than clamping it away.
     track->offsetSource->setInSourceSamples(
-        static_cast<juce::int64>(clampedInMs * track->sampleRate / 1000.0));
+        static_cast<juce::int64>(inMs * track->sampleRate / 1000.0));
     const double clampedDurMs = juce::jmax(0.0, clipDurationMs);
     track->offsetSource->setClipDurationSamples(
         static_cast<juce::int64>(clampedDurMs * track->sampleRate / 1000.0));

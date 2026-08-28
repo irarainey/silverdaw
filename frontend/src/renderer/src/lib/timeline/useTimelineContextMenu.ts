@@ -32,7 +32,7 @@ import {
 import type { ClipHitRegion } from '@/lib/timeline/useDragHandlers'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import { generateGridSlices, type SliceSubdivision } from '@/lib/clipEditor/loopSlice'
-import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { resolveClipBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import type { ClipDialogActions } from '@/lib/timeline/useClipDialogs'
 import { TRANSITION_RECIPES } from '@/lib/transitions/transitionRecipes'
 import { requestStemSeparationForClip } from '@/lib/stems/stemSeparationFlow'
@@ -346,8 +346,7 @@ export function useTimelineContextMenu(
     // grid — the same grid the timeline draws, so the command is never offered
     // where there are no lines to chop on, and never withheld from a stem that
     // inherits its tempo (the editor's Slice mode adds manual markers and 1/32).
-    const chopSrc = clip ? library.byId[clip.libraryItemId] : undefined
-    const chopGrid = chopSrc ? resolveSourceBeatGrid(chopSrc, library.byId) : null
+    const chopGrid = clip ? resolveClipBeatGrid(clip, library) : null
     if (clip && !clip.locked && !isLinkedClip && chopGrid) {
       const subdivisions: { sub: SliceSubdivision; label: string }[] = [
         { sub: '1 bar', label: '1 bar' },
@@ -705,7 +704,7 @@ export function useTimelineContextMenu(
       const src = clip ? library.byId[clip.libraryItemId] : undefined
       if (clip && src) {
         const markers = generateGridSlices({
-          grid: resolveSourceBeatGrid(src, library.byId),
+          grid: resolveClipBeatGrid(clip, library),
           subdivision,
           windowInMs: clip.inMs,
           windowDurationMs: clip.durationMs

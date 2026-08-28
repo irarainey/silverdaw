@@ -184,6 +184,32 @@ bool ProjectState::isClipReversed(const juce::String& clipId) const
     return static_cast<bool>(clip.getProperty(kReversed, false));
 }
 
+bool ProjectState::setClipBeatOffset(const juce::String& clipId, double beatOffsetMs)
+{
+    auto clip = findClip(clipId);
+    if (!clip.isValid())
+    {
+        return false;
+    }
+    if (std::isfinite(beatOffsetMs) && std::abs(beatOffsetMs) > 1.0e-6)
+    {
+        clip.setProperty(kBeatOffsetMs, beatOffsetMs, &undoManager);
+    }
+    else
+    {
+        // Absent means the unshifted source grid on disk and wire.
+        clip.removeProperty(kBeatOffsetMs, &undoManager);
+    }
+    return true;
+}
+
+double ProjectState::getClipBeatOffset(const juce::String& clipId) const
+{
+    const auto clip = findClip(clipId);
+    if (!clip.isValid()) return 0.0;
+    return static_cast<double>(clip.getProperty(kBeatOffsetMs, 0.0));
+}
+
 bool ProjectState::setClipBrake(const juce::String& clipId, bool brake)
 {
     auto clip = findClip(clipId);

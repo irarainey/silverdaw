@@ -34,7 +34,6 @@ export interface ClipEditorSaveDeps {
   editorItem: () => LibraryItem | null
   timelineClip: () => Clip | null
   sourceItem: () => LibraryItem | null
-  titleText: () => string
   editsSingleTimelineClip: () => boolean
   editsLibraryClipLibrary: () => boolean
   editsTimelineClip: () => boolean
@@ -146,14 +145,12 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
    *  timeline footprint exactly, so the arrangement survives the correction.
    *
    *  Runs inside the save's undo group so the change folds into the one Save step;
-   *  nothing happens while the grid is merely being dragged. */
+   *  nothing happens while the grid is merely being dragged. Where the slide runs off
+   *  either end of the source the overhang plays as silence, so the alignment always
+   *  succeeds. */
   function alignEditedClipToGridOnSave(clip: Clip): void {
     if (!deps.gridChanged() || !deps.alignToGridEnabled()) return
-    if (deps.project.alignClipAudioToBarGrid(clip.id) === 'blocked') {
-      deps.notifications.pushInfo(
-        `Couldn't align "${deps.titleText()}" to the bar grid — there isn't enough audio either side of the clip to move it onto the beat.`
-      )
-    }
+    deps.project.alignClipAudioToBarGrid(clip.id)
   }
 
   function onSaveChanges(): void {

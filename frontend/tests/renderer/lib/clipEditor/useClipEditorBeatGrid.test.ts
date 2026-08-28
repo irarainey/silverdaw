@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
 import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { useProjectStore } from '@/stores/projectStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
 
@@ -493,5 +494,74 @@ describe('useClipEditorBeatGrid', () => {
     // The second session's rollback must not reach back into the first item.
     expect(first.beatAnchorSec).toBe(0.4)
     expect(first.bpm).toBe(120)
+  })
+
+  // The whole point of per-clip phase: sliding one clip's grid must not move the
+  // markers on any other clip cut from the same file.
+  describe('a clip that owns its grid phase', () => {
+    function setup(beatOffsetMs?: number): {
+      item: LibraryItem
+      clip: { id: string; beatOffsetMs?: number }
+      grid: ReturnType<typeof useClipEditorBeatGrid>
+    } {
+      const item = addSource(120, 0.4)
+      const clip = { id: 'c1', beatOffsetMs }
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item, phaseClip: () => clip })
+      grid.reset()
+      sendMock.mockClear()
+      return { item, clip, grid }
+    }
+
+    it('seeds the resolved grid from the clip offset', () => {
+      const { item, grid } = setup(90)
+      expect(grid.resolvedGrid.value?.anchorMs).toBe(490)
+      // The item itself is untouched, so sibling clips still resolve to 400 ms.
+      expect(item.beatAnchorSec).toBe(0.4)
+    })
+
+    it('writes the phase to the clip and leaves the source item alone', () => {
+      const { item, grid } = setup()
+      const setClipBeatOffset = vi.spyOn(useProjectStore(), 'setClipBeatOffset')
+      grid.commitAnchorSec(0.55)
+      expect(item.beatAnchorSec).toBe(0.4)
+      expect(grid.resolvedGrid.value?.anchorMs).toBeCloseTo(550, 6)
+
+      grid.commit()
+      expect(setClipBeatOffset).toHaveBeenCalledWith('c1', 150)
+      expect(sendMock).not.toHaveBeenCalledWith(
+        'LIBRARY_ITEM_SET_MANUAL_TEMPO',
+        expect.anything()
+      )
+    })
+
+    it('nudges the clip phase rather than the item anchor', () => {
+      const { item, grid } = setup()
+      grid.nudgeAnchorMs(25)
+      expect(item.beatAnchorSec).toBe(0.4)
+      expect(grid.resolvedGrid.value?.anchorMs).toBeCloseTo(425, 6)
+    })
+
+    // A tempo change is still source-wide (ADR 0024), and must not bake in this
+    // clip's phase as the item's new anchor.
+    it('keeps a tempo edit item-wide and phase-free', () => {
+      const { item, grid } = setup(150)
+      grid.beginTempoEdit()
+      grid.manualBpmInput.value = '90'
+      grid.commitTempoEdit(true)
+      grid.commit()
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_SET_MANUAL_TEMPO', {
+        itemId: item.id,
+        bpm: 90,
+        beatAnchorSec: 0.4
+      })
+    })
+
+    it('discards an uncommitted phase draft', () => {
+      const { grid } = setup(60)
+      grid.commitAnchorSec(0.9)
+      grid.discardIfUncommitted()
+      expect(grid.resolvedGrid.value?.anchorMs).toBe(460)
+      expect(grid.hasGridChanged()).toBe(false)
+    })
   })
 })

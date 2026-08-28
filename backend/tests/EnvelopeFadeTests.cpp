@@ -391,6 +391,61 @@ void testTracksAsJsonCarriesClipReversed()
             "a forward clip must omit reversed to keep PROJECT_STATE tidy");
 }
 
+void testTracksAsJsonCarriesClipBeatOffset()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    require(state.addClip("t1", "c-phase", "lib1", 100.0, 1000.0), "addClip should succeed");
+
+    // Absent means the unshifted source grid, so every project saved before per-clip
+    // phase existed must read back as zero.
+    requireNear(state.getClipBeatOffset("c-phase"), 0.0, 1e-9,
+                "a new clip sits on the unshifted source grid");
+    const auto bare = state.tracksAsJson();
+    auto* bareClips = (*bare.getArray())[0].getDynamicObject()->getProperty("clips").getArray();
+    require(!(*bareClips)[0].getDynamicObject()->hasProperty("beatOffsetMs"),
+            "an unshifted clip must omit beatOffsetMs to keep PROJECT_STATE tidy");
+
+    require(state.setClipBeatOffset("c-phase", -37.5), "setClipBeatOffset should succeed");
+    requireNear(state.getClipBeatOffset("c-phase"), -37.5, 1e-9,
+                "getClipBeatOffset returns the stored phase, negative included");
+
+    const auto shifted = state.tracksAsJson();
+    auto* clipsArr = (*shifted.getArray())[0].getDynamicObject()->getProperty("clips").getArray();
+    require(clipsArr != nullptr && clipsArr->size() == 1, "track should carry the clip");
+    auto* clipObj = (*clipsArr)[0].getDynamicObject();
+    require(clipObj->hasProperty("beatOffsetMs"), "a shifted clip must carry beatOffsetMs");
+    requireNear(static_cast<double>(clipObj->getProperty("beatOffsetMs")), -37.5, 1e-9,
+                "serialised beatOffsetMs must survive the round trip");
+
+    // Zero clears the property so the clip returns to the shared source grid.
+    require(state.setClipBeatOffset("c-phase", 0.0), "setClipBeatOffset(0) should succeed");
+    requireNear(state.getClipBeatOffset("c-phase"), 0.0, 1e-9, "zero restores the source grid");
+    const auto cleared = state.tracksAsJson();
+    auto* clearedClips = (*cleared.getArray())[0].getDynamicObject()->getProperty("clips").getArray();
+    require(!(*clearedClips)[0].getDynamicObject()->hasProperty("beatOffsetMs"),
+            "clearing the phase must remove beatOffsetMs entirely");
+
+    require(!state.setClipBeatOffset("missing", 10.0), "an unknown clip id must be rejected");
+}
+
+void testClipBeatOffsetIsClipLocal()
+{
+    silverdaw::ProjectState state;
+    require(state.addTrack("t1"), "addTrack should succeed");
+    require(state.addLibraryItem("lib1", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2),
+            "addLibraryItem should succeed");
+    require(state.addClip("t1", "c-a", "lib1", 0.0, 1000.0), "addClip a should succeed");
+    require(state.addClip("t1", "c-b", "lib1", 1000.0, 1000.0), "addClip b should succeed");
+
+    // The whole point of per-clip phase: a sibling cut from the same source never moves.
+    require(state.setClipBeatOffset("c-a", 64.0), "setClipBeatOffset should succeed");
+    requireNear(state.getClipBeatOffset("c-b"), 0.0, 1e-9,
+                "a sibling clip of the same source must keep its own phase");
+}
+
 void testTracksAsJsonCarriesClipBrake()
 {
     silverdaw::ProjectState state;
@@ -944,6 +999,8 @@ void addEnvelopeFadeTests(std::vector<TestCase>& tests)
     tests.push_back({"Mixdown snapshot carries per-clip volume envelope", testMixdownSnapshotCarriesClipEnvelope});
     tests.push_back({"tracksAsJson carries per-clip volume envelope into PROJECT_STATE", testTracksAsJsonCarriesClipEnvelope});
     tests.push_back({"tracksAsJson carries per-clip reverse flag into PROJECT_STATE", testTracksAsJsonCarriesClipReversed});
+    tests.push_back({"tracksAsJson carries per-clip beat-grid phase into PROJECT_STATE", testTracksAsJsonCarriesClipBeatOffset});
+    tests.push_back({"clip beat-grid phase never reaches a sibling of the same source", testClipBeatOffsetIsClipLocal});
     tests.push_back({"tracksAsJson carries per-clip brake flag into PROJECT_STATE", testTracksAsJsonCarriesClipBrake});
     tests.push_back({"EdgeFadeSnapshot equal-power crossfade, endpoints, and sandwiching", testEdgeFadeSnapshotEqualPower});
     tests.push_back({"EdgeFadeSnapshot linear curve law and independent per-leg curves", testEdgeFadeSnapshotLinear});

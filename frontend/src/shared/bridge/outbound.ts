@@ -86,6 +86,14 @@ export interface ClipSetReversedPayload {
   reversed: boolean
 }
 
+/** Per-clip beat-grid phase in SOURCE milliseconds, added to the library item's grid
+ *  anchor for this clip alone. 0 clears it back to the source grid. Never propagated —
+ *  that is the point: each clip owns where its own beat one falls. */
+export interface ClipSetBeatOffsetPayload {
+  clipId: string
+  beatOffsetMs: number
+}
+
 /** Apply a turntable brake (record-stop) at the clip's end; `on` toggles it. */
 export interface ClipSetBrakePayload {
   clipId: string
@@ -574,6 +582,7 @@ export interface BridgeOutboundMap {
   CLIP_COLOR: ClipColorPayload
   CLIP_SET_LOCKED: ClipSetLockedPayload
   CLIP_SET_REVERSED: ClipSetReversedPayload
+  CLIP_SET_BEAT_OFFSET: ClipSetBeatOffsetPayload
   CLIP_SET_BRAKE: ClipSetBrakePayload
   CLIP_SET_BACKSPIN: ClipSetBackspinPayload
   CLIP_REMOVE: ClipRemovePayload
@@ -1255,6 +1264,7 @@ export const bridgeOutboundPayloadKinds: {
   CLIP_COLOR: 'payload',
   CLIP_SET_LOCKED: 'payload',
   CLIP_SET_REVERSED: 'payload',
+  CLIP_SET_BEAT_OFFSET: 'payload',
   CLIP_SET_BRAKE: 'payload',
   CLIP_SET_BACKSPIN: 'payload',
   CLIP_REMOVE: 'payload',

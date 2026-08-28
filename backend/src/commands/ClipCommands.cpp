@@ -153,9 +153,22 @@ void handleClipSetReversed(const juce::var& payload, silverdaw::AudioEngine& eng
     engine.setClipReversed(clipId, reversed);
 }
 
-void handleClipSetBrake(const juce::var& payload, silverdaw::AudioEngine& engine,
-                        silverdaw::ProjectState& projectState)
+void handleClipSetBeatOffset(const juce::var& payload, silverdaw::ProjectState& projectState)
 {
+    const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
+    const double beatOffsetMs = static_cast<double>(payload.getProperty("beatOffsetMs", 0.0));
+    silverdaw::log::info("bridge", "recv CLIP_SET_BEAT_OFFSET clipId=" + clipId +
+                                      " beatOffsetMs=" + juce::String(beatOffsetMs, 3));
+    if (clipId.isEmpty())
+    {
+        return;
+    }
+    // Grid phase is drawn by the renderer only, so there is nothing to tell the engine.
+    projectState.setClipBeatOffset(clipId, beatOffsetMs);
+}
+
+void handleClipSetBrake(const juce::var& payload, silverdaw::AudioEngine& engine,
+                        silverdaw::ProjectState& projectState){
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const bool on = static_cast<bool>(payload.getProperty("on", false));
     silverdaw::log::info("bridge", "recv CLIP_SET_BRAKE clipId=" + clipId +

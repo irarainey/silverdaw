@@ -108,6 +108,9 @@ export const clipEditActions = {
           // Per-clip playback state the right half must inherit to stay a faithful
           // continuation of the source clip.
           reversed: clip.reversed,
+          // Both halves start from the parent's grid phase, so the split is invisible on
+          // the beat markers. From here the two are independent and can be corrected apart.
+          beatOffsetMs: clip.beatOffsetMs,
           brake: carriedBrake ? true : undefined,
           backspin: carriedBackspin ? true : undefined,
           envelopePoints: splitEnvelope.right?.map((p) => ({ ...p })),
@@ -143,6 +146,9 @@ export const clipEditActions = {
         // Replay reverse so the right half keeps playing backwards like its source.
         if (isReversed) {
           sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
+        }
+        if (clip.beatOffsetMs) {
+          sendBridge('CLIP_SET_BEAT_OFFSET', { clipId: newId, beatOffsetMs: clip.beatOffsetMs })
         }
         // Hand the end-of-clip turntable effect to the right half and clear it from the
         // left, so it still fires once, at the end of the original clip's audio.
@@ -256,6 +262,7 @@ export const clipEditActions = {
         cents: clip.cents,
         pendingAutoWarp: clip.pendingAutoWarp,
         reversed: clip.reversed,
+        beatOffsetMs: clip.beatOffsetMs,
         locked: clip.locked,
         // Carry the source's exact rendered footprint and volume shape so the
         // duplicate is a true copy from the first frame, before the warp /
@@ -300,6 +307,9 @@ export const clipEditActions = {
         // Replay reverse so the duplicate plays backwards like its source.
         if (clip.reversed === true) {
           sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
+        }
+        if (clip.beatOffsetMs) {
+          sendBridge('CLIP_SET_BEAT_OFFSET', { clipId: newId, beatOffsetMs: clip.beatOffsetMs })
         }
         // Replay the volume shape so the duplicate keeps the source's fades.
         if (copy.envelopePoints && copy.envelopePoints.length >= 2) {

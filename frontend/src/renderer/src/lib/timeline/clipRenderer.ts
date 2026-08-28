@@ -12,7 +12,7 @@ import {
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
-import { clipTimelineBeatSpacingMs, firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { clipTimelineBeatSpacingMs, firstSourceBeatMsAtOrAfter, resolveClipBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
@@ -435,6 +435,13 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         // is mirrored here.
         const srcPx = reversed ? w - 1 - px : px
         const columnStartPeak = exactStartPeak + srcPx * bucketsPerPixel
+        // A window can overhang the head of the source (a grid slide that ran off the
+        // start); those columns have no audio, so leave them silent rather than smearing
+        // the file's first peak across them.
+        if (columnStartPeak + bucketsPerPixel <= 0) {
+          merger.breakRun(px)
+          continue
+        }
         const startIdx = Math.max(0, Math.floor(columnStartPeak))
         if (startIdx >= lanePeakCount) {
           // Out-of-data column: close the current run so it never spans the gap.
@@ -521,10 +528,10 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       }
     }
 
-    // Source-global synthetic beat grid keeps split clips phase-aligned. Resolved
-    // through the shared module so the markers, the drag/nudge snap, the drop snap,
-    // and bar-grid alignment can never disagree about where the beats are.
-    const grid = libItem ? resolveSourceBeatGrid(libItem, library.byId) : null
+    // Beat grid for THIS clip: source-global spacing, clip-local phase. Resolved through
+    // the shared module so the markers, the drag/nudge snap, the drop snap, and bar-grid
+    // alignment can never disagree about where the beats are.
+    const grid = libItem ? resolveClipBeatGrid(clip, library) : null
     const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     if (grid && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000

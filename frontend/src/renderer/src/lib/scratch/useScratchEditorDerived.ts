@@ -3,7 +3,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import type { useScratchEditorSession } from '@/lib/scratch/useScratchEditorSession'
-import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { resolveClipBeatGrid, resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 
 export interface ScratchEditorDerivedState {
   clip: ComputedRef<ReturnType<typeof useProjectStore>['clips'][string] | null>
@@ -100,10 +100,16 @@ export function useScratchEditorDerived(
       : 0
   })
   const clipReversed = computed(() => clip.value?.reversed ?? false)
-  // A one-shot has no musical grid to show, on any surface.
+  // A one-shot has no musical grid to show, on any surface. When the editor is on a
+  // timeline clip of this very source, show that clip's own phase so the markers here
+  // match the ones drawn on the timeline.
   const sourceBeatGrid = computed(() => {
     const item = sourceItem.value
-    return item ? resolveSourceBeatGrid(item, library.byId) : null
+    if (!item) return null
+    const c = clip.value
+    return c && c.libraryItemId === item.id
+      ? resolveClipBeatGrid(c, library)
+      : resolveSourceBeatGrid(item, library.byId)
   })
   // Peak coordinates remain in source time; the session supplies the separate
   // prepared duration used for playback and playhead positioning.

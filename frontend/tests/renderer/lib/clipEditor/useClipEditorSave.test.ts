@@ -72,7 +72,6 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editorItem: { id: 'item-1', name: 'Test' },
     timelineClip: null,
     sourceItem: { id: 'item-1', name: 'Test' },
-    titleText: 'Test',
     editsSingleTimelineClip: false,
     editsLibraryClipLibrary: true,
     editsTimelineClip: false,
@@ -106,7 +105,6 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editorItem: () => state.editorItem as ReturnType<ClipEditorSaveDeps['editorItem']>,
     timelineClip: () => state.timelineClip as Clip | null,
     sourceItem: () => state.sourceItem as ReturnType<ClipEditorSaveDeps['sourceItem']>,
-    titleText: () => state.titleText as string,
     editsSingleTimelineClip: () => state.editsSingleTimelineClip as boolean,
     editsLibraryClipLibrary: () => state.editsLibraryClipLibrary as boolean,
     editsTimelineClip: () => state.editsTimelineClip as boolean,
@@ -306,8 +304,9 @@ describe('useClipEditorSave', () => {
     expect(h.project.alignClipAudioToBarGrid).toHaveBeenCalledWith('clip-1')
   })
 
-  it('timeline-clip save toasts when the audio cannot be re-aligned (blocked)', () => {
-    h.project.alignClipAudioToBarGrid.mockReturnValue('blocked')
+  // The alignment can no longer fail: a slide that runs off the source overhangs it and
+  // plays as silence, so the save must go through quietly rather than warn.
+  it('timeline-clip save never warns about an alignment that overhangs the source', () => {
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -319,7 +318,8 @@ describe('useClipEditorSave', () => {
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.notifications.pushInfo).toHaveBeenCalled()
+    expect(h.project.alignClipAudioToBarGrid).toHaveBeenCalledWith('clip-1')
+    expect(h.notifications.pushInfo).not.toHaveBeenCalled()
   })
 
   it('timeline-clip save does not re-align when the beat grid was not changed', () => {

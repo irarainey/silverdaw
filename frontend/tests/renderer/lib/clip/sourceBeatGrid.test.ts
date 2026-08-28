@@ -3,6 +3,7 @@ import {
   clipFirstBeatOffsetMs,
   clipTimelineBeatSpacingMs,
   firstSourceBeatMsAtOrAfter,
+  resolveClipBeatGrid,
   resolveSourceBeatGrid
 } from '@/lib/clip/sourceBeatGrid'
 import type { LibraryItem } from '@/stores/libraryTypes'
@@ -107,6 +108,41 @@ describe('firstSourceBeatMsAtOrAfter', () => {
 
   it('still advances for a beat the user genuinely trimmed away', () => {
     expect(firstSourceBeatMsAtOrAfter(grid, 500.5)).toBe(1000)
+  })
+})
+
+describe('resolveClipBeatGrid', () => {
+  const lib = { byId: { lib1: source }, items: [source] }
+  const base = { libraryItemId: 'lib1', filePath: 'C:\\src.wav', inMs: 0, durationMs: 1000 }
+
+  it('returns the unshifted source grid when the clip has no offset', () => {
+    // Every project saved before per-clip phase existed must resolve exactly as before.
+    expect(resolveClipBeatGrid(base, lib)).toEqual(resolveSourceBeatGrid(source, lib.byId))
+  })
+
+  it('treats a zero offset as unshifted', () => {
+    expect(resolveClipBeatGrid({ ...base, beatOffsetMs: 0 }, lib)?.anchorMs).toBe(0)
+  })
+
+  it('shifts only the phase, never the spacing', () => {
+    const grid = resolveClipBeatGrid({ ...base, beatOffsetMs: 120 }, lib)
+    expect(grid?.anchorMs).toBe(120)
+    expect(grid?.spacingMs).toBe(500)
+    expect(grid?.bpm).toBe(120)
+  })
+
+  it('accepts a negative offset', () => {
+    expect(resolveClipBeatGrid({ ...base, beatOffsetMs: -75 }, lib)?.anchorMs).toBe(-75)
+  })
+
+  it('leaves sibling clips of the same source untouched', () => {
+    const sibling = { ...base, beatOffsetMs: undefined }
+    resolveClipBeatGrid({ ...base, beatOffsetMs: 200 }, lib)
+    expect(resolveClipBeatGrid(sibling, lib)?.anchorMs).toBe(0)
+  })
+
+  it('returns null when the source has no usable grid', () => {
+    expect(resolveClipBeatGrid({ ...base, beatOffsetMs: 50 }, { byId: {}, items: [] })).toBeNull()
   })
 })
 

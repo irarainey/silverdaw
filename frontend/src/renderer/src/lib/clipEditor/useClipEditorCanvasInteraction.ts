@@ -280,7 +280,12 @@ export function useClipEditorCanvasInteraction(
     const src = deps.sourceItem()
     const bpm = src?.bpm
     if (!src || !bpm || bpm <= 0) return
-    const startAnchorSec = src.beatAnchorSec ?? src.beats?.[0] ?? 0
+    // Start from the grid actually on screen — the clip's own phase when it has one —
+    // so the drag continues from where the markers are rather than snapping the grid
+    // back to the source anchor on mouse-down.
+    const gridAnchorMs = deps.sourceBeatGrid()?.anchorMs
+    const startAnchorSec =
+      typeof gridAnchorMs === 'number' ? gridAnchorMs / 1000 : src.beatAnchorSec ?? src.beats?.[0] ?? 0
     e.preventDefault()
     const xToMs = (clientX: number): number =>
       Math.max(fullIn, Math.min(fullEnd, vIn + ((clientX - rect.left) / rect.width) * vDur))
