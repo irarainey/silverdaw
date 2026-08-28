@@ -836,7 +836,7 @@ export function useClipEditorController(
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
     gridChanged: () => beatGrid.hasGridChanged(),
     commitGrid: () => beatGrid.commit(),
-    alignToGridEnabled: () => ui.alignClipsToGridOnAnalysis,
+    gridShiftMs: () => beatGrid.sourceGridShiftMs(),
     sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm,
     canApplyCrop: () => canApplyCrop.value,

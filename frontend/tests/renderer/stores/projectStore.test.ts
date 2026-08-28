@@ -718,189 +718,120 @@ describe('projectStore', () => {
     expect(project.clips[clipId ?? '']?.startMs).toBe(0) // left where it was
   })
 
-  it('alignClipAudioToBarGrid holds the clip still and slides the audio onto the beat', () => {
+  /** Build a clip on a fresh track over a source with a 120 BPM grid (500 ms beats)
+   *  anchored 125 ms in, and return its id. */
+  function addGriddedClip(
+    fileName: string,
+    sourceDurationMs: number,
+    startMs: number,
+    anchorSec = 0.125
+  ): string {
     const project = useProjectStore()
     const library = useLibraryStore()
-    const transport = useTransportStore()
-    transport.bpm = 120 // matches the clip; 500 ms/beat (4/4)
-
+    const filePath = `C:\\${fileName}`
     const itemId = library.addItem({
-      filePath: 'C:\\audioalign.wav',
-      fileName: 'audioalign.wav',
-      durationMs: 10_000,
+      filePath,
+      fileName,
+      durationMs: sourceDurationMs,
       sampleRate: 44_100,
       channelCount: 2,
       peaks: new Float32Array()
     })
     const item = library.byId[itemId]!
     item.bpm = 120
-    item.beatAnchorSec = 0.125
-    item.beats = [0.125, 0.625, 1.125, 1.625]
-
+    item.beatAnchorSec = anchorSec
+    item.beats = [anchorSec, anchorSec + 0.5]
     const trackId = project.addTrack()
-    const clipId =
+    return (
       project.addClipToTrack(
         trackId,
         {
           libraryItemId: itemId,
-          filePath: 'C:\\audioalign.wav',
-          fileName: 'audioalign.wav',
-          durationMs: 1_000,
+          filePath,
+          fileName,
+          durationMs: sourceDurationMs,
           sampleRate: 44_100,
           channelCount: 2,
           peaks: new Float32Array()
         },
-        0
+        startMs
       ) ?? ''
+    )
+  }
 
-    // The clip's first beat sits 125 ms into it; the nearest beat line is the clip's own
-    // start, so the audio moves 125 ms earlier while the clip itself does not move at all.
-    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
+  it('slideClipAudioWithGrid moves the audio by the grid shift and holds the clip still', () => {
+    const project = useProjectStore()
+    useTransportStore().bpm = 120
+
+    const clipId = addGriddedClip('slide1.wav', 10_000, 0)
+
+    // The user dragged the markers 15 ms later in the audio, so the audio is cut in
+    // 15 ms later to meet them: every marker keeps the timeline position it had.
+    expect(project.slideClipAudioWithGrid(clipId, 15)).toBe('moved')
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(15, 6)
     expect(project.clips[clipId]?.startMs).toBe(0)
-    expect(project.clips[clipId]?.durationMs).toBe(1_000)
-    expect(project.clips[clipId]?.inMs).toBeCloseTo(125, 6)
+    expect(project.clips[clipId]?.durationMs).toBe(10_000)
   })
 
-  it('alignClipAudioToBarGrid overhangs the source rather than refusing to align', () => {
+  it('slideClipAudioWithGrid leaves a clip placed off the beat exactly where it is', () => {
+    const project = useProjectStore()
+    useTransportStore().bpm = 120
+
+    // Deliberately placed an eighth of a beat off the bar line — an offbeat hit the user
+    // arranged by hand, and the whole point of the sub-beat snap grid.
+    const clipId = addGriddedClip('slide2.wav', 10_000, 187.5)
+
+    expect(project.slideClipAudioWithGrid(clipId, 15)).toBe('moved')
+    // Only the 15 ms it was asked for. Rounding the clip's first beat to the nearest
+    // PROJECT beat, as this used to, would have dragged the audio 187.5 ms to the bar
+    // line and thrown away the placement the user built.
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(15, 6)
+    expect(project.clips[clipId]?.startMs).toBe(187.5)
+  })
+
+  it('slideClipAudioWithGrid ignores a whole-beat regrid', () => {
+    const project = useProjectStore()
+    useTransportStore().bpm = 120
+
+    const clipId = addGriddedClip('slide3.wav', 10_000, 0)
+
+    // A half-beat flip applied twice, an octave fix, or any move that lands the grid back
+    // on its own lines: the markers are already where they were, so nothing should move.
+    expect(project.slideClipAudioWithGrid(clipId, 500)).toBe('skip')
+    expect(project.clips[clipId]?.inMs).toBe(0)
+  })
+
+  it('slideClipAudioWithGrid cuts in before the file when the grid moved backwards', () => {
+    const project = useProjectStore()
+    useTransportStore().bpm = 120
+
+    const clipId = addGriddedClip('slide4.wav', 10_000, 0)
+
+    expect(project.slideClipAudioWithGrid(clipId, -15)).toBe('moved')
+    // A negative in-point: the clip holds its place and its first 15 ms is silence.
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(-15, 6)
+    expect(project.clips[clipId]?.startMs).toBe(0)
+    expect(project.clips[clipId]?.durationMs).toBe(10_000)
+  })
+
+  it('slideClipAudioWithGrid overhangs the end of the source rather than refusing', () => {
     const project = useProjectStore()
     const library = useLibraryStore()
-    const transport = useTransportStore()
-    transport.bpm = 120
+    useTransportStore().bpm = 120
 
-    const itemId = library.addItem({
-      filePath: 'C:\\audioalign2.wav',
-      fileName: 'audioalign2.wav',
-      durationMs: 1_000,
-      sampleRate: 44_100,
-      channelCount: 2,
-      peaks: new Float32Array()
-    })
-    const item = library.byId[itemId]!
-    item.bpm = 120
-    item.beatAnchorSec = 0.125
-    item.beats = [0.125, 0.625]
+    // The back half of the file, ending exactly on its last sample — a very common cut,
+    // so any later cut-in overhangs the tail.
+    const clipId = addGriddedClip('slide5.wav', 1_000, 0)
+    project.trimClip(clipId, 0, 500, 500)
 
-    const trackId = project.addTrack()
-    // The clip already spans the whole file, so there is nothing either side to cut into
-    // and stepping a whole source beat runs off the other end. The audio still moves onto
-    // the beat; the part that falls outside the source plays as silence.
-    const clipId =
-      project.addClipToTrack(
-        trackId,
-        {
-          libraryItemId: itemId,
-          filePath: 'C:\\audioalign2.wav',
-          fileName: 'audioalign2.wav',
-          durationMs: 1_000,
-          sampleRate: 44_100,
-          channelCount: 2,
-          peaks: new Float32Array()
-        },
-        0
-      ) ?? ''
-
-    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
-    // The window is cut 125 ms later so the beat lands on the bar line. That runs 125 ms
-    // past the end of the file, and stepping back a whole beat would run off the head, so
-    // the overhang stays and plays as silence — the clip itself never moves.
-    expect(project.clips[clipId]?.inMs).toBeCloseTo(125, 6)
+    expect(project.slideClipAudioWithGrid(clipId, 15)).toBe('moved')
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(515, 6)
     expect(project.clips[clipId]?.startMs).toBe(0)
-    expect(project.clips[clipId]?.durationMs).toBe(1_000)
+    expect(project.clips[clipId]?.durationMs).toBe(500)
+    const item = library.items.find((i) => i.fileName === 'slide5.wav')!
     expect(
       (project.clips[clipId]?.inMs ?? 0) + (project.clips[clipId]?.durationMs ?? 0)
     ).toBeGreaterThan(item.durationMs)
-  })
-
-  it('alignClipAudioToBarGrid takes the minimal correction rather than stepping a whole beat', () => {
-    const project = useProjectStore()
-    const library = useLibraryStore()
-    const transport = useTransportStore()
-    transport.bpm = 120
-
-    const itemId = library.addItem({
-      filePath: 'C:\\audioalign4.wav',
-      fileName: 'audioalign4.wav',
-      durationMs: 1_000,
-      sampleRate: 44_100,
-      channelCount: 2,
-      peaks: new Float32Array()
-    })
-    const item = library.byId[itemId]!
-    item.bpm = 120
-    item.beatAnchorSec = 0.125
-    item.beats = [0.125, 0.625]
-
-    const trackId = project.addTrack()
-    // The back half of the file — a very common cut, and its window ends exactly on the
-    // last sample, so ANY later cut-in overhangs the tail.
-    const clipId =
-      project.addClipToTrack(
-        trackId,
-        {
-          libraryItemId: itemId,
-          filePath: 'C:\\audioalign4.wav',
-          fileName: 'audioalign4.wav',
-          durationMs: 1_000,
-          sampleRate: 44_100,
-          channelCount: 2,
-          peaks: new Float32Array()
-        },
-        0
-      ) ?? ''
-    project.trimClip(clipId, 0, 500, 500)
-
-    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
-    // 125 ms later, and no further. Stepping back a whole source beat to 125 ms would
-    // also land on the grid and would keep the window inside the file, but it replaces
-    // the clip's audio with a completely different beat — a drastic, unasked-for edit in
-    // response to a small grid nudge. The 125 ms that falls past the end plays as silence.
-    expect(project.clips[clipId]?.inMs).toBeCloseTo(625, 6)
-    expect(project.clips[clipId]?.startMs).toBe(0)
-    expect(project.clips[clipId]?.durationMs).toBe(500)
-  })
-
-  it('alignClipAudioToBarGrid cuts in before the file when the beat is behind the clip', () => {
-    const project = useProjectStore()
-    const library = useLibraryStore()
-    const transport = useTransportStore()
-    transport.bpm = 120
-
-    const itemId = library.addItem({
-      filePath: 'C:\\audioalign3.wav',
-      fileName: 'audioalign3.wav',
-      durationMs: 1_000,
-      sampleRate: 44_100,
-      channelCount: 2,
-      peaks: new Float32Array()
-    })
-    const item = library.byId[itemId]!
-    item.bpm = 120
-    // Beat one sits 375 ms in, so the nearest bar line is 125 ms EARLIER than it — the
-    // audio has to slide later, which cuts the window in before the file starts.
-    item.beatAnchorSec = 0.375
-    item.beats = [0.375, 0.875]
-
-    const trackId = project.addTrack()
-    const clipId =
-      project.addClipToTrack(
-        trackId,
-        {
-          libraryItemId: itemId,
-          filePath: 'C:\\audioalign3.wav',
-          fileName: 'audioalign3.wav',
-          durationMs: 1_000,
-          sampleRate: 44_100,
-          channelCount: 2,
-          peaks: new Float32Array()
-        },
-        0
-      ) ?? ''
-
-    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
-    // A negative in-point: the clip holds its place and its first 125 ms is silence.
-    expect(project.clips[clipId]?.inMs).toBeCloseTo(-125, 6)
-    expect(project.clips[clipId]?.startMs).toBe(0)
-    expect(project.clips[clipId]?.durationMs).toBe(1_000)
   })
 
   it('pasteClipAtPlayhead anchors the clip beat at the playhead, so a paste then a drag agree', () => {

@@ -8,11 +8,10 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
-  sourceDeltaMsFromTimeline,
   findClipSlot,
   CLIP_FIT_EPSILON_MS
 } from '@/lib/clip/clipTiming'
-import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
+import { clipFirstBeatOffsetMs, resolveClipBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { warpChangesTiming } from '@/lib/warp'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
@@ -26,14 +25,17 @@ const GRID_ALIGNED_EPSILON_MS = 0.5
 
 /** A clip's beat-grid alignment against the project grid, or null when it has none.
  *
- *  Resolved once and shared by both align actions — the one that moves the clip and the
- *  one that moves the audio inside it — so the two can never disagree about which beat
- *  is being aligned or how far off it is. `shiftMs` is the timeline distance the clip's
- *  first in-window source beat must travel to reach the NEAREST project beat line: the
- *  smallest possible correction (at most half a beat), forward or back, rather than the
- *  nearest bar, which could shove it up to two beats away. Aligning the beat grid (what
- *  the timeline markers use) rather than the raw clip edge is why a clip that opens with
- *  silence lands on the grid rather than a fraction of a beat off it. */
+ *  `shiftMs` is the timeline distance the clip's first in-window source beat must travel
+ *  to reach the NEAREST project beat line: the smallest possible correction (at most half
+ *  a beat), forward or back, rather than the nearest bar, which could shove it up to two
+ *  beats away. Aligning the beat grid (what the timeline markers use) rather than the raw
+ *  clip edge is why a clip that opens with silence lands on the grid rather than a
+ *  fraction of a beat off it.
+ *
+ *  This answers "where should this clip be placed?", so it belongs only to the actions
+ *  that place clips. Sliding the audio inside a clip that is already placed
+ *  (`slideClipAudioWithGrid`) must not consult it: that clip's position is not in
+ *  question and re-rounding it to a whole beat destroys a deliberate sub-beat placement. */
 function resolveClipBeatAlignment(
   store: ProjectClipThis,
   clipId: string
@@ -41,9 +43,7 @@ function resolveClipBeatAlignment(
   clip: Clip
   beatOffsetMs: number
   shiftMs: number
-  ratio: number
   projectBeatMs: number
-  sourceSpacingMs: number
 } | null {
   const clip = store.clips[clipId]
   if (!clip || clip.locked) return null
@@ -67,7 +67,7 @@ function resolveClipBeatAlignment(
 
   const firstBeatMs = clip.startMs + beatOffsetMs
   const shiftMs = Math.round(firstBeatMs / projectBeatMs) * projectBeatMs - firstBeatMs
-  return { clip, beatOffsetMs, shiftMs, ratio, projectBeatMs, sourceSpacingMs }
+  return { clip, beatOffsetMs, shiftMs, projectBeatMs }
 }
 
 export const clipPlacementActions = {
@@ -409,9 +409,10 @@ export const clipPlacementActions = {
      *
      *  This is the drop / first-analysis correction, where the clip's placement is what
      *  was provisional. For a clip already sitting in an arrangement — a grid edit in
-     *  the Clip Editor — use `alignClipAudioToBarGrid` instead, which holds the clip
-     *  still. No-op unless the clip's effective (warp-adjusted) tempo matches the
-     *  project tempo; simple samples (no beat grid) and locked clips are never moved.
+     *  the Clip Editor — use `slideClipAudioWithGrid` instead, which holds both the clip
+     *  and its beat lines still and moves the audio under them. No-op unless the clip's
+     *  effective (warp-adjusted) tempo matches the project tempo; simple samples (no beat
+     *  grid) and locked clips are never moved.
      *  Callers run this AFTER the project tempo has settled (e.g. after the first-clip
      *  BPM seed), so `transport.bpm` reflects the grid the clip will sit on. */
     alignClipToBarGrid(clipId: string): 'moved' | 'blocked' | 'skip' {
@@ -450,55 +451,60 @@ export const clipPlacementActions = {
       log.debug('project', `setClipBeatOffset ${clipId} beatOffsetMs=${beatOffsetMs.toFixed(3)}`)
     },
 
-    /** Align a clip to the project beat grid by sliding the AUDIO inside a clip that
-     *  does not move — the counterpart to `alignClipToBarGrid`, which moves the clip.
+    /** Slide the AUDIO inside a clip that does not move, by the same distance a Clip
+     *  Editor session just moved that clip's beat grid (`gridShiftSourceMs`, in source
+     *  ms, positive when the beat lines moved later in the audio).
      *
-     *  Editing a source's beat grid re-answers "where is beat one in this audio?", so the
-     *  clip's placement on the timeline is not what was wrong and moving it is the wrong
-     *  correction: a clip in a finished arrangement has neighbours, and shifting it by up
-     *  to half a beat leaves it overhanging the bar it was cut to, with no room to sit
-     *  back down and no room to duplicate it. Re-cutting the source window instead keeps
-     *  `startMs` and the timeline footprint byte-for-byte identical — so the volume shape
-     *  stays valid, no neighbour can be in the way, and the arrangement the user built
-     *  survives a grid correction — while the audio moves under the new beat lines.
+     *  The user drags the markers onto the transients they can see; the audio then moves
+     *  under them so each marker keeps the timeline position it already had. Nothing the
+     *  user arranged changes: `startMs` and the timeline footprint are held byte-for-byte
+     *  (so the volume shape stays valid and no neighbour can be in the way), the beat
+     *  lines stay put, and only which part of the file plays under them moves.
+     *
+     *  This deliberately does NOT re-align the clip to the project grid, which is what it
+     *  used to do. Rounding the clip's first beat to the nearest project BEAT ignored
+     *  where the clip already sat, so a clip placed on a sub-beat — an eighth off the
+     *  bar, say — was dragged up to half a beat to the nearest whole one. A five
+     *  millisecond marker nudge moved the audio by a fifth of a second and the clip came
+     *  back playing visibly different material. Correcting a grid is not a request to
+     *  re-place the clip; snapping to the project grid is what clip drag and nudge are
+     *  for. The shift is wrapped to the smallest move that puts the new grid back on the
+     *  old grid's lines, so a whole-beat regrid (an octave fix, half-beat flip) is a
+     *  no-op rather than a beat-long jump.
      *
      *  A window that runs off either end of the source is allowed: the engine renders the
-     *  overhang as silence, so the audio always lands on the beat rather than the edit
-     *  being refused, and the correction is always the smallest one that reaches the
-     *  grid — the clip keeps the audio it had, minus whatever slid off the edge. */
-    alignClipAudioToBarGrid(clipId: string): 'moved' | 'skip' {
-      const aligned = resolveClipBeatAlignment(this, clipId)
-      if (!aligned) return 'skip'
-      const { clip, shiftMs, ratio } = aligned
-      if (Math.abs(shiftMs) < GRID_ALIGNED_EPSILON_MS) return 'skip' // already aligned
-
-      // Audio at source time `s` renders at `startMs + (s - inMs) / ratio`, so moving the
-      // audio LATER by `shiftMs` means cutting in EARLIER by that much in source time.
+     *  overhang as silence, so the slide always succeeds rather than being refused, and
+     *  the clip keeps the audio it had minus whatever slid off the edge. */
+    slideClipAudioWithGrid(clipId: string, gridShiftSourceMs: number): 'moved' | 'skip' {
+      const clip = this.clips[clipId]
+      if (!clip || clip.locked) return 'skip'
+      if (!Number.isFinite(gridShiftSourceMs)) return 'skip'
       const library = useLibraryStore()
+      const grid = resolveClipBeatGrid(clip, library)
+      if (!grid) return 'skip' // no beat grid — nothing moved under the markers
+
+      const spacingMs = grid.spacingMs
+      const shiftMs = gridShiftSourceMs - Math.round(gridShiftSourceMs / spacingMs) * spacingMs
+      if (Math.abs(shiftMs) < GRID_ALIGNED_EPSILON_MS) return 'skip' // grid landed on itself
+
+      // A beat that was at source time `s` is now at `s + shiftMs`, and renders at
+      // `startMs + (s + shiftMs - inMs) / ratio`. Cutting in later by the same amount
+      // cancels it, putting every marker back where the user already had it.
+      const origInMs = clip.inMs
+      const newInMs = origInMs + shiftMs
       const item = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
       const sourceDurationMs =
-        item && item.durationMs > 0 ? item.durationMs : clip.inMs + clip.durationMs
-      const origInMs = clip.inMs
-      // This is the WHOLE correction: the window lands exactly where the grid puts it.
-      // It used to step a whole source beat when the new window ran off either end of the
-      // file, on the theory that a beat either way lands on the same grid and so keeps
-      // real audio. That trade is wrong. A clip cut to the end of its file overhangs by a
-      // fraction of a millisecond after any nudge, and the step then swapped a sliver of
-      // silence for a whole beat of COMPLETELY DIFFERENT audio — the clip's contents
-      // changed under a 5 ms grid correction, which reads as the clip being re-cut or
-      // playing the wrong part of the file. Silence at the edge is the honest result, and
-      // the minimal one.
-      const newInMs = origInMs - sourceDeltaMsFromTimeline(shiftMs, ratio)
-      if (Math.abs(newInMs - origInMs) < GRID_ALIGNED_EPSILON_MS) return 'skip'
+        item && item.durationMs > 0 ? item.durationMs : origInMs + clip.durationMs
 
       this.trimClip(clipId, clip.startMs, newInMs, clip.durationMs)
       const headSilenceMs = Math.max(0, -newInMs)
       const tailSilenceMs = Math.max(0, newInMs + clip.durationMs - sourceDurationMs)
       log.debug(
         'project',
-        `alignClipAudioToBarGrid ${clipId} in ${origInMs.toFixed(1)} -> ${newInMs.toFixed(1)}ms ` +
-          `(shift=${shiftMs.toFixed(1)}ms, clip held at ${clip.startMs.toFixed(1)}ms, ` +
-          `reversed=${clip.reversed === true}, source=${sourceDurationMs.toFixed(1)}ms, ` +
+        `slideClipAudioWithGrid ${clipId} in ${origInMs.toFixed(1)} -> ${newInMs.toFixed(1)}ms ` +
+          `(gridShift=${gridShiftSourceMs.toFixed(1)}ms, applied=${shiftMs.toFixed(1)}ms, ` +
+          `beat=${spacingMs.toFixed(1)}ms, clip held at ${clip.startMs.toFixed(1)}ms, ` +
+          `source=${sourceDurationMs.toFixed(1)}ms, ` +
           `silence head=${headSilenceMs.toFixed(1)}ms tail=${tailSilenceMs.toFixed(1)}ms)`
       )
       return 'moved'

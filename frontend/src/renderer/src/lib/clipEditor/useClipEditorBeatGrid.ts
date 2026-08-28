@@ -65,6 +65,17 @@ export interface ClipEditorBeatGrid {
    * affordance even though the change is already persisted to the source item.
    */
   hasGridChanged: () => boolean
+  /**
+   * How far this session has moved the beat grid, in SOURCE milliseconds, measured
+   * against where the grid sat when the editor opened. Positive means the beat lines
+   * now fall later in the audio; zero when nothing moved or there is no grid.
+   *
+   * Save uses this to slide the clip's audio by the same distance, so every marker keeps
+   * the timeline position the user already had. Reporting the raw distance — rather than
+   * letting Save re-derive an alignment from the committed grid — is what keeps the
+   * correction relative: the clip's placement, sub-beat or not, is never re-judged.
+   */
+  sourceGridShiftMs: () => number
   /** Toggle slide-to-align mode (no-op without a grid). */
   toggleAlign: () => void
   /** Mark the tempo field as being edited so external tempo changes don't clobber typing. */
@@ -162,6 +173,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // True while the user is typing in the tempo field, so external tempo changes
   // (octave, restore, backend echo) don't overwrite what they are entering.
   let tempoEditing = false
+  // Where the grid's phase sat (source ms) when the editor opened. Save measures the
+  // session's grid movement against this so it can slide the clip's audio by exactly
+  // the same distance, leaving the markers on the timeline positions they already had.
+  let sessionStartAnchorMs: number | null = null
 
   function currentBpm(): number | undefined {
     // Always the tempo the grid is actually drawn from, so the controls can never
@@ -234,6 +249,12 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function hasGridChanged(): boolean {
     return gridEdited.value
+  }
+
+  function sourceGridShiftMs(): number {
+    const anchorMs = resolvedGrid.value?.anchorMs
+    if (sessionStartAnchorMs === null || typeof anchorMs !== 'number') return 0
+    return anchorMs - sessionStartAnchorMs
   }
 
   function toggleAlign(): void {
@@ -373,6 +394,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
     gridSnapshotItemId = item ? item.id : null
+    sessionStartAnchorMs = resolvedGrid.value?.anchorMs ?? null
     const bpm = currentBpm()
     originalBpm.value = bpm !== undefined ? bpm : null
     syncTempoField()
@@ -387,6 +409,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     resolvedGrid,
     canRestore,
     hasGridChanged,
+    sourceGridShiftMs,
     toggleAlign,
     beginTempoEdit,
     commitTempoEdit,

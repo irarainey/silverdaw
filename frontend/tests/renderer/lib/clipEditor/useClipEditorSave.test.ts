@@ -25,7 +25,7 @@ interface Harness {
     setClipReversed: ReturnType<typeof vi.fn>
     setClipBrake: ReturnType<typeof vi.fn>
     setClipBackspin: ReturnType<typeof vi.fn>
-    alignClipAudioToBarGrid: ReturnType<typeof vi.fn>
+    slideClipAudioWithGrid: ReturnType<typeof vi.fn>
   }
   library: {
     updateLibraryClipEdit: ReturnType<typeof vi.fn>
@@ -54,7 +54,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     setClipReversed: vi.fn(),
     setClipBrake: vi.fn(),
     setClipBackspin: vi.fn(),
-    alignClipAudioToBarGrid: vi.fn(() => 'skip')
+    slideClipAudioWithGrid: vi.fn(() => 'skip')
   }
   const library = {
     updateLibraryClipEdit: vi.fn(() => ({ ok: true })),
@@ -77,7 +77,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     editsTimelineClip: false,
     hasWarpPitchChanged: false,
     gridChanged: false,
-    alignToGridEnabled: false,
+    gridShiftMs: 0,
     sourceBpm: 120,
     projectBpm: 120,
     canApplyCrop: false,
@@ -113,7 +113,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     commitGrid: () => {
       commitGrid()
     },
-    alignToGridEnabled: () => state.alignToGridEnabled as boolean,
+    gridShiftMs: () => state.gridShiftMs as number,
     sourceBpm: () => state.sourceBpm as number | undefined,
     projectBpm: () => state.projectBpm as number,
     canApplyCrop: () => state.canApplyCrop as boolean,
@@ -289,7 +289,7 @@ describe('useClipEditorSave', () => {
     expect(h.project.setClipBackspin).toHaveBeenCalledWith('clip-1', false)
   })
 
-  it('timeline-clip save re-aligns the audio inside the clip when the beat grid changed', () => {
+  it('timeline-clip save slides the audio inside the clip by the beat-grid shift', () => {
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -297,16 +297,16 @@ describe('useClipEditorSave', () => {
     h.state.selectionInMs = 0
     h.state.selectionDurationMs = 1000
     h.state.gridChanged = true
-    h.state.alignToGridEnabled = true
+    h.state.gridShiftMs = 15
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.project.alignClipAudioToBarGrid).toHaveBeenCalledWith('clip-1')
+    expect(h.project.slideClipAudioWithGrid).toHaveBeenCalledWith('clip-1', 15)
   })
 
-  // The alignment can no longer fail: a slide that runs off the source overhangs it and
-  // plays as silence, so the save must go through quietly rather than warn.
-  it('timeline-clip save never warns about an alignment that overhangs the source', () => {
+  // The slide can no longer fail: one that runs off the source overhangs it and plays as
+  // silence, so the save must go through quietly rather than warn.
+  it('timeline-clip save never warns about a slide that overhangs the source', () => {
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -314,15 +314,15 @@ describe('useClipEditorSave', () => {
     h.state.selectionInMs = 0
     h.state.selectionDurationMs = 1000
     h.state.gridChanged = true
-    h.state.alignToGridEnabled = true
+    h.state.gridShiftMs = 15
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.project.alignClipAudioToBarGrid).toHaveBeenCalledWith('clip-1')
+    expect(h.project.slideClipAudioWithGrid).toHaveBeenCalledWith('clip-1', 15)
     expect(h.notifications.pushInfo).not.toHaveBeenCalled()
   })
 
-  it('timeline-clip save does not re-align when the beat grid was not changed', () => {
+  it('timeline-clip save does not slide the audio when the beat grid was not changed', () => {
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -330,11 +330,11 @@ describe('useClipEditorSave', () => {
     h.state.selectionInMs = 0
     h.state.selectionDurationMs = 1000
     h.state.gridChanged = false
-    h.state.alignToGridEnabled = true
+    h.state.gridShiftMs = 15
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.project.alignClipAudioToBarGrid).not.toHaveBeenCalled()
+    expect(h.project.slideClipAudioWithGrid).not.toHaveBeenCalled()
   })
 
   it('commits the beat-grid draft on save (timeline-clip branch)', () => {
