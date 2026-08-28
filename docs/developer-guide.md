@@ -1186,7 +1186,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
         automation?, automationLaneView?, transitions?]
     BEAT_REPEAT[id, startBeat, lengthBeats, division]*
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
-         locked?, reversed?, brake?, backspin?,
+         locked?, reversed?, brake?, backspin?, beatOffsetMs?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
          envelopePoints?,
          effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?,
@@ -1205,8 +1205,12 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
 
 `CLIP` references the audio it plays via `libraryItemId`; the underlying source file path
 lives only on the library item. `offsetMs` is the timeline start, `inMs` is where in the
-source file playback begins (≥ 0), and `durationMs` is how long the clip plays for from
-that point. Split, duplicate and edge-drag trim all manipulate this window without ever
+source file playback begins, and `durationMs` is how long the clip plays for from
+that point. `inMs` is normally ≥ 0 but is **deliberately unclamped**: a beat-grid slide
+can pull the window off the front of the file, and a window that overhangs either end
+renders as silence rather than the edit being refused or the audio being shunted (see
+[Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)). Split,
+duplicate and edge-drag trim all manipulate this window without ever
 re-decoding the source — peaks are computed once per file and the renderer windows into
 them at draw time. Warp fields are non-destructive: `tempoRatio` pins a ratio when set,
 otherwise a warped clip follows `projectBpm / sourceBpm`; pitch is stored as semitone
@@ -1289,6 +1293,18 @@ Clip Editor auditions them live on the preview voice via `PREVIEW_SET_BRAKE` /
 suppressed from save when off and round-trip through `PROJECT_STATE` and the
 `.silverdaw` file.
 
+`CLIP.beatOffsetMs` is an optional number (absent == 0) holding **this clip's beat-grid
+phase**, in source milliseconds, added to the library item's anchor. Beat *spacing* stays
+source-global — a file has exactly one tempo (ADR 0024) — but phase is per clip, because a
+split makes two independent clips and on variable-tempo material the correct position of
+beat one genuinely differs between them. Correcting one clip's grid used to rewrite the
+shared library-item anchor, which moved the markers on every other clip cut from that file
+while they sat perfectly still. It is set via `CLIP_SET_BEAT_OFFSET { clipId, beatOffsetMs }`,
+suppressed from save when zero, and round-trips through `PROJECT_STATE` and the `.silverdaw`
+file. The grid is drawn by the renderer only, so the engine stores and replays the value
+but never reads it. A project saved before 1.7.1 simply has no offset and resolves to the
+unshifted source grid (ADR 0019).
+
 **How a split divides these properties.** `splitClipAt` cuts one clip in two at
 a timeline position, and each per-clip property above has to land on the correct
 half. Reverse plays the source window back-to-front, so the timeline-*left* half
@@ -1300,8 +1316,10 @@ original clip's audio. `envelopePoints` are re-mapped onto both halves by
 `splitEnvelopeAtMs`, which pins a shared breakpoint at the seam sampled from the
 original curve and re-bases the right half to its own zero; the envelope's axis
 is elapsed playback time from the clip start, so it splits on the timeline axis
-regardless of reverse. `locked` needs no handling — a locked clip refuses the
-split outright.
+regardless of reverse. `beatOffsetMs` is **inherited by both halves**, so the markers do
+not move across the seam; from then on each half owns its phase, and correcting one
+cannot disturb the other. Duplicate and paste inherit it the same way. `locked` needs no
+handling — a locked clip refuses the split outright.
 
 **Phase 5 effects properties.** Each `TRACK` carries optional sound-shaping
 fields, all suppressed from save when at their defaults so legacy projects stay
@@ -2171,12 +2189,18 @@ builds a rigid grid across the item's duration on the backend and re-broadcasts
 `LIBRARY_ITEM_ANALYSIS` with `variableTempo` and `lowConfidence` cleared, so the
 item reads as verified music. In the Clip Editor the whole grid is edited as a
 **draft**: a slide-the-grid drag, the BPM field, the octave buttons, the nudges and
-the half-beat shift all update the source's local `(bpm, beatAnchorSec)` only — the
-markers and preview metronome track the edit live with no bridge round-trip — and
-mark the Clip Editor dirty. The draft is persisted with a single
-`LIBRARY_ITEM_SET_MANUAL_TEMPO` on **Save** (inside the Save undo group, so the
-grid change and any on-Save re-align fold into one undo step), and rolled back to
-the grid captured on open if the session ends without a Save (Cancel / close).
+the half-beat shift all update the grid locally — the markers and preview metronome
+track the edit live with no bridge round-trip — and mark the Clip Editor dirty.
+
+Which of the two the draft writes depends on what is being edited. **Tempo** is always
+the source item's (a file has one tempo, ADR 0024) and is persisted with a single
+`LIBRARY_ITEM_SET_MANUAL_TEMPO`. **Phase** belongs to the timeline clip being edited and
+is persisted with `CLIP_SET_BEAT_OFFSET`, leaving the source item — and so every sibling
+clip cut from the same file — untouched; only a session with no owning clip (a library
+item or a linked saved clip, where the phase is shared by design) writes the item's
+anchor. Both commit on **Save** inside the Save undo group, so the grid change and the
+audio slide that follows it fold into one undo step, and both roll back to the grid
+captured on open if the session ends without a Save (Cancel / close).
 Alongside the drag, the beat-grid panel is split into a **Tempo** section — a BPM
 field you type and commit with Enter or by clicking away (no separate Apply
 button), **÷2 / ×2**
@@ -2232,24 +2256,32 @@ the item falls back to music.
 ### Beat markers and source-beat snap
 
 The renderer overlays faint white vertical lines on every clip at the source's
-detected beats. The markers are **synthesised on a source-global beat grid**
-anchored on the regression-derived `beatAnchorSec` (older projects fall back to
-`beats[0]`) and spaced by `60 / sourceBPM`, not on each raw detected position.
-This makes them survive a split / duplicate / trim without drifting — both halves
-of a split clip share one coordinate system, so the markers stay in lockstep
-across the split point.
+detected beats. The markers are **synthesised on a rigid beat grid** anchored on the
+regression-derived `beatAnchorSec` (older projects fall back to `beats[0]`) and spaced by
+`60 / sourceBPM`, not on each raw detected position. This makes them survive a split /
+duplicate / trim without drifting — both halves of a split clip share one coordinate
+system, so the markers stay in lockstep across the split point.
+
+**Spacing is source-global; phase is per clip.** A file has exactly one tempo (ADR 0024),
+so every clip cut from it is spaced identically. Where beat one falls is a different
+question: on variable-tempo material the honest answer genuinely differs between two
+halves of a split, and correcting one used to rewrite the shared library-item anchor and
+so drag the markers on every sibling clip off the bar lines while they sat still. The
+phase therefore lives on the clip, in `CLIP.beatOffsetMs`, and is inherited by split /
+duplicate / paste so the correction is invisible at the moment it is made.
 
 Every surface that reads that grid resolves it through a single helper,
-`lib/clip/sourceBeatGrid.ts` — `resolveSourceBeatGrid()` returns
-`{ bpm, spacingMs, anchorMs }` or `null`, and `firstSourceBeatMsAtOrAfter()` walks
-it. That covers timeline markers, drag/nudge snap, library drop snap, bar-grid
-alignment, Chop to Grid, and the Clip Editor and Scratch Editor grids (waveform
-lines, envelope beat snap, grid slicing). Never re-derive `60_000 / bpm` phase
-maths at a call site: the projections used to disagree on inherited BPM and on the
-simple-item gate, which made one-shots snap to a grid they never drew and made Chop
-to Grid silently do nothing on a stem that visibly had one.
+`lib/clip/sourceBeatGrid.ts`. `resolveSourceBeatGrid()` returns the *item's* grid as
+`{ bpm, spacingMs, anchorMs }` or `null`; **every clip-aware consumer must use
+`resolveClipBeatGrid()`**, which is the same grid with that clip's phase applied.
+`firstSourceBeatMsAtOrAfter()` walks either. That covers timeline markers, drag/nudge
+snap, library drop snap, bar-grid alignment, Chop to Grid, and the Clip Editor and
+Scratch Editor grids (waveform lines, envelope beat snap, grid slicing). Never re-derive
+`60_000 / bpm` phase maths at a call site: the projections used to disagree on inherited
+BPM and on the simple-item gate, which made one-shots snap to a grid they never drew and
+made Chop to Grid silently do nothing on a stem that visibly had one.
 
-Three rules the helper settles:
+Four rules the helper settles:
 
 - **Inheritance is unconditional.** BPM resolves through `libraryItemSourceBpm`,
   and `beats` / `beatAnchorSec` fall back to the source item, so a stem or saved
@@ -2281,6 +2313,33 @@ Three rules the helper settles:
   it re-derives the warp of every unpinned clip using that item (or inheriting its
   tempo) and re-broadcasts `CLIP_WARP_APPLIED`, so the engine's stretch, the clip's
   drawn width and the markers all move onto the new tempo together.
+- **Phase belongs to the clip, spacing to the source.** `resolveClipBeatGrid()` adds
+  `CLIP.beatOffsetMs` to the item anchor and returns the same shape, so a consumer
+  cannot accidentally read the unshifted grid. `clipAnchorOffsetMs()` is the one
+  reference point every *placement* operation must agree on — drag snap, keyboard
+  nudge, library drop and paste all anchor the first in-window beat rather than the
+  clip's left edge, which is why a clip that opens with silence lands on the beat and
+  why pasting a clip and then nudging it no longer moves it.
+
+**Correcting a clip's grid never moves the clip.** Sliding the markers in the Clip
+Editor answers "where is beat one in this audio?", so the clip's *placement* was never
+what was wrong. On Save, `project.slideClipAudioWithGrid(clipId, gridShiftSourceMs)`
+re-cuts the source window by exactly the distance the session moved the grid
+(`useClipEditorBeatGrid.sourceGridShiftMs()`), holding `startMs` and the timeline
+footprint byte-for-byte: the volume shape stays valid, no neighbour can be in the way,
+every marker keeps the timeline position it had, and only the audio underneath moves.
+The shift is wrapped to the smallest move that lands the new grid back on the old grid's
+lines, so a whole-beat regrid (an octave fix, a half-beat flip applied twice) is a no-op
+rather than a beat-long jump, and a window that runs off either end of the source
+overhangs it and plays as silence rather than the edit being refused.
+
+It deliberately does **not** re-align the clip to the project grid. Rounding the clip's
+first beat to the nearest project *beat* ignores where the clip already sits, so a clip
+placed on a sub-beat — an eighth off the bar — was dragged up to half a beat onto the
+nearest whole one: a five-millisecond marker nudge moved the audio by a fifth of a
+second and the clip came back playing visibly different material. Snapping to the project
+grid is what clip drag, keyboard nudge and `alignClipToBarGrid` (the drop / first-analysis
+path, where the placement genuinely is provisional) are for.
 
 Drag-snap on a clip with a known source tempo locks onto the same grid: instead
 of snapping the clip's left edge to the snap grid, it snaps the first
@@ -3458,7 +3517,10 @@ Persisted fields:
   is skipped as a mismatch at analysis time and snaps into place once the seeded tempo
   lands (a short-lived pending set stops a later manual BPM change from reflowing clips).
   Clips with no beat grid (simple samples), locked clips, and clips queued for
-  auto-warp are left untouched.
+  auto-warp are left untouched. It applies **only** to this analysis-time snap: a grid
+  correction made in the Clip Editor slides the audio inside the clip unconditionally
+  (see *Beat markers and source-beat snap*), because that holds the clip still rather
+  than re-placing it and so is never unwanted.
 - **Show toast notifications** — pop transient feedback (errors, save acks) in the
   bottom-right. Off silences them; the underlying events still go to the log when
   diagnostic logging is enabled.

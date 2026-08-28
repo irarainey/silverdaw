@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-25 · Owner: @irarainey_
+_Last reviewed: 2026-08-28 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -46,11 +46,6 @@ and importing it — see `docs/development-plan.md` §1.6.0.
 rather than on every spinner tick, typing a tempo commits, and entering the box
 selects what is there — and tidied the file browser, where the now-playing bar
 clears when the audition stops and a whole row is the click target.
-The current release is **1.7.1**, which fixes clip timing arithmetic: a trimmed
-edge no longer slides the audio inside the clip, the waveform is drawn from the
-clip's exact position in the source so identical windows render identically, and
-editing a clip's beat markers moves the audio inside the clip rather than moving
-the clip off the grid.
 **1.7.0** let a track carry the user's own
 **VST3 effect plugins** as per-track inserts from a new Plugins tab: scanned out
 of process so a plugin that fails to load cannot take the app down, saved with
@@ -59,6 +54,12 @@ exactly as the arrangement plays, with delay compensation and tempo/playhead
 sync keeping them in time — see `docs/development-plan.md` §1.7.0. It also
 dragged a file from the Files tab straight onto a track, and reopened the lower
 panel on the tab it was left on.
+The current release is **1.7.1**, which fixes clip timing arithmetic: a trimmed
+edge no longer slides the audio inside the clip, the waveform is drawn from the
+clip's exact position in the source so identical windows render identically, and
+a clip's beat-grid phase became a per-clip fact, so correcting one clip's markers
+moves the audio inside that clip alone and leaves both its position and its
+siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
@@ -89,7 +90,9 @@ and saved projects must keep working across every update (see ADR 0019).
   `ProjectState::getLibraryItemBpm`, and the two share the same rules — including
   that a recorded musical length (`musicalBeats`) outranks any detected tempo, so
   a clip cut to a number of bars stays that number of bars. Never read
-  `item.bpm` directly to draw, grid, warp or stretch. See ADR 0024.
+  `item.bpm` directly to draw, grid, warp or stretch. Beat *phase* is the
+  exception and belongs to the clip (`CLIP.beatOffsetMs`), resolved through
+  `resolveClipBeatGrid`. See ADR 0024.
 - `CRITICAL` — **Non-destructive editing.** Tempo, pitch, trim, fades, reverse,
   and volume shape are clip settings — never mutate the user's source files.
   See ADR 0007.
