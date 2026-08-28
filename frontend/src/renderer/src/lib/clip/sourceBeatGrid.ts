@@ -100,13 +100,24 @@ export function clipTimelineBeatSpacingMs(
   return sourceSpacingMs / effectiveClipTempoRatio(clip)
 }
 
-/** The first grid beat at or after `fromMs`, in source-time milliseconds. */
+/** A beat this close (in beat indices) to `fromMs` counts as landing exactly on it.
+ *  Well below one float ULP of a beat index at any realistic clip length, and far too
+ *  small to reclassify a beat the user genuinely trimmed away. */
+const BEAT_INDEX_EPSILON = 1e-6
+
+/** The first grid beat at or after `fromMs`, in source-time milliseconds.
+ *
+ *  A clip edge produced by split or trim arithmetic lands a fraction of a nanosecond
+ *  either side of the beat it was cut on. A bare `ceil` turns "a hair above the beat"
+ *  into the NEXT beat, so the clip's first-beat offset jumps from ~0 to a full beat:
+ *  the leading marker vanishes and, on a bar snap grid (where a one-beat translation is
+ *  not invariant), the clip snaps a beat early or three beats late. Selecting the
+ *  nearest beat index when it is within epsilon keeps that boundary continuous. */
 export function firstSourceBeatMsAtOrAfter(grid: SourceBeatGrid, fromMs: number): number {
-  let beatMs =
-    grid.anchorMs + Math.ceil((fromMs - grid.anchorMs) / grid.spacingMs) * grid.spacingMs
-  // `ceil` on a value that is already an exact multiple can land a hair short.
-  while (beatMs < fromMs) beatMs += grid.spacingMs
-  return beatMs
+  const relative = (fromMs - grid.anchorMs) / grid.spacingMs
+  const nearest = Math.round(relative)
+  const index = Math.abs(relative - nearest) <= BEAT_INDEX_EPSILON ? nearest : Math.ceil(relative)
+  return grid.anchorMs + index * grid.spacingMs
 }
 
 /** Minimal clip shape needed to project a clip's first in-window source beat. */

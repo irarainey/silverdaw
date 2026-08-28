@@ -10,7 +10,11 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
-import { effectiveClipDurationMs } from '@/lib/clip/clipTiming'
+import {
+  effectiveClipDurationMs,
+  sourceDeltaMsFromTimeline,
+  timelineDeltaMsFromSource
+} from '@/lib/clip/clipTiming'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { startMsForAlignedBeat } from '@/lib/musicTime'
 import { buildTrackRowLayout } from './trackLayout'
@@ -848,13 +852,16 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       const rawLeftMs = trimOrigStartMs + (pointerMs - trimPointerStartMs)
       const targetLeftMs = snapTimelineMs(rawLeftMs, e.altKey)
       const deltaTimelineMs = targetLeftMs - trimOrigStartMs
-      const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
+      const deltaSourceMs = sourceDeltaMsFromTimeline(deltaTimelineMs, ratio)
       // Left trim moves `startMs` in timeline time and adjusts `inMs`/`durationMs` in source time.
       const minDeltaSrc = -trimOrigInMs
       const maxDeltaSrc = trimOrigDurationMs - MIN_CLIP_MS
       const clampedSrc = Math.max(minDeltaSrc, Math.min(maxDeltaSrc, deltaSourceMs))
-      const clampedTimeline = ratio > 0 ? Math.round(clampedSrc / ratio) : clampedSrc
-      const newStartMs = trimOrigStartMs + clampedTimeline
+      // Derive the edge back from the clamped SOURCE delta rather than reusing
+      // `targetLeftMs`, so a trim stopped by the start of the source or the minimum clip
+      // length still lands where its audio actually ends up. Unclamped, this returns
+      // exactly `targetLeftMs`, so a snapped edge sits on the line it snapped to.
+      const newStartMs = trimOrigStartMs + timelineDeltaMsFromSource(clampedSrc, ratio)
       const newInMs = trimOrigInMs + clampedSrc
       const newDurationMs = trimOrigDurationMs - clampedSrc
       if (
@@ -866,11 +873,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       }
       project.trimClip(clip.id, newStartMs, newInMs, newDurationMs)
     } else {
-      const origRightMs = trimOrigStartMs + (trimOrigDurationMs / Math.max(1e-9, ratio))
+      const origRightMs = trimOrigStartMs + timelineDeltaMsFromSource(trimOrigDurationMs, ratio)
       const rawRightMs = origRightMs + (pointerMs - trimPointerStartMs)
       const targetRightMs = snapTimelineMs(rawRightMs, e.altKey)
       const deltaTimelineMs = targetRightMs - origRightMs
-      const deltaSourceMs = Math.round(deltaTimelineMs * ratio)
+      const deltaSourceMs = sourceDeltaMsFromTimeline(deltaTimelineMs, ratio)
       // Right trim changes only source-time `durationMs`.
       const minDeltaSrc = MIN_CLIP_MS - trimOrigDurationMs
       const maxDeltaSrc = trimSourceDurationMs - (trimOrigInMs + trimOrigDurationMs)

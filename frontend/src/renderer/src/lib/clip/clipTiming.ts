@@ -36,6 +36,29 @@ export function isClipTempoWarpActive(clip: { effectiveWarpActive?: boolean }): 
   return clip.effectiveWarpActive === true
 }
 
+/**
+ * Convert a timeline-time delta to the source-time delta it covers, and back.
+ *
+ * A warped clip keeps `inMs` / `durationMs` in SOURCE time while every gesture arrives
+ * in TIMELINE time, so edits have to cross the ratio — and the pair must stay exact
+ * inverses. Trim used to round each direction to whole milliseconds independently,
+ * which broke that: `inMs` advanced by the rounded source delta while `startMs` advanced
+ * by a separately rounded timeline delta, so the audio slid under the clip by up to
+ * 0.5 ms per gesture and a snapped edge never quite landed on the line it snapped to.
+ * Rounding also cannot represent a musical length at all — one beat of a 105.8 BPM
+ * source is 567.0852 ms — so a clip trimmed to a beat came out a fraction long and every
+ * duplicate of it walked further off the grid. These carry no rounding: the fields are
+ * doubles all the way to the engine, which quantises to samples once, at the end.
+ */
+export function sourceDeltaMsFromTimeline(timelineDeltaMs: number, ratio: number): number {
+  return ratio > 0 ? timelineDeltaMs * ratio : timelineDeltaMs
+}
+
+/** Timeline-time delta for a source-time delta at `ratio`. Inverse of the above. */
+export function timelineDeltaMsFromSource(sourceDeltaMs: number, ratio: number): number {
+  return ratio > 0 ? sourceDeltaMs / ratio : sourceDeltaMs
+}
+
 /** Minimal clip shape `findClipSlot` needs — the store's full `Clip` is
  *  structurally compatible. */
 export interface ClipSlotInput {

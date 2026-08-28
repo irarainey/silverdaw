@@ -718,6 +718,91 @@ describe('projectStore', () => {
     expect(project.clips[clipId ?? '']?.startMs).toBe(0) // left where it was
   })
 
+  it('alignClipAudioToBarGrid holds the clip still and slides the audio onto the beat', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 120 // matches the clip; 500 ms/beat (4/4)
+
+    const itemId = library.addItem({
+      filePath: 'C:\\audioalign.wav',
+      fileName: 'audioalign.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625, 1.125, 1.625]
+
+    const trackId = project.addTrack()
+    const clipId =
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: itemId,
+          filePath: 'C:\\audioalign.wav',
+          fileName: 'audioalign.wav',
+          durationMs: 1_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        0
+      ) ?? ''
+
+    // The clip's first beat sits 125 ms into it; the nearest beat line is the clip's own
+    // start, so the audio moves 125 ms earlier while the clip itself does not move at all.
+    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
+    expect(project.clips[clipId]?.startMs).toBe(0)
+    expect(project.clips[clipId]?.durationMs).toBe(1_000)
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(125, 6)
+  })
+
+  it('alignClipAudioToBarGrid reports blocked when the source has no audio left to slide', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+
+    const itemId = library.addItem({
+      filePath: 'C:\\audioalign2.wav',
+      fileName: 'audioalign2.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625]
+
+    const trackId = project.addTrack()
+    // The clip already spans the whole file, so there is nothing either side to cut into
+    // and stepping a whole source beat runs off the other end.
+    const clipId =
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: itemId,
+          filePath: 'C:\\audioalign2.wav',
+          fileName: 'audioalign2.wav',
+          durationMs: 1_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        0
+      ) ?? ''
+
+    expect(project.alignClipAudioToBarGrid(clipId)).toBe('blocked')
+    expect(project.clips[clipId]?.inMs).toBe(0)
+    expect(project.clips[clipId]?.startMs).toBe(0)
+  })
+
   it('alignClipToBarGrid does nothing when the clip tempo differs from the project tempo', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

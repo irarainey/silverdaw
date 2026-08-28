@@ -265,6 +265,8 @@ export interface ClipboardEntry {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  /** Copied clip was still waiting on its source BPM; the paste must keep waiting too. */
+  pendingAutoWarp?: boolean
   effectiveDurationMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean

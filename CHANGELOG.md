@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.1
+
+### Changed
+
+- Editing a clip's beat markers now moves the audio inside the clip rather than moving the clip, so a clip already cut to the bar keeps its place in the arrangement instead of being pushed off the grid.
+
+### Fixed
+
+- Dragging a clip edge no longer shifts the audio inside the clip. A snapped edge now lands exactly on the line it snapped to, and repeated trims no longer build up a drift.
+- The waveform inside a clip is now drawn from the clip's exact position in the audio, so clips split or copied from the same material look identical instead of appearing to shift as they are edited.
+- Splitting, duplicating or pasting a clip that is still waiting on its tempo analysis now keeps the new clip in time with the original.
+- A clip cut exactly on a beat no longer loses its first beat marker, or jumps a beat when snapped to a bar.
+
 ## 1.7.0
 
 ### Added

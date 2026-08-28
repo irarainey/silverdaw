@@ -3,7 +3,9 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
-  findClipSlot
+  findClipSlot,
+  sourceDeltaMsFromTimeline,
+  timelineDeltaMsFromSource
 } from '@/lib/clip/clipTiming'
 
 describe('effectiveClipDurationMs', () => {
@@ -102,5 +104,28 @@ describe('findClipSlot', () => {
     )
     // Gap [1000,1500) is 500ms — well short of a 1000ms clip → next gap after b.
     expect(findClipSlot(s, 't1', 'x', 1000, 1000)).toBe(2500)
+  })
+})
+
+describe('source/timeline delta conversion', () => {
+  // The exact ratio from the reported project: 92 BPM project, 105.80420935304572 BPM source.
+  const ratio = 0.8695306222932581
+
+  it('round-trips exactly so a trim cannot slide audio under the clip edge', () => {
+    for (const timelineDelta of [10, 11.500458, -34.501373, 663.67437058182, 0.25]) {
+      const src = sourceDeltaMsFromTimeline(timelineDelta, ratio)
+      expect(timelineDeltaMsFromSource(src, ratio)).toBeCloseTo(timelineDelta, 9)
+    }
+  })
+
+  it('represents a musical length that whole-millisecond rounding cannot', () => {
+    // One project beat at 92 BPM, in source time, is 567.0852 ms — not an integer.
+    const oneBeatTimeline = 60_000 / 92
+    expect(sourceDeltaMsFromTimeline(oneBeatTimeline, ratio)).toBeCloseTo(567.0852, 3)
+  })
+
+  it('treats a non-positive ratio as unwarped rather than dividing by zero', () => {
+    expect(sourceDeltaMsFromTimeline(100, 0)).toBe(100)
+    expect(timelineDeltaMsFromSource(100, 0)).toBe(100)
   })
 })

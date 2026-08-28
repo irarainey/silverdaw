@@ -25,7 +25,7 @@ interface Harness {
     setClipReversed: ReturnType<typeof vi.fn>
     setClipBrake: ReturnType<typeof vi.fn>
     setClipBackspin: ReturnType<typeof vi.fn>
-    alignClipToBarGrid: ReturnType<typeof vi.fn>
+    alignClipAudioToBarGrid: ReturnType<typeof vi.fn>
   }
   library: {
     updateLibraryClipEdit: ReturnType<typeof vi.fn>
@@ -54,7 +54,7 @@ function makeHarness(overrides: Partial<ClipEditorSaveDeps> = {}): Harness {
     setClipReversed: vi.fn(),
     setClipBrake: vi.fn(),
     setClipBackspin: vi.fn(),
-    alignClipToBarGrid: vi.fn(() => 'skip')
+    alignClipAudioToBarGrid: vi.fn(() => 'skip')
   }
   const library = {
     updateLibraryClipEdit: vi.fn(() => ({ ok: true })),
@@ -291,7 +291,7 @@ describe('useClipEditorSave', () => {
     expect(h.project.setClipBackspin).toHaveBeenCalledWith('clip-1', false)
   })
 
-  it('timeline-clip save re-aligns the clip to the grid when the beat grid changed', () => {
+  it('timeline-clip save re-aligns the audio inside the clip when the beat grid changed', () => {
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -303,11 +303,11 @@ describe('useClipEditorSave', () => {
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.project.alignClipToBarGrid).toHaveBeenCalledWith('clip-1')
+    expect(h.project.alignClipAudioToBarGrid).toHaveBeenCalledWith('clip-1')
   })
 
-  it('timeline-clip save toasts when the clip cannot be re-aligned (blocked)', () => {
-    h.project.alignClipToBarGrid.mockReturnValue('blocked')
+  it('timeline-clip save toasts when the audio cannot be re-aligned (blocked)', () => {
+    h.project.alignClipAudioToBarGrid.mockReturnValue('blocked')
     h.state.editsSingleTimelineClip = true
     h.state.editsLibraryClipLibrary = false
     h.state.timelineClip = makeClip({ id: 'clip-1' })
@@ -334,7 +334,7 @@ describe('useClipEditorSave', () => {
 
     useClipEditorSave(h.deps).onSaveChanges()
 
-    expect(h.project.alignClipToBarGrid).not.toHaveBeenCalled()
+    expect(h.project.alignClipAudioToBarGrid).not.toHaveBeenCalled()
   })
 
   it('commits the beat-grid draft on save (timeline-clip branch)', () => {

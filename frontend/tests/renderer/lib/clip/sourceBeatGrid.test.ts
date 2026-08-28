@@ -92,8 +92,21 @@ describe('firstSourceBeatMsAtOrAfter', () => {
   })
 
   it('works backwards from before the anchor', () => {
+    expect(firstSourceBeatMsAtOrAfter({ ...grid, anchorMs: 250 }, 250)).toBe(250)
     expect(firstSourceBeatMsAtOrAfter({ ...grid, anchorMs: 250 }, 0)).toBe(250)
     expect(firstSourceBeatMsAtOrAfter({ ...grid, anchorMs: 250 }, -300)).toBe(-250)
+  })
+
+  it('holds the beat when a split lands a float hair above or below it', () => {
+    // Split/trim arithmetic never lands exactly on the beat it cut. A bare `ceil` would
+    // skip a whole beat on the "above" case, dropping the clip's leading marker and
+    // moving a bar-snapped clip by a beat.
+    expect(firstSourceBeatMsAtOrAfter(grid, 500 + 1e-9)).toBe(500)
+    expect(firstSourceBeatMsAtOrAfter(grid, 500 - 1e-9)).toBe(500)
+  })
+
+  it('still advances for a beat the user genuinely trimmed away', () => {
+    expect(firstSourceBeatMsAtOrAfter(grid, 500.5)).toBe(1000)
   })
 })
 

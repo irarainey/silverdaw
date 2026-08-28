@@ -8,15 +8,67 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
+  sourceDeltaMsFromTimeline,
   findClipSlot,
   CLIP_FIT_EPSILON_MS
 } from '@/lib/clip/clipTiming'
 import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
+import { warpChangesTiming } from '@/lib/warp'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
 import { useTransportStore } from '@/stores/transportStore'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
+
+/** Below this a clip's first beat is already on the line; moving it would be churn.
+ *  Half a millisecond is ~22 samples at 44.1 kHz and well under a pixel at any zoom. */
+const GRID_ALIGNED_EPSILON_MS = 0.5
+
+/** A clip's beat-grid alignment against the project grid, or null when it has none.
+ *
+ *  Resolved once and shared by both align actions — the one that moves the clip and the
+ *  one that moves the audio inside it — so the two can never disagree about which beat
+ *  is being aligned or how far off it is. `shiftMs` is the timeline distance the clip's
+ *  first in-window source beat must travel to reach the NEAREST project beat line: the
+ *  smallest possible correction (at most half a beat), forward or back, rather than the
+ *  nearest bar, which could shove it up to two beats away. Aligning the beat grid (what
+ *  the timeline markers use) rather than the raw clip edge is why a clip that opens with
+ *  silence lands on the grid rather than a fraction of a beat off it. */
+function resolveClipBeatAlignment(
+  store: ProjectClipThis,
+  clipId: string
+): {
+  clip: Clip
+  beatOffsetMs: number
+  shiftMs: number
+  ratio: number
+  projectBeatMs: number
+  sourceSpacingMs: number
+} | null {
+  const clip = store.clips[clipId]
+  if (!clip || clip.locked) return null
+  const projectBpm = useTransportStore().bpm
+  if (!Number.isFinite(projectBpm) || projectBpm <= 0) return null
+  const library = useLibraryStore()
+  const beatOffsetMs = clipFirstBeatOffsetMs(clip, library)
+  if (beatOffsetMs === null) return null // no beat grid — leave simple samples untouched
+
+  // The clip's beats must share the project grid spacing, or aligning one beat is
+  // meaningless (the rest drift). Compare the clip's effective (warp-adjusted)
+  // timeline beat spacing to the project's.
+  const item = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
+  const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
+  if (!sourceBpm || sourceBpm <= 0) return null
+  const ratio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
+  const sourceSpacingMs = 60_000 / sourceBpm
+  const clipBeatMs = sourceSpacingMs / ratio
+  const projectBeatMs = 60_000 / projectBpm
+  if (Math.abs(clipBeatMs - projectBeatMs) / projectBeatMs > 0.01) return null // tempo mismatch
+
+  const firstBeatMs = clip.startMs + beatOffsetMs
+  const shiftMs = Math.round(firstBeatMs / projectBeatMs) * projectBeatMs - firstBeatMs
+  return { clip, beatOffsetMs, shiftMs, ratio, projectBeatMs, sourceSpacingMs }
+}
 
 export const clipPlacementActions = {
     addClipToTrack(
@@ -278,9 +330,15 @@ export const clipPlacementActions = {
       clip.startMs = safeStart
       clip.inMs = safeIn
       clip.durationMs = safeDur
-      // CLIP_TRIM is not echoed, so update the effective timeline footprint here.
-      const trimRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
-      clip.effectiveDurationMs = trimRatio > 0 ? safeDur / trimRatio : safeDur
+      // CLIP_TRIM is not echoed, so recompute the derived timing fields here — all three
+      // together. `effectiveWarpActive` is duration-dependent (a warp that moves the end
+      // by less than a millisecond is not applied, ADR 0024), so a trim can switch it,
+      // and leaving the flag stale while updating the duration would make the renderer's
+      // ratio disagree with the engine's.
+      const trimRatio = effectiveClipTempoRatio(clip)
+      const trimWarpActive = warpChangesTiming(safeDur, trimRatio)
+      clip.effectiveWarpActive = trimWarpActive
+      clip.effectiveDurationMs = trimWarpActive ? safeDur / trimRatio : safeDur
       this.timelineRevision++
 
       const track = this.tracks.find((t) => t.id === clip.trackId)
@@ -341,53 +399,80 @@ export const clipPlacementActions = {
       useNotificationsStore().pushError(message)
     },
 
-    /** Snap a clip so its beat grid lines up with the project beat grid: the clip's
-     *  first in-window grid beat is moved to the NEAREST project beat line — the
-     *  smallest possible shift (at most half a beat), forward or back — rather than the
-     *  nearest bar, which could shove the clip up to two beats away. If that would land
-     *  before the timeline origin it bumps forward one beat so the clip stays on the
-     *  grid at t >= 0. Aligning the beat grid (what the timeline markers use) rather
-     *  than the raw clip edge is why a clip that starts with silence lands on the grid
-     *  rather than a fraction of a beat off it.
+    /** Snap a clip onto the project beat grid by MOVING the clip: its first in-window
+     *  grid beat travels the smallest distance to a project beat line (see
+     *  `resolveClipBeatAlignment`). If that would land before the timeline origin it
+     *  bumps forward one beat so the clip stays on the grid at t >= 0.
      *
-     *  No-op unless the clip's effective (warp-adjusted) tempo matches the project
-     *  tempo — a clip whose beats are spaced differently from the grid can't align,
-     *  and simple samples (no beat grid) and locked clips are never moved. Callers
-     *  run this AFTER the project tempo has settled (e.g. after the first-clip BPM
-     *  seed), so `transport.bpm` reflects the grid the clip will sit on. */
+     *  This is the drop / first-analysis correction, where the clip's placement is what
+     *  was provisional. For a clip already sitting in an arrangement — a grid edit in
+     *  the Clip Editor — use `alignClipAudioToBarGrid` instead, which holds the clip
+     *  still. No-op unless the clip's effective (warp-adjusted) tempo matches the
+     *  project tempo; simple samples (no beat grid) and locked clips are never moved.
+     *  Callers run this AFTER the project tempo has settled (e.g. after the first-clip
+     *  BPM seed), so `transport.bpm` reflects the grid the clip will sit on. */
     alignClipToBarGrid(clipId: string): 'moved' | 'blocked' | 'skip' {
-      const clip = this.clips[clipId]
-      if (!clip || clip.locked) return 'skip'
-      const projectBpm = useTransportStore().bpm
-      if (!Number.isFinite(projectBpm) || projectBpm <= 0) return 'skip'
-      const library = useLibraryStore()
-      const offsetMs = clipFirstBeatOffsetMs(clip, library)
-      if (offsetMs === null) return 'skip' // no beat grid — leave simple samples untouched
-
-      // The clip's beats must share the project grid spacing, or aligning one beat
-      // is meaningless (the rest drift). Compare the clip's effective (warp-adjusted)
-      // timeline beat spacing to the project's.
-      const item = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
-      const sourceBpm = item ? libraryItemSourceBpm(item, library.byId) : undefined
-      if (!sourceBpm || sourceBpm <= 0) return 'skip'
-      const warpRatio = isClipTempoWarpActive(clip) ? effectiveClipTempoRatio(clip) : 1
-      const clipBeatMs = 60_000 / sourceBpm / warpRatio
-      const projectBeatMs = 60_000 / projectBpm
-      if (Math.abs(clipBeatMs - projectBeatMs) / projectBeatMs > 0.01) return 'skip' // tempo mismatch
-
-      const firstBeatMs = clip.startMs + offsetMs
-      // Nearest project beat line (least distance, earlier or later), then back out the
-      // offset. Bump one beat forward if that would put the clip before the origin.
-      let target = Math.round(firstBeatMs / projectBeatMs) * projectBeatMs - offsetMs
+      const aligned = resolveClipBeatAlignment(this, clipId)
+      if (!aligned) return 'skip'
+      const { clip, beatOffsetMs, shiftMs, projectBeatMs } = aligned
+      if (Math.abs(shiftMs) < GRID_ALIGNED_EPSILON_MS) return 'skip' // already aligned
+      // Bump one beat forward if aligning would put the clip before the origin.
+      let target = clip.startMs + shiftMs
       while (target < -1e-6) target += projectBeatMs
       target = Math.max(0, target)
-      if (Math.abs(target - clip.startMs) < 0.5) return 'skip' // already aligned
+      if (Math.abs(target - clip.startMs) < GRID_ALIGNED_EPSILON_MS) return 'skip'
       // Only align when the target position is clear. Never bump into a nearby gap
       // (that would misalign the grid) or overlap a neighbour — report it as blocked so
       // the caller can leave the clip put and tell the user to move it by hand.
       if (this.wouldClipOverlap(clip.trackId, target, effectiveClipDurationMs(clip), clipId)) return 'blocked'
       this.moveClip(clipId, target)
-      log.debug('project', `alignClipToBarGrid ${clipId} ${clip.startMs.toFixed(1)} -> ${target.toFixed(1)}ms`)
+      log.debug(
+        'project',
+        `alignClipToBarGrid ${clipId} ${clip.startMs.toFixed(1)} -> ${target.toFixed(1)}ms (beatOffset=${beatOffsetMs.toFixed(1)})`
+      )
+      return 'moved'
+    },
+
+    /** Align a clip to the project beat grid by sliding the AUDIO inside a clip that
+     *  does not move — the counterpart to `alignClipToBarGrid`, which moves the clip.
+     *
+     *  Editing a source's beat grid re-answers "where is beat one in this audio?", so the
+     *  clip's placement on the timeline is not what was wrong and moving it is the wrong
+     *  correction: a clip in a finished arrangement has neighbours, and shifting it by up
+     *  to half a beat leaves it overhanging the bar it was cut to, with no room to sit
+     *  back down and no room to duplicate it. Re-cutting the source window instead keeps
+     *  `startMs` and the timeline footprint byte-for-byte identical — so the volume shape
+     *  stays valid, no neighbour can be in the way, and the arrangement the user built
+     *  survives a grid correction — while the audio moves under the new beat lines.
+     *
+     *  Returns `blocked` when the source runs out of audio to slide into (the shift is at
+     *  most half a beat, so this only bites at the very ends of a file). */
+    alignClipAudioToBarGrid(clipId: string): 'moved' | 'blocked' | 'skip' {
+      const aligned = resolveClipBeatAlignment(this, clipId)
+      if (!aligned) return 'skip'
+      const { clip, shiftMs, ratio, sourceSpacingMs } = aligned
+      if (Math.abs(shiftMs) < GRID_ALIGNED_EPSILON_MS) return 'skip' // already aligned
+
+      // Audio at source time `s` renders at `startMs + (s - inMs) / ratio`, so moving the
+      // audio LATER by `shiftMs` means cutting in EARLIER by that much in source time.
+      const library = useLibraryStore()
+      const item = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
+      const sourceDurationMs =
+        item && item.durationMs > 0 ? item.durationMs : clip.inMs + clip.durationMs
+      const origInMs = clip.inMs
+      let newInMs = origInMs - sourceDeltaMsFromTimeline(shiftMs, ratio)
+      // A whole source beat either way lands on the same grid, so stepping by one buys
+      // room at the head or tail of the file without losing the alignment.
+      if (newInMs < 0) newInMs += sourceSpacingMs
+      if (newInMs + clip.durationMs > sourceDurationMs) newInMs -= sourceSpacingMs
+      if (newInMs < 0 || newInMs + clip.durationMs > sourceDurationMs) return 'blocked'
+      if (Math.abs(newInMs - origInMs) < GRID_ALIGNED_EPSILON_MS) return 'skip'
+
+      this.trimClip(clipId, clip.startMs, newInMs, clip.durationMs)
+      log.debug(
+        'project',
+        `alignClipAudioToBarGrid ${clipId} in ${origInMs.toFixed(1)} -> ${newInMs.toFixed(1)}ms (shift=${shiftMs.toFixed(1)}ms, clip held at ${clip.startMs.toFixed(1)}ms)`
+      )
       return 'moved'
     }
 } satisfies Record<string, (this: ProjectClipThis, ...args: never[]) => unknown> &

@@ -17,6 +17,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import type { Clip } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
 import { waveformReusePayload } from './project-waveform-state'
+import { replayClipWarpToNewClip } from './projectClipWarpActions'
 import { splitEnvelopeAtMs } from '@/lib/envelope'
 
 export const clipEditActions = {
@@ -136,17 +137,9 @@ export const clipEditActions = {
         if (clip.name) {
           sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
         }
-        // Replay active warp so the backend builds the right-half processor.
-        if (clip.warpEnabled === true) {
-          sendBridge('CLIP_SET_WARP', {
-            clipId: newId,
-            warpEnabled: true,
-            warpMode: clip.warpMode,
-            tempoRatio: clip.tempoRatio,
-            semitones: clip.semitones,
-            cents: clip.cents
-          })
-        }
+        // Replay active (or still-pending) warp so the backend builds the right-half
+        // processor at the same tempo as the left.
+        replayClipWarpToNewClip(clip, newId)
         // Replay reverse so the right half keeps playing backwards like its source.
         if (isReversed) {
           sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })
@@ -302,17 +295,8 @@ export const clipEditActions = {
         if (clip.name) {
           sendBridge('CLIP_RENAME', { clipId: newId, name: clip.name })
         }
-        // Replay active warp so the backend builds the duplicate processor.
-        if (clip.warpEnabled === true) {
-          sendBridge('CLIP_SET_WARP', {
-            clipId: newId,
-            warpEnabled: true,
-            warpMode: clip.warpMode,
-            tempoRatio: clip.tempoRatio,
-            semitones: clip.semitones,
-            cents: clip.cents
-          })
-        }
+        // Replay active (or still-pending) warp so the duplicate plays at the same tempo.
+        replayClipWarpToNewClip(clip, newId)
         // Replay reverse so the duplicate plays backwards like its source.
         if (clip.reversed === true) {
           sendBridge('CLIP_SET_REVERSED', { clipId: newId, reversed: true })

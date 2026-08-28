@@ -134,16 +134,24 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     return null
   }
 
-  /** After a Clip Editor save, snap the edited timeline clip to the bar grid when the
-   *  beat grid was changed this session and the align preference is on — but only if it
-   *  has room. A clip boxed in by neighbours is left where it is and the user is told to
-   *  move it manually. Runs inside the save's undo group so the move folds into the one
-   *  Save step; nothing happens while the grid is merely being dragged. */
+  /** After a Clip Editor save, re-align the edited clip to the bar grid when the beat
+   *  grid was changed this session and the align preference is on — by sliding the audio
+   *  inside the clip, not by moving the clip.
+   *
+   *  A grid edit re-answers "where is beat one in this audio?", so the clip's placement
+   *  was never what was wrong. Moving it (the original behaviour) shifted a clip that
+   *  was already cut to the bar by up to half a beat, leaving it overhanging its bar with
+   *  no room to sit back down and no room to duplicate it — and it could be blocked
+   *  outright by a neighbour. Re-cutting the source window holds `startMs` and the
+   *  timeline footprint exactly, so the arrangement survives the correction.
+   *
+   *  Runs inside the save's undo group so the change folds into the one Save step;
+   *  nothing happens while the grid is merely being dragged. */
   function alignEditedClipToGridOnSave(clip: Clip): void {
     if (!deps.gridChanged() || !deps.alignToGridEnabled()) return
-    if (deps.project.alignClipToBarGrid(clip.id) === 'blocked') {
+    if (deps.project.alignClipAudioToBarGrid(clip.id) === 'blocked') {
       deps.notifications.pushInfo(
-        `Couldn't align "${deps.titleText()}" to the bar grid — other clips are in the way. Move it manually.`
+        `Couldn't align "${deps.titleText()}" to the bar grid — there isn't enough audio either side of the clip to move it onto the beat.`
       )
     }
   }

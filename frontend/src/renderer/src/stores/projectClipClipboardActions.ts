@@ -9,6 +9,7 @@ import { effectiveClipDurationMs, CLIP_FIT_EPSILON_MS } from '@/lib/clip/clipTim
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { filePathToDisplayName } from './projectHelpers'
+import { replayClipWarpToNewClip } from './projectClipWarpActions'
 import { waveformReusePayload } from './project-waveform-state'
 import type { Clip, ClipboardEntry, ClipboardGroupItem, Track } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
@@ -30,6 +31,7 @@ function clipToClipboardEntry(clip: Clip): ClipboardEntry {
     tempoRatio: clip.tempoRatio,
     semitones: clip.semitones,
     cents: clip.cents,
+    pendingAutoWarp: clip.pendingAutoWarp,
     effectiveDurationMs: clip.effectiveDurationMs,
     effectiveTempoRatio: clip.effectiveTempoRatio,
     effectiveWarpActive: clip.effectiveWarpActive
@@ -85,6 +87,7 @@ function insertPastedClip(
     tempoRatio: entry.tempoRatio,
     semitones: entry.semitones,
     cents: entry.cents,
+    pendingAutoWarp: entry.pendingAutoWarp,
     effectiveDurationMs: entry.effectiveDurationMs,
     effectiveTempoRatio: entry.effectiveTempoRatio,
     effectiveWarpActive: entry.effectiveWarpActive
@@ -119,17 +122,8 @@ function replayPastedClipBridge(
   if (entry.name) {
     sendBridge('CLIP_RENAME', { clipId: newId, name: entry.name })
   }
-  // Replay active warp so the backend builds the pasted processor.
-  if (entry.warpEnabled === true) {
-    sendBridge('CLIP_SET_WARP', {
-      clipId: newId,
-      warpEnabled: true,
-      warpMode: entry.warpMode,
-      tempoRatio: entry.tempoRatio,
-      semitones: entry.semitones,
-      cents: entry.cents
-    })
-  }
+  // Replay active (or still-pending) warp so the backend builds the pasted processor.
+  replayClipWarpToNewClip(entry, newId)
 }
 
 export const clipClipboardActions = {

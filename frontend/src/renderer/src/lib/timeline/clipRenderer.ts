@@ -404,13 +404,16 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       resetWaveBuilder()
       const lanePeakCount = lanePeaks.length / 2
       if (lanePeakCount <= 0 || w <= 0) return false
-      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * lanePps))
-      const endPeak = Math.min(
-        lanePeakCount,
-        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * lanePps))
-      )
-      const windowSize = endPeak - startPeak
-      const peaksPerPixel = windowSize / w
+      // Map each column from the clip's TRUE fractional position in the peak array.
+      // This used to floor `inMs` to a whole peak bucket and ceil the end, then stretch
+      // that EXPANDED window across the same `w` pixels — so the drawn scale and phase
+      // depended on where the window happened to fall between buckets. Two clips cut
+      // from identical audio at different offsets therefore drew the same samples
+      // slightly differently, which is the waveform appearing to shift inside the clip
+      // after a split or a trim. Fractional coordinates make the mapping depend only on
+      // `inMs`/`durationMs`, so identical source windows are always drawn identically.
+      const exactStartPeak = (clip.inMs / 1000) * lanePps
+      const bucketsPerPixel = ((clip.durationMs / 1000) * lanePps) / w
       const reversed = clip.reversed === true
       let didDraw = false
       let drawnColumns = 0
@@ -431,18 +434,19 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         // envelope below stays oriented to clip-time, so only the peak read
         // is mirrored here.
         const srcPx = reversed ? w - 1 - px : px
-        const startIdx = startPeak + Math.floor(srcPx * peaksPerPixel)
-        // Always read at least one peak per pixel when zoomed in.
-        const endIdx = Math.min(
-          endPeak,
-          Math.max(startIdx + 1, startPeak + Math.ceil((srcPx + 1) * peaksPerPixel))
-        )
-        if (startIdx >= endPeak) {
+        const columnStartPeak = exactStartPeak + srcPx * bucketsPerPixel
+        const startIdx = Math.max(0, Math.floor(columnStartPeak))
+        if (startIdx >= lanePeakCount) {
           // Out-of-data column: close the current run so it never spans the gap.
           merger.breakRun(px)
           if (reversed) continue
           break
         }
+        // Always read at least one peak per pixel when zoomed in.
+        const endIdx = Math.min(
+          lanePeakCount,
+          Math.max(startIdx + 1, Math.ceil(columnStartPeak + bucketsPerPixel))
+        )
 
         let min = 0
         let max = 0

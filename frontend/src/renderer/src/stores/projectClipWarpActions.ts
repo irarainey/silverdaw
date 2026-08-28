@@ -8,6 +8,44 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import type { ClipEnvelopePoint, ClipWarpMode } from '@shared/bridge-protocol'
 import type { ProjectClipThis } from './projectClipContract'
 
+/** The warp state that has to survive onto a clip created by split, duplicate or paste. */
+export interface ReplayableClipWarp {
+  warpEnabled?: boolean
+  warpMode?: ClipWarpMode
+  tempoRatio?: number | null
+  semitones?: number
+  cents?: number
+  pendingAutoWarp?: boolean
+}
+
+/**
+ * Replay a source clip's warp state onto a newly created backend clip.
+ *
+ * Split, duplicate and paste build the child with `CLIP_ADD`, which carries no warp
+ * fields, so the parent's warp has to be re-sent or the child plays at the source tempo
+ * while its parent plays at the project tempo. Each call site used to do this inline
+ * behind `warpEnabled === true`, which silently dropped a clip still waiting on its
+ * source BPM: auto-warp-on-drop sets `pendingAutoWarp` with `warpEnabled` not yet true,
+ * so splitting such a clip before `LIBRARY_ITEM_ANALYSIS` arrived left the child
+ * permanently unwarped. One helper keeps the three paths from drifting apart again.
+ */
+export function replayClipWarpToNewClip(source: ReplayableClipWarp, newClipId: string): void {
+  const pendingAutoWarp = source.pendingAutoWarp === true
+  const warpEnabled = source.warpEnabled === true
+  if (!warpEnabled && !pendingAutoWarp) return
+  sendBridge('CLIP_SET_WARP', {
+    clipId: newClipId,
+    // Omit rather than send `false`: this envelope is a partial update and the clip is
+    // new, so unset already means "not warped".
+    warpEnabled: warpEnabled ? true : undefined,
+    warpMode: source.warpMode,
+    tempoRatio: source.tempoRatio,
+    semitones: source.semitones,
+    cents: source.cents,
+    pendingAutoWarp: pendingAutoWarp ? true : undefined
+  })
+}
+
 export const clipWarpActions = {
     /** Patch warp/pitch settings; `tempoRatio: null` clears a pinned ratio. */
     setClipWarp(
