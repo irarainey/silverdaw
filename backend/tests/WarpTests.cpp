@@ -295,6 +295,41 @@ void testOffsetSourceChunksOversizedWarpRequests()
             "warped reads must not leak source audio beyond the trimmed clip window");
 }
 
+// A clip window may start BEFORE the source file: sliding a clip's beat grid onto the beat
+// re-cuts the window without moving the clip, which can push the in-point negative. The
+// overhang must render as silence, and — critically — the child must never be asked for a
+// negative read position, which would read garbage or assert.
+void testOffsetSourceSilencesWindowOverhangingSourceStart()
+{
+    constexpr int kOverhang = 4800; // 100 ms of silence before the file starts
+    constexpr int kTotal = 48000;
+
+    RampSource child; // each sample's value IS its source position
+    silverdaw::OffsetSource source(&child);
+    source.setOffsetSamples(0);
+    source.setInSourceSamples(-kOverhang);
+    source.setClipDurationSamples(kTotal);
+    require(source.getInSourceSamples() == -kOverhang,
+            "a negative in-point must survive the setter rather than being clamped to zero");
+    source.prepareToPlay(kTotal, 48000.0);
+
+    juce::AudioBuffer<float> out(1, kTotal);
+    out.clear();
+    juce::AudioSourceChannelInfo info(&out, 0, kTotal);
+    source.getNextAudioBlock(info);
+
+    // Past the clip's edge fade, but still before the file: must be true silence, not a
+    // faded copy of the source's first sample.
+    for (int i = 1000; i < kOverhang; ++i)
+        requireNear(static_cast<double>(out.getSample(0, i)), 0.0, 1.0e-6,
+                    "the head that falls before the file must be silent");
+    // Well inside the clip, away from both edge fades, the source plays normally and in
+    // order from its very first sample.
+    for (int i = 10000; i < 20000; ++i)
+        requireNear(static_cast<double>(out.getSample(0, i)), static_cast<double>(i - kOverhang),
+                    1.0e-6, "audio after the overhang must be the source read from sample zero");
+}
+
 // A stretched clip must remain audible for its whole timeline window. The clip's timeline
 // extent scales with the warp ratio, but juce::AudioTransportSource ends the stream at
 // `getNextReadPosition() >= getTotalLength()`, so an unwarped total length made a stretched
@@ -355,6 +390,7 @@ void addWarpTests(std::vector<TestCase>& tests)
     tests.push_back({"Warp feeds Rubber Band on demand", testWarpFeedsRubberBandOnDemand});
     tests.push_back({"Warp produces at extreme ratios", testWarpProducesAtExtremeRatios});
     tests.push_back({"OffsetSource chunks oversized warp requests", testOffsetSourceChunksOversizedWarpRequests});
+    tests.push_back({"OffsetSource silences a window overhanging the start of the source", testOffsetSourceSilencesWindowOverhangingSourceStart});
     tests.push_back({"OffsetSource total length follows the warped timeline", testOffsetSourceTotalLengthFollowsWarpedTimeline});
 }
 

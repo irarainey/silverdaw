@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.7.0
+    VERSION 1.7.1
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -835,7 +835,8 @@ tests/MixdownRenderTests.cpp
         tests/OtherEnhancerTests.cpp
         tests/MelRoformerSpectralTests.cpp
         tests/BsRoformerSpectralTests.cpp
-        tests/LibraryCleanupTests.cpp)
+        tests/LibraryCleanupTests.cpp
+        tests/DecodedCacheTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
     if(SILVERDAW_ENABLE_STEM_SEPARATION)

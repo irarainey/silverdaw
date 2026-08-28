@@ -12,7 +12,7 @@ import {
   PEAKS_PER_SECOND
 } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemSourceBpm } from '@/stores/libraryStore'
-import { clipTimelineBeatSpacingMs, firstSourceBeatMsAtOrAfter, resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
+import { clipTimelineBeatSpacingMs, firstSourceBeatMsAtOrAfter, resolveClipBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
 import { pickPeaksLod } from '@/lib/peaksLod'
@@ -404,13 +404,16 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       resetWaveBuilder()
       const lanePeakCount = lanePeaks.length / 2
       if (lanePeakCount <= 0 || w <= 0) return false
-      const startPeak = Math.max(0, Math.floor((clip.inMs / 1000) * lanePps))
-      const endPeak = Math.min(
-        lanePeakCount,
-        Math.max(startPeak + 1, Math.ceil(((clip.inMs + clip.durationMs) / 1000) * lanePps))
-      )
-      const windowSize = endPeak - startPeak
-      const peaksPerPixel = windowSize / w
+      // Map each column from the clip's TRUE fractional position in the peak array.
+      // This used to floor `inMs` to a whole peak bucket and ceil the end, then stretch
+      // that EXPANDED window across the same `w` pixels — so the drawn scale and phase
+      // depended on where the window happened to fall between buckets. Two clips cut
+      // from identical audio at different offsets therefore drew the same samples
+      // slightly differently, which is the waveform appearing to shift inside the clip
+      // after a split or a trim. Fractional coordinates make the mapping depend only on
+      // `inMs`/`durationMs`, so identical source windows are always drawn identically.
+      const exactStartPeak = (clip.inMs / 1000) * lanePps
+      const bucketsPerPixel = ((clip.durationMs / 1000) * lanePps) / w
       const reversed = clip.reversed === true
       let didDraw = false
       let drawnColumns = 0
@@ -431,18 +434,26 @@ export function createClipRenderer(ctx: ClipRendererContext) {
         // envelope below stays oriented to clip-time, so only the peak read
         // is mirrored here.
         const srcPx = reversed ? w - 1 - px : px
-        const startIdx = startPeak + Math.floor(srcPx * peaksPerPixel)
-        // Always read at least one peak per pixel when zoomed in.
-        const endIdx = Math.min(
-          endPeak,
-          Math.max(startIdx + 1, startPeak + Math.ceil((srcPx + 1) * peaksPerPixel))
-        )
-        if (startIdx >= endPeak) {
+        const columnStartPeak = exactStartPeak + srcPx * bucketsPerPixel
+        // A window can overhang the head of the source (a grid slide that ran off the
+        // start); those columns have no audio, so leave them silent rather than smearing
+        // the file's first peak across them.
+        if (columnStartPeak + bucketsPerPixel <= 0) {
+          merger.breakRun(px)
+          continue
+        }
+        const startIdx = Math.max(0, Math.floor(columnStartPeak))
+        if (startIdx >= lanePeakCount) {
           // Out-of-data column: close the current run so it never spans the gap.
           merger.breakRun(px)
           if (reversed) continue
           break
         }
+        // Always read at least one peak per pixel when zoomed in.
+        const endIdx = Math.min(
+          lanePeakCount,
+          Math.max(startIdx + 1, Math.ceil(columnStartPeak + bucketsPerPixel))
+        )
 
         let min = 0
         let max = 0
@@ -517,10 +528,10 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       }
     }
 
-    // Source-global synthetic beat grid keeps split clips phase-aligned. Resolved
-    // through the shared module so the markers, the drag/nudge snap, the drop snap,
-    // and bar-grid alignment can never disagree about where the beats are.
-    const grid = libItem ? resolveSourceBeatGrid(libItem, library.byId) : null
+    // Beat grid for THIS clip: source-global spacing, clip-local phase. Resolved through
+    // the shared module so the markers, the drag/nudge snap, the drop snap, and bar-grid
+    // alignment can never disagree about where the beats are.
+    const grid = libItem ? resolveClipBeatGrid(clip, library) : null
     const markerSourceBpm = libItem ? libraryItemSourceBpm(libItem, library.byId) : undefined
     if (grid && w > 0) {
       const pxPerMs = pxPerSecond.value / 1000

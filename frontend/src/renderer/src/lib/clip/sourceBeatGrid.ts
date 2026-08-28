@@ -1,9 +1,14 @@
 // Single source of truth for a clip's *source* beat grid.
 //
-// The grid is synthetic and source-global: a constant `bpm` spacing phase-locked to
-// `beatAnchorSec`, rather than the detected `beats` timestamps themselves. That is
-// deliberate — two clips split from the same take stay phase-aligned, and a
-// low-confidence detection still gives the user a rigid grid to correct against.
+// The grid is synthetic: a constant `bpm` spacing phase-locked to an anchor, rather
+// than the detected `beats` timestamps themselves. Spacing is source-global — there
+// is only ever one answer for a file's tempo (ADR 0024) — but the *phase* is per
+// clip, via the clip's optional `beatOffsetMs` added to the item anchor. A split,
+// copy or duplicate inherits the parent's offset so the operation is invisible on the
+// markers; after that each piece is independent, so sliding one clip's grid can never
+// knock the markers off every other clip cut from the same file. A clip with no
+// offset (every project saved before 1.7.1) resolves to the unshifted source grid.
+// A low-confidence detection still gives the user a rigid grid to correct against.
 // `beats` is only consulted for presence (an item with no detected beats has no
 // grid) and as the legacy anchor fallback for projects saved before
 // `beatAnchorSec` existed.
@@ -100,13 +105,24 @@ export function clipTimelineBeatSpacingMs(
   return sourceSpacingMs / effectiveClipTempoRatio(clip)
 }
 
-/** The first grid beat at or after `fromMs`, in source-time milliseconds. */
+/** A beat this close (in beat indices) to `fromMs` counts as landing exactly on it.
+ *  Well below one float ULP of a beat index at any realistic clip length, and far too
+ *  small to reclassify a beat the user genuinely trimmed away. */
+const BEAT_INDEX_EPSILON = 1e-6
+
+/** The first grid beat at or after `fromMs`, in source-time milliseconds.
+ *
+ *  A clip edge produced by split or trim arithmetic lands a fraction of a nanosecond
+ *  either side of the beat it was cut on. A bare `ceil` turns "a hair above the beat"
+ *  into the NEXT beat, so the clip's first-beat offset jumps from ~0 to a full beat:
+ *  the leading marker vanishes and, on a bar snap grid (where a one-beat translation is
+ *  not invariant), the clip snaps a beat early or three beats late. Selecting the
+ *  nearest beat index when it is within epsilon keeps that boundary continuous. */
 export function firstSourceBeatMsAtOrAfter(grid: SourceBeatGrid, fromMs: number): number {
-  let beatMs =
-    grid.anchorMs + Math.ceil((fromMs - grid.anchorMs) / grid.spacingMs) * grid.spacingMs
-  // `ceil` on a value that is already an exact multiple can land a hair short.
-  while (beatMs < fromMs) beatMs += grid.spacingMs
-  return beatMs
+  const relative = (fromMs - grid.anchorMs) / grid.spacingMs
+  const nearest = Math.round(relative)
+  const index = Math.abs(relative - nearest) <= BEAT_INDEX_EPSILON ? nearest : Math.ceil(relative)
+  return grid.anchorMs + index * grid.spacingMs
 }
 
 /** Minimal clip shape needed to project a clip's first in-window source beat. */
@@ -115,8 +131,58 @@ export interface ClipBeatGridClip {
   filePath: string
   inMs: number
   durationMs: number
+  beatOffsetMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean
+}
+
+/**
+ * The beat grid a specific CLIP draws and snaps to: the source grid with the clip's own
+ * phase offset applied.
+ *
+ * Spacing stays source-global — it comes from the source BPM, which has exactly one
+ * answer (ADR 0024) — but phase is per clip. A split produces two independent clips, and
+ * on variable-tempo material the correct position of beat one genuinely differs between
+ * them; correcting one used to rewrite the shared library-item anchor and so moved the
+ * markers on every other clip cut from that file, leaving them off the bar lines while
+ * they sat perfectly still. Resolving phase here keeps that edit local to the clip.
+ *
+ * Every clip-aware consumer must come through this rather than `resolveSourceBeatGrid`,
+ * for the same reason that function exists: markers, drag/nudge snap, chop to grid and
+ * bar alignment must never disagree about where the beats are.
+ */
+export function resolveClipBeatGrid(
+  clip: ClipBeatGridClip,
+  library: SourceBeatGridLibrary
+): SourceBeatGrid | null {
+  // Prefer libraryItemId; library-clip siblings can share file paths.
+  const itemById = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
+  const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
+  if (!item) return null
+  const grid = resolveSourceBeatGrid(item, library.byId)
+  if (!grid) return null
+  const offsetMs = clip.beatOffsetMs
+  if (typeof offsetMs !== 'number' || !Number.isFinite(offsetMs) || offsetMs === 0) return grid
+  return { ...grid, anchorMs: grid.anchorMs + offsetMs }
+}
+
+/**
+ * A clip's MUSICAL ANCHOR offset: the timeline distance from its left edge to the
+ * position that placement should treat as "where this clip sits".
+ *
+ * This is the one reference point every placement operation must agree on. Clip drag
+ * snaps the first in-window beat, so a clip that opens with silence still lands on the
+ * beat; paste used to place the left EDGE at the playhead instead. The two differ by
+ * this offset — up to a whole beat — which is why pasting a clip and then nudging it
+ * moved it, and why clips that should have been identical ended up at different grid
+ * phases. Routing every placement through this function makes those agree by
+ * construction.
+ *
+ * A clip with no usable beat grid (a simple sample, or a window with no beat in it)
+ * anchors on its own edge, which is the only musical position it has.
+ */
+export function clipAnchorOffsetMs(clip: ClipBeatGridClip, library: SourceBeatGridLibrary): number {
+  return clipFirstBeatOffsetMs(clip, library) ?? 0
 }
 
 /**
@@ -129,11 +195,7 @@ export function clipFirstBeatOffsetMs(
   clip: ClipBeatGridClip,
   library: SourceBeatGridLibrary
 ): number | null {
-  // Prefer libraryItemId; library-clip siblings can share file paths.
-  const itemById = clip.libraryItemId ? library.byId[clip.libraryItemId] : undefined
-  const item = itemById ?? library.items.find((i) => i.filePath === clip.filePath)
-  if (!item) return null
-  const grid = resolveSourceBeatGrid(item, library.byId)
+  const grid = resolveClipBeatGrid(clip, library)
   if (!grid) return null
 
   const inMs = clip.inMs

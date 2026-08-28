@@ -60,6 +60,7 @@ constexpr DomainRegistrar kRegistrars[] = {
     {"MelRoformerSpectral", addMelRoformerSpectralTests},
     {"BsRoformerSpectral", addBsRoformerSpectralTests},
     {"LibraryCleanup", addLibraryCleanupTests},
+    {"DecodedCache", addDecodedCacheTests},
     {"ScratchPatternPersistence", addScratchPatternPersistenceTests},
     {"ScratchPatternEvaluator", addScratchPatternEvaluatorTests},
     {"ScratchPatternReplayProjectState", addScratchPatternReplayProjectStateTests},

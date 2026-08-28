@@ -26,8 +26,12 @@ void OffsetSource::readChildReversibleBlock(float* const* dst, int numCh, juce::
             juce::FloatVectorOperations::clear(dst[c], n);
 
         const juce::int64 localStart = srcPos - inSrc;
+        // The window can start before the file (a grid slide that ran off the head) or
+        // run past its end. Clamp the read to both the window AND the file, leaving the
+        // rest of the block as the silence it was cleared to. `-inSrc` is <= 0 for every
+        // ordinary clip, so this is a no-op unless the window really does overhang.
         const juce::int64 validStart =
-            juce::jmax(static_cast<juce::int64>(0), localStart);
+            juce::jmax(static_cast<juce::int64>(0), localStart, -inSrc);
         const juce::int64 validEnd = juce::jmin(localStart + n, sourceDur);
         const int validCount =
             static_cast<int>(juce::jmax(static_cast<juce::int64>(0),
@@ -59,8 +63,9 @@ void OffsetSource::readChildReversibleBlock(float* const* dst, int numCh, juce::
 
         const juce::int64 localStart = srcPos + done - inSrc;
         const juce::int64 mirroredLocalStart = sourceDur - localStart - chunk;
+        // Same overhang guard as the forward path, in mirrored window coordinates.
         const juce::int64 validStart =
-            juce::jmax(static_cast<juce::int64>(0), mirroredLocalStart);
+            juce::jmax(static_cast<juce::int64>(0), mirroredLocalStart, -inSrc);
         const juce::int64 validEnd =
             juce::jmin(mirroredLocalStart + chunk, sourceDur);
         const int validCount =

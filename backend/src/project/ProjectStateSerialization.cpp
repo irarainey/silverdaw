@@ -284,6 +284,12 @@ juce::var ProjectState::tracksAsJson() const
             {
                 clipObj->setProperty("backspin", true);
             }
+            // Emit only a shifted beat grid; clips on the unshifted source grid stay absent.
+            if (clip.hasProperty(kBeatOffsetMs))
+            {
+                clipObj->setProperty("beatOffsetMs",
+                                     static_cast<double>(clip.getProperty(kBeatOffsetMs, 0.0)));
+            }
             // Emit scratchPatternId only when set; absent = no pattern applied.
             if (clip.hasProperty(kScratchPatternId))
             {

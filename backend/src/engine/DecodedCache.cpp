@@ -1,10 +1,12 @@
 #include "DecodedCache.h"
 #include "Log.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace silverdaw
 {
@@ -56,6 +58,43 @@ juce::File cacheFileForKey(const juce::File& cacheDir, const juce::String& key)
     return cacheDir.getChildFile(hashHex + ".wav");
 }
 } // namespace
+
+DecodeResult writeDecodedBlocks(juce::AudioFormatReader& reader, juce::AudioFormatWriter& writer)
+{
+    constexpr int kBlockSize = 16384;
+    const int numChannels = static_cast<int>(reader.numChannels);
+    juce::AudioBuffer<float> block(numChannels, kBlockSize);
+    std::vector<int*> channels(static_cast<size_t>(numChannels), nullptr);
+
+    DecodeResult result;
+    while (result.samplesWritten < reader.lengthInSamples)
+    {
+        const auto remaining = reader.lengthInSamples - result.samplesWritten;
+        const int numToDo = static_cast<int>(std::min<juce::int64>(kBlockSize, remaining));
+        // JUCE's readers deliver float data through int pointers into the same storage.
+        for (int ch = 0; ch < numChannels; ++ch)
+            channels[static_cast<size_t>(ch)] = reinterpret_cast<int*>(block.getWritePointer(ch));
+
+        if (!reader.read(channels.data(), numChannels, result.samplesWritten, numToDo, false))
+            break;
+
+        if (!reader.usesFloatingPointData)
+        {
+            constexpr auto scale = 1.0f / static_cast<float>(0x7fffffff);
+            for (int ch = 0; ch < numChannels; ++ch)
+                juce::FloatVectorOperations::convertFixedToFloat(
+                    block.getWritePointer(ch), channels[static_cast<size_t>(ch)], scale, numToDo);
+        }
+
+        if (!writer.writeFromAudioSampleBuffer(block, 0, numToDo))
+        {
+            result.writeFailed = true;
+            break;
+        }
+        result.samplesWritten += numToDo;
+    }
+    return result;
+}
 
 DecodedCache::DecodedCache()
 {
@@ -172,16 +211,34 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
     }
     // The writer took ownership of the stream on success.
 
-    constexpr int kBlockSize = 4096;
-    if (!writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples))
+    // `writeFromAudioReader` is all-or-nothing on a length the reader may only have
+    // estimated. JUCE sizes an MP3 with no Xing header by dividing the stream by the
+    // UNPADDED frame size, which over-runs the real audio by a frame per few hundred
+    // padded frames, so the final read fails and an otherwise perfect decode is binned —
+    // leaving the file with no decoded WAV, no tempo, and stems that inherit no tempo
+    // either. Decode block by block so a short tail costs only the tail.
+    const auto decoded = writeDecodedBlocks(*reader, *writer);
+    writer.reset(); // flushes + closes the stream
+
+    const auto expectedSamples = reader->lengthInSamples;
+    const bool tooShort =
+        decoded.samplesWritten < static_cast<juce::int64>((double) expectedSamples * kMinDecodedFraction);
+    if (decoded.writeFailed || decoded.samplesWritten <= 0 || tooShort)
     {
-        silverdaw::log::warn("decodedcache", "writeFromAudioReader failed for " + cachePath.getFileName());
-        writer.reset();
+        silverdaw::log::warn("decodedcache",
+                             "decode failed for " + cachePath.getFileName() + ": wrote "
+                                 + juce::String(decoded.samplesWritten) + " of "
+                                 + juce::String(expectedSamples) + " samples");
         tmpPath.deleteFile();
         return {};
     }
-    (void) kBlockSize; // writeFromAudioReader picks its own chunk size internally.
-    writer.reset();    // flushes + closes the stream
+    if (decoded.samplesWritten < expectedSamples)
+    {
+        silverdaw::log::info("decodedcache",
+                             "short tail on " + sourceFile.getFileName() + ": kept "
+                                 + juce::String(decoded.samplesWritten) + " of "
+                                 + juce::String(expectedSamples) + " estimated samples");
+    }
 
     if (!tmpPath.moveFileTo(cachePath))
     {

@@ -10,6 +10,7 @@
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { libraryItemIsSimple } from '@/stores/libraryItemHelpers'
 import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
@@ -17,6 +18,16 @@ import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 export interface ClipEditorBeatGridDeps {
   /** The source library item backing the clip, or null when unavailable. */
   sourceItem: () => LibraryItem | null
+  /**
+   * The unlinked timeline clip that owns the grid PHASE, or null when the session edits a
+   * library item or a linked (saved) clip, where the phase is shared by design.
+   *
+   * A split makes two independent clips, so correcting where beat one falls in one of them
+   * must not move the markers on its siblings — which is exactly what writing the shared
+   * library-item anchor did. Spacing still comes from the source BPM and stays item-wide;
+   * there is only ever one answer for a source tempo (ADR 0024).
+   */
+  phaseClip?: () => { id: string; beatOffsetMs?: number } | null
 }
 
 export interface ClipEditorBeatGrid {
@@ -54,6 +65,17 @@ export interface ClipEditorBeatGrid {
    * affordance even though the change is already persisted to the source item.
    */
   hasGridChanged: () => boolean
+  /**
+   * How far this session has moved the beat grid, in SOURCE milliseconds, measured
+   * against where the grid sat when the editor opened. Positive means the beat lines
+   * now fall later in the audio; zero when nothing moved or there is no grid.
+   *
+   * Save uses this to slide the clip's audio by the same distance, so every marker keeps
+   * the timeline position the user already had. Reporting the raw distance — rather than
+   * letting Save re-derive an alignment from the committed grid — is what keeps the
+   * correction relative: the clip's placement, sub-beat or not, is never re-judged.
+   */
+  sourceGridShiftMs: () => number
   /** Toggle slide-to-align mode (no-op without a grid). */
   toggleAlign: () => void
   /** Mark the tempo field as being edited so external tempo changes don't clobber typing. */
@@ -101,9 +123,21 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   const alignActive = ref(false)
   const manualBpmInput = ref<string | number>('')
 
-  const resolvedGrid = computed<SourceBeatGrid | null>(() => {
+  // Draft phase offset (source ms) for the clip that owns it. Local until Save, exactly
+  // like the tempo draft, so nothing on the timeline reflows while the user drags.
+  const clipPhaseDraftMs = ref(0)
+
+  const itemGrid = computed<SourceBeatGrid | null>(() => {
     const item = deps.sourceItem()
     return item ? resolveSourceBeatGrid(item, library.byId) : null
+  })
+
+  const resolvedGrid = computed<SourceBeatGrid | null>(() => {
+    const grid = itemGrid.value
+    if (!grid) return null
+    // Phase belongs to the clip when there is one; spacing is always the source's.
+    if (!deps.phaseClip?.()) return grid
+    return { ...grid, anchorMs: grid.anchorMs + clipPhaseDraftMs.value }
   })
 
   const oneShot = computed<boolean>(() => {
@@ -124,6 +158,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // True after `commit` has persisted the draft, so the close handler doesn't then
   // roll it back as if the session were cancelled.
   let gridCommitted = false
+  // Set when the SOURCE grid was changed (tempo, or a phase edit on a surface that has
+  // no owning clip). Only this may write the library item on Save — a clip-local phase
+  // session must leave the source, and therefore every sibling clip, untouched.
+  let itemGridEdited = false
   // The source grid as it looked when the editor opened, so an uncommitted session
   // (Cancel / close without Save) can restore it exactly.
   let gridSnapshot: LibraryItemGridSnapshot | null = null
@@ -135,6 +173,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // True while the user is typing in the tempo field, so external tempo changes
   // (octave, restore, backend echo) don't overwrite what they are entering.
   let tempoEditing = false
+  // Where the grid's phase sat (source ms) when the editor opened. Save measures the
+  // session's grid movement against this so it can slide the clip's audio by exactly
+  // the same distance, leaving the markers on the timeline positions they already had.
+  let sessionStartAnchorMs: number | null = null
 
   function currentBpm(): number | undefined {
     // Always the tempo the grid is actually drawn from, so the controls can never
@@ -144,12 +186,37 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     return typeof bpm === 'number' && bpm > 0 ? bpm : undefined
   }
 
-  /** Grid phase to keep when only the tempo changes; resolves the same inheritance. */
+  /** Grid phase to keep when only the tempo changes; the ITEM's own anchor, never the
+   *  clip-shifted one, so a BPM edit can't leak this clip's phase onto the source. */
   function currentAnchorSec(): number {
-    const grid = resolvedGrid.value
+    const grid = itemGrid.value
     if (grid) return grid.anchorMs / 1000
     const item = deps.sourceItem()
     return item?.beatAnchorSec ?? item?.beats?.[0] ?? 0
+  }
+
+  /** Move the grid phase to `anchorSec`, writing whichever of the two owns it. */
+  function setAnchorSec(anchorSec: number, local: boolean): void {
+    const item = deps.sourceItem()
+    if (!item || !Number.isFinite(anchorSec)) return
+    if (deps.phaseClip?.()) {
+      const base = itemGrid.value?.anchorMs
+      if (typeof base !== 'number') return
+      clipPhaseDraftMs.value = anchorSec * 1000 - base
+      // Markers redraw off `resolvedGrid`; nothing on the item changes.
+      useProjectStore().timelineRevision++
+      if (!local) gridEdited.value = true
+      return
+    }
+    if (local) {
+      library.setItemBeatAnchorLocal(item.id, anchorSec)
+      return
+    }
+    const cur = currentBpm()
+    if (cur === undefined) return
+    library.setItemManualTempoLocal(item.id, cur, anchorSec)
+    gridEdited.value = true
+    itemGridEdited = true
   }
 
   function syncTempoField(): void {
@@ -184,6 +251,12 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     return gridEdited.value
   }
 
+  function sourceGridShiftMs(): number {
+    const anchorMs = resolvedGrid.value?.anchorMs
+    if (sessionStartAnchorMs === null || typeof anchorMs !== 'number') return 0
+    return anchorMs - sessionStartAnchorMs
+  }
+
   function toggleAlign(): void {
     if (!hasGrid()) {
       alignActive.value = false
@@ -208,6 +281,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
       if (cur === undefined || Math.abs(cur - bpm) > 1e-6) {
         library.setItemManualTempoLocal(item.id, bpm, currentAnchorSec())
         gridEdited.value = true
+        itemGridEdited = true
       }
       manualBpmInput.value = bpm.toFixed(2)
     } else if (!tempoEditing || endEditing) {
@@ -225,6 +299,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     library.setItemManualTempoLocal(item.id, orig, currentAnchorSec())
     manualBpmInput.value = orig.toFixed(2)
     gridEdited.value = true
+    itemGridEdited = true
   }
 
   // Re-anchor on the same phase so a halve/double doesn't jump the grid origin.
@@ -237,6 +312,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     library.setItemManualTempoLocal(item.id, next, currentAnchorSec())
     manualBpmInput.value = next.toFixed(2)
     gridEdited.value = true
+    itemGridEdited = true
   }
 
   function halveBpm(): void {
@@ -256,37 +332,29 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     library.setItemManualTempoLocal(item.id, next, currentAnchorSec())
     manualBpmInput.value = next.toFixed(2)
     gridEdited.value = true
+    itemGridEdited = true
   }
 
   function nudgeAnchorMs(deltaMs: number): void {
-    const item = deps.sourceItem()
-    const cur = currentBpm()
-    if (!item || cur === undefined || !Number.isFinite(deltaMs)) return
-    library.setItemManualTempoLocal(item.id, cur, currentAnchorSec() + deltaMs / 1000)
-    gridEdited.value = true
+    if (!Number.isFinite(deltaMs)) return
+    const grid = resolvedGrid.value
+    if (!grid) return
+    setAnchorSec(grid.anchorMs / 1000 + deltaMs / 1000, false)
   }
 
   function nudgeHalfBeat(direction: -1 | 1): void {
-    const item = deps.sourceItem()
     const cur = currentBpm()
-    if (!item || cur === undefined) return
-    const halfBeatSec = 30 / cur
-    library.setItemManualTempoLocal(item.id, cur, currentAnchorSec() + direction * halfBeatSec)
-    gridEdited.value = true
+    const grid = resolvedGrid.value
+    if (cur === undefined || !grid) return
+    setAnchorSec(grid.anchorMs / 1000 + (direction * 30) / cur, false)
   }
 
   function previewAnchorSec(anchorSec: number): void {
-    const item = deps.sourceItem()
-    if (!item) return
-    library.setItemBeatAnchorLocal(item.id, anchorSec)
+    setAnchorSec(anchorSec, true)
   }
 
   function commitAnchorSec(anchorSec: number): void {
-    const item = deps.sourceItem()
-    const cur = currentBpm()
-    if (!item || cur === undefined) return
-    library.setItemManualTempoLocal(item.id, cur, anchorSec)
-    gridEdited.value = true
+    setAnchorSec(anchorSec, false)
   }
 
   function commit(): void {
@@ -294,15 +362,23 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     const cur = currentBpm()
     if (!item || cur === undefined) return
-    // The draft already lives in the item's local (bpm, anchor); persist that final
-    // pair as the session's single undoable grid edit.
-    library.setItemManualTempo(item.id, cur, currentAnchorSec())
+    const clip = deps.phaseClip?.()
+    if (clip) {
+      // Phase is this clip's alone; the source item keeps whatever anchor it had, so no
+      // other clip cut from the same file moves.
+      useProjectStore().setClipBeatOffset(clip.id, clipPhaseDraftMs.value)
+    }
+    // The tempo draft already lives in the item's local bpm; persist it (with the item's
+    // own unchanged phase) only when it actually moved.
+    if (itemGridEdited) library.setItemManualTempo(item.id, cur, currentAnchorSec())
     gridCommitted = true
   }
 
   function discardIfUncommitted(): void {
-    if (!gridEdited.value || gridCommitted || !gridSnapshot || !gridSnapshotItemId) return
-    library.restoreItemGridLocal(gridSnapshotItemId, gridSnapshot)
+    if (!gridEdited.value || gridCommitted) return
+    clipPhaseDraftMs.value = deps.phaseClip?.()?.beatOffsetMs ?? 0
+    if (gridSnapshot && gridSnapshotItemId) library.restoreItemGridLocal(gridSnapshotItemId, gridSnapshot)
+    useProjectStore().timelineRevision++
     gridEdited.value = false
   }
 
@@ -312,10 +388,13 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     alignActive.value = false
     gridEdited.value = false
     gridCommitted = false
+    itemGridEdited = false
     tempoEditing = false
+    clipPhaseDraftMs.value = deps.phaseClip?.()?.beatOffsetMs ?? 0
     const item = deps.sourceItem()
     gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
     gridSnapshotItemId = item ? item.id : null
+    sessionStartAnchorMs = resolvedGrid.value?.anchorMs ?? null
     const bpm = currentBpm()
     originalBpm.value = bpm !== undefined ? bpm : null
     syncTempoField()
@@ -330,6 +409,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     resolvedGrid,
     canRestore,
     hasGridChanged,
+    sourceGridShiftMs,
     toggleAlign,
     beginTempoEdit,
     commitTempoEdit,

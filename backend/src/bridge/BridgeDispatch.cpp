@@ -140,6 +140,10 @@ bool dispatchClip(const DispatchContext& ctx)
     {
         silverdaw::handleClipSetReversed(payload, engine, projectState);
     }
+    else if (type == "CLIP_SET_BEAT_OFFSET")
+    {
+        silverdaw::handleClipSetBeatOffset(payload, projectState);
+    }
     else if (type == "CLIP_SET_BRAKE")
     {
         silverdaw::handleClipSetBrake(payload, engine, projectState);

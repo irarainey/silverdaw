@@ -176,8 +176,10 @@ void handleClipAdd(const juce::var& payload, silverdaw::AudioEngine& engine, sil
         (posVar.isDouble() || posVar.isInt() || posVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(posVar)) : 0.0;
 
     const juce::var inVar = payload.getProperty("inMs", juce::var());
+    // Not clamped to zero: a window that overhangs the head of the file is legal and
+    // renders as silence, so a split or paste of such a clip must keep its in-point.
     const double inMs =
-        (inVar.isDouble() || inVar.isInt() || inVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(inVar)) : 0.0;
+        (inVar.isDouble() || inVar.isInt() || inVar.isInt64()) ? static_cast<double>(inVar) : 0.0;
     const juce::var durVar = payload.getProperty("durationMs", juce::var());
     const double payloadDurationMs =
         (durVar.isDouble() || durVar.isInt() || durVar.isInt64()) ? juce::jmax(0.0, static_cast<double>(durVar)) : 0.0;

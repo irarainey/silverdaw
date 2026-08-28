@@ -6,9 +6,11 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveClipDurationMs, CLIP_FIT_EPSILON_MS } from '@/lib/clip/clipTiming'
+import { clipAnchorOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { filePathToDisplayName } from './projectHelpers'
+import { replayClipWarpToNewClip } from './projectClipWarpActions'
 import { waveformReusePayload } from './project-waveform-state'
 import type { Clip, ClipboardEntry, ClipboardGroupItem, Track } from './projectTypes'
 import type { ProjectClipThis } from './projectClipContract'
@@ -30,6 +32,8 @@ function clipToClipboardEntry(clip: Clip): ClipboardEntry {
     tempoRatio: clip.tempoRatio,
     semitones: clip.semitones,
     cents: clip.cents,
+    pendingAutoWarp: clip.pendingAutoWarp,
+    beatOffsetMs: clip.beatOffsetMs,
     effectiveDurationMs: clip.effectiveDurationMs,
     effectiveTempoRatio: clip.effectiveTempoRatio,
     effectiveWarpActive: clip.effectiveWarpActive
@@ -85,6 +89,8 @@ function insertPastedClip(
     tempoRatio: entry.tempoRatio,
     semitones: entry.semitones,
     cents: entry.cents,
+    pendingAutoWarp: entry.pendingAutoWarp,
+    beatOffsetMs: entry.beatOffsetMs,
     effectiveDurationMs: entry.effectiveDurationMs,
     effectiveTempoRatio: entry.effectiveTempoRatio,
     effectiveWarpActive: entry.effectiveWarpActive
@@ -119,16 +125,10 @@ function replayPastedClipBridge(
   if (entry.name) {
     sendBridge('CLIP_RENAME', { clipId: newId, name: entry.name })
   }
-  // Replay active warp so the backend builds the pasted processor.
-  if (entry.warpEnabled === true) {
-    sendBridge('CLIP_SET_WARP', {
-      clipId: newId,
-      warpEnabled: true,
-      warpMode: entry.warpMode,
-      tempoRatio: entry.tempoRatio,
-      semitones: entry.semitones,
-      cents: entry.cents
-    })
+  // Replay active (or still-pending) warp so the backend builds the pasted processor.
+  replayClipWarpToNewClip(entry, newId)
+  if (entry.beatOffsetMs) {
+    sendBridge('CLIP_SET_BEAT_OFFSET', { clipId: newId, beatOffsetMs: entry.beatOffsetMs })
   }
 }
 
@@ -207,7 +207,13 @@ export const clipClipboardActions = {
         return null
       }
       const cbEffDur = clipboardEntryEffDur(cb)
-      const targetStartMs = Math.max(0, positionMs ?? 0)
+      // Place the clip's musical anchor at the target, which is what a drag would do.
+      // Pasting the left EDGE there instead put the clip up to a beat away from where
+      // dragging it would, so a pasted clip jumped the first time it was nudged.
+      const targetStartMs = Math.max(
+        0,
+        (positionMs ?? 0) - clipAnchorOffsetMs(cb, useLibraryStore())
+      )
       for (const id of track.clipIds) {
         const c = this.clips[id]
         if (!c) continue
@@ -254,7 +260,14 @@ export const clipClipboardActions = {
         return null
       }
       const lastTrackIndex = this.tracks.length - 1
-      const anchorStartMs = Math.max(0, positionMs ?? 0)
+      // Anchor the GROUP by its earliest clip's musical anchor and shift every clip by
+      // that one delta, so the group lands where dragging it would while its internal
+      // spacing stays exactly as it was copied.
+      const primary = cb.items.find((i) => i.relStartMs === 0) ?? cb.items[0]!
+      const anchorStartMs = Math.max(
+        0,
+        (positionMs ?? 0) - clipAnchorOffsetMs(primary, useLibraryStore())
+      )
 
       // Resolve every clip's destination up front so validation and application share one layout.
       const placements = cb.items.map((entry) => {

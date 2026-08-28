@@ -76,7 +76,12 @@ export function useClipEditorController(
   // Draft warp + pitch state reseeded on each target switch.
   const warpDraft = useClipEditorWarpDraft(warpSourceBpm)
   // Manual-tempo fallback: pin a BPM + slide the grid to align it.
-  const beatGrid = useClipEditorBeatGrid({ sourceItem: () => sourceItem.value })
+  const beatGrid = useClipEditorBeatGrid({
+    sourceItem: () => sourceItem.value,
+    // Only a plain timeline clip owns its grid phase; library items and linked/saved
+    // clips are shared by design, so they keep the item-wide anchor.
+    phaseClip: () => (editsSingleTimelineClip.value ? timelineClip.value : null)
+  })
   const {
     draftTempoEnabled,
     draftMode,
@@ -467,11 +472,12 @@ export function useClipEditorController(
   // Marker ref is reassigned per edit, so a shallow watch is enough.
   watch(() => sliceDraft.markers.value, () => drawWaveform())
 
-  // Sliding the beat grid (or applying a manual BPM) mutates the source item's
-  // anchor/tempo locally; redraw so the grid markers track the pointer live
+  // Sliding the beat grid (or applying a manual BPM) moves the resolved grid — the
+  // clip's own phase draft when it owns one, the source item's anchor/tempo otherwise.
+  // Watch the resolved values so the markers track the pointer live on both paths,
   // instead of only snapping into place on pointer release.
   watch(
-    [() => sourceItem.value?.beatAnchorSec, () => sourceItem.value?.bpm],
+    [() => beatGrid.resolvedGrid.value?.anchorMs, () => beatGrid.resolvedGrid.value?.bpm],
     () => {
       drawWaveform()
     }
@@ -824,14 +830,13 @@ export function useClipEditorController(
     editorItem: () => editorItem.value,
     timelineClip: () => timelineClip.value,
     sourceItem: () => sourceItem.value,
-    titleText: () => titleText.value,
     editsSingleTimelineClip: () => editsSingleTimelineClip.value,
     editsLibraryClipLibrary: () => editsLibraryClipLibrary.value,
     editsTimelineClip: () => editsTimelineClip.value,
     hasWarpPitchChanged: () => hasWarpPitchChanged.value,
     gridChanged: () => beatGrid.hasGridChanged(),
     commitGrid: () => beatGrid.commit(),
-    alignToGridEnabled: () => ui.alignClipsToGridOnAnalysis,
+    gridShiftMs: () => beatGrid.sourceGridShiftMs(),
     sourceBpm: () => warpSourceBpm.value,
     projectBpm: () => transport.bpm,
     canApplyCrop: () => canApplyCrop.value,

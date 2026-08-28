@@ -3,7 +3,9 @@ import {
   effectiveClipDurationMs,
   effectiveClipTempoRatio,
   isClipTempoWarpActive,
-  findClipSlot
+  findClipSlot,
+  sourceDeltaMsFromTimeline,
+  timelineDeltaMsFromSource
 } from '@/lib/clip/clipTiming'
 
 describe('effectiveClipDurationMs', () => {
@@ -102,5 +104,49 @@ describe('findClipSlot', () => {
     )
     // Gap [1000,1500) is 500ms — well short of a 1000ms clip → next gap after b.
     expect(findClipSlot(s, 't1', 'x', 1000, 1000)).toBe(2500)
+  })
+})
+
+describe('source/timeline delta conversion', () => {
+  // The exact ratio from the reported project: 92 BPM project, 105.80420935304572 BPM source.
+  const ratio = 0.8695306222932581
+
+  it('round-trips exactly so a trim cannot slide audio under the clip edge', () => {
+    for (const timelineDelta of [10, 11.500458, -34.501373, 663.67437058182, 0.25]) {
+      const src = sourceDeltaMsFromTimeline(timelineDelta, ratio)
+      expect(timelineDeltaMsFromSource(src, ratio)).toBeCloseTo(timelineDelta, 9)
+    }
+  })
+
+  it('represents a musical length that whole-millisecond rounding cannot', () => {
+    // One project beat at 92 BPM, in source time, is 567.0852 ms — not an integer.
+    const oneBeatTimeline = 60_000 / 92
+    expect(sourceDeltaMsFromTimeline(oneBeatTimeline, ratio)).toBeCloseTo(567.0852, 3)
+  })
+
+  it('treats a non-positive ratio as unwarped rather than dividing by zero', () => {
+    expect(sourceDeltaMsFromTimeline(100, 0)).toBe(100)
+    expect(timelineDeltaMsFromSource(100, 0)).toBe(100)
+  })
+})
+
+describe('musical lengths survive a snapped trim', () => {
+  const ratio = 0.8695306222932581 // 92 BPM project over a 105.804 BPM source
+
+  it('keeps duplicates on the grid because a snapped edge yields an exact bar length', () => {
+    // A right trim writes `durationMs = (targetRightMs - startMs) * ratio`; duplicate then
+    // appends by `durationMs / ratio`. Whole-millisecond rounding used to make that
+    // effective length slightly non-musical, so each successive duplicate walked further
+    // off the grid (the reported 11.5 ms per copy). Exact conversion makes it stay put.
+    const beatMs = 60_000 / 92
+    const oneBarMs = 4 * beatMs
+    const durationMs = sourceDeltaMsFromTimeline(oneBarMs, ratio)
+    const effectiveMs = timelineDeltaMsFromSource(durationMs, ratio)
+
+    let startMs = 0
+    for (let copy = 1; copy <= 16; copy++) {
+      startMs += effectiveMs
+      expect(startMs).toBeCloseTo(copy * oneBarMs, 6)
+    }
   })
 })

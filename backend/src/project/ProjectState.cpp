@@ -24,6 +24,7 @@ const juce::Identifier ProjectState::kChannelCount{"channelCount"};
 const juce::Identifier ProjectState::kColorIndex{"colorIndex"};
 const juce::Identifier ProjectState::kLocked{"locked"};
 const juce::Identifier ProjectState::kReversed{"reversed"};
+const juce::Identifier ProjectState::kBeatOffsetMs{"beatOffsetMs"};
 const juce::Identifier ProjectState::kBrake{"brake"};
 const juce::Identifier ProjectState::kBackspin{"backspin"};
 const juce::Identifier ProjectState::kScratchPatternId{"scratchPatternId"};

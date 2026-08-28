@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.7.1
+
+### Changed
+
+- Sliding a clip's beat markers now changes only that clip, and copies made from it inherit that alignment.
+- Editing a clip's beat markers now moves the audio inside the clip instead of moving the clip.
+- Pasting a clip now lines its beat up with the playhead the same way dragging it does.
+
+### Fixed
+
+- Dragging a clip edge no longer shifts the audio inside the clip or drifts off the line it snapped to.
+- The waveform inside a clip is now drawn from the clip's exact position in the audio.
+- Splitting, duplicating or pasting a clip still waiting on its tempo analysis now keeps it in time with the original.
+- Duplicating a clip trimmed on the grid now keeps every copy on the grid.
+- A clip cut exactly on a beat no longer loses its first beat marker or jumps a beat when snapped to a bar.
+- Sliding a clip's beat markers now moves the audio by exactly that much, leaving the clip where it was placed even when it sits off the beat.
+- Importing some MP3s no longer fails to detect a tempo, leaving them and their stems without one.
+
 ## 1.7.0
 
 ### Added

@@ -256,6 +256,7 @@ export function applyProjectTracks(target: SnapshotTarget, snapshot: ProjectStat
           c.pendingAutoWarp === true && c.warpEnabled !== true ? true : undefined,
         locked: c.locked === true ? true : undefined,
         reversed: c.reversed === true ? true : undefined,
+        beatOffsetMs: typeof c.beatOffsetMs === 'number' ? c.beatOffsetMs : undefined,
         brake: c.brake === true ? true : undefined,
         backspin: c.backspin === true ? true : undefined,
         scratchPatternId: typeof c.scratchPatternId === 'string' && c.scratchPatternId

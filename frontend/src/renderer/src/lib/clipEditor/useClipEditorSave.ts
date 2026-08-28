@@ -34,7 +34,6 @@ export interface ClipEditorSaveDeps {
   editorItem: () => LibraryItem | null
   timelineClip: () => Clip | null
   sourceItem: () => LibraryItem | null
-  titleText: () => string
   editsSingleTimelineClip: () => boolean
   editsLibraryClipLibrary: () => boolean
   editsTimelineClip: () => boolean
@@ -44,8 +43,8 @@ export interface ClipEditorSaveDeps {
   /** Persist the session's final beat grid as one undoable edit (draft-then-commit).
    *  Called inside the Save undo group so the grid change folds into the one Save step. */
   commitGrid: () => void
-  /** The "align clips to grid on analysis" preference. */
-  alignToGridEnabled: () => boolean
+  /** How far the session moved the beat grid, in source ms (see `sourceGridShiftMs`). */
+  gridShiftMs: () => number
   sourceBpm: () => number | undefined
   projectBpm: () => number
 
@@ -134,18 +133,29 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
     return null
   }
 
-  /** After a Clip Editor save, snap the edited timeline clip to the bar grid when the
-   *  beat grid was changed this session and the align preference is on — but only if it
-   *  has room. A clip boxed in by neighbours is left where it is and the user is told to
-   *  move it manually. Runs inside the save's undo group so the move folds into the one
-   *  Save step; nothing happens while the grid is merely being dragged. */
-  function alignEditedClipToGridOnSave(clip: Clip): void {
-    if (!deps.gridChanged() || !deps.alignToGridEnabled()) return
-    if (deps.project.alignClipToBarGrid(clip.id) === 'blocked') {
-      deps.notifications.pushInfo(
-        `Couldn't align "${deps.titleText()}" to the bar grid — other clips are in the way. Move it manually.`
-      )
-    }
+  /** After a Clip Editor save that moved the beat grid, slide the audio inside the clip
+   *  by the same distance, so every beat marker keeps the timeline position it had.
+   *
+   *  A grid edit re-answers "where is beat one in this audio?", so the clip's placement
+   *  was never what was wrong. Moving the clip (the original behaviour) shifted a clip
+   *  that was already cut to the bar by up to half a beat, leaving it overhanging its bar
+   *  with no room to sit back down, and could be blocked outright by a neighbour.
+   *  Re-cutting the source window holds `startMs` and the timeline footprint exactly.
+   *
+   *  The slide is measured against where the grid opened rather than against the project
+   *  grid, and is unconditional. Re-aligning to the project grid re-placed the clip on
+   *  the strength of a marker nudge: a clip deliberately sat on a sub-beat was dragged to
+   *  the nearest whole beat, so a few milliseconds of grid correction moved the audio by
+   *  a fifth of a second. Snapping a clip to the project grid is what clip drag, nudge
+   *  and the on-analysis alignment preference are for; this only stops the audio drifting
+   *  out from under markers the user just placed by hand, which is never unwanted.
+   *
+   *  Runs inside the save's undo group so the change folds into the one Save step;
+   *  nothing happens while the grid is merely being dragged. Where the slide runs off
+   *  either end of the source the overhang plays as silence, so it always succeeds. */
+  function holdEditedClipAudioUnderGrid(clip: Clip): void {
+    if (!deps.gridChanged()) return
+    deps.project.slideClipAudioWithGrid(clip.id, deps.gridShiftMs())
   }
 
   function onSaveChanges(): void {
@@ -191,7 +201,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         // clip, so it is set directly (the linked branch below propagates).
         deps.project.setClipBrake(clip.id, deps.brakeCommitted())
         deps.project.setClipBackspin(clip.id, deps.backspinCommitted())
-        alignEditedClipToGridOnSave(clip)
+        holdEditedClipAudioUnderGrid(clip)
       })
       deps.close()
       return
@@ -218,7 +228,7 @@ export function useClipEditorSave(deps: ClipEditorSaveDeps): ClipEditorSave {
         deps.library.updateLibraryClipBrake(entry.id, deps.brakeCommitted())
         deps.library.updateLibraryClipBackspin(entry.id, deps.backspinCommitted())
         const linked = deps.timelineClip()
-        if (linked) alignEditedClipToGridOnSave(linked)
+        if (linked) holdEditedClipAudioUnderGrid(linked)
       }
       return editResult
     })

@@ -62,6 +62,11 @@ export interface Clip {
   locked?: boolean
   /** Plays the clip window backwards (non-destructive). Propagated across library-clip siblings. */
   reversed?: boolean
+  /** Beat-grid phase for THIS clip alone, in source ms, added to the library item's grid
+   *  anchor. Absent = the unshifted source grid, which is how every clip saved before this
+   *  existed loads. Deliberately never propagated: a split produces two independent clips,
+   *  and correcting where beat one falls in one must not move the markers on the other. */
+  beatOffsetMs?: number
   /** Turntable brake (record-stop): when set, the clip decelerates to a stop over a fixed
    *  platter-stop time at its end. Propagated across library-clip siblings. */
   brake?: boolean
@@ -265,6 +270,10 @@ export interface ClipboardEntry {
   tempoRatio?: number
   semitones?: number
   cents?: number
+  /** Copied clip was still waiting on its source BPM; the paste must keep waiting too. */
+  pendingAutoWarp?: boolean
+  /** Clip-local beat-grid phase in source ms; carried so a pasted copy keeps its alignment. */
+  beatOffsetMs?: number
   effectiveDurationMs?: number
   effectiveTempoRatio?: number
   effectiveWarpActive?: boolean

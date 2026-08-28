@@ -268,6 +268,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a clip's reverse flag. Defaults to false. */
     bool isClipReversed(const juce::String& clipId) const;
 
+    // Per-clip beat-grid phase in SOURCE ms, added to the library item's grid anchor for
+    // this clip alone. Zero is suppressed on disk/wire, so projects saved before this
+    // existed load as the unshifted source grid. Renderer-only: the engine never reads it.
+    bool setClipBeatOffset(const juce::String& clipId, double beatOffsetMs);
+
+    /** Read a clip's beat-grid phase offset in source ms. Defaults to 0. */
+    double getClipBeatOffset(const juce::String& clipId) const;
+
     // Clip brake (turntable record-stop): a non-destructive on/off flag. When set, the
     // clip decelerates to a stop over a fixed platter-stop time at its end. Absent = off,
     // suppressed on disk/wire (mirrors `reversed`).
@@ -889,6 +897,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kColorIndex;
     static const juce::Identifier kLocked;
     static const juce::Identifier kReversed;
+    static const juce::Identifier kBeatOffsetMs;
     static const juce::Identifier kBrake;
     static const juce::Identifier kBackspin;
     static const juce::Identifier kScratchPatternId;
