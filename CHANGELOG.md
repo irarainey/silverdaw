@@ -14,6 +14,7 @@
 - Splitting, duplicating or pasting a clip that is still waiting on its tempo analysis now keeps the new clip in time with the original.
 - Duplicating a clip that was trimmed on the grid now keeps every copy on the grid, instead of each copy drifting a little further off it.
 - A clip cut exactly on a beat no longer loses its first beat marker, or jumps a beat when snapped to a bar.
+- Importing some MP3s no longer silently fails to find a tempo, which also left every stem separated from them without one. Such a file could not report its true length, so the last fraction of a second was refused and the whole import was thrown away with it.
 
 ## 1.7.0
 

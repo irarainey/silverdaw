@@ -6,6 +6,21 @@
 namespace silverdaw
 {
 
+// Result of streaming a reader into a writer; `samplesWritten` may fall short of the
+// reader's reported length when that length was only an estimate.
+struct DecodeResult
+{
+    juce::int64 samplesWritten = 0;
+    bool writeFailed = false;
+};
+
+// Below this share of the reader's reported length a decode is a real failure, not an
+// over-estimated tail, and must not be cached.
+inline constexpr double kMinDecodedFraction = 0.98;
+
+// Copy reader -> writer a block at a time, stopping cleanly when the reader runs dry.
+DecodeResult writeDecodedBlocks(juce::AudioFormatReader& reader, juce::AudioFormatWriter& writer);
+
 // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play start.
 class DecodedCache
 {

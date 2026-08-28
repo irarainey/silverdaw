@@ -42,6 +42,7 @@ void addOtherEnhancerTests(std::vector<TestCase>& tests);
 void addMelRoformerSpectralTests(std::vector<TestCase>& tests);
 void addBsRoformerSpectralTests(std::vector<TestCase>& tests);
 void addLibraryCleanupTests(std::vector<TestCase>& tests);
+void addDecodedCacheTests(std::vector<TestCase>& tests);
 void addScratchPatternPersistenceTests(std::vector<TestCase>& tests);
 void addScratchPatternEvaluatorTests(std::vector<TestCase>& tests);
 void addScratchPatternReplayProjectStateTests(std::vector<TestCase>& tests);
