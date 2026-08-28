@@ -811,6 +811,54 @@ describe('projectStore', () => {
     ).toBeGreaterThan(item.durationMs)
   })
 
+  it('alignClipAudioToBarGrid takes the minimal correction rather than stepping a whole beat', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+
+    const itemId = library.addItem({
+      filePath: 'C:\\audioalign4.wav',
+      fileName: 'audioalign4.wav',
+      durationMs: 1_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625]
+
+    const trackId = project.addTrack()
+    // The back half of the file — a very common cut, and its window ends exactly on the
+    // last sample, so ANY later cut-in overhangs the tail.
+    const clipId =
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: itemId,
+          filePath: 'C:\\audioalign4.wav',
+          fileName: 'audioalign4.wav',
+          durationMs: 1_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        0
+      ) ?? ''
+    project.trimClip(clipId, 0, 500, 500)
+
+    expect(project.alignClipAudioToBarGrid(clipId)).toBe('moved')
+    // 125 ms later, and no further. Stepping back a whole source beat to 125 ms would
+    // also land on the grid and would keep the window inside the file, but it replaces
+    // the clip's audio with a completely different beat — a drastic, unasked-for edit in
+    // response to a small grid nudge. The 125 ms that falls past the end plays as silence.
+    expect(project.clips[clipId]?.inMs).toBeCloseTo(625, 6)
+    expect(project.clips[clipId]?.startMs).toBe(0)
+    expect(project.clips[clipId]?.durationMs).toBe(500)
+  })
+
   it('alignClipAudioToBarGrid cuts in before the file when the beat is behind the clip', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

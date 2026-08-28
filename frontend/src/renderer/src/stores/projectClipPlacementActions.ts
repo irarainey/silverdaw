@@ -358,7 +358,7 @@ export const clipPlacementActions = {
       })
       log.debug(
         'project',
-        `trimClip id=${clipId} start=${safeStart} in=${safeIn} dur=${safeDur}`
+        `trimClip id=${clipId} start=${safeStart} in=${safeIn} dur=${safeDur} reversed=${clip.reversed === true}`
       )
     },
 
@@ -464,12 +464,12 @@ export const clipPlacementActions = {
      *
      *  A window that runs off either end of the source is allowed: the engine renders the
      *  overhang as silence, so the audio always lands on the beat rather than the edit
-     *  being refused. Whole-beat steps are preferred first, since they buy the same
-     *  alignment while keeping real audio. */
+     *  being refused, and the correction is always the smallest one that reaches the
+     *  grid — the clip keeps the audio it had, minus whatever slid off the edge. */
     alignClipAudioToBarGrid(clipId: string): 'moved' | 'skip' {
       const aligned = resolveClipBeatAlignment(this, clipId)
       if (!aligned) return 'skip'
-      const { clip, shiftMs, ratio, sourceSpacingMs } = aligned
+      const { clip, shiftMs, ratio } = aligned
       if (Math.abs(shiftMs) < GRID_ALIGNED_EPSILON_MS) return 'skip' // already aligned
 
       // Audio at source time `s` renders at `startMs + (s - inMs) / ratio`, so moving the
@@ -479,23 +479,27 @@ export const clipPlacementActions = {
       const sourceDurationMs =
         item && item.durationMs > 0 ? item.durationMs : clip.inMs + clip.durationMs
       const origInMs = clip.inMs
-      let newInMs = origInMs - sourceDeltaMsFromTimeline(shiftMs, ratio)
-      // A whole source beat either way lands on the same grid, so stepping by one buys
-      // room at the head or tail of the file without losing the alignment. Only step when
-      // it actually helps — otherwise the overhang is unavoidable and silence is better
-      // than trading one end's overhang for the other's.
-      if (newInMs < 0 && newInMs + sourceSpacingMs + clip.durationMs <= sourceDurationMs) {
-        newInMs += sourceSpacingMs
-      }
-      if (newInMs + clip.durationMs > sourceDurationMs && newInMs - sourceSpacingMs >= 0) {
-        newInMs -= sourceSpacingMs
-      }
+      // This is the WHOLE correction: the window lands exactly where the grid puts it.
+      // It used to step a whole source beat when the new window ran off either end of the
+      // file, on the theory that a beat either way lands on the same grid and so keeps
+      // real audio. That trade is wrong. A clip cut to the end of its file overhangs by a
+      // fraction of a millisecond after any nudge, and the step then swapped a sliver of
+      // silence for a whole beat of COMPLETELY DIFFERENT audio — the clip's contents
+      // changed under a 5 ms grid correction, which reads as the clip being re-cut or
+      // playing the wrong part of the file. Silence at the edge is the honest result, and
+      // the minimal one.
+      const newInMs = origInMs - sourceDeltaMsFromTimeline(shiftMs, ratio)
       if (Math.abs(newInMs - origInMs) < GRID_ALIGNED_EPSILON_MS) return 'skip'
 
       this.trimClip(clipId, clip.startMs, newInMs, clip.durationMs)
+      const headSilenceMs = Math.max(0, -newInMs)
+      const tailSilenceMs = Math.max(0, newInMs + clip.durationMs - sourceDurationMs)
       log.debug(
         'project',
-        `alignClipAudioToBarGrid ${clipId} in ${origInMs.toFixed(1)} -> ${newInMs.toFixed(1)}ms (shift=${shiftMs.toFixed(1)}ms, clip held at ${clip.startMs.toFixed(1)}ms)`
+        `alignClipAudioToBarGrid ${clipId} in ${origInMs.toFixed(1)} -> ${newInMs.toFixed(1)}ms ` +
+          `(shift=${shiftMs.toFixed(1)}ms, clip held at ${clip.startMs.toFixed(1)}ms, ` +
+          `reversed=${clip.reversed === true}, source=${sourceDurationMs.toFixed(1)}ms, ` +
+          `silence head=${headSilenceMs.toFixed(1)}ms tail=${tailSilenceMs.toFixed(1)}ms)`
       )
       return 'moved'
     }

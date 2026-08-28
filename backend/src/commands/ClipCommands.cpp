@@ -168,7 +168,8 @@ void handleClipSetBeatOffset(const juce::var& payload, silverdaw::ProjectState& 
 }
 
 void handleClipSetBrake(const juce::var& payload, silverdaw::AudioEngine& engine,
-                        silverdaw::ProjectState& projectState){
+                        silverdaw::ProjectState& projectState)
+{
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const bool on = static_cast<bool>(payload.getProperty("on", false));
     silverdaw::log::info("bridge", "recv CLIP_SET_BRAKE clipId=" + clipId +
