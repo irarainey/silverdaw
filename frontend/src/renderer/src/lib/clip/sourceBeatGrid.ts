@@ -131,6 +131,25 @@ export interface ClipBeatGridClip {
 }
 
 /**
+ * A clip's MUSICAL ANCHOR offset: the timeline distance from its left edge to the
+ * position that placement should treat as "where this clip sits".
+ *
+ * This is the one reference point every placement operation must agree on. Clip drag
+ * snaps the first in-window beat, so a clip that opens with silence still lands on the
+ * beat; paste used to place the left EDGE at the playhead instead. The two differ by
+ * this offset — up to a whole beat — which is why pasting a clip and then nudging it
+ * moved it, and why clips that should have been identical ended up at different grid
+ * phases. Routing every placement through this function makes those agree by
+ * construction.
+ *
+ * A clip with no usable beat grid (a simple sample, or a window with no beat in it)
+ * anchors on its own edge, which is the only musical position it has.
+ */
+export function clipAnchorOffsetMs(clip: ClipBeatGridClip, library: SourceBeatGridLibrary): number {
+  return clipFirstBeatOffsetMs(clip, library) ?? 0
+}
+
+/**
  * Timeline-time offset from a clip's left edge to the first source-grid beat inside
  * its trim window, or null when the source has no usable grid (or no beat falls
  * within the window). Shared by clip drag, keyboard nudge, and bar-grid alignment,

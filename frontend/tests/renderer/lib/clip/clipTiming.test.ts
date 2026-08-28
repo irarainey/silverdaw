@@ -129,3 +129,24 @@ describe('source/timeline delta conversion', () => {
     expect(timelineDeltaMsFromSource(100, 0)).toBe(100)
   })
 })
+
+describe('musical lengths survive a snapped trim', () => {
+  const ratio = 0.8695306222932581 // 92 BPM project over a 105.804 BPM source
+
+  it('keeps duplicates on the grid because a snapped edge yields an exact bar length', () => {
+    // A right trim writes `durationMs = (targetRightMs - startMs) * ratio`; duplicate then
+    // appends by `durationMs / ratio`. Whole-millisecond rounding used to make that
+    // effective length slightly non-musical, so each successive duplicate walked further
+    // off the grid (the reported 11.5 ms per copy). Exact conversion makes it stay put.
+    const beatMs = 60_000 / 92
+    const oneBarMs = 4 * beatMs
+    const durationMs = sourceDeltaMsFromTimeline(oneBarMs, ratio)
+    const effectiveMs = timelineDeltaMsFromSource(durationMs, ratio)
+
+    let startMs = 0
+    for (let copy = 1; copy <= 16; copy++) {
+      startMs += effectiveMs
+      expect(startMs).toBeCloseTo(copy * oneBarMs, 6)
+    }
+  })
+})

@@ -15,7 +15,7 @@ import {
   sourceDeltaMsFromTimeline,
   timelineDeltaMsFromSource
 } from '@/lib/clip/clipTiming'
-import { clipFirstBeatOffsetMs } from '@/lib/clip/sourceBeatGrid'
+import { clipAnchorOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { startMsForAlignedBeat } from '@/lib/musicTime'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
@@ -598,19 +598,20 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (ms !== null) seekTo(ms)
   }
 
-  // Beat-aware snap aligns the clip's first in-window source beat to the project
-  // grid rather than its left edge, so a clip that opens with silence still
-  // lands on the beat. Alt fine mode and a Free grid both give exact placement.
+  // Beat-aware snap aligns the clip's MUSICAL ANCHOR (its first in-window source beat,
+  // or its edge when it has no grid) to the project grid rather than its left edge, so
+  // a clip that opens with silence still lands on the beat. `clipAnchorOffsetMs` is the
+  // same reference point paste uses, so pasting then dragging never moves a clip.
+  // Alt fine mode and a Free grid both give exact placement.
   function snapClipStartMs(
-    clip: Parameters<typeof clipFirstBeatOffsetMs>[0],
+    clip: Parameters<typeof clipAnchorOffsetMs>[0],
     rawStartMs: number,
     fineMode: boolean
   ): number {
-    const referenceBeatOffsetMs = clipFirstBeatOffsetMs(clip, library)
-    if (referenceBeatOffsetMs === null) return snapTimelineMs(rawStartMs, fineMode)
+    const anchorOffsetMs = clipAnchorOffsetMs(clip, library)
     return startMsForAlignedBeat(
-      snapTimelineMs(rawStartMs + referenceBeatOffsetMs, fineMode),
-      referenceBeatOffsetMs,
+      snapTimelineMs(rawStartMs + anchorOffsetMs, fineMode),
+      anchorOffsetMs,
       transport.bpm,
       fineMode ? 'free' : ui.snapGrid
     )

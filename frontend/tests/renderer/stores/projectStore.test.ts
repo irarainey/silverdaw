@@ -803,6 +803,50 @@ describe('projectStore', () => {
     expect(project.clips[clipId]?.startMs).toBe(0)
   })
 
+  it('pasteClipAtPlayhead anchors the clip beat at the playhead, so a paste then a drag agree', () => {
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    transport.bpm = 120
+
+    const itemId = library.addItem({
+      filePath: 'C:\\pasteanchor.wav',
+      fileName: 'pasteanchor.wav',
+      durationMs: 10_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const item = library.byId[itemId]!
+    item.bpm = 120
+    item.beatAnchorSec = 0.125
+    item.beats = [0.125, 0.625, 1.125, 1.625]
+
+    const trackId = project.addTrack()
+    const clipId =
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId: itemId,
+          filePath: 'C:\\pasteanchor.wav',
+          fileName: 'pasteanchor.wav',
+          durationMs: 1_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        0
+      ) ?? ''
+    project.selectClip(clipId)
+    expect(project.copySelectedClip()).toBe(true)
+
+    // The clip's first beat sits 125 ms in, so pasting at 4000 ms must start the clip at
+    // 3875 ms to put that beat ON the playhead — which is where dragging it would land it.
+    project.selectedTrackId = trackId
+    const pastedId = project.pasteClipAtPlayhead(4_000) ?? ''
+    expect(project.clips[pastedId]?.startMs).toBeCloseTo(3_875, 6)
+  })
+
   it('alignClipToBarGrid does nothing when the clip tempo differs from the project tempo', () => {
     const project = useProjectStore()
     const library = useLibraryStore()

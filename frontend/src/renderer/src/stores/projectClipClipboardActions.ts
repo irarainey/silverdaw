@@ -6,6 +6,7 @@ import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import { effectiveClipDurationMs, CLIP_FIT_EPSILON_MS } from '@/lib/clip/clipTiming'
+import { clipAnchorOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { filePathToDisplayName } from './projectHelpers'
@@ -201,7 +202,13 @@ export const clipClipboardActions = {
         return null
       }
       const cbEffDur = clipboardEntryEffDur(cb)
-      const targetStartMs = Math.max(0, positionMs ?? 0)
+      // Place the clip's musical anchor at the target, which is what a drag would do.
+      // Pasting the left EDGE there instead put the clip up to a beat away from where
+      // dragging it would, so a pasted clip jumped the first time it was nudged.
+      const targetStartMs = Math.max(
+        0,
+        (positionMs ?? 0) - clipAnchorOffsetMs(cb, useLibraryStore())
+      )
       for (const id of track.clipIds) {
         const c = this.clips[id]
         if (!c) continue
@@ -248,7 +255,14 @@ export const clipClipboardActions = {
         return null
       }
       const lastTrackIndex = this.tracks.length - 1
-      const anchorStartMs = Math.max(0, positionMs ?? 0)
+      // Anchor the GROUP by its earliest clip's musical anchor and shift every clip by
+      // that one delta, so the group lands where dragging it would while its internal
+      // spacing stays exactly as it was copied.
+      const primary = cb.items.find((i) => i.relStartMs === 0) ?? cb.items[0]!
+      const anchorStartMs = Math.max(
+        0,
+        (positionMs ?? 0) - clipAnchorOffsetMs(primary, useLibraryStore())
+      )
 
       // Resolve every clip's destination up front so validation and application share one layout.
       const placements = cb.items.map((entry) => {
