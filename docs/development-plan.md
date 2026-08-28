@@ -118,6 +118,7 @@ type-checked list of every currently-defined envelope.
 { "type": "CLIP_ADD", "payload": { "trackId": "t1", "clipId": "c1", "libraryItemId": "l1", "positionMs": 0, "inMs": 0, "durationMs": 8000, "colorIndex": 3 } }
 { "type": "CLIP_MOVE", "payload": { "clipId": "c1", "positionMs": 2000, "trackId": "t2" } }
 { "type": "CLIP_TRIM", "payload": { "clipId": "c1", "startMs": 1000, "inMs": 500, "durationMs": 4000 } }
+{ "type": "CLIP_SET_BEAT_OFFSET", "payload": { "clipId": "c1", "beatOffsetMs": 15.0 } }
 { "type": "CLIP_COLOR", "payload": { "clipId": "c1", "colorIndex": 5 } }
 { "type": "CLIP_REBIND", "payload": { "clipId": "c1", "libraryItemId": "l2" } }
 { "type": "LIBRARY_ITEM_RELINK", "payload": { "itemId": "l1", "filePath": "..." } }
@@ -133,7 +134,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.7.0" } }
+{ "type": "READY", "payload": { "version": "1.7.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -632,8 +633,9 @@ Design converged via rubber-duck across Gemini 3.1 Pro, MAI-Code, and GPT-5.5.
   — the Clip Editor's native coordinate space — and only converted to timeline
   positions at commit (`timelineAt = clip.startMs + (markerSourceMs − clip.inMs) /
   effectiveTempoRatio`). Two v1 sources, both freely editable after generation:
-  - **Grid** — derived client-side from the library item's `bpm` + `beatAnchorSec`
-    and a subdivision (1 bar / 1/2 bar / 1/4 / 1/8 / 1/16 / 1/32), reusing the
+  - **Grid** — derived client-side from the clip's resolved beat grid
+    (`resolveClipBeatGrid`: the source `bpm` plus the clip's own phase) and a
+    subdivision (1 bar / 1/2 bar / 1/4 / 1/8 / 1/16 / 1/32), reusing the
     existing beat-grid math (`envelopeBeatSnap.ts`). No backend call.
   - **Manual** — click the waveform to add, drag to move, Alt/right-click to
     remove (reuse the `volumeOverlay.ts` interaction pattern).
@@ -2093,7 +2095,7 @@ make the file browser's now-playing bar and rows behave the way they read.
 6. [x] **One more e2e journey** (ADR 0014): a file browser audition, from adding
    a folder through playing a row to the bar clearing on pause.
 
-### 1.7.0 - VST3 Effect Plugins *(current release)*
+### 1.7.0 - VST3 Effect Plugins *(released)*
 
 **Goal:** let a track carry the user's own VST3 effects alongside the built-in
 Track FX, without giving up export parity or a responsive transport. Full
@@ -2133,6 +2135,42 @@ reasoning in ADR 0025 (hosting) and ADR 0026 (delay compensation).
 Still open, and deliberately so: plugin-parameter automation, which needs a
 dynamic replacement for the fixed `AutomationParam` enum and is a decision of
 its own.
+
+### 1.7.1 - Clip Timing & Beat-Grid Correctness *(current release)*
+
+**Goal:** make a clip's window arithmetic exact, so clips that should be identical
+are identical, and make correcting a clip's beat grid a local edit that moves neither
+the clip nor its siblings.
+
+1. [x] **A clip's beat-grid phase belongs to the clip.** `CLIP.beatOffsetMs` (source
+   ms, absent == 0, via `CLIP_SET_BEAT_OFFSET`) shifts the item anchor for that clip
+   alone; spacing stays source-global (ADR 0024). A split, duplicate or paste inherits
+   the parent's offset so the operation is invisible on the markers, and from then on
+   each piece is independent. Correcting one clip used to rewrite the shared
+   library-item anchor and knock the markers off every other clip cut from that file
+   while they sat perfectly still. Projects saved before this resolve to the unshifted
+   source grid (ADR 0019).
+2. [x] **Correcting the grid moves the audio, not the clip.**
+   `project.slideClipAudioWithGrid` re-cuts the source window by exactly the distance
+   the Clip Editor session moved the grid, holding `startMs` and the timeline footprint
+   byte-for-byte. The clip keeps its place in the arrangement, every marker keeps its
+   timeline position, and only the audio underneath moves. The shift is wrapped to the
+   smallest move that lands the new grid on the old grid's lines, so a whole-beat regrid
+   is a no-op. It deliberately does **not** re-align to the project grid: rounding to the
+   nearest whole project beat dragged a clip deliberately placed on a sub-beat up to half
+   a beat, so a few milliseconds of correction moved the audio by a fifth of a second.
+3. [x] **A window may overhang the source.** `inMs` is no longer clamped at zero and the
+   window may run past the end of the file; `OffsetSource` renders the overhang as
+   silence. A grid slide therefore always succeeds instead of being refused or, worse,
+   stepping a whole beat to stay inside the file and swapping the clip's audio for
+   completely different material.
+4. [x] **Exact window arithmetic.** Edge-drag trim no longer shifts the audio inside the
+   clip or drifts off the line it snapped to; the waveform is drawn from the clip's exact
+   position in the source, so two identical windows render identically; a clip cut exactly
+   on a beat keeps its first marker; and paste anchors the clip's beat at the playhead the
+   same way dragging does (`clipAnchorOffsetMs`).
+5. [x] **Tempo detection on imported MP3s.** Some files failed to decode to the WAV
+   playback cache and so were left with no tempo, taking their stems with them.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3006,10 +3044,12 @@ Implementation increments (foundations first; each keeps build + tests green):
 
 - [x] **Minimal beat-grid correction** — manual BPM override plus a slide-the-grid
   drag in the Clip Editor that re-anchors the first downbeat
-  (`LIBRARY_ITEM_SET_MANUAL_TEMPO`), and a guarded detector phase-correction step.
+  (`LIBRARY_ITEM_SET_MANUAL_TEMPO` for the tempo, `CLIP_SET_BEAT_OFFSET` for a
+  timeline clip's own phase), and a guarded detector phase-correction step.
   Deliberately **not** full variable-tempo maps, per-beat warp markers, or time
-  signatures. The single authority is the source's `(bpm, beatAnchorSec)`, which
-  the rigid project grid follows.
+  signatures. Spacing has a single authority — the source's `bpm`, which the rigid
+  project grid follows — while phase is per clip, so correcting one clip cannot move
+  the markers on its siblings.
 
 ### 11.4 Loudness & gain — *Phase 5/8*
 

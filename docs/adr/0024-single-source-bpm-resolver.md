@@ -119,3 +119,13 @@ legitimately not a whole number of bars.
   answers again. Timeline beat markers close the loop structurally: a clip warped to
   follow the project tempo takes its marker spacing from the project itself rather
   than deriving it from the ratio, so there is no arithmetic left to disagree.
+- **This governs beat *spacing*, not beat *phase*.** A file has one tempo, so every
+  clip cut from it is gridded identically — but where beat one falls is a separate
+  question, and on variable-tempo material the honest answer genuinely differs
+  between two halves of a split. Phase therefore lives on the clip
+  (`CLIP.beatOffsetMs`, added to the item anchor by `resolveClipBeatGrid`), and is
+  inherited by split, duplicate and paste. Writing it to the shared library-item
+  anchor instead — as correcting a clip's grid used to — moved the markers on every
+  sibling clip cut from that file while they sat perfectly still, which is the same
+  class of "one fact, several owners" defect this ADR exists to prevent, only in the
+  opposite direction: phase was being centralised on a fact that is not shared.
