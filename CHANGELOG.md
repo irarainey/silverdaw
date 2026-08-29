@@ -4,24 +4,24 @@
 
 ### Added
 
-- **Edit BPM** on a library item corrects a mis-detected tempo, respacing that file's beat markers without moving a single clip, marker or automation point.
-- Edit BPM is reached from a library item's right-click menu, the **Edit** button beside the BPM in its information, or the Beat grid in the Clip Editor.
-- A correction reports what it re-warped and what it left alone, including clips whose tempo is pinned or whose warp is off.
+- **Edit BPM** corrects a mis-detected tempo on a library item, respacing its beat markers without moving any clip, marker or automation point.
+- Edit BPM is reached from a library item's right-click menu, the **Edit** button beside the BPM on a library item's or clip's information, or the Clip Editor's beat grid.
+- A tempo correction reports which clips it re-warped and which it left alone.
 
 ### Changed
 
-- Tempo detection is more accurate on dense material such as full-band rock and soul, where sustained guitars, pads and vocals previously blurred the beat.
-- A tempo that two independent detectors disagree on is now settled by a second opinion rather than by the detector that raised the doubt.
-- A tempo inherited from the file an item was cut from is now corrected on that file, fixing every stem and clip taken from it together.
-- A tempo inherited through more than one step — a clip of a stem of a track — is now resolved and drawn correctly instead of appearing to be missing.
-- Previewing a library file no longer draws beat markers over its waveform, since they cannot be adjusted from that window.
+- Tempo detection is more accurate on dense material such as full-band rock and soul.
+- A tempo the detector is unsure of is now settled by a second, independent estimator.
+- A tempo corrected on a file now corrects every stem and clip taken from it.
+- A tempo inherited through several steps, such as a clip of a stem, is now shown instead of appearing to be missing.
+- Previewing a library file no longer draws beat markers over its waveform.
 
 ### Fixed
 
-- Tempo detection no longer gives up on MP3s whose final moments fail to decode, which left common tracks with no tempo and no beat markers at all.
-- Removing the last track now clears the markers and area selection with it, which were left stranded on a timeline that no longer showed any time.
-- Changing the project tempo no longer turns warp on for clips already at that tempo, which gained a warp badge for a stretch that did nothing.
-- Beat markers no longer sit a few milliseconds late on bass-heavy material. The grid is now anchored to where each onset began rather than to where the sound was changing fastest, which removes a lateness that grew with how slowly the sound started — roughly 3 ms on kicks and pads against 0.3 ms on sharp clicks.
+- Tempo detection no longer gives up on MP3s whose final moments fail to decode.
+- Removing the last track now clears the markers and area selection with it.
+- Changing the project tempo no longer turns warp on for clips already at that tempo.
+- Beat markers no longer sit a few milliseconds late on bass-heavy material.
 
 ## 1.7.1
 
