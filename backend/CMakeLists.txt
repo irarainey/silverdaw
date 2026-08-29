@@ -97,6 +97,24 @@ if(MSVC)
 endif()
 target_link_libraries(btrack_local PRIVATE SampleRate::samplerate)
 
+# ─── MiniBPM (second, independent fixed-tempo estimator) ─────────────────
+# Vendored verbatim (two self-contained files, no dependencies) under
+# `backend/third_party/minibpm/`, following the BTrack precedent. BTrack is a
+# CAUSAL tracker whose tempo seed constrains every later refinement stage to
+# +/-10% of its period, so a bad seed is unrecoverable. MiniBPM is a whole-file
+# estimator with a different failure profile, which is exactly what makes it
+# useful as a corroborating second opinion rather than a replacement.
+# Licence: GPL-2.0-or-later, compatible with the project's AGPL-3.0-or-later
+# (see THIRD_PARTY_LICENSES.md and ADR 0028).
+set(MINIBPM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/minibpm)
+add_library(minibpm_local STATIC ${MINIBPM_DIR}/MiniBpm.cpp)
+target_include_directories(minibpm_local PUBLIC ${MINIBPM_DIR})
+# Silence MSVC's "unsafe" warnings inside third-party code so our own warnings
+# stay visible, matching the btrack_local treatment above.
+if(MSVC)
+    target_compile_options(minibpm_local PRIVATE /W0 /wd4267 /wd4244)
+endif()
+
 # ─── Rubber Band Library (time-stretch + pitch-shift) ────────────────────
 # Rubber Band ships a Meson-only build; there's no upstream CMake target.
 # We FetchContent the source tree (downloads only, no add_subdirectory) and
@@ -453,6 +471,9 @@ add_library(silverdaw_backend_core STATIC
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/BpmAnalysisHelpers.cpp
+    src/dsp/BpmAudioLoader.cpp
+    src/dsp/MiniBpmEstimator.cpp
+    src/dsp/PercussiveEmphasis.cpp
     src/dsp/LoudnessAnalyzer.cpp
     src/dsp/EnhancerDsp.cpp
     src/dsp/SafetyLimiter.cpp
@@ -590,6 +611,7 @@ target_link_libraries(silverdaw_backend_core PUBLIC
     juce::juce_gui_basics
     ixwebsocket
     btrack_local
+    minibpm_local
     rubberband_local
     rnnoise_local
     SampleRate::samplerate

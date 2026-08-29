@@ -53,6 +53,22 @@ class BpmDetector
         timeout the pass returns no tempo with `timedOut` set, and the user is
         invited to reanalyse. */
     static constexpr double kAnalysisTimeoutSeconds = 120.0;
+    /** How near the independent second estimator must be to the autocorrelation
+        period before it is allowed to overturn the beat-residual test. The
+        residual test compares both candidates against BTrack's OWN beats, so it
+        cannot arbitrate when those beats are the unreliable part; this is the
+        tie-break for that case. Kept tight so only a decisive second opinion
+        counts — see ADR 0028. */
+    static constexpr double kArbiterMaxAgreementBpm = 2.0;
+    /** How much closer, in BPM, the second engine must be to the autocorrelation
+        period than to the baseline before its preference counts. Guards the
+        near-tie case, where the arbiter is only nominally on one side and a
+        baseline that was already correct would otherwise be overturned. */
+    static constexpr double kArbiterMinPreferenceMarginBpm = 0.25;
+    /** Minimum separation between the second engine's top two candidates, as a
+        fraction of the winner, before its answer counts as decisive. A narrow
+        win is an ambiguous readout, not a second opinion. */
+    static constexpr double kArbiterMinCandidateSeparation = 0.05;
 
     /** Blocking; call from a worker, and keep `formatManager` alive for the call. */
     static BpmAnalysis analyse(const juce::File& audioFile, juce::AudioFormatManager& formatManager);

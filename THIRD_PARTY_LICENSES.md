@@ -95,6 +95,21 @@ SOFTWARE.
   [`backend/third_party/btrack/PATCHES.md`](backend/third_party/btrack/PATCHES.md)
   for the local MSVC-compatibility changes.
 
+### MiniBPM — © 2012-2025 Particular Programs Ltd.
+
+- **Licence**: GPL-2.0-or-later. A commercial licence is also offered by the
+  copyright holders; Silverdaw relies on the GPL grant only.
+- **Project**: <https://breakfastquay.com/minibpm/>
+- **Source**: <https://github.com/breakfastquay/minibpm>
+- **Notice**: An unmodified vendored copy of `src/MiniBpm.h` and
+  `src/MiniBpm.cpp` lives under `backend/third_party/minibpm/` and provides a
+  second, independent fixed-tempo estimate used to corroborate BTrack's. The
+  upstream licence text is included verbatim as
+  `backend/third_party/minibpm/LICENSE.txt`. The **or later** clause is what
+  makes this compatible with the project's AGPL-3.0-or-later licence: the code
+  is taken under GPL-3.0, which AGPL-3.0 §13 expressly permits combining with.
+  A GPL-2.0-**only** dependency would not have been usable here.
+
 ### RNNoise — © 2017 Mozilla; © 2018 Gregor Richards
 
 - **Licence**: BSD 2-Clause.

@@ -10,12 +10,15 @@
 
 ### Changed
 
+- Tempo detection is more accurate on dense material such as full-band rock and soul, where sustained guitars, pads and vocals previously blurred the beat.
+- A tempo that two independent detectors disagree on is now settled by a second opinion rather than by the detector that raised the doubt.
 - A tempo inherited from the file an item was cut from is now corrected on that file, fixing every stem and clip taken from it together.
 - A tempo inherited through more than one step — a clip of a stem of a track — is now resolved and drawn correctly instead of appearing to be missing.
 - Previewing a library file no longer draws beat markers over its waveform, since they cannot be adjusted from that window.
 
 ### Fixed
 
+- Tempo detection no longer gives up on MP3s whose final moments fail to decode, which left common tracks with no tempo and no beat markers at all.
 - Removing the last track now clears the markers and area selection with it, which were left stranded on a timeline that no longer showed any time.
 - Changing the project tempo no longer turns warp on for clips already at that tempo, which gained a warp badge for a stretch that did nothing.
 

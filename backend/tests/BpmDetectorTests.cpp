@@ -7,9 +7,13 @@
 #include "TestSupport.h"
 
 #include "../src/dsp/BpmDetector.h"
+#include "../src/dsp/BpmAudioLoader.h"
+#include "../src/dsp/MiniBpmEstimator.h"
+#include "../src/dsp/PercussiveEmphasis.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -296,11 +300,156 @@ void testWholeTrackGridDoesNotDriftBeyondBeatWindow()
         checkClickTrackGrid(bpm, 180.0);
 }
 
+// Octave folding is what lets two estimators with different search ranges be
+// compared on equal terms: MiniBPM commits to 55-190, while BpmDetector accepts
+// 40-240, so a half/double-time disagreement must not read as a wild one.
+void testFoldBpmIntoRangeNormalisesOctaves()
+{
+    requireNear(silverdaw::foldBpmIntoRange(45.0), 90.0, 1e-9, "sub-range tempo doubles into range");
+    requireNear(silverdaw::foldBpmIntoRange(200.0), 100.0, 1e-9, "super-range tempo halves into range");
+    requireNear(silverdaw::foldBpmIntoRange(128.0), 128.0, 1e-9, "in-range tempo is left alone");
+    // Boundaries are inclusive, so neither endpoint should be pushed an octave away.
+    requireNear(silverdaw::foldBpmIntoRange(55.0), 55.0, 1e-9, "lower bound is left alone");
+    requireNear(silverdaw::foldBpmIntoRange(190.0), 190.0, 1e-9, "upper bound is left alone");
+    require(silverdaw::foldBpmIntoRange(0.0) == 0.0, "non-positive input yields no tempo");
+    require(silverdaw::foldBpmIntoRange(std::numeric_limits<double>::quiet_NaN()) == 0.0,
+            "non-finite input yields no tempo");
+}
+
+// The second engine has to agree with the first on unambiguous material before
+// any disagreement between them can be treated as a meaningful signal. A click
+// track is the cleanest possible case: if MiniBPM cannot hit this, a consensus
+// built on it would be noise. Also covers the shared decode front-end.
+void testMiniBpmAgreesWithBpmDetectorOnAClickTrack()
+{
+    constexpr double kBpm = 128.0;
+    const double sampleRate = 44100.0;
+
+    auto dir = makeTempDir("bpm-minibpm");
+    const auto file = writeClickWav(dir, "click.wav", kBpm, 60.0, sampleRate);
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+
+    const auto decoded = silverdaw::decodeMonoForAnalysis(
+        file, fm, silverdaw::BpmDetector::kMaxAnalysisSeconds,
+        silverdaw::BpmDetector::kAnalysisSampleRate, {});
+
+    dir.deleteRecursively();
+
+    require(decoded.ok(), "shared loader should decode the click track");
+    require(!decoded.mono.empty(), "decoded buffer should carry samples");
+    requireNear(decoded.sourceSampleRate, sampleRate, 1e-9, "loader reports the source rate");
+
+    const auto estimate = silverdaw::estimateTempoWithMiniBpm(
+        decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
+
+    require(estimate.bpm > 0.0, "MiniBPM should yield a tempo for a click track");
+    requireNear(silverdaw::foldBpmIntoRange(estimate.bpm), kBpm, 1.0,
+                "MiniBPM should agree with the click tempo once octave-folded");
+}
+
+// The whole justification for conditioning the audio ahead of beat tracking is
+// that it changes onset STRENGTH without changing onset TIME. BpmDetector's beat
+// anchor is calibrated against a fixed ODF group delay, so a filter with any
+// frequency-dependent delay would shift every visible beat marker by a
+// material-dependent amount. Asserting zero phase directly keeps that property
+// from being lost to a future "better sounding" filter.
+void testPercussiveEmphasisPreservesOnsetTiming()
+{
+    const double sampleRate = 44100.0;
+    const int length = 44100;
+
+    // Boundaries are tested explicitly: an edge policy that shrinks the window
+    // instead of mirroring would keep the interior symmetric while quietly
+    // biasing onsets in the first and last few milliseconds, which is exactly
+    // where a clip's opening beat tends to sit.
+    for (int impulseAt : {200, 22050, 43900})
+    {
+        // A single impulse contains every frequency, so if any band were delayed
+        // relative to another the response would smear asymmetrically about it.
+        std::vector<float> impulse(static_cast<size_t>(length), 0.0f);
+        impulse[static_cast<size_t>(impulseAt)] = 1.0f;
+
+        const auto filtered = silverdaw::emphasisePercussiveContent(impulse, sampleRate);
+        require(filtered.size() == impulse.size(), "conditioning preserves length");
+
+        int peakIndex = 0;
+        float peak = 0.0f;
+        for (size_t i = 0; i < filtered.size(); ++i)
+        {
+            if (std::abs(filtered[i]) > peak)
+            {
+                peak = std::abs(filtered[i]);
+                peakIndex = static_cast<int>(i);
+            }
+        }
+        require(peak > 0.0f, "conditioned impulse should not be silent");
+        require(peakIndex == impulseAt, "impulse peak must not move");
+
+        // Sample-wise symmetry is the positive evidence of linear phase; a peak
+        // that merely happened to stay put could still sit on a skewed response.
+        const int span = std::min(150, std::min(impulseAt, length - 1 - impulseAt));
+        require(span > 0, "test impulse should leave room to compare either side");
+        for (int offset = 1; offset <= span; ++offset)
+        {
+            requireNear(filtered[static_cast<size_t>(impulseAt - offset)],
+                        filtered[static_cast<size_t>(impulseAt + offset)], 1e-6,
+                        "impulse response must be symmetric (linear phase)");
+        }
+    }
+}
+
+// Conditioning re-weights bands, so material must survive it at a usable level -
+// including material whose pulse lives in the ATTENUATED mid, which is the case
+// the five-track tuning corpus did not cover.
+void testPercussiveEmphasisKeepsSignalLevel()
+{
+    const double sampleRate = 44100.0;
+    auto tone = [sampleRate](double hz, double amplitude) {
+        std::vector<float> out(44100u, 0.0f);
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            const double t = static_cast<double>(i) / sampleRate;
+            out[i] = static_cast<float>(amplitude *
+                                        std::sin(2.0 * juce::MathConstants<double>::pi * hz * t));
+        }
+        return out;
+    };
+
+    auto peakOf = [](const std::vector<float>& v) {
+        float peak = 0.0f;
+        for (float sample : v) peak = std::max(peak, std::abs(sample));
+        return peak;
+    };
+
+    const auto percussive = silverdaw::emphasisePercussiveContent(tone(60.0, 0.5), sampleRate);
+    require(peakOf(percussive) > 0.1f, "percussive bands should survive conditioning");
+
+    // A mid-only source must not be reduced to nothing: a track carried by
+    // piano, hand percussion or filtered drums still has to yield onsets.
+    const auto midOnly = silverdaw::emphasisePercussiveContent(tone(1000.0, 0.5), sampleRate);
+    require(peakOf(midOnly) > 0.01f, "mid-led material keeps a usable pulse");
+
+    // ...but near-silence must not be amplified into apparent onsets by the
+    // peak restoration, so the gain is capped.
+    std::vector<float> quiet(44100u, 0.0f);
+    for (size_t i = 0; i < quiet.size(); ++i)
+        quiet[i] = (i % 7 == 0) ? 1.0e-4f : -1.0e-4f;
+    const auto quietOut = silverdaw::emphasisePercussiveContent(quiet, sampleRate);
+    require(peakOf(quietOut) <= 1.0e-4f * silverdaw::kPercussiveMaxRestoreGain + 1e-9f,
+            "restoration gain is capped so noise is not lifted to full scale");
+
+    // Too short to filter meaningfully: returned unaltered rather than blanked.
+    const std::vector<float> tiny(16u, 0.5f);
+    const auto tinyOut = silverdaw::emphasisePercussiveContent(tiny, sampleRate);
+    require(tinyOut == tiny, "very short buffers pass through untouched");
+}
+
 } // namespace
 
 void addBpmDetectorTests(std::vector<TestCase>& tests)
-{
-    tests.push_back({"Grid phase: constant offset is recovered", testConsistentOffsetEstimated});
+{    tests.push_back({"Grid phase: constant offset is recovered", testConsistentOffsetEstimated});
     tests.push_back({"Grid phase: aligned grid reports ~zero", testZeroOffsetLeavesAnchor});
     tests.push_back({"Grid phase: inconsistent jitter flagged by MAD", testInconsistentOffsetsFlaggedByMad});
     tests.push_back({"Grid phase: sparse onsets decline", testSparseOnsetsReturnFalse});
@@ -312,6 +461,14 @@ void addBpmDetectorTests(std::vector<TestCase>& tests)
     tests.push_back({"Click track: grid lands on beats", testClickTrackGridLandsOnBeats});
     tests.push_back({"Click track: whole-track grid does not drift past beat window",
                      testWholeTrackGridDoesNotDriftBeyondBeatWindow});
+    tests.push_back({"Octave fold: half/double time normalised into the comparison range",
+                     testFoldBpmIntoRangeNormalisesOctaves});
+    tests.push_back({"MiniBPM: agrees with the click tempo via the shared loader",
+                     testMiniBpmAgreesWithBpmDetectorOnAClickTrack});
+    tests.push_back({"Percussive emphasis: zero phase, onsets do not move",
+                     testPercussiveEmphasisPreservesOnsetTiming});
+    tests.push_back({"Percussive emphasis: percussive bands survive at level",
+                     testPercussiveEmphasisKeepsSignalLevel});
 }
 
 } // namespace silverdaw::tests

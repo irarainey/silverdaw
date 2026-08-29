@@ -1909,6 +1909,12 @@ persisted as `LIBRARY > ITEM.key`.
 - **Resampler**: [libsamplerate](https://github.com/libsndfile/libsamplerate) 0.2.2
   (BSD-2-Clause), pulled in via FetchContent. Used to one-shot convert decoded mono
   audio to BTrack's expected 44.1 kHz.
+- **Second opinion**: [MiniBPM](https://breakfastquay.com/minibpm/) (Chris Cannam,
+  Particular Programs) — a fixed-tempo estimator for whole files, used as an
+  independent arbiter rather than as the primary detector. GPL-2.0-**or-later**; the
+  "or later" clause is what makes it combinable with Silverdaw's AGPL-3.0-or-later. A
+  verbatim copy lives at `backend/third_party/minibpm/` — see
+  [`PATCHES.md`](../backend/third_party/minibpm/PATCHES.md) (no patches were needed).
 - **FFT**: [KISS FFT](https://github.com/mborgerding/kissfft) 1.3.0 (BSD), bundled in
   the BTrack vendor copy. No FFTW dependency.
 
@@ -1920,7 +1926,11 @@ already has a BPM for). The library tile context menu can also send
 `LIBRARY_REANALYSE`, which clears the current tempo/beat fields, recreates the
 decoded-WAV cache, and reruns detection from the current source file. Worker thread
 → decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
-libsamplerate → feed BTrack frame-by-frame at hop=256 (~5.8 ms steps) recording every
+libsamplerate (all shared with every other estimator via
+[`BpmAudioLoader`](../backend/src/dsp/BpmAudioLoader.h), so they judge byte-identical
+audio) → **condition the audio with a zero-phase percussive emphasis**
+([`PercussiveEmphasis`](../backend/src/dsp/PercussiveEmphasis.h)) → feed BTrack
+frame-by-frame at hop=256 (~5.8 ms steps) recording every
 `beatDueInCurrentFrame()` event. **BTrack itself only tracks the first 60 seconds**
 (`kBeatTrackingSeconds`) — it is the expensive, causal part and a bounded prefix gives a
 robust octave/tempo *seed* without risking octave-wander on long, variable material. The
@@ -1928,6 +1938,22 @@ robust octave/tempo *seed* without risking octave-wander on long, variable mater
 decoded track** (bounded only by the generous `kMaxAnalysisSeconds` ceiling), so the final
 period is fit over the entire piece rather than extrapolated from the opening minute.
 Estimates outside `[40, 240]` BPM are dropped as implausible.
+
+The conditioning step emphasises the kick band (below ~180 Hz) and the snare/hat band
+(above ~4 kHz) and attenuates the mid to 0.10, raising onset contrast on dense material
+where sustained guitars, pads and vocals otherwise blur the beat. It uses only symmetric
+FIR kernels applied centred over a reflected extension, so it adds **exactly zero group
+delay at every frequency and every sample position** — non-negotiable, because the beat
+anchor is de-biased by a calibrated ODF group delay and any material-dependent shift
+would silently move every visible beat marker. See ADR 0028.
+
+When the autocorrelation refinement is rejected, a second, independent estimator
+([MiniBPM](../backend/src/dsp/MiniBpmEstimator.h)) arbitrates. That rejection test scores
+candidates against BTrack's *own* beat times, so it is circular precisely when those beats
+are untrustworthy. MiniBPM runs on the **raw** decode — not the conditioned buffer, so it
+does not inherit the same blind spots — and may overturn the rejection only when it is
+within 2.0 BPM of the autocorrelation period and at least 0.25 BPM closer to it than to the
+baseline. It is consulted only on a dispute, so an uncontested import pays nothing for it.
 
 The reported BPM starts from the **median of beat-to-beat intervals** (more stable
 than BTrack's running tempo estimate, which can drift a fraction of a BPM from the
