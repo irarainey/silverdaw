@@ -358,6 +358,7 @@ void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)
             info.cents = static_cast<double>(clip.getProperty(kCents, 0.0));
             info.warpMode = clip.getProperty(kWarpMode, "rhythmic").toString();
             info.pendingAutoWarp = static_cast<bool>(clip.getProperty(kPendingAutoWarp, false));
+            info.durationMs = static_cast<double>(clip.getProperty(kDurationMs, 0.0));
             visitor(info);
         }
     }
@@ -427,16 +428,10 @@ ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juc
     // then drew it at native length, hid the WARP badge, and spaced its beat markers to
     // the wrong grid. Judge it on the drift the ratio produces across the clip instead.
     // Mirrored by the renderer's `isWarpActive` (ADR 0024).
-    const double stretchedMs = out.durationMs / out.tempoRatio;
-    out.warpActive = out.durationMs > 0.0
-                         ? std::abs(stretchedMs - out.durationMs) >= kWarpNegligibleDriftMs
-                         // Length not known yet (a clip warped before its audio landed):
-                         // fall back to the ratio, matching the renderer's "can't tell, so
-                         // treat it as warped" rather than reporting a stretch as inactive.
-                         : std::abs(out.tempoRatio - 1.0) > 1.0e-9;
+    out.warpActive = warpChangesTiming(out.durationMs, out.tempoRatio);
     if (out.warpActive)
     {
-        out.durationMs = stretchedMs;
+        out.durationMs = out.durationMs / out.tempoRatio;
     }
     return out;
 }

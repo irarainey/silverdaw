@@ -1574,12 +1574,63 @@ void testNewProjectDisarmsPreviousProjectTimelineLoop()
             "a new project must disarm the previous project's timeline loop");
 }
 
+// Regression: editing the project tempo auto-warped every unwarped clip that had a
+// source BPM at all, including one whose own tempo already matched the tempo just
+// typed. That clip gained the WARP badge, a stretch ratio and a resampled playback
+// path to leave its audio exactly as it was. Auto-warp asked "does this clip have a
+// tempo?" where the drop path asks "would warping it change anything?" (ADR 0024).
+void testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped()
+{
+    const auto dir = makeTempDir("tempo-change-no-warp");
+    silverdaw::AudioEngine engine;
+    engine.initialise({}, {}, nullptr);
+    silverdaw::ProjectState state;
+    silverdaw::BridgeServer bridge(
+        "test-token", [](silverdaw::BridgeServer&, const juce::String&, const juce::var&) {});
+
+    const auto wav = writeTestWav(dir, "loop.wav", 2.0);
+    require(state.addLibraryItem("match", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
+            "matching library item should add");
+    require(state.addLibraryItem("differ", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
+            "differing library item should add");
+    // The tempo the user is about to type, and one that genuinely needs a stretch.
+    require(state.setLibraryItemBpm("match", 102.76), "matching source BPM should apply");
+    require(state.setLibraryItemBpm("differ", 120.0), "differing source BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "cMatch", "match", 0.0, 2000.0), "matching clip should add");
+    require(state.addClip("t1", "cDiffer", "differ", 4000.0, 2000.0), "differing clip should add");
+    require(engine.addClip("t1", "cMatch", wav, 0.0), "matching engine clip should attach");
+    require(engine.addClip("t1", "cDiffer", wav, 4000.0), "differing engine clip should attach");
+
+    state.setBpm(98.80);
+    state.setBpmSeeded(true);
+
+    auto payload = std::make_unique<juce::DynamicObject>();
+    payload->setProperty("bpm", 102.76);
+    payload->setProperty("autoWarp", true);
+    silverdaw::handleProjectSetBpm(juce::var(payload.release()), engine, state, bridge);
+
+    bool matchWarped = true;
+    bool differWarped = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId == "cMatch") matchWarped = info.warpEnabled;
+            if (info.clipId == "cDiffer") differWarped = info.warpEnabled;
+        });
+    require(!matchWarped, "a clip already at the tempo just typed should not be warped");
+    require(!engine.clipHasWarpForTest("cMatch"),
+            "the engine should not stretch a clip that is already at the project tempo");
+    require(differWarped, "a clip that genuinely differs should still warp onto the new tempo");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"Tempo change warps a previously unwarped clip in the engine", testTempoChangeWarpsPreviouslyUnwarpedClipInEngine});
+    tests.push_back({"Tempo change leaves a clip already at the new tempo unwarped", testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
     tests.push_back({"Stopped seek keeps the read-ahead and any pending edit rebuild", testStoppedSeekKeepsReadAheadAndPendingEditRebuild});

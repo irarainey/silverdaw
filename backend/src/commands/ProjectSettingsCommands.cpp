@@ -149,7 +149,14 @@ void handleProjectSetBpm(const juce::var& payload, silverdaw::AudioEngine& engin
                     [&](const silverdaw::ProjectState::WarpClipInfo& info)
                     {
                         if (info.warpEnabled || info.tempoRatioPinned) return;
-                        if (projectState.getLibraryItemBpm(info.libraryItemId) <= 0.0) return;
+                        const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+                        if (sourceBpm <= 0.0) return;
+                        // A clip already at the new tempo needs no warp, and turning one
+                        // on would be a visible lie: the WARP badge, a stretch ratio and a
+                        // resampled playback path, all to leave the audio exactly as it is.
+                        // The same drift test the drop path applies (ADR 0024), so typing a
+                        // tempo and dropping a file at that tempo agree on what warping means.
+                        if (!silverdaw::warpChangesTiming(info.durationMs, bpm / sourceBpm)) return;
                         projectState.setClipWarp(info.clipId, true, std::nullopt, std::nullopt,
                                                  /*tempoRatioClear=*/true, std::nullopt, std::nullopt,
                                                  std::nullopt);

@@ -2101,7 +2101,9 @@ The same drift rule decides whether a warp *reports* itself active, in both proc
 (`kWarpNegligibleDriftMs`). They must move together — the epsilons used to disagree with
 the engine, which happily stretched the near-miss stem while the project state called the
 warp inactive, so the timeline drew the clip at its native width, withheld the WARP badge
-and spaced its beat markers on the unwarped grid.
+and spaced its beat markers on the unwarped grid. Each process keeps the rule in one
+function — `warpChangesTiming` in `lib/warp.ts` and in `ProjectStateTypes.h` — so
+enabling a warp, drawing one and reporting one cannot answer the question differently.
 
 **Changing the project tempo.** `handleProjectSetBpm` keeps the arrangement's
 musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
@@ -2111,6 +2113,12 @@ arrangement drifts apart on every tempo edit. When the renderer's **Auto-warp cl
 tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
 since the preference lives in the renderer — clips that are not warped but whose
 source has a tempo are warped first, so nothing is left behind at the old tempo.
+A clip whose own tempo *already matches* the new one is skipped: it is filtered by
+`warpChangesTiming`, the same drift test the drop path applies, so typing a tempo and
+dropping a file at that tempo reach the same answer about what warping means. Without
+that filter a matching clip picked up a WARP badge, a stretch ratio and a resampled
+playback path for a stretch that changes nothing — a warp the user can see and
+cannot account for.
 That is the same preference that governs warping a clip *on drop*, deliberately:
 one setting expresses one intent ("keep music at the project tempo"), and it holds
 at every moment the project tempo is established. Widening it rather than minting a
@@ -2122,8 +2130,10 @@ explicitly `true`: the engine reads an unset `enabled` as "keep the current engi
 state", and a clip that has never been warped has no warp processor, so leaving it
 unset would disable warp on the very clips the auto-warp pass just enabled and they
 would play dry and stop at their unwarped length. Sitting at the project tempo is a
-coincidence of the moment, not a property of the clip — any clip with a source tempo
-stays warp-capable and a tempo change must never turn its warp off. The
+coincidence of the moment, not a property of the clip — such a clip stays
+warp-capable and a later tempo change warps it like any other; skipping it above
+only declines to enable a warp that would do nothing *now*, and a tempo change must
+never turn an existing warp off. The
 renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
 shared by the transport bar and the project properties dialog. An active timeline
 selection is rescaled by the same factor there

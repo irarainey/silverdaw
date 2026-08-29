@@ -14,6 +14,10 @@
 - A tempo inherited through more than one step — a clip of a stem of a track — is now resolved and drawn correctly instead of appearing to be missing.
 - Previewing a library file no longer draws beat markers over its waveform, since they cannot be adjusted from that window.
 
+### Fixed
+
+- Changing the project tempo no longer turns warp on for clips already at that tempo, which gained a warp badge for a stretch that did nothing.
+
 ## 1.7.1
 
 ### Changed
