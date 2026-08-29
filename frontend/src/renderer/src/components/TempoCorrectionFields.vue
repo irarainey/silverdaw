@@ -13,6 +13,8 @@
 // play at. Offering to move it turned one clear action into two coupled ones and put
 // the arrangement at risk for a case the user can settle directly in the transport.
 
+import { computed } from 'vue'
+
 const props = defineProps<{
   /** The tempo the surface opened with — the number believed to be wrong. */
   originalBpm: number | null
@@ -28,6 +30,18 @@ const props = defineProps<{
    * two buttons which both write.
    */
   showApply?: boolean
+  /**
+   * Whether to draw the standing explanation: what the correction does, and that the
+   * project tempo is not part of it. An inline host needs it, because there the
+   * correction is offered unprompted beside a tempo field that means "play at this
+   * tempo", and the two have to be told apart. A host the user reached by choosing
+   * "Edit BPM" does not: that choice already states the intent, so the text lands as
+   * a lecture on something they have just told us they know.
+   *
+   * The conditional notes below are not covered by this — an inherited owner and a
+   * measured musical length are facts about *this* item, not restatements of intent.
+   */
+  showSummary?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -37,14 +51,28 @@ const emit = defineEmits<{
 function bpmText(value: number | null): string {
   return value !== null && Number.isFinite(value) ? value.toFixed(2) : '—'
 }
+
+// With the summary suppressed and no note that applies, there is nothing left to say,
+// and the bordered panel would draw as an empty box under the input.
+const hasContent = computed(
+  () =>
+    props.showSummary !== false ||
+    props.showApply !== false ||
+    props.ownerName !== null ||
+    props.fromMusicalLength
+)
 </script>
 
 <template>
   <div
+    v-if="hasContent"
     data-testid="tempo-correction"
     class="mt-1 flex flex-col gap-2 rounded border border-zinc-700 bg-zinc-900/60 p-2"
   >
-    <p class="text-[11px] text-zinc-300">
+    <p
+      v-if="props.showSummary !== false"
+      class="text-[11px] text-zinc-300"
+    >
       Is {{ bpmText(props.originalBpm) }} BPM wrong? Setting it to
       {{ bpmText(props.correctedBpm) }} BPM keeps every clip start, marker and automation
       point exactly where it is.
@@ -65,6 +93,7 @@ function bpmText(value: number | null): string {
       that measurement, which can change the item's bar length.
     </p>
     <p
+      v-if="props.showSummary !== false"
       data-testid="tempo-correction-project-note"
       class="text-[10px] text-zinc-500"
     >

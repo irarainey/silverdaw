@@ -2272,7 +2272,12 @@ earlier choice, not failures), transitions removed, and clips now past the proje
 
 The consequence wording lives in `TempoCorrectionFields.vue` and is rendered by every
 surface that offers a correction, so none of them can drift into saying something
-different. There are two:
+different. It separates notes that are *facts about the item* — an inherited owner, a
+tempo measured from a musical length — from the standing explanation of what a
+correction does. The explanation is drawn only by hosts that offer the correction
+unprompted; a host the user reached by choosing **Edit BPM** suppresses it with
+`show-summary`, because that choice already states the intent and repeating it explains
+the edit back to the person who asked for it. There are two:
 
 - **`EditBpmDialog.vue`**, a dialog whose whole job is this one number. It lands on the
   field with the old value selected and commits on **Save**, with **Cancel** discarding

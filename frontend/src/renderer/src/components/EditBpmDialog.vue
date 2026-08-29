@@ -135,9 +135,10 @@ function onCancel(): void {
           </p>
 
           <!--
-            Only once the typed number is a usable correction. Before that there is
-            nothing to decide about, and showing the consequences of an edit that cannot
-            be applied reads as a warning about the file rather than about the change.
+            Only once the typed number is a usable correction, and only the notes that
+            are facts about this item: choosing "Edit BPM" already states the intent, so
+            restating what a correction does would explain back to the user the thing
+            they just told us.
           -->
           <TempoCorrectionFields
             v-if="tempo.canCorrect.value"
@@ -146,6 +147,7 @@ function onCancel(): void {
             :owner-name="tempo.ownerName.value"
             :from-musical-length="tempo.fromMusicalLength.value"
             :show-apply="false"
+            :show-summary="false"
           />
         </div>
 

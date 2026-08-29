@@ -126,9 +126,10 @@ test('a tempo correction fixes the file tempo without moving anything', async ({
   await bpmInput.press('ControlOrMeta+a')
   await bpmInput.pressSequentially(CORRECTED_BPM.toFixed(2))
 
-  // The consequences appear only once the typed number is a usable correction, and they
-  // say in as many words that the project tempo is not part of this edit.
-  await expect(page.getByTestId('tempo-correction-project-note')).toBeVisible()
+  // Choosing "Edit BPM" already states the intent, so the dialog does not explain a
+  // correction back to the user. The invariant it was standing in for — that the
+  // project tempo is untouched — is asserted below against the transport itself.
+  await expect(page.getByTestId('tempo-correction-project-note')).toBeHidden()
 
   await page.getByTestId('edit-bpm-save').click()
   await expect(bpmInput).toBeHidden({ timeout: 30_000 })
