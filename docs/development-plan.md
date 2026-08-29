@@ -2136,53 +2136,61 @@ Still open, and deliberately so: plugin-parameter automation, which needs a
 dynamic replacement for the fixed `AutomationParam` enum and is a decision of
 its own.
 
-### 1.8.0 - Correcting a Mis-Detected Tempo *(in development)*
+### 1.8.0 - Correcting a Mis-Detected Tempo
 
 **Goal:** give the user a way to say "the detected BPM is simply wrong" and have
-the beat grid, the clips using that source and — if they choose — the project
-tempo follow, without the arrangement rescaling underneath them. Decision and
-rejected alternatives: ADR 0027.
+the beat grid and the clips using that source follow, without the arrangement
+rescaling underneath them. Decision and rejected alternatives: ADR 0027.
 
 Today a wrong detection lands in two places at once, because
 `maybeSeedProjectBpmFor` copies the first musical clip's tempo into the project
 tempo. Neither existing control corrects it: the project tempo box rescales the
-whole arrangement and re-warps the clip, and the Clip Editor's tempo field
-corrects the source but cannot re-seed the project, so the same clip warps by
-the same error inverted.
+whole arrangement and re-warps the clip, and the Clip Editor's tempo field is
+reachable only from a clip already on the timeline — by which point the project
+has been seeded from the wrong number.
 
-1. [ ] **Resolve a tempo owner, not an item.** A shared, cycle-safe resolution in
+1. [x] **Resolve a tempo owner, not an item.** A shared, cycle-safe resolution in
    both processes returning an owner item id and a reason (`musicalLength` /
    `ownBpm` / `inheritedBpm`). Neither `libraryItemSourceBpm` nor
    `ProjectState::getLibraryItemBpm` walks a chain today — both stop at the direct
    source and read its raw BPM — so this is a prerequisite, not an optimisation.
-2. [ ] **One `Correct detected tempo` command.** A single backend command that
-   validates once, writes the source tempo and (only on the user's explicit
-   answer) the project tempo, reconciles every affected clip ratio, envelope and
-   transition from the final state, and broadcasts one consistent result. Not two
-   messages in an undo group: grouping is transaction coalescing, not atomic
-   validation, and the project half can only reach the tempo through the retiming
-   path this exists to avoid.
-3. [ ] **Never move a persisted absolute anchor.** No clip start, marker,
+2. [x] **One `LIBRARY_ITEM_CORRECT_TEMPO` command.** A single backend command that
+   validates once, writes the source tempo, reconciles every affected clip ratio,
+   envelope and transition from the final state, and broadcasts one consistent
+   result. Not two messages in an undo group: grouping is transaction coalescing,
+   not atomic validation.
+3. [x] **Never move a persisted absolute anchor.** No clip start, marker,
    automation point, timeline selection or playhead moves. Tempo-derived and
    clip-local geometry does: clip envelopes scale with their footprint via
    `retimeClipEnvelopesForFootprintChange`, and transitions reconcile inside the
    same undo transaction.
-4. [ ] **Ask before carrying the project tempo, and state the trade-off.**
-   Carrying it corrects the grid but can knock material arranged against the old
-   grid off it — at 98.80 BPM bar 9 sits at 19433 ms, at 102.76 BPM at 18684 ms.
-   Equality between the project tempo and the item's old BPM affects only how
-   prominently the option is offered; it never decides. No provenance is
-   persisted (ADR 0027 §Rejected alternatives).
-5. [ ] **Warn before discarding a recorded musical length.** When the resolution
+4. [x] **Never touch the project tempo.** Setting it from the first clip dropped
+   is merely a convenience, with no linkage and no history — nothing records that
+   it happened and the item it came from may since have left the project. The
+   number is the user's, a correction to a file is not evidence about it, and the
+   transport box remains the one place it changes. Correcting a file in the
+   library *before* placing the first clip means the seed reads the right number
+   and there is no second step. No provenance is persisted, and nothing about the
+   project tempo appears in the payload (ADR 0027 §Rejected alternatives).
+5. [x] **Warn before discarding a recorded musical length.** When the resolution
    reason is `musicalLength`, correcting the tempo drops `musicalBeats` and can
    change the item's bar length (ADR 0024 rule 2). Say so first.
-6. [ ] **Report the outcome.** Clips updated; clips excluded because their ratio
+6. [x] **Report the outcome.** Clips updated; clips excluded because their ratio
    is pinned or their warp is off; transitions invalidated; new overlaps or gaps;
    any clip now past the persisted project length.
-7. [ ] **Register the new type.** `isUndoableEnvelopeType` and
+7. [x] **Register the new type.** `isUndoableEnvelopeType` and
    `prettyTransactionName` in `UndoCommands.cpp`, and
    `transitionGeometryMayHaveChanged` in `TransitionCommands.cpp` — the last is
    what routes reconciliation and `syncClipEdgeFades`.
+8. [x] **Make it findable, and make it a transaction.** The correction is reached
+   from the library context menu's **Edit BPM…**, from the **Edit** button beside
+   the BPM on the item's information dialog, and from the Clip Editor's Beat grid
+   on a timeline clip. It opens `EditBpmDialog.vue`, whose only job is that one
+   number and whose **Cancel** / **Save** footer makes plain that nothing is
+   written until Save. The information dialog stays read-only: it states what a
+   file is, and editing is a transaction. The Clip Editor opened on a *library
+   source* carries no grid editor — that window chooses a section to save and has
+   no Save of its own to commit a file-level edit.
 
 Deliberately out of scope, each its own decision: flagging a `lowConfidence`
 detection at the moment it seeds the project tempo, which is the cheapest place

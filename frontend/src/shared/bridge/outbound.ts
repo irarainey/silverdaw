@@ -228,6 +228,33 @@ export interface LibraryItemSetManualTempoPayload {
   beatAnchorSec: number
 }
 
+/**
+ * Correct a mis-detected tempo on a source item (ADR 0027).
+ *
+ * Distinct from {@link LibraryItemSetManualTempoPayload}, which only rewrites the item's
+ * grid, and from `PROJECT_SET_BPM`, which reads a tempo edit as a *musical* instruction
+ * and rescales the arrangement to preserve its musical shape. This message says "the
+ * detector was wrong": no persisted absolute timeline anchor — clip start, marker,
+ * automation point, timeline selection or playhead — may move as a result of it.
+ *
+ * `itemId` is the item the user acted on; the backend resolves the tempo OWNER from it
+ * and writes the correction there, so correcting a stem or a saved clip fixes the import
+ * it came from and every sibling at once rather than splitting one child away.
+ *
+ * The project tempo is deliberately NOT part of this message. Seeding it from the first
+ * musical clip is a one-time convenience, not a link between the two facts, so a
+ * correction to a file says nothing about what the project's tempo should be. That
+ * remains the user's own setting, made where it is shown (ADR 0027).
+ */
+export interface LibraryItemCorrectTempoPayload {
+  /** The item the user acted on. The backend corrects its resolved tempo owner. */
+  itemId: string
+  /** The true tempo, typed by the user. */
+  bpm: number
+  /** Grid phase anchor in seconds, as for a manual tempo. */
+  beatAnchorSec: number
+}
+
 export interface TrackAddPayload {
   trackId: string
   /** Initial display name for new tracks. Optional for older clients. */
@@ -603,6 +630,7 @@ export interface BridgeOutboundMap {
   LIBRARY_ITEM_SET_COVER_HIDDEN: LibraryItemSetCoverHiddenPayload
   LIBRARY_ITEM_SET_COVER_OVERRIDE: LibraryItemSetCoverOverridePayload
   LIBRARY_ITEM_SET_MANUAL_TEMPO: LibraryItemSetManualTempoPayload
+  LIBRARY_ITEM_CORRECT_TEMPO: LibraryItemCorrectTempoPayload
   TRACK_ADD: TrackAddPayload
   TRACK_REMOVE: TrackRemovePayload
   TRACK_RENAME: TrackRenamePayload
@@ -1285,6 +1313,7 @@ export const bridgeOutboundPayloadKinds: {
   LIBRARY_ITEM_SET_COVER_HIDDEN: 'payload',
   LIBRARY_ITEM_SET_COVER_OVERRIDE: 'payload',
   LIBRARY_ITEM_SET_MANUAL_TEMPO: 'payload',
+  LIBRARY_ITEM_CORRECT_TEMPO: 'payload',
   TRACK_ADD: 'payload',
   TRACK_REMOVE: 'payload',
   TRACK_RENAME: 'payload',

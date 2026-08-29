@@ -2211,6 +2211,89 @@ buttons, and a **half-beat** shift for when the grid has locked onto the off-bea
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 
+**Correcting a mis-detected tempo.** The manual-tempo path above says "play at this
+tempo" and lets Save move the arrangement to suit; it cannot say "the detector read the
+wrong number". Because `maybeSeedProjectBpmFor` copies the first musical clip's detected
+tempo into the project tempo, one wrong detection lands in two places, and neither
+existing control fixes both: the project tempo box rescales the whole arrangement
+(`retimeClipsForTempoChange` and friends), while the Clip Editor tempo field corrects
+only the source, so the clip then warps by the same error inverted. ADR 0027 adds a
+distinct operation for the corrective intent, drawn at persisted position: **a correction
+never moves a clip start, a marker, an automation point, the timeline selection or the
+playhead**, while everything derived from a tempo — clip ratios, footprints, volume
+shapes, transitions — is reconciled from the final corrected state.
+
+`LIBRARY_ITEM_CORRECT_TEMPO { itemId, bpm, beatAnchorSec }` is handled by
+`handleLibraryItemCorrectTempo` (`commands/TempoCorrectionCommands.cpp`). It resolves the
+**tempo owner** first (`ProjectState::resolveTempoOwner`, mirrored by `resolveTempoOwner`
+in `libraryItemHelpers.ts`), so an inherited tempo is corrected on the ancestor and every
+sibling is fixed at once. `applyManualTempo` then writes the tempo and re-derives every
+clip that follows it; `retimeClipEnvelopesForFootprintChange` runs last, against
+footprints the re-derive has settled, and transitions are reconciled in-command so the
+reported count is true of the state the user is told about.
+
+**The project tempo is deliberately absent from the payload.** Setting it from the first
+clip dropped is **merely a convenience, with no linkage and no history**:
+`maybeSeedProjectBpmFor` copies a number once and returns early ever after, nothing
+records that it happened, and the item it came from may since have been deleted from the
+timeline or the library. The project tempo is the user's number, and a statement about a
+file is not evidence about it — not even when the two are equal, which is the case a rule
+would be most tempted to guess from. The command therefore writes exactly one tempo fact
+and no provenance is persisted. The practical route for the common case is to correct the
+file in the library **before** placing the first clip, at which point
+`maybeSeedProjectBpmFor` seeds the project from the corrected number; otherwise the
+project tempo is changed afterwards in the transport box, which is a tempo *change* and
+rescales the arrangement as it always has. In that second case the corrected clip warps by
+`projectBpm / correctedSourceBpm` in between — that is warp working correctly, not a
+residual bug: before the correction both numbers were the same wrong number so the ratio
+happened to be 1.0, and setting the project tempo unwarps it again.
+
+Because the project grid never moves, nothing can be knocked off it: a correction moves no
+clip, so there is no alignment pass and `libraryHandlers.ts` writes nothing to
+`project.clips`.
+
+The reply is `TEMPO_CORRECTION_APPLIED`, a union discriminated on `ok`. The failure arm
+carries `{ itemId, error }` and means nothing was written. The success arm reports the
+owner and its resolution reason, both the previous and applied tempi, whether a recorded
+musical length was discarded, and what was and was not touched: clips re-warped, clips
+excluded because their ratio is pinned or their warp is off (exclusions by the user's own
+earlier choice, not failures), transitions removed, and clips now past the project length.
+`lib/library/tempoCorrectionReport.ts` turns that into the wording the user reads.
+
+The consequence wording lives in `TempoCorrectionFields.vue` and is rendered by every
+surface that offers a correction, so none of them can drift into saying something
+different. There are two:
+
+- **`EditBpmDialog.vue`**, a dialog whose whole job is this one number. It lands on the
+  field with the old value selected and commits on **Save**, with **Cancel** discarding
+  the draft; its Escape listener is registered in the **capture** phase so a dialog
+  underneath cannot close itself on the same key. It is reached from the library context
+  menu's **Edit BPM…** (`useLibraryItemActions`) or from the **Edit** button beside the
+  BPM on the item's information dialog, which is otherwise read-only — information states
+  what a file *is*, editing is a transaction, and a live input in a dialog whose only
+  footer button was Close made it ambiguous which control wrote anything. The Edit button
+  appears only while the row shows the item's own tempo: a warped value is a product of
+  the project tempo and the clip's ratio rather than a fact about the file, so typing over
+  it would have no single meaning. State comes from `useLibraryItemTempoCorrection`, which
+  writes through `libraryStore.correctItemTempo`.
+- **The Clip Editor opened on a timeline clip**, via `useClipEditorBeatGrid`. This is the
+  only one with a grid draft to unwind first: the typed BPM is written locally onto the
+  item being edited so markers redraw live, and `applyCorrection` rolls that back and
+  re-applies it to the resolved owner before sending.
+
+The Clip Editor opened on a **library source** deliberately carries no Beat grid module.
+That window's job is choosing a section to save; it has no Save of its own to commit a
+file-level edit, and the tempo it would show belongs to the library item rather than to
+anything on screen. Its hint text points at the library's **Edit BPM…** instead, so the
+correction has one home on the source rather than two that mean subtly different things.
+
+Beat markers need nothing extra. `resolveSourceBeatGrid` spaces them at `60000 / bpm`
+phase-locked to `beatAnchorSec`; the detected `beats` array is consulted only for presence
+and as a legacy anchor fallback, so a corrected tempo respells the grid by construction.
+Phase is a separate fact: a correction carries the **owner's existing anchor**, never the
+edited item's, so fixing a number can never slide the grid of every clip cut from that
+file. Phase is corrected where it can be seen, in the Clip Editor's Position control.
+
 ### Confidence and audio type classification
 
 `BpmAnalysis` also reports a `lowConfidence` flag derived from the LSQ-fit

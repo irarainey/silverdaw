@@ -46,6 +46,104 @@ export function libraryItemDisplayName(item: {
   return title && title.length > 0 ? title : item.fileName
 }
 
+/** How an item's resolved tempo was arrived at. Mirrors the backend's
+ *  `ProjectState::TempoReason`. */
+export type TempoResolutionReason =
+  /** No tempo at all — nothing to correct. */
+  | 'none'
+  /** A one-shot holds no tempo, inherited or otherwise (ADR 0024 rule 1). */
+  | 'oneShot'
+  /** Calculated from the item's own `musicalBeats` (rule 2). */
+  | 'musicalLength'
+  /** The item's own `bpm` property (rule 3). */
+  | 'ownBpm'
+  /** Owned by an ancestor the item was derived from (rule 4). */
+  | 'inheritedBpm'
+
+/** Who owns an item's tempo, how it was resolved, and what it resolves to. */
+export interface TempoOwner {
+  /** Undefined for `none`/`oneShot`; the item itself for `musicalLength`/`ownBpm`. */
+  ownerItemId?: string
+  reason: TempoResolutionReason
+  /** Undefined whenever `reason` is `none` or `oneShot`. */
+  bpm?: number
+}
+
+/** The minimum shape both tempo resolvers read. */
+interface TempoResolvable {
+  id?: string
+  bpm?: number
+  durationMs?: number
+  musicalBeats?: number
+  audioType?: 'simple' | 'music'
+  derivedFrom?: LibraryClipSource
+}
+
+/**
+ * Resolve an item's tempo AND who owns it, walking the `derivedFrom` chain.
+ *
+ * {@link libraryItemSourceBpm} answers only "what tempo?", which is all drawing and
+ * warping need. Correcting a mis-detected tempo needs "whose tempo?" as well: a stem or
+ * saved clip usually shows a tempo it inherits rather than owns, and writing the
+ * correction onto the child would split it away from its parent while leaving every
+ * sibling on the wrong number (ADR 0027). The reason matters too — a `musicalLength`
+ * tempo is a measurement that a correction would discard, which the user has to be told
+ * before it happens.
+ *
+ * Deliberately mirrors the backend's `ProjectState::resolveTempoOwner` rule for rule.
+ * Unlike the single-hop lookup this replaces, the walk follows the chain to its end and
+ * is cycle-safe, so an item derived from a saved clip that was itself cut from an import
+ * resolves to the import.
+ */
+export function resolveTempoOwner(
+  item: TempoResolvable | undefined | null,
+  byId: Readonly<Record<string, LibraryItem>>
+): TempoOwner {
+  let current: TempoResolvable | undefined | null = item
+  // A chain is normally one or two links (import -> saved clip -> sample), but a corrupt
+  // or hand-edited project could close it into a loop, which would hang the walk.
+  const visited = new Set<string>()
+  let isOriginalItem = true
+
+  while (current) {
+    const currentId = current.id
+    if (currentId !== undefined) {
+      if (visited.has(currentId)) return { reason: 'none' }
+      visited.add(currentId)
+    }
+
+    // Answer "is this a one-shot?" before resolving any tempo. A one-shot anywhere in the
+    // chain ends the walk, because an ancestor with no tempo has none to pass down —
+    // an explicit `audioType: 'music'` says THIS item has a pulse, it does not create one
+    // in the item it was cut from (ADR 0024 rule 1).
+    if (libraryItemIsSimple(current, byId)) return { reason: 'oneShot' }
+
+    // Only the item the caller asked about may answer from its musical length: an
+    // ancestor's recorded beat count describes the ancestor's file, not this one.
+    if (isOriginalItem) {
+      const fromLength = musicalLengthBpm(current)
+      if (fromLength !== undefined) {
+        return { ownerItemId: currentId, reason: 'musicalLength', bpm: fromLength }
+      }
+    }
+
+    if (typeof current.bpm === 'number' && current.bpm > 0) {
+      return {
+        ownerItemId: currentId,
+        reason: isOriginalItem ? 'ownBpm' : 'inheritedBpm',
+        bpm: current.bpm
+      }
+    }
+
+    const sourceId = current.derivedFrom?.sourceItemId
+    // A broken link is not an error: the chain simply has no owner to reach.
+    current = sourceId ? byId[sourceId] : undefined
+    isOriginalItem = false
+  }
+
+  return { reason: 'none' }
+}
+
 /**
  * The single resolver for a clip or library item's ORIGINAL BPM.
  *
@@ -55,7 +153,8 @@ export function libraryItemDisplayName(item: {
  * the two processes must never derive their own version of it: when they drifted,
  * a clip could be drawn stretched while the engine played it unwarped.
  *
- * Three rules, in order:
+ * Delegates to {@link resolveTempoOwner} so ADR 0024's rules live in exactly one
+ * place; this is the hot, "what tempo?" question. The rules, in order:
  *   1. A one-shot has no tempo at all, inherited or otherwise.
  *   2. A recorded musical length wins: when the item's file is known to hold a whole
  *      number of beats, `beats * 60000 / durationMs` is a measurement of the audio
@@ -65,31 +164,14 @@ export function libraryItemDisplayName(item: {
  *      directly visible as a clip that no longer warps onto the grid. A hand-typed
  *      tempo clears the length (backend `setLibraryItemManualTempo`), so an explicit
  *      instruction still wins.
- *   3. Otherwise use the item's own BPM, falling back to the item it was derived
- *      from — a stem or saved clip lands on its parent's tempo.
+ *   3. Otherwise use the item's own BPM, falling back to the chain it was derived
+ *      from — a stem or saved clip lands on its ancestor's tempo.
  */
 export function libraryItemSourceBpm(
-  item: {
-    bpm?: number
-    durationMs?: number
-    musicalBeats?: number
-    audioType?: 'simple' | 'music'
-    derivedFrom?: LibraryClipSource
-  },
+  item: TempoResolvable,
   byId: Readonly<Record<string, LibraryItem>>
 ): number | undefined {
-  if (libraryItemIsSimple(item, byId)) return undefined
-  const fromLength = musicalLengthBpm(item)
-  if (fromLength !== undefined) return fromLength
-  if (typeof item.bpm === 'number' && item.bpm > 0) return item.bpm
-  const sourceId = item.derivedFrom?.sourceItemId
-  if (!sourceId) return undefined
-  const source = byId[sourceId]
-  // An explicit `audioType: 'music'` says this item has a pulse; it does not create
-  // one in the item it was cut from. Inheriting a tempo off a one-shot parent would
-  // have the renderer resolve a BPM the backend refuses (ADR 0024).
-  if (!source || libraryItemIsSimple(source, byId)) return undefined
-  return typeof source.bpm === 'number' && source.bpm > 0 ? source.bpm : undefined
+  return resolveTempoOwner(item, byId).bpm
 }
 
 /**
@@ -122,7 +204,7 @@ export function musicalLengthBpm(item: {
  * Stretch % while everything else warped it to the project tempo.
  */
 export function libraryItemWarpSourceBpm(
-  item: { kind?: LibraryItem['kind']; bpm?: number; durationMs?: number; musicalBeats?: number; audioType?: 'simple' | 'music'; derivedFrom?: LibraryClipSource } | undefined,
+  item: (TempoResolvable & { kind?: LibraryItem['kind'] }) | undefined,
   byId: Readonly<Record<string, LibraryItem>>
 ): number | undefined {
   if (!item) return undefined

@@ -34,7 +34,8 @@ export type {
   LibraryItemGridSnapshot,
   LibraryClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, libraryItemWarpSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, libraryItemWarpSourceBpm, resolveTempoOwner, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export type { TempoOwner, TempoResolutionReason } from './libraryItemHelpers'
 
 import { libraryClipActions } from './libraryClipActions'
 import { importActions } from './libraryImportActions'
@@ -326,6 +327,32 @@ export const useLibraryStore = defineStore('library', {
       // of placed clips happens on Clip Editor Save (see useClipEditorSave), not on
       // every grid tweak, so the timeline never reflows while the user is dragging.
       sendBridge('LIBRARY_ITEM_SET_MANUAL_TEMPO', { itemId, bpm, beatAnchorSec })
+    },
+
+    /**
+     * Corrects a mis-detected tempo (ADR 0027). Distinct from `setItemManualTempo`:
+     * that says "this is the tempo I want to play at" and lets the arrangement follow,
+     * while this says "the detector read the wrong number" and must leave every
+     * persisted position — clip starts, markers, automation, the playhead — exactly
+     * where it is. The backend resolves the tempo owner, writes the source tempo in one
+     * undoable step and replies with `TEMPO_CORRECTION_APPLIED`.
+     *
+     * The project tempo is untouched. It is seeded from the first musical clip as a
+     * one-time convenience, so it is the user's number rather than the file's, and a
+     * correction to a file says nothing about it.
+     *
+     * Nothing is applied optimistically. A correction re-derives every following clip;
+     * a local guess would only have to be unpicked on the failure arm, so the store
+     * waits for the backend echo instead.
+     *
+     * Returns false without sending when `bpm` is outside 20–300.
+     */
+    correctItemTempo(itemId: string, bpm: number, beatAnchorSec: number): boolean {
+      if (!Number.isFinite(bpm) || bpm < 20 || bpm > 300) return false
+      if (!Number.isFinite(beatAnchorSec)) return false
+      sendBridge('LIBRARY_ITEM_CORRECT_TEMPO', { itemId, bpm, beatAnchorSec })
+      log.info('library', `correctItemTempo id=${itemId} bpm=${bpm}`)
+      return true
     },
 
     /**

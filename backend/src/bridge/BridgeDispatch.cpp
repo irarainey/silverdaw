@@ -22,6 +22,7 @@
 #include "ProjectFxCommands.h"
 #include "ProjectSession.h"
 #include "ProjectSettingsCommands.h"
+#include "TempoCorrectionCommands.h"
 #include "ProjectState.h"
 #include "SampleExport.h"
 #include "ScratchSessionCommands.h"
@@ -251,6 +252,10 @@ bool dispatchLibrary(const DispatchContext& ctx)
     else if (type == "LIBRARY_ITEM_SET_MANUAL_TEMPO")
     {
         silverdaw::handleLibraryItemSetManualTempo(payload, engine, projectState, bridge);
+    }
+    else if (type == "LIBRARY_ITEM_CORRECT_TEMPO")
+    {
+        silverdaw::handleLibraryItemCorrectTempo(payload, engine, projectState, bridge);
     }
     else
     {

@@ -1681,4 +1681,56 @@ describe('libraryStore', () => {
 
     expect(library.byId[id]!.beatAnchorSec).toBeUndefined()
   })
+
+  // Correcting a mis-detected tempo (ADR 0027). One command carries both tempo facts, so
+  // the store must not guess at any of it locally.
+  describe('correctItemTempo', () => {
+    function addSource(): string {
+      return useLibraryStore().addItem({
+        filePath: 'C:\\audio\\song.wav',
+        fileName: 'song.wav',
+        durationMs: 268_094,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      })
+    }
+
+    it('sends the item, the tempo and the grid phase, and nothing else', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      sendMock.mockClear()
+
+      expect(library.correctItemTempo(id, 102.76, 0.25)).toBe(true)
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_CORRECT_TEMPO', {
+        itemId: id,
+        bpm: 102.76,
+        beatAnchorSec: 0.25,
+      })
+    })
+
+    it('applies nothing optimistically, so a refusal has nothing to unpick', () => {
+      // A correction rewrites two tempo facts and re-derives every following clip; a
+      // local guess would only have to be rolled back on the failure arm.
+      const library = useLibraryStore()
+      const id = addSource()
+      const before = library.byId[id]!.bpm
+
+      library.correctItemTempo(id, 102.76, 0)
+
+      expect(library.byId[id]!.bpm).toBe(before)
+    })
+
+    it('refuses a tempo outside 20-300 without sending anything', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      sendMock.mockClear()
+
+      expect(library.correctItemTempo(id, 5, 0)).toBe(false)
+      expect(library.correctItemTempo(id, 4000, 0)).toBe(false)
+      expect(library.correctItemTempo(id, Number.NaN, 0)).toBe(false)
+      expect(library.correctItemTempo(id, 120, Number.NaN)).toBe(false)
+      expect(sendMock).not.toHaveBeenCalled()
+    })
+  })
 })

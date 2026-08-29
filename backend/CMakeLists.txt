@@ -417,6 +417,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ProjectImportSource.cpp
     src/commands/ProjectFxCommands.cpp
     src/commands/ProjectSettingsCommands.cpp
+    src/commands/TempoCorrectionCommands.cpp
     src/commands/ScratchSessionCommands.cpp
     src/commands/ScratchPatternCommands.cpp
     src/commands/ScratchSaveCommands.cpp

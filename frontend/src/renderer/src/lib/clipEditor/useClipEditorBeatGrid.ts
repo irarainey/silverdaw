@@ -9,9 +9,9 @@
 // backend as a single undoable edit on Save, or discarded on Cancel.
 
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
-import { useLibraryStore, type LibraryItem, type LibraryItemGridSnapshot } from '@/stores/libraryStore'
+import { useLibraryStore, resolveTempoOwner, type LibraryItem, type LibraryItemGridSnapshot, type TempoOwner } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { libraryItemIsSimple } from '@/stores/libraryItemHelpers'
+import { libraryItemIsSimple, libraryItemDisplayName } from '@/stores/libraryItemHelpers'
 import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 
@@ -113,6 +113,32 @@ export interface ClipEditorBeatGrid {
    * so this only restores the local view.
    */
   discardIfUncommitted: () => void
+  /**
+   * The tempo owner as it stood when the editor opened, before any local grid draft.
+   * Snapshotted because a draft BPM writes onto the edited item and would make a
+   * derived item appear to own a tempo it does not. Null when there is no source item.
+   */
+  tempoOwner: () => TempoOwner | null
+  /**
+   * The display name of the item whose tempo a correction would rewrite, when that is
+   * not the item being edited (an inherited tempo is corrected on the ancestor, fixing
+   * every sibling at once). Null when the edited item is itself the owner.
+   */
+  correctionOwnerName: () => string | null
+  /**
+   * Whether *Correct detected tempo* is offered: the source has a correctable tempo
+   * owner and the typed tempo differs from the one the editor opened with. A correction
+   * needs a wrong number and a right one; without both there is nothing to correct.
+   */
+  canCorrect: () => boolean
+  /**
+   * Apply the typed tempo as a correction (ADR 0027): the detector read the wrong
+   * number, so every clip start, marker and automation point must stay exactly where it
+   * is. Discards the local draft first — the backend owns the result and echoes it —
+   * and ends the session's grid edit, so Save will not also send it as a musical change.
+   * Returns false when there is nothing to correct.
+   */
+  applyCorrection: () => boolean
   /** Reset per-session grid UI (align mode, edited flag, captured original) for a
    *  freshly opened editor, recapturing the current source tempo as the baseline. */
   reset: () => void
@@ -177,6 +203,14 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // session's grid movement against this so it can slide the clip's audio by exactly
   // the same distance, leaving the markers on the timeline positions they already had.
   let sessionStartAnchorMs: number | null = null
+  // The tempo owner as it stood before any local grid draft (ADR 0027). A draft BPM is
+  // written onto the item being EDITED, so resolving this live would report a derived
+  // item as owning its own tempo, and a correction would split it from its source
+  // instead of fixing the ancestor every sibling shares.
+  let sessionTempoOwner: TempoOwner | null = null
+  // False until an owner has actually been resolved from a present item, so a composable
+  // constructed before the dialog has a source keeps trying rather than caching "none".
+  let tempoOwnerCaptured = false
 
   function currentBpm(): number | undefined {
     // Always the tempo the grid is actually drawn from, so the controls can never
@@ -231,6 +265,9 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
       if (originalBpm.value === null && typeof bpm === 'number' && bpm > 0) {
         originalBpm.value = bpm
       }
+      // Capture the tempo owner alongside the baseline tempo: both must describe the
+      // source as it was before the user drafted anything (ADR 0027).
+      if (!tempoOwnerCaptured) captureTempoOwner()
       syncTempoField()
     },
     { immediate: true }
@@ -382,6 +419,86 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     gridEdited.value = false
   }
 
+  // ─── Correcting a mis-detected tempo (ADR 0027) ──────────────────────────────
+  //
+  // Distinct from everything above. The controls above say "this is the tempo I want",
+  // and Save lets the arrangement follow. A correction says "the detector read the wrong
+  // number", so it must leave every clip start, marker and automation point exactly
+  // where it is — and it may also carry the fix into the project tempo, which the user
+  // is always asked about rather than it being inferred. The session's owner snapshot is
+  // declared with the other per-session state above.
+
+  function captureTempoOwner(): void {
+    const item = deps.sourceItem()
+    sessionTempoOwner = item ? resolveTempoOwner(item, library.byId) : null
+    tempoOwnerCaptured = item !== null
+  }
+
+  function tempoOwner(): TempoOwner | null {
+    return sessionTempoOwner
+  }
+
+  function correctableOwner(): (TempoOwner & { ownerItemId: string }) | null {
+    const owner = sessionTempoOwner
+    if (!owner || owner.ownerItemId === undefined) return null
+    if (owner.reason === 'none' || owner.reason === 'oneShot') return null
+    return { ...owner, ownerItemId: owner.ownerItemId }
+  }
+
+  function correctionOwnerName(): string | null {
+    const owner = correctableOwner()
+    const item = deps.sourceItem()
+    if (!owner || !item || owner.ownerItemId === item.id) return null
+    const owningItem = library.byId[owner.ownerItemId]
+    return owningItem ? libraryItemDisplayName(owningItem) : owner.ownerItemId
+  }
+
+  function canCorrect(): boolean {
+    const cur = currentBpm()
+    const orig = originalBpm.value
+    if (!correctableOwner() || cur === undefined || orig === null) return false
+    if (cur < MIN_BPM || cur > MAX_BPM) return false
+    return Math.abs(cur - orig) > 1e-6
+  }
+
+  function applyCorrection(): boolean {
+    const owner = correctableOwner()
+    const item = deps.sourceItem()
+    const bpm = currentBpm()
+    if (!owner || !item || bpm === undefined || !canCorrect()) return false
+
+    // The phase belongs with the tempo only when the edited item IS the owner; a
+    // correction on an ancestor must not push this item's anchor onto it.
+    const ownerItem = library.byId[owner.ownerItemId]
+    const anchorSec =
+      owner.ownerItemId === item.id
+        ? currentAnchorSec()
+        : (ownerItem?.beatAnchorSec ?? ownerItem?.beats?.[0] ?? 0)
+
+    // Drop the local draft and re-apply the correction to the item that actually owns
+    // the tempo. The draft wrote the typed BPM onto the item being EDITED, which for an
+    // inherited tempo is the wrong item entirely; this leaves the view showing what the
+    // backend is about to echo instead of a value on the wrong item.
+    if (gridSnapshot && gridSnapshotItemId) library.restoreItemGridLocal(gridSnapshotItemId, gridSnapshot)
+    library.setItemManualTempoLocal(owner.ownerItemId, bpm, anchorSec)
+
+    if (!library.correctItemTempo(owner.ownerItemId, bpm, anchorSec)) {
+      return false
+    }
+
+    // The session's tempo edit is spent: with nothing pending, Save will not send it
+    // again as a musical change and Cancel has nothing to roll back. The corrected value
+    // becomes the new baseline, so Restore offers to go back to it rather than to the
+    // number that was wrong.
+    gridEdited.value = false
+    itemGridEdited = false
+    originalBpm.value = bpm
+    manualBpmInput.value = bpm.toFixed(2)
+    sessionTempoOwner = { ...owner, bpm }
+    useProjectStore().timelineRevision++
+    return true
+  }
+
   function reset(): void {
     // Slide-to-align, the session edit flag, and the tempo-edit lock are per-open UI
     // state — without this they persisted into the next clip's editor session.
@@ -394,6 +511,8 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     const item = deps.sourceItem()
     gridSnapshot = item ? library.snapshotItemGrid(item.id) : null
     gridSnapshotItemId = item ? item.id : null
+    tempoOwnerCaptured = false
+    captureTempoOwner()
     sessionStartAnchorMs = resolvedGrid.value?.anchorMs ?? null
     const bpm = currentBpm()
     originalBpm.value = bpm !== undefined ? bpm : null
@@ -423,6 +542,10 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     commitAnchorSec,
     commit,
     discardIfUncommitted,
+    tempoOwner,
+    correctionOwnerName,
+    canCorrect,
+    applyCorrection,
     reset
   }
 }

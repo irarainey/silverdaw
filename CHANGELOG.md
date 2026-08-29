@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.0
+
+### Added
+
+- **Edit BPM** on a library item corrects a mis-detected tempo, respacing that file's beat markers without moving a single clip, marker or automation point.
+- Edit BPM is reached from a library item's right-click menu, the **Edit** button beside the BPM in its information, or the Beat grid in the Clip Editor.
+- A correction reports what it re-warped and what it left alone, including clips whose tempo is pinned or whose warp is off.
+
+### Changed
+
+- A tempo inherited from the file an item was cut from is now corrected on that file, fixing every stem and clip taken from it together.
+- A tempo inherited through more than one step — a clip of a stem of a track — is now resolved and drawn correctly instead of appearing to be missing.
+
 ## 1.7.1
 
 ### Changed

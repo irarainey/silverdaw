@@ -76,7 +76,7 @@ bool transitionGeometryMayHaveChanged(const juce::String& type) noexcept
 {
     return type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_REMOVE" ||
            type == "CLIP_SET_WARP" || type == "TRACK_REMOVE" || type == "PROJECT_SET_BPM" ||
-           type == "CLIP_RELINK";
+           type == "LIBRARY_ITEM_CORRECT_TEMPO" || type == "CLIP_RELINK";
 }
 
 void reconcileTransitionsAfterGeometryEdit(silverdaw::AudioEngine& engine,

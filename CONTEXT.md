@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-28 · Owner: @irarainey_
+_Last reviewed: 2026-08-29 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -60,6 +60,14 @@ clip's exact position in the source so identical windows render identically, and
 a clip's beat-grid phase became a per-clip fact, so correcting one clip's markers
 moves the audio inside that clip alone and leaves both its position and its
 siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
+In development is **1.8.0**, which closes the gap between changing a tempo and
+correcting one: **Edit BPM** — reached from a library item's context menu, the
+Edit button on its information dialog, or the Clip Editor's Beat grid — rewrites
+the source tempo alone in one undoable step, respacing that file's beat markers
+without moving a single clip, marker or automation point, and reports what it
+re-warped and what it left alone. The project tempo is never touched: it is the
+user's number, set in the transport (ADR 0027,
+`docs/development-plan.md` §1.8.0).
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

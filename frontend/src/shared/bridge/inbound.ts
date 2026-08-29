@@ -789,6 +789,60 @@ export const LibraryItemAnalysisPayloadSchema = z.object({
 })
 export type LibraryItemAnalysisPayload = z.infer<typeof LibraryItemAnalysisPayloadSchema>
 
+/**
+ * Result of a `LIBRARY_ITEM_CORRECT_TEMPO` command (ADR 0027).
+ *
+ * A correction reconciles far more than the number the user typed — every clip that
+ * follows the corrected tempo re-derives its ratio and therefore its length, which can
+ * scale envelopes, invalidate transitions and push a clip past the persisted project
+ * length. The user is told what actually moved, so the operation is never a silent
+ * rewrite of their arrangement.
+ *
+ * The failure arm exists because a partial correction is the worst outcome: the renderer
+ * needs to roll its optimistic draft back and say what was not applied, rather than leave
+ * the project half-corrected.
+ */
+const TempoCorrectionAppliedSuccessSchema = z.object({
+  ok: z.literal(true),
+  /** The item the user acted on — not necessarily the one that was written. */
+  itemId: z.string(),
+  /** The item the correction was actually written to, after owner resolution. */
+  ownerItemId: z.string(),
+  /** Which ADR 0024 rule resolved the owner. Drives the wording the renderer shows:
+   *  `inheritedBpm` means siblings were fixed too, `musicalLength` means a recorded
+   *  measurement was discarded. */
+  ownerReason: z.enum(['musicalLength', 'ownBpm', 'inheritedBpm']),
+  /** The tempo now stored on the owner. */
+  appliedBpm: z.number(),
+  /** The tempo the owner held before the correction, so the report can name the error. */
+  previousBpm: z.number(),
+  /** A recorded `musicalBeats` measurement was discarded by the correction. */
+  musicalLengthDiscarded: z.boolean(),
+  /** Clips whose warp ratio was re-derived. */
+  clipsUpdated: z.number().int().nonnegative(),
+  /** Clips left alone because their ratio is pinned — the user's own earlier choice,
+   *  reported as an exclusion rather than a failure. */
+  clipsPinnedExcluded: z.number().int().nonnegative(),
+  /** Clips left alone because their warp is off. Also an exclusion, not a failure. */
+  clipsUnwarpedExcluded: z.number().int().nonnegative(),
+  /** Transitions that no longer had a valid overlap and were removed. */
+  transitionsRemoved: z.number().int().nonnegative(),
+  /** Clips now extending past the persisted project length, which is independent and
+   *  deliberately not auto-updated. */
+  clipsPastProjectLength: z.number().int().nonnegative()
+})
+const TempoCorrectionAppliedFailureSchema = z.object({
+  ok: z.literal(false),
+  itemId: z.string(),
+  /** Why nothing was applied, shown to the user verbatim. */
+  error: z.string()
+})
+export const TempoCorrectionAppliedPayloadSchema = z.discriminatedUnion('ok', [
+  TempoCorrectionAppliedSuccessSchema,
+  TempoCorrectionAppliedFailureSchema
+])
+export type TempoCorrectionAppliedPayload = z.infer<typeof TempoCorrectionAppliedPayloadSchema>
+
 /** Backend-seeded project BPM; renderer applies without echoing `PROJECT_SET_BPM`. */
 export const ProjectBpmAppliedPayloadSchema = z.object({
   bpm: z.number(),
@@ -1085,6 +1139,7 @@ export interface BridgeInboundMap {
   CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
   SAMPLE_SAVED: SampleSavedPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
+  TEMPO_CORRECTION_APPLIED: TempoCorrectionAppliedPayload
   CLIP_WARP_APPLIED: ClipWarpAppliedPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
   PREVIEW_STATE: PreviewStatePayload
@@ -1168,6 +1223,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'CLIP_EDITOR_PEAKS_READY',
   'SAMPLE_SAVED',
   'LIBRARY_ITEM_ANALYSIS',
+  'TEMPO_CORRECTION_APPLIED',
   'CLIP_WARP_APPLIED',
   'PROJECT_BPM_APPLIED',
   'PREVIEW_STATE',
@@ -1383,6 +1439,12 @@ export function isProjectMixGlueAppliedPayload(value: unknown): value is Project
 
 export function isLibraryItemAnalysisPayload(value: unknown): value is LibraryItemAnalysisPayload {
   return LibraryItemAnalysisPayloadSchema.safeParse(value).success
+}
+
+export function isTempoCorrectionAppliedPayload(
+  value: unknown
+): value is TempoCorrectionAppliedPayload {
+  return TempoCorrectionAppliedPayloadSchema.safeParse(value).success
 }
 
 export function isProjectBpmAppliedPayload(value: unknown): value is ProjectBpmAppliedPayload {

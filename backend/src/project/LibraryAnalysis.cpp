@@ -84,6 +84,70 @@ std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(ProjectState& p
     return obj;
 }
 
+ClipTempoRederiveReport rederiveClipsForTempoOwner(const juce::String& ownerItemId,
+                                                  AudioEngine& engine, ProjectState& projectState,
+                                                  BridgeServer& bridge)
+{
+    ClipTempoRederiveReport report;
+    const double projectBpm = projectState.getBpm();
+    if (projectBpm <= 0.0 || ownerItemId.isEmpty()) return report;
+
+    projectState.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            // A clip is affected when the tempo it follows is OWNED by the item that
+            // just changed — which is not the same as being cut from it. A derived item
+            // holding its own BPM, or its own recorded musical length, owns its tempo
+            // and is unmoved by a re-detection on its parent; matching it here would
+            // recompute an unchanged ratio and broadcast a no-op. Matching by owner also
+            // reaches down a chain of any depth, where the previous "the item, or one
+            // direct source" test stopped at the first hop and left a clip cut from a
+            // stem behind (ADR 0027).
+            if (projectState.resolveTempoOwner(info.libraryItemId).ownerItemId != ownerItemId) return;
+
+            // A pinned ratio is an explicit user choice about this clip, so it is left
+            // alone — an exclusion the caller reports, not a failure.
+            if (info.tempoRatioPinned)
+            {
+                ++report.clipsPinnedExcluded;
+                return;
+            }
+            // Always through the resolver, never a local derivation: a recorded musical
+            // length still outranks whatever tempo was just written (ADR 0024).
+            const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
+            if (sourceBpm <= 0.0) return;
+            const double ratio = projectBpm / sourceBpm;
+
+            if (info.pendingAutoWarp)
+            {
+                projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
+                                         /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
+                                         std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
+                engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
+                                   std::nullopt, std::nullopt);
+            }
+            else if (info.warpEnabled)
+            {
+                engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
+                                   info.cents);
+            }
+            else
+            {
+                // Warp is off by the user's own earlier choice. The clip plays dry, so
+                // its ratio is not re-derived; the caller says so rather than silently
+                // leaving the clip under a grid it no longer matches.
+                ++report.clipsUnwarpedExcluded;
+                return;
+            }
+
+            ++report.clipsUpdated;
+            auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
+            bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
+        });
+
+    return report;
+}
+
 void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectState, BridgeServer& bridge)
 {
     silverdaw::log::info("bpmjob", "seed check for itemId=" + itemId);
@@ -206,12 +270,19 @@ namespace
 // Applies analysis fields to a library item, broadcasts LIBRARY_ITEM_ANALYSIS,
 // performs late auto-warp for the item's pending clips, and seeds project BPM.
 // Runs on the message thread. Returns false if the item vanished before applying.
+//
+// `allowProjectBpmSeeding` is false for a tempo correction: seeding would move the
+// project tempo as a side effect of fixing a source tempo, which ADR 0027 requires to be
+// the user's explicit answer and never an inference. `rederiveReport`, when given,
+// receives what the shared re-derive pass did so the caller can report it.
 bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                                    const std::vector<double>& beats, double beatAnchorSec,
                                    bool variableTempo, bool lowConfidence,
                                    const juce::String& cachedPath, AudioEngine& engine,
                                    ProjectState& projectState, BridgeServer& bridge,
-                                   juce::UndoManager* undo = nullptr)
+                                   juce::UndoManager* undo = nullptr,
+                                   bool allowProjectBpmSeeding = true,
+                                   ClipTempoRederiveReport* rederiveReport = nullptr)
 {
     if (undo != nullptr)
     {
@@ -278,47 +349,10 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     // off the project grid by exactly the tempo change, the clip keeps its old drawn
     // width, and playback keeps the old stretch. A pinned ratio is explicit user intent
     // and is never touched.
-    const double projectBpm = projectState.getBpm();
-    if (projectBpm > 0.0)
-    {
-        projectState.forEachWarpClip(
-            [&](const silverdaw::ProjectState::WarpClipInfo& info)
-            {
-                // Clips on this item, plus clips on items that borrow its tempo (the
-                // resolver falls back to the item something was derived from), so a
-                // stem that carries no BPM of its own moves with its source.
-                if (info.libraryItemId != itemId
-                    && projectState.getLibraryItemSourceItemId(info.libraryItemId) != itemId)
-                    return;
-                if (info.tempoRatioPinned) return;
-                // Always through the resolver, never a local derivation: a recorded
-                // musical length still outranks whatever this analysis detected (ADR 0024).
-                const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
-                if (sourceBpm <= 0.0) return;
-                const double ratio = projectBpm / sourceBpm;
-                if (info.pendingAutoWarp)
-                {
-                    projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
-                                             /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
-                                             std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
-                    engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
-                                       std::nullopt, std::nullopt);
-                }
-                else if (info.warpEnabled)
-                {
-                    engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
-                                       info.cents);
-                }
-                else
-                {
-                    return;
-                }
-                auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
-                bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
-            });
-    }
+    const auto report = rederiveClipsForTempoOwner(itemId, engine, projectState, bridge);
+    if (rederiveReport != nullptr) *rederiveReport = report;
 
-    maybeSeedProjectBpmFor(itemId, projectState, bridge);
+    if (allowProjectBpmSeeding) maybeSeedProjectBpmFor(itemId, projectState, bridge);
     // Keep the monitoring metronome in time if this analysis just (re)seeded the project tempo.
     engine.setMetronomeBpm(projectState.getBpm());
     syncBeatRepeatRegions(engine, projectState);
@@ -404,13 +438,15 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 }
 } // namespace
 
-void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
-                      AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge)
+ClipTempoRederiveReport applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
+                                        AudioEngine& engine, ProjectState& projectState,
+                                        BridgeServer& bridge, bool allowProjectBpmSeeding)
 {
+    ClipTempoRederiveReport report;
     if (bpm <= 0.0)
     {
         silverdaw::log::warn("bpmjob", "applyManualTempo ignored non-positive bpm for itemId=" + itemId);
-        return;
+        return report;
     }
 
     // Build a rigid metronome grid from the anchor across the source duration so
@@ -425,7 +461,9 @@ void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorS
 
     applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, /*variableTempo=*/false,
                                   /*lowConfidence=*/false, /*cachedPath=*/juce::String{}, engine,
-                                  projectState, bridge, &projectState.getUndoManager());
+                                  projectState, bridge, &projectState.getUndoManager(),
+                                  allowProjectBpmSeeding, &report);
+    return report;
 }
 
 void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, ProjectState& projectState,

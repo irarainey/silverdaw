@@ -29,6 +29,7 @@ const {
   bpmLabel,
   bpmIsVariable,
   bpmPillClass,
+  canEditBpm,
   keyLabel,
   displayDecodedCachePath,
   playbackPathDistinct,
@@ -203,15 +204,36 @@ const {
                   {{ bpmLabel }}
                 </dt>
                 <dd>
+                  <!--
+                    Read-only. The tempo is stated here as a fact about the file; changing
+                    it is a transaction with a Cancel and a Save, so it belongs in its own
+                    dialog rather than as a live field on an information screen whose only
+                    footer button is Close.
+                  -->
                   <span
                     v-if="warpedBpm ?? item.bpm"
-                    :class="bpmPillClass"
-                    :title="bpmIsVariable ? 'Tempo varies across the file - the BPM shown is a rough average' : 'Detected tempo'"
+                    class="inline-flex items-center gap-1.5"
                   >
                     <span
-                      v-if="bpmIsVariable"
-                      class="mr-0.5"
-                    >~</span>{{ (warpedBpm ?? item.bpm)?.toFixed(2) }} BPM
+                      :class="bpmPillClass"
+                      :title="bpmIsVariable ? 'Tempo varies across the file - the BPM shown is a rough average' : 'Tempo of this file'"
+                    >
+                      <span
+                        v-if="bpmIsVariable"
+                        class="mr-0.5"
+                      >~</span>{{ (warpedBpm ?? item.bpm)?.toFixed(2) }} BPM
+                    </span>
+                    <button
+                      v-if="canEditBpm"
+                      type="button"
+                      data-testid="library-item-bpm-edit"
+                      aria-label="Edit BPM"
+                      title="Edit BPM"
+                      class="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-400"
+                      @click="emit('edit-bpm')"
+                    >
+                      Edit
+                    </button>
                   </span>
                   <span v-else>Not analysed</span>
                 </dd>

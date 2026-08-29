@@ -235,6 +235,24 @@ bool ProjectState::hasAnyTransition() const
     return false;
 }
 
+// Counted rather than inferred from `reconcileTransitions`, which reports only whether
+// anything went. A tempo correction has to tell the user HOW MANY transitions it cost
+// them, so the count is taken either side of the reconcile (ADR 0027).
+int ProjectState::countTransitions() const
+{
+    int count = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int i = 0; i < track.getNumChildren(); ++i)
+        {
+            if (track.getChild(i).hasType(kTransition)) ++count;
+        }
+    }
+    return count;
+}
+
 juce::var ProjectState::buildTransitionsJson(const juce::ValueTree& track)
 {
     juce::Array<juce::var> arr;

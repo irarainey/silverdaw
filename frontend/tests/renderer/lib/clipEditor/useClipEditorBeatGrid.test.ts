@@ -4,6 +4,7 @@ import { useClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
 import { resolveSourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTransportStore } from '@/stores/transportStore'
 
 const sendMock = vi.hoisted(() => vi.fn())
 
@@ -562,6 +563,125 @@ describe('useClipEditorBeatGrid', () => {
       grid.discardIfUncommitted()
       expect(grid.resolvedGrid.value?.anchorMs).toBe(460)
       expect(grid.hasGridChanged()).toBe(false)
+    })
+  })
+
+
+  // Correcting a mis-detected tempo (ADR 0027). Distinct from every edit above: those
+  // say "play at this tempo", this says "the detector read the wrong number", and so it
+  // must never let the arrangement move underneath the user.
+  describe('correcting a mis-detected tempo', () => {
+    function correctable(bpm = 98.8, anchor = 0): { item: LibraryItem; grid: ReturnType<typeof useClipEditorBeatGrid> } {
+      const item = addSource(bpm, anchor)
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+      grid.reset()
+      sendMock.mockClear()
+      return { item, grid }
+    }
+
+    function typeBpm(grid: ReturnType<typeof useClipEditorBeatGrid>, bpm: string): void {
+      grid.beginTempoEdit()
+      grid.manualBpmInput.value = bpm
+      grid.commitTempoEdit(true)
+    }
+
+    it('is not offered until there is both a wrong tempo and a right one', () => {
+      const { grid } = correctable()
+      expect(grid.canCorrect()).toBe(false)
+
+      typeBpm(grid, '102.76')
+      expect(grid.canCorrect()).toBe(true)
+    })
+
+    it('is not offered for a source with no tempo at all', () => {
+      const item = addSource()
+      const grid = useClipEditorBeatGrid({ sourceItem: () => item })
+      grid.reset()
+      expect(grid.tempoOwner()?.reason).toBe('none')
+      expect(grid.canCorrect()).toBe(false)
+      expect(grid.applyCorrection()).toBe(false)
+    })
+
+    it('sends the corrected tempo and the grid phase, and nothing about the project', () => {
+      const { item, grid } = correctable(98.8, 0.25)
+      typeBpm(grid, '102.76')
+
+      expect(grid.applyCorrection()).toBe(true)
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_CORRECT_TEMPO', {
+        itemId: item.id,
+        bpm: 102.76,
+        beatAnchorSec: 0.25
+      })
+    })
+
+    it('never touches the project tempo, even when it reads the number being corrected', () => {
+      // Setting the project tempo from the first clip dropped is merely a convenience,
+      // with no linkage and no history (ADR 0027), so the number is the user's rather
+      // than the file's. A correction to a file says nothing about it.
+      const transport = useTransportStore()
+      transport.bpm = 98.8
+      const { grid } = correctable(98.8)
+      typeBpm(grid, '102.76')
+
+      grid.applyCorrection()
+
+      expect(sendMock.mock.calls[0]?.[1]).not.toHaveProperty('carryProjectTempo')
+      expect(transport.bpm).toBe(98.8)
+    })
+
+    it('corrects the ancestor an inherited tempo comes from, keeping its own phase', () => {
+      // The stem has no tempo of its own; writing the typed BPM onto it would split it
+      // from its source and leave every sibling stem still wrong.
+      const library = useLibraryStore()
+      const source = addSource(98.8, 0.25)
+      const stemId = library.addItem({
+        kind: 'stem',
+        filePath: 'C:\\audio\\grid-drums.wav',
+        fileName: 'grid-drums.wav',
+        durationMs: 4_000,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1]),
+        derivedFrom: { sourceItemId: source.id, inMs: 0, durationMs: 4_000 }
+      })
+      const stem = library.byId[stemId]!
+      const grid = useClipEditorBeatGrid({ sourceItem: () => stem })
+      grid.reset()
+      sendMock.mockClear()
+
+      expect(grid.tempoOwner()?.reason).toBe('inheritedBpm')
+      expect(grid.correctionOwnerName()).toBe('grid.wav')
+
+      typeBpm(grid, '102.76')
+      expect(grid.applyCorrection()).toBe(true)
+
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_CORRECT_TEMPO', {
+        itemId: source.id,
+        bpm: 102.76,
+        beatAnchorSec: 0.25
+      })
+      // The draft must be rolled back off the stem, or it would keep a tempo of its own.
+      expect(stem.bpm).toBeUndefined()
+    })
+
+    it('ends the session edit so Save does not also send it as a musical change', () => {
+      const { grid } = correctable()
+      typeBpm(grid, '102.76')
+      grid.applyCorrection()
+      sendMock.mockClear()
+
+      grid.commit()
+      expect(sendMock).not.toHaveBeenCalled()
+      expect(grid.hasGridChanged()).toBe(false)
+    })
+
+    it('makes the corrected tempo the new baseline, so Restore no longer offers the wrong one', () => {
+      const { grid } = correctable(98.8)
+      typeBpm(grid, '102.76')
+      grid.applyCorrection()
+
+      expect(grid.originalBpm.value).toBe(102.76)
+      expect(grid.canCorrect()).toBe(false)
     })
   })
 })
