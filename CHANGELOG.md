@@ -21,6 +21,7 @@
 - Tempo detection no longer gives up on MP3s whose final moments fail to decode, which left common tracks with no tempo and no beat markers at all.
 - Removing the last track now clears the markers and area selection with it, which were left stranded on a timeline that no longer showed any time.
 - Changing the project tempo no longer turns warp on for clips already at that tempo, which gained a warp badge for a stretch that did nothing.
+- Beat markers no longer sit a few milliseconds late on bass-heavy material. The grid is now anchored to where each onset began rather than to where the sound was changing fastest, which removes a lateness that grew with how slowly the sound started — roughly 3 ms on kicks and pads against 0.3 ms on sharp clicks.
 
 ## 1.7.1
 

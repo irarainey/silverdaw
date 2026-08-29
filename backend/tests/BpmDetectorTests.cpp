@@ -119,8 +119,11 @@ void testOnsetBeyondWindowNotCaptured()
 
 // Write a mono click track with sharp transients at exact beat positions so the
 // detected grid can be compared against ground truth.
+// toneHz/burstSec select the material. The default 1 kHz 10 ms burst is a
+// broadband click; a low toneHz with a longer burst models a kick, whose slower
+// spectral change is what used to push the ODF peak (and so the grid) late.
 juce::File writeClickWav(const juce::File& dir, const juce::String& name, double bpm, double seconds,
-                         double sampleRate)
+                         double sampleRate, double toneHz = 1000.0, double burstSec = 0.01)
 {
     auto file = dir.getChildFile(name);
     juce::WavAudioFormat format;
@@ -139,7 +142,7 @@ juce::File writeClickWav(const juce::File& dir, const juce::String& name, double
     auto* data = buffer.getWritePointer(0);
 
     const double samplesPerBeat = 60.0 / bpm * sampleRate;
-    const int clickLen = static_cast<int>(0.01 * sampleRate); // 10 ms decaying sine burst
+    const int clickLen = juce::jmax(1, static_cast<int>(burstSec * sampleRate));
     for (int beat = 0;; ++beat)
     {
         const int start = static_cast<int>(std::llround(beat * samplesPerBeat));
@@ -148,7 +151,7 @@ juce::File writeClickWav(const juce::File& dir, const juce::String& name, double
         {
             const double env = std::exp(-5.0 * n / clickLen);
             data[start + n] += static_cast<float>(
-                0.8 * env * std::sin(2.0 * juce::MathConstants<double>::pi * 1000.0 * n / sampleRate));
+                0.8 * env * std::sin(2.0 * juce::MathConstants<double>::pi * toneHz * n / sampleRate));
         }
     }
     require(writer->writeFromAudioSampleBuffer(buffer, 0, numSamples), "click wav write should succeed");
@@ -231,12 +234,13 @@ void testMovingMedianFloorPreservesPeaksRemovesSwell()
     require(cleaned[static_cast<size_t>(crest)] < 0.05, "swell crest is flattened post-cleaning");
 }
 
-void checkClickTrackGrid(double bpm, double seconds = 60.0)
+void checkClickTrackGrid(double bpm, double seconds = 60.0, double toneHz = 1000.0,
+                         double burstSec = 0.01)
 {
     const double sampleRate = 44100.0;
 
     auto dir = makeTempDir("bpm-click");
-    const auto file = writeClickWav(dir, "click.wav", bpm, seconds, sampleRate);
+    const auto file = writeClickWav(dir, "click.wav", bpm, seconds, sampleRate, toneHz, burstSec);
 
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
@@ -281,6 +285,18 @@ void checkClickTrackGrid(double bpm, double seconds = 60.0)
     // up here long before it trips the mean/max checks above.
     const double slope = std::abs(residualSec(lastBeat) - residualSec(4));
     require(slope < 0.002, "grid must not drift (first vs last residual) across the track");
+}
+
+// Regression guard for material-dependent marker lateness. A kick-like onset
+// (60 Hz, 120 ms) changes spectrum far more slowly than a 1 kHz click, so its
+// ODF peak used to arrive ~3 ms after the transient while a click's arrived
+// almost on it — a gap no single group-delay constant can close, and the reason
+// markers read as "slightly late" on real music. The grid is now anchored to
+// where the onset *began*, so both materials must satisfy the same bound.
+void testLowFrequencyOnsetGridIsNotLate()
+{
+    for (double bpm : {100.0, 128.0})
+        checkClickTrackGrid(bpm, 60.0, 60.0, 0.12);
 }
 
 void testClickTrackGridLandsOnBeats()
@@ -459,6 +475,8 @@ void addBpmDetectorTests(std::vector<TestCase>& tests)
     tests.push_back({"Grid anchor: circular mean ignores off-grid intro beat",
                      testCircularMeanAnchorIgnoresIntroBeat});
     tests.push_back({"Click track: grid lands on beats", testClickTrackGridLandsOnBeats});
+    tests.push_back({"Low-frequency onsets: grid is not systematically late",
+                     testLowFrequencyOnsetGridIsNotLate});
     tests.push_back({"Click track: whole-track grid does not drift past beat window",
                      testWholeTrackGridDoesNotDriftBeyondBeatWindow});
     tests.push_back({"Octave fold: half/double time normalised into the comparison range",

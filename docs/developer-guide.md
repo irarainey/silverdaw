@@ -1977,8 +1977,8 @@ median-phase and ODF-peak stages key off true onsets rather than broad humps —
 it is the difference between the median-phase alignment engaging or being skipped
 on dense material (where the raw ODF's per-beat offset IQR otherwise blows past
 the consistency gate). A final **whole-track ODF-peak refit**
-(`refineGridFromOdfPeaks`) does a least-squares period+anchor fit over the
-sub-frame-interpolated ODF onset peaks across the *entire* track; the long lever arm
+(`refineGridFromOdfPeaks`) does a least-squares period+anchor fit over
+sub-frame-interpolated ODF onset points across the *entire* track; the long lever arm
 pins the period far more tightly than a 60 s fit, which is what stops the rigid grid
 from drifting late→early across a long track (adopted only when it stays within 5 % of
 BTrack's octave, so a spurious fit can't hijack the tempo). This keeps the project grid
@@ -1986,6 +1986,21 @@ we later seed lined up with the source's beats from the first beat to the last. 
 `variableTempo` flag is also computed by checking the spread of per-beat tempo samples
 (after a short settling period) — if it's > 5 % of the mean, the library tile shows the
 amber `~ BPM` warning badge.
+
+Each of those points is the estimated **onset start**, not the ODF peak
+(`estimateOnsetStartFrames`). The peak marks where the spectrum is changing fastest,
+which for a broadband click is essentially the transient but for a kick or a soft pad
+arrives several analysis frames later — measured against a corpus with known beat times,
+peaks sat 0.7 ms late on clicks and 3.0–3.6 ms late on drums and pads. That spread is
+material-dependent, so no single group-delay constant can remove it, and the residual is
+exactly what reads as "markers slightly late". Walking back from the peak to where the
+ODF first rose through 75 % of its height above the preceding valley adapts
+automatically, because a slow-rising onset has a proportionally longer ramp; the crossing
+is linearly interpolated because the 5.8 ms frame grid is coarser than the bias being
+removed, and the backtrack is bounded to 120 ms so a quiet passage cannot drag the
+estimate away. That fraction is calibrated, not arbitrary: it minimises mean |offset|
+across click, drum and pad material (2.6 ms → 0.6 ms) and collapses the difference
+between those materials to under 1 ms.
 
 The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
 pair, so the anchor's phase matters as much as the period. Before the final

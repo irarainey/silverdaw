@@ -356,12 +356,73 @@ bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, dou
     return true;
 }
 
-// Refine period+anchor by least-squares over sub-frame ODF onset peaks across
+namespace
+{
+// Calibrated on a corpus with known beat times: 0.75 minimises mean |offset|
+// across click, drum and pad material (2.68 ms -> 0.52 ms) and, more
+// importantly, collapses the spread between those materials to under 1 ms.
+// Lower fractions overshoot early, higher ones leave drums late.
+constexpr double kOnsetBacktrackFraction = 0.75;
+constexpr double kOnsetBacktrackMaxSec = 0.120;
+} // namespace
+
+// Estimate where a transient *began*, given the ODF peak frame it produced.
+//
+// The ODF peak marks where spectral change is fastest, not where the sound
+// started, and the gap between the two depends on the material: a broadband
+// click peaks almost immediately, while a low kick or a soft pad spreads its
+// energy change over several 1024-sample analysis frames and peaks later.
+// Measured against a corpus with known beat times, ODF peaks sit +0.7 ms late
+// on clicks but +3.0 to +3.6 ms late on drums and pads, so no single constant
+// can correct both — the residual is what users hear as "markers slightly
+// late".
+//
+// Walking back from the peak to where the ODF first rose through a fixed
+// fraction of its height above the preceding valley adapts to the material
+// automatically, because a slow-rising onset has a correspondingly longer
+// ramp. The crossing is linearly interpolated so the estimate is not limited
+// to the 5.8 ms frame grid, which is coarser than the bias being removed.
+// The search is bounded so a long quiet passage before the peak cannot drag
+// the estimate arbitrarily far back.
+double estimateOnsetStartFrames(const std::vector<double>& odf, int peakIdx, double peakFrames,
+                                double envRate)
+{
+    if (peakIdx < 1 || peakIdx >= static_cast<int>(odf.size()) || envRate <= 0.0) return peakFrames;
+
+    const double peakV = odf[static_cast<size_t>(peakIdx)];
+    int valley = peakIdx;
+    const int limit = std::max(0, peakIdx - static_cast<int>(std::ceil(kOnsetBacktrackMaxSec * envRate)));
+    for (int i = peakIdx - 1; i >= limit; --i)
+    {
+        const double v = odf[static_cast<size_t>(i)];
+        if (v <= odf[static_cast<size_t>(valley)]) valley = i;
+        else if (v > peakV) break; // a larger neighbouring onset: stop before absorbing it
+    }
+    if (valley >= peakIdx) return peakFrames;
+
+    const double base = odf[static_cast<size_t>(valley)];
+    const double target = base + (peakV - base) * kOnsetBacktrackFraction;
+    for (int i = peakIdx; i > valley; --i)
+    {
+        const double hiV = odf[static_cast<size_t>(i)];
+        const double loV = odf[static_cast<size_t>(i - 1)];
+        if (loV <= target && hiV >= target)
+        {
+            const double span = hiV - loV;
+            const double frac = span > 1e-12 ? (target - loV) / span : 0.0;
+            return static_cast<double>(i - 1) + frac;
+        }
+    }
+    return peakFrames;
+}
+
+// Refine period+anchor by least-squares over sub-frame ODF onset points across
 // the whole analysed span. BTrack beats are hop-quantised (256 samples) with a
-// structured, phase-correlated latency that biases the LSQ slope; the
-// parabolically-interpolated ODF peaks give sub-sample, slope-unbiased positions
-// with a long lever arm, which sharpens the period. groupDelaySec removes the
-// ODF's constant onset latency so the fitted anchor lands on the transient.
+// structured, phase-correlated latency that biases the LSQ slope; the ODF-derived
+// points give sub-sample, slope-unbiased positions with a long lever arm, which
+// sharpens the period. Each point is the estimated onset *start*, not the ODF
+// peak (see estimateOnsetStartFrames), and groupDelaySec then removes the
+// remaining constant framing latency so the fitted anchor lands on the transient.
 // Returns false when too few grid lines find a confident onset peak.
 bool refineGridFromOdfPeaks(const std::vector<double>& odf, double envRate, double groupDelaySec,
                             double periodSec, double anchorSec, double& outPeriod, double& outAnchor,
@@ -409,7 +470,9 @@ bool refineGridFromOdfPeaks(const std::vector<double>& odf, double envRate, doub
             const double d = 0.5 * (y0 - y2) / denom;
             if (std::abs(d) <= 1.0) frac = d;
         }
-        const double peakT = (static_cast<double>(bestI) + frac) / envRate - groupDelaySec;
+        const double peakT = estimateOnsetStartFrames(odf, bestI, static_cast<double>(bestI) + frac, envRate)
+                                 / envRate
+                             - groupDelaySec;
         pts.emplace_back(n, peakT);
     }
 

@@ -25,6 +25,7 @@
 #include "../../src/dsp/BpmAudioLoader.h"
 #include "../../src/dsp/MiniBpmEstimator.h"
 #include "../../src/dsp/PercussiveEmphasis.h"
+#include "../../src/dsp/BpmAnalysisHelpers.h"
 #include "../../src/core/Log.h"
 
 #include <algorithm>
@@ -236,9 +237,100 @@ void printCheckpoints(const silverdaw::BpmAnalysis& a, const Entry& e, const juc
     std::printf("\n");
 }
 
+/** Measures where the ODF actually peaks relative to a KNOWN beat grid, and how
+    much of the remaining lateness each candidate onset-start estimator removes.
+
+    This exists because beat markers were reported as consistently a few
+    milliseconds late, and the current model — "onset time = ODF peak minus one
+    calibrated constant" — cannot be judged from tempo figures at all. Only a
+    file whose true beat times are known can separate a framing delay (constant,
+    correctable) from a material-dependent one (not correctable by a constant).
+
+    `backtrackFraction` walks left from the peak to where the ODF last sat below
+    that fraction of the peak's height above the preceding local minimum, then
+    interpolates the crossing, which estimates where the transient began rather
+    than where it was changing fastest. */
+double medianOffsetForStrategy(const std::vector<double>& odf, double envRate, double periodSec,
+                               double firstBeatSec, double groupDelaySec, double backtrackFraction,
+                               int& outMatched)
+{
+    outMatched = 0;
+    if (odf.size() < 16 || envRate <= 0.0 || periodSec <= 0.0) return 0.0;
+
+    const int maxIdx = static_cast<int>(odf.size()) - 2;
+    const double totalSec = static_cast<double>(odf.size()) / envRate;
+    const double win = std::min(periodSec * 0.25, 0.12);
+
+    std::vector<double> offsets;
+    for (double beatT = firstBeatSec; beatT <= totalSec; beatT += periodSec)
+    {
+        if (beatT < 0.0) continue;
+        const int lo = std::max(1, static_cast<int>(std::floor((beatT - win) * envRate)));
+        const int hi = std::min(maxIdx, static_cast<int>(std::ceil((beatT + win) * envRate)));
+        if (hi <= lo) continue;
+
+        int bestI = -1;
+        double bestV = 0.0;
+        for (int i = lo; i <= hi; ++i)
+        {
+            const double v = odf[static_cast<size_t>(i)];
+            if (v > odf[static_cast<size_t>(i - 1)] && v >= odf[static_cast<size_t>(i + 1)] && v > bestV)
+            {
+                bestV = v;
+                bestI = i;
+            }
+        }
+        if (bestI < 0) continue;
+
+        double estFrames = static_cast<double>(bestI);
+        const double y0 = odf[static_cast<size_t>(bestI - 1)];
+        const double y1 = odf[static_cast<size_t>(bestI)];
+        const double y2 = odf[static_cast<size_t>(bestI + 1)];
+        const double denom = y0 - 2.0 * y1 + y2;
+        if (std::abs(denom) > 1e-12)
+        {
+            const double d = 0.5 * (y0 - y2) / denom;
+            if (std::abs(d) <= 1.0) estFrames += d;
+        }
+
+        if (backtrackFraction > 0.0)
+        {
+            // Find the valley preceding the peak, bounded so a long quiet run
+            // cannot drag the estimate arbitrarily far back.
+            int valley = bestI;
+            const int limit = std::max(1, bestI - static_cast<int>(std::ceil(0.120 * envRate)));
+            for (int i = bestI - 1; i >= limit; --i)
+            {
+                if (odf[static_cast<size_t>(i)] <= odf[static_cast<size_t>(valley)]) valley = i;
+                else if (odf[static_cast<size_t>(i)] > odf[static_cast<size_t>(bestI)]) break;
+            }
+            const double base = odf[static_cast<size_t>(valley)];
+            const double target = base + (odf[static_cast<size_t>(bestI)] - base) * backtrackFraction;
+            for (int i = bestI; i > valley; --i)
+            {
+                const double hiV = odf[static_cast<size_t>(i)];
+                const double loV = odf[static_cast<size_t>(i - 1)];
+                if (loV <= target && hiV >= target)
+                {
+                    const double span = hiV - loV;
+                    const double frac = span > 1e-12 ? (target - loV) / span : 0.0;
+                    estFrames = static_cast<double>(i - 1) + frac;
+                    break;
+                }
+            }
+        }
+
+        offsets.push_back(estFrames / envRate - groupDelaySec - beatT);
+    }
+
+    if (offsets.empty()) return 0.0;
+    std::sort(offsets.begin(), offsets.end());
+    outMatched = static_cast<int>(offsets.size());
+    return offsets[offsets.size() / 2];
+}
+
 /** Writes mono float samples to a 32-bit WAV so the full detector, which reads
-    files rather than buffers, can be run over conditioned audio. */
-bool writeMonoWav(const juce::File& target, const std::vector<float>& mono, double sampleRate)
+    files rather than buffers, can be run over conditioned audio. */bool writeMonoWav(const juce::File& target, const std::vector<float>& mono, double sampleRate)
 {
     target.getParentDirectory().createDirectory();
     target.deleteFile();
@@ -836,10 +928,14 @@ int main(int argc, char** argv)
     Accum miniAcc;
     Accum condAcc;
     AgreeAccum agreeAcc;
-    // Percussive conditioning is an experiment, not the shipped path, so it is
-    // opt-in: it re-runs the whole detector per file and would otherwise double
-    // the runtime of every ordinary evaluation.
+    // Conditioning now runs inside the detector, so this flag re-runs the whole
+    // detector a second time on pre-conditioned audio purely to A/B the effect.
+    // It doubles the runtime of an evaluation, so it stays opt-in.
     const bool runConditioned = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BPM_EVAL_COND", "0") == "1";
+    // Reports how far ODF-derived onset estimates sit from the *known* beat times
+    // in the manifest, per backtrack strategy. Only meaningful on the synthetic
+    // corpus, which is the sole source of beat-phase ground truth.
+    const bool runPhaseProbe = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BPM_EVAL_PHASE", "0") == "1";
 
     for (auto e : entries)
     {
@@ -876,6 +972,32 @@ int main(int argc, char** argv)
             silverdaw::BpmDetector::kAnalysisSampleRate, {});
         if (decoded.ok())
         {
+            // Phase diagnostic: needs a known first beat, so it runs only on the
+            // synthetic corpus where the true grid is exact.
+            if (runPhaseProbe && e.referenceBpm > 0.0 && std::isfinite(e.referenceFirstBeatSec))
+            {
+                const auto conditioned = silverdaw::emphasisePercussiveContent(
+                    decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
+                constexpr int kOdfHop = 256;
+                const double envRate = silverdaw::BpmDetector::kAnalysisSampleRate / (double)kOdfHop;
+                const double periodSec = 60.0 / e.referenceBpm;
+                auto probeOdf = silverdaw::bpm_detail::computeOdf(conditioned, kOdfHop);
+                probeOdf = silverdaw::subtractMovingMedianFloor(probeOdf, envRate, periodSec);
+                const double groupDelaySec = 0.53 / envRate;
+
+                std::printf("  [phase-probe] %-28s", f.getFileName().toStdString().c_str());
+                for (double fraction : {0.0, 0.50, 0.75, 0.90})
+                {
+                    int matched = 0;
+                    const double med = medianOffsetForStrategy(probeOdf, envRate, periodSec,
+                                                               e.referenceFirstBeatSec, groupDelaySec,
+                                                               fraction, matched);
+                    if (fraction == 0.0) std::printf("  peak %+6.2fms", med * 1000.0);
+                    else std::printf("  bt%.0f%% %+6.2fms", fraction * 100.0, med * 1000.0);
+                }
+                std::printf("\n");
+            }
+
             const auto miniStart = std::chrono::steady_clock::now();
             const auto mini = silverdaw::estimateTempoWithMiniBpm(
                 decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
