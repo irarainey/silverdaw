@@ -2155,6 +2155,27 @@ likewise moved on the backend, through the ordinary `setPositionMs` seek: the sa
 material sits under it after the move, so the effect tails carry across rather than
 being reset.
 
+**Removing the last track.** `handleTrackRemove` clears every marker
+(`ProjectState::clearMarkers`) and the timeline selection once no tracks remain, and
+re-runs `syncTimelineLoop` so the engine's loop range goes with them. A marker names a
+place on a timeline and a selection is a span of one, and with no tracks the ruler
+draws no time for either to name. Left behind they were unreachable rather than merely
+idle — the ruler renderer and the drag handlers both stand down with no tracks — so
+they could be neither seen nor cleared, yet they persisted into the saved file and
+reappeared the moment a track was added, with a looping selection still wrapping
+playback inside a range nothing on screen accounted for.
+
+The clear runs inside the transaction `beginUndoTransactionIfNeeded` has already
+opened for `TRACK_REMOVE`, so removing a track and losing its markers is one action
+and one undo, not two. Markers are persisted content and dirty the project, but only
+through the derived path: `clearMarkers` does *not* call `markDirty`, because the
+child-removed listener recomputes dirtiness against the clean snapshot, and forcing
+the flag would strand the project dirty after an undo had put every marker back. The
+selection is view state written through `setNonDirtyRootProperty`, so it never dirties
+and is not restored by undo — consistent with how a selection is treated everywhere
+else. `projectStore.removeTrack` mirrors both locally so the timeline does not draw
+stale markers for the round trip.
+
 Track automation is on that same timeline axis, so it is rescaled by the same factor
 (`ProjectState::retimeTrackAutomationForTempoChange`, mirrored in `applyProjectBpm`);
 a filter sweep drawn for the drop must still be over the drop rather than over

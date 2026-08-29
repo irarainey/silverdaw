@@ -483,6 +483,34 @@ describe('projectStore', () => {
     expect(ui.loopTimelineSelection).toBe(false)
   })
 
+  it('clears markers and the timeline selection when the last track goes', async () => {
+    // Reported: markers and an area selection survived removing the last track, and
+    // could then be neither seen nor removed — with no tracks the ruler draws no time
+    // and the drag handlers stand down — yet they persisted in the file and came back
+    // the moment a track was added.
+    const { useUiStore } = await import('@/stores/uiStore')
+    const project = useProjectStore()
+    const ui = useUiStore()
+
+    const first = project.addTrack()
+    const second = project.addTrack()
+    project.markers = [
+      { id: 'm1', positionMs: 1_000 },
+      { id: 'm2', positionMs: 2_000 }
+    ]
+    ui.setTimelineSelection({ startMs: 2_000, endMs: 6_000 })
+
+    // A track remains, so the timeline is still a place a marker can name.
+    project.removeTrack(first)
+    expect(project.markers).toHaveLength(2)
+    expect(ui.timelineSelection).not.toBeNull()
+
+    project.removeTrack(second)
+    expect(project.tracks).toHaveLength(0)
+    expect(project.markers).toEqual([])
+    expect(ui.timelineSelection).toBeNull()
+  })
+
   it('retimes markers and the playhead with the clips when the tempo changes', () => {
     // Reported: markers and the playhead were pinned to their millisecond positions,
     // so a tempo change slid them off the material they marked while everything else

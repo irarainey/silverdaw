@@ -22,6 +22,7 @@
 #include "ProjectState.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
+#include "TrackCommands.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
 
@@ -1624,6 +1625,68 @@ void testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped()
     require(differWarped, "a clip that genuinely differs should still warp onto the new tempo");
 }
 
+// Regression: removing the last track left markers and the timeline selection behind.
+// With no tracks the ruler draws no time, so neither could be seen or reached to be
+// cleared, yet both persisted in the file and reappeared as soon as a track was added.
+// A looping selection also kept the engine's timeline loop armed over a range nothing
+// on screen accounted for.
+void testRemovingTheLastTrackClearsMarkersAndSelection()
+{
+    silverdaw::AudioEngine engine;
+    silverdaw::ProjectState state;
+    silverdaw::BridgeServer bridge(
+        "test-token", [](silverdaw::BridgeServer&, const juce::String&, const juce::var&) {});
+
+    require(state.addTrack("t1"), "first track should add");
+    require(state.addTrack("t2"), "second track should add");
+    require(state.addMarker("m1", 1000.0), "first marker should add");
+    require(state.addMarker("m2", 2000.0), "second marker should add");
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{2000.0, 6000.0, /*loop*/ true});
+    silverdaw::syncTimelineLoop(engine, state);
+    require(engine.isTimelineLoopArmed(), "a looping selection should arm the engine loop");
+
+    auto removePayload = [](const char* trackId)
+    {
+        auto p = std::make_unique<juce::DynamicObject>();
+        p->setProperty("trackId", trackId);
+        return juce::var(p.release());
+    };
+
+    // A track still remains, so the timeline is still a place markers can name.
+    // One transaction per command, as the dispatcher does, or a single undo would walk
+    // both removals and prove nothing about the second.
+    state.getUndoManager().beginNewTransaction("Remove track");
+    silverdaw::handleTrackRemove(removePayload("t1"), engine, state, bridge);
+    require(state.getMarkerCount() == 2, "removing one of two tracks should keep markers");
+    require(state.getViewTimelineSelection().has_value(),
+            "removing one of two tracks should keep the selection");
+
+    // Markers are persisted content, so clearing them is a real edit the user can lose.
+    // The selection is view state and does not dirty on its own. Proved from clean, so
+    // the track removal in the same call cannot be what sets the flag.
+    state.markClean();
+    state.getUndoManager().beginNewTransaction("Remove track");
+    silverdaw::handleTrackRemove(removePayload("t2"), engine, state, bridge);
+    require(state.getTrackCount() == 0, "both tracks should be gone");
+    require(state.getMarkerCount() == 0, "removing the last track should clear every marker");
+    require(!state.getViewTimelineSelection().has_value(),
+            "removing the last track should clear the timeline selection");
+    require(state.isDirty(), "clearing persisted markers should leave the project dirty");
+    require(!engine.isTimelineLoopArmed(),
+            "the engine loop must disarm, or playback wraps inside a range nothing draws");
+
+    // One undo brings the track and its markers back together: the clear runs inside
+    // whatever transaction the removal is already in, so the two cannot come apart and
+    // leave a restored timeline with nothing marked on it.
+    state.getUndoManager().beginNewTransaction();
+    require(state.getUndoManager().undo(), "the removal should undo");
+    require(state.getTrackCount() == 1, "undo should bring the last track back");
+    require(state.getMarkerCount() == 2, "undo should bring the markers back with it");
+    require(!state.isDirty(),
+            "restoring every marker is a net-zero edit and must return the project to clean");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
@@ -1631,6 +1694,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
     tests.push_back({"Tempo change warps a previously unwarped clip in the engine", testTempoChangeWarpsPreviouslyUnwarpedClipInEngine});
     tests.push_back({"Tempo change leaves a clip already at the new tempo unwarped", testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped});
+    tests.push_back({"Removing the last track clears markers and the timeline selection", testRemovingTheLastTrackClearsMarkersAndSelection});
     tests.push_back({"AudioEngine primeTracksForPlayback is safe and bounded", testAudioEnginePrimeTracksForPlaybackIsSafeAndBounded});
     tests.push_back({"Stopped clip move recreates the read-ahead buffer safely", testStoppedClipMoveRecreatesReadAheadSafely});
     tests.push_back({"Stopped seek keeps the read-ahead and any pending edit rebuild", testStoppedSeekKeepsReadAheadAndPendingEditRebuild});

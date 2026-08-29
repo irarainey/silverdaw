@@ -70,6 +70,9 @@ class ProjectState : public juce::ValueTree::Listener
     /** Returns true if `trackId` exists in the tree. */
     bool hasTrack(const juce::String& trackId) const;
 
+    /** Number of tracks in the tree, ignoring sibling LIBRARY/MARKERS nodes. */
+    int getTrackCount() const noexcept;
+
     // `newIndex` is track-ordinal; moveChild keeps ordering undoable.
     bool moveTrack(const juce::String& trackId, int newIndex);
 
@@ -721,6 +724,15 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Remove an existing timeline marker. Returns false when no marker matches. */
     bool removeMarker(const juce::String& markerId);
+
+    /**
+     * Remove every timeline marker, returning how many went.
+     *
+     * Used when the last track goes: a marker names a place on a timeline, and with no
+     * tracks there is no timeline and no ruler time to name. Undoable in whatever
+     * transaction the caller is already in, so the markers come back with the track.
+     */
+    int clearMarkers();
 
     /**
      * Keep every timeline marker on the same bar when the project tempo changes.

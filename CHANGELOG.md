@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Removing the last track now clears the markers and area selection with it, which were left stranded on a timeline that no longer showed any time.
 - Changing the project tempo no longer turns warp on for clips already at that tempo, which gained a warp badge for a stretch that did nothing.
 
 ## 1.7.1
