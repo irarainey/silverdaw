@@ -2286,6 +2286,11 @@ That window's job is choosing a section to save; it has no Save of its own to co
 file-level edit, and the tempo it would show belongs to the library item rather than to
 anything on screen. Its hint text points at the library's **Edit BPM…** instead, so the
 correction has one home on the source rather than two that mean subtly different things.
+That window draws no beat markers either: `useClipEditorController` feeds the waveform and
+the canvas a `visibleBeatGrid` that is `null` unless `editsExistingClip`, so markers appear
+only where the Beat grid module is there to edit them. Previewing a source is about hearing
+it and picking a section, and an unadjustable grid over that is decoration at best and a
+misread tempo presented as fact at worst.
 
 Beat markers need nothing extra. `resolveSourceBeatGrid` spaces them at `60000 / bpm`
 phase-locked to `beatAnchorSec`; the detected `beats` array is consulted only for presence

@@ -12,6 +12,7 @@
 
 - A tempo inherited from the file an item was cut from is now corrected on that file, fixing every stem and clip taken from it together.
 - A tempo inherited through more than one step — a clip of a stem of a track — is now resolved and drawn correctly instead of appearing to be missing.
+- Previewing a library file no longer draws beat markers over its waveform, since they cannot be adjusted from that window.
 
 ## 1.7.1
 

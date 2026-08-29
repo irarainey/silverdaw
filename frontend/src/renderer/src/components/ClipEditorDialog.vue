@@ -312,12 +312,15 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             class="flex min-h-0 min-w-0 shrink-0 gap-3"
           >
             <!--
-              Warp, pitch, slice AND the beat grid all stay out of the source preview.
-              This window is for choosing a section to save, not for editing the file's
-              properties: a grid editor here has no Save of its own to commit it, and the
-              tempo it shows belongs to the library item rather than to anything on
-              screen. Correcting a mis-detected tempo (ADR 0027) is reached from the
-              library instead — right-click the item and choose Edit BPM.
+              Warp, pitch, slice AND the beat grid all stay out of the source preview,
+              and the waveform draws no beat markers either (see `visibleBeatGrid` in
+              `useClipEditorController`). This window is for choosing a section to save,
+              not for editing the file's properties: a grid editor here has no Save of
+              its own to commit it, and the tempo it shows belongs to the library item
+              rather than to anything on screen. Markers that can be seen but not
+              corrected are worse than none. Correcting a mis-detected tempo (ADR 0027)
+              is reached from the library instead — right-click the item and choose
+              Edit BPM.
             -->
             <div class="min-w-0 flex-1 rounded border border-zinc-800 bg-zinc-950/40 px-4 py-3 text-xs leading-relaxed text-zinc-400">
               <span class="font-medium text-zinc-200">Drag across the waveform to select a section</span>,
