@@ -17,12 +17,13 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 
 import { useLibraryStore } from '@/stores/libraryStore'
-import { libraryItemDisplayName, resolveTempoOwner, type TempoOwner } from '@/stores/libraryItemHelpers'
+import {
+  libraryItemDisplayName,
+  resolveCorrectableTempoOwner,
+  type CorrectableTempoOwner
+} from '@/stores/libraryItemHelpers'
+import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 import type { LibraryItem } from '@/stores/libraryTypes'
-
-/** Matches the backend's accepted range and `libraryStore.correctItemTempo`. */
-const MIN_BPM = 20
-const MAX_BPM = 300
 
 export interface LibraryItemTempoCorrection {
   /**
@@ -37,7 +38,7 @@ export interface LibraryItemTempoCorrection {
   /** The tempo the user has typed, NaN while it is unusable. */
   typedBpm: ComputedRef<number>
   /** The resolved owner, or null when nothing here owns a correctable tempo. */
-  owner: ComputedRef<TempoOwner | null>
+  owner: ComputedRef<CorrectableTempoOwner | null>
   /** Set when the tempo is inherited, naming the item that actually owns it. */
   ownerName: ComputedRef<string | null>
   /** True when the owner's tempo comes from a recorded musical length. */
@@ -68,30 +69,22 @@ export function useLibraryItemTempoCorrection(
   /** The entry as text, whichever of the two shapes `v-model` handed back. */
   const bpmText = computed(() => String(bpmInput.value).trim())
 
-  const owner = computed<TempoOwner | null>(() => {
-    const target = item()
-    if (!target) return null
-    const resolved = resolveTempoOwner(target, library.byId)
+  const owner = computed<CorrectableTempoOwner | null>(() =>
     // A one-shot has no tempo to correct, and an item with none has nothing to correct
     // FROM — offering a field on either would write a number nothing ever draws.
-    if (resolved.reason === 'none' || resolved.reason === 'oneShot') return null
-    if (resolved.ownerItemId === undefined) return null
-    return resolved
-  })
+    resolveCorrectableTempoOwner(item(), library.byId)
+  )
 
-  const currentBpm = computed<number | null>(() => {
-    const bpm = owner.value?.bpm
-    return typeof bpm === 'number' && bpm > 0 ? bpm : null
-  })
+  const currentBpm = computed<number | null>(() => owner.value?.bpm ?? null)
 
-  const isCorrectable = computed(() => owner.value !== null && currentBpm.value !== null)
+  const isCorrectable = computed(() => owner.value !== null)
 
   const ownerName = computed<string | null>(() => {
     const resolved = owner.value
     const target = item()
     if (!resolved || !target || resolved.ownerItemId === target.id) return null
-    const owningItem = resolved.ownerItemId ? library.byId[resolved.ownerItemId] : undefined
-    return owningItem ? libraryItemDisplayName(owningItem) : (resolved.ownerItemId ?? null)
+    const owningItem = library.byId[resolved.ownerItemId]
+    return owningItem ? libraryItemDisplayName(owningItem) : resolved.ownerItemId
   })
 
   const fromMusicalLength = computed(() => owner.value?.reason === 'musicalLength')
@@ -114,8 +107,8 @@ export function useLibraryItemTempoCorrection(
 
   function apply(): boolean {
     const resolved = owner.value
-    const ownerItemId = resolved?.ownerItemId
-    if (!resolved || ownerItemId === undefined || !canCorrect.value) return false
+    if (!resolved || !canCorrect.value) return false
+    const ownerItemId = resolved.ownerItemId
 
     // The correction targets the OWNER, so it must carry the owner's own phase: this
     // surface never edits phase, and pushing anything else would slide the grid of every
@@ -123,13 +116,11 @@ export function useLibraryItemTempoCorrection(
     const ownerItem = library.byId[ownerItemId]
     const anchorSec = ownerItem?.beatAnchorSec ?? ownerItem?.beats?.[0] ?? 0
 
+    // `correctItemTempo` owns the optimistic write and its rollback, so a rejected
+    // correction cannot leave this field showing a tempo the backend refused.
     if (!library.correctItemTempo(ownerItemId, typedBpm.value, anchorSec)) {
       return false
     }
-    // Show what the backend is about to echo. The command is atomic, so there is no
-    // intermediate state worth rendering, and leaving the old number on screen would
-    // read as the correction having been ignored.
-    library.setItemManualTempoLocal(ownerItemId, typedBpm.value, anchorSec)
     reset()
     return true
   }

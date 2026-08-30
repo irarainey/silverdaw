@@ -1146,6 +1146,105 @@ void testTempoCorrectionIsRedirectedToTheTempoOwner()
             "the stem must not be given a BPM of its own, which would split it from its source");
 }
 
+// Regression: `beatAnchorSec` defaulted to 0 and was written to the OWNER, an item the
+// caller never named. Correcting a stem without naming a phase therefore snapped the
+// import's grid to the start of its file, sliding the markers of every clip ever cut from
+// it — while the user believed they had only corrected a number.
+void testTempoCorrectionKeepsTheOwnersGridPhaseWhenNoneIsGiven()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.setLibraryItemBeatAnchor("src", 0.317), "the import should carry a grid phase");
+    require(state.addLibraryItem("drums", "C:\\audio\\drums.wav", "drums.wav", 268094.0, 44100, 2,
+                                 {}, {}, "stem", {}, "src"),
+            "drums stem should add");
+
+    // No `beatAnchorSec`: the user corrected a number and said nothing about phase.
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("itemId", "drums");
+    obj->setProperty("bpm", 102.76);
+    silverdaw::handleLibraryItemCorrectTempo(juce::var(obj), engine, state, bridge);
+
+    requireNear(state.getLibraryItemBpm("src"), 102.76, 1e-9, "the tempo should still be corrected");
+    requireNear(state.getLibraryItemBeatAnchorSec("src"), 0.317, 1e-9,
+                "omitting the phase must leave the owner's grid phase exactly where it was");
+}
+
+// A phase that is not a usable time is a mistake worth reporting, not one to round away
+// into a silent grid slide.
+void testTempoCorrectionRejectsAnUnusableGridPhase()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.setLibraryItemBeatAnchor("src", 0.317), "the import should carry a grid phase");
+
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 102.76, -1.0), engine,
+                                             state, bridge);
+    requireNear(state.getLibraryItemBpm("src"), 98.80, 1e-9,
+                "a negative grid phase should be rejected before anything is written");
+
+    silverdaw::handleLibraryItemCorrectTempo(
+        correctTempoPayload("src", 102.76, std::numeric_limits<double>::quiet_NaN()), engine, state,
+        bridge);
+    requireNear(state.getLibraryItemBpm("src"), 98.80, 1e-9,
+                "a grid phase that is not a number should be rejected too");
+    requireNear(state.getLibraryItemBeatAnchorSec("src"), 0.317, 1e-9,
+                "a rejected correction must leave the grid phase alone");
+}
+
+void testTempoCorrectionSupersedesADetectionAlreadyInFlight()
+{
+    // F1: a detection job runs on a worker thread and applies its result later, on the
+    // message thread. If the user corrects the tempo in between, the result that finally
+    // lands is stale. Letting it through was silent, unrecoverable data loss: the
+    // automatic path writes derived, non-dirtying, NON-UNDOABLE metadata, so the
+    // overwritten correction could not be brought back with undo — nothing had been
+    // pushed onto the undo stack to undo.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+
+    // What a job captures when it is enqueued, before any correction exists.
+    const auto atEnqueue = silverdaw::getTempoAuthorityGeneration("src");
+    require(!silverdaw::tempoDetectionResultIsStale("src", atEnqueue),
+            "a job whose item nobody has touched must be allowed to apply its result");
+
+    silverdaw::applyManualTempo("src", 102.76, 0.0, engine, state, bridge);
+
+    require(silverdaw::tempoDetectionResultIsStale("src", atEnqueue),
+            "a correction made while the job ran must invalidate that job's result");
+    require(!silverdaw::tempoDetectionResultIsStale(
+                "src", silverdaw::getTempoAuthorityGeneration("src")),
+            "a reanalysis enqueued AFTER the correction is an explicit instruction and still applies");
+
+    // A second correction invalidates the reanalysis in turn.
+    const auto afterReanalyseEnqueue = silverdaw::getTempoAuthorityGeneration("src");
+    silverdaw::applyManualTempo("src", 90.0, 0.0, engine, state, bridge);
+    require(silverdaw::tempoDetectionResultIsStale("src", afterReanalyseEnqueue),
+            "the newest correction always wins over a detection enqueued before it");
+
+    // An item nobody has ever corrected is unaffected by another item's corrections.
+    require(!silverdaw::tempoDetectionResultIsStale("untouched", 0),
+            "generations are per item, so one item's correction must not discard another's analysis");
+
+    requireNear(state.getLibraryItemBpm("src"), 90.0, 1e-9,
+                "the hand-set tempo is what the item is left holding");
+}
+
 void testTempoCorrectionRederivesFollowersAndReportsExclusions()
 {
     // Clips that follow the corrected tempo re-derive; clips the user pinned or unwarped
@@ -2370,6 +2469,9 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"Tempo correction leaves the project tempo alone", testTempoCorrectionLeavesTheProjectTempoAlone});
     tests.push_back({"Tempo correction must not seed an unseeded project", testTempoCorrectionMustNotSeedAnUnseededProject});
     tests.push_back({"Tempo correction is redirected to the tempo owner", testTempoCorrectionIsRedirectedToTheTempoOwner});
+    tests.push_back({"Tempo correction keeps the owner's grid phase when none is given", testTempoCorrectionKeepsTheOwnersGridPhaseWhenNoneIsGiven});
+    tests.push_back({"Tempo correction rejects an unusable grid phase", testTempoCorrectionRejectsAnUnusableGridPhase});
+    tests.push_back({"Tempo correction supersedes a detection already in flight", testTempoCorrectionSupersedesADetectionAlreadyInFlight});
     tests.push_back({"Tempo correction re-derives followers and reports exclusions", testTempoCorrectionRederivesFollowersAndReportsExclusions});
     tests.push_back({"Tempo correction scales clip envelopes with their footprint", testTempoCorrectionScalesClipEnvelopesWithTheirFootprint});
     tests.push_back({"Tempo correction rejects what it cannot correct", testTempoCorrectionRejectsWhatItCannotCorrect});

@@ -5,7 +5,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
 import { formatTrackTime } from '@/lib/library/trackTime'
-import { useLibraryItemTempoCorrection } from '@/lib/library/useLibraryItemTempoCorrection'
+import { resolveCorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
 
@@ -239,19 +239,19 @@ export function useLibraryItemInfoController(
   const bpmLabel = computed(() => (warpedBpm.value ? 'Warped BPM' : 'BPM'))
 
   /**
-   * Resolves whether this item has a tempo that could be corrected at all. Only the
-   * `isCorrectable` answer is used here — the editing itself happens in the Edit BPM
-   * dialog, which owns its own instance.
-   */
-  const tempoCorrection = useLibraryItemTempoCorrection(() => props.item)
-
-  /**
    * Whether to offer the Edit button beside the BPM. Only while the row shows the item's
    * OWN tempo: a warped value is a product of the project tempo and the clip's ratio
    * rather than a fact about the file, so editing it would have no single meaning.
+   *
+   * Answered with the shared predicate rather than by constructing the correction
+   * composable: this dialog is read-only, and building an editing session — with its
+   * input ref and its two watchers — to read one boolean gave the composable a second
+   * lifetime to reason about for no benefit. The Edit BPM dialog owns the real one.
    */
   const canEditBpm = computed(
-    () => warpedBpm.value === undefined && tempoCorrection.isCorrectable.value
+    () =>
+      warpedBpm.value === undefined &&
+      resolveCorrectableTempoOwner(props.item, library.byId) !== null
   )
   /** Whether the BPM shown is a rough average of a varying tempo (only for the
    *  source's own detected tempo, not a precise warped value). */

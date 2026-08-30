@@ -71,18 +71,22 @@ export function describeTempoCorrectionCaveats(
 
   const excluded = payload.clipsPinnedExcluded + payload.clipsUnwarpedExcluded
   if (excluded > 0) {
-    const reasons: string[] = []
-    if (payload.clipsPinnedExcluded > 0) {
-      reasons.push(`${pluralise(payload.clipsPinnedExcluded, 'is pinned', 'are pinned')}`)
-    }
-    if (payload.clipsUnwarpedExcluded > 0) {
-      reasons.push(
-        `${pluralise(payload.clipsUnwarpedExcluded, 'has warp off', 'have warp off')}`
+    const pinned = payload.clipsPinnedExcluded
+    const unwarped = payload.clipsUnwarpedExcluded
+    if (pinned > 0 && unwarped > 0) {
+      // Both reasons apply, so the counts have to be split out to say which is which.
+      // `excluded` is at least 2 here, so the plural is always right.
+      caveats.push(
+        `${excluded} clips were left as they are: ${pinned} ${pinned === 1 ? 'is' : 'are'} pinned and ${unwarped} ${unwarped === 1 ? 'has' : 'have'} warp off.`
+      )
+    } else {
+      // One reason, so repeating the count in it reads as a second, unrelated number.
+      const one = excluded === 1
+      const reason = pinned > 0 ? (one ? 'is pinned' : 'are pinned') : one ? 'has warp off' : 'have warp off'
+      caveats.push(
+        `${pluralise(excluded, 'clip was left as it is', 'clips were left as they are')} because ${one ? 'it' : 'they'} ${reason}.`
       )
     }
-    caveats.push(
-      `${pluralise(excluded, 'clip was', 'clips were')} left as they are because ${reasons.join(' and ')}.`
-    )
   }
 
   if (payload.transitionsRemoved > 0) {

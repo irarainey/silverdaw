@@ -217,7 +217,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                         // conditioned buffer: an arbiter sharing the other engine's
                         // front-end would inherit its blind spots and manufacture
                         // agreement, defeating the independence this depends on.
-                        const auto mini = estimateTempoWithMiniBpm(decoded.mono, kAnalysisSampleRate);
+                        const auto mini = estimateTempoWithMiniBpm(
+                            decoded.mono, kAnalysisSampleRate, kMiniBpmMinBpm, kMiniBpmMaxBpm,
+                            timedOut);
+
+                        // An abandoned pass is not a second opinion. Leaving it to fall
+                        // through would let a timeout read as "MiniBPM found no tempo"
+                        // and silently keep the baseline the rejection had doubted.
+                        if (mini.abandoned) return abortTimedOut("minibpm arbiter");
 
                         // A winner that barely beat its own runner-up is an ambiguous
                         // readout rather than a second opinion, and may overturn nothing.
@@ -431,10 +438,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             : 0.0;
     const bool poorFit = relResidual > 0.08 || (baselineKept > 0 && keptFraction < 0.6);
     // Tempo drift alone is valid musical material, so require a poor-fit signal too.
-    result.lowConfidence = poorFit && (variable || keptFraction < 0.5);
+    // A truncated decode is flagged regardless of how well the fit came out: the estimate
+    // describes only the part of the file that could be read, so it may simply be wrong
+    // about the rest and the user is entitled to know the number is provisional.
+    result.lowConfidence = (poorFit && (variable || keptFraction < 0.5)) || decoded.truncated;
     silverdaw::log::info("bpm", "estimated " + audioFile.getFileName() + " -> " +
                                     juce::String(derivedBpm, 4) + " BPM" + (variable ? " (variable)" : "") +
                                     (result.lowConfidence ? " (low-confidence)" : "") +
+                                    (decoded.truncated ? " (truncated decode)" : "") +
                                     " anchor=" + juce::String(anchorSec, 4) +
                                     "s beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())) +
                                     " relResidual=" + juce::String(relResidual, 3) +

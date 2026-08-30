@@ -20,6 +20,7 @@
 // replace the ODF period/phase refinement, which is what places beat markers.
 
 #include <vector>
+#include <functional>
 
 namespace silverdaw
 {
@@ -43,15 +44,24 @@ struct MiniBpmEstimate
         confidence signal, and because the runner-up is often the correct
         octave when the winner is not. */
     std::vector<double> candidates;
+    /** Set when `shouldAbort` ended the pass early. `bpm` is 0 and the estimate
+        must be discarded rather than treated as "no tempo found". */
+    bool abandoned = false;
 };
 
 /** Estimates tempo from mono audio already decoded at `sampleRate`.
     Blocking and CPU-bound, but does no I/O: callers pass the same buffer the
     other estimators use, so a second opinion costs no extra decode or resample.
-    Returns an estimate with `bpm == 0` when no tempo could be judged. */
+    Returns an estimate with `bpm == 0` when no tempo could be judged.
+
+    `shouldAbort` is polled between feed blocks; return true from it to abandon
+    the pass. MiniBPM exposes no abort callback of its own, so this is the only
+    place the analysis timeout can reach: without it a long file made this engine
+    the one stage that ignored the deadline the rest of detection honours. */
 MiniBpmEstimate estimateTempoWithMiniBpm(const std::vector<float>& mono, double sampleRate,
                                          double minBpm = kMiniBpmMinBpm,
-                                         double maxBpm = kMiniBpmMaxBpm);
+                                         double maxBpm = kMiniBpmMaxBpm,
+                                         const std::function<bool()>& shouldAbort = {});
 
 /** Halves or doubles `bpm` until it falls within [minBpm, maxBpm], so two
     engines that picked different octaves can be compared on equal terms.

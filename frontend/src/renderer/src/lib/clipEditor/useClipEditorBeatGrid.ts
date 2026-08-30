@@ -8,10 +8,10 @@
 // the editor session (a live redraw with no bridge round-trip) and committed to the
 // backend as a single undoable edit on Save, or discarded on Cancel.
 
-import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, resolveTempoOwner, type LibraryItem, type LibraryItemGridSnapshot, type TempoOwner } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { libraryItemIsSimple, libraryItemDisplayName } from '@/stores/libraryItemHelpers'
+import { libraryItemIsSimple, libraryItemDisplayName, narrowCorrectableTempoOwner, type CorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { resolveSourceBeatGrid, type SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 
@@ -207,7 +207,11 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
   // written onto the item being EDITED, so resolving this live would report a derived
   // item as owning its own tempo, and a correction would split it from its source
   // instead of fixing the ancestor every sibling shares.
-  let sessionTempoOwner: TempoOwner | null = null
+  // A ref, not a plain binding: the panel reads it through a `computed` to decide whether
+  // to warn that a measured bar length is about to be discarded, and the editor re-targets
+  // in place, so a non-reactive value leaves that warning describing the previous clip.
+  // `shallowRef` because it is always replaced wholesale, never mutated in place.
+  const sessionTempoOwner = shallowRef<TempoOwner | null>(null)
   // False until an owner has actually been resolved from a present item, so a composable
   // constructed before the dialog has a source keeps trying rather than caching "none".
   let tempoOwnerCaptured = false
@@ -430,19 +434,16 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
 
   function captureTempoOwner(): void {
     const item = deps.sourceItem()
-    sessionTempoOwner = item ? resolveTempoOwner(item, library.byId) : null
+    sessionTempoOwner.value = item ? resolveTempoOwner(item, library.byId) : null
     tempoOwnerCaptured = item !== null
   }
 
   function tempoOwner(): TempoOwner | null {
-    return sessionTempoOwner
+    return sessionTempoOwner.value
   }
 
-  function correctableOwner(): (TempoOwner & { ownerItemId: string }) | null {
-    const owner = sessionTempoOwner
-    if (!owner || owner.ownerItemId === undefined) return null
-    if (owner.reason === 'none' || owner.reason === 'oneShot') return null
-    return { ...owner, ownerItemId: owner.ownerItemId }
+  function correctableOwner(): CorrectableTempoOwner | null {
+    return narrowCorrectableTempoOwner(sessionTempoOwner.value)
   }
 
   function correctionOwnerName(): string | null {
@@ -474,15 +475,21 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
       owner.ownerItemId === item.id
         ? currentAnchorSec()
         : (ownerItem?.beatAnchorSec ?? ownerItem?.beats?.[0] ?? 0)
+    // Checked before the draft is dropped, so a value the store would reject cannot cost
+    // the user their session's grid edit. `canCorrect` has already bounded the BPM.
+    if (!Number.isFinite(anchorSec)) return false
 
-    // Drop the local draft and re-apply the correction to the item that actually owns
-    // the tempo. The draft wrote the typed BPM onto the item being EDITED, which for an
-    // inherited tempo is the wrong item entirely; this leaves the view showing what the
-    // backend is about to echo instead of a value on the wrong item.
+    // Drop the local draft and let the store re-apply the correction to the item that
+    // actually owns the tempo. The draft wrote the typed BPM onto the item being EDITED,
+    // which for an inherited tempo is the wrong item entirely. Restoring first also makes
+    // the snapshot `correctItemTempo` takes the true pre-draft grid, so a rejected
+    // correction rolls back to that rather than to a half-unwound draft.
     if (gridSnapshot && gridSnapshotItemId) library.restoreItemGridLocal(gridSnapshotItemId, gridSnapshot)
-    library.setItemManualTempoLocal(owner.ownerItemId, bpm, anchorSec)
 
     if (!library.correctItemTempo(owner.ownerItemId, bpm, anchorSec)) {
+      // The draft is spent either way; the grid is back to how the session opened, which
+      // is a coherent state rather than a partly-applied one.
+      syncTempoField()
       return false
     }
 
@@ -494,7 +501,7 @@ export function useClipEditorBeatGrid(deps: ClipEditorBeatGridDeps): ClipEditorB
     itemGridEdited = false
     originalBpm.value = bpm
     manualBpmInput.value = bpm.toFixed(2)
-    sessionTempoOwner = { ...owner, bpm }
+    sessionTempoOwner.value = { ...owner, bpm }
     useProjectStore().timelineRevision++
     return true
   }

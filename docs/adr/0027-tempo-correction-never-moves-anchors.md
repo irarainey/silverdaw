@@ -185,6 +185,18 @@ edit, one number, one undo is the version they can predict.
 
 ## Consequences
 
+- **A correction outranks any tempo detection already in flight.** Detection
+  runs on a worker thread and applies its result later, on the message thread,
+  so a job started at import can land after the user has corrected the same
+  item. That path writes derived, non-dirtying, non-undoable metadata, so a
+  correction it overwrote could not be recovered with undo — nothing had been
+  pushed onto the undo stack. Each library item therefore carries a *tempo
+  authority generation*, bumped by `applyManualTempo`; a job captures it when
+  it is **enqueued**, not when it starts, so a correction wins even while the
+  job is still queued, and discards its own result if the generation moved on.
+  A reanalysis the user explicitly asks for is enqueued after the correction
+  that preceded it, so it still applies — the guard only ever drops a result
+  the user has since overruled.
 - A correction is one action with one undo. Clip starts, markers, automation,
   the timeline selection and the playhead are untouched. Beat grids, following
   clips' ratios and lengths, clip envelopes, transitions, the metronome,

@@ -102,7 +102,7 @@ describe('TEMPO_CORRECTION_APPLIED', () => {
 
     expect(pushInfo).toHaveBeenCalledTimes(1)
     const text = String(pushInfo.mock.calls[0]?.[0])
-    expect(text).toContain('left as they are')
+    expect(text).toContain('left as it is')
     expect(text).toContain('no longer had an overlap')
   })
 

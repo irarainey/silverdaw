@@ -1037,6 +1037,12 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     // Mutations get one undo transaction; high-rate drag streams coalesce by target.
     silverdaw::beginUndoTransactionIfNeeded(type, payload, projectState);
 
+    // Counted before the handler runs so the reconcile pass below can see removals the
+    // handler made itself. Only for the types that can move transition geometry, so the
+    // tree walk stays off the path of every other message.
+    const bool mayChangeTransitions = silverdaw::transitionGeometryMayHaveChanged(type);
+    const int transitionsBeforeDispatch = mayChangeTransitions ? projectState.countTransitions() : 0;
+
     // Route to the first domain that owns the type. Type strings are unique, so
     // the chaining order only affects readability, not behaviour.
     const DispatchContext ctx{type, payload, engine, projectState, bridge, peakPool,
@@ -1055,9 +1061,10 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     silverdaw::endUndoTransactionIfNeeded(type, payload);
 
     // Geometry edits can invalidate transition overlaps; reconcile inside the same undo step.
-    if (silverdaw::transitionGeometryMayHaveChanged(type))
+    if (mayChangeTransitions)
     {
-        silverdaw::reconcileTransitionsAfterGeometryEdit(engine, projectState, bridge, session);
+        silverdaw::reconcileTransitionsAfterGeometryEdit(engine, projectState, bridge, session,
+                                                        transitionsBeforeDispatch);
     }
 
     // Mutations and project replacement can change undo/redo menu state.

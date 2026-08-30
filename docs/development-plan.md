@@ -2198,6 +2198,34 @@ to catch this error but a detection-confidence question in its own right; and a
 named "override this derived item only" action, which reintroduces the
 two-concept burden the single corrective action exists to avoid.
 
+**Detection accuracy (ADR 0028).** Correcting a tempo by hand is the safety net;
+this is about needing it less often. Decision and rejected alternatives: ADR 0028.
+
+9. [x] **Condition the audio before beat tracking.** A zero-phase percussive
+   emphasis keeps the kick and snare/hat bands and discards the mid, where
+   sustained guitar, pad and vocal energy feeds the onset function without
+   carrying any beat. Zero phase by construction, so marker timing is unchanged.
+10. [x] **Settle a disputed refinement with an independent engine.** MiniBPM is
+    vendored and consulted *only* when the residual gate rejects the
+    autocorrelation candidate — the case where the existing test is circular,
+    because it scores candidates against beats the suspect tempo produced. Fed
+    the raw decode, never the conditioned buffer, or the two engines would share
+    blind spots and manufacture agreement.
+11. [x] **Fit the grid to onset starts, not onset-function peaks.** The peak
+    marks the fastest spectral change, which arrives 0.7 ms after a click but
+    3.0–3.6 ms after a drum or pad. Because the bias depends on the material, no
+    single group-delay constant can correct it; `estimateOnsetStartFrames`
+    backtracks to a proportion of each onset's own height instead. Mean absolute
+    phase error 2.63 ms → 0.57 ms.
+12. [x] **Honour the analysis timeout in every stage.** MiniBPM exposes no abort
+    callback, so the deadline is polled between the blocks fed to it and an
+    abandoned pass is reported as a timeout rather than as "no tempo found".
+
+Known limits, recorded rather than resolved: the arbiter's endorsement is not
+revalidated after the later ODF refit, which may still move the tempo by up to
+5%; and the 0.75 backtrack fraction is calibrated on twelve synthetic files,
+because the real tracks carry no beat-phase ground truth.
+
 ### 1.7.1 - Clip Timing & Beat-Grid Correctness *(current release)*
 
 **Goal:** make a clip's window arithmetic exact, so clips that should be identical

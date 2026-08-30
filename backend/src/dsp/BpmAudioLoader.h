@@ -34,7 +34,9 @@ struct BpmDecodeResult
     std::vector<float> mono;
     /** The file's own rate, retained so beat times can be reported in source time. */
     double sourceSampleRate = 0.0;
-    /** Set when the decode stopped early but kept enough audio to analyse. */
+    /** Set when the decode stopped early but kept enough audio to analyse. Forces
+        `lowConfidence` on the result: the estimate describes only the part of the file
+        that was read, so it may not hold for the rest. */
     bool truncated = false;
 
     bool ok() const noexcept { return status == BpmDecodeStatus::Ok; }

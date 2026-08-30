@@ -246,10 +246,8 @@ void printCheckpoints(const silverdaw::BpmAnalysis& a, const Entry& e, const juc
     file whose true beat times are known can separate a framing delay (constant,
     correctable) from a material-dependent one (not correctable by a constant).
 
-    `backtrackFraction` walks left from the peak to where the ODF last sat below
-    that fraction of the peak's height above the preceding local minimum, then
-    interpolates the crossing, which estimates where the transient began rather
-    than where it was changing fastest. */
+    `backtrackFraction` is passed straight to the shipped
+   `estimateOnsetStartFrames`, so what is calibrated here is what ships. */
 double medianOffsetForStrategy(const std::vector<double>& odf, double envRate, double periodSec,
                                double firstBeatSec, double groupDelaySec, double backtrackFraction,
                                int& outMatched)
@@ -294,31 +292,7 @@ double medianOffsetForStrategy(const std::vector<double>& odf, double envRate, d
         }
 
         if (backtrackFraction > 0.0)
-        {
-            // Find the valley preceding the peak, bounded so a long quiet run
-            // cannot drag the estimate arbitrarily far back.
-            int valley = bestI;
-            const int limit = std::max(1, bestI - static_cast<int>(std::ceil(0.120 * envRate)));
-            for (int i = bestI - 1; i >= limit; --i)
-            {
-                if (odf[static_cast<size_t>(i)] <= odf[static_cast<size_t>(valley)]) valley = i;
-                else if (odf[static_cast<size_t>(i)] > odf[static_cast<size_t>(bestI)]) break;
-            }
-            const double base = odf[static_cast<size_t>(valley)];
-            const double target = base + (odf[static_cast<size_t>(bestI)] - base) * backtrackFraction;
-            for (int i = bestI; i > valley; --i)
-            {
-                const double hiV = odf[static_cast<size_t>(i)];
-                const double loV = odf[static_cast<size_t>(i - 1)];
-                if (loV <= target && hiV >= target)
-                {
-                    const double span = hiV - loV;
-                    const double frac = span > 1e-12 ? (target - loV) / span : 0.0;
-                    estFrames = static_cast<double>(i - 1) + frac;
-                    break;
-                }
-            }
-        }
+            estFrames = silverdaw::estimateOnsetStartFrames(odf, bestI, estFrames, envRate, backtrackFraction);
 
         offsets.push_back(estFrames / envRate - groupDelaySec - beatT);
     }

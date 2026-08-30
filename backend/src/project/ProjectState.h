@@ -611,6 +611,11 @@ class ProjectState : public juce::ValueTree::Listener
     bool setLibraryItemMusicalBeats(const juce::String& itemId, int beats);
     int getLibraryItemMusicalBeats(const juce::String& itemId) const;
 
+    /** The item's current beat-grid phase, or 0 when it has none. Returns 0 for a stored
+     *  value that is not a usable time, so a corrupt project cannot poison a caller that
+     *  is only trying to leave the phase where it already was. */
+    double getLibraryItemBeatAnchorSec(const juce::String& itemId) const;
+
     // A hand-set tempo/beat grid is a deliberate user edit (unlike automatic
     // analysis): it writes bpm/beats/anchor through the UndoManager and marks the
     // project dirty, so it is undoable via EDIT_UNDO. Clears the variable-tempo and

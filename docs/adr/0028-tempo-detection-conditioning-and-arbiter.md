@@ -1,4 +1,4 @@
-# ADR 0028 — Tempo detection conditions the audio and settles disputes with an independent second engine
+# ADR 0028 — Tempo detection conditions the audio, settles disputes with an independent second engine, and fits the grid to onset starts
 
 - **Date:** 2026-08-29 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
 
@@ -135,6 +135,44 @@ comparison. `BpmDetector`'s own 40–240 range is left alone: it is a **rejectio
 gate** returning "no tempo", not a search range, and narrowing it would convert
 usable detections into no result at all.
 
+### 3. Fit the grid to onset starts, not to ODF peaks
+
+Conditioning and arbitration both decide *what the tempo is*. Neither decides
+*where the beat falls*, and measurement showed the grid was consistently late.
+
+The onset detection function is a complex spectral difference over 1024-sample
+frames at hop 256, so one frame is 5.8 ms at 44.1 kHz. Its peak marks the moment
+of fastest spectral change, which is not the moment the note starts. Probing the
+synthetic corpus put the gap at **+0.7 ms on broadband clicks but +3.0–3.6 ms on
+drums and pads**: energy that arrives gradually across several frames peaks later
+relative to its own onset than energy that arrives all at once.
+
+That the error is **material-dependent is the whole point**. A single calibrated
+group-delay constant — which is what the detector had — can be correct for one
+kind of material or the other, never both, and no amount of retuning changes
+that. The fix has to be a measurement per onset rather than a constant.
+
+`estimateOnsetStartFrames` therefore walks back from each ODF peak to the point
+where the function has fallen to 75% of that peak's height above the onset's own
+foot, interpolating between frames because a 5.8 ms frame is coarser than the
+~3 ms bias being corrected. `refineGridFromOdfPeaks` fits the grid to those
+starts. Three details are load-bearing:
+
+- **The foot is this onset's, not the global minimum.** The backward search stops
+  at the first upward turn beyond a small noise tolerance, so on a flam the
+  second hit does not backtrack past the first.
+- **The result is clamped to the peak**, so a degenerate or flat ODF can only
+  fail to move a marker, never move one forward.
+- **The fraction self-adapts.** Backtracking a proportion of each onset's own
+  height is what makes one rule fit both a click and a pad; 0.75 was the value
+  that minimised both mean error and, more importantly, the spread *between*
+  materials.
+
+An earlier hypothesis, that the lateness was the notes' own finite attack time,
+was **disproved**: the corpus synthesises instantaneous attacks. The cause is
+spectral smearing across analysis frames, which is why the correction belongs in
+the ODF stage rather than in the corpus or the tempo estimate.
+
 ## Consequences
 
 Measured over the five real tracks, mean absolute error:
@@ -163,7 +201,15 @@ would have been enough.
 The motivating file moves from 98.80 to 104.02 against a truth of 102.76 — from
 4% out to 1.2% out. No track regressed. The synthetic corpus is unchanged in
 both tempo (12/12) and phase (mean offset 0.0863 beat before and after),
-supporting the claim that markers do not move.
+supporting the claim that conditioning and arbitration do not move markers.
+
+Onset-start fitting moves markers deliberately, and only earlier: mean absolute
+phase offset falls from **2.63 ms to 0.57 ms**. Drums and pads land within
+±0.2 ms of truth. Broadband clicks move from 0.35 ms late to about 1.6 ms early,
+which is the trade the single fraction makes — the between-material spread
+collapses, at the cost of slightly overshooting the material that was already
+nearly right. Tempo is untouched by this stage: the corpus stays at 12/12 and
+the real-track mean error is unchanged at 0.439 BPM.
 
 Detection cost is broadly unchanged.
 
@@ -185,11 +231,18 @@ Detection cost is broadly unchanged.
   That refit may move the tempo by up to 5%, so the final answer is not
   guaranteed to be the candidate MiniBPM approved. This has not been observed on
   the corpus but is not prevented.
-- **MiniBPM does not observe the analysis timeout.** It has no abort callback,
-  so once arbitration starts a pathological input could carry the analysis past
-  `kAnalysisTimeoutSeconds`. It only runs on a disputed refinement and takes
-  1–3 s on normal material, so this is a latent contract gap rather than an
-  observed problem.
+- **MiniBPM has no abort callback of its own.** The analysis timeout is therefore
+  polled between the blocks fed to it, and an abandoned pass is reported as a
+  timeout rather than as "no tempo found" — the distinction matters, because the
+  latter would silently keep the baseline the rejection had doubted. The final
+  `estimateTempo` call is still not interruptible, but it is a small fraction of
+  the cost on any realistic input.
+- **The 0.75 backtrack fraction is calibrated on twelve synthetic files.** They
+  are the only material with beat-phase ground truth available; the five real
+  tracks have none. The fraction is a single constant fitted to a small, easy
+  corpus and should be treated as provisional. Whether it and the conditioning
+  constants ought to be versioned together as one calibration profile is left
+  open.
 - **Detection remains a guess.** It is now wrong less often and by less, but the
   motivating file is still 1.2% out. **ADR 0027's Edit BPM remains the
   authoritative correction**, and nothing here reduces the need for it. That is

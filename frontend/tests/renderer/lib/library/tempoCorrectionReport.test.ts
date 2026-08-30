@@ -103,6 +103,23 @@ describe('describeTempoCorrectionCaveats', () => {
     expect(line).not.toMatch(/fail|error/i)
   })
 
+  it('reads as English when only one clip, or only one reason, was excluded', () => {
+    // Regression: every case went through the both-reasons wording, producing
+    // "1 clip was left as they are because 1 is pinned" — a plural pronoun for a single
+    // clip, and a count repeated as though it were a second, unrelated number.
+    const onePinned = describeTempoCorrectionCaveats(applied({ clipsPinnedExcluded: 1 }))
+    expect(onePinned).toContain('1 clip was left as it is because it is pinned.')
+
+    const manyPinned = describeTempoCorrectionCaveats(applied({ clipsPinnedExcluded: 3 }))
+    expect(manyPinned).toContain('3 clips were left as they are because they are pinned.')
+
+    const oneUnwarped = describeTempoCorrectionCaveats(applied({ clipsUnwarpedExcluded: 1 }))
+    expect(oneUnwarped).toContain('1 clip was left as it is because it has warp off.')
+
+    const manyUnwarped = describeTempoCorrectionCaveats(applied({ clipsUnwarpedExcluded: 2 }))
+    expect(manyUnwarped).toContain('2 clips were left as they are because they have warp off.')
+  })
+
   it('reports removed transitions and clips pushed past the project length', () => {
     const caveats = describeTempoCorrectionCaveats(
       applied({ transitionsRemoved: 1, clipsPastProjectLength: 2 })

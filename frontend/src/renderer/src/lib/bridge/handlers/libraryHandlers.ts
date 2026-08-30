@@ -86,11 +86,15 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
     const library = useLibraryStore()
 
     if (!payload.ok) {
-      // Nothing was applied, so the project is not half-corrected; say what failed.
+      // Nothing was applied, so the project is not half-corrected; put the displayed
+      // tempo back to the number the backend still holds before saying what failed.
       log.warn('bridge', `TEMPO_CORRECTION_APPLIED itemId=${payload.itemId} failed: ${payload.error}`)
+      library.rollbackTempoCorrection(payload.itemId)
       notifications.pushError(`Could not correct the tempo. ${payload.error}`)
       return
     }
+
+    library.commitTempoCorrection(payload.itemId)
 
     const item = library.getItem(payload.itemId)
     const owner = library.getItem(payload.ownerItemId)

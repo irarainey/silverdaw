@@ -358,12 +358,12 @@ bool estimateGridPhaseOffset(const std::vector<double>& odf, double envRate, dou
 
 namespace
 {
-// Calibrated on a corpus with known beat times: 0.75 minimises mean |offset|
-// across click, drum and pad material (2.68 ms -> 0.52 ms) and, more
-// importantly, collapses the spread between those materials to under 1 ms.
-// Lower fractions overshoot early, higher ones leave drums late.
-constexpr double kOnsetBacktrackFraction = 0.75;
-constexpr double kOnsetBacktrackMaxSec = 0.120;
+// A rise larger than this fraction of the peak's height, seen while walking
+// left, is treated as a real turn upward rather than noise on the descent.
+constexpr double kOnsetValleyNoiseFraction = 0.05;
+// Below this share of the peak height there is no usable ramp to measure, so
+// the parabolic peak is kept rather than inventing a crossing from noise.
+constexpr double kOnsetMinProminenceFraction = 0.02;
 } // namespace
 
 // Estimate where a transient *began*, given the ODF peak frame it produced.
@@ -382,26 +382,42 @@ constexpr double kOnsetBacktrackMaxSec = 0.120;
 // automatically, because a slow-rising onset has a correspondingly longer
 // ramp. The crossing is linearly interpolated so the estimate is not limited
 // to the 5.8 ms frame grid, which is coarser than the bias being removed.
-// The search is bounded so a long quiet passage before the peak cannot drag
+//
+// The backward search stops at the FOOT of this onset — the first point where
+// the ODF turns upward again as we walk left. It deliberately does not run on
+// to the lowest sample in the window: crossing an intervening smaller onset
+// would measure the ramp from an unrelated earlier trough, making the
+// threshold depend on whatever happened up to 120 ms earlier. That matters on
+// flams, rolls and dense percussion, where a smaller hit often sits just
+// before the beat. The window is bounded so a long quiet passage cannot drag
 // the estimate arbitrarily far back.
 double estimateOnsetStartFrames(const std::vector<double>& odf, int peakIdx, double peakFrames,
-                                double envRate)
+                                double envRate, double backtrackFraction)
 {
     if (peakIdx < 1 || peakIdx >= static_cast<int>(odf.size()) || envRate <= 0.0) return peakFrames;
+    if (backtrackFraction <= 0.0 || backtrackFraction >= 1.0) return peakFrames;
 
     const double peakV = odf[static_cast<size_t>(peakIdx)];
-    int valley = peakIdx;
+    const double noiseTol = std::abs(peakV) * kOnsetValleyNoiseFraction;
     const int limit = std::max(0, peakIdx - static_cast<int>(std::ceil(kOnsetBacktrackMaxSec * envRate)));
+
+    int valley = peakIdx;
     for (int i = peakIdx - 1; i >= limit; --i)
     {
         const double v = odf[static_cast<size_t>(i)];
-        if (v <= odf[static_cast<size_t>(valley)]) valley = i;
-        else if (v > peakV) break; // a larger neighbouring onset: stop before absorbing it
+        if (v <= odf[static_cast<size_t>(valley)])
+        {
+            valley = i;
+            continue;
+        }
+        if (v - odf[static_cast<size_t>(valley)] > noiseTol) break; // turned upward: foot of this onset
     }
     if (valley >= peakIdx) return peakFrames;
 
     const double base = odf[static_cast<size_t>(valley)];
-    const double target = base + (peakV - base) * kOnsetBacktrackFraction;
+    if (peakV - base <= std::abs(peakV) * kOnsetMinProminenceFraction) return peakFrames;
+
+    const double target = base + (peakV - base) * backtrackFraction;
     for (int i = peakIdx; i > valley; --i)
     {
         const double hiV = odf[static_cast<size_t>(i)];
@@ -410,7 +426,10 @@ double estimateOnsetStartFrames(const std::vector<double>& odf, int peakIdx, dou
         {
             const double span = hiV - loV;
             const double frac = span > 1e-12 ? (target - loV) / span : 0.0;
-            return static_cast<double>(i - 1) + frac;
+            // The parabolic peak can interpolate to the LEFT of peakIdx, so the
+            // crossing must be clamped or it could report an onset starting
+            // after the peak it was derived from.
+            return std::min(peakFrames, static_cast<double>(i - 1) + frac);
         }
     }
     return peakFrames;

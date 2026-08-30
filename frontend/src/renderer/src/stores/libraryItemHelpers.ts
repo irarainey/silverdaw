@@ -144,6 +144,39 @@ export function resolveTempoOwner(
   return { reason: 'none' }
 }
 
+/** A tempo owner that a correction can actually be written to. */
+export type CorrectableTempoOwner = TempoOwner & { ownerItemId: string; bpm: number }
+
+/**
+ * Narrow a resolved owner to one a correction can be sent for, or null.
+ *
+ * The rule is "there is a real number, on a real item, that could be wrong": `none` and
+ * `oneShot` hold no tempo to correct, and an owner with no id is a tempo nothing can be
+ * written to. By construction of {@link resolveTempoOwner} every other reason carries a
+ * positive `bpm`, so this is a narrowing rather than an extra test — it just makes the
+ * guarantee visible in the type instead of leaving each caller to re-derive it.
+ *
+ * Shared deliberately: the library context menu, the Edit BPM dialog and the Clip Editor
+ * beat grid all have to agree on whether a correction is offered, and when each kept its
+ * own copy they had already drifted apart.
+ */
+export function narrowCorrectableTempoOwner(
+  owner: TempoOwner | undefined | null
+): CorrectableTempoOwner | null {
+  if (!owner || owner.ownerItemId === undefined) return null
+  if (owner.reason === 'none' || owner.reason === 'oneShot') return null
+  if (typeof owner.bpm !== 'number' || owner.bpm <= 0) return null
+  return { ...owner, ownerItemId: owner.ownerItemId, bpm: owner.bpm }
+}
+
+/** Resolve an item's tempo owner and narrow it in one step; null when not correctable. */
+export function resolveCorrectableTempoOwner(
+  item: TempoResolvable | undefined | null,
+  byId: Readonly<Record<string, LibraryItem>>
+): CorrectableTempoOwner | null {
+  return narrowCorrectableTempoOwner(resolveTempoOwner(item, byId))
+}
+
 /**
  * The single resolver for a clip or library item's ORIGINAL BPM.
  *

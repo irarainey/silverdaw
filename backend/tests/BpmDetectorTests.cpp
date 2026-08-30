@@ -10,6 +10,7 @@
 #include "../src/dsp/BpmAudioLoader.h"
 #include "../src/dsp/MiniBpmEstimator.h"
 #include "../src/dsp/PercussiveEmphasis.h"
+#include "../src/dsp/BpmAnalysisHelpers.h"
 
 #include <algorithm>
 #include <cmath>
@@ -235,7 +236,8 @@ void testMovingMedianFloorPreservesPeaksRemovesSwell()
 }
 
 void checkClickTrackGrid(double bpm, double seconds = 60.0, double toneHz = 1000.0,
-                         double burstSec = 0.01)
+                         double burstSec = 0.01, double meanTolSec = 0.003,
+                         double maxTolSec = 0.004)
 {
     const double sampleRate = 44100.0;
 
@@ -277,8 +279,8 @@ void checkClickTrackGrid(double bpm, double seconds = 60.0, double toneHz = 1000
     const double meanSigned = sumSigned / counted;
 
     // No systematic early/late bias, and never far off on any single beat.
-    requireNear(meanSigned, 0.0, 0.003, "grid should not be systematically late/early");
-    require(maxAbs < 0.004, "every grid line should sit within ~4 ms of its beat");
+    requireNear(meanSigned, 0.0, meanTolSec, "grid should not be systematically late/early");
+    require(maxAbs < maxTolSec, "every grid line should sit within tolerance of its beat");
 
     // Drift guard: the grid must not tilt across the track. With an accurate
     // period the first and last residuals are nearly equal; a period error shows
@@ -293,10 +295,90 @@ void checkClickTrackGrid(double bpm, double seconds = 60.0, double toneHz = 1000
 // almost on it — a gap no single group-delay constant can close, and the reason
 // markers read as "slightly late" on real music. The grid is now anchored to
 // where the onset *began*, so both materials must satisfy the same bound.
+//
+// The tolerance is deliberately TIGHTER than the shared click default. Measured,
+// the pre-fix peak-anchored grid sat +3.47 ms out on this material, so a 3 ms
+// bound would have caught it by only half a millisecond. 1.5 ms fails the old
+// behaviour decisively while leaving ample room above the ~0.2 ms this now
+// achieves.
 void testLowFrequencyOnsetGridIsNotLate()
 {
     for (double bpm : {100.0, 128.0})
-        checkClickTrackGrid(bpm, 60.0, 60.0, 0.12);
+        checkClickTrackGrid(bpm, 60.0, 60.0, 0.12, 0.0015, 0.004);
+}
+
+// A linear ramp peaking at index 10, shared by the estimator tests.
+std::vector<double> slowRampForClamp()
+{
+    return {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 0.5, 0.1};
+}
+
+// The onset-start estimator is the final authority on where a beat marker
+// lands, so it is tested directly on hand-built ODFs rather than only through
+// a whole-file analysis where a regression could hide behind a tolerance.
+void testOnsetStartEstimatorBacktracksSlowRamps()
+{
+    const double envRate = 172.265625; // 44100 / 256
+
+    // A slow ramp: the peak is at index 10 but the rise starts around index 5.
+    // The 75 % crossing must land between the foot and the peak, and clearly
+    // before the peak, or the material-dependent lateness is back.
+    std::vector<double> slow{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 0.5, 0.1};
+    const double slowStart = silverdaw::estimateOnsetStartFrames(slow, 10, 10.0, envRate);
+    require(slowStart < 10.0, "a slow ramp must resolve earlier than its peak");
+    require(slowStart > 5.0, "backtrack must not run past the foot of the ramp");
+    requireNear(slowStart, 8.75, 0.01, "75% of a linear ramp is three quarters up it");
+
+    // A sharp onset: peak at index 5 with the immediately preceding frame at
+    // zero. There is no ramp to walk back along, so the estimate must stay
+    // within one frame of the peak.
+    std::vector<double> sharp{0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.3, 0.0};
+    const double sharpStart = silverdaw::estimateOnsetStartFrames(sharp, 5, 5.0, envRate);
+    require(sharpStart > 4.0 && sharpStart <= 5.0, "a sharp onset must barely move");
+
+    // Fraction 0 or 1 is a disabled/degenerate request and must be a no-op
+    // rather than silently resolving to the valley.
+    requireNear(silverdaw::estimateOnsetStartFrames(slow, 10, 10.0, envRate, 0.0), 10.0, 1e-9,
+                "a zero fraction leaves the peak alone");
+    requireNear(silverdaw::estimateOnsetStartFrames(slow, 10, 10.0, envRate, 1.0), 10.0, 1e-9,
+                "a unit fraction leaves the peak alone");
+}
+
+// Robustness cases that the synthetic corpus cannot produce but real music can.
+void testOnsetStartEstimatorHandlesAwkwardOdfs()
+{
+    const double envRate = 172.265625;
+
+    // An intervening SMALLER onset just before the beat (a flam or a roll).
+    // The walk must stop at the foot of the beat's own onset and must not
+    // cross the smaller peak to measure from an unrelated earlier trough.
+    std::vector<double> flam{0.0, 0.6, 0.1, 0.5, 0.5, 0.5, 1.0, 0.2};
+    const double flamStart = silverdaw::estimateOnsetStartFrames(flam, 6, 6.0, envRate);
+    require(flamStart > 5.0 && flamStart <= 6.0,
+            "the walk must stop at this onset's foot, not cross the earlier hit");
+
+    // A flat ODF has no prominence to measure; the peak must be kept.
+    std::vector<double> flat(20, 0.4);
+    requireNear(silverdaw::estimateOnsetStartFrames(flat, 10, 10.0, envRate), 10.0, 1e-9,
+                "a flat ODF leaves the peak alone");
+
+    // A zero-clipped plateau, which the moving-median floor subtraction
+    // routinely produces, must not resolve to some arbitrary earlier frame.
+    std::vector<double> clipped{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.4};
+    const double clippedStart = silverdaw::estimateOnsetStartFrames(clipped, 8, 8.0, envRate);
+    require(clippedStart > 7.0 && clippedStart <= 8.0, "a step out of silence must not drift early");
+
+    // The parabolic peak can interpolate to the LEFT of the integer maximum.
+    // The returned onset start must never be later than the peak it came from.
+    const double clamped = silverdaw::estimateOnsetStartFrames(slowRampForClamp(), 10, 9.6, envRate);
+    require(clamped <= 9.6 + 1e-9, "onset start must never follow the interpolated peak");
+
+    // Degenerate inputs must be handled rather than indexed out of bounds.
+    std::vector<double> tiny{1.0};
+    requireNear(silverdaw::estimateOnsetStartFrames(tiny, 0, 0.0, envRate), 0.0, 1e-9,
+                "a single-frame ODF is left alone");
+    requireNear(silverdaw::estimateOnsetStartFrames(slowRampForClamp(), 10, 10.0, 0.0), 10.0, 1e-9,
+                "a zero envelope rate is left alone");
 }
 
 void testClickTrackGridLandsOnBeats()
@@ -375,43 +457,85 @@ void testPercussiveEmphasisPreservesOnsetTiming()
 {
     const double sampleRate = 44100.0;
     const int length = 44100;
+    // Low band 180 Hz -> lround(0.44 * 44100 / 180) = 108, forced odd = 109,
+    // half = 54, cascaded twice = 108 samples of reach either side.
+    const int kReach = 108;
 
-    // Boundaries are tested explicitly: an edge policy that shrinks the window
-    // instead of mirroring would keep the interior symmetric while quietly
-    // biasing onsets in the first and last few milliseconds, which is exactly
-    // where a clip's opening beat tends to sit.
-    for (int impulseAt : {200, 22050, 43900})
-    {
-        // A single impulse contains every frequency, so if any band were delayed
-        // relative to another the response would smear asymmetrically about it.
+    auto conditionImpulseAt = [&](int at) {
         std::vector<float> impulse(static_cast<size_t>(length), 0.0f);
-        impulse[static_cast<size_t>(impulseAt)] = 1.0f;
+        impulse[static_cast<size_t>(at)] = 1.0f;
+        return silverdaw::emphasisePercussiveContent(impulse, sampleRate);
+    };
 
-        const auto filtered = silverdaw::emphasisePercussiveContent(impulse, sampleRate);
-        require(filtered.size() == impulse.size(), "conditioning preserves length");
-
+    auto peakIndexOf = [](const std::vector<float>& v) {
         int peakIndex = 0;
         float peak = 0.0f;
-        for (size_t i = 0; i < filtered.size(); ++i)
+        for (size_t i = 0; i < v.size(); ++i)
         {
-            if (std::abs(filtered[i]) > peak)
+            if (std::abs(v[i]) > peak)
             {
-                peak = std::abs(filtered[i]);
+                peak = std::abs(v[i]);
                 peakIndex = static_cast<int>(i);
             }
         }
+        return std::pair<int, float>{peakIndex, peak};
+    };
+
+    // --- Interior: the response must be symmetric about the impulse ----------
+    // Away from both edges no reflected sample participates, so sample-wise
+    // symmetry is the direct positive evidence of linear phase. A peak that
+    // merely stayed put could still sit on a skewed response.
+    for (int impulseAt : {200, 22050, 43900})
+    {
+        const auto filtered = conditionImpulseAt(impulseAt);
+        require(filtered.size() == static_cast<size_t>(length), "conditioning preserves length");
+        const auto [peakIndex, peak] = peakIndexOf(filtered);
         require(peak > 0.0f, "conditioned impulse should not be silent");
         require(peakIndex == impulseAt, "impulse peak must not move");
 
-        // Sample-wise symmetry is the positive evidence of linear phase; a peak
-        // that merely happened to stay put could still sit on a skewed response.
-        const int span = std::min(150, std::min(impulseAt, length - 1 - impulseAt));
-        require(span > 0, "test impulse should leave room to compare either side");
-        for (int offset = 1; offset <= span; ++offset)
+        for (int offset = 1; offset <= 150; ++offset)
         {
             requireNear(filtered[static_cast<size_t>(impulseAt - offset)],
                         filtered[static_cast<size_t>(impulseAt + offset)], 1e-6,
-                        "impulse response must be symmetric (linear phase)");
+                        "interior impulse response must be symmetric (linear phase)");
+        }
+    }
+
+    // --- Boundary: the response must be the REFLECTED fold of that same kernel
+    // Within `kReach` of an edge the mirror folds a second copy of the onset
+    // back into the buffer, so sample-wise symmetry about the impulse is
+    // mathematically impossible there and asserting it would be wrong. What the
+    // reflected extension does promise is an exact shape: h(i-a) + h(i-mirror),
+    // with the SAME symmetric kernel h everywhere. Predicting the edge response
+    // from the measured interior kernel therefore distinguishes true reflection
+    // from a window that merely shrinks at the edges — the failure mode that
+    // would make the operator time-varying and bias a clip's opening beat.
+    const auto reference = conditionImpulseAt(22050);
+    const double referencePeak = peakIndexOf(reference).second;
+    require(referencePeak > 0.0, "reference impulse should not be silent");
+    auto kernelAt = [&](int offsetFromCentre) {
+        if (std::abs(offsetFromCentre) > kReach) return 0.0;
+        return static_cast<double>(reference[static_cast<size_t>(22050 + offsetFromCentre)]) / referencePeak;
+    };
+
+    for (int impulseAt : {0, 20, 54, 100, length - 1 - 99, length - 1 - 53, length - 1 - 19, length - 1})
+    {
+        const auto filtered = conditionImpulseAt(impulseAt);
+        const auto [peakIndex, peak] = peakIndexOf(filtered);
+        require(peak > 0.0f, "conditioned edge impulse should not be silent");
+        require(peakIndex == impulseAt, "edge impulse peak must not move");
+
+        // The mirror index: reflection is about sample 0 at the start and about
+        // the last sample at the end. Only the nearer edge can reach.
+        const int mirror = impulseAt < length / 2 ? -impulseAt : 2 * (length - 1) - impulseAt;
+
+        for (int i = std::max(0, impulseAt - kReach); i <= std::min(length - 1, impulseAt + kReach); ++i)
+        {
+            const double predicted = kernelAt(i - impulseAt) + kernelAt(i - mirror);
+            const double actual = static_cast<double>(filtered[static_cast<size_t>(i)]) / peak;
+            const double predictedPeak = 1.0 + kernelAt(impulseAt - mirror);
+            requireNear(actual, predicted / predictedPeak, 2e-3,
+                        "edge response must equal the reflected fold of the interior kernel");
         }
     }
 }
@@ -474,6 +598,10 @@ void addBpmDetectorTests(std::vector<TestCase>& tests)
                      testMovingMedianFloorPreservesPeaksRemovesSwell});
     tests.push_back({"Grid anchor: circular mean ignores off-grid intro beat",
                      testCircularMeanAnchorIgnoresIntroBeat});
+    tests.push_back({"Onset start: slow ramps backtrack, sharp onsets do not",
+                     testOnsetStartEstimatorBacktracksSlowRamps});
+    tests.push_back({"Onset start: flams, flat and clipped ODFs are handled",
+                     testOnsetStartEstimatorHandlesAwkwardOdfs});
     tests.push_back({"Click track: grid lands on beats", testClickTrackGridLandsOnBeats});
     tests.push_back({"Low-frequency onsets: grid is not systematically late",
                      testLowFrequencyOnsetGridIsNotLate});

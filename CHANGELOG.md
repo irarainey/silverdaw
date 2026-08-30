@@ -19,9 +19,15 @@
 ### Fixed
 
 - Tempo detection no longer gives up on MP3s whose final moments fail to decode.
+- Correcting a tempo while it is still being detected now keeps the correction, instead of losing it to the detection that finishes afterwards.
 - Removing the last track now clears the markers and area selection with it.
 - Changing the project tempo no longer turns warp on for clips already at that tempo.
 - Beat markers no longer sit a few milliseconds late on bass-heavy material.
+- Correcting the tempo of a stem or saved clip no longer shifts the beat markers of the file it came from.
+- A tempo correction that cannot be applied now puts the displayed tempo back instead of leaving the rejected number on screen.
+- A tempo correction that invalidates a transition now redraws the timeline and updates the crossfades it left behind.
+- A tempo read from a file that only partly decoded is now flagged as unconfirmed.
+- The warning that a measured bar length is about to be discarded now follows the clip being edited.
 
 ## 1.7.1
 

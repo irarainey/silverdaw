@@ -67,8 +67,6 @@ void handleLibraryItemCorrectTempo(const juce::var& payload, AudioEngine& engine
         return;
     }
 
-    const double beatAnchorSec = static_cast<double>(payload.getProperty("beatAnchorSec", 0.0));
-
     // The correction is written to the item that OWNS the tempo, not the one the user
     // happened to have open. Correcting a stem or a saved clip in place would split it
     // away from its parent and leave every sibling on the wrong number (ADR 0027).
@@ -90,6 +88,30 @@ void handleLibraryItemCorrectTempo(const juce::var& payload, AudioEngine& engine
     const bool musicalLengthDiscarded =
         owner.reason == ProjectState::TempoReason::musicalLength
         || projectState.getLibraryItemMusicalBeats(owner.ownerItemId) > 0;
+
+    // The anchor is resolved AFTER the owner, because it is written to the owner and not
+    // to the item the caller named. Omitting it therefore has to mean "leave the owner's
+    // phase alone": defaulting to 0 would snap an ancestor's grid to the start of its
+    // file and slide the grid of every clip ever cut from it, while the user believes
+    // they only corrected a number. A value that is not a usable time is a mistake worth
+    // reporting rather than rounding away.
+    double beatAnchorSec = projectState.getLibraryItemBeatAnchorSec(owner.ownerItemId);
+    if (payload.hasProperty("beatAnchorSec"))
+    {
+        const auto anchorVar = payload.getProperty("beatAnchorSec", juce::var());
+        if (!(anchorVar.isDouble() || anchorVar.isInt() || anchorVar.isInt64()))
+        {
+            broadcastFailure(bridge, itemId, "That beat position is not a number.");
+            return;
+        }
+        const double requested = static_cast<double>(anchorVar);
+        if (!std::isfinite(requested) || requested < 0.0)
+        {
+            broadcastFailure(bridge, itemId, "That beat position is not a valid time.");
+            return;
+        }
+        beatAnchorSec = requested;
+    }
 
     // Captured before anything moves. Volume shapes are clip-local milliseconds measured
     // across a footprint, so the retime below can only know how far each clip actually
@@ -124,8 +146,9 @@ void handleLibraryItemCorrectTempo(const juce::var& payload, AudioEngine& engine
         { engine.setClipEnvelope(clipId, points); });
 
     // Reconciled here, not left to the dispatcher, so the count in the report is true of
-    // the state the user is about to be told about. The dispatcher's later pass finds
-    // nothing left to remove and still runs `syncClipEdgeFades`.
+    // the state the user is about to be told about. The dispatcher's later pass compares
+    // against the count from before this command ran, so these removals are still synced
+    // to the engine and published to the renderer.
     int transitionsRemoved = 0;
     if (transitionsBefore > 0)
     {

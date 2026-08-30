@@ -62,12 +62,17 @@ moves the audio inside that clip alone and leaves both its position and its
 siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
 In development is **1.8.0**, which closes the gap between changing a tempo and
 correcting one: **Edit BPM** — reached from a library item's context menu, the
-Edit button on its information dialog, or the Clip Editor's Beat grid — rewrites
-the source tempo alone in one undoable step, respacing that file's beat markers
-without moving a single clip, marker or automation point, and reports what it
-re-warped and what it left alone. The project tempo is never touched: it is the
-user's number, set in the transport (ADR 0027,
-`docs/development-plan.md` §1.8.0).
+Edit button on its information dialog, or the beat grid in the Clip Editor
+opened on a timeline clip — rewrites the source tempo alone in one undoable step,
+respacing that file's beat markers without moving a single clip, marker or
+automation point, and reports what it re-warped and what it left alone. The
+project tempo is never touched: it is the user's number, set in the transport
+(ADR 0027, `docs/development-plan.md` §1.8.0). Detection itself also got more
+accurate, so the correction is needed less often: the audio is conditioned to
+emphasise percussive content before beat tracking, a disputed tempo is settled
+by an independent second engine, and the grid is fitted to onset starts rather
+than to onset-function peaks, which had been leaving markers a few milliseconds
+late on bass-heavy material (ADR 0028).
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

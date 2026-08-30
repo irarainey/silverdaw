@@ -6,7 +6,7 @@
 // is delegated to the caller because it owns the inline-edit lifecycle.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
-import { resolveTempoOwner } from '@/stores/libraryItemHelpers'
+import { resolveCorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { reanalyseLibraryItem } from '@/lib/importAudio'
 import { requestStemSeparationForLibraryItem } from '@/lib/stems/stemSeparationFlow'
@@ -56,14 +56,11 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
   const bpmEditItemId = ref<string | null>(null)
 
   /**
-   * Whether this item has a tempo that Edit BPM could correct. Mirrors the Edit BPM
-   * dialog's own test (`useLibraryItemTempoCorrection`) so the menu never offers a
-   * command that opens a dialog with nothing to change.
+   * Whether this item has a tempo that Edit BPM could correct. Shares the dialog's own
+   * test so the menu never offers a command that opens a dialog with nothing to change.
    */
   function isCorrectableTempo(item: LibraryItem): boolean {
-    const owner = resolveTempoOwner(item, library.byId)
-    if (owner.reason === 'none' || owner.reason === 'oneShot') return false
-    return owner.ownerItemId !== undefined && typeof owner.bpm === 'number' && owner.bpm > 0
+    return resolveCorrectableTempoOwner(item, library.byId) !== null
   }
   const editorItemId = ref<string | null>(null)
   const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)

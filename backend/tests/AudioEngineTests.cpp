@@ -1580,6 +1580,10 @@ void testNewProjectDisarmsPreviousProjectTimelineLoop()
 // typed. That clip gained the WARP badge, a stretch ratio and a resampled playback
 // path to leave its audio exactly as it was. Auto-warp asked "does this clip have a
 // tempo?" where the drop path asks "would warping it change anything?" (ADR 0024).
+//
+// The question is answered by drift across the clip, not by exact equality, so this
+// straddles the threshold rather than only testing a ratio of exactly 1: over a 2 s clip
+// `kWarpNegligibleDriftMs` sits at roughly ±0.05 BPM either side of 102.76.
 void testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped()
 {
     const auto dir = makeTempDir("tempo-change-no-warp");
@@ -1592,16 +1596,35 @@ void testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped()
     const auto wav = writeTestWav(dir, "loop.wav", 2.0);
     require(state.addLibraryItem("match", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
             "matching library item should add");
+    require(state.addLibraryItem("near", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
+            "near-tempo library item should add");
+    require(state.addLibraryItem("just", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
+            "just-outside library item should add");
     require(state.addLibraryItem("differ", wav.getFullPathName(), "loop.wav", 2000.0, 44100, 2),
             "differing library item should add");
-    // The tempo the user is about to type, and one that genuinely needs a stretch.
+    // Exactly the tempo the user types; a hair inside the drift threshold (~0.19 ms over
+    // 2 s); just outside it (~2.7 ms); and one that genuinely needs a stretch.
     require(state.setLibraryItemBpm("match", 102.76), "matching source BPM should apply");
+    require(state.setLibraryItemBpm("near", 102.77), "near source BPM should apply");
+    require(state.setLibraryItemBpm("just", 102.90), "just-outside source BPM should apply");
     require(state.setLibraryItemBpm("differ", 120.0), "differing source BPM should apply");
     require(state.addTrack("t1"), "track should add");
     require(state.addClip("t1", "cMatch", "match", 0.0, 2000.0), "matching clip should add");
-    require(state.addClip("t1", "cDiffer", "differ", 4000.0, 2000.0), "differing clip should add");
+    require(state.addClip("t1", "cNear", "near", 4000.0, 2000.0), "near clip should add");
+    require(state.addClip("t1", "cJust", "just", 8000.0, 2000.0), "just-outside clip should add");
+    require(state.addClip("t1", "cDiffer", "differ", 12000.0, 2000.0), "differing clip should add");
     require(engine.addClip("t1", "cMatch", wav, 0.0), "matching engine clip should attach");
-    require(engine.addClip("t1", "cDiffer", wav, 4000.0), "differing engine clip should attach");
+    require(engine.addClip("t1", "cNear", wav, 4000.0), "near engine clip should attach");
+    require(engine.addClip("t1", "cJust", wav, 8000.0), "just-outside engine clip should attach");
+    require(engine.addClip("t1", "cDiffer", wav, 12000.0), "differing engine clip should attach");
+
+    // The threshold this test claims to straddle, asserted directly so a change to
+    // `kWarpNegligibleDriftMs` fails here rather than silently making the cases below
+    // agree for the wrong reason.
+    require(!silverdaw::warpChangesTiming(2000.0, 102.77 / 102.76),
+            "a hair of tempo drift over 2 s should be negligible");
+    require(silverdaw::warpChangesTiming(2000.0, 102.90 / 102.76),
+            "0.14 BPM of drift over 2 s should not be negligible");
 
     state.setBpm(98.80);
     state.setBpmSeeded(true);
@@ -1612,16 +1635,24 @@ void testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped()
     silverdaw::handleProjectSetBpm(juce::var(payload.release()), engine, state, bridge);
 
     bool matchWarped = true;
+    bool nearWarped = true;
+    bool justWarped = false;
     bool differWarped = false;
     state.forEachWarpClip(
         [&](const silverdaw::ProjectState::WarpClipInfo& info)
         {
             if (info.clipId == "cMatch") matchWarped = info.warpEnabled;
+            if (info.clipId == "cNear") nearWarped = info.warpEnabled;
+            if (info.clipId == "cJust") justWarped = info.warpEnabled;
             if (info.clipId == "cDiffer") differWarped = info.warpEnabled;
         });
     require(!matchWarped, "a clip already at the tempo just typed should not be warped");
     require(!engine.clipHasWarpForTest("cMatch"),
             "the engine should not stretch a clip that is already at the project tempo");
+    require(!nearWarped, "a clip within the negligible-drift threshold should not be warped");
+    require(!engine.clipHasWarpForTest("cNear"),
+            "the engine should not stretch a clip whose drift is inaudible");
+    require(justWarped, "a clip just outside the threshold should warp");
     require(differWarped, "a clip that genuinely differs should still warp onto the new tempo");
 }
 
@@ -1685,6 +1716,22 @@ void testRemovingTheLastTrackClearsMarkersAndSelection()
     require(state.getMarkerCount() == 2, "undo should bring the markers back with it");
     require(!state.isDirty(),
             "restoring every marker is a net-zero edit and must return the project to clean");
+
+    // A removal naming a track that is not there changes nothing, so it must not reach
+    // the last-track cleanup. The count is legitimately zero on a project that has
+    // markers but no tracks yet, and acting on the count alone let a stale or repeated
+    // command wipe markers and the selection of a project it removed nothing from.
+    silverdaw::ProjectState trackless;
+    require(trackless.addMarker("m1", 1000.0), "a marker should add without any track");
+    trackless.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{0.0, 4000.0, /*loop*/ false});
+
+    silverdaw::handleTrackRemove(removePayload("ghost"), engine, trackless, bridge);
+
+    require(trackless.getMarkerCount() == 1,
+            "removing a track that does not exist must not clear any marker");
+    require(trackless.getViewTimelineSelection().has_value(),
+            "removing a track that does not exist must not clear the selection");
 }
 
 } // namespace

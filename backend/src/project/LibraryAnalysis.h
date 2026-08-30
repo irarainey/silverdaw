@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <cstdint>
 #include <memory>
 
 namespace silverdaw
@@ -95,5 +96,27 @@ int recordMusicalLength(const juce::String& itemId, double sourceBpm, double win
 // Background-decodes missing WAV caches so playback can use cheap PCM.
 void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine, ProjectState& projectState,
                         juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
+
+// --- Tempo authority generation (ADR 0027) -----------------------------------------
+//
+// A detection job runs on a worker thread and applies its result later, on the message
+// thread. If the user corrects the item's tempo by hand in between, the result that
+// finally lands is stale and must be dropped: the automatic path writes DERIVED,
+// non-dirtying, non-undoable metadata, so a correction it overwrote could not be
+// recovered with undo — nothing was pushed onto the undo stack to undo.
+//
+// Each item carries a generation, bumped by `applyManualTempo`. A job captures the
+// generation when it is ENQUEUED (not when it starts running, so a correction wins even
+// while the job sits in the pool queue) and discards itself if it no longer matches.
+//
+// These two are exposed for tests, which cannot reach the guard inside the detection
+// job itself: it depends on real audio decoding and on message-thread delivery.
+
+/** The item's current tempo authority generation. Zero for an item never corrected. */
+std::uint64_t getTempoAuthorityGeneration(const juce::String& itemId);
+
+/** Whether a detection result captured at `startGeneration` has since been superseded
+ *  by a hand-set tempo, and so must not be applied. */
+bool tempoDetectionResultIsStale(const juce::String& itemId, std::uint64_t startGeneration);
 
 } // namespace silverdaw
