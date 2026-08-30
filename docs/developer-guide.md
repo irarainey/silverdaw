@@ -62,7 +62,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 
 ## Architecture
 
-Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a per-session-authenticated localhost WebSocket bridge.
+Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a local WebSocket bridge that is guarded by a token unique to each run.
 
 - **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
   audio device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
@@ -1954,6 +1954,9 @@ are untrustworthy. MiniBPM runs on the **raw** decode — not the conditioned bu
 does not inherit the same blind spots — and may overturn the rejection only when it is
 within 2.0 BPM of the autocorrelation period and at least 0.25 BPM closer to it than to the
 baseline. It is consulted only on a dispute, so an uncontested import pays nothing for it.
+MiniBPM offers no abort callback of its own, so the analysis timeout is enforced around it:
+`MiniBpmEstimator` polls a `shouldAbort` callback between blocks and reports that it gave
+up, which keeps a timeout reported as a timeout instead of reading as "no tempo found".
 
 The reported BPM starts from the **median of beat-to-beat intervals** (more stable
 than BTrack's running tempo estimate, which can drift a fraction of a BPM from the
@@ -2324,11 +2327,33 @@ Because the project grid never moves, nothing can be knocked off it: a correctio
 clip, so there is no alignment pass and `libraryHandlers.ts` writes nothing to
 `project.clips`.
 
-The reply is `TEMPO_CORRECTION_APPLIED`, a union discriminated on `ok`. The failure arm
-carries `{ itemId, error }` and means nothing was written. The success arm reports the
-owner and its resolution reason, both the previous and applied tempi, whether a recorded
-musical length was discarded, and what was and was not touched: clips re-warped, clips
-excluded because their ratio is pinned or their warp is off (exclusions by the user's own
+**A correction outranks a detection that is still running.** Tempo detection runs on a
+worker thread and applies its answer later, on the message thread, so a job started at
+import can finish after the user has already corrected the same item. Each library item
+therefore carries a *tempo authority generation*, bumped by `applyManualTempo`. A detection
+job reads that number when it is **enqueued** — not when it starts, so a correction wins
+even while the job is still queued — and throws its own result away if the number has since
+moved. `getTempoAuthorityGeneration` and `tempoDetectionResultIsStale`
+(`project/LibraryAnalysis.h`) are the guard, exposed so tests can reach it. This matters
+more than an ordinary race: the automatic path writes derived, non-dirtying, non-undoable
+metadata, so a correction it overwrote could not be recovered with undo, because nothing
+was ever pushed onto the undo stack. A reanalysis the user explicitly asks for is enqueued
+*after* the correction that preceded it, so it still applies — the guard only ever drops a
+result the user has since overruled.
+
+**The renderer shows the new tempo immediately and takes it back if the engine refuses.**
+`libraryStore.correctItemTempo` snapshots the item's grid, applies the new tempo locally,
+then sends. The `TEMPO_CORRECTION_APPLIED` handler calls `commitTempoCorrection` on
+success or `rollbackTempoCorrection` on failure, which restores the snapshot — including
+`musicalBeats`, `variableTempo` and `lowConfidence`, which the local write clears. The
+snapshots are held in a `WeakMap` keyed by the item object rather than its id, so a
+rollback point cannot outlive the item it describes when a project is closed and reopened.
+
+The reply is `TEMPO_CORRECTION_APPLIED`. Its `ok` field says which of two shapes it
+carries. `ok: false` carries `{ itemId, error }` and means nothing was written. `ok: true`
+reports the owner and its resolution reason, both the previous and applied tempi, whether a
+recorded musical length was discarded, and what was and was not touched: clips re-warped,
+clips excluded because their ratio is pinned or their warp is off (exclusions by the user's own
 earlier choice, not failures), transitions removed, and clips now past the project length.
 `lib/library/tempoCorrectionReport.ts` turns that into the wording the user reads.
 
@@ -2363,11 +2388,11 @@ That window's job is choosing a section to save; it has no Save of its own to co
 file-level edit, and the tempo it would show belongs to the library item rather than to
 anything on screen. Its hint text points at the library's **Edit BPM…** instead, so the
 correction has one home on the source rather than two that mean subtly different things.
-That window draws no beat markers either: `useClipEditorController` feeds the waveform and
-the canvas a `visibleBeatGrid` that is `null` unless `editsExistingClip`, so markers appear
-only where the Beat grid module is there to edit them. Previewing a source is about hearing
-it and picking a section, and an unadjustable grid over that is decoration at best and a
-misread tempo presented as fact at worst.
+That window draws no beat markers either. `useClipEditorController` passes the waveform
+and the canvas a `visibleBeatGrid` of `null` unless `editsExistingClip` is set, so markers
+appear only where the Beat grid module is present to edit them. Previewing a source is
+about hearing it and picking a section, and a grid nobody can adjust is decoration at best
+and a misread tempo presented as fact at worst.
 
 Beat markers need nothing extra. `resolveSourceBeatGrid` spaces them at `60000 / bpm`
 phase-locked to `beatAnchorSec`; the detected `beats` array is consulted only for presence
@@ -2384,6 +2409,12 @@ Specifically the analysis is flagged when *both* of these hold:
 
 - **poor fit**: `relResidual > 0.08` OR `keptFraction < 0.6`, AND
 - **non-musical signature**: `variableTempo` is true OR `keptFraction < 0.5`.
+
+A **partly decoded file also forces the flag on its own**, whatever the fit
+looked like. `BpmAudioLoader` sets `truncated` when it could not read the file to
+the end, and the estimate then describes only the part that was readable, so it
+may simply be wrong about the rest. The user is entitled to know the number is
+provisional rather than have it presented as confirmed.
 
 `variableTempo` alone is intentionally not sufficient — live performances and
 rubato music can drift more than 5 % per beat without being non-musical. The

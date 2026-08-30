@@ -134,7 +134,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.7.1" } }
+{ "type": "READY", "payload": { "version": "1.8.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -2136,7 +2136,7 @@ Still open, and deliberately so: plugin-parameter automation, which needs a
 dynamic replacement for the fixed `AutomationParam` enum and is a decision of
 its own.
 
-### 1.8.0 - Correcting a Mis-Detected Tempo
+### 1.8.0 - Correcting a Mis-Detected Tempo *(current release)*
 
 **Goal:** give the user a way to say "the detected BPM is simply wrong" and have
 the beat grid and the clips using that source follow, without the arrangement
@@ -2206,7 +2206,7 @@ this is about needing it less often. Decision and rejected alternatives: ADR 002
    sustained guitar, pad and vocal energy feeds the onset function without
    carrying any beat. Zero phase by construction, so marker timing is unchanged.
 10. [x] **Settle a disputed refinement with an independent engine.** MiniBPM is
-    vendored and consulted *only* when the residual gate rejects the
+    included in the repository and consulted *only* when the residual gate rejects the
     autocorrelation candidate — the case where the existing test is circular,
     because it scores candidates against beats the suspect tempo produced. Fed
     the raw decode, never the conditioned buffer, or the two engines would share
@@ -2220,13 +2220,17 @@ this is about needing it less often. Decision and rejected alternatives: ADR 002
 12. [x] **Honour the analysis timeout in every stage.** MiniBPM exposes no abort
     callback, so the deadline is polled between the blocks fed to it and an
     abandoned pass is reported as a timeout rather than as "no tempo found".
+13. [x] **Treat a partly-read file as unverified.** A truncated decode marks the
+    tempo low confidence however well the fit scored: the estimate describes only
+    the part of the file that could be read, so the number is provisional and the
+    user is told so rather than being shown it as fact.
 
 Known limits, recorded rather than resolved: the arbiter's endorsement is not
 revalidated after the later ODF refit, which may still move the tempo by up to
 5%; and the 0.75 backtrack fraction is calibrated on twelve synthetic files,
 because the real tracks carry no beat-phase ground truth.
 
-### 1.7.1 - Clip Timing & Beat-Grid Correctness *(current release)*
+### 1.7.1 - Clip Timing & Beat-Grid Correctness
 
 **Goal:** make a clip's window arithmetic exact, so clips that should be identical
 are identical, and make correcting a clip's beat grid a local edit that moves neither

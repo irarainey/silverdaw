@@ -97,10 +97,22 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   beat positions, so clips can line up musically. Once a clip's tempo is known it
   automatically snaps to the timeline's bar grid so its bars line up with the
   project — handy when a clip has a silent intro — and you can turn this off in
-  Preferences. When detection is uncertain you can set a BPM by hand and slide the
-  beat grid over the waveform to line it up; the clip stays exactly where you put
-  it and the audio moves under the markers, and each clip's grid is its own, so
-  correcting one never disturbs another cut from the same file.
+  Preferences. Two independent detectors are used: when the first is unsure of a
+  tempo, a second settles it, and anything still doubtful is marked **tempo
+  unverified** so you know to check it.
+- **Correct a wrong tempo.** When a detected BPM is wrong, **Edit BPM** sets the
+  right one and respaces that file's beat markers to match. Nothing in your
+  arrangement moves: every clip, marker, and automation point stays exactly where
+  you put it, and stems and saved clips taken from the same file are corrected
+  along with it. It is one undo away, and it tells you which clips it re-warped
+  and which it left alone. Find it on a library item's right-click menu, on the
+  **Edit** button beside the BPM on a clip's or library item's information, or in
+  the Clip Editor. The project tempo is separate and is never changed for you —
+  that number stays yours, in the transport bar.
+- **Line up a beat grid by hand.** If the markers sit slightly off the beat, open
+  a clip in the Clip Editor and slide its grid over the waveform. The clip stays
+  exactly where you put it and the audio moves under the markers. This phase is
+  each clip's own, so nudging one never disturbs another cut from the same file.
 - **Metronome.** Toggle an audible click that follows the project tempo from the
   timing display, so you can check by ear whether a loop or beat sits in time
   with the BPM. It is off by default and its state is saved with the project.

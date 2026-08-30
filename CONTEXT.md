@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-29 · Owner: @irarainey_
+_Last reviewed: 2026-08-30 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -54,13 +54,13 @@ exactly as the arrangement plays, with delay compensation and tempo/playhead
 sync keeping them in time — see `docs/development-plan.md` §1.7.0. It also
 dragged a file from the Files tab straight onto a track, and reopened the lower
 panel on the tab it was left on.
-The current release is **1.7.1**, which fixes clip timing arithmetic: a trimmed
+Release **1.7.1** fixed clip timing arithmetic: a trimmed
 edge no longer slides the audio inside the clip, the waveform is drawn from the
 clip's exact position in the source so identical windows render identically, and
 a clip's beat-grid phase became a per-clip fact, so correcting one clip's markers
 moves the audio inside that clip alone and leaves both its position and its
 siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
-In development is **1.8.0**, which closes the gap between changing a tempo and
+The current release is **1.8.0**, which closes the gap between changing a tempo and
 correcting one: **Edit BPM** — reached from a library item's context menu, the
 Edit button on its information dialog, or the beat grid in the Clip Editor
 opened on a timeline clip — rewrites the source tempo alone in one undoable step,
