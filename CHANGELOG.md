@@ -4,29 +4,27 @@
 
 ### Added
 
-- **Edit BPM** corrects a mis-detected tempo on a library item, respacing its beat markers without moving any clip, marker or automation point.
-- Edit BPM is reached from a library item's right-click menu, the **Edit** button beside the BPM on a library item's or clip's information, or the Clip Editor's beat grid.
+- **Edit BPM** corrects a mis-detected tempo on a library item or clip, respacing its beat markers without moving any clip, marker or automation point.
 - A tempo correction reports which clips it re-warped and which it left alone.
+- **MiniBPM** is included as a second tempo estimator, settling a tempo the primary detector is unsure of.
 
 ### Changed
 
 - Tempo detection is more accurate on dense material such as full-band rock and soul.
-- A tempo the detector is unsure of is now settled by a second, independent estimator.
 - A tempo corrected on a file now corrects every stem and clip taken from it.
-- A tempo inherited through several steps, such as a clip of a stem, is now shown instead of appearing to be missing.
+- A tempo inherited through several steps, such as a clip of a stem, is now shown.
 - Previewing a library file no longer draws beat markers over its waveform.
 
 ### Fixed
 
-- Tempo detection no longer gives up on MP3s whose final moments fail to decode.
-- Correcting a tempo while it is still being detected now keeps the correction, instead of losing it to the detection that finishes afterwards.
-- Removing the last track now clears the markers and area selection with it.
-- Changing the project tempo no longer turns warp on for clips already at that tempo.
-- Beat markers no longer sit a few milliseconds late on bass-heavy material.
+- Tempo detection now completes on MP3s whose final moments fail to decode, flagging the result as unconfirmed.
+- Correcting a tempo while it is still being detected now keeps the correction.
 - Correcting the tempo of a stem or saved clip no longer shifts the beat markers of the file it came from.
-- A tempo correction that cannot be applied now puts the displayed tempo back instead of leaving the rejected number on screen.
+- A tempo correction that cannot be applied now restores the displayed tempo instead of leaving the rejected number on screen.
 - A tempo correction that invalidates a transition now redraws the timeline and updates the crossfades it left behind.
-- A tempo read from a file that only partly decoded is now flagged as unconfirmed.
+- Beat markers no longer sit a few milliseconds late on bass-heavy material.
+- Changing the project tempo no longer turns warp on for clips already at that tempo.
+- Removing the last track now clears the markers and area selection with it.
 - The warning that a measured bar length is about to be discarded now follows the clip being edited.
 
 ## 1.7.1
