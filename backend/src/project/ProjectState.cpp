@@ -193,7 +193,8 @@ void ProjectState::setDirty(bool d)
     dirty = d;
     if (onDirtyChanged)
     {
-        onDirtyChanged(d);
+        onDirtyChanged(d, backgroundDirtyDepth > 0 ? DirtyReason::BackgroundAnalysis
+                                                   : DirtyReason::UserEdit);
     }
 }
 

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 
 namespace silverdaw
@@ -319,6 +320,17 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                                    bool allowProjectBpmSeeding = true,
                                    ClipTempoRederiveReport* rederiveReport = nullptr)
 {
+    // Two things below dirty the project without the user doing anything: the late
+    // auto-warp of clips dropped before detection finished (inside
+    // `rederiveClipsForTempoOwner`) and the project-tempo seed. Both are real persisted
+    // edits, so they must dirty — but they land seconds after the drop that started
+    // them, so from the user's seat the unsaved-changes marker returns on its own, and
+    // can do so after a save. Attribute them so the renderer can say what happened.
+    // The manual tempo path (`undo != nullptr`) is deliberately excluded: that one is a
+    // user edit and needs no explanation.
+    std::optional<ProjectState::BackgroundDirtyScope> backgroundDirty;
+    if (undo == nullptr) backgroundDirty.emplace(projectState);
+
     if (undo != nullptr)
     {
         // User-driven manual tempo: an undoable, dirtying edit (variable /

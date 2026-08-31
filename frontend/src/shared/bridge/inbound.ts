@@ -681,8 +681,15 @@ export const ProjectRenamedPayloadSchema = z.object({
 })
 export type ProjectRenamedPayload = z.infer<typeof ProjectRenamedPayloadSchema>
 
+/**
+ * `reason` is present only when `dirty` is true, and names what caused it:
+ * `edit` for anything the user did, `analysis` for background tempo analysis
+ * landing after the fact (the project-tempo seed and the late auto-warp of clips
+ * dropped before detection finished). Optional so an older backend still validates.
+ */
 export const ProjectDirtyPayloadSchema = z.object({
-  dirty: z.boolean()
+  dirty: z.boolean(),
+  reason: z.enum(['edit', 'analysis']).optional()
 })
 export type ProjectDirtyPayload = z.infer<typeof ProjectDirtyPayloadSchema>
 

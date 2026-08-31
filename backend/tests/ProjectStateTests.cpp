@@ -49,7 +49,7 @@ void testProjectStateTracksClipsAndDirty()
     int dirtyTransitions = 0;
     bool lastDirty = false;
     state.setDirtyChangedCallback(
-        [&](bool dirty)
+        [&](bool dirty, silverdaw::ProjectState::DirtyReason)
         {
             ++dirtyTransitions;
             lastDirty = dirty;
@@ -292,7 +292,7 @@ void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
         int transitions = 0;
         bool lastDirty = false;
         state.setDirtyChangedCallback(
-            [&](bool d)
+            [&](bool d, silverdaw::ProjectState::DirtyReason)
             {
                 ++transitions;
                 lastDirty = d;
@@ -345,7 +345,7 @@ void testProjectStateDerivedLibraryMetadataDoesNotMarkDirty()
     require(!state.isDirty(), "baseline should be clean after markClean");
 
     int transitions = 0;
-    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+    state.setDirtyChangedCallback([&](bool, silverdaw::ProjectState::DirtyReason) { ++transitions; });
 
     // All of these are derived/cache writes — none should toggle dirty.
     require(state.setLibraryItemBpm("l1", 124.5), "bpm setter should find item");
@@ -1610,7 +1610,7 @@ void testProjectStateNonDirtyLibraryRemove()
     require(!state.isDirty(), "baseline should be clean after markClean");
 
     int transitions = 0;
-    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+    state.setDirtyChangedCallback([&](bool, silverdaw::ProjectState::DirtyReason) { ++transitions; });
 
     // A "clean up project files" removal deletes the item's file from disk (irreversible),
     // so it must NOT mark the project dirty and must not fire the dirty callback.
@@ -1638,7 +1638,7 @@ void testProjectStateNetZeroDirty()
     int transitions = 0;
     bool lastDirty = false;
     state.setDirtyChangedCallback(
-        [&](bool d)
+        [&](bool d, silverdaw::ProjectState::DirtyReason)
         {
             ++transitions;
             lastDirty = d;
@@ -1659,6 +1659,46 @@ void testProjectStateNetZeroDirty()
     require(state.isDirty(), "clip add should mark dirty");
     require(state.removeLibraryItem("l2"), "clip remove should succeed");
     require(!state.isDirty(), "clip add+remove should return to clean");
+}
+
+// Background analysis landing after a save changes real, persisted content (the seeded
+// project tempo, the late auto-warp), so it must still dirty — mirroring it into the
+// clean snapshot would claim "saved" for content that is not on disk. What it must NOT
+// do is look like a phantom edit, so the transition is attributed and the renderer
+// explains it.
+void testProjectStateAttributesBackgroundAnalysisDirty()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    std::vector<std::pair<bool, silverdaw::ProjectState::DirtyReason>> events;
+    state.setDirtyChangedCallback([&](bool d, silverdaw::ProjectState::DirtyReason reason)
+                                  { events.emplace_back(d, reason); });
+
+    state.setBpm(120.0);
+    require(events.size() == 1, "a user tempo edit should fire one transition");
+    require(events[0].first, "a user tempo edit should mark dirty");
+    require(events[0].second == silverdaw::ProjectState::DirtyReason::UserEdit,
+            "an unscoped edit should be attributed to the user");
+
+    state.markClean();
+    events.clear();
+
+    {
+        const silverdaw::ProjectState::BackgroundDirtyScope background(state);
+        state.setBpm(128.0);
+    }
+    require(events.size() == 1, "a scoped tempo write should fire one transition");
+    require(events[0].first, "background analysis still marks dirty (the edit is real)");
+    require(events[0].second == silverdaw::ProjectState::DirtyReason::BackgroundAnalysis,
+            "a scoped write should be attributed to background analysis");
+
+    // The scope must not leak: the next ordinary edit is the user's again.
+    state.markClean();
+    events.clear();
+    state.setBpm(140.0);
+    require(events.size() == 1 && events[0].second == silverdaw::ProjectState::DirtyReason::UserEdit,
+            "attribution should not outlive the scope");
 }
 
 void testProjectStateClipTransitions()
@@ -2460,6 +2500,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
+    tests.push_back({"ProjectState attributes background-analysis dirty",
+                     testProjectStateAttributesBackgroundAnalysisDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
     tests.push_back({"ProjectState reanalyse preserves a derived library-item kind", testProjectStateReanalyseKeepsDerivedKind});
     tests.push_back({"ProjectState simple classification strips and blocks tempo", testProjectStateSimpleClassificationHasNoTempo});

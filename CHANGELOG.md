@@ -23,6 +23,7 @@
 - A tempo correction that cannot be applied now restores the displayed tempo instead of leaving the rejected number on screen.
 - A tempo correction that invalidates a transition now redraws the timeline and updates the crossfades it left behind.
 - Beat markers no longer sit a few milliseconds late on bass-heavy material.
+- Tempo analysis finishing after a save now says so, instead of silently marking the project unsaved again.
 - Changing the project tempo no longer turns warp on for clips already at that tempo.
 - Removing the last track now clears the markers and area selection with it.
 - The warning that a measured bar length is about to be discarded now follows the clip being edited.

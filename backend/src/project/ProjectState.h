@@ -28,8 +28,41 @@ class ProjectState : public juce::ValueTree::Listener
         (absent == unity for legacy files). */
     static constexpr float kDefaultMasterVolume = 0.31622776601683794F;
 
+    /** Why the dirty flag moved. Lets the renderer explain an unsaved-changes marker
+        that appeared without the user touching anything. */
+    enum class DirtyReason
+    {
+        /** Something the user did — the ordinary case, needing no explanation. */
+        UserEdit,
+        /** Background analysis landing after the fact: the project-tempo seed and the
+            late auto-warp of clips dropped before detection finished. Both are real,
+            persisted edits, so they must still dirty (mirroring them into the clean
+            snapshot would report "saved" for content that is not on disk yet) — but
+            they arrive with no user action to explain them. */
+        BackgroundAnalysis
+    };
+
     /** Fired when the dirty flag transitions. Set by `Main.cpp` after the bridge exists. */
-    using DirtyChangedCallback = std::function<void(bool dirty)>;
+    using DirtyChangedCallback = std::function<void(bool dirty, DirtyReason reason)>;
+
+    /** RAII: attributes every dirty transition inside the scope to background analysis
+        rather than a user edit. Nest-safe and exception-safe, like `SuppressDirtyScope`.
+        Wrap the automatic analysis path in this; never the manual tempo path, which is a
+        genuine user edit. */
+    class BackgroundDirtyScope
+    {
+    public:
+        explicit BackgroundDirtyScope(ProjectState& owner) noexcept : state(owner)
+        {
+            ++state.backgroundDirtyDepth;
+        }
+        ~BackgroundDirtyScope() noexcept { --state.backgroundDirtyDepth; }
+        BackgroundDirtyScope(const BackgroundDirtyScope&) = delete;
+        BackgroundDirtyScope& operator=(const BackgroundDirtyScope&) = delete;
+
+    private:
+        ProjectState& state;
+    };
 
     ProjectState();
     ~ProjectState() override;
@@ -869,6 +902,8 @@ class ProjectState : public juce::ValueTree::Listener
     bool seedProjectTempoFromFirstClip_{true};
     // Counter, not bool, so nested dirty-suppression scopes cannot unsuppress an outer scope.
     int suppressDirtyDepth{0};
+    // Counter, for the same reason: attributes dirty transitions to background analysis.
+    int backgroundDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;
 
     // Populated by performUndo/performRedo (see lastUndoChangeSet); `recordingChangeSet_` is

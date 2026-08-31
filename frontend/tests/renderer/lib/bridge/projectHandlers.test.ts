@@ -7,6 +7,8 @@ import { useBackspinSettingsStore } from '@/stores/backspinSettingsStore'
 import { useBrakeSettingsStore } from '@/stores/brakeSettingsStore'
 import { useScratchRealismSettingsStore } from '@/stores/scratchRealismSettingsStore'
 import { useMidiDeviceStore } from '@/stores/midiDeviceStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useTransportStore } from '@/stores/transportStore'
@@ -187,5 +189,56 @@ describe('project bridge handlers', () => {
     })
 
     expect(app.projectActionPending).toBe(false)
+  })
+
+  // Background tempo analysis lands seconds after the drop that started it, so it can
+  // re-dirty a project the user has already saved. That is a real content change and
+  // must dirty — but it needs explaining, or the unsaved-changes marker looks like a fault.
+  describe('PROJECT_DIRTY', () => {
+    it('explains a dirty flag raised by analysis after the project was saved', () => {
+      const project = useProjectStore()
+      const notifications = useNotificationsStore()
+      project.isDirty = false
+
+      projectBridgeHandlers.PROJECT_DIRTY({ dirty: true, reason: 'analysis' })
+
+      expect(project.isDirty).toBe(true)
+      expect(notifications.items).toHaveLength(1)
+      expect(notifications.items[0]?.kind).toBe('info')
+      expect(notifications.items[0]?.message).toContain('Tempo analysis')
+    })
+
+    it('stays quiet when analysis lands on an already-dirty project', () => {
+      const project = useProjectStore()
+      const notifications = useNotificationsStore()
+      project.isDirty = true
+
+      projectBridgeHandlers.PROJECT_DIRTY({ dirty: true, reason: 'analysis' })
+
+      expect(project.isDirty).toBe(true)
+      expect(notifications.items).toHaveLength(0)
+    })
+
+    it('stays quiet for an ordinary user edit', () => {
+      const project = useProjectStore()
+      const notifications = useNotificationsStore()
+      project.isDirty = false
+
+      projectBridgeHandlers.PROJECT_DIRTY({ dirty: true, reason: 'edit' })
+
+      expect(project.isDirty).toBe(true)
+      expect(notifications.items).toHaveLength(0)
+    })
+
+    it('mirrors a clean flag without comment', () => {
+      const project = useProjectStore()
+      const notifications = useNotificationsStore()
+      project.isDirty = true
+
+      projectBridgeHandlers.PROJECT_DIRTY({ dirty: false })
+
+      expect(project.isDirty).toBe(false)
+      expect(notifications.items).toHaveLength(0)
+    })
   })
 })

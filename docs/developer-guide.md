@@ -1542,12 +1542,27 @@ construction, after `markClean()` and after `replaceTree()` (load). A
 `juce::ValueTree::Listener` fires on every mutation and compares the live tree against
 the clean snapshot via `isEquivalentTo`. If they match — for example after a sequence
 that nets to zero (add a library item, then remove it) — the project returns to clean.
-Otherwise it's dirty. Changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The
-renderer mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project
+Otherwise it's dirty. Changes are broadcast as `PROJECT_DIRTY { dirty, reason? }`
+envelopes. The renderer mirrors it as `projectStore.isDirty`, shows a leading `•` next
+to the project
 name in the title bar when dirty, and intercepts **File → New / Open / Exit** and the
 window close button to prompt with **Save / Don't save / Cancel** before discarding
 work. When the project is clean, those same leave-project paths silently flush view
 state only.
+
+`reason` is sent only on a transition **into** dirty (going clean is always a save or a
+load) and is either `edit` or `analysis`. Most background work never dirties at all:
+detected BPM, beats, anchor and confidence flags are derived metadata, written through
+`mutateDerivedLibraryItem`, which suppresses the dirty listener *and* mirrors the write
+into the clean snapshot. Two things analysis does are not derived, and do dirty:
+seeding the project tempo from the first clip, and the late auto-warp of clips dropped
+before detection finished. Both change content that has to reach disk, so suppressing
+them would report "saved" for work that is not saved. Instead
+`ProjectState::BackgroundDirtyScope` wraps the automatic analysis path, tagging those
+transitions `analysis`; the renderer shows an info toast naming the cause, so an
+unsaved-changes marker that reappears on its own after a save is explained rather than
+looking like a fault. The manual tempo path is deliberately outside the scope — that is
+a user edit and reports `edit`.
 
 On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 
