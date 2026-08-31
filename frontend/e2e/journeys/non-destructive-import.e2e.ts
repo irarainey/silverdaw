@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { closeSilverdaw, expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
-import { libraryItem } from '../helpers/library'
+import { libraryItem, libraryItemTempo } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
 import { startNewProject } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
@@ -59,6 +59,10 @@ test('importing onto a track leaves the source file byte-identical', async ({ la
 
   await expect(libraryItem(app.page, AUDIO_FILE)).toBeVisible({ timeout: 30_000 })
   await expect(app.page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+
+  // Tempo detection writes into the project when it lands, so saving before then
+  // would leave the project dirty again the moment it finishes.
+  await expect(libraryItemTempo(app.page, AUDIO_FILE)).toBeVisible({ timeout: 60_000 })
 
   await stubSaveDialog(app.electronApp, chosenPath)
   await invokeMenuItem(app.page, 'File', 'Save As')

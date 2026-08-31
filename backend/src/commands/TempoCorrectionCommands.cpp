@@ -59,7 +59,9 @@ void handleLibraryItemCorrectTempo(const juce::var& payload, AudioEngine& engine
         return;
     }
     const double bpm = static_cast<double>(bpmVar);
-    if (!(bpm >= kMinBpm && bpm <= kMaxBpm))
+    // isfinite() first, and deliberately: a NaN compares false against every bound, so
+    // range checks alone would wave it through and write a tempo nothing can divide by.
+    if (!std::isfinite(bpm) || bpm < kMinBpm || bpm > kMaxBpm)
     {
         broadcastFailure(bridge, itemId,
                          "The tempo must be between " + juce::String(static_cast<int>(kMinBpm))

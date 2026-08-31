@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
-import { libraryItem } from '../helpers/library'
+import { libraryItem, libraryItemTempo } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
 import { startNewProject } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
@@ -53,6 +53,10 @@ test('a clip imported into a project with a tempo warps to it', async ({ launchA
   // A hand-set tempo is established, so the clip must warp to it rather than
   // re-seed the project from its own detected tempo.
   await expect(bpmField).toHaveValue(PROJECT_BPM.toFixed(2))
+
+  // Tempo detection writes into the project when it lands, so saving before then
+  // would leave the project dirty again the moment it finishes.
+  await expect(libraryItemTempo(page, AUDIO_FILE)).toBeVisible({ timeout: 60_000 })
 
   await stubSaveDialog(app.electronApp, chosenPath)
   await invokeMenuItem(page, 'File', 'Save As')

@@ -222,7 +222,7 @@ juce::File DecodedCache::ensureDecoded(const juce::File& sourceFile, juce::Audio
 
     const auto expectedSamples = reader->lengthInSamples;
     const bool tooShort =
-        decoded.samplesWritten < static_cast<juce::int64>((double) expectedSamples * kMinDecodedFraction);
+        decoded.samplesWritten < static_cast<juce::int64>(static_cast<double>(expectedSamples) * kMinDecodedFraction);
     if (decoded.writeFailed || decoded.samplesWritten <= 0 || tooShort)
     {
         silverdaw::log::warn("decodedcache",
