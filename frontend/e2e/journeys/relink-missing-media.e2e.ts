@@ -32,7 +32,7 @@ import { basename, join } from 'node:path'
 import { closeSilverdaw, expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
-import { libraryItem } from '../helpers/library'
+import { libraryItem, libraryItemTempo } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
 import { startNewProject, waitForStartupReady } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
@@ -62,6 +62,10 @@ test('a project whose audio has moved can be relinked and stays relinked', async
   await first.page.getByTitle('Import audio file...').click()
   await expect(libraryItem(first.page, AUDIO_FILE)).toBeVisible({ timeout: 30_000 })
   await expect(first.page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+
+  // Tempo detection writes into the project when it lands, so saving before then
+  // would leave the project dirty again the moment it finishes.
+  await expect(libraryItemTempo(first.page, AUDIO_FILE)).toBeVisible({ timeout: 60_000 })
 
   await stubSaveDialog(first.electronApp, chosenPath)
   await invokeMenuItem(first.page, 'File', 'Save As')

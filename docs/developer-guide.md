@@ -2998,6 +2998,13 @@ of handing the original to the engine. Only the newest audition is allowed to
 load, tracked by its own request counter rather than the engine's preview
 generation, which advances only after a successful load.
 
+`AUDIO_FILE_PROBE` reads metadata rather than audio, but it read it through the
+same JUCE reader — so it reported 225.99 s for the file above, and refused files
+the reader could not open, on the import path before any decode was attempted.
+It now probes the decoded WAV for MP3, so the duration recorded at import matches
+the audio that will play, and the decode the import goes on to need is already
+warm.
+
 ## Library panel
 
 The bottom library panel stores source, stem, sample, and clip items as draggable tiles.

@@ -8,6 +8,7 @@ namespace silverdaw
 {
 
 class BridgeServer;
+class DecodedCache;
 
 // Dispatcher and JUCE hotplug callback share device-list broadcasting here.
 
@@ -25,7 +26,9 @@ void handleSetBackspinSettings(const juce::var& payload, AudioEngine& engine);
 void handleScratchRealismSet(const juce::var& payload, AudioEngine& engine);
 
 // Reader construction runs on `peakPool` so transport ticks keep draining.
+// MP3 is probed through `decodedCache`, because JUCE's MP3 reader mis-sizes some
+// files and would report a wrong duration (ADR 0029).
 void handleAudioFileProbe(const juce::var& payload, AudioEngine& engine, BridgeServer& bridge,
-                          juce::ThreadPool& peakPool);
+                          juce::ThreadPool& peakPool, const DecodedCache& decodedCache);
 
 } // namespace silverdaw

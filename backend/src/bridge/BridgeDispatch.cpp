@@ -852,7 +852,7 @@ bool dispatchAudioDevice(const DispatchContext& ctx)
     }
     else if (type == "AUDIO_FILE_PROBE")
     {
-        silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool);
+        silverdaw::handleAudioFileProbe(payload, engine, bridge, peakPool, ctx.decodedCache);
     }
     else
     {

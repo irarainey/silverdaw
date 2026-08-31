@@ -20,6 +20,7 @@
 
 - Some MP3s could not be played, previewed or analysed at all, failing silently with no tempo and no sound. They now import and play correctly.
 - Previewing an MP3 that had not been decoded yet could stay silent. It is now decoded first, in the background.
+- Importing an MP3 could record the wrong track length, or reject the file as unreadable. The imported length now matches the audio that plays.
 - Tempo detection now completes on MP3s whose final moments fail to decode, flagging the result as unconfirmed.
 - Correcting a tempo while it is still being detected now keeps the correction.
 - Correcting the tempo of a stem or saved clip no longer shifts the beat markers of the file it came from.
