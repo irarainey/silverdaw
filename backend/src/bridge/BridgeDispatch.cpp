@@ -306,10 +306,11 @@ bool dispatchPreview(const DispatchContext& ctx)
     auto& projectState = ctx.projectState;
     auto& bridge = ctx.bridge;
     const auto& decodedCache = ctx.decodedCache;
+    auto& peakPool = ctx.peakPool;
 
     if (type == "PREVIEW_LOAD")
     {
-        silverdaw::handlePreviewLoad(payload, engine, projectState, bridge, decodedCache);
+        silverdaw::handlePreviewLoad(payload, engine, projectState, bridge, decodedCache, peakPool);
     }
 
     else if (type == "PREVIEW_UNLOAD")

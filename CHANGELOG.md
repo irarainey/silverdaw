@@ -10,6 +10,7 @@
 
 ### Changed
 
+- MP3 files are now decoded with the bundled LAME decoder, which reads files the previous decoder could not and no longer trims the last fraction of a second. Existing MP3s are decoded again on first use, so their beat markers are recalculated.
 - Tempo detection is more accurate on dense material such as full-band rock and soul.
 - A tempo corrected on a file now corrects every stem and clip taken from it.
 - A tempo inherited through several steps, such as a clip of a stem, is now shown.
@@ -17,6 +18,8 @@
 
 ### Fixed
 
+- Some MP3s could not be played, previewed or analysed at all, failing silently with no tempo and no sound. They now import and play correctly.
+- Previewing an MP3 that had not been decoded yet could stay silent. It is now decoded first, in the background.
 - Tempo detection now completes on MP3s whose final moments fail to decode, flagging the result as unconfirmed.
 - Correcting a tempo while it is still being detected now keeps the correction.
 - Correcting the tempo of a stem or saved clip no longer shifts the beat markers of the file it came from.

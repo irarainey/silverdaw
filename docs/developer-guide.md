@@ -559,7 +559,8 @@ Silverdaw currently supports the core arrangement workflow:
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
 buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
-play seamlessly.
+play seamlessly. MP3 is decoded by the bundled LAME rather than by JUCE's own MP3
+reader — see *Decoding compressed sources*.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
@@ -2955,6 +2956,48 @@ into setup, host STFT/tensor preparation, ONNX inference, synthesis,
 overlap-add, and finalisation. These timings are emitted in Release builds and
 run only on the existing stem worker or renderer orchestration paths.
 
+## Decoding compressed sources
+
+`DecodedCache` turns any non-WAV source into a 16-bit PCM WAV in a central cache,
+and everything downstream — playback, preview, waveform peaks, tempo and beat
+detection, stems — reads that WAV rather than the original file.
+
+**MP3 is decoded by the bundled `lame.exe`, not by JUCE's MP3 reader.** JUCE
+mis-parses some MP3s outright: one 192 kbps file was sized as though it were
+256 kbps, so every frame boundary after the first was wrong, every read failed,
+and the file could be neither played nor analysed — it simply appeared to have no
+tempo and made no sound. Across a 25-file sample JUCE also stopped short on 18 of
+them, discarding up to a twentieth of a second that was quietly accepted as a
+"short tail". LAME decoded all 25 in full, at the same speed (about 330 ms for a
+five-minute track), and it was already shipped for MP3 export, so it costs no new
+dependency.
+
+Two consequences worth knowing:
+
+- **LAME strips the MP3 encoder delay (typically 529 samples) that JUCE leaves
+  in.** Decodes are therefore about 12 ms earlier than before. This is the
+  correct gapless behaviour, but it does move the audio, which is why the change
+  carries a `kDecodedCacheGeneration` bump — every MP3 is decoded again on first
+  use and its beat markers recalculated against the corrected audio.
+- **JUCE remains the fallback.** If `lame.exe` is missing or fails, the old path
+  still runs, so this can only add coverage. The chosen decoder is recorded in
+  the `decodedcache` log line for each file.
+
+`lame.exe` is required at configure time (see *Continuous integration*), because
+a build without it can neither export nor import MP3.
+
+Decoding is validated by reading the result back with `WavAudioFormat` directly
+rather than through `AudioFormatManager`. The manager picks a reader from the file
+extension, and decodes land on a `.wav.tmp` staging path, so an extension-based
+check finds no format for `.tmp` and rejects every good decode — which silently
+disabled the LAME path while looking exactly like a decode failure.
+
+Because an MP3 cannot be trusted to play through JUCE, `PREVIEW_LOAD` decodes an
+MP3 that has no cache entry yet on a worker thread before auditioning it, instead
+of handing the original to the engine. Only the newest audition is allowed to
+load, tracked by its own request counter rather than the engine's preview
+generation, which advances only after a successful load.
+
 ## Library panel
 
 The bottom library panel stores source, stem, sample, and clip items as draggable tiles.
@@ -4882,8 +4925,9 @@ reuse a tree configured by a different generator).
 Six details are worth knowing before changing it:
 
 - **`lame.exe` is not in the repository**, so both C++ jobs run
-  `scripts/Fetch-Lame.ps1` first. A build without it cannot copy the encoder
-  next to the backend.
+  `scripts/Fetch-Lame.ps1` first. LAME is required, not optional — it both
+  encodes MP3 on export and decodes MP3 on import — so configuring without it
+  now fails outright rather than producing a backend that cannot do either.
 - **Two build trees, two generators.** The test job uses the multi-config
   Visual Studio generator; clang-tidy needs `compile_commands.json`, which only
   Ninja emits, so it configures `backend/build-release` separately and through

@@ -18,6 +18,8 @@ namespace silverdaw::mixdown_export
 {
 
 
+// Re-exported from core/LamePath.h so existing callers keep one spelling; the
+// encoder and the MP3 decoder must resolve the same bundled binary.
 juce::File findLameExecutable();
 
 int lameQualityIndexForCbr(int kbps);

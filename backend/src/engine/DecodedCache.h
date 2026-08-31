@@ -21,6 +21,14 @@ inline constexpr double kMinDecodedFraction = 0.98;
 // Copy reader -> writer a block at a time, stopping cleanly when the reader runs dry.
 DecodeResult writeDecodedBlocks(juce::AudioFormatReader& reader, juce::AudioFormatWriter& writer);
 
+// True if `wav` reads back as real audio.
+//
+// Deliberately checks the WAV format directly instead of going through
+// AudioFormatManager, which selects a reader from the file extension: decodes land
+// on a `.wav.tmp` staging path, so an extension-based check finds no format for
+// `.tmp` and rejects every good decode.
+bool decodedWavIsUsable(const juce::File& wav);
+
 // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play start.
 class DecodedCache
 {
