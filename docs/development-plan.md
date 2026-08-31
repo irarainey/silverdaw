@@ -2136,6 +2136,42 @@ Still open, and deliberately so: plugin-parameter automation, which needs a
 dynamic replacement for the fixed `AutomationParam` enum and is a decision of
 its own.
 
+### 1.7.1 - Clip Timing & Beat-Grid Correctness *(released)*
+
+**Goal:** make a clip's window arithmetic exact, so clips that should be identical
+are identical, and make correcting a clip's beat grid a local edit that moves neither
+the clip nor its siblings.
+
+1. [x] **A clip's beat-grid phase belongs to the clip.** `CLIP.beatOffsetMs` (source
+   ms, absent == 0, via `CLIP_SET_BEAT_OFFSET`) shifts the item anchor for that clip
+   alone; spacing stays source-global (ADR 0024). A split, duplicate or paste inherits
+   the parent's offset so the operation is invisible on the markers, and from then on
+   each piece is independent. Correcting one clip used to rewrite the shared
+   library-item anchor and knock the markers off every other clip cut from that file
+   while they sat perfectly still. Projects saved before this resolve to the unshifted
+   source grid (ADR 0019).
+2. [x] **Correcting the grid moves the audio, not the clip.**
+   `project.slideClipAudioWithGrid` re-cuts the source window by exactly the distance
+   the Clip Editor session moved the grid, holding `startMs` and the timeline footprint
+   byte-for-byte. The clip keeps its place in the arrangement, every marker keeps its
+   timeline position, and only the audio underneath moves. The shift is wrapped to the
+   smallest move that lands the new grid on the old grid's lines, so a whole-beat regrid
+   is a no-op. It deliberately does **not** re-align to the project grid: rounding to the
+   nearest whole project beat dragged a clip deliberately placed on a sub-beat up to half
+   a beat, so a few milliseconds of correction moved the audio by a fifth of a second.
+3. [x] **A window may overhang the source.** `inMs` is no longer clamped at zero and the
+   window may run past the end of the file; `OffsetSource` renders the overhang as
+   silence. A grid slide therefore always succeeds instead of being refused or, worse,
+   stepping a whole beat to stay inside the file and swapping the clip's audio for
+   completely different material.
+4. [x] **Exact window arithmetic.** Edge-drag trim no longer shifts the audio inside the
+   clip or drifts off the line it snapped to; the waveform is drawn from the clip's exact
+   position in the source, so two identical windows render identically; a clip cut exactly
+   on a beat keeps its first marker; and paste anchors the clip's beat at the playhead the
+   same way dragging does (`clipAnchorOffsetMs`).
+5. [x] **Tempo detection on imported MP3s.** Some files failed to decode to the WAV
+   playback cache and so were left with no tempo, taking their stems with them.
+
 ### 1.8.0 - Correcting a Mis-Detected Tempo *(current release)*
 
 **Goal:** give the user a way to say "the detected BPM is simply wrong" and have
@@ -2255,42 +2291,6 @@ samples) that JUCE left in place, so decoded MP3 audio now starts about 12 ms
 earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
 its markers, but a beat anchor adjusted by hand in a project saved before this
 sits 12 ms off and wants correcting once.
-
-### 1.7.1 - Clip Timing & Beat-Grid Correctness
-
-**Goal:** make a clip's window arithmetic exact, so clips that should be identical
-are identical, and make correcting a clip's beat grid a local edit that moves neither
-the clip nor its siblings.
-
-1. [x] **A clip's beat-grid phase belongs to the clip.** `CLIP.beatOffsetMs` (source
-   ms, absent == 0, via `CLIP_SET_BEAT_OFFSET`) shifts the item anchor for that clip
-   alone; spacing stays source-global (ADR 0024). A split, duplicate or paste inherits
-   the parent's offset so the operation is invisible on the markers, and from then on
-   each piece is independent. Correcting one clip used to rewrite the shared
-   library-item anchor and knock the markers off every other clip cut from that file
-   while they sat perfectly still. Projects saved before this resolve to the unshifted
-   source grid (ADR 0019).
-2. [x] **Correcting the grid moves the audio, not the clip.**
-   `project.slideClipAudioWithGrid` re-cuts the source window by exactly the distance
-   the Clip Editor session moved the grid, holding `startMs` and the timeline footprint
-   byte-for-byte. The clip keeps its place in the arrangement, every marker keeps its
-   timeline position, and only the audio underneath moves. The shift is wrapped to the
-   smallest move that lands the new grid on the old grid's lines, so a whole-beat regrid
-   is a no-op. It deliberately does **not** re-align to the project grid: rounding to the
-   nearest whole project beat dragged a clip deliberately placed on a sub-beat up to half
-   a beat, so a few milliseconds of correction moved the audio by a fifth of a second.
-3. [x] **A window may overhang the source.** `inMs` is no longer clamped at zero and the
-   window may run past the end of the file; `OffsetSource` renders the overhang as
-   silence. A grid slide therefore always succeeds instead of being refused or, worse,
-   stepping a whole beat to stay inside the file and swapping the clip's audio for
-   completely different material.
-4. [x] **Exact window arithmetic.** Edge-drag trim no longer shifts the audio inside the
-   clip or drifts off the line it snapped to; the waveform is drawn from the clip's exact
-   position in the source, so two identical windows render identically; a clip cut exactly
-   on a beat keeps its first marker; and paste anchors the clip's beat at the playhead the
-   same way dragging does (`clipAnchorOffsetMs`).
-5. [x] **Tempo detection on imported MP3s.** Some files failed to decode to the WAV
-   playback cache and so were left with no tempo, taking their stems with them.
 
 ### Phase 1 — Backend Foundation & Bridge
 
