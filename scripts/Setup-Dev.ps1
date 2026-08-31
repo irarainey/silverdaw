@@ -272,7 +272,19 @@ if (-not $SkipFrontend) {
 
 # 3. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
-    Write-Section '3. Backend CMake configure'
+    # Bundled MP3 encoder/decoder. lame.exe is gitignored (`*.exe`), so it is
+    # never in a fresh clone. It must be fetched *before* the CMake configure
+    # below, which fails with a fatal error when the binary is absent.
+    $lameExe = Join-Path $repoRoot 'backend/third_party/lame/lame.exe'
+    if (-not (Test-Path -LiteralPath $lameExe)) {
+        Write-Section '3. Fetch bundled LAME (lame.exe)'
+        & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/Fetch-Lame.ps1')
+        if ($LASTEXITCODE -ne 0) {
+            throw "Fetch-Lame.ps1 failed with exit code $LASTEXITCODE. lame.exe is required: MP3 import and export both depend on it, and the CMake configure below will not succeed without it."
+        }
+    }
+
+    Write-Section '3a. Backend CMake configure'
     # Visual Studio 17 2022, NOT Ninja: `.vscode/tasks.json` (`backend: configure`)
     # and `.vscode/settings.json` (`cmake.generator`) both use this generator for
     # `backend/build`. CMake refuses to reconfigure a tree with a different
@@ -287,19 +299,6 @@ if (-not $SkipBackend) {
         throw "CMake configure failed with exit code $LASTEXITCODE."
     }
     Write-Ok "Backend configured in backend/build."
-
-    # Bundled MP3 encoder. The repo *should* contain backend/third_party/lame/lame.exe
-    # (committed), but a fresh clone after a `lame.exe` refresh — or any clone
-    # where the binary was excluded for size — may be missing it. Fetch on
-    # demand so MP3 export works after a single Setup-Dev run.
-    $lameExe = Join-Path $repoRoot 'backend/third_party/lame/lame.exe'
-    if (-not (Test-Path -LiteralPath $lameExe)) {
-        Write-Section '3a. Fetch bundled LAME encoder (lame.exe)'
-        & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/Fetch-Lame.ps1')
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  Fetch-Lame.ps1 failed (exit $LASTEXITCODE). MP3 export will be unavailable." -ForegroundColor Yellow
-        }
-    }
 
     if ($BuildBackend) {
         Write-Section '3b. Backend build (Debug)'

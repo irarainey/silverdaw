@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-08-30 · Owner: @irarainey_
+_Last reviewed: 2026-08-31 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -87,6 +87,8 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   optimistic state, connect path merges additively). See ADR 0002.
 - **Clips reference audio by `libraryItemId`,** never by path; the backend
   resolves the on-disk file (preferring the decoded-WAV cache) at load time.
+  Compressed sources are decoded into that cache once, MP3 via the bundled
+  `lame.exe`. See `docs/developer-guide.md#decoding-compressed-sources`.
 - **Same canonical chain for playback and mixdown** so exports match what the
   user hears.
 - **MIDI is a profile-driven control plane.** The backend enumerates MIDI

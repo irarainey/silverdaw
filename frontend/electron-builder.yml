@@ -71,12 +71,12 @@ extraResources:
       # absent and this filter entry matches nothing.
       - DirectML.dll
       # lame.exe is copied next to SilverdawBackend.exe by the CMake POST_BUILD
-      # step (see `SILVERDAW_LAME_EXE` in backend/CMakeLists.txt) when the
-      # binary is dropped into `backend/third_party/lame/`. When present it
-      # ships next to the backend so `findLameExecutable()` resolves it via
-      # `process.resourcesPath/backend/lame.exe`. When absent, MP3 export
-      # returns a friendly "encoder not bundled" error at runtime and the
-      # other formats (WAV/FLAC) keep working.
+      # step (see `SILVERDAW_LAME_EXE` in backend/CMakeLists.txt). It is a
+      # required dependency — CMake configure fails without it — so it is
+      # always present here, and ships next to the backend so
+      # `findLameExecutable()` resolves it via
+      # `process.resourcesPath/backend/lame.exe`. MP3 import and export both
+      # depend on it.
       - lame.exe
       # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime, which
       # a clean machine may lack and MSIX does not auto-provide. The backend copies

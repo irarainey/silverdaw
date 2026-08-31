@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-30 · Owner: @irarainey_
+_Last reviewed: 2026-08-31 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -72,7 +72,9 @@ accurate, so the correction is needed less often: the audio is conditioned to
 emphasise percussive content before beat tracking, a disputed tempo is settled
 by an independent second engine, and the grid is fitted to onset starts rather
 than to onset-function peaks, which had been leaving markers a few milliseconds
-late on bass-heavy material (ADR 0028).
+late on bass-heavy material (ADR 0028). Underneath both, MP3 is now decoded by
+the bundled LAME rather than JUCE's own reader, which mis-parsed some files
+badly enough that they could not be played or analysed at all.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

@@ -139,7 +139,7 @@ jobs:
 
       # lame.exe is not in the repository, and CMake copies it next to the
       # backend at build time.
-      - name: Fetch the LAME encoder
+      - name: Fetch LAME (MP3 encoder/decoder)
         run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
 
       # Visual Studio generator, matching .vscode/settings.json and the
@@ -234,7 +234,7 @@ jobs:
           key: cmake-deps-ninja-windows-2022-${{ hashFiles('backend/CMakeLists.txt') }}
           restore-keys: cmake-deps-ninja-windows-2022-
 
-      - name: Fetch the LAME encoder
+      - name: Fetch LAME (MP3 encoder/decoder)
         run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
 
       # clang-tidy reads compile_commands.json, which only the Ninja generator

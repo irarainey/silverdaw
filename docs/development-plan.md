@@ -2230,6 +2230,32 @@ revalidated after the later ODF refit, which may still move the tempo by up to
 5%; and the 0.75 backtrack fraction is calibrated on twelve synthetic files,
 because the real tracks carry no beat-phase ground truth.
 
+**Reading the source audio.** Detection and correction both assume the file was
+read correctly in the first place. One library MP3 that played fine elsewhere
+could not be played, auditioned or analysed at all, and said so only in the log.
+
+14. [x] **Decode MP3 with LAME, not JUCE.** JUCE's MP3 reader latched onto the
+    wrong frame size on that file and reported 226 s of a 301 s track, failing
+    every read while still emitting samples of magnitude 20 — so playback,
+    waveform and tempo all died together. Measured over 25 library files, the
+    bundled `lame.exe` decoded 25/25 in full at the same speed (about 330 ms for
+    a five-minute track), where JUCE fully failed one and silently truncated 18
+    more under the 98% "short tail" tolerance. JUCE remains the fallback if LAME
+    is missing or fails.
+15. [x] **Audition through the cache.** The Files tab opened an uncached MP3
+    directly with the same broken reader, so fixing the cache alone would have
+    left preview still silent. It now decodes on a worker first, and a
+    superseded request is abandoned rather than allowed to steal playback.
+16. [x] **Make `lame.exe` a required build dependency.** It is what both MP3
+    import and MP3 export depend on, so CMake fails at configure time rather
+    than producing a binary that silently falls back to the broken reader.
+
+A consequence worth knowing: LAME strips the MP3 encoder delay (typically 529
+samples) that JUCE left in place, so decoded MP3 audio now starts about 12 ms
+earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
+its markers, but a beat anchor adjusted by hand in a project saved before this
+sits 12 ms off and wants correcting once.
+
 ### 1.7.1 - Clip Timing & Beat-Grid Correctness
 
 **Goal:** make a clip's window arithmetic exact, so clips that should be identical
