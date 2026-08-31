@@ -62,7 +62,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 
 ## Architecture
 
-Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a per-session-authenticated localhost WebSocket bridge.
+Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a local WebSocket bridge that is guarded by a token unique to each run.
 
 - **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
   audio device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
@@ -559,7 +559,8 @@ Silverdaw currently supports the core arrangement workflow:
 Playback is always served from the decoded WAV cache; original compressed sources
 (MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
 buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
-play seamlessly.
+play seamlessly. MP3 is decoded by the bundled LAME rather than by JUCE's own MP3
+reader — see *Decoding compressed sources*.
 
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
@@ -1542,12 +1543,27 @@ construction, after `markClean()` and after `replaceTree()` (load). A
 `juce::ValueTree::Listener` fires on every mutation and compares the live tree against
 the clean snapshot via `isEquivalentTo`. If they match — for example after a sequence
 that nets to zero (add a library item, then remove it) — the project returns to clean.
-Otherwise it's dirty. Changes are broadcast as `PROJECT_DIRTY { dirty }` envelopes. The
-renderer mirrors it as `projectStore.isDirty`, shows a leading `•` next to the project
+Otherwise it's dirty. Changes are broadcast as `PROJECT_DIRTY { dirty, reason? }`
+envelopes. The renderer mirrors it as `projectStore.isDirty`, shows a leading `•` next
+to the project
 name in the title bar when dirty, and intercepts **File → New / Open / Exit** and the
 window close button to prompt with **Save / Don't save / Cancel** before discarding
 work. When the project is clean, those same leave-project paths silently flush view
 state only.
+
+`reason` is sent only on a transition **into** dirty (going clean is always a save or a
+load) and is either `edit` or `analysis`. Most background work never dirties at all:
+detected BPM, beats, anchor and confidence flags are derived metadata, written through
+`mutateDerivedLibraryItem`, which suppresses the dirty listener *and* mirrors the write
+into the clean snapshot. Two things analysis does are not derived, and do dirty:
+seeding the project tempo from the first clip, and the late auto-warp of clips dropped
+before detection finished. Both change content that has to reach disk, so suppressing
+them would report "saved" for work that is not saved. Instead
+`ProjectState::BackgroundDirtyScope` wraps the automatic analysis path, tagging those
+transitions `analysis`; the renderer shows an info toast naming the cause, so an
+unsaved-changes marker that reappears on its own after a save is explained rather than
+looking like a fault. The manual tempo path is deliberately outside the scope — that is
+a user edit and reports `edit`.
 
 On every connect the backend sends a `PROJECT_STATE` snapshot. The renderer:
 
@@ -1909,6 +1925,12 @@ persisted as `LIBRARY > ITEM.key`.
 - **Resampler**: [libsamplerate](https://github.com/libsndfile/libsamplerate) 0.2.2
   (BSD-2-Clause), pulled in via FetchContent. Used to one-shot convert decoded mono
   audio to BTrack's expected 44.1 kHz.
+- **Second opinion**: [MiniBPM](https://breakfastquay.com/minibpm/) (Chris Cannam,
+  Particular Programs) — a fixed-tempo estimator for whole files, used as an
+  independent arbiter rather than as the primary detector. GPL-2.0-**or-later**; the
+  "or later" clause is what makes it combinable with Silverdaw's AGPL-3.0-or-later. A
+  verbatim copy lives at `backend/third_party/minibpm/` — see
+  [`PATCHES.md`](../backend/third_party/minibpm/PATCHES.md) (no patches were needed).
 - **FFT**: [KISS FFT](https://github.com/mborgerding/kissfft) 1.3.0 (BSD), bundled in
   the BTrack vendor copy. No FFTW dependency.
 
@@ -1920,7 +1942,11 @@ already has a BPM for). The library tile context menu can also send
 `LIBRARY_REANALYSE`, which clears the current tempo/beat fields, recreates the
 decoded-WAV cache, and reruns detection from the current source file. Worker thread
 → decode the file via JUCE → downmix to mono → resample to 44.1 kHz with
-libsamplerate → feed BTrack frame-by-frame at hop=256 (~5.8 ms steps) recording every
+libsamplerate (all shared with every other estimator via
+[`BpmAudioLoader`](../backend/src/dsp/BpmAudioLoader.h), so they judge byte-identical
+audio) → **condition the audio with a zero-phase percussive emphasis**
+([`PercussiveEmphasis`](../backend/src/dsp/PercussiveEmphasis.h)) → feed BTrack
+frame-by-frame at hop=256 (~5.8 ms steps) recording every
 `beatDueInCurrentFrame()` event. **BTrack itself only tracks the first 60 seconds**
 (`kBeatTrackingSeconds`) — it is the expensive, causal part and a bounded prefix gives a
 robust octave/tempo *seed* without risking octave-wander on long, variable material. The
@@ -1928,6 +1954,25 @@ robust octave/tempo *seed* without risking octave-wander on long, variable mater
 decoded track** (bounded only by the generous `kMaxAnalysisSeconds` ceiling), so the final
 period is fit over the entire piece rather than extrapolated from the opening minute.
 Estimates outside `[40, 240]` BPM are dropped as implausible.
+
+The conditioning step emphasises the kick band (below ~180 Hz) and the snare/hat band
+(above ~4 kHz) and attenuates the mid to 0.10, raising onset contrast on dense material
+where sustained guitars, pads and vocals otherwise blur the beat. It uses only symmetric
+FIR kernels applied centred over a reflected extension, so it adds **exactly zero group
+delay at every frequency and every sample position** — non-negotiable, because the beat
+anchor is de-biased by a calibrated ODF group delay and any material-dependent shift
+would silently move every visible beat marker. See ADR 0028.
+
+When the autocorrelation refinement is rejected, a second, independent estimator
+([MiniBPM](../backend/src/dsp/MiniBpmEstimator.h)) arbitrates. That rejection test scores
+candidates against BTrack's *own* beat times, so it is circular precisely when those beats
+are untrustworthy. MiniBPM runs on the **raw** decode — not the conditioned buffer, so it
+does not inherit the same blind spots — and may overturn the rejection only when it is
+within 2.0 BPM of the autocorrelation period and at least 0.25 BPM closer to it than to the
+baseline. It is consulted only on a dispute, so an uncontested import pays nothing for it.
+MiniBPM offers no abort callback of its own, so the analysis timeout is enforced around it:
+`MiniBpmEstimator` polls a `shouldAbort` callback between blocks and reports that it gave
+up, which keeps a timeout reported as a timeout instead of reading as "no tempo found".
 
 The reported BPM starts from the **median of beat-to-beat intervals** (more stable
 than BTrack's running tempo estimate, which can drift a fraction of a BPM from the
@@ -1951,8 +1996,8 @@ median-phase and ODF-peak stages key off true onsets rather than broad humps —
 it is the difference between the median-phase alignment engaging or being skipped
 on dense material (where the raw ODF's per-beat offset IQR otherwise blows past
 the consistency gate). A final **whole-track ODF-peak refit**
-(`refineGridFromOdfPeaks`) does a least-squares period+anchor fit over the
-sub-frame-interpolated ODF onset peaks across the *entire* track; the long lever arm
+(`refineGridFromOdfPeaks`) does a least-squares period+anchor fit over
+sub-frame-interpolated ODF onset points across the *entire* track; the long lever arm
 pins the period far more tightly than a 60 s fit, which is what stops the rigid grid
 from drifting late→early across a long track (adopted only when it stays within 5 % of
 BTrack's octave, so a spurious fit can't hijack the tempo). This keeps the project grid
@@ -1960,6 +2005,21 @@ we later seed lined up with the source's beats from the first beat to the last. 
 `variableTempo` flag is also computed by checking the spread of per-beat tempo samples
 (after a short settling period) — if it's > 5 % of the mean, the library tile shows the
 amber `~ BPM` warning badge.
+
+Each of those points is the estimated **onset start**, not the ODF peak
+(`estimateOnsetStartFrames`). The peak marks where the spectrum is changing fastest,
+which for a broadband click is essentially the transient but for a kick or a soft pad
+arrives several analysis frames later — measured against a corpus with known beat times,
+peaks sat 0.7 ms late on clicks and 3.0–3.6 ms late on drums and pads. That spread is
+material-dependent, so no single group-delay constant can remove it, and the residual is
+exactly what reads as "markers slightly late". Walking back from the peak to where the
+ODF first rose through 75 % of its height above the preceding valley adapts
+automatically, because a slow-rising onset has a proportionally longer ramp; the crossing
+is linearly interpolated because the 5.8 ms frame grid is coarser than the bias being
+removed, and the backtrack is bounded to 120 ms so a quiet passage cannot drag the
+estimate away. That fraction is calibrated, not arbitrary: it minimises mean |offset|
+across click, drum and pad material (2.6 ms → 0.6 ms) and collapses the difference
+between those materials to under 1 ms.
 
 The grid is rendered as a **rigid metronome** from a single `(bpm, beatAnchorSec)`
 pair, so the anchor's phase matters as much as the period. Before the final
@@ -2101,7 +2161,9 @@ The same drift rule decides whether a warp *reports* itself active, in both proc
 (`kWarpNegligibleDriftMs`). They must move together — the epsilons used to disagree with
 the engine, which happily stretched the near-miss stem while the project state called the
 warp inactive, so the timeline drew the clip at its native width, withheld the WARP badge
-and spaced its beat markers on the unwarped grid.
+and spaced its beat markers on the unwarped grid. Each process keeps the rule in one
+function — `warpChangesTiming` in `lib/warp.ts` and in `ProjectStateTypes.h` — so
+enabling a warp, drawing one and reporting one cannot answer the question differently.
 
 **Changing the project tempo.** `handleProjectSetBpm` keeps the arrangement's
 musical shape: `ProjectState::retimeClipsForTempoChange` rescales every clip's start
@@ -2111,6 +2173,12 @@ arrangement drifts apart on every tempo edit. When the renderer's **Auto-warp cl
 tempo** preference is on — sent as the optional `autoWarp` flag on `PROJECT_SET_BPM`,
 since the preference lives in the renderer — clips that are not warped but whose
 source has a tempo are warped first, so nothing is left behind at the old tempo.
+A clip whose own tempo *already matches* the new one is skipped: it is filtered by
+`warpChangesTiming`, the same drift test the drop path applies, so typing a tempo and
+dropping a file at that tempo reach the same answer about what warping means. Without
+that filter a matching clip picked up a WARP badge, a stretch ratio and a resampled
+playback path for a stretch that changes nothing — a warp the user can see and
+cannot account for.
 That is the same preference that governs warping a clip *on drop*, deliberately:
 one setting expresses one intent ("keep music at the project tempo"), and it holds
 at every moment the project tempo is established. Widening it rather than minting a
@@ -2122,8 +2190,10 @@ explicitly `true`: the engine reads an unset `enabled` as "keep the current engi
 state", and a clip that has never been warped has no warp processor, so leaving it
 unset would disable warp on the very clips the auto-warp pass just enabled and they
 would play dry and stop at their unwarped length. Sitting at the project tempo is a
-coincidence of the moment, not a property of the clip — any clip with a source tempo
-stays warp-capable and a tempo change must never turn its warp off. The
+coincidence of the moment, not a property of the clip — such a clip stays
+warp-capable and a later tempo change warps it like any other; skipping it above
+only declines to enable a warp that would do nothing *now*, and a tempo change must
+never turn an existing warp off. The
 renderer mirrors both in `projectStore.applyProjectBpm`, the single entry point
 shared by the transport bar and the project properties dialog. An active timeline
 selection is rescaled by the same factor there
@@ -2144,6 +2214,27 @@ locally — marker positions otherwise only reach the renderer on a full
 likewise moved on the backend, through the ordinary `setPositionMs` seek: the same
 material sits under it after the move, so the effect tails carry across rather than
 being reset.
+
+**Removing the last track.** `handleTrackRemove` clears every marker
+(`ProjectState::clearMarkers`) and the timeline selection once no tracks remain, and
+re-runs `syncTimelineLoop` so the engine's loop range goes with them. A marker names a
+place on a timeline and a selection is a span of one, and with no tracks the ruler
+draws no time for either to name. Left behind they were unreachable rather than merely
+idle — the ruler renderer and the drag handlers both stand down with no tracks — so
+they could be neither seen nor cleared, yet they persisted into the saved file and
+reappeared the moment a track was added, with a looping selection still wrapping
+playback inside a range nothing on screen accounted for.
+
+The clear runs inside the transaction `beginUndoTransactionIfNeeded` has already
+opened for `TRACK_REMOVE`, so removing a track and losing its markers is one action
+and one undo, not two. Markers are persisted content and dirty the project, but only
+through the derived path: `clearMarkers` does *not* call `markDirty`, because the
+child-removed listener recomputes dirtiness against the clean snapshot, and forcing
+the flag would strand the project dirty after an undo had put every marker back. The
+selection is view state written through `setNonDirtyRootProperty`, so it never dirties
+and is not restored by undo — consistent with how a selection is treated everywhere
+else. `projectStore.removeTrack` mirrors both locally so the timeline does not draw
+stale markers for the round trip.
 
 Track automation is on that same timeline axis, so it is rescaled by the same factor
 (`ProjectState::retimeTrackAutomationForTempoChange`, mirrored in `applyProjectBpm`);
@@ -2211,6 +2302,121 @@ buttons, and a **half-beat** shift for when the grid has locked onto the off-bea
 Manual values survive save / load because `ensureBpmDetection`
 is idempotent and skips a source that already has a BPM.
 
+**Correcting a mis-detected tempo.** The manual-tempo path above says "play at this
+tempo" and lets Save move the arrangement to suit; it cannot say "the detector read the
+wrong number". Because `maybeSeedProjectBpmFor` copies the first musical clip's detected
+tempo into the project tempo, one wrong detection lands in two places, and neither
+existing control fixes both: the project tempo box rescales the whole arrangement
+(`retimeClipsForTempoChange` and friends), while the Clip Editor tempo field corrects
+only the source, so the clip then warps by the same error inverted. ADR 0027 adds a
+distinct operation for the corrective intent, drawn at persisted position: **a correction
+never moves a clip start, a marker, an automation point, the timeline selection or the
+playhead**, while everything derived from a tempo — clip ratios, footprints, volume
+shapes, transitions — is reconciled from the final corrected state.
+
+`LIBRARY_ITEM_CORRECT_TEMPO { itemId, bpm, beatAnchorSec }` is handled by
+`handleLibraryItemCorrectTempo` (`commands/TempoCorrectionCommands.cpp`). It resolves the
+**tempo owner** first (`ProjectState::resolveTempoOwner`, mirrored by `resolveTempoOwner`
+in `libraryItemHelpers.ts`), so an inherited tempo is corrected on the ancestor and every
+sibling is fixed at once. `applyManualTempo` then writes the tempo and re-derives every
+clip that follows it; `retimeClipEnvelopesForFootprintChange` runs last, against
+footprints the re-derive has settled, and transitions are reconciled in-command so the
+reported count is true of the state the user is told about.
+
+**The project tempo is deliberately absent from the payload.** Setting it from the first
+clip dropped is **merely a convenience, with no linkage and no history**:
+`maybeSeedProjectBpmFor` copies a number once and returns early ever after, nothing
+records that it happened, and the item it came from may since have been deleted from the
+timeline or the library. The project tempo is the user's number, and a statement about a
+file is not evidence about it — not even when the two are equal, which is the case a rule
+would be most tempted to guess from. The command therefore writes exactly one tempo fact
+and no provenance is persisted. The practical route for the common case is to correct the
+file in the library **before** placing the first clip, at which point
+`maybeSeedProjectBpmFor` seeds the project from the corrected number; otherwise the
+project tempo is changed afterwards in the transport box, which is a tempo *change* and
+rescales the arrangement as it always has. In that second case the corrected clip warps by
+`projectBpm / correctedSourceBpm` in between — that is warp working correctly, not a
+residual bug: before the correction both numbers were the same wrong number so the ratio
+happened to be 1.0, and setting the project tempo unwarps it again.
+
+Because the project grid never moves, nothing can be knocked off it: a correction moves no
+clip, so there is no alignment pass and `libraryHandlers.ts` writes nothing to
+`project.clips`.
+
+**A correction outranks a detection that is still running.** Tempo detection runs on a
+worker thread and applies its answer later, on the message thread, so a job started at
+import can finish after the user has already corrected the same item. Each library item
+therefore carries a *tempo authority generation*, bumped by `applyManualTempo`. A detection
+job reads that number when it is **enqueued** — not when it starts, so a correction wins
+even while the job is still queued — and throws its own result away if the number has since
+moved. `getTempoAuthorityGeneration` and `tempoDetectionResultIsStale`
+(`project/LibraryAnalysis.h`) are the guard, exposed so tests can reach it. This matters
+more than an ordinary race: the automatic path writes derived, non-dirtying, non-undoable
+metadata, so a correction it overwrote could not be recovered with undo, because nothing
+was ever pushed onto the undo stack. A reanalysis the user explicitly asks for is enqueued
+*after* the correction that preceded it, so it still applies — the guard only ever drops a
+result the user has since overruled.
+
+**The renderer shows the new tempo immediately and takes it back if the engine refuses.**
+`libraryStore.correctItemTempo` snapshots the item's grid, applies the new tempo locally,
+then sends. The `TEMPO_CORRECTION_APPLIED` handler calls `commitTempoCorrection` on
+success or `rollbackTempoCorrection` on failure, which restores the snapshot — including
+`musicalBeats`, `variableTempo` and `lowConfidence`, which the local write clears. The
+snapshots are held in a `WeakMap` keyed by the item object rather than its id, so a
+rollback point cannot outlive the item it describes when a project is closed and reopened.
+
+The reply is `TEMPO_CORRECTION_APPLIED`. Its `ok` field says which of two shapes it
+carries. `ok: false` carries `{ itemId, error }` and means nothing was written. `ok: true`
+reports the owner and its resolution reason, both the previous and applied tempi, whether a
+recorded musical length was discarded, and what was and was not touched: clips re-warped,
+clips excluded because their ratio is pinned or their warp is off (exclusions by the user's own
+earlier choice, not failures), transitions removed, and clips now past the project length.
+`lib/library/tempoCorrectionReport.ts` turns that into the wording the user reads.
+
+The consequence wording lives in `TempoCorrectionFields.vue` and is rendered by every
+surface that offers a correction, so none of them can drift into saying something
+different. It separates notes that are *facts about the item* — an inherited owner, a
+tempo measured from a musical length — from the standing explanation of what a
+correction does. The explanation is drawn only by hosts that offer the correction
+unprompted; a host the user reached by choosing **Edit BPM** suppresses it with
+`show-summary`, because that choice already states the intent and repeating it explains
+the edit back to the person who asked for it. There are two:
+
+- **`EditBpmDialog.vue`**, a dialog whose whole job is this one number. It lands on the
+  field with the old value selected and commits on **Save**, with **Cancel** discarding
+  the draft; its Escape listener is registered in the **capture** phase so a dialog
+  underneath cannot close itself on the same key. It is reached from the library context
+  menu's **Edit BPM…** (`useLibraryItemActions`) or from the **Edit** button beside the
+  BPM on the item's information dialog, which is otherwise read-only — information states
+  what a file *is*, editing is a transaction, and a live input in a dialog whose only
+  footer button was Close made it ambiguous which control wrote anything. The Edit button
+  appears only while the row shows the item's own tempo: a warped value is a product of
+  the project tempo and the clip's ratio rather than a fact about the file, so typing over
+  it would have no single meaning. State comes from `useLibraryItemTempoCorrection`, which
+  writes through `libraryStore.correctItemTempo`.
+- **The Clip Editor opened on a timeline clip**, via `useClipEditorBeatGrid`. This is the
+  only one with a grid draft to unwind first: the typed BPM is written locally onto the
+  item being edited so markers redraw live, and `applyCorrection` rolls that back and
+  re-applies it to the resolved owner before sending.
+
+The Clip Editor opened on a **library source** deliberately carries no Beat grid module.
+That window's job is choosing a section to save; it has no Save of its own to commit a
+file-level edit, and the tempo it would show belongs to the library item rather than to
+anything on screen. Its hint text points at the library's **Edit BPM…** instead, so the
+correction has one home on the source rather than two that mean subtly different things.
+That window draws no beat markers either. `useClipEditorController` passes the waveform
+and the canvas a `visibleBeatGrid` of `null` unless `editsExistingClip` is set, so markers
+appear only where the Beat grid module is present to edit them. Previewing a source is
+about hearing it and picking a section, and a grid nobody can adjust is decoration at best
+and a misread tempo presented as fact at worst.
+
+Beat markers need nothing extra. `resolveSourceBeatGrid` spaces them at `60000 / bpm`
+phase-locked to `beatAnchorSec`; the detected `beats` array is consulted only for presence
+and as a legacy anchor fallback, so a corrected tempo respells the grid by construction.
+Phase is a separate fact: a correction carries the **owner's existing anchor**, never the
+edited item's, so fixing a number can never slide the grid of every clip cut from that
+file. Phase is corrected where it can be seen, in the Clip Editor's Position control.
+
 ### Confidence and audio type classification
 
 `BpmAnalysis` also reports a `lowConfidence` flag derived from the LSQ-fit
@@ -2219,6 +2425,12 @@ Specifically the analysis is flagged when *both* of these hold:
 
 - **poor fit**: `relResidual > 0.08` OR `keptFraction < 0.6`, AND
 - **non-musical signature**: `variableTempo` is true OR `keptFraction < 0.5`.
+
+A **partly decoded file also forces the flag on its own**, whatever the fit
+looked like. `BpmAudioLoader` sets `truncated` when it could not read the file to
+the end, and the estimate then describes only the part that was readable, so it
+may simply be wrong about the rest. The user is entitled to know the number is
+provisional rather than have it presented as confirmed.
 
 `variableTempo` alone is intentionally not sufficient — live performances and
 rubato music can drift more than 5 % per beat without being non-musical. The
@@ -2743,6 +2955,55 @@ and each job's total duration. RoFormer profile entries further split each run
 into setup, host STFT/tensor preparation, ONNX inference, synthesis,
 overlap-add, and finalisation. These timings are emitted in Release builds and
 run only on the existing stem worker or renderer orchestration paths.
+
+## Decoding compressed sources
+
+`DecodedCache` turns any non-WAV source into a 16-bit PCM WAV in a central cache,
+and everything downstream — playback, preview, waveform peaks, tempo and beat
+detection, stems — reads that WAV rather than the original file.
+
+**MP3 is decoded by the bundled `lame.exe`, not by JUCE's MP3 reader.** JUCE
+mis-parses some MP3s outright: one 192 kbps file was sized as though it were
+256 kbps, so every frame boundary after the first was wrong, every read failed,
+and the file could be neither played nor analysed — it simply appeared to have no
+tempo and made no sound. Across a 25-file sample JUCE also stopped short on 18 of
+them, discarding up to a twentieth of a second that was quietly accepted as a
+"short tail". LAME decoded all 25 in full, at the same speed (about 330 ms for a
+five-minute track), and it was already shipped for MP3 export, so it costs no new
+dependency.
+
+Two consequences worth knowing:
+
+- **LAME strips the MP3 encoder delay (typically 529 samples) that JUCE leaves
+  in.** Decodes are therefore about 12 ms earlier than before. This is the
+  correct gapless behaviour, but it does move the audio, which is why the change
+  carries a `kDecodedCacheGeneration` bump — every MP3 is decoded again on first
+  use and its beat markers recalculated against the corrected audio.
+- **JUCE remains the fallback.** If `lame.exe` is missing or fails, the old path
+  still runs, so this can only add coverage. The chosen decoder is recorded in
+  the `decodedcache` log line for each file.
+
+`lame.exe` is required at configure time (see *Continuous integration*), because
+a build without it can neither export nor import MP3.
+
+Decoding is validated by reading the result back with `WavAudioFormat` directly
+rather than through `AudioFormatManager`. The manager picks a reader from the file
+extension, and decodes land on a `.wav.tmp` staging path, so an extension-based
+check finds no format for `.tmp` and rejects every good decode — which silently
+disabled the LAME path while looking exactly like a decode failure.
+
+Because an MP3 cannot be trusted to play through JUCE, `PREVIEW_LOAD` decodes an
+MP3 that has no cache entry yet on a worker thread before auditioning it, instead
+of handing the original to the engine. Only the newest audition is allowed to
+load, tracked by its own request counter rather than the engine's preview
+generation, which advances only after a successful load.
+
+`AUDIO_FILE_PROBE` reads metadata rather than audio, but it read it through the
+same JUCE reader — so it reported 225.99 s for the file above, and refused files
+the reader could not open, on the import path before any decode was attempted.
+It now probes the decoded WAV for MP3, so the duration recorded at import matches
+the audio that will play, and the decode the import goes on to need is already
+warm.
 
 ## Library panel
 
@@ -4638,10 +4899,17 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the gates above on every branch push and on
-demand (**Actions ▸ CI ▸ Run workflow**), so a regression is caught before it
-reaches `main`. Runs are grouped per ref with `cancel-in-progress`, because a
-newer push makes the previous answer irrelevant.
+`.github/workflows/ci.yml` runs the gates above on pushes to any branch except
+`main`, on pull requests, and on demand (**Actions ▸ CI ▸ Run workflow**), so a
+regression is caught before it reaches `main`. A merge to `main` does not re-run
+them: main is only reachable through a pull request that already passed, so a
+post-merge run would re-answer a settled question. Runs are grouped per ref with
+`cancel-in-progress`, because a newer commit makes the previous answer
+irrelevant.
+
+The `pull_request` trigger covers pull requests from forks, whose pushes never
+reach this repository. For a branch here that already has a pull request open,
+that means two runs per push — the price of covering outside contributions.
 
 Every job runs on `windows-2022`. Silverdaw is Windows-x64 only, so a green
 result anywhere else would be false signal — and the image is pinned rather
@@ -4664,8 +4932,9 @@ reuse a tree configured by a different generator).
 Six details are worth knowing before changing it:
 
 - **`lame.exe` is not in the repository**, so both C++ jobs run
-  `scripts/Fetch-Lame.ps1` first. A build without it cannot copy the encoder
-  next to the backend.
+  `scripts/Fetch-Lame.ps1` first. LAME is required, not optional — it both
+  encodes MP3 on export and decodes MP3 on import — so configuring without it
+  now fails outright rather than producing a backend that cannot do either.
 - **Two build trees, two generators.** The test job uses the multi-config
   Visual Studio generator; clang-tidy needs `compile_commands.json`, which only
   Ninja emits, so it configures `backend/build-release` separately and through

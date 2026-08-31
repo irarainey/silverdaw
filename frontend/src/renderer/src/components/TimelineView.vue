@@ -5,15 +5,21 @@ import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import ClipWarpDialog from '@/components/ClipWarpDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
+import EditBpmDialog from '@/components/EditBpmDialog.vue'
 import SampleTypeDialog from '@/components/SampleTypeDialog.vue'
 import { useTimelineViewController } from '@/lib/timeline/useTimelineViewController'
 import { useUiStore } from '@/stores/uiStore'
+import type { LibraryItem } from '@/stores/libraryTypes'
 
 const ui = useUiStore()
 
 const host = ref<HTMLDivElement | null>(null)
 const scrollbarTrack = ref<HTMLDivElement | null>(null)
 const vScrollbarTrack = ref<HTMLDivElement | null>(null)
+
+/** The Edit BPM dialog, reached from the Edit button on a clip's information. It edits
+ *  the library source, so it holds the item rather than the clip. */
+const bpmEditItem = ref<LibraryItem | null>(null)
 
 const {
   project,
@@ -196,6 +202,12 @@ const {
       :item="infoItem"
       :clip-id="infoClipId"
       @close="dialogs.closeInfo()"
+      @edit-bpm="bpmEditItem = infoItem"
+    />
+    <EditBpmDialog
+      :open="bpmEditItem !== null"
+      :item="bpmEditItem"
+      @close="bpmEditItem = null"
     />
     <ClipEditorDialog
       :open="editorClipId !== null && editorItem !== null"

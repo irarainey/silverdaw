@@ -13,6 +13,7 @@ import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { MAX_BPM, MIN_BPM } from '@/lib/musicTime'
 import { runInUndoGroup } from '@/lib/undo/undoGroup'
 import type {
   AddLibraryItemInput,
@@ -34,12 +35,22 @@ export type {
   LibraryItemGridSnapshot,
   LibraryClipSource
 } from './libraryTypes'
-export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, libraryItemWarpSourceBpm, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, libraryItemShowsLinkBadge, libraryItemTempoUnverified, libraryItemSourceBpm, libraryItemWarpSourceBpm, resolveTempoOwner, resolveLibraryItemMediaId, stemPartLabel, STEM_NAME_SEPARATOR } from './libraryItemHelpers'
+export type { TempoOwner, TempoResolutionReason } from './libraryItemHelpers'
 
 import { libraryClipActions } from './libraryClipActions'
 import { importActions } from './libraryImportActions'
 import { peaksActions } from './libraryPeaksActions'
 import { softReplaceActions } from './librarySoftReplaceActions'
+
+// Grid state as it stood before an in-flight tempo correction's optimistic write.
+//
+// Keyed by the item object rather than its id so the rollback point cannot outlive what
+// it describes: closing a project or removing the item drops the entry with it, where an
+// id-keyed map would keep a snapshot of a vanished library and hand it to whatever item
+// next held that id. Deliberately outside store state — nothing renders it, and making it
+// reactive would invite a component to draw a half-applied correction.
+const pendingTempoCorrectionSnapshots = new WeakMap<LibraryItem, LibraryItemGridSnapshot>()
 
 function touchTimelineClipsForLibraryItem(itemId: string): number {
   const project = useProjectStore()
@@ -329,6 +340,68 @@ export const useLibraryStore = defineStore('library', {
     },
 
     /**
+     * Corrects a mis-detected tempo (ADR 0027). Distinct from `setItemManualTempo`:
+     * that says "this is the tempo I want to play at" and lets the arrangement follow,
+     * while this says "the detector read the wrong number" and must leave every
+     * persisted position — clip starts, markers, automation, the playhead — exactly
+     * where it is. The backend resolves the tempo owner, writes the source tempo in one
+     * undoable step and replies with `TEMPO_CORRECTION_APPLIED`.
+     *
+     * The project tempo is untouched. It is seeded from the first musical clip as a
+     * one-time convenience, so it is the user's number rather than the file's, and a
+     * correction to a file says nothing about it.
+     *
+     * The new number is shown immediately, because leaving the old one on screen for a
+     * round-trip reads as the correction having been ignored. That optimistic write is
+     * this action's own responsibility, not the caller's: the pre-correction grid is
+     * captured first and `TEMPO_CORRECTION_APPLIED` either commits it (success) or hands
+     * it to `rollbackTempoCorrection` (failure), so a rejected correction can never leave
+     * the item showing a tempo the backend refused. Only the displayed grid is optimistic
+     * — no clip, marker or automation position moves until the backend echo arrives.
+     *
+     * Returns false without sending or mutating anything when the item is unknown or
+     * `bpm` is outside 20–300, so a caller can validate by calling and checking.
+     */
+    correctItemTempo(itemId: string, bpm: number, beatAnchorSec: number): boolean {
+      if (!Number.isFinite(bpm) || bpm < MIN_BPM || bpm > MAX_BPM) return false
+      if (!Number.isFinite(beatAnchorSec)) return false
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return false
+      // Capture before the optimistic write, and only once per item: a second correction
+      // sent while the first is still in flight must still be able to roll back to the
+      // last state the backend actually confirmed.
+      if (!pendingTempoCorrectionSnapshots.has(item)) {
+        const snapshot = this.snapshotItemGrid(itemId)
+        if (snapshot) pendingTempoCorrectionSnapshots.set(item, snapshot)
+      }
+      this.setItemManualTempoLocal(itemId, bpm, beatAnchorSec)
+      sendBridge('LIBRARY_ITEM_CORRECT_TEMPO', { itemId, bpm, beatAnchorSec })
+      log.info('library', `correctItemTempo id=${itemId} bpm=${bpm}`)
+      return true
+    },
+
+    /**
+     * Put an item's grid back to how it looked before a correction that the backend then
+     * rejected. No-op when nothing is pending for `itemId`, so it is safe to call from
+     * the failure arm unconditionally.
+     */
+    rollbackTempoCorrection(itemId: string): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item) return
+      const snapshot = pendingTempoCorrectionSnapshots.get(item)
+      if (!snapshot) return
+      pendingTempoCorrectionSnapshots.delete(item)
+      this.restoreItemGridLocal(itemId, snapshot)
+      log.info('library', `rollbackTempoCorrection id=${itemId}`)
+    },
+
+    /** Drop a correction's rollback point once the backend has confirmed it. */
+    commitTempoCorrection(itemId: string): void {
+      const item = this.items.find((i) => i.id === itemId)
+      if (item) pendingTempoCorrectionSnapshots.delete(item)
+    },
+
+    /**
      * Local-only manual-tempo draft (no bridge round-trip). The Clip Editor edits
      * the source grid locally during a session — markers redraw and the preview
      * metronome grid re-pushes off (bpm, anchor) — then commits the final position
@@ -338,7 +411,7 @@ export const useLibraryStore = defineStore('library', {
     setItemManualTempoLocal(itemId: string, bpm: number, beatAnchorSec: number): boolean {
       const item = this.items.find((i) => i.id === itemId)
       if (!item) return false
-      if (!Number.isFinite(bpm) || bpm < 20 || bpm > 300) return false
+      if (!Number.isFinite(bpm) || bpm < MIN_BPM || bpm > MAX_BPM) return false
       if (!Number.isFinite(beatAnchorSec)) return false
       item.bpm = bpm
       item.beatAnchorSec = beatAnchorSec

@@ -5,6 +5,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
 import { formatTrackTime } from '@/lib/library/trackTime'
+import { resolveCorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
 
@@ -16,6 +17,7 @@ export type LibraryItemInfoProps = {
 
 export type LibraryItemInfoEmit = {
   (e: 'close'): void
+  (e: 'edit-bpm'): void
 }
 
 export function useLibraryItemInfoController(
@@ -229,7 +231,28 @@ export function useLibraryItemInfoController(
     })
     return sourceBpm * ratio
   })
-  const bpmLabel = computed(() => warpedBpm.value ? 'Warped BPM' : 'Detected BPM')
+  /**
+   * The row label. "Detected" is only true until someone corrects it: the number can
+   * itself be a correction, so calling it detected would describe neither where it came
+   * from nor what the Edit button does.
+   */
+  const bpmLabel = computed(() => (warpedBpm.value ? 'Warped BPM' : 'BPM'))
+
+  /**
+   * Whether to offer the Edit button beside the BPM. Only while the row shows the item's
+   * OWN tempo: a warped value is a product of the project tempo and the clip's ratio
+   * rather than a fact about the file, so editing it would have no single meaning.
+   *
+   * Answered with the shared predicate rather than by constructing the correction
+   * composable: this dialog is read-only, and building an editing session — with its
+   * input ref and its two watchers — to read one boolean gave the composable a second
+   * lifetime to reason about for no benefit. The Edit BPM dialog owns the real one.
+   */
+  const canEditBpm = computed(
+    () =>
+      warpedBpm.value === undefined &&
+      resolveCorrectableTempoOwner(props.item, library.byId) !== null
+  )
   /** Whether the BPM shown is a rough average of a varying tempo (only for the
    *  source's own detected tempo, not a precise warped value). */
   const bpmIsVariable = computed(() => !warpedBpm.value && props.item?.variableTempo === true)
@@ -310,7 +333,10 @@ export function useLibraryItemInfoController(
   watch(
     () => props.open,
     (isOpen) => {
-      if (isOpen) requestAnimationFrame(() => dialogEl.value?.focus())
+      if (!isOpen) return
+      requestAnimationFrame(() => {
+        dialogEl.value?.focus()
+      })
     }
   )
 
@@ -335,6 +361,7 @@ export function useLibraryItemInfoController(
     bpmLabel,
     bpmIsVariable,
     bpmPillClass,
+    canEditBpm,
     keyLabel,
     displayDecodedCachePath,
     playbackPathDistinct,

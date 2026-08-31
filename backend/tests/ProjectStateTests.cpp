@@ -19,6 +19,7 @@
 #include "ProjectSession.h"
 #include "ProjectState.h"
 #include "ClipCommands.h"
+#include "TempoCorrectionCommands.h"
 #include "UndoCommands.h"
 #include "SharedFx.h"
 #include "ToneEq.h"
@@ -48,7 +49,7 @@ void testProjectStateTracksClipsAndDirty()
     int dirtyTransitions = 0;
     bool lastDirty = false;
     state.setDirtyChangedCallback(
-        [&](bool dirty)
+        [&](bool dirty, silverdaw::ProjectState::DirtyReason)
         {
             ++dirtyTransitions;
             lastDirty = dirty;
@@ -291,7 +292,7 @@ void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()
         int transitions = 0;
         bool lastDirty = false;
         state.setDirtyChangedCallback(
-            [&](bool d)
+            [&](bool d, silverdaw::ProjectState::DirtyReason)
             {
                 ++transitions;
                 lastDirty = d;
@@ -344,7 +345,7 @@ void testProjectStateDerivedLibraryMetadataDoesNotMarkDirty()
     require(!state.isDirty(), "baseline should be clean after markClean");
 
     int transitions = 0;
-    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+    state.setDirtyChangedCallback([&](bool, silverdaw::ProjectState::DirtyReason) { ++transitions; });
 
     // All of these are derived/cache writes — none should toggle dirty.
     require(state.setLibraryItemBpm("l1", 124.5), "bpm setter should find item");
@@ -862,6 +863,567 @@ void testProjectStateSourceBpmResolverContract()
     require(state.getLibraryItemBpm("nope") <= 0.0, "an unknown item should resolve no tempo");
 }
 
+void testProjectStateTempoOwnerResolverContract()
+{
+    // `resolveTempoOwner` answers "whose tempo is this?" as well as "what is it?", and
+    // the renderer's `resolveTempoOwner` must agree case for case — a correction is
+    // written to the OWNER, so the two processes disagreeing about the owner would
+    // write the fix onto the wrong item and leave every sibling on the wrong number
+    // (ADR 0027). Each case below is mirrored in the renderer's unit tests.
+    using Reason = silverdaw::ProjectState::TempoReason;
+    silverdaw::ProjectState state;
+
+    const auto owner = [&state](const char* id) { return state.resolveTempoOwner(id); };
+
+    // 1. An item's own BPM: the item owns its tempo and a correction lands on itself.
+    require(state.addLibraryItem("track", "C:\\audio\\track.wav", "track.wav", 60000.0, 48000, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("track", 98.80), "source bpm should apply");
+    requireEqual(owner("track").ownerItemId, "track", "own bpm should be owned by the item");
+    require(owner("track").reason == Reason::ownBpm, "own bpm should report ownBpm");
+    requireNear(owner("track").bpm, 98.80, 1e-9, "own bpm should resolve");
+
+    // 2. A one-hop derived item does NOT own the tempo it shows — the import does.
+    require(state.addLibraryItem("stem", "C:\\audio\\stem.wav", "stem.wav", 60000.0, 48000, 2,
+                                 {}, {}, "stem", {}, "track"),
+            "stem should add");
+    requireEqual(owner("stem").ownerItemId, "track", "a stem's tempo is owned by its source");
+    require(owner("stem").reason == Reason::inheritedBpm, "a stem should report inheritedBpm");
+    requireNear(owner("stem").bpm, 98.80, 1e-9, "a stem should resolve its source's bpm");
+
+    // 3. Two levels deep. Before the walk followed the chain to its end this resolved to
+    //    NO tempo, so a clip cut from a stem warped as if it had none.
+    require(state.addLibraryItem("cut", "C:\\audio\\cut.wav", "cut.wav", 8000.0, 48000, 2,
+                                 {}, {}, "clip", {}, "stem"),
+            "cut should add");
+    requireEqual(owner("cut").ownerItemId, "track", "a two-level chain should reach the import");
+    require(owner("cut").reason == Reason::inheritedBpm, "a two-level chain should report inheritedBpm");
+    requireNear(owner("cut").bpm, 98.80, 1e-9, "a two-level chain should resolve the import's bpm");
+
+    // 4. A recorded musical length is a measurement, and only the queried item's own
+    //    length may answer: an ancestor's beat count describes the ancestor's file.
+    require(state.setLibraryItemMusicalBeats("cut", 16), "musical length should apply");
+    requireEqual(owner("cut").ownerItemId, "cut", "a musical length is owned by the item itself");
+    require(owner("cut").reason == Reason::musicalLength, "a musical length should report musicalLength");
+    requireNear(owner("cut").bpm, 16.0 * 60000.0 / 8000.0, 1e-9, "a musical length should resolve from beats");
+
+    require(state.addLibraryItem("grandchild", "C:\\audio\\gc.wav", "gc.wav", 4000.0, 48000, 2,
+                                 {}, {}, "clip", {}, "cut"),
+            "grandchild should add");
+    requireEqual(owner("grandchild").ownerItemId, "track",
+                 "an ancestor's musical length must not answer for a child");
+    require(owner("grandchild").reason == Reason::inheritedBpm,
+            "an ancestor's musical length must not be reported as the child's");
+
+    // 5. A one-shot holds no tempo, and the classification is inherited — so neither the
+    //    one-shot nor anything cut from it has an owner to correct.
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 800.0, 48000, 2,
+                                 {}, {}, "sample", {}, "track"),
+            "sample should add");
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    require(owner("hit").reason == Reason::oneShot, "a one-shot should report oneShot");
+    require(owner("hit").ownerItemId.isEmpty(), "a one-shot has no tempo owner");
+    require(owner("hit").bpm <= 0.0, "a one-shot must resolve no tempo");
+
+    require(state.addLibraryItem("hitcut", "C:\\audio\\hitcut.wav", "hitcut.wav", 400.0, 48000, 2,
+                                 {}, {}, "clip", {}, "hit"),
+            "derived clip should add");
+    require(owner("hitcut").reason == Reason::oneShot,
+            "a clip cut from a one-shot should report oneShot");
+
+    // 6. An item absent from the library, and a dangling link to one, resolve to nothing
+    //    rather than falling through to a stale answer.
+    require(owner("nope").reason == Reason::none, "an unknown item should report none");
+    require(owner("nope").ownerItemId.isEmpty(), "an unknown item has no owner");
+
+    require(state.addLibraryItem("orphan", "C:\\audio\\orphan.wav", "orphan.wav", 5000.0, 48000, 2,
+                                 {}, {}, "clip", {}, "missing-parent"),
+            "orphan should add");
+    require(owner("orphan").reason == Reason::none, "a dangling source link should report none");
+
+    // 7. A hand-edited or corrupted project could close the chain into a loop. Walking it
+    //    would hang the message thread, so the cycle has to end the walk rather than the
+    //    process. The API cannot build one, so the link is written directly.
+    require(state.addLibraryItem("loopA", "C:\\audio\\a.wav", "a.wav", 5000.0, 48000, 2,
+                                 {}, {}, "clip", {}, "orphan"),
+            "loopA should add");
+    require(state.addLibraryItem("loopB", "C:\\audio\\b.wav", "b.wav", 5000.0, 48000, 2,
+                                 {}, {}, "clip", {}, "loopA"),
+            "loopB should add");
+    auto loopA = state.getTree()
+                     .getChildWithName(juce::Identifier{"LIBRARY"})
+                     .getChildWithProperty(juce::Identifier{"id"}, "loopA");
+    require(loopA.isValid(), "loopA should be in the library");
+    loopA.setProperty(juce::Identifier{"sourceItemId"}, "loopB", nullptr);
+    require(owner("loopB").reason == Reason::none, "a derivation cycle should report none");
+    require(owner("loopB").bpm <= 0.0, "a derivation cycle must resolve no tempo");
+}
+
+// ─── Tempo correction (ADR 0027) ─────────────────────────────────────────────
+//
+// A correction says "the detector was wrong", not "play my arrangement faster". The line
+// between the two is drawn at persisted position: a correction may re-derive anything a
+// tempo implies, but it must never move a clip start, a marker, an automation point or
+// the playhead. These tests hold that line, and hold the reporting honest.
+
+// Defined further down with the other bridge-backed helpers.
+silverdaw::BridgeServer makeSilentBridge();
+
+namespace
+{
+juce::var correctTempoPayload(const juce::String& itemId, double bpm, double beatAnchorSec = 0.0)
+{
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("itemId", itemId);
+    obj->setProperty("bpm", bpm);
+    obj->setProperty("beatAnchorSec", beatAnchorSec);
+    return juce::var(obj);
+}
+} // namespace
+
+void testTempoCorrectionNeverMovesPersistedAnchors()
+{
+    // The reported bug, end to end: a track really at 102.76 is detected as 98.80 and the
+    // project is seeded from it. Correcting it must fix both numbers WITHOUT rescaling the
+    // arrangement, which is precisely what the project tempo box would have done.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(98.80);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+
+    // Bar 9 at 98.80 BPM. A tempo CHANGE would move this to 18684 ms; a correction may not.
+    const double barNine = 19433.0;
+    require(state.addClip("t1", "clip", "src", barNine, 8000.0), "clip should add");
+    require(state.setClipWarp("clip", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "clip should follow the project tempo");
+    require(state.addMarker("drop", barNine), "marker should add");
+
+    juce::Array<juce::var> points;
+    const auto makeAutomationPoint = [](double timeMs, double value) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("value", value);
+        return juce::var(obj);
+    };
+    points.add(makeAutomationPoint(0.0, 0.2));
+    points.add(makeAutomationPoint(barNine, 0.5));
+    require(state.setTrackAutomation("t1", "filter", points), "automation should apply");
+
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 102.76),
+                                             engine, state, bridge);
+
+    requireNear(state.getLibraryItemBpm("src"), 102.76, 1e-9, "the source tempo should be corrected");
+    requireNear(state.getBpm(), 98.80, 1e-9, "a correction must leave the project tempo alone");
+
+    // The invariant. Every one of these would have moved under `handleProjectSetBpm`.
+    const auto clipStart = [&](const juce::String& clipId) {
+        double found = -1.0;
+        const auto tree = state.getTree();
+        for (int t = 0; t < tree.getNumChildren(); ++t)
+        {
+            const auto track = tree.getChild(t);
+            for (int c = 0; c < track.getNumChildren(); ++c)
+            {
+                const auto clip = track.getChild(c);
+                if (clip.getProperty(juce::Identifier{"id"}).toString() == clipId)
+                    found = static_cast<double>(clip.getProperty(juce::Identifier{"offsetMs"}, -1.0));
+            }
+        }
+        return found;
+    };
+    requireNear(clipStart("clip"), barNine, 1e-9, "a correction must not move a clip start");
+
+    const auto markers = state.markersAsJson();
+    require(markers.isArray() && markers.getArray()->size() == 1, "the marker should survive");
+    requireNear(static_cast<double>(markers.getArray()->getReference(0).getProperty("positionMs", -1.0)),
+                barNine, 1e-9, "a correction must not move a marker");
+
+    const auto automation = state.getTrackAutomation("t1", "filter");
+    require(automation.size() == 2, "the automation points should survive");
+    requireNear(static_cast<double>(automation.getReference(1).getProperty("timeMs", -1.0)), barNine,
+                1e-9, "a correction must not move an automation point");
+
+    // What DOES change: the clip was warped by 98.80/98.80 = 1.0 while both numbers were
+    // the same wrong number; now the file tells the truth, warping it to the project's
+    // 98.80 genuinely slows it. That is warp working as documented, and the user finishes
+    // the job in the transport tempo box — which is theirs to set, and which rescales the
+    // arrangement precisely because it is a tempo CHANGE rather than a correction.
+    requireNear(state.getClipEffectiveTiming("clip").tempoRatio, 98.80 / 102.76, 1e-9,
+                "a warped clip must follow the project tempo against its corrected own");
+}
+
+void testTempoCorrectionLeavesTheProjectTempoAlone()
+{
+    // Setting the project tempo from the first clip dropped is merely a convenience, with
+    // no linkage and no history (ADR 0027), so the number is the user's rather than the
+    // file's. A correction to a file is never evidence about it — not even when the two
+    // are equal, which is the case a rule would be most tempted to guess from.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(98.80);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 102.76),
+                                             engine, state, bridge);
+
+    requireNear(state.getLibraryItemBpm("src"), 102.76, 1e-9, "the source tempo should be corrected");
+    requireNear(state.getBpm(), 98.80, 1e-9,
+                "an equal project tempo is not evidence — the project number is the user's");
+}
+
+void testTempoCorrectionMustNotSeedAnUnseededProject()
+{
+    // Seeding would move the project tempo as a side effect of correcting a source, which
+    // is the inference ADR 0027 exists to forbid. It stays the job of the first musical
+    // clip.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    const double defaultBpm = state.getBpm();
+    require(!state.isBpmSeeded(), "a fresh project starts unseeded");
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "clip", "src", 0.0, 8000.0), "clip should add");
+
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 102.76),
+                                             engine, state, bridge);
+
+    requireNear(state.getBpm(), defaultBpm, 1e-9,
+                "a correction must not seed the project tempo behind the user's back");
+    require(!state.isBpmSeeded(), "a correction must leave the project unseeded");
+}
+
+void testTempoCorrectionIsRedirectedToTheTempoOwner()
+{
+    // A stem shows its source's tempo but does not own it. Correcting the stem in place
+    // would split it from its siblings and leave the import — and every other stem — on
+    // the wrong number.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(98.80);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.addLibraryItem("drums", "C:\\audio\\drums.wav", "drums.wav", 268094.0, 44100, 2,
+                                 {}, {}, "stem", {}, "src"),
+            "drums stem should add");
+    require(state.addLibraryItem("bass", "C:\\audio\\bass.wav", "bass.wav", 268094.0, 44100, 2,
+                                 {}, {}, "stem", {}, "src"),
+            "bass stem should add");
+
+    // The user acts on the stem they had open.
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("drums", 102.76),
+                                             engine, state, bridge);
+
+    requireNear(state.getLibraryItemBpm("src"), 102.76, 1e-9,
+                "the correction should be written to the import that owns the tempo");
+    requireNear(state.getLibraryItemBpm("bass"), 102.76, 1e-9,
+                "every sibling should be fixed by the one correction");
+    requireNear(state.getLibraryItemBpm("drums"), 102.76, 1e-9,
+                "the stem the user acted on should resolve the corrected tempo");
+    const auto stemItem = state.getTree()
+                              .getChildWithName(juce::Identifier{"LIBRARY"})
+                              .getChildWithProperty(juce::Identifier{"id"}, "drums");
+    require(static_cast<double>(stemItem.getProperty(juce::Identifier{"bpm"}, 0.0)) <= 0.0,
+            "the stem must not be given a BPM of its own, which would split it from its source");
+}
+
+// Regression: `beatAnchorSec` defaulted to 0 and was written to the OWNER, an item the
+// caller never named. Correcting a stem without naming a phase therefore snapped the
+// import's grid to the start of its file, sliding the markers of every clip ever cut from
+// it — while the user believed they had only corrected a number.
+void testTempoCorrectionKeepsTheOwnersGridPhaseWhenNoneIsGiven()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.setLibraryItemBeatAnchor("src", 0.317), "the import should carry a grid phase");
+    require(state.addLibraryItem("drums", "C:\\audio\\drums.wav", "drums.wav", 268094.0, 44100, 2,
+                                 {}, {}, "stem", {}, "src"),
+            "drums stem should add");
+
+    // No `beatAnchorSec`: the user corrected a number and said nothing about phase.
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("itemId", "drums");
+    obj->setProperty("bpm", 102.76);
+    silverdaw::handleLibraryItemCorrectTempo(juce::var(obj), engine, state, bridge);
+
+    requireNear(state.getLibraryItemBpm("src"), 102.76, 1e-9, "the tempo should still be corrected");
+    requireNear(state.getLibraryItemBeatAnchorSec("src"), 0.317, 1e-9,
+                "omitting the phase must leave the owner's grid phase exactly where it was");
+}
+
+// A phase that is not a usable time is a mistake worth reporting, not one to round away
+// into a silent grid slide.
+void testTempoCorrectionRejectsAnUnusableGridPhase()
+{
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+    require(state.setLibraryItemBeatAnchor("src", 0.317), "the import should carry a grid phase");
+
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 102.76, -1.0), engine,
+                                             state, bridge);
+    requireNear(state.getLibraryItemBpm("src"), 98.80, 1e-9,
+                "a negative grid phase should be rejected before anything is written");
+
+    silverdaw::handleLibraryItemCorrectTempo(
+        correctTempoPayload("src", 102.76, std::numeric_limits<double>::quiet_NaN()), engine, state,
+        bridge);
+    requireNear(state.getLibraryItemBpm("src"), 98.80, 1e-9,
+                "a grid phase that is not a number should be rejected too");
+    requireNear(state.getLibraryItemBeatAnchorSec("src"), 0.317, 1e-9,
+                "a rejected correction must leave the grid phase alone");
+}
+
+void testTempoCorrectionSupersedesADetectionAlreadyInFlight()
+{
+    // F1: a detection job runs on a worker thread and applies its result later, on the
+    // message thread. If the user corrects the tempo in between, the result that finally
+    // lands is stale. Letting it through was silent, unrecoverable data loss: the
+    // automatic path writes derived, non-dirtying, NON-UNDOABLE metadata, so the
+    // overwritten correction could not be brought back with undo — nothing had been
+    // pushed onto the undo stack to undo.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    require(state.addLibraryItem("src", "C:\\audio\\song.wav", "song.wav", 268094.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 98.80), "detected BPM should apply");
+
+    // What a job captures when it is enqueued, before any correction exists.
+    const auto atEnqueue = silverdaw::getTempoAuthorityGeneration("src");
+    require(!silverdaw::tempoDetectionResultIsStale("src", atEnqueue),
+            "a job whose item nobody has touched must be allowed to apply its result");
+
+    silverdaw::applyManualTempo("src", 102.76, 0.0, engine, state, bridge);
+
+    require(silverdaw::tempoDetectionResultIsStale("src", atEnqueue),
+            "a correction made while the job ran must invalidate that job's result");
+    require(!silverdaw::tempoDetectionResultIsStale(
+                "src", silverdaw::getTempoAuthorityGeneration("src")),
+            "a reanalysis enqueued AFTER the correction is an explicit instruction and still applies");
+
+    // A second correction invalidates the reanalysis in turn.
+    const auto afterReanalyseEnqueue = silverdaw::getTempoAuthorityGeneration("src");
+    silverdaw::applyManualTempo("src", 90.0, 0.0, engine, state, bridge);
+    require(silverdaw::tempoDetectionResultIsStale("src", afterReanalyseEnqueue),
+            "the newest correction always wins over a detection enqueued before it");
+
+    // An item nobody has ever corrected is unaffected by another item's corrections.
+    require(!silverdaw::tempoDetectionResultIsStale("untouched", 0),
+            "generations are per item, so one item's correction must not discard another's analysis");
+
+    requireNear(state.getLibraryItemBpm("src"), 90.0, 1e-9,
+                "the hand-set tempo is what the item is left holding");
+}
+
+void testTempoCorrectionRederivesFollowersAndReportsExclusions()
+{
+    // Clips that follow the corrected tempo re-derive; clips the user pinned or unwarped
+    // are left alone. Those are exclusions by the user's own earlier choice, not failures,
+    // and the command has to be able to say how many there were.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\loop.wav", "loop.wav", 8000.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 100.0), "detected BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+
+    require(state.addClip("t1", "following", "src", 0.0, 8000.0), "following clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "following clip should warp to the project tempo");
+    require(state.addClip("t1", "pinned", "src", 20000.0, 8000.0), "pinned clip should add");
+    require(state.setClipWarp("pinned", true, std::nullopt, 1.5, false, std::nullopt, std::nullopt,
+                              std::nullopt),
+            "pinned clip should hold its own ratio");
+    require(state.addClip("t1", "dry", "src", 40000.0, 8000.0), "unwarped clip should add");
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.2, 1e-9,
+                "the following clip starts at project / detected BPM");
+
+    // Correct the source only: the project stays at 120, so the follower re-warps onto it.
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 80.0),
+                                             engine, state, bridge);
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.5, 1e-9,
+                "a following clip's ratio should be re-derived from the corrected tempo");
+    requireNear(state.getClipEffectiveTiming("pinned").tempoRatio, 1.5, 1e-9,
+                "a pinned ratio is explicit user intent and must survive untouched");
+
+    bool sawPinned = false;
+    state.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            if (info.clipId != "pinned") return;
+            sawPinned = true;
+            require(info.tempoRatioPinned, "the pinned clip should still be pinned");
+            requireNear(info.tempoRatio, 1.5, 1e-9, "the pinned ratio value should be unchanged");
+        });
+    require(sawPinned, "the pinned clip should remain in project state");
+}
+
+void testTempoCorrectionScalesClipEnvelopesWithTheirFootprint()
+{
+    // A volume shape is clip-local milliseconds measured across the clip's footprint. A
+    // correction that changes the ratio changes that footprint, so leaving the shape fixed
+    // would make it shape different audio — the one kind of movement the invariant
+    // deliberately permits and requires.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\loop.wav", "loop.wav", 8000.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 120.0), "detected BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "following", "src", 0.0, 8000.0), "clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "clip should follow the project tempo");
+
+    const auto makePoint = [](double timeMs, double gain) {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("timeMs", timeMs);
+        obj->setProperty("gain", gain);
+        return juce::var(obj);
+    };
+    juce::Array<juce::var> shape;
+    shape.add(makePoint(0.0, 1.0));
+    shape.add(makePoint(4000.0, 1.0));
+    shape.add(makePoint(8000.0, 0.0));
+    require(state.setClipEnvelope("following", shape), "shape should apply");
+
+    // Correcting the source to 60 doubles the ratio (120/60), so the clip plays twice as
+    // fast and its timeline footprint halves.
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 60.0),
+                                             engine, state, bridge);
+
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 2.0, 1e-9,
+                "the clip should re-warp onto the unchanged project tempo");
+    requireNear(state.getClipEffectiveTiming("following").durationMs, 4000.0, 1e-6,
+                "a doubled ratio should halve the clip's timeline footprint");
+    const auto pts = state.getClipEnvelope("following");
+    require(pts.size() == 3, "the shape should keep its breakpoints");
+    requireNear(static_cast<double>(pts.getReference(1).getProperty("timeMs", -1.0)), 2000.0, 1e-6,
+                "the shape's midpoint should scale with the clip's new footprint");
+    requireNear(static_cast<double>(pts.getReference(2).getProperty("timeMs", -1.0)), 4000.0, 1e-6,
+                "the shape's end should scale with the clip's new footprint");
+    // The shape is a function of position within the clip, not of the tempo.
+    requireNear(static_cast<double>(pts.getReference(2).getProperty("gain", -1.0)), 0.0, 1e-9,
+                "a footprint change must not touch the shape's values");
+}
+
+void testTempoCorrectionRejectsWhatItCannotCorrect()
+{
+    // A rejected correction must change nothing at all: a half-corrected project is worse
+    // than an uncorrected one.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\loop.wav", "loop.wav", 8000.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 100.0), "detected BPM should apply");
+
+    // Out of range in both directions: a mistyped digit, not a tempo.
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 5.0), engine,
+                                             state, bridge);
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 4000.0),
+                                             engine, state, bridge);
+    requireNear(state.getLibraryItemBpm("src"), 100.0, 1e-9,
+                "an out-of-range tempo must not be applied");
+    requireNear(state.getBpm(), 120.0, 1e-9, "a rejected correction must change nothing at all");
+
+    // An item that is not in the library at all.
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("nope", 102.76),
+                                             engine, state, bridge);
+    requireNear(state.getBpm(), 120.0, 1e-9, "an unknown item must not move the project tempo");
+
+    // A one-shot has no tempo to correct, so the command refuses rather than inventing one.
+    require(state.addLibraryItem("hit", "C:\\audio\\hit.wav", "hit.wav", 800.0, 44100, 2, {}, {},
+                                 "sample", {}, "src"),
+            "one-shot should add");
+    require(state.setLibraryItemAudioType("hit", "simple"), "simple classification applies");
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("hit", 102.76),
+                                             engine, state, bridge);
+    require(state.getLibraryItemBpm("hit") <= 0.0, "a one-shot must not be given a tempo");
+    requireNear(state.getLibraryItemBpm("src"), 100.0, 1e-9,
+                "refusing a one-shot must not write through to its source");
+    requireNear(state.getBpm(), 120.0, 1e-9, "a refused correction must not move the project tempo");
+}
+
+void testTempoCorrectionUndoesTheWholeCorrectionInOneStep()
+{
+    // One action, one undo press. The command writes the tempo AND re-derives every clip
+    // that follows it; separate messages in an edit group would give the same key press
+    // but could leave a half-corrected project if the second were rejected.
+    silverdaw::ProjectState state;
+    silverdaw::AudioEngine engine;
+    auto bridge = makeSilentBridge();
+
+    state.setBpm(120.0);
+    state.setBpmSeeded(true);
+    require(state.addLibraryItem("src", "C:\\audio\\loop.wav", "loop.wav", 8000.0, 44100, 2),
+            "source should add");
+    require(state.setLibraryItemBpm("src", 100.0), "detected BPM should apply");
+    require(state.addTrack("t1"), "track should add");
+    require(state.addClip("t1", "following", "src", 0.0, 8000.0), "clip should add");
+    require(state.setClipWarp("following", true, std::nullopt, std::nullopt, false, std::nullopt,
+                              std::nullopt, std::nullopt),
+            "clip should follow the project tempo");
+
+    auto& undo = state.getUndoManager();
+    undo.beginNewTransaction("Correct tempo");
+    silverdaw::handleLibraryItemCorrectTempo(correctTempoPayload("src", 80.0), engine, state,
+                                             bridge);
+    requireNear(state.getLibraryItemBpm("src"), 80.0, 1e-9, "the source tempo should be corrected");
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.5, 1e-9,
+                "the follower should be re-derived");
+
+    require(undo.undo(), "the correction should undo");
+    requireNear(state.getLibraryItemBpm("src"), 100.0, 1e-9,
+                "undo should restore the source tempo");
+    requireNear(state.getClipEffectiveTiming("following").tempoRatio, 1.2, 1e-9,
+                "the same single undo should restore every clip the correction re-derived");
+}
+
 void testProjectStateRepairsLegacySampleKind()
 {
     // Projects saved before the sample `kind` fix hold their samples as plain
@@ -1048,7 +1610,7 @@ void testProjectStateNonDirtyLibraryRemove()
     require(!state.isDirty(), "baseline should be clean after markClean");
 
     int transitions = 0;
-    state.setDirtyChangedCallback([&](bool) { ++transitions; });
+    state.setDirtyChangedCallback([&](bool, silverdaw::ProjectState::DirtyReason) { ++transitions; });
 
     // A "clean up project files" removal deletes the item's file from disk (irreversible),
     // so it must NOT mark the project dirty and must not fire the dirty callback.
@@ -1076,7 +1638,7 @@ void testProjectStateNetZeroDirty()
     int transitions = 0;
     bool lastDirty = false;
     state.setDirtyChangedCallback(
-        [&](bool d)
+        [&](bool d, silverdaw::ProjectState::DirtyReason)
         {
             ++transitions;
             lastDirty = d;
@@ -1097,6 +1659,46 @@ void testProjectStateNetZeroDirty()
     require(state.isDirty(), "clip add should mark dirty");
     require(state.removeLibraryItem("l2"), "clip remove should succeed");
     require(!state.isDirty(), "clip add+remove should return to clean");
+}
+
+// Background analysis landing after a save changes real, persisted content (the seeded
+// project tempo, the late auto-warp), so it must still dirty — mirroring it into the
+// clean snapshot would claim "saved" for content that is not on disk. What it must NOT
+// do is look like a phantom edit, so the transition is attributed and the renderer
+// explains it.
+void testProjectStateAttributesBackgroundAnalysisDirty()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+
+    std::vector<std::pair<bool, silverdaw::ProjectState::DirtyReason>> events;
+    state.setDirtyChangedCallback([&](bool d, silverdaw::ProjectState::DirtyReason reason)
+                                  { events.emplace_back(d, reason); });
+
+    state.setBpm(120.0);
+    require(events.size() == 1, "a user tempo edit should fire one transition");
+    require(events[0].first, "a user tempo edit should mark dirty");
+    require(events[0].second == silverdaw::ProjectState::DirtyReason::UserEdit,
+            "an unscoped edit should be attributed to the user");
+
+    state.markClean();
+    events.clear();
+
+    {
+        const silverdaw::ProjectState::BackgroundDirtyScope background(state);
+        state.setBpm(128.0);
+    }
+    require(events.size() == 1, "a scoped tempo write should fire one transition");
+    require(events[0].first, "background analysis still marks dirty (the edit is real)");
+    require(events[0].second == silverdaw::ProjectState::DirtyReason::BackgroundAnalysis,
+            "a scoped write should be attributed to background analysis");
+
+    // The scope must not leak: the next ordinary edit is the user's again.
+    state.markClean();
+    events.clear();
+    state.setBpm(140.0);
+    require(events.size() == 1 && events[0].second == silverdaw::ProjectState::DirtyReason::UserEdit,
+            "attribution should not outlive the scope");
 }
 
 void testProjectStateClipTransitions()
@@ -1898,10 +2500,24 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
+    tests.push_back({"ProjectState attributes background-analysis dirty",
+                     testProjectStateAttributesBackgroundAnalysisDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});
     tests.push_back({"ProjectState reanalyse preserves a derived library-item kind", testProjectStateReanalyseKeepsDerivedKind});
     tests.push_back({"ProjectState simple classification strips and blocks tempo", testProjectStateSimpleClassificationHasNoTempo});
     tests.push_back({"ProjectState source-BPM resolver contract", testProjectStateSourceBpmResolverContract});
+    tests.push_back({"ProjectState tempo-owner resolver contract", testProjectStateTempoOwnerResolverContract});
+    tests.push_back({"Tempo correction never moves persisted anchors", testTempoCorrectionNeverMovesPersistedAnchors});
+    tests.push_back({"Tempo correction leaves the project tempo alone", testTempoCorrectionLeavesTheProjectTempoAlone});
+    tests.push_back({"Tempo correction must not seed an unseeded project", testTempoCorrectionMustNotSeedAnUnseededProject});
+    tests.push_back({"Tempo correction is redirected to the tempo owner", testTempoCorrectionIsRedirectedToTheTempoOwner});
+    tests.push_back({"Tempo correction keeps the owner's grid phase when none is given", testTempoCorrectionKeepsTheOwnersGridPhaseWhenNoneIsGiven});
+    tests.push_back({"Tempo correction rejects an unusable grid phase", testTempoCorrectionRejectsAnUnusableGridPhase});
+    tests.push_back({"Tempo correction supersedes a detection already in flight", testTempoCorrectionSupersedesADetectionAlreadyInFlight});
+    tests.push_back({"Tempo correction re-derives followers and reports exclusions", testTempoCorrectionRederivesFollowersAndReportsExclusions});
+    tests.push_back({"Tempo correction scales clip envelopes with their footprint", testTempoCorrectionScalesClipEnvelopesWithTheirFootprint});
+    tests.push_back({"Tempo correction rejects what it cannot correct", testTempoCorrectionRejectsWhatItCannotCorrect});
+    tests.push_back({"Tempo correction undoes the whole correction in one step", testTempoCorrectionUndoesTheWholeCorrectionInOneStep});
     tests.push_back({"ProjectState repairs legacy sample kind on load", testProjectStateRepairsLegacySampleKind});
     tests.push_back({"ProjectState repairs demoted stem kind on load", testProjectStateRepairsDemotedStemKind});
     tests.push_back({"ProjectState musical length outranks detected bpm", testProjectStateMusicalLengthOutranksDetectedBpm});

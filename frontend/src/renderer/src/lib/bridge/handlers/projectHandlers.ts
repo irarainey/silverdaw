@@ -130,8 +130,21 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
   },
 
   PROJECT_DIRTY: (payload) => {
-    useProjectStore().isDirty = payload.dirty
-    log.debug('bridge', `PROJECT_DIRTY dirty=${payload.dirty}`)
+    const project = useProjectStore()
+    // A `false -> true` transition attributed to analysis means background tempo
+    // detection landed after the project was already saved, changing real content (the
+    // seeded project tempo, or the auto-warp of clips dropped before detection finished).
+    // Nothing the user did caused it, so say so rather than letting the unsaved-changes
+    // marker reappear on its own and look like a fault. The backend only sends
+    // `reason` on a transition into dirty, so a project that was already dirty — the
+    // ordinary import — stays quiet.
+    if (payload.dirty && !project.isDirty && payload.reason === 'analysis') {
+      useNotificationsStore().pushInfo(
+        'Tempo analysis finished and updated the project — save again to keep the changes.'
+      )
+    }
+    project.isDirty = payload.dirty
+    log.debug('bridge', `PROJECT_DIRTY dirty=${payload.dirty}${payload.reason ? ` reason=${payload.reason}` : ''}`)
   },
 
   PROJECT_BPM_APPLIED: (payload) => {

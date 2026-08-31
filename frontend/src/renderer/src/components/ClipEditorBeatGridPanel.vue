@@ -4,16 +4,26 @@
 // beat grid over the waveform to fix its phase. Pure presentation: the state +
 // actions live in `useClipEditorBeatGrid` and are passed in via the `grid` prop.
 
+import { computed } from 'vue'
+import TempoCorrectionFields from '@/components/TempoCorrectionFields.vue'
 import type { ClipEditorBeatGrid } from '@/lib/clipEditor/useClipEditorBeatGrid'
 
-const props = defineProps<{
-  grid: ClipEditorBeatGrid
-}>()
+const props = defineProps<{ grid: ClipEditorBeatGrid }>()
 
 // Alias refs so the template never reaches through the prop directly.
 const manualBpmInput = props.grid.manualBpmInput
 const originalBpm = props.grid.originalBpm
 const alignActive = props.grid.alignActive
+
+/** Whether the correction is available: a wrong number, a right one, and a correctable owner. */
+const canCorrect = computed(() => props.grid.canCorrect())
+const correctedBpm = computed(() => Number(String(manualBpmInput.value)))
+const ownerName = computed(() => props.grid.correctionOwnerName())
+const fromMusicalLength = computed(() => props.grid.tempoOwner()?.reason === 'musicalLength')
+
+function onCorrect(): void {
+  props.grid.applyCorrection()
+}
 
 /** Wheel over the BPM field steps by 1 (whole integer), or 0.01 with Alt held (fine). */
 function onBpmWheel(e: WheelEvent): void {
@@ -89,6 +99,22 @@ function onBpmWheel(e: WheelEvent): void {
       >
         Original {{ originalBpm !== null ? originalBpm.toFixed(2) : '—' }} BPM · press Enter to set a new tempo
       </div>
+
+      <!--
+        Correcting a mis-detected tempo (ADR 0027). Offered only once there is both a
+        wrong number and a right one. The tempo field above says "play at this tempo";
+        this says "the detector read the wrong number", and so leaves every clip start,
+        marker and automation point exactly where it is. The fields themselves are shared
+        with the Edit BPM dialog so both surfaces say the same thing.
+      -->
+      <TempoCorrectionFields
+        v-if="canCorrect"
+        :original-bpm="originalBpm"
+        :corrected-bpm="correctedBpm"
+        :owner-name="ownerName"
+        :from-musical-length="fromMusicalLength"
+        @apply="onCorrect"
+      />
     </fieldset>
 
     <!-- Position: where beat 1 sits over the waveform. -->

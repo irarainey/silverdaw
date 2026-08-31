@@ -76,17 +76,29 @@ bool transitionGeometryMayHaveChanged(const juce::String& type) noexcept
 {
     return type == "CLIP_MOVE" || type == "CLIP_TRIM" || type == "CLIP_REMOVE" ||
            type == "CLIP_SET_WARP" || type == "TRACK_REMOVE" || type == "PROJECT_SET_BPM" ||
-           type == "CLIP_RELINK";
+           type == "LIBRARY_ITEM_CORRECT_TEMPO" || type == "CLIP_RELINK";
 }
 
 void reconcileTransitionsAfterGeometryEdit(silverdaw::AudioEngine& engine,
                                            silverdaw::ProjectState& projectState,
-                                           silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session)
+                                           silverdaw::BridgeServer& bridge, silverdaw::ProjectSession& session,
+                                           int transitionsBefore)
 {
-    if (!projectState.hasAnyTransition()) return;
-    const bool removed = projectState.reconcileTransitions(/*useUndo*/ true);
+    // Judged against the count from before the handler ran, not against what this pass
+    // alone finds. A handler may have reconciled already so it could report what it
+    // removed (the tempo correction does). Trusting only this pass then gets both arms
+    // wrong: if the handler removed EVERY transition there is nothing left to reconcile
+    // and the early return below skipped the edge-fade refresh, leaving the engine
+    // playing crossfades for transitions that no longer exist; and if it removed only
+    // some, this pass finds nothing to remove and the renderer is never told.
+    const bool removedByHandler = projectState.countTransitions() < transitionsBefore;
+    const bool hasTransitions = projectState.hasAnyTransition();
+    // Nothing to reconcile and nothing already removed: keep a transition-free drag O(1).
+    if (!hasTransitions && !removedByHandler) return;
+
+    const bool removedHere = hasTransitions && projectState.reconcileTransitions(/*useUndo*/ true);
     silverdaw::syncClipEdgeFades(engine, projectState);
-    if (removed)
+    if (removedHere || removedByHandler)
     {
         bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
     }

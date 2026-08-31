@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-28 · Owner: @irarainey_
+_Last reviewed: 2026-08-31 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -54,12 +54,27 @@ exactly as the arrangement plays, with delay compensation and tempo/playhead
 sync keeping them in time — see `docs/development-plan.md` §1.7.0. It also
 dragged a file from the Files tab straight onto a track, and reopened the lower
 panel on the tab it was left on.
-The current release is **1.7.1**, which fixes clip timing arithmetic: a trimmed
+Release **1.7.1** fixed clip timing arithmetic: a trimmed
 edge no longer slides the audio inside the clip, the waveform is drawn from the
 clip's exact position in the source so identical windows render identically, and
 a clip's beat-grid phase became a per-clip fact, so correcting one clip's markers
 moves the audio inside that clip alone and leaves both its position and its
 siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
+The current release is **1.8.0**, which closes the gap between changing a tempo and
+correcting one: **Edit BPM** — reached from a library item's context menu, the
+Edit button on its information dialog, or the beat grid in the Clip Editor
+opened on a timeline clip — rewrites the source tempo alone in one undoable step,
+respacing that file's beat markers without moving a single clip, marker or
+automation point, and reports what it re-warped and what it left alone. The
+project tempo is never touched: it is the user's number, set in the transport
+(ADR 0027, `docs/development-plan.md` §1.8.0). Detection itself also got more
+accurate, so the correction is needed less often: the audio is conditioned to
+emphasise percussive content before beat tracking, a disputed tempo is settled
+by an independent second engine, and the grid is fitted to onset starts rather
+than to onset-function peaks, which had been leaving markers a few milliseconds
+late on bass-heavy material (ADR 0028). Underneath both, MP3 is now decoded by
+the bundled LAME rather than JUCE's own reader, which mis-parsed some files
+badly enough that they could not be played or analysed at all.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

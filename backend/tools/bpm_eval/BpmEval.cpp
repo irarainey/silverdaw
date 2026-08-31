@@ -22,6 +22,10 @@
 // that costs tens of seconds per track is not automatically a win.
 
 #include "../../src/dsp/BpmDetector.h"
+#include "../../src/dsp/BpmAudioLoader.h"
+#include "../../src/dsp/MiniBpmEstimator.h"
+#include "../../src/dsp/PercussiveEmphasis.h"
+#include "../../src/dsp/BpmAnalysisHelpers.h"
 #include "../../src/core/Log.h"
 
 #include <algorithm>
@@ -233,10 +237,94 @@ void printCheckpoints(const silverdaw::BpmAnalysis& a, const Entry& e, const juc
     std::printf("\n");
 }
 
+/** Measures where the ODF actually peaks relative to a KNOWN beat grid, and how
+    much of the remaining lateness each candidate onset-start estimator removes.
+
+    This exists because beat markers were reported as consistently a few
+    milliseconds late, and the current model — "onset time = ODF peak minus one
+    calibrated constant" — cannot be judged from tempo figures at all. Only a
+    file whose true beat times are known can separate a framing delay (constant,
+    correctable) from a material-dependent one (not correctable by a constant).
+
+    `backtrackFraction` is passed straight to the shipped
+   `estimateOnsetStartFrames`, so what is calibrated here is what ships. */
+double medianOffsetForStrategy(const std::vector<double>& odf, double envRate, double periodSec,
+                               double firstBeatSec, double groupDelaySec, double backtrackFraction,
+                               int& outMatched)
+{
+    outMatched = 0;
+    if (odf.size() < 16 || envRate <= 0.0 || periodSec <= 0.0) return 0.0;
+
+    const int maxIdx = static_cast<int>(odf.size()) - 2;
+    const double totalSec = static_cast<double>(odf.size()) / envRate;
+    const double win = std::min(periodSec * 0.25, 0.12);
+
+    std::vector<double> offsets;
+    for (double beatT = firstBeatSec; beatT <= totalSec; beatT += periodSec)
+    {
+        if (beatT < 0.0) continue;
+        const int lo = std::max(1, static_cast<int>(std::floor((beatT - win) * envRate)));
+        const int hi = std::min(maxIdx, static_cast<int>(std::ceil((beatT + win) * envRate)));
+        if (hi <= lo) continue;
+
+        int bestI = -1;
+        double bestV = 0.0;
+        for (int i = lo; i <= hi; ++i)
+        {
+            const double v = odf[static_cast<size_t>(i)];
+            if (v > odf[static_cast<size_t>(i - 1)] && v >= odf[static_cast<size_t>(i + 1)] && v > bestV)
+            {
+                bestV = v;
+                bestI = i;
+            }
+        }
+        if (bestI < 0) continue;
+
+        double estFrames = static_cast<double>(bestI);
+        const double y0 = odf[static_cast<size_t>(bestI - 1)];
+        const double y1 = odf[static_cast<size_t>(bestI)];
+        const double y2 = odf[static_cast<size_t>(bestI + 1)];
+        const double denom = y0 - 2.0 * y1 + y2;
+        if (std::abs(denom) > 1e-12)
+        {
+            const double d = 0.5 * (y0 - y2) / denom;
+            if (std::abs(d) <= 1.0) estFrames += d;
+        }
+
+        if (backtrackFraction > 0.0)
+            estFrames = silverdaw::estimateOnsetStartFrames(odf, bestI, estFrames, envRate, backtrackFraction);
+
+        offsets.push_back(estFrames / envRate - groupDelaySec - beatT);
+    }
+
+    if (offsets.empty()) return 0.0;
+    std::sort(offsets.begin(), offsets.end());
+    outMatched = static_cast<int>(offsets.size());
+    return offsets[offsets.size() / 2];
+}
+
+/** Writes mono float samples to a 32-bit WAV so the full detector, which reads
+    files rather than buffers, can be run over conditioned audio. */bool writeMonoWav(const juce::File& target, const std::vector<float>& mono, double sampleRate)
+{
+    target.getParentDirectory().createDirectory();
+    target.deleteFile();
+
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::FileOutputStream> stream(target.createOutputStream());
+    if (stream == nullptr) return false;
+
+    std::unique_ptr<juce::AudioFormatWriter> writer(
+        wav.createWriterFor(stream.get(), sampleRate, 1, 32, {}, 0));
+    if (writer == nullptr) return false;
+    stream.release(); // the writer owns the stream once created
+
+    const float* channels[1] = { mono.data() };
+    return writer->writeFromFloatArrays(channels, 1, static_cast<int>(mono.size()));
+}
+
 void scoreRow(const char* label, const silverdaw::BpmAnalysis& a, const Entry& e, const juce::String& name,
               Accum& acc, double elapsedSec)
-{
-    ++acc.analysed;
+{    ++acc.analysed;
     double ratio = 1.0;
     const double signedErr = octaveAwareError(a.bpm, e.referenceBpm, ratio);
     const double absErr = std::abs(signedErr);
@@ -303,6 +391,121 @@ void printSummary(const char* label, const Accum& acc)
         std::cout << " | wall mean=" << (acc.sumSeconds / acc.analysed) << " s, worst=" << acc.worstSeconds
                   << " s";
     std::cout << '\n';
+}
+
+} // namespace
+
+// Cross-engine agreement, which is the whole point of running a second
+// estimator: a second opinion is only evidence if the two engines fail
+// DIFFERENTLY, so what matters is not just whether MiniBPM is accurate but how
+// its errors relate to BTrack's. Values are octave-folded before comparison,
+// because a half/double-time difference is a categorically different
+// disagreement from a small period one and conflating them hides both.
+namespace
+{
+
+struct AgreeAccum
+{
+    int compared = 0;
+    int sameOctave = 0; // agreed without either estimate needing to be folded
+    int within0p5 = 0;  // folded estimates within 0.5 BPM
+    int within2pc = 0;  // folded estimates within 2%
+    int wild = 0;       // folded estimates more than 5% apart
+    double sumAbsDiff = 0.0;
+    // Which engine was closer, since a "who is authoritative on disagreement"
+    // rule has to be grounded in this rather than assumed.
+    int mixCloser = 0;
+    int miniCloser = 0;
+};
+
+void scoreAgreement(double mixBpm, double miniBpm, double referenceBpm, AgreeAccum& acc)
+{
+    if (mixBpm <= 0.0 || miniBpm <= 0.0) return;
+
+    const double foldedMix = silverdaw::foldBpmIntoRange(mixBpm);
+    const double foldedMini = silverdaw::foldBpmIntoRange(miniBpm);
+    if (foldedMix <= 0.0 || foldedMini <= 0.0) return;
+
+    ++acc.compared;
+    if (std::abs(mixBpm - miniBpm) <= 0.05 * std::max(mixBpm, miniBpm)) ++acc.sameOctave;
+
+    const double diff = std::abs(foldedMix - foldedMini);
+    acc.sumAbsDiff += diff;
+    if (diff <= 0.5) ++acc.within0p5;
+    if (diff <= 0.02 * std::max(foldedMix, foldedMini)) ++acc.within2pc;
+    if (diff > 0.05 * std::max(foldedMix, foldedMini)) ++acc.wild;
+
+    if (referenceBpm > 0.0)
+    {
+        double r = 1.0;
+        const double mixErr = std::abs(octaveAwareError(mixBpm, referenceBpm, r));
+        const double miniErr = std::abs(octaveAwareError(miniBpm, referenceBpm, r));
+        if (mixErr < miniErr) ++acc.mixCloser;
+        else if (miniErr < mixErr) ++acc.miniCloser;
+    }
+}
+
+void printAgreement(const AgreeAccum& acc)
+{
+    if (acc.compared == 0)
+    {
+        std::cout << "  [agree] no file produced a tempo from both engines\n";
+        return;
+    }
+    std::cout << "  [agree] " << acc.compared << " compared | mean |mix-mbpm| = "
+              << (acc.sumAbsDiff / acc.compared) << " BPM (octave-folded)"
+              << " | within 0.5 = " << acc.within0p5 << "/" << acc.compared
+              << " | within 2% = " << acc.within2pc << "/" << acc.compared
+              << " | same octave = " << acc.sameOctave << "/" << acc.compared
+              << " | WILD (>5%) = " << acc.wild << "/" << acc.compared << '\n';
+    std::cout << "  [agree] closer to reference: mix=" << acc.mixCloser << ", mbpm=" << acc.miniCloser
+              << " (ties and unreferenced files excluded)\n";
+}
+
+// Per-file, reference-free engine comparison. Deliberately usable with no ground
+// truth: for real music the honest question is not "who is right" (which needs an
+// annotation) but "do they agree, and if not, how" — an octave apart is a
+// different problem from a few BPM apart. MiniBPM's runner-up candidates are shown
+// because when it picks the wrong octave the right one is usually second.
+void printComparison(const silverdaw::BpmAnalysis& mix, const silverdaw::MiniBpmEstimate& mini,
+                     const Entry& e, const juce::String& name, double mixSec, double miniSec)
+{
+    juce::String verdict = "n/a";
+    if (mix.bpm > 0.0 && mini.bpm > 0.0)
+    {
+        const double fMix = silverdaw::foldBpmIntoRange(mix.bpm);
+        const double fMini = silverdaw::foldBpmIntoRange(mini.bpm);
+        const double diff = std::abs(fMix - fMini);
+        const double rel = diff / std::max(fMix, fMini);
+        const bool octave = std::abs(mix.bpm - mini.bpm) > 0.05 * std::max(mix.bpm, mini.bpm);
+        if (rel <= 0.002) verdict = octave ? "AGREE(octave apart)" : "AGREE";
+        else if (rel <= 0.02) verdict = octave ? "CLOSE(octave apart)" : "CLOSE";
+        else verdict = "DISAGREE";
+    }
+
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), "  [cmp] %-46s mix=%8.3f (%.1fs)  mbpm=%8.3f (%.1fs)  %-19s",
+                  name.toStdString().c_str(), mix.bpm, mixSec, mini.bpm, miniSec,
+                  verdict.toRawUTF8());
+    std::cout << buf;
+    if (e.referenceBpm > 0.0) std::cout << "  ref=" << e.referenceBpm;
+    std::cout << '\n';
+
+    if (!mini.candidates.empty())
+    {
+        std::cout << "        mbpm candidates:";
+        const size_t show = std::min<size_t>(5, mini.candidates.size());
+        for (size_t i = 0; i < show; ++i) std::printf(" %.2f", mini.candidates[i]);
+        std::cout << '\n';
+    }
+    if (mix.variableTempo || mix.lowConfidence || mix.timedOut)
+    {
+        std::cout << "        mix flags:";
+        if (mix.variableTempo) std::cout << " variableTempo";
+        if (mix.lowConfidence) std::cout << " lowConfidence";
+        if (mix.timedOut) std::cout << " timedOut";
+        std::cout << '\n';
+    }
 }
 
 } // namespace
@@ -696,6 +899,17 @@ int main(int argc, char** argv)
                  "  ------  ----\n";
 
     Accum mixAcc;
+    Accum miniAcc;
+    Accum condAcc;
+    AgreeAccum agreeAcc;
+    // Conditioning now runs inside the detector, so this flag re-runs the whole
+    // detector a second time on pre-conditioned audio purely to A/B the effect.
+    // It doubles the runtime of an evaluation, so it stays opt-in.
+    const bool runConditioned = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BPM_EVAL_COND", "0") == "1";
+    // Reports how far ODF-derived onset estimates sit from the *known* beat times
+    // in the manifest, per backtrack strategy. Only meaningful on the synthetic
+    // corpus, which is the sole source of beat-phase ground truth.
+    const bool runPhaseProbe = juce::SystemStats::getEnvironmentVariable("SILVERDAW_BPM_EVAL_PHASE", "0") == "1";
 
     for (auto e : entries)
     {
@@ -721,10 +935,111 @@ int main(int argc, char** argv)
         // score - they contribute the checkpoint readout alone.
         if (e.referenceBpm > 0.0) scoreRow("mix", mix, e, f.getFileName(), mixAcc, mixSec);
         printCheckpoints(mix, e, f.getFileName());
+
+        // Second engine, over the SAME decode path so any difference in the
+        // answers comes from the algorithms rather than divergent audio.
+        // The reported wall time deliberately excludes the decode: in production
+        // both engines would share one buffer, so counting the decode twice would
+        // overstate what a second opinion actually costs.
+        const auto decoded = silverdaw::decodeMonoForAnalysis(
+            f, fm, silverdaw::BpmDetector::kMaxAnalysisSeconds,
+            silverdaw::BpmDetector::kAnalysisSampleRate, {});
+        if (decoded.ok())
+        {
+            // Phase diagnostic: needs a known first beat, so it runs only on the
+            // synthetic corpus where the true grid is exact.
+            if (runPhaseProbe && e.referenceBpm > 0.0 && std::isfinite(e.referenceFirstBeatSec))
+            {
+                const auto conditioned = silverdaw::emphasisePercussiveContent(
+                    decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
+                constexpr int kOdfHop = 256;
+                const double envRate = silverdaw::BpmDetector::kAnalysisSampleRate / (double)kOdfHop;
+                const double periodSec = 60.0 / e.referenceBpm;
+                auto probeOdf = silverdaw::bpm_detail::computeOdf(conditioned, kOdfHop);
+                probeOdf = silverdaw::subtractMovingMedianFloor(probeOdf, envRate, periodSec);
+                const double groupDelaySec = 0.53 / envRate;
+
+                std::printf("  [phase-probe] %-28s", f.getFileName().toStdString().c_str());
+                for (double fraction : {0.0, 0.50, 0.75, 0.90})
+                {
+                    int matched = 0;
+                    const double med = medianOffsetForStrategy(probeOdf, envRate, periodSec,
+                                                               e.referenceFirstBeatSec, groupDelaySec,
+                                                               fraction, matched);
+                    if (fraction == 0.0) std::printf("  peak %+6.2fms", med * 1000.0);
+                    else std::printf("  bt%.0f%% %+6.2fms", fraction * 100.0, med * 1000.0);
+                }
+                std::printf("\n");
+            }
+
+            const auto miniStart = std::chrono::steady_clock::now();
+            const auto mini = silverdaw::estimateTempoWithMiniBpm(
+                decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
+            const double miniSec =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - miniStart).count();
+
+            if (e.referenceBpm > 0.0)
+            {
+                // MiniBPM reports tempo only, with no beat phase. Scoring it against
+                // the phase/drift columns would invent an anchor at 0 s and print a
+                // number that looks like a measurement but is not one, so those
+                // references are stripped for this row and the columns read "-".
+                Entry tempoOnly = e;
+                tempoOnly.referenceFirstBeatSec = std::numeric_limits<double>::quiet_NaN();
+                tempoOnly.checkpointSec.clear();
+
+                silverdaw::BpmAnalysis miniAnalysis;
+                miniAnalysis.bpm = mini.bpm;
+                scoreRow("mbpm", miniAnalysis, tempoOnly, f.getFileName(), miniAcc, miniSec);
+                scoreAgreement(mix.bpm, mini.bpm, e.referenceBpm, agreeAcc);
+            }
+
+            // Printed for every file, referenced or not. Unlabelled real music is
+            // the case the synthetic corpus cannot cover, and the engines' raw
+            // disagreement is informative on its own: it needs no ground truth,
+            // and it is precisely the signal a consensus rule would act on.
+            printComparison(mix, mini, e, f.getFileName(), mixSec, miniSec);
+
+            // Experiment: does percussive band emphasis give BTrack cleaner beats?
+            // The whole detector is re-run on the conditioned audio rather than
+            // just the tempo stage, because the question is whether the BEAT TIMES
+            // improve - those are what the refinement stages score against, and
+            // they are what places markers.
+            if (runConditioned)
+            {
+                const auto conditioned =
+                    silverdaw::emphasisePercussiveContent(decoded.mono, silverdaw::BpmDetector::kAnalysisSampleRate);
+                juce::File temp = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                      .getChildFile("silverdaw_bpm_cond")
+                                      .getChildFile(f.getFileNameWithoutExtension() + "_cond.wav");
+                if (writeMonoWav(temp, conditioned, silverdaw::BpmDetector::kAnalysisSampleRate))
+                {
+                    const auto condStart = std::chrono::steady_clock::now();
+                    const auto cond = detector.analyse(temp, fm);
+                    const double condSec =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - condStart).count();
+                    if (e.referenceBpm > 0.0)
+                        scoreRow("cond", cond, e, f.getFileName(), condAcc, condSec);
+                    temp.deleteFile();
+                }
+                else
+                {
+                    std::cout << "  [cond] WAV WRITE FAILED " << f.getFileName().toStdString() << '\n';
+                }
+            }
+        }
+        else
+        {
+            std::cout << "  [cmp] DECODE FAILED " << f.getFileName().toStdString() << '\n';
+        }
     }
 
     std::cout << '\n';
     printSummary("mix", mixAcc);
+    printSummary("mbpm", miniAcc);
+    if (runConditioned) printSummary("cond", condAcc);
+    std::cout << '\n';
+    printAgreement(agreeAcc);
     std::cout << '\n';
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "AudioDeviceCommands.h"
 
 #include "BridgeServer.h"
+#include "DecodedCache.h"
 #include "Log.h"
 #include "PayloadHelpers.h"
 
@@ -195,7 +196,8 @@ void handleScratchRealismSet(const juce::var& payload, silverdaw::AudioEngine& e
 }
 
 void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engine,
-                          silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool)
+                          silverdaw::BridgeServer& bridge, juce::ThreadPool& peakPool,
+                          const silverdaw::DecodedCache& decodedCache)
 {
     // `requestId` round-trips so batched import probes don't collide.
     const auto requestId = tryGetRequiredString(payload, "requestId").value_or(juce::String{});
@@ -208,10 +210,22 @@ void handleAudioFileProbe(const juce::var& payload, silverdaw::AudioEngine& engi
 
     silverdaw::log::debug("bridge", "recv AUDIO_FILE_PROBE id=" + requestId + " path=" + filePath);
     // Reader construction stays off the message thread to keep 60 Hz transport ticks draining.
-    peakPool.addJob([requestId, filePath, &engine, &bridge]() {
+    peakPool.addJob([requestId, filePath, &engine, &bridge, &decodedCache]() {
         const juce::File file(filePath);
+
+        // JUCE's MP3 reader mis-sizes some files — one 192 kbps file was read as though
+        // it were 256 kbps, so its header reported 226 s of a 301 s track, and others it
+        // cannot open at all. Probing the decoded WAV instead reports what will actually
+        // be played, and warms the cache the import that follows needs anyway (ADR 0029).
+        juce::File probeTarget = file;
+        if (file.getFileExtension().equalsIgnoreCase(".mp3"))
+        {
+            const auto decoded = decodedCache.ensureDecoded(file, engine.getFormatManager());
+            if (decoded.existsAsFile()) probeTarget = decoded;
+        }
+
         std::unique_ptr<juce::AudioFormatReader> reader(
-            engine.getFormatManager().createReaderFor(file));
+            engine.getFormatManager().createReaderFor(probeTarget));
         juce::MessageManager::callAsync([requestId, filePath, &bridge,
                                          reader = std::shared_ptr<juce::AudioFormatReader>(std::move(reader))]() {
             auto* obj = new juce::DynamicObject();

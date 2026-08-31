@@ -8,6 +8,9 @@
 #include "PayloadHelpers.h"
 #include "ProjectState.h"
 
+#include <atomic>
+#include <optional>
+
 namespace silverdaw
 {
 
@@ -43,10 +46,50 @@ void broadcastPreviewStateIfCurrent(AudioEngine& engine, BridgeServer& bridge,
     stateObj->setProperty("generation", generation);
     bridge.broadcast("PREVIEW_STATE", juce::var(stateObj));
 }
+
+// Everything a PREVIEW_LOAD needs to reach the engine, so the load can be replayed
+// on the message thread once a background decode has finished.
+struct PreviewLoadRequest
+{
+    juce::String libraryItemId;
+    double inMs = 0.0;
+    double durationMs = 0.0;
+    std::optional<bool> warpEnabled;
+    std::optional<juce::String> warpMode;
+    std::optional<double> tempoRatio;
+    std::optional<double> semitones;
+    std::optional<double> cents;
+};
+
+void loadPreviewAndBroadcast(const juce::String& pathToLoad, const PreviewLoadRequest& request,
+                             AudioEngine& engine, BridgeServer& bridge)
+{
+    juce::String err;
+    if (!engine.loadPreview(juce::File(pathToLoad), request.inMs, request.durationMs, &err,
+                            request.warpEnabled, request.warpMode, request.tempoRatio,
+                            request.semitones, request.cents))
+    {
+        silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
+    }
+    const auto generation = engine.getPreviewGeneration();
+    const auto itemId = request.libraryItemId;
+    juce::Timer::callAfterDelay(
+        kPreviewReadyDelayMs,
+        [&engine, &bridge, itemId, generation]
+        {
+            broadcastPreviewStateIfCurrent(engine, bridge, itemId, generation);
+        });
+}
+
+// Only the newest audition may load. The engine's preview generation cannot serve
+// here because it advances only after a successful load, so two pending decodes
+// would both still look current.
+std::atomic<juce::int64> previewRequestCounter{0};
 } // namespace
 
 void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                       BridgeServer& bridge, const DecodedCache& decodedCache)
+                       BridgeServer& bridge, const DecodedCache& decodedCache,
+                       juce::ThreadPool& peakPool)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const juce::String requestedPath = payload.getProperty("filePath", juce::var{}).toString();
@@ -72,38 +115,67 @@ void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectSta
     }
     // Prefer the decoded WAV cache so compressed sources preview promptly.
     const juce::String playbackPath = resolveEnginePlaybackPath(sourcePath, projectState, decodedCache);
-    juce::String err;
-    std::optional<bool> warpEnabled;
-    std::optional<juce::String> warpMode;
-    std::optional<double> tempoRatio;
-    std::optional<double> semitones;
-    std::optional<double> cents;
+    PreviewLoadRequest request;
+    request.libraryItemId = libraryItemId;
+    request.inMs = inMs;
+    request.durationMs = durationMs;
     if (payload.hasProperty("warpEnabled"))
     {
-        warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
-        warpMode = readOptionalWarpMode(payload, "warpMode");
+        request.warpEnabled = static_cast<bool>(payload.getProperty("warpEnabled", false));
+        request.warpMode = readOptionalWarpMode(payload, "warpMode");
         if (payload.hasProperty("tempoRatio"))
         {
             const auto& v = payload["tempoRatio"];
-            if (!v.isVoid() && !v.isUndefined()) tempoRatio = static_cast<double>(v);
+            if (!v.isVoid() && !v.isUndefined()) request.tempoRatio = static_cast<double>(v);
         }
         if (payload.hasProperty("semitones"))
-            semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
+            request.semitones = static_cast<double>(payload.getProperty("semitones", 0.0));
         if (payload.hasProperty("cents"))
-            cents = static_cast<double>(payload.getProperty("cents", 0.0));
+            request.cents = static_cast<double>(payload.getProperty("cents", 0.0));
     }
-    if (!engine.loadPreview(juce::File(playbackPath), inMs, durationMs, &err,
-                            warpEnabled, warpMode, tempoRatio, semitones, cents))
+
+    const auto requestId = ++previewRequestCounter;
+
+    // An MP3 with no cache entry yet must be decoded before it can be auditioned.
+    // Handing the original to the engine relies on the built-in MP3 reader, which
+    // mis-parses some files so badly that the audition silently does nothing —
+    // exactly the "it plays everywhere else but not here" symptom. Decode on a
+    // worker rather than the message thread so the UI never stalls.
+    if (juce::File(playbackPath).hasFileExtension("mp3"))
     {
-        silverdaw::log::warn("preview", "PREVIEW_LOAD failed: " + err.toStdString());
+        silverdaw::log::info("preview",
+                             "decoding " + juce::File(playbackPath).getFileName() + " before audition");
+        peakPool.addJob(
+            [&engine, &bridge, &projectState, &decodedCache, request, requestId,
+             source = juce::File(sourcePath)]
+            {
+                const auto built = decodedCache.ensureDecoded(source, engine.getFormatManager());
+                const auto& sourcePathCopy = source.getFullPathName();
+                const auto builtPath = built.existsAsFile() ? built.getFullPathName() : juce::String{};
+                juce::MessageManager::callAsync(
+                    [&engine, &bridge, &projectState, request, requestId, sourcePathCopy, builtPath]
+                    {
+                        // A newer audition started while this decode ran.
+                        if (previewRequestCounter.load() != requestId) return;
+                        if (builtPath.isEmpty())
+                        {
+                            silverdaw::log::warn("preview",
+                                                 "could not decode " + sourcePathCopy + " — nothing to audition");
+                            broadcastPreviewState(engine, bridge, false, false, 0.0);
+                            return;
+                        }
+                        const auto itemId = findLibraryItemIdForPath(projectState, sourcePathCopy);
+                        if (itemId.isNotEmpty())
+                        {
+                            projectState.setLibraryItemPlaybackPath(itemId, builtPath);
+                        }
+                        loadPreviewAndBroadcast(builtPath, request, engine, bridge);
+                    });
+            });
+        return;
     }
-    const auto generation = engine.getPreviewGeneration();
-    juce::Timer::callAfterDelay(
-        kPreviewReadyDelayMs,
-        [&engine, &bridge, libraryItemId, generation]
-        {
-            broadcastPreviewStateIfCurrent(engine, bridge, libraryItemId, generation);
-        });
+
+    loadPreviewAndBroadcast(playbackPath, request, engine, bridge);
 }
 
 void handlePreviewUnload(AudioEngine& engine, BridgeServer& bridge)

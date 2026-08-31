@@ -483,6 +483,34 @@ describe('projectStore', () => {
     expect(ui.loopTimelineSelection).toBe(false)
   })
 
+  it('clears markers and the timeline selection when the last track goes', async () => {
+    // Reported: markers and an area selection survived removing the last track, and
+    // could then be neither seen nor removed — with no tracks the ruler draws no time
+    // and the drag handlers stand down — yet they persisted in the file and came back
+    // the moment a track was added.
+    const { useUiStore } = await import('@/stores/uiStore')
+    const project = useProjectStore()
+    const ui = useUiStore()
+
+    const first = project.addTrack()
+    const second = project.addTrack()
+    project.markers = [
+      { id: 'm1', positionMs: 1_000 },
+      { id: 'm2', positionMs: 2_000 }
+    ]
+    ui.setTimelineSelection({ startMs: 2_000, endMs: 6_000 })
+
+    // A track remains, so the timeline is still a place a marker can name.
+    project.removeTrack(first)
+    expect(project.markers).toHaveLength(2)
+    expect(ui.timelineSelection).not.toBeNull()
+
+    project.removeTrack(second)
+    expect(project.tracks).toHaveLength(0)
+    expect(project.markers).toEqual([])
+    expect(ui.timelineSelection).toBeNull()
+  })
+
   it('retimes markers and the playhead with the clips when the tempo changes', () => {
     // Reported: markers and the playhead were pinned to their millisecond positions,
     // so a tempo change slid them off the material they marked while everything else
@@ -987,6 +1015,67 @@ describe('projectStore', () => {
     transport.setBpm(120)
     library.flushGridAlignAfterBpm()
     expect(project.clips[clipId ?? '']?.startMs).toBe(375)
+  })
+
+  it('leaves a clip already at the new tempo unwarped when the project tempo changes', async () => {
+    // Reported: editing the project BPM turned warp on for a clip whose own tempo
+    // already matched it. Auto-warp asked "does this clip have a tempo?" rather than
+    // "would warping it change anything?", so a matching clip got the WARP badge and a
+    // stretch ratio for a warp that does nothing.
+    const { useUiStore } = await import('@/stores/uiStore')
+    const project = useProjectStore()
+    const library = useLibraryStore()
+    const transport = useTransportStore()
+    const ui = useUiStore()
+    ui.matchProjectTempoOnDrop = true
+    transport.bpm = 98.8
+
+    const matchingId = library.addItem({
+      filePath: 'C:\\matching.wav',
+      fileName: 'matching.wav',
+      durationMs: 30_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    const differingId = library.addItem({
+      filePath: 'C:\\differing.wav',
+      fileName: 'differing.wav',
+      durationMs: 30_000,
+      sampleRate: 44_100,
+      channelCount: 2,
+      peaks: new Float32Array()
+    })
+    library.setItemAnalysis(matchingId, 102.76, 0, [], false)
+    library.setItemAnalysis(differingId, 120, 0, [], false)
+
+    const trackId = project.addTrack()
+    const addClip = (libraryItemId: string, startMs: number): string =>
+      project.addClipToTrack(
+        trackId,
+        {
+          libraryItemId,
+          filePath: `C:\\${libraryItemId}.wav`,
+          fileName: `${libraryItemId}.wav`,
+          durationMs: 30_000,
+          sampleRate: 44_100,
+          channelCount: 2,
+          peaks: new Float32Array()
+        },
+        startMs
+      )!
+
+    const matchingClipId = addClip(matchingId, 0)
+    const differingClipId = addClip(differingId, 60_000)
+    project.clips[matchingClipId]!.warpEnabled = false
+    project.clips[differingClipId]!.warpEnabled = false
+
+    // The project moves onto the matching clip's own tempo.
+    project.applyProjectBpm(102.76)
+
+    expect(project.clips[matchingClipId]?.warpEnabled).toBe(false)
+    // A clip that genuinely differs still gets warped onto the new tempo.
+    expect(project.clips[differingClipId]?.warpEnabled).toBe(true)
   })
 
   it('requests the timeline reveal the newly added track', async () => {

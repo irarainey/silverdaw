@@ -95,6 +95,21 @@ SOFTWARE.
   [`backend/third_party/btrack/PATCHES.md`](backend/third_party/btrack/PATCHES.md)
   for the local MSVC-compatibility changes.
 
+### MiniBPM — © 2012-2025 Particular Programs Ltd.
+
+- **Licence**: GPL-2.0-or-later. A commercial licence is also offered by the
+  copyright holders; Silverdaw relies on the GPL grant only.
+- **Project**: <https://breakfastquay.com/minibpm/>
+- **Source**: <https://github.com/breakfastquay/minibpm>
+- **Notice**: An unmodified vendored copy of `src/MiniBpm.h` and
+  `src/MiniBpm.cpp` lives under `backend/third_party/minibpm/` and provides a
+  second, independent fixed-tempo estimate used to corroborate BTrack's. The
+  upstream licence text is included verbatim as
+  `backend/third_party/minibpm/LICENSE.txt`. The **or later** clause is what
+  makes this compatible with the project's AGPL-3.0-or-later licence: the code
+  is taken under GPL-3.0, which AGPL-3.0 §13 expressly permits combining with.
+  A GPL-2.0-**only** dependency would not have been usable here.
+
 ### RNNoise — © 2017 Mozilla; © 2018 Gregor Richards
 
 - **Licence**: BSD 2-Clause.
@@ -110,21 +125,20 @@ SOFTWARE.
   licence text is included with the fetched source at
   `backend/build/_deps/rnnoise-src/COPYING`.
 
-### LAME MP3 encoder — © The LAME Project
+### LAME MP3 encoder and decoder — © The LAME Project
 
 - **Licence**: GNU Lesser General Public License v2.1 or later (LGPL-2.1+).
 - **Project**: <https://lame.sourceforge.io/>
 - **Source**: <https://sourceforge.net/projects/lame/files/lame/>
-- **Notice**: When MP3 export is enabled, Silverdaw bundles an unmodified
-  Windows `lame.exe` build (typically sourced from the
+- **Notice**: Silverdaw bundles an unmodified Windows `lame.exe` build
+  (typically sourced from the
   [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php))
   next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
-  the encoder as a separate child process (via JUCE's
-  `LAMEEncoderAudioFormat`); there is no static or dynamic linking against
-  the LAME library, so the LGPL boundary is the process boundary.
-  Per the LGPL, the unmodified upstream source is available from the
-  project links above. If MP3 export was not enabled in a particular
-  build, `lame.exe` is not included.
+  it as a separate child process for both MP3 encoding on export (via JUCE's
+  `LAMEEncoderAudioFormat`) and MP3 decoding on import; there is no static or
+  dynamic linking against the LAME library, so the LGPL boundary is the
+  process boundary. Per the LGPL, the unmodified upstream source is available
+  from the project links above.
 
 ## Frontend (Electron + Vue)
 

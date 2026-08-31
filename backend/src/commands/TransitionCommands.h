@@ -26,8 +26,11 @@ void finishTransitionEdit(AudioEngine& engine, ProjectState& projectState, Bridg
 // Undo, redo, and load reconcile separately via rebuildEngineFromProject.
 bool transitionGeometryMayHaveChanged(const juce::String& type) noexcept;
 
-// Avoid full PROJECT_STATE spam during 60 Hz geometry drags.
+// Avoid full PROJECT_STATE spam during 60 Hz geometry drags. `transitionsBefore` is the
+// transition count from before the handler ran, so a handler that reconciled on its own
+// behalf still gets its removals published.
 void reconcileTransitionsAfterGeometryEdit(AudioEngine& engine, ProjectState& projectState,
-                                           BridgeServer& bridge, ProjectSession& session);
+                                           BridgeServer& bridge, ProjectSession& session,
+                                           int transitionsBefore);
 
 } // namespace silverdaw

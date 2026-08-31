@@ -123,6 +123,43 @@ void testATruncatedDecodeFallsBelowTheThreshold()
     wav.deleteFile();
 }
 
+// The staging path a real decode writes to is `<hash>.wav.tmp`. Validating it through
+// AudioFormatManager, which picks a reader by file extension, silently rejected every
+// good decode because nothing is registered for `.tmp` — which disabled the MP3
+// decoder entirely while looking like a decode failure.
+void testAUsableWavIsAcceptedOnATmpStagingPath()
+{
+    constexpr juce::int64 kLength = 50000;
+    ShortTailReader reader(kLength, kLength);
+
+    juce::File wav;
+    const auto result = decodeToTempWav(reader, wav);
+    require(result.samplesWritten == kLength, "the fixture decode must succeed");
+
+    const auto staged = wav.getSiblingFile(wav.getFileName() + ".tmp");
+    staged.deleteFile();
+    require(wav.moveFileTo(staged), "must be able to stage the wav under a .wav.tmp name");
+
+    require(decodedWavIsUsable(staged),
+            "a real wav must validate even when staged under a .wav.tmp extension");
+    staged.deleteFile();
+}
+
+void testAnUnusableDecodeIsRejected()
+{
+    const auto missing = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                             .getChildFile("silverdaw_no_such_decode.wav.tmp");
+    missing.deleteFile();
+    require(!decodedWavIsUsable(missing), "a missing decode must be rejected");
+
+    const auto garbage = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                             .getChildFile("silverdaw_garbage_decode.wav.tmp");
+    garbage.deleteFile();
+    garbage.replaceWithText("this is not audio");
+    require(!decodedWavIsUsable(garbage), "a non-audio file must be rejected");
+    garbage.deleteFile();
+}
+
 } // namespace
 
 void addDecodedCacheTests(std::vector<TestCase>& tests)
@@ -131,6 +168,9 @@ void addDecodedCacheTests(std::vector<TestCase>& tests)
                      testShortTailKeepsTheDecodedAudio});
     tests.push_back({"decode writes every sample when the reader is accurate", testAFullReadWritesEverySample});
     tests.push_back({"decode rejects a badly truncated read", testATruncatedDecodeFallsBelowTheThreshold});
+    tests.push_back({"decode validation accepts a wav staged under a .wav.tmp name",
+                     testAUsableWavIsAcceptedOnATmpStagingPath});
+    tests.push_back({"decode validation rejects a missing or non-audio file", testAnUnusableDecodeIsRejected});
 }
 
 } // namespace silverdaw::tests

@@ -104,6 +104,20 @@ int ProjectState::getLibraryItemMusicalBeats(const juce::String& itemId) const
     return 0;
 }
 
+double ProjectState::getLibraryItemBeatAnchorSec(const juce::String& itemId) const
+{
+    const auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return 0.0;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        const auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() != itemId) continue;
+        const double anchor = static_cast<double>(item.getProperty(kBeatAnchorSec, 0.0));
+        return std::isfinite(anchor) && anchor >= 0.0 ? anchor : 0.0;
+    }
+    return 0.0;
+}
+
 bool ProjectState::setLibraryItemBeatAnchor(const juce::String& itemId, double anchorSec){
     return mutateDerivedLibraryItem(itemId,
                                     [anchorSec](juce::ValueTree& item)

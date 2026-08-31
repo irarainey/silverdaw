@@ -1,6 +1,7 @@
 #include "MixdownExport.h"
 
 #include "Log.h"
+#include "../core/LamePath.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -13,14 +14,7 @@ namespace silverdaw::mixdown_export
 
 juce::File findLameExecutable()
 {
-    const auto exeDir = juce::File::getSpecialLocation(
-                            juce::File::currentExecutableFile)
-                            .getParentDirectory();
-#if JUCE_WINDOWS
-    return exeDir.getChildFile("lame.exe");
-#else
-    return exeDir.getChildFile("lame");
-#endif
+    return silverdaw::findLameExecutable();
 }
 
 int lameQualityIndexForCbr(int kbps)

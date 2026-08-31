@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.8.0
+
+### Added
+
+- **Edit BPM** corrects a mis-detected tempo on a library item or clip, respacing its beat markers without moving any clip, marker or automation point.
+- A tempo correction reports which clips it re-warped and which it left alone.
+- **MiniBPM** is included as a second tempo estimator, settling a tempo the primary detector is unsure of.
+
+### Changed
+
+- MP3 files are now decoded with the bundled LAME decoder, which reads files the previous decoder could not and no longer trims the last fraction of a second. Existing MP3s are decoded again on first use, so their beat markers are recalculated.
+- Tempo detection is more accurate on dense material such as full-band rock and soul.
+- A tempo corrected on a file now corrects every stem and clip taken from it.
+- A tempo inherited through several steps, such as a clip of a stem, is now shown.
+- Previewing a library file no longer draws beat markers over its waveform.
+
+### Fixed
+
+- Some MP3s could not be played, previewed or analysed at all, failing silently with no tempo and no sound. They now import and play correctly.
+- Previewing an MP3 that had not been decoded yet could stay silent. It is now decoded first, in the background.
+- Importing an MP3 could record the wrong track length, or reject the file as unreadable. The imported length now matches the audio that plays.
+- Tempo detection now completes on MP3s whose final moments fail to decode, flagging the result as unconfirmed.
+- Correcting a tempo while it is still being detected now keeps the correction.
+- Correcting the tempo of a stem or saved clip no longer shifts the beat markers of the file it came from.
+- A tempo correction that cannot be applied now restores the displayed tempo instead of leaving the rejected number on screen.
+- A tempo correction that invalidates a transition now redraws the timeline and updates the crossfades it left behind.
+- Beat markers no longer sit a few milliseconds late on bass-heavy material.
+- Tempo analysis finishing after a save now says so, instead of silently marking the project unsaved again.
+- Changing the project tempo no longer turns warp on for clips already at that tempo.
+- Removing the last track now clears the markers and area selection with it.
+- The warning that a measured bar length is about to be discarded now follows the clip being edited.
+
 ## 1.7.1
 
 ### Changed

@@ -5,6 +5,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include <cmath>
+
 #include "EdgeFadeSnapshot.h"
 
 namespace silverdaw
@@ -44,6 +46,9 @@ struct WarpClipInfo
     juce::String warpMode;
     // Distinguishes pending auto-warp from explicit warp-off before BPM was known.
     bool pendingAutoWarp;
+    // Native (unwarped) length, so callers can judge whether a warp would do anything
+    // without a second lookup. Zero when the audio has not landed yet.
+    double durationMs;
 };
 
 // Effective timeline timing for a clip (may differ from stored duration when warped).
@@ -63,6 +68,23 @@ struct EffectiveClipTiming
  * renderer's `WARP_NEGLIGIBLE_DRIFT_MS`, and the two must stay in step (ADR 0024).
  */
 inline constexpr double kWarpNegligibleDriftMs = 1.0;
+
+/**
+ * True when warping `durationMs` of audio at `ratio` moves the clip's end audibly.
+ *
+ * The one place this test lives, so every caller that has to decide whether a warp is
+ * worth having — enabling one, drawing one, reporting one — reaches the same answer.
+ * Mirrors the renderer's `warpChangesTiming` (ADR 0024).
+ *
+ * A clip whose length is not known yet falls back to the ratio, matching "can't tell,
+ * so treat it as warped" rather than reporting a stretch as doing nothing.
+ */
+inline bool warpChangesTiming(double durationMs, double ratio)
+{
+    if (ratio <= 0.0) return false;
+    if (durationMs <= 0.0) return std::abs(ratio - 1.0) > 1.0e-9;
+    return std::abs(durationMs / ratio - durationMs) >= kWarpNegligibleDriftMs;
+}
 
 // Immutable message-thread snapshot for preparing clip audio off-thread.
 struct ClipPreparationInfo

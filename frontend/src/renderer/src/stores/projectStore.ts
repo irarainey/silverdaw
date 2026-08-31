@@ -31,7 +31,7 @@ import type {
   DelayNoteValue,
   ProjectStatePayload
 } from '@shared/bridge-protocol'
-import { effectiveDurationMs } from '@/lib/warp'
+import { effectiveDurationMs, warpChangesTiming } from '@/lib/warp'
 import { scaleEnvelopePoints } from '@/lib/envelope'
 
 // Facade re-export: these pure clip-timing helpers now live in
@@ -594,7 +594,17 @@ export const useProjectStore = defineStore('project', {
         }
         const footprintBefore = effectiveDurationMs(clip.durationMs, warpBefore)
         if (autoWarp && clip.warpEnabled !== true && clip.tempoRatio === undefined) {
-          if (typeof sourceBpm === 'number' && sourceBpm > 0) clip.warpEnabled = true
+          // A clip already at the new tempo needs no warp, and turning one on would be a
+          // visible lie: the WARP badge and a stretch ratio, all to leave the audio exactly
+          // as it is. The same drift test the drop path applies (ADR 0024), so typing a
+          // tempo and dropping a file at that tempo agree on what warping means.
+          if (
+            typeof sourceBpm === 'number' &&
+            sourceBpm > 0 &&
+            warpChangesTiming(clip.durationMs, nextBpm / sourceBpm)
+          ) {
+            clip.warpEnabled = true
+          }
         }
         if (clip.startMs > 0) clip.startMs *= scale
         // A volume shape is measured across the clip's timeline footprint, so it has to

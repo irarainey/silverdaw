@@ -132,6 +132,26 @@ bool ProjectState::removeMarker(const juce::String& markerId)
     return false;
 }
 
+int ProjectState::clearMarkers()
+{
+    auto markers = root.getChildWithName(kMarkers);
+    if (!markers.isValid()) return 0;
+
+    int count = 0;
+    for (int i = markers.getNumChildren() - 1; i >= 0; --i)
+    {
+        const auto marker = markers.getChild(i);
+        if (!marker.hasType(kMarker)) continue;
+        // No markDirty here: markers are persisted content, so removing one is a real
+        // edit, but dirty is *derived* — the child-removed listener recomputes it against
+        // the clean snapshot. Forcing it would strand the project dirty after an undo put
+        // every marker back, which is exactly the net-zero case that design exists for.
+        markers.removeChild(marker, &undoManager);
+        ++count;
+    }
+    return count;
+}
+
 int ProjectState::retimeMarkersForTempoChange(double previousBpm, double newBpm)
 {
     if (previousBpm <= 0.0 || newBpm <= 0.0 || previousBpm == newBpm) return 0;

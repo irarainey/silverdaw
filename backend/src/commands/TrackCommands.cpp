@@ -4,6 +4,7 @@
 #include "BridgeServer.h"
 #include "CommandHelpers.h"
 #include "PayloadHelpers.h"
+#include "ProjectSettingsCommands.h"
 #include "ProjectState.h"
 
 namespace silverdaw
@@ -100,9 +101,33 @@ void handleTrackRemove(const juce::var& payload, silverdaw::AudioEngine& engine,
     engine.clearTrackBeatRepeatRegions(trackId);
     projectState.removeTrack(trackId);
     engine.retireTrackFxState(trackId);
+
+    // Removing the last track empties the timeline, and a marker or a selection over
+    // nothing has nothing left to name: the ruler draws no time without tracks, so the
+    // user can neither see these nor reach them to clear them, yet they persist in the
+    // file and reappear the moment a track is added. Clearing them here rather than
+    // leaving them orphaned keeps "no tracks" meaning the same thing as a new project.
+    // Part of the same undo transaction as the removal, so one undo brings the track
+    // and everything cleared alongside it back together.
+    //
+    // Gated on the track having actually existed. Without that, a stale or repeated
+    // TRACK_REMOVE naming a track that has already gone would find a track count of zero
+    // and wipe the markers and selection of a project it changed nothing else about.
+    int markersCleared = 0;
+    if (existed && projectState.getTrackCount() == 0)
+    {
+        markersCleared = projectState.clearMarkers();
+        projectState.setViewTimelineSelection(std::nullopt);
+        // A timeline loop lives in the engine, not the tree (ADR 0023), so the range has
+        // to be disarmed explicitly or playback keeps wrapping inside a selection that
+        // is no longer drawn anywhere.
+        syncTimelineLoop(engine, projectState);
+    }
+
     auto* p = new juce::DynamicObject();
     p->setProperty("trackId", trackId);
     p->setProperty("ok", existed);
+    p->setProperty("markersCleared", markersCleared);
     bridge.broadcast("TRACK_REMOVED", juce::var(p));
 }
 

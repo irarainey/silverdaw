@@ -371,10 +371,21 @@ int runBackend(int argc, char* argv[])
 
     // Dirty broadcasts mirror message-thread ValueTree mutations to renderer chrome.
     projectState.setDirtyChangedCallback(
-        [&bridge](bool dirty)
+        [&bridge](bool dirty, silverdaw::ProjectState::DirtyReason reason)
         {
             auto* p = new juce::DynamicObject();
             p->setProperty("dirty", dirty);
+            // Only a transition INTO dirty has a cause worth naming: going clean is
+            // always a save or a load. "analysis" tells the renderer the change came
+            // from background tempo analysis landing rather than anything the user did,
+            // so it can say so instead of showing an unexplained unsaved-changes marker.
+            if (dirty)
+            {
+                p->setProperty(
+                    "reason",
+                    reason == silverdaw::ProjectState::DirtyReason::BackgroundAnalysis ? "analysis"
+                                                                                       : "edit");
+            }
             bridge.broadcast("PROJECT_DIRTY", juce::var(p));
         });
 

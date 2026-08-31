@@ -28,8 +28,41 @@ class ProjectState : public juce::ValueTree::Listener
         (absent == unity for legacy files). */
     static constexpr float kDefaultMasterVolume = 0.31622776601683794F;
 
+    /** Why the dirty flag moved. Lets the renderer explain an unsaved-changes marker
+        that appeared without the user touching anything. */
+    enum class DirtyReason
+    {
+        /** Something the user did — the ordinary case, needing no explanation. */
+        UserEdit,
+        /** Background analysis landing after the fact: the project-tempo seed and the
+            late auto-warp of clips dropped before detection finished. Both are real,
+            persisted edits, so they must still dirty (mirroring them into the clean
+            snapshot would report "saved" for content that is not on disk yet) — but
+            they arrive with no user action to explain them. */
+        BackgroundAnalysis
+    };
+
     /** Fired when the dirty flag transitions. Set by `Main.cpp` after the bridge exists. */
-    using DirtyChangedCallback = std::function<void(bool dirty)>;
+    using DirtyChangedCallback = std::function<void(bool dirty, DirtyReason reason)>;
+
+    /** RAII: attributes every dirty transition inside the scope to background analysis
+        rather than a user edit. Nest-safe and exception-safe, like `SuppressDirtyScope`.
+        Wrap the automatic analysis path in this; never the manual tempo path, which is a
+        genuine user edit. */
+    class BackgroundDirtyScope
+    {
+    public:
+        explicit BackgroundDirtyScope(ProjectState& owner) noexcept : state(owner)
+        {
+            ++state.backgroundDirtyDepth;
+        }
+        ~BackgroundDirtyScope() noexcept { --state.backgroundDirtyDepth; }
+        BackgroundDirtyScope(const BackgroundDirtyScope&) = delete;
+        BackgroundDirtyScope& operator=(const BackgroundDirtyScope&) = delete;
+
+    private:
+        ProjectState& state;
+    };
 
     ProjectState();
     ~ProjectState() override;
@@ -69,6 +102,9 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Returns true if `trackId` exists in the tree. */
     bool hasTrack(const juce::String& trackId) const;
+
+    /** Number of tracks in the tree, ignoring sibling LIBRARY/MARKERS nodes. */
+    int getTrackCount() const noexcept;
 
     // `newIndex` is track-ordinal; moveChild keeps ordering undoable.
     bool moveTrack(const juce::String& trackId, int newIndex);
@@ -212,6 +248,10 @@ class ProjectState : public juce::ValueTree::Listener
     // Cheap guard for skipping transition reconcile/sync on transition-free projects.
     bool hasAnyTransition() const;
 
+    /** How many transitions the project holds. Taken either side of a reconcile so an
+     *  operation can report how many it invalidated. */
+    int countTransitions() const;
+
     // Reverb defaults are suppressed so untouched projects stay byte-clean.
     bool setProjectReverb(float size, float decay, float tone, float mix);
     float getProjectReverbSize() const;
@@ -346,6 +386,10 @@ class ProjectState : public juce::ValueTree::Listener
      */
     std::unordered_map<juce::String, double> snapshotClipFootprints() const;
 
+    /** How many clips end past `lengthMs`, measured from their effective (warp-scaled)
+     *  length. Returns 0 for a non-positive length. */
+    int countClipsEndingAfter(double lengthMs) const;
+
     /**
      * Rescale clip volume envelopes onto their new timeline footprints.
      *
@@ -365,6 +409,42 @@ class ProjectState : public juce::ValueTree::Listener
 
     // Effective duration is timeline/output time; stored duration remains source time.
     EffectiveClipTiming getClipEffectiveTiming(const juce::String& clipId) const;
+
+    /** How an item's resolved tempo was arrived at. Mirrors the renderer's
+     *  `TempoResolutionReason` in `libraryItemHelpers.ts`. */
+    enum class TempoReason
+    {
+        none,         ///< No tempo at all — nothing to correct.
+        oneShot,      ///< A one-shot holds no tempo, inherited or otherwise (ADR 0024 rule 1).
+        musicalLength,///< Calculated from the item's own `musicalBeats` (rule 2).
+        ownBpm,       ///< The item's own `bpm` property (rule 3).
+        inheritedBpm  ///< Owned by an ancestor the item was derived from (rule 4).
+    };
+
+    /** Who owns an item's tempo, how it was resolved, and what it resolves to. */
+    struct TempoOwner
+    {
+        juce::String ownerItemId; ///< Empty for `none`/`oneShot`; the item itself for `musicalLength`/`ownBpm`.
+        TempoReason reason{TempoReason::none};
+        double bpm{0.0};
+    };
+
+    /**
+     * Resolve an item's tempo AND who owns it, walking the `sourceItemId` chain.
+     *
+     * {@link getLibraryItemBpm} answers only "what tempo?", which is all playback and
+     * drawing need. Correcting a mis-detected tempo needs "whose tempo?" as well: a stem
+     * or saved clip usually shows a tempo it inherits rather than owns, and writing the
+     * correction onto the child would split it away from its parent while leaving every
+     * sibling on the wrong number (ADR 0027). The reason matters too — a
+     * `musicalLength` tempo is a measurement that a correction would discard, which the
+     * user has to be told before it happens.
+     *
+     * Unlike the single-hop lookup this replaces, the walk follows the chain to its end
+     * and is cycle-safe, so an item derived from a saved clip that was itself cut from an
+     * import resolves to the import. Rules and their order are ADR 0024's, unchanged.
+     */
+    TempoOwner resolveTempoOwner(const juce::String& itemId) const;
 
     double getLibraryItemBpm(const juce::String& itemId) const;
 
@@ -564,6 +644,11 @@ class ProjectState : public juce::ValueTree::Listener
     bool setLibraryItemMusicalBeats(const juce::String& itemId, int beats);
     int getLibraryItemMusicalBeats(const juce::String& itemId) const;
 
+    /** The item's current beat-grid phase, or 0 when it has none. Returns 0 for a stored
+     *  value that is not a usable time, so a corrupt project cannot poison a caller that
+     *  is only trying to leave the phase where it already was. */
+    double getLibraryItemBeatAnchorSec(const juce::String& itemId) const;
+
     // A hand-set tempo/beat grid is a deliberate user edit (unlike automatic
     // analysis): it writes bpm/beats/anchor through the UndoManager and marks the
     // project dirty, so it is undoable via EDIT_UNDO. Clears the variable-tempo and
@@ -677,6 +762,15 @@ class ProjectState : public juce::ValueTree::Listener
 
     /** Remove an existing timeline marker. Returns false when no marker matches. */
     bool removeMarker(const juce::String& markerId);
+
+    /**
+     * Remove every timeline marker, returning how many went.
+     *
+     * Used when the last track goes: a marker names a place on a timeline, and with no
+     * tracks there is no timeline and no ruler time to name. Undoable in whatever
+     * transaction the caller is already in, so the markers come back with the track.
+     */
+    int clearMarkers();
 
     /**
      * Keep every timeline marker on the same bar when the project tempo changes.
@@ -808,6 +902,8 @@ class ProjectState : public juce::ValueTree::Listener
     bool seedProjectTempoFromFirstClip_{true};
     // Counter, not bool, so nested dirty-suppression scopes cannot unsuppress an outer scope.
     int suppressDirtyDepth{0};
+    // Counter, for the same reason: attributes dirty transitions to background analysis.
+    int backgroundDirtyDepth{0};
     DirtyChangedCallback onDirtyChanged;
 
     // Populated by performUndo/performRedo (see lastUndoChangeSet); `recordingChangeSet_` is

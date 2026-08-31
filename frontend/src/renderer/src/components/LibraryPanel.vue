@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ClipContextMenu from '@/components/ClipContextMenu.vue'
 import LibraryItemInfoDialog from '@/components/LibraryItemInfoDialog.vue'
+import EditBpmDialog from '@/components/EditBpmDialog.vue'
 import ClipEditorDialog from '@/components/ClipEditorDialog.vue'
 import TrackFxPanel from '@/components/TrackFxPanel.vue'
 import ProjectFxPanel from '@/components/ProjectFxPanel.vue'
@@ -38,9 +39,12 @@ const {
   startRename,
   contextMenu,
   infoItem,
+  bpmEditItem,
   editorItem,
   contextMenuItems,
   closeItemInfo,
+  openBpmEditor,
+  closeBpmEditor,
   openItemEditor,
   closeItemEditor,
   openItemContextMenu,
@@ -167,6 +171,12 @@ const {
       :open="infoItem !== null"
       :item="infoItem"
       @close="closeItemInfo"
+      @edit-bpm="infoItem && openBpmEditor(infoItem)"
+    />
+    <EditBpmDialog
+      :open="bpmEditItem !== null"
+      :item="bpmEditItem"
+      @close="closeBpmEditor"
     />
     <ClipEditorDialog
       :open="editorItem !== null"

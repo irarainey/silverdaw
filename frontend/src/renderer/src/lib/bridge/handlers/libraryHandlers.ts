@@ -7,10 +7,19 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { applySampleSaved, loadEditorPeaksFromCache, loadPeaksFromCache } from '@/lib/bridge/peaksCache'
 import { log } from '@/lib/log'
 import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
+import {
+  describeTempoCorrection,
+  describeTempoCorrectionCaveats
+} from '@/lib/library/tempoCorrectionReport'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 export const libraryBridgeHandlers: BridgeInboundHandlers<
-  'WAVEFORM_READY' | 'WAVEFORM_FAILED' | 'CLIP_EDITOR_PEAKS_READY' | 'LIBRARY_ITEM_ANALYSIS' | 'SAMPLE_SAVED'
+  | 'WAVEFORM_READY'
+  | 'WAVEFORM_FAILED'
+  | 'CLIP_EDITOR_PEAKS_READY'
+  | 'LIBRARY_ITEM_ANALYSIS'
+  | 'TEMPO_CORRECTION_APPLIED'
+  | 'SAMPLE_SAVED'
 > = {
   WAVEFORM_READY: (payload) => {
     // Bulk peaks stay on disk; main reads and dequantises them.
@@ -67,5 +76,43 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
 
   SAMPLE_SAVED: (payload) => {
     void applySampleSaved(payload)
+  },
+
+  // ADR 0027: a correction is never silent. It can re-warp clips it was not pointed at,
+  // remove transitions and push clips past the project length, so the result is always
+  // reported — including what it deliberately left alone.
+  TEMPO_CORRECTION_APPLIED: (payload) => {
+    const notifications = useNotificationsStore()
+    const library = useLibraryStore()
+
+    if (!payload.ok) {
+      // Nothing was applied, so the project is not half-corrected; put the displayed
+      // tempo back to the number the backend still holds before saying what failed.
+      log.warn('bridge', `TEMPO_CORRECTION_APPLIED itemId=${payload.itemId} failed: ${payload.error}`)
+      library.rollbackTempoCorrection(payload.itemId)
+      notifications.pushError(`Could not correct the tempo. ${payload.error}`)
+      return
+    }
+
+    library.commitTempoCorrection(payload.itemId)
+
+    const item = library.getItem(payload.itemId)
+    const owner = library.getItem(payload.ownerItemId)
+    const summary = describeTempoCorrection(
+      payload,
+      item ? libraryItemDisplayName(item) : 'the track',
+      owner ? libraryItemDisplayName(owner) : undefined
+    )
+    const caveats = describeTempoCorrectionCaveats(payload)
+
+    log.info(
+      'bridge',
+      `TEMPO_CORRECTION_APPLIED itemId=${payload.itemId} owner=${payload.ownerItemId} (${payload.ownerReason}) ${payload.previousBpm.toFixed(2)}->${payload.appliedBpm.toFixed(2)} updated=${payload.clipsUpdated} pinned=${payload.clipsPinnedExcluded} unwarped=${payload.clipsUnwarpedExcluded} transitionsRemoved=${payload.transitionsRemoved} pastLength=${payload.clipsPastProjectLength}`
+    )
+
+    // The caveats ride in the same toast: they are consequences of the one action the
+    // user just took, and splitting them across toasts would make the outcome harder to
+    // read rather than easier.
+    notifications.pushInfo([summary, ...caveats].join('\n'))
   }
 }

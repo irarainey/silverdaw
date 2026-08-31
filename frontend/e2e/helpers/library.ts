@@ -18,3 +18,18 @@ export function libraryItems(page: Page): Locator {
 export function libraryItem(page: Page, name: string): Locator {
   return page.locator(`[data-testid="library-item"][data-library-item-name="${name}"]`)
 }
+
+/**
+ * The tempo badge on a library row, which only renders once detection has
+ * written the file's BPM.
+ *
+ * Detection finishes well after the clip is placed, and its result is written
+ * into the project, which marks the project dirty. A journey that saves before
+ * this badge appears is therefore saving a state the engine is about to change
+ * underneath it, and any "no unsaved changes" assertion after that save is a
+ * race rather than a check. Matching the title covers both the steady badge
+ * ("Detected tempo") and the variable-tempo one.
+ */
+export function libraryItemTempo(page: Page, name: string): Locator {
+  return libraryItem(page, name).getByTitle(/tempo/i).first()
+}

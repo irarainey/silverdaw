@@ -1,5 +1,8 @@
 #include "BpmDetector.h"
 #include "BpmAnalysisHelpers.h"
+#include "BpmAudioLoader.h"
+#include "MiniBpmEstimator.h"
+#include "PercussiveEmphasis.h"
 
 #include "Log.h"
 
@@ -10,7 +13,6 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <limits>
 #include <numeric>
-#include <samplerate.h>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -44,84 +46,20 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
         return out;
     };
 
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(audioFile));
-    if (reader == nullptr)
-    {
-        silverdaw::log::warn("bpm", "createReaderFor failed for " + audioFile.getFileName());
-        return result;
-    }
-    const double sourceSampleRate = reader->sampleRate;
-    if (sourceSampleRate <= 0.0 || reader->numChannels == 0 || reader->lengthInSamples <= 0)
-    {
-        return result;
-    }
+    // Decode, channel-fold and resample are shared with every other estimator
+    // so they all judge byte-identical audio (see BpmAudioLoader.h).
+    const auto decoded = decodeMonoForAnalysis(audioFile, formatManager, kMaxAnalysisSeconds,
+                                               kAnalysisSampleRate, timedOut);
+    if (decoded.status == BpmDecodeStatus::TimedOut) return abortTimedOut("decode");
+    if (!decoded.ok()) return result;
 
-    // Decode the whole track (bounded only by the generous kMaxAnalysisSeconds
-    // ceiling) so the ODF-based period fit below spans the entire piece.
-    const juce::int64 maxSourceSamples =
-        static_cast<juce::int64>(kMaxAnalysisSeconds * sourceSampleRate);
-    const juce::int64 totalSourceSamples = juce::jmin(reader->lengthInSamples, maxSourceSamples);
-
-    // One contiguous mono buffer keeps the libsamplerate handoff simple.
-    std::vector<float> mono(static_cast<size_t>(totalSourceSamples), 0.0F);
-    const int numCh = static_cast<int>(reader->numChannels);
-    const int decodeBlockSize = 4096;
-    juce::AudioBuffer<float> decodeBuffer(numCh, decodeBlockSize);
-
-    juce::int64 sourcePos = 0;
-    while (sourcePos < totalSourceSamples)
-    {
-        const int toRead =
-            static_cast<int>(juce::jmin(static_cast<juce::int64>(decodeBlockSize), totalSourceSamples - sourcePos));
-        if (toRead <= 0) break;
-        // ~every 4 MB decoded (large tracks only); cheap clock read, no hot-path cost.
-        if ((sourcePos % (static_cast<juce::int64>(decodeBlockSize) * 256)) == 0 && timedOut()) return abortTimedOut("decode");
-
-        if (!reader->read(&decodeBuffer, 0, toRead, sourcePos, true, true))
-        {
-            silverdaw::log::warn("bpm", "reader read failed at " + juce::String(sourcePos));
-            return result;
-        }
-        const float invCh = 1.0F / static_cast<float>(numCh);
-        const size_t writeBase = static_cast<size_t>(sourcePos);
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            const float* src = decodeBuffer.getReadPointer(ch);
-            for (int i = 0; i < toRead; ++i)
-            {
-                mono[writeBase + static_cast<size_t>(i)] += src[i] * invCh;
-            }
-        }
-        sourcePos += toRead;
-    }
-
-    // BTrack expects 44.1 kHz mono; use one-shot libsamplerate conversion.
-    std::vector<float> resampled;
-    if (std::abs(sourceSampleRate - kAnalysisSampleRate) < 0.001)
-    {
-        resampled = std::move(mono);
-    }
-    else
-    {
-        const double ratio = kAnalysisSampleRate / sourceSampleRate;
-        const size_t outFrames =
-            static_cast<size_t>(std::ceil(static_cast<double>(mono.size()) * ratio)) + 4;
-        resampled.assign(outFrames, 0.0F);
-        SRC_DATA srcData{};
-        srcData.data_in = mono.data();
-        srcData.input_frames = static_cast<long>(mono.size());
-        srcData.data_out = resampled.data();
-        srcData.output_frames = static_cast<long>(outFrames);
-        srcData.src_ratio = ratio;
-        srcData.end_of_input = 1;
-        const int err = src_simple(&srcData, SRC_SINC_BEST_QUALITY, 1);
-        if (err != 0)
-        {
-            silverdaw::log::warn("bpm", juce::String("src_simple failed: ") + src_strerror(err));
-            return result;
-        }
-        resampled.resize(static_cast<size_t>(srcData.output_frames_gen));
-    }
+    const double sourceSampleRate = decoded.sourceSampleRate;
+    // Onset-strength conditioning: keep the kick and snare/hat bands and discard
+    // the mid, where sustained guitar, pad and vocal energy contributes to the
+    // onset function without carrying any beat. Zero phase by construction, so
+    // onset timing - and therefore marker placement - is unchanged; see
+    // PercussiveEmphasis.h. BTrack and the ODF refinement below both run on this.
+    const std::vector<float> resampled = emphasisePercussiveContent(decoded.mono, kAnalysisSampleRate);
 
     // Beat positions stay in source time even after analysis-rate resampling.
     if (timedOut()) return abortTimedOut("resample");
@@ -255,10 +193,87 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
                     int acKept = 0;
                     bpm_detail::scoreGridAgainstBeats(beatTimes, acPeriod, acAnchor, acRms, acKept);
                     // Equal-or-better residual is enough because the baseline period is quantised.
-                    if (acKept >= baselineKept * 0.8 && acRms <= baselineResidual * 1.05)
+                    bool acceptAc = (acKept >= baselineKept * 0.8 && acRms <= baselineResidual * 1.05);
+                    juce::String acceptReason = "residual";
+
+                    if (!acceptAc)
+                    {
+                        // The residual test scores BOTH candidates against BTrack's own
+                        // detected beats, so when the tempo behind those beats is wrong
+                        // the period that generated them wins on its own evidence —
+                        // circular, and exactly the case where the baseline is most
+                        // likely wrong. Break the tie with an estimator that never saw
+                        // those beats.
+                        //
+                        // Restricting this to cases where the beat fit looks weak was
+                        // tried and measured worse: the corpus contains a file whose
+                        // beats are internally consistent (100/100 retained, 20ms
+                        // residual) while its tempo is still 1.7 BPM out. A tidy beat
+                        // sequence is evidence of self-consistency, not of correctness,
+                        // so the quality of the fit is not used to gate arbitration.
+                        //
+                        // Consulted only on a rejection, so an uncontested refinement
+                        // pays nothing. Deliberately fed the RAW decode, not the
+                        // conditioned buffer: an arbiter sharing the other engine's
+                        // front-end would inherit its blind spots and manufacture
+                        // agreement, defeating the independence this depends on.
+                        const auto mini = estimateTempoWithMiniBpm(
+                            decoded.mono, kAnalysisSampleRate, kMiniBpmMinBpm, kMiniBpmMaxBpm,
+                            timedOut);
+
+                        // An abandoned pass is not a second opinion. Leaving it to fall
+                        // through would let a timeout read as "MiniBPM found no tempo"
+                        // and silently keep the baseline the rejection had doubted.
+                        if (mini.abandoned) return abortTimedOut("minibpm arbiter");
+
+                        // A winner that barely beat its own runner-up is an ambiguous
+                        // readout rather than a second opinion, and may overturn nothing.
+                        const bool miniIsDecisive =
+                            mini.candidates.size() < 2 ||
+                            std::abs(mini.candidates[0] - mini.candidates[1]) >
+                                mini.candidates[0] * kArbiterMinCandidateSeparation;
+
+                        if (mini.bpm > 0.0 && derivedBpm > 0.0 && miniIsDecisive)
+                        {
+                            // MiniBPM searches a narrower range than we accept, so bring
+                            // its answer to the baseline's octave before comparing.
+                            double miniAligned = mini.bpm;
+                            for (int i = 0; i < 8 && miniAligned < derivedBpm * 0.71; ++i) miniAligned *= 2.0;
+                            for (int i = 0; i < 8 && miniAligned > derivedBpm * 1.42; ++i) miniAligned /= 2.0;
+
+                            const double toAc = std::abs(miniAligned - acBpm);
+                            const double toBaseline = std::abs(miniAligned - derivedBpm);
+                            // Require the preference to be both close in absolute terms
+                            // and clear by a real margin. The margin is what stops a
+                            // near-tie — where the arbiter is only nominally closer to one
+                            // side — from overturning a baseline that was already right.
+                            if (toAc <= kArbiterMaxAgreementBpm &&
+                                (toBaseline - toAc) >= kArbiterMinPreferenceMarginBpm)
+                            {
+                                acceptAc = true;
+                                acceptReason = "minibpm arbiter";
+                            }
+                            silverdaw::log::info(
+                                "bpm", "minibpm arbiter for " + audioFile.getFileName() + ": mbpm=" +
+                                           juce::String(mini.bpm, 3) + " (aligned " +
+                                           juce::String(miniAligned, 3) + ") baseline=" +
+                                           juce::String(derivedBpm, 3) + " ac=" + juce::String(acBpm, 3) +
+                                           " margin=" + juce::String(toBaseline - toAc, 3) + " -> " +
+                                           (acceptAc ? "prefers autocorr" : "no clear preference"));
+                        }
+                        else
+                        {
+                            silverdaw::log::info("bpm", "minibpm arbiter declined for " +
+                                                            audioFile.getFileName() +
+                                                            " (no decisive second opinion)");
+                        }
+                    }
+
+                    if (acceptAc)
                     {
                         silverdaw::log::info("bpm",
-                                             "autocorr period accepted for " + audioFile.getFileName() + ": " +
+                                             "autocorr period accepted (" + acceptReason + ") for " +
+                                                 audioFile.getFileName() + ": " +
                                                  juce::String(derivedBpm, 4) + " -> " + juce::String(acBpm, 4) +
                                                  " BPM (lag=" + juce::String(bestLag, 2) + " envFrames, residual " +
                                                  juce::String(baselineResidual * 1000.0, 2) + "ms -> " +
@@ -423,10 +438,14 @@ BpmAnalysis BpmDetector::analyse(const juce::File& audioFile, juce::AudioFormatM
             : 0.0;
     const bool poorFit = relResidual > 0.08 || (baselineKept > 0 && keptFraction < 0.6);
     // Tempo drift alone is valid musical material, so require a poor-fit signal too.
-    result.lowConfidence = poorFit && (variable || keptFraction < 0.5);
+    // A truncated decode is flagged regardless of how well the fit came out: the estimate
+    // describes only the part of the file that could be read, so it may simply be wrong
+    // about the rest and the user is entitled to know the number is provisional.
+    result.lowConfidence = (poorFit && (variable || keptFraction < 0.5)) || decoded.truncated;
     silverdaw::log::info("bpm", "estimated " + audioFile.getFileName() + " -> " +
                                     juce::String(derivedBpm, 4) + " BPM" + (variable ? " (variable)" : "") +
                                     (result.lowConfidence ? " (low-confidence)" : "") +
+                                    (decoded.truncated ? " (truncated decode)" : "") +
                                     " anchor=" + juce::String(anchorSec, 4) +
                                     "s beats=" + juce::String(static_cast<int>(result.beatTimesSec.size())) +
                                     " relResidual=" + juce::String(relResidual, 3) +

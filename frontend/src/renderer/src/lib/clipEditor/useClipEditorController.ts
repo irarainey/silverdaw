@@ -82,6 +82,16 @@ export function useClipEditorController(
     // clips are shared by design, so they keep the item-wide anchor.
     phaseClip: () => (editsSingleTimelineClip.value ? timelineClip.value : null)
   })
+
+  // The beat grid the *waveform* shows and snaps to. The source preview draws none:
+  // that window previews the original file and chooses a section of it, and it is the
+  // one mode that carries no Beat grid module, so the grid cannot be corrected from
+  // there. Markers that can be seen but not corrected read as a statement about the
+  // file rather than something the user is meant to work with, so they are left out
+  // entirely rather than shown inert.
+  const visibleBeatGrid = computed(() =>
+    editsExistingClip.value ? beatGrid.resolvedGrid.value : null
+  )
   const {
     draftTempoEnabled,
     draftMode,
@@ -477,7 +487,7 @@ export function useClipEditorController(
   // Watch the resolved values so the markers track the pointer live on both paths,
   // instead of only snapping into place on pointer release.
   watch(
-    [() => beatGrid.resolvedGrid.value?.anchorMs, () => beatGrid.resolvedGrid.value?.bpm],
+    [() => visibleBeatGrid.value?.anchorMs, () => visibleBeatGrid.value?.bpm],
     () => {
       drawWaveform()
     }
@@ -686,7 +696,7 @@ export function useClipEditorController(
     resetHiResRequestKey
   } = useClipEditorWaveform({
     sourceItem: () => sourceItem.value,
-    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
+    sourceBeatGrid: () => visibleBeatGrid.value,
     sourceDurationMs: () => sourceDurationMs.value,
     zoom: () => zoom.value,
     visibleInMs: () => visibleInMs.value,
@@ -753,7 +763,7 @@ export function useClipEditorController(
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     sourceItem: () => sourceItem.value,
-    sourceBeatGrid: () => beatGrid.resolvedGrid.value,
+    sourceBeatGrid: () => visibleBeatGrid.value,
     zoom: () => zoom.value,
     gridAlignActive: () => beatGrid.alignActive.value,
     previewGridAnchorSec: (anchorSec: number) => beatGrid.previewAnchorSec(anchorSec),

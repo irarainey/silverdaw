@@ -35,6 +35,7 @@ import {
   isChannelSplitReadyPayload,
   isChannelSplitFailedPayload,
   isLibraryItemAnalysisPayload,
+  isTempoCorrectionAppliedPayload,
   isMasterLevelPayload,
   isTrackLevelsPayload,
   isPlayheadUpdatePayload,
@@ -158,6 +159,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isSampleSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'LIBRARY_ITEM_ANALYSIS':
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TEMPO_CORRECTION_APPLIED':
+      return isTempoCorrectionAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':
       return isProjectBpmAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'CLIP_WARP_APPLIED':

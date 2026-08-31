@@ -6,6 +6,7 @@
 // is delegated to the caller because it owns the inline-edit lifecycle.
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useLibraryStore, type LibraryItem } from '@/stores/libraryStore'
+import { resolveCorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
 import { reanalyseLibraryItem } from '@/lib/importAudio'
 import { requestStemSeparationForLibraryItem } from '@/lib/stems/stemSeparationFlow'
@@ -18,14 +19,19 @@ export interface LibraryItemActionsDeps {
 
 export interface LibraryItemActions {
   infoItemId: Ref<string | null>
+  /** The item whose BPM the Edit BPM dialog is editing, or null when it is closed. */
+  bpmEditItemId: Ref<string | null>
   editorItemId: Ref<string | null>
   contextMenu: Ref<{ itemId: string; x: number; y: number } | null>
   infoItem: ComputedRef<LibraryItem | null>
+  bpmEditItem: ComputedRef<LibraryItem | null>
   editorItem: ComputedRef<LibraryItem | null>
   contextMenuItem: ComputedRef<LibraryItem | null>
   contextMenuItems: ComputedRef<ClipContextMenuItem[]>
   openItemInfo: (item: LibraryItem) => void
   closeItemInfo: () => void
+  openBpmEditor: (item: LibraryItem) => void
+  closeBpmEditor: () => void
   openItemEditor: (item: LibraryItem) => void
   closeItemEditor: () => void
   openItemScratchEditor: (item: LibraryItem) => void
@@ -47,10 +53,22 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
   }
 
   const infoItemId = ref<string | null>(null)
+  const bpmEditItemId = ref<string | null>(null)
+
+  /**
+   * Whether this item has a tempo that Edit BPM could correct. Shares the dialog's own
+   * test so the menu never offers a command that opens a dialog with nothing to change.
+   */
+  function isCorrectableTempo(item: LibraryItem): boolean {
+    return resolveCorrectableTempoOwner(item, library.byId) !== null
+  }
   const editorItemId = ref<string | null>(null)
   const contextMenu = ref<{ itemId: string; x: number; y: number } | null>(null)
 
   const infoItem = computed(() => (infoItemId.value ? library.byId[infoItemId.value] ?? null : null))
+  const bpmEditItem = computed(() =>
+    bpmEditItemId.value ? library.byId[bpmEditItemId.value] ?? null : null
+  )
   const editorItem = computed(() =>
     editorItemId.value ? library.byId[editorItemId.value] ?? null : null
   )
@@ -65,9 +83,23 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     const items: ClipContextMenuItem[] = [
       { command: 'library.edit', label: item.kind === 'clip' ? 'Open in Editor' : 'Preview' },
       { command: 'library.openScratchEditor', label: 'Open in Scratch Editor' },
-      { command: 'library.info', label: 'Show Information' },
-      { command: 'library.rename', label: 'Rename', separatorAbove: true }
+      { command: 'library.info', label: 'Show Information' }
     ]
+    // Correcting a mis-detected tempo (ADR 0027). The number lives on the library item,
+    // so the library is where it should be reachable — the info dialog held the only
+    // field, which meant reading the wrong number and editing it were different errands.
+    // Offered only where there is a tempo to correct: a one-shot has none by definition,
+    // and an unanalysed file has nothing to correct FROM.
+    if (isCorrectableTempo(item)) {
+      items.push({
+        command: 'library.editBpm',
+        label: 'Edit BPM\u2026',
+        title:
+          'Set the tempo of this file when detection read it wrongly. Beat markers respace ' +
+          'themselves, and no clip, marker or automation point moves.'
+      })
+    }
+    items.push({ command: 'library.rename', label: 'Rename', separatorAbove: true })
     const isFile = item.kind === 'source' || item.kind === 'sample' || item.kind === 'stem'
     if (isFile) {
       items.push({ command: 'library.reanalyse', label: 'Reanalyse File' })
@@ -174,6 +206,15 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     infoItemId.value = null
   }
 
+  function openBpmEditor(item: LibraryItem): void {
+    closeItemContextMenu()
+    bpmEditItemId.value = item.id
+  }
+
+  function closeBpmEditor(): void {
+    bpmEditItemId.value = null
+  }
+
   function openItemEditor(item: LibraryItem): void {
     closeItemContextMenu()
     editorItemId.value = item.id
@@ -213,6 +254,10 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     }
     if (command === 'library.info') {
       openItemInfo(item)
+      return
+    }
+    if (command === 'library.editBpm') {
+      openBpmEditor(item)
       return
     }
     if (command === 'library.rename') {
@@ -273,19 +318,24 @@ export function useLibraryItemActions(deps: LibraryItemActionsDeps): LibraryItem
     if (command === 'library.delete') {
       const removed = library.removeItem(item.id)
       if (removed && infoItemId.value === item.id) closeItemInfo()
+      if (removed && bpmEditItemId.value === item.id) closeBpmEditor()
     }
   }
 
   return {
     infoItemId,
+    bpmEditItemId,
     editorItemId,
     contextMenu,
     infoItem,
+    bpmEditItem,
     editorItem,
     contextMenuItem,
     contextMenuItems,
     openItemInfo,
     closeItemInfo,
+    openBpmEditor,
+    closeBpmEditor,
     openItemEditor,
     closeItemEditor,
     openItemScratchEditor,

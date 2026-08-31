@@ -1681,4 +1681,119 @@ describe('libraryStore', () => {
 
     expect(library.byId[id]!.beatAnchorSec).toBeUndefined()
   })
+
+  // Correcting a mis-detected tempo (ADR 0027). One command carries both tempo facts.
+  // The displayed tempo is optimistic so the new number appears at once, but the store
+  // holds a rollback point so a refusal cannot leave the wrong number on screen.
+  describe('correctItemTempo', () => {
+    function addSource(): string {
+      return useLibraryStore().addItem({
+        filePath: 'C:\\audio\\song.wav',
+        fileName: 'song.wav',
+        durationMs: 268_094,
+        sampleRate: 44_100,
+        channelCount: 2,
+        peaks: new Float32Array([0, 1])
+      })
+    }
+
+    it('sends the item, the tempo and the grid phase, and nothing else', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      sendMock.mockClear()
+
+      expect(library.correctItemTempo(id, 102.76, 0.25)).toBe(true)
+      expect(sendMock).toHaveBeenCalledWith('LIBRARY_ITEM_CORRECT_TEMPO', {
+        itemId: id,
+        bpm: 102.76,
+        beatAnchorSec: 0.25,
+      })
+    })
+
+    it('shows the corrected tempo straight away rather than waiting for the echo', () => {
+      // Leaving the old number on screen for a round-trip reads as the correction having
+      // been ignored. Only the displayed grid moves; no position is guessed at locally.
+      const library = useLibraryStore()
+      const id = addSource()
+
+      library.correctItemTempo(id, 102.76, 0.25)
+
+      expect(library.byId[id]!.bpm).toBe(102.76)
+      expect(library.byId[id]!.beatAnchorSec).toBe(0.25)
+    })
+
+    it('rolls the displayed tempo back when the backend refuses the correction', () => {
+      // The whole point of holding a snapshot: a rejected correction must not leave the
+      // item showing a tempo the backend never accepted.
+      const library = useLibraryStore()
+      const id = addSource()
+      library.setItemManualTempoLocal(id, 98.8, 0.1)
+
+      library.correctItemTempo(id, 102.76, 0.25)
+      expect(library.byId[id]!.bpm).toBe(102.76)
+
+      library.rollbackTempoCorrection(id)
+
+      expect(library.byId[id]!.bpm).toBe(98.8)
+      expect(library.byId[id]!.beatAnchorSec).toBe(0.1)
+    })
+
+    it('rolls back to the last confirmed tempo, not to a correction still in flight', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      library.setItemManualTempoLocal(id, 98.8, 0.1)
+
+      library.correctItemTempo(id, 102.76, 0.25)
+      library.correctItemTempo(id, 110, 0.3)
+      library.rollbackTempoCorrection(id)
+
+      expect(library.byId[id]!.bpm).toBe(98.8)
+    })
+
+    it('keeps the corrected tempo once the backend confirms it', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      library.setItemManualTempoLocal(id, 98.8, 0.1)
+
+      library.correctItemTempo(id, 102.76, 0.25)
+      library.commitTempoCorrection(id)
+      // Nothing is pending, so a stray rollback must not resurrect the wrong number.
+      library.rollbackTempoCorrection(id)
+
+      expect(library.byId[id]!.bpm).toBe(102.76)
+    })
+
+    it('restores the measured musical length a correction discarded', () => {
+      // A correction drops `musicalBeats` because a typed tempo outranks a measurement;
+      // a refusal has to give the measurement back or the item is silently degraded.
+      const library = useLibraryStore()
+      const id = addSource()
+      library.byId[id]!.musicalBeats = 128
+      library.byId[id]!.lowConfidence = true
+
+      library.correctItemTempo(id, 102.76, 0.25)
+      expect(library.byId[id]!.musicalBeats).toBeUndefined()
+
+      library.rollbackTempoCorrection(id)
+
+      expect(library.byId[id]!.musicalBeats).toBe(128)
+      expect(library.byId[id]!.lowConfidence).toBe(true)
+    })
+
+    it('refuses a tempo outside 20-300 without sending or changing anything', () => {
+      const library = useLibraryStore()
+      const id = addSource()
+      library.setItemManualTempoLocal(id, 98.8, 0.1)
+      sendMock.mockClear()
+
+      expect(library.correctItemTempo(id, 5, 0)).toBe(false)
+      expect(library.correctItemTempo(id, 4000, 0)).toBe(false)
+      expect(library.correctItemTempo(id, Number.NaN, 0)).toBe(false)
+      expect(library.correctItemTempo(id, 120, Number.NaN)).toBe(false)
+      expect(library.correctItemTempo('no-such-item', 120, 0)).toBe(false)
+      expect(sendMock).not.toHaveBeenCalled()
+      // Rejected before the optimistic write, so there is nothing to unpick.
+      expect(library.byId[id]!.bpm).toBe(98.8)
+    })
+  })
 })

@@ -1,8 +1,10 @@
 #include "ProjectState.h"
+#include "Log.h"
 
 #include <cmath>
 #include <algorithm>
 #include <functional>
+#include <set>
 
 namespace silverdaw
 {
@@ -356,6 +358,7 @@ void ProjectState::forEachWarpClip(const std::function<void(const WarpClipInfo&)
             info.cents = static_cast<double>(clip.getProperty(kCents, 0.0));
             info.warpMode = clip.getProperty(kWarpMode, "rhythmic").toString();
             info.pendingAutoWarp = static_cast<bool>(clip.getProperty(kPendingAutoWarp, false));
+            info.durationMs = static_cast<double>(clip.getProperty(kDurationMs, 0.0));
             visitor(info);
         }
     }
@@ -425,16 +428,10 @@ ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juc
     // then drew it at native length, hid the WARP badge, and spaced its beat markers to
     // the wrong grid. Judge it on the drift the ratio produces across the clip instead.
     // Mirrored by the renderer's `isWarpActive` (ADR 0024).
-    const double stretchedMs = out.durationMs / out.tempoRatio;
-    out.warpActive = out.durationMs > 0.0
-                         ? std::abs(stretchedMs - out.durationMs) >= kWarpNegligibleDriftMs
-                         // Length not known yet (a clip warped before its audio landed):
-                         // fall back to the ratio, matching the renderer's "can't tell, so
-                         // treat it as warped" rather than reporting a stretch as inactive.
-                         : std::abs(out.tempoRatio - 1.0) > 1.0e-9;
+    out.warpActive = warpChangesTiming(out.durationMs, out.tempoRatio);
     if (out.warpActive)
     {
-        out.durationMs = stretchedMs;
+        out.durationMs = out.durationMs / out.tempoRatio;
     }
     return out;
 }
@@ -538,57 +535,86 @@ ProjectState::getLibraryItemPreparationInfo(const juce::String& libraryItemId) c
 // processes must never derive their own version: when they drifted, a clip could be
 // drawn stretched while the engine played it unwarped.
 //
-// Two rules, in order: a one-shot has no tempo at all (inherited or otherwise), then
-// own BPM, falling back to the item it was derived from.
+// Delegates to `resolveTempoOwner` so the rules live in exactly one place; this
+// overload is the hot, "what tempo?" question that playback and drawing ask.
 double ProjectState::getLibraryItemBpm(const juce::String& itemId) const
 {
+    return resolveTempoOwner(itemId).bpm;
+}
+
+// Resolves ADR 0024's rules in order, and records which one answered. See the header
+// for why the owner and the reason are needed alongside the value.
+ProjectState::TempoOwner ProjectState::resolveTempoOwner(const juce::String& itemId) const
+{
     const auto library = root.getChildWithName(kLibrary);
-    if (!library.isValid()) return 0.0;
-    juce::String sourceItemId;
-    bool foundItem = false;
-    for (int i = 0; i < library.getNumChildren(); ++i)
+    if (!library.isValid()) return {};
+
+    // A chain is normally one or two links (import -> saved clip -> sample), but a
+    // corrupt or hand-edited project could close it into a loop. Walking a cycle here
+    // would hang the message thread, so every visited id is remembered.
+    std::set<juce::String> visited;
+    juce::String currentId = itemId;
+    bool isOriginalItem = true;
+
+    while (currentId.isNotEmpty())
     {
-        const auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
+        if (!visited.insert(currentId).second)
         {
-            foundItem = true;
-            // Answer "is this a one-shot?" before resolving any tempo, and answer it
-            // the way the renderer's `libraryItemIsSimple` does — by inheritance. Left
-            // to the fallback below, an unclassified cut of a one-shot that carries a
-            // detected BPM of its own would resolve to that BPM here while the renderer
-            // resolved to nothing: the clip played stretched and drawn native, which is
-            // exactly the split ADR 0024 exists to prevent.
-            if (isOneShotItemInherited(item, library)) return 0.0;
-            // A recorded musical length is a measurement of the audio itself ("this
-            // file is exactly N beats"), so it outranks any tempo opinion — including
-            // a reanalysis, whose few seconds of audio are exactly what makes short
-            // saved samples mis-detect. Keeping the grid and the warp on the same
-            // number is what stops a clip being drawn to one tempo and played at
-            // another (ADR 0024): a single resolver, refined, not a second source.
-            if (const auto fromLength = musicalLengthBpm(item); fromLength > 0.0) return fromLength;
-            const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0));
-            if (bpm > 0.0) return bpm;
-            sourceItemId = item.getProperty(kSourceItemId, {}).toString();
-            break;
+            silverdaw::log::warn("project",
+                                 "resolveTempoOwner found a derivation cycle at itemId=" + currentId
+                                     + " — treating the item as having no tempo");
+            return {};
         }
-    }
-    if (!foundItem) return 0.0;
-    if (sourceItemId.isNotEmpty())
-    {
+
+        juce::ValueTree item;
         for (int i = 0; i < library.getNumChildren(); ++i)
         {
-            const auto item = library.getChild(i);
-            if (item.getProperty(kId).toString() == sourceItemId)
+            const auto candidate = library.getChild(i);
+            if (candidate.getProperty(kId).toString() == currentId)
             {
-                // The item itself was already judged above; the source is checked
-                // again here because it may be explicitly "music" over a one-shot
-                // parent of its own.
-                if (isOneShotItemInherited(item, library)) return 0.0;
-                return static_cast<double>(item.getProperty(kBpm, 0.0));
+                item = candidate;
+                break;
             }
         }
+        // A broken link is not an error: the chain simply has no owner to reach.
+        if (!item.isValid()) return {};
+
+        // Answer "is this a one-shot?" before resolving any tempo, and answer it the way
+        // the renderer's `libraryItemIsSimple` does — by inheritance. Left to the
+        // fallback below, an unclassified cut of a one-shot that carries a detected BPM
+        // of its own would resolve to that BPM here while the renderer resolved to
+        // nothing: the clip played stretched and drawn native, which is exactly the split
+        // ADR 0024 exists to prevent. A one-shot anywhere in the chain ends the walk,
+        // because an ancestor with no tempo has none to pass down.
+        if (isOneShotItemInherited(item, library)) return {{}, TempoReason::oneShot, 0.0};
+
+        // A recorded musical length is a measurement of the audio itself ("this file is
+        // exactly N beats"), so it outranks any tempo opinion — including a reanalysis,
+        // whose few seconds of audio are exactly what makes short saved samples
+        // mis-detect. Keeping the grid and the warp on the same number is what stops a
+        // clip being drawn to one tempo and played at another (ADR 0024).
+        //
+        // Only the item the caller asked about may answer this way. An ancestor's
+        // musical length describes the ancestor's file, not this one, and the pre-existing
+        // single-hop lookup likewise read only the parent's raw `bpm`.
+        if (isOriginalItem)
+        {
+            if (const auto fromLength = musicalLengthBpm(item); fromLength > 0.0)
+            {
+                return {currentId, TempoReason::musicalLength, fromLength};
+            }
+        }
+
+        if (const auto bpm = static_cast<double>(item.getProperty(kBpm, 0.0)); bpm > 0.0)
+        {
+            return {currentId, isOriginalItem ? TempoReason::ownBpm : TempoReason::inheritedBpm, bpm};
+        }
+
+        currentId = item.getProperty(kSourceItemId, {}).toString();
+        isOriginalItem = false;
     }
-    return 0.0;
+
+    return {};
 }
 
 bool ProjectState::setClipWarp(const juce::String& clipId,
@@ -752,6 +778,30 @@ juce::Array<juce::var> ProjectState::getClipEnvelope(const juce::String& clipId)
     const auto clip = findClip(clipId);
     if (!clip.isValid()) return {};
     return readEnvelopeArray(clip, kEnvelopePoints);
+}
+
+// Counted from effective (warp-scaled) length, not stored duration: a correction changes
+// exactly that scaling, so a clip can end past the project length without any stored
+// property of it having moved. The project length is independent and deliberately not
+// auto-updated, so this is reported rather than fixed (ADR 0027).
+int ProjectState::countClipsEndingAfter(double lengthMs) const
+{
+    if (lengthMs <= 0.0) return 0;
+    int count = 0;
+    for (int t = 0; t < root.getNumChildren(); ++t)
+    {
+        const auto track = root.getChild(t);
+        if (!track.hasType(kTrack)) continue;
+        for (int c = 0; c < track.getNumChildren(); ++c)
+        {
+            const auto clip = track.getChild(c);
+            if (!clip.hasType(kClip)) continue;
+            const auto clipId = clip.getProperty(kId).toString();
+            const double startMs = static_cast<double>(clip.getProperty(kOffsetMs, 0.0));
+            if (startMs + getClipEffectiveTiming(clipId).durationMs > lengthMs) ++count;
+        }
+    }
+    return count;
 }
 
 std::unordered_map<juce::String, double> ProjectState::snapshotClipFootprints() const

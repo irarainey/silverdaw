@@ -2,6 +2,11 @@
 
 #include <juce_core/juce_core.h>
 
+namespace juce
+{
+class ThreadPool;
+}
+
 namespace silverdaw
 {
 
@@ -13,7 +18,8 @@ class DecodedCache;
 // Clip Editor preview is an exclusive audition path, separate from transport.
 
 void handlePreviewLoad(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
-                       BridgeServer& bridge, const DecodedCache& decodedCache);
+                       BridgeServer& bridge, const DecodedCache& decodedCache,
+                       juce::ThreadPool& peakPool);
 void handlePreviewUnload(AudioEngine& engine, BridgeServer& bridge);
 void handlePreviewPlay(AudioEngine& engine, BridgeServer& bridge);
 void handlePreviewPause(AudioEngine& engine, BridgeServer& bridge);

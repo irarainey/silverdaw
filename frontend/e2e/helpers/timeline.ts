@@ -13,6 +13,9 @@ import { type Page } from '@playwright/test'
 /** Height of the ruler band in CSS px (`lib/timeline/constants.ts`). */
 const RULER_HEIGHT = 28
 
+/** Height of a track lane in CSS px (`lib/timeline/constants.ts`). */
+const TRACK_HEIGHT = 120
+
 /**
  * The divider hit area is 6 px wide and straddles the header seam, so its left
  * edge sits 3 px before the first content pixel (`TimelineView.vue`).
@@ -55,4 +58,16 @@ export async function dragRulerRange(page: Page, fromPx: number, toPx: number): 
   // threshold — a single jump would be taken for a click and seek instead.
   await page.mouse.move(firstContentX + toPx, rulerY, { steps: 20 })
   await page.mouse.up()
+}
+
+/**
+ * Opens the Clip Editor on a clip in the first track by double-clicking it, the
+ * gesture a user uses. The clip has no DOM, so the point is addressed the same way as
+ * the ruler gestures above — from the divider box — and the caller asserts on the
+ * dialog that appears rather than on anything read back from the canvas.
+ */
+export async function openClipEditorOnFirstTrack(page: Page, offsetPx: number): Promise<void> {
+  const { firstContentX, rulerY } = await rulerGeometry(page)
+  const laneY = rulerY - RULER_HEIGHT / 2 + RULER_HEIGHT + TRACK_HEIGHT / 2
+  await page.mouse.dblclick(firstContentX + offsetPx, laneY)
 }

@@ -134,7 +134,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.7.1" } }
+{ "type": "READY", "payload": { "version": "1.8.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -2136,7 +2136,7 @@ Still open, and deliberately so: plugin-parameter automation, which needs a
 dynamic replacement for the fixed `AutomationParam` enum and is a decision of
 its own.
 
-### 1.7.1 - Clip Timing & Beat-Grid Correctness *(current release)*
+### 1.7.1 - Clip Timing & Beat-Grid Correctness *(released)*
 
 **Goal:** make a clip's window arithmetic exact, so clips that should be identical
 are identical, and make correcting a clip's beat grid a local edit that moves neither
@@ -2171,6 +2171,126 @@ the clip nor its siblings.
    same way dragging does (`clipAnchorOffsetMs`).
 5. [x] **Tempo detection on imported MP3s.** Some files failed to decode to the WAV
    playback cache and so were left with no tempo, taking their stems with them.
+
+### 1.8.0 - Correcting a Mis-Detected Tempo *(current release)*
+
+**Goal:** give the user a way to say "the detected BPM is simply wrong" and have
+the beat grid and the clips using that source follow, without the arrangement
+rescaling underneath them. Decision and rejected alternatives: ADR 0027.
+
+Today a wrong detection lands in two places at once, because
+`maybeSeedProjectBpmFor` copies the first musical clip's tempo into the project
+tempo. Neither existing control corrects it: the project tempo box rescales the
+whole arrangement and re-warps the clip, and the Clip Editor's tempo field is
+reachable only from a clip already on the timeline — by which point the project
+has been seeded from the wrong number.
+
+1. [x] **Resolve a tempo owner, not an item.** A shared, cycle-safe resolution in
+   both processes returning an owner item id and a reason (`musicalLength` /
+   `ownBpm` / `inheritedBpm`). Neither `libraryItemSourceBpm` nor
+   `ProjectState::getLibraryItemBpm` walks a chain today — both stop at the direct
+   source and read its raw BPM — so this is a prerequisite, not an optimisation.
+2. [x] **One `LIBRARY_ITEM_CORRECT_TEMPO` command.** A single backend command that
+   validates once, writes the source tempo, reconciles every affected clip ratio,
+   envelope and transition from the final state, and broadcasts one consistent
+   result. Not two messages in an undo group: grouping is transaction coalescing,
+   not atomic validation.
+3. [x] **Never move a persisted absolute anchor.** No clip start, marker,
+   automation point, timeline selection or playhead moves. Tempo-derived and
+   clip-local geometry does: clip envelopes scale with their footprint via
+   `retimeClipEnvelopesForFootprintChange`, and transitions reconcile inside the
+   same undo transaction.
+4. [x] **Never touch the project tempo.** Setting it from the first clip dropped
+   is merely a convenience, with no linkage and no history — nothing records that
+   it happened and the item it came from may since have left the project. The
+   number is the user's, a correction to a file is not evidence about it, and the
+   transport box remains the one place it changes. Correcting a file in the
+   library *before* placing the first clip means the seed reads the right number
+   and there is no second step. No provenance is persisted, and nothing about the
+   project tempo appears in the payload (ADR 0027 §Rejected alternatives).
+5. [x] **Warn before discarding a recorded musical length.** When the resolution
+   reason is `musicalLength`, correcting the tempo drops `musicalBeats` and can
+   change the item's bar length (ADR 0024 rule 2). Say so first.
+6. [x] **Report the outcome.** Clips updated; clips excluded because their ratio
+   is pinned or their warp is off; transitions invalidated; new overlaps or gaps;
+   any clip now past the persisted project length.
+7. [x] **Register the new type.** `isUndoableEnvelopeType` and
+   `prettyTransactionName` in `UndoCommands.cpp`, and
+   `transitionGeometryMayHaveChanged` in `TransitionCommands.cpp` — the last is
+   what routes reconciliation and `syncClipEdgeFades`.
+8. [x] **Make it findable, and make it a transaction.** The correction is reached
+   from the library context menu's **Edit BPM…**, from the **Edit** button beside
+   the BPM on the item's information dialog, and from the Clip Editor's Beat grid
+   on a timeline clip. It opens `EditBpmDialog.vue`, whose only job is that one
+   number and whose **Cancel** / **Save** footer makes plain that nothing is
+   written until Save. The information dialog stays read-only: it states what a
+   file is, and editing is a transaction. The Clip Editor opened on a *library
+   source* carries no grid editor — that window chooses a section to save and has
+   no Save of its own to commit a file-level edit.
+
+Deliberately out of scope, each its own decision: flagging a `lowConfidence`
+detection at the moment it seeds the project tempo, which is the cheapest place
+to catch this error but a detection-confidence question in its own right; and a
+named "override this derived item only" action, which reintroduces the
+two-concept burden the single corrective action exists to avoid.
+
+**Detection accuracy (ADR 0028).** Correcting a tempo by hand is the safety net;
+this is about needing it less often. Decision and rejected alternatives: ADR 0028.
+
+9. [x] **Condition the audio before beat tracking.** A zero-phase percussive
+   emphasis keeps the kick and snare/hat bands and discards the mid, where
+   sustained guitar, pad and vocal energy feeds the onset function without
+   carrying any beat. Zero phase by construction, so marker timing is unchanged.
+10. [x] **Settle a disputed refinement with an independent engine.** MiniBPM is
+    included in the repository and consulted *only* when the residual gate rejects the
+    autocorrelation candidate — the case where the existing test is circular,
+    because it scores candidates against beats the suspect tempo produced. Fed
+    the raw decode, never the conditioned buffer, or the two engines would share
+    blind spots and manufacture agreement.
+11. [x] **Fit the grid to onset starts, not onset-function peaks.** The peak
+    marks the fastest spectral change, which arrives 0.7 ms after a click but
+    3.0–3.6 ms after a drum or pad. Because the bias depends on the material, no
+    single group-delay constant can correct it; `estimateOnsetStartFrames`
+    backtracks to a proportion of each onset's own height instead. Mean absolute
+    phase error 2.63 ms → 0.57 ms.
+12. [x] **Honour the analysis timeout in every stage.** MiniBPM exposes no abort
+    callback, so the deadline is polled between the blocks fed to it and an
+    abandoned pass is reported as a timeout rather than as "no tempo found".
+13. [x] **Treat a partly-read file as unverified.** A truncated decode marks the
+    tempo low confidence however well the fit scored: the estimate describes only
+    the part of the file that could be read, so the number is provisional and the
+    user is told so rather than being shown it as fact.
+
+Known limits, recorded rather than resolved: the arbiter's endorsement is not
+revalidated after the later ODF refit, which may still move the tempo by up to
+5%; and the 0.75 backtrack fraction is calibrated on twelve synthetic files,
+because the real tracks carry no beat-phase ground truth.
+
+**Reading the source audio.** Detection and correction both assume the file was
+read correctly in the first place. One library MP3 that played fine elsewhere
+could not be played, auditioned or analysed at all, and said so only in the log.
+
+14. [x] **Decode MP3 with LAME, not JUCE.** JUCE's MP3 reader latched onto the
+    wrong frame size on that file and reported 226 s of a 301 s track, failing
+    every read while still emitting samples of magnitude 20 — so playback,
+    waveform and tempo all died together. Measured over 25 library files, the
+    bundled `lame.exe` decoded 25/25 in full at the same speed (about 330 ms for
+    a five-minute track), where JUCE fully failed one and silently truncated 18
+    more under the 98% "short tail" tolerance. JUCE remains the fallback if LAME
+    is missing or fails.
+15. [x] **Audition through the cache.** The Files tab opened an uncached MP3
+    directly with the same broken reader, so fixing the cache alone would have
+    left preview still silent. It now decodes on a worker first, and a
+    superseded request is abandoned rather than allowed to steal playback.
+16. [x] **Make `lame.exe` a required build dependency.** It is what both MP3
+    import and MP3 export depend on, so CMake fails at configure time rather
+    than producing a binary that silently falls back to the broken reader.
+
+A consequence worth knowing: LAME strips the MP3 encoder delay (typically 529
+samples) that JUCE left in place, so decoded MP3 audio now starts about 12 ms
+earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
+its markers, but a beat anchor adjusted by hand in a project saved before this
+sits 12 ms off and wants correcting once.
 
 ### Phase 1 — Backend Foundation & Bridge
 

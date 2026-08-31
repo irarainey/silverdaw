@@ -12,7 +12,10 @@
 #include <juce_events/juce_events.h>
 
 #include <cmath>
+#include <cstdint>
+#include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 
 namespace silverdaw
@@ -23,6 +26,36 @@ namespace
 // Dedupe guard: at most one in-flight analysis job per library item id.
 std::mutex bpmJobsMutex;
 std::set<juce::String> bpmJobsInFlight;
+
+// Tempo authority generation, per library item id. Bumped whenever the user sets an
+// item's tempo by hand. A detection job captures the generation it started under and
+// discards its result if the generation has moved on, so a slow analysis cannot
+// overwrite a correction the user made while it was running (ADR 0027).
+//
+// This matters more than an ordinary race because the automatic path writes DERIVED,
+// non-dirtying, non-undoable metadata: a correction lost this way could not be
+// recovered with undo, because nothing was ever pushed onto the undo stack. The
+// no-tempo-found arm is the sharpest case of all, since it clears the item's analysis
+// outright and would leave the item with no tempo at all.
+std::map<juce::String, std::uint64_t> tempoAuthorityGenerations;
+
+// Reads the item's current tempo authority generation. Absent means zero: an item
+// nobody has corrected is at generation 0, and a job that started before any
+// correction existed compares equal.
+std::uint64_t currentTempoGeneration(const juce::String& itemId)
+{
+    std::scoped_lock lock(bpmJobsMutex);
+    const auto it = tempoAuthorityGenerations.find(itemId);
+    return it == tempoAuthorityGenerations.end() ? 0 : it->second;
+}
+// Records that the user has taken authority over this item's tempo, invalidating any
+// detection already in flight for it.
+void bumpTempoGeneration(const juce::String& itemId)
+{
+    if (itemId.isEmpty()) return;
+    std::scoped_lock lock(bpmJobsMutex);
+    ++tempoAuthorityGenerations[itemId];
+}
 
 // Build a rigid metronome grid phase-locked to `beatAnchorSec`, spanning the
 // item's window [0, durationSec]. The renderer derives marker positions from
@@ -82,6 +115,73 @@ std::unique_ptr<juce::DynamicObject> buildClipWarpAppliedPayload(ProjectState& p
     obj->setProperty("effectiveTempoRatio", timing.tempoRatio);
     obj->setProperty("effectiveWarpActive", timing.warpActive);
     return obj;
+}
+
+ClipTempoRederiveReport rederiveClipsForTempoOwner(const juce::String& ownerItemId,
+                                                  AudioEngine& engine, ProjectState& projectState,
+                                                  BridgeServer& bridge)
+{
+    ClipTempoRederiveReport report;
+    const double projectBpm = projectState.getBpm();
+    if (projectBpm <= 0.0 || ownerItemId.isEmpty()) return report;
+
+    projectState.forEachWarpClip(
+        [&](const silverdaw::ProjectState::WarpClipInfo& info)
+        {
+            // A clip is affected when the tempo it follows is OWNED by the item that
+            // just changed — which is not the same as being cut from it. A derived item
+            // holding its own BPM, or its own recorded musical length, owns its tempo
+            // and is unmoved by a re-detection on its parent; matching it here would
+            // recompute an unchanged ratio and broadcast a no-op. Matching by owner also
+            // reaches down a chain of any depth, where the previous "the item, or one
+            // direct source" test stopped at the first hop and left a clip cut from a
+            // stem behind (ADR 0027).
+            // One resolution per clip: `getLibraryItemBpm` is itself a `resolveTempoOwner`
+            // call, so asking it separately walked the same derivation chain twice.
+            const auto clipOwner = projectState.resolveTempoOwner(info.libraryItemId);
+            if (clipOwner.ownerItemId != ownerItemId) return;
+
+            // A pinned ratio is an explicit user choice about this clip, so it is left
+            // alone — an exclusion the caller reports, not a failure.
+            if (info.tempoRatioPinned)
+            {
+                ++report.clipsPinnedExcluded;
+                return;
+            }
+            // The resolver's own answer, never a local derivation: a recorded musical
+            // length still outranks whatever tempo was just written (ADR 0024).
+            const double sourceBpm = clipOwner.bpm;
+            if (sourceBpm <= 0.0) return;
+            const double ratio = projectBpm / sourceBpm;
+
+            if (info.pendingAutoWarp)
+            {
+                projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
+                                         /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
+                                         std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
+                engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
+                                   std::nullopt, std::nullopt);
+            }
+            else if (info.warpEnabled)
+            {
+                engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
+                                   info.cents);
+            }
+            else
+            {
+                // Warp is off by the user's own earlier choice. The clip plays dry, so
+                // its ratio is not re-derived; the caller says so rather than silently
+                // leaving the clip under a grid it no longer matches.
+                ++report.clipsUnwarpedExcluded;
+                return;
+            }
+
+            ++report.clipsUpdated;
+            auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
+            bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
+        });
+
+    return report;
 }
 
 void maybeSeedProjectBpmFor(const juce::String& itemId, ProjectState& projectState, BridgeServer& bridge)
@@ -206,17 +306,40 @@ namespace
 // Applies analysis fields to a library item, broadcasts LIBRARY_ITEM_ANALYSIS,
 // performs late auto-warp for the item's pending clips, and seeds project BPM.
 // Runs on the message thread. Returns false if the item vanished before applying.
+//
+// `allowProjectBpmSeeding` is false for a tempo correction: seeding would move the
+// project tempo as a side effect of fixing a source tempo, which ADR 0027 requires to be
+// the user's explicit answer and never an inference. `rederiveReport`, when given,
+// receives what the shared re-derive pass did so the caller can report it.
 bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
                                    const std::vector<double>& beats, double beatAnchorSec,
                                    bool variableTempo, bool lowConfidence,
                                    const juce::String& cachedPath, AudioEngine& engine,
                                    ProjectState& projectState, BridgeServer& bridge,
-                                   juce::UndoManager* undo = nullptr)
+                                   juce::UndoManager* undo = nullptr,
+                                   bool allowProjectBpmSeeding = true,
+                                   ClipTempoRederiveReport* rederiveReport = nullptr)
 {
+    // Two things below dirty the project without the user doing anything: the late
+    // auto-warp of clips dropped before detection finished (inside
+    // `rederiveClipsForTempoOwner`) and the project-tempo seed. Both are real persisted
+    // edits, so they must dirty — but they land seconds after the drop that started
+    // them, so from the user's seat the unsaved-changes marker returns on its own, and
+    // can do so after a save. Attribute them so the renderer can say what happened.
+    // The manual tempo path (`undo != nullptr`) is deliberately excluded: that one is a
+    // user edit and needs no explanation.
+    std::optional<ProjectState::BackgroundDirtyScope> backgroundDirty;
+    if (undo == nullptr) backgroundDirty.emplace(projectState);
+
     if (undo != nullptr)
     {
         // User-driven manual tempo: an undoable, dirtying edit (variable /
         // low-confidence flags are always cleared for a hand-set grid).
+        //
+        // Claim tempo authority BEFORE writing, so a detection job that completes
+        // between here and the end of this function still sees a newer generation and
+        // discards itself rather than overwriting what we are about to store.
+        bumpTempoGeneration(itemId);
         if (!projectState.setLibraryItemManualTempo(itemId, bpm, beats, beatAnchorSec))
         {
             silverdaw::log::warn("bpmjob", "library item " + itemId + " gone before manual tempo applied");
@@ -278,47 +401,10 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
     // off the project grid by exactly the tempo change, the clip keeps its old drawn
     // width, and playback keeps the old stretch. A pinned ratio is explicit user intent
     // and is never touched.
-    const double projectBpm = projectState.getBpm();
-    if (projectBpm > 0.0)
-    {
-        projectState.forEachWarpClip(
-            [&](const silverdaw::ProjectState::WarpClipInfo& info)
-            {
-                // Clips on this item, plus clips on items that borrow its tempo (the
-                // resolver falls back to the item something was derived from), so a
-                // stem that carries no BPM of its own moves with its source.
-                if (info.libraryItemId != itemId
-                    && projectState.getLibraryItemSourceItemId(info.libraryItemId) != itemId)
-                    return;
-                if (info.tempoRatioPinned) return;
-                // Always through the resolver, never a local derivation: a recorded
-                // musical length still outranks whatever this analysis detected (ADR 0024).
-                const double sourceBpm = projectState.getLibraryItemBpm(info.libraryItemId);
-                if (sourceBpm <= 0.0) return;
-                const double ratio = projectBpm / sourceBpm;
-                if (info.pendingAutoWarp)
-                {
-                    projectState.setClipWarp(info.clipId, /*warpEnabled=*/true, juce::String("rhythmic"),
-                                             /*tempoRatio=*/std::nullopt, /*tempoRatioClear=*/false,
-                                             std::nullopt, std::nullopt, /*pendingAutoWarp=*/false);
-                    engine.setClipWarp(info.clipId, true, juce::String("rhythmic"), ratio,
-                                       std::nullopt, std::nullopt);
-                }
-                else if (info.warpEnabled)
-                {
-                    engine.setClipWarp(info.clipId, true, info.warpMode, ratio, info.semitones,
-                                       info.cents);
-                }
-                else
-                {
-                    return;
-                }
-                auto wp = buildClipWarpAppliedPayload(projectState, info.clipId);
-                bridge.broadcast("CLIP_WARP_APPLIED", juce::var(wp.release()));
-            });
-    }
+    const auto report = rederiveClipsForTempoOwner(itemId, engine, projectState, bridge);
+    if (rederiveReport != nullptr) *rederiveReport = report;
 
-    maybeSeedProjectBpmFor(itemId, projectState, bridge);
+    if (allowProjectBpmSeeding) maybeSeedProjectBpmFor(itemId, projectState, bridge);
     // Keep the monitoring metronome in time if this analysis just (re)seeded the project tempo.
     engine.setMetronomeBpm(projectState.getBpm());
     syncBeatRepeatRegions(engine, projectState);
@@ -326,10 +412,14 @@ bool applyAndBroadcastItemAnalysis(const juce::String& itemId, double bpm,
 }
 
 // Worker analysis must marshal ValueTree writes and broadcasts to the message thread.
+//
+// `startGeneration` is the item's tempo authority generation at the moment this job was
+// ENQUEUED, not when it began running. Capturing it at enqueue is what makes a
+// correction win even while the job is still sitting in the pool queue.
 void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
                      AudioEngine& engine, ProjectState& projectState,
                      BridgeServer& bridge, const DecodedCache& decodedCache,
-                     bool recreateDecodedCache = false)
+                     std::uint64_t startGeneration, bool recreateDecodedCache = false)
 {
     silverdaw::log::info("bpmjob", "start itemId=" + itemId + " file=" + filePath.getFileName());
 
@@ -368,8 +458,21 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
         // clip adds reuse the WAV. `timedOut` tells the renderer to toast so the
         // user knows they can reanalyse.
         juce::MessageManager::callAsync(
-            [itemId, cachedPath, didTimeOut, &projectState, &bridge]
+            [itemId, cachedPath, didTimeOut, startGeneration, &projectState, &bridge]
             {
+                // The sharpest case of a superseded result: clearing the analysis of an
+                // item the user has since given a tempo by hand would leave it with no
+                // tempo at all, and no undo entry to get it back. Still publish the
+                // playback path — the decoded WAV is a fact about the file, not about
+                // its tempo, and the import UI is waiting on it.
+                if (tempoDetectionResultIsStale(itemId, startGeneration))
+                {
+                    silverdaw::log::info("bpmjob", "discarded empty analysis for itemId=" + itemId
+                                                       + " — tempo was set by hand while detecting");
+                    if (cachedPath.isNotEmpty())
+                        projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
+                    return;
+                }
                 projectState.clearLibraryItemAnalysis(itemId);
                 if (cachedPath.isNotEmpty())
                     projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
@@ -390,12 +493,25 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
         return;
     }
     juce::MessageManager::callAsync(
-        [itemId, analysis, cachedPath, &projectState, &bridge, &engine]
+        [itemId, analysis, cachedPath, startGeneration, &projectState, &bridge, &engine]
         {
-            applyAndBroadcastItemAnalysis(itemId, analysis.bpm, analysis.beatTimesSec,
-                                          analysis.beatAnchorSec, analysis.variableTempo,
-                                          analysis.lowConfidence, cachedPath, engine, projectState,
-                                          bridge);
+            // A tempo the user set by hand while this job was running outranks whatever
+            // was detected. The automatic path writes derived, non-undoable metadata, so
+            // letting it land would discard the correction with no way to undo it.
+            if (tempoDetectionResultIsStale(itemId, startGeneration))
+            {
+                silverdaw::log::info("bpmjob", "discarded detected bpm for itemId=" + itemId
+                                                   + " — tempo was set by hand while detecting");
+                if (cachedPath.isNotEmpty())
+                    projectState.setLibraryItemPlaybackPath(itemId, cachedPath);
+            }
+            else
+            {
+                applyAndBroadcastItemAnalysis(itemId, analysis.bpm, analysis.beatTimesSec,
+                                              analysis.beatAnchorSec, analysis.variableTempo,
+                                              analysis.lowConfidence, cachedPath, engine, projectState,
+                                              bridge);
+            }
             {
                 std::scoped_lock lock(bpmJobsMutex);
                 bpmJobsInFlight.erase(itemId);
@@ -404,13 +520,15 @@ void runBpmDetection(const juce::String& itemId, const juce::File& filePath,
 }
 } // namespace
 
-void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
-                      AudioEngine& engine, ProjectState& projectState, BridgeServer& bridge)
+ClipTempoRederiveReport applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorSec,
+                                        AudioEngine& engine, ProjectState& projectState,
+                                        BridgeServer& bridge, bool allowProjectBpmSeeding)
 {
+    ClipTempoRederiveReport report;
     if (bpm <= 0.0)
     {
         silverdaw::log::warn("bpmjob", "applyManualTempo ignored non-positive bpm for itemId=" + itemId);
-        return;
+        return report;
     }
 
     // Build a rigid metronome grid from the anchor across the source duration so
@@ -425,7 +543,9 @@ void applyManualTempo(const juce::String& itemId, double bpm, double beatAnchorS
 
     applyAndBroadcastItemAnalysis(itemId, bpm, beats, beatAnchorSec, /*variableTempo=*/false,
                                   /*lowConfidence=*/false, /*cachedPath=*/juce::String{}, engine,
-                                  projectState, bridge, &projectState.getUndoManager());
+                                  projectState, bridge, &projectState.getUndoManager(),
+                                  allowProjectBpmSeeding, &report);
+    return report;
 }
 
 void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, ProjectState& projectState,
@@ -455,6 +575,7 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
                                            + " — inherited tempo from " + sourceItemId);
         return;
     }
+    std::uint64_t startGeneration = 0;
     {
         std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
@@ -463,6 +584,11 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
             return;
         }
         bpmJobsInFlight.insert(itemId);
+        // Read under the same lock as the in-flight claim so a correction landing
+        // between the two cannot be missed. Read directly rather than through
+        // `currentTempoGeneration`, which takes this mutex itself.
+        const auto it = tempoAuthorityGenerations.find(itemId);
+        startGeneration = it == tempoAuthorityGenerations.end() ? 0 : it->second;
     }
     // Detection must run on decoded PCM. Compressed non-native sources (.m4a /
     // .aac) can't be read by the backend's format manager; the renderer decodes
@@ -472,8 +598,9 @@ void ensureBpmDetection(const juce::String& filePath, AudioEngine& engine, Proje
     // mirroring what LIBRARY_REANALYSE already does.
     const juce::String analysisPath = resolveEnginePlaybackPath(filePath, projectState, decodedCache);
     peakPool.addJob(
-        [itemId, file = juce::File(analysisPath), &engine, &projectState, &bridge, &decodedCache]
-        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache); });
+        [itemId, file = juce::File(analysisPath), startGeneration, &engine, &projectState, &bridge,
+         &decodedCache]
+        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache, startGeneration); });
 }
 
 int recordMusicalLength(const juce::String& itemId, double sourceBpm, double windowDurationMs,
@@ -604,6 +731,7 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
                               const DecodedCache& decodedCache)
 {
     if (itemId.isEmpty() || filePath.isEmpty()) return;
+    std::uint64_t startGeneration = 0;
     {
         std::scoped_lock lock(bpmJobsMutex);
         if (bpmJobsInFlight.find(itemId) != bpmJobsInFlight.end())
@@ -612,11 +740,17 @@ void forceLibraryItemAnalysis(const juce::String& itemId, const juce::String& fi
             return;
         }
         bpmJobsInFlight.insert(itemId);
+        // Reanalyse is an explicit instruction, so it deliberately supersedes any
+        // EARLIER correction — the generation is captured here, after that correction
+        // bumped it. Only a correction made after this point discards the result.
+        const auto it = tempoAuthorityGenerations.find(itemId);
+        startGeneration = it == tempoAuthorityGenerations.end() ? 0 : it->second;
     }
     projectState.clearLibraryItemAnalysis(itemId);
     peakPool.addJob(
-        [itemId, file = juce::File(filePath), &engine, &projectState, &bridge, &decodedCache]
-        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache, true); });
+        [itemId, file = juce::File(filePath), startGeneration, &engine, &projectState, &bridge,
+         &decodedCache]
+        { runBpmDetection(itemId, file, engine, projectState, bridge, decodedCache, startGeneration, true); });
 }
 
 void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine, ProjectState& projectState,
@@ -644,6 +778,16 @@ void ensureDecodedCache(const juce::String& sourceFilePath, AudioEngine& engine,
                     }
                 });
         });
+}
+
+std::uint64_t getTempoAuthorityGeneration(const juce::String& itemId)
+{
+    return currentTempoGeneration(itemId);
+}
+
+bool tempoDetectionResultIsStale(const juce::String& itemId, std::uint64_t startGeneration)
+{
+    return currentTempoGeneration(itemId) != startGeneration;
 }
 
 } // namespace silverdaw

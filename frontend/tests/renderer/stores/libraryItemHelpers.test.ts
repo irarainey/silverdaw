@@ -7,6 +7,7 @@ import {
   libraryItemTempoUnverified,
   libraryItemWarpSourceBpm,
   musicalLengthBpm,
+  resolveTempoOwner,
   stemPartLabel,
   STEM_NAME_SEPARATOR
 } from '@/stores/libraryItemHelpers'
@@ -235,6 +236,132 @@ describe('libraryItemWarpSourceBpm', () => {
         byId
       )
     ).toBe(128)
+  })
+})
+
+describe('resolveTempoOwner', () => {
+  // Mirrors the backend's ProjectStateTests "tempo-owner resolver contract" case for
+  // case. A correction is written to the OWNER, so the two processes disagreeing about
+  // who owns a tempo would write the fix onto the wrong item and leave every sibling on
+  // the wrong number (ADR 0027).
+  const items = {
+    track: { id: 'track', kind: 'source', bpm: 98.8 },
+    stem: {
+      id: 'stem',
+      kind: 'stem',
+      derivedFrom: { sourceItemId: 'track', inMs: 0, durationMs: 60_000 }
+    },
+    cut: {
+      id: 'cut',
+      kind: 'clip',
+      durationMs: 8_000,
+      derivedFrom: { sourceItemId: 'stem', inMs: 0, durationMs: 8_000 }
+    },
+    cutWithLength: {
+      id: 'cutWithLength',
+      kind: 'clip',
+      durationMs: 8_000,
+      musicalBeats: 16,
+      derivedFrom: { sourceItemId: 'stem', inMs: 0, durationMs: 8_000 }
+    },
+    grandchild: {
+      id: 'grandchild',
+      kind: 'clip',
+      durationMs: 4_000,
+      derivedFrom: { sourceItemId: 'cutWithLength', inMs: 0, durationMs: 4_000 }
+    },
+    hit: {
+      id: 'hit',
+      kind: 'sample',
+      audioType: 'simple',
+      derivedFrom: { sourceItemId: 'track', inMs: 0, durationMs: 800 }
+    },
+    hitcut: {
+      id: 'hitcut',
+      kind: 'clip',
+      derivedFrom: { sourceItemId: 'hit', inMs: 0, durationMs: 400 }
+    },
+    orphan: {
+      id: 'orphan',
+      kind: 'clip',
+      derivedFrom: { sourceItemId: 'missing-parent', inMs: 0, durationMs: 5_000 }
+    },
+    loopA: {
+      id: 'loopA',
+      kind: 'clip',
+      derivedFrom: { sourceItemId: 'loopB', inMs: 0, durationMs: 5_000 }
+    },
+    loopB: {
+      id: 'loopB',
+      kind: 'clip',
+      derivedFrom: { sourceItemId: 'loopA', inMs: 0, durationMs: 5_000 }
+    }
+  }
+  // The fixture is a plain object so `item()` can be keyed off it; both are widened at
+  // the call boundary because LibraryItem carries far more than these resolvers read.
+  const byId = items as never
+  const item = (id: keyof typeof items): never => items[id] as never
+
+  it('reports an item that holds its own tempo as its own owner', () => {
+    expect(resolveTempoOwner(item('track'), byId)).toEqual({
+      ownerItemId: 'track',
+      reason: 'ownBpm',
+      bpm: 98.8
+    })
+  })
+
+  it('names the source, not the stem, as the owner of an inherited tempo', () => {
+    // The stem SHOWS 98.8 but does not own it; correcting the stem would split it from
+    // its siblings and leave the import wrong.
+    expect(resolveTempoOwner(item('stem'), byId)).toEqual({
+      ownerItemId: 'track',
+      reason: 'inheritedBpm',
+      bpm: 98.8
+    })
+  })
+
+  it('follows a two-level chain to the import that owns the tempo', () => {
+    // Before the walk followed the chain to its end this resolved to NO tempo at all,
+    // so a clip cut from a stem warped as if it had none.
+    expect(resolveTempoOwner(item('cut'), byId)).toEqual({
+      ownerItemId: 'track',
+      reason: 'inheritedBpm',
+      bpm: 98.8
+    })
+  })
+
+  it('reports a recorded musical length as owned by the item itself', () => {
+    expect(resolveTempoOwner(item('cutWithLength'), byId)).toEqual({
+      ownerItemId: 'cutWithLength',
+      reason: 'musicalLength',
+      bpm: (16 * 60_000) / 8_000
+    })
+  })
+
+  it('never answers from an ancestor\u2019s musical length', () => {
+    // An ancestor's beat count measures the ancestor's file, not this one.
+    expect(resolveTempoOwner(item('grandchild'), byId)).toEqual({
+      ownerItemId: 'track',
+      reason: 'inheritedBpm',
+      bpm: 98.8
+    })
+  })
+
+  it('reports a one-shot, and anything cut from one, as having no owner', () => {
+    expect(resolveTempoOwner(item('hit'), byId)).toEqual({ reason: 'oneShot' })
+    expect(resolveTempoOwner(item('hitcut'), byId)).toEqual({ reason: 'oneShot' })
+  })
+
+  it('reports no owner for a missing item or a dangling source link', () => {
+    expect(resolveTempoOwner(undefined, byId)).toEqual({ reason: 'none' })
+    expect(resolveTempoOwner(null, byId)).toEqual({ reason: 'none' })
+    expect(resolveTempoOwner(item('orphan'), byId)).toEqual({ reason: 'none' })
+  })
+
+  it('ends the walk on a derivation cycle rather than looping forever', () => {
+    // A hand-edited or corrupted project can close the chain into a loop; walking it
+    // would hang the renderer.
+    expect(resolveTempoOwner(item('loopB'), byId)).toEqual({ reason: 'none' })
   })
 })
 

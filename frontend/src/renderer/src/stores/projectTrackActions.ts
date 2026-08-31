@@ -433,6 +433,19 @@ export const trackActions = {
 
       sendBridge('TRACK_REMOVE', { trackId })
 
+      // Removing the last track empties the timeline, and a marker or a selection over
+      // nothing has nothing left to name: the ruler draws no time without tracks, so
+      // these can be neither seen nor reached to clear, yet they persist in the file and
+      // reappear the moment a track is added. Mirrored from the backend, which clears
+      // its own copy on TRACK_REMOVE, so the timeline does not draw stale markers for
+      // the round trip.
+      if (this.tracks.length === 0) {
+        this.markers = []
+        const ui = useUiStore()
+        ui.setTimelineSelection(null)
+        ui.persistTimelineSelectionView()
+      }
+
       if (track.soloed) this.pushAllGains()
       log.info('project', `removeTrack id=${trackId}`)
     },

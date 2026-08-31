@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-08-28 · Owner: @irarainey_
+_Last reviewed: 2026-08-31 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -71,6 +71,10 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   `WAVEFORM_READY` for every waiter. Live clip copies that already hold complete
   peaks opt out before joining the pool. `WAVEFORM_FAILED` lets the renderer
   fall back to local decoding.
+- **Tempo detection** runs on that same pool, then `callAsync`s its result onto
+  the message thread to apply it. The result is discarded if the user set that
+  item's tempo by hand while the job was running, so a slow analysis can never
+  overwrite a correction. See ADR 0027 and ADR 0028.
 
 ## Data-flow rules
 
@@ -83,6 +87,8 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   optimistic state, connect path merges additively). See ADR 0002.
 - **Clips reference audio by `libraryItemId`,** never by path; the backend
   resolves the on-disk file (preferring the decoded-WAV cache) at load time.
+  Compressed sources are decoded into that cache once, MP3 via the bundled
+  `lame.exe`. See `docs/developer-guide.md#decoding-compressed-sources`.
 - **Same canonical chain for playback and mixdown** so exports match what the
   user hears.
 - **MIDI is a profile-driven control plane.** The backend enumerates MIDI
@@ -116,7 +122,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
-| `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks) | — |
+| `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks), plus tempo and beat-grid detection | ADR 0028 |
 | `backend/src/plugins/` | VST3 catalogue and out-of-process scanning, hosted per-track insert chains, plugin play head, native editor windows | ADR 0025 |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |
 | `backend/src/mixdown/` | Offline render/export on the canonical chain | — |
