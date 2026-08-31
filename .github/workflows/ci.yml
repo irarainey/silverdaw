@@ -1,7 +1,18 @@
 # Silverdaw CI gate.
 #
-# Runs on every branch push and on demand, so a regression is caught before it
-# reaches main rather than after. Every job runs on Windows because Silverdaw
+# Runs on pushes to any branch except main, on pull requests, and on demand.
+# A merge to main deliberately does NOT re-run it: main is only reachable
+# through a pull request that already went green, so a post-merge run
+# re-answers a settled question and costs Windows runner minutes for signal
+# nobody acts on.
+#
+# The `pull_request` trigger earns its place on top of `push` by covering pull
+# requests from forks, whose pushes never reach this repository. For a branch
+# in this repository with an open pull request it does mean two runs per push;
+# that is the accepted price of covering outside contributions. Narrow it to
+# `types: [opened, reopened, ready_for_review]` if that ever outweighs it.
+#
+# Every job runs on Windows because Silverdaw
 # is a Windows-x64-only product (CONTEXT.md): a green build on another platform
 # would be false signal.
 #
@@ -29,7 +40,8 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches-ignore: ["main"]
+  pull_request:
   workflow_dispatch:
     inputs:
       run_e2e:
@@ -37,7 +49,9 @@ on:
         type: boolean
         default: true
 
-# A second push to the same branch makes the first run's answer irrelevant.
+# A newer commit makes the previous run's answer irrelevant. Push and pull
+# request runs group separately because `github.ref` differs between them
+# (`refs/heads/<branch>` vs the PR's merge ref).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

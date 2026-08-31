@@ -4834,10 +4834,17 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the gates above on every branch push and on
-demand (**Actions ▸ CI ▸ Run workflow**), so a regression is caught before it
-reaches `main`. Runs are grouped per ref with `cancel-in-progress`, because a
-newer push makes the previous answer irrelevant.
+`.github/workflows/ci.yml` runs the gates above on pushes to any branch except
+`main`, on pull requests, and on demand (**Actions ▸ CI ▸ Run workflow**), so a
+regression is caught before it reaches `main`. A merge to `main` does not re-run
+them: main is only reachable through a pull request that already passed, so a
+post-merge run would re-answer a settled question. Runs are grouped per ref with
+`cancel-in-progress`, because a newer commit makes the previous answer
+irrelevant.
+
+The `pull_request` trigger covers pull requests from forks, whose pushes never
+reach this repository. For a branch here that already has a pull request open,
+that means two runs per push — the price of covering outside contributions.
 
 Every job runs on `windows-2022`. Silverdaw is Windows-x64 only, so a green
 result anywhere else would be false signal — and the image is pinned rather
