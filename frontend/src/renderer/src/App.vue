@@ -29,6 +29,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useScratchEditorStore } from '@/stores/scratchEditorStore'
+import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { startAutosaveManager, stopAutosaveManager } from '@/lib/autosave'
 import { getActivePinia } from 'pinia'
 import { connect as connectBridge, disconnect as disconnectBridge } from '@/lib/bridgeService'
@@ -59,6 +60,7 @@ import {
   PreferencesDialog,
   ProjectImportDialog,
   ProjectPropertiesDialog,
+  RecordAudioDialog,
   RelinkDialog,
   SampleRateMismatchDialog,
   StemModelDownloadDialog,
@@ -73,6 +75,7 @@ const ui = useUiStore()
 const library = useLibraryStore()
 const preview = usePreviewStore()
 const scratchEditor = useScratchEditorStore()
+const recording = useRecordingSessionStore()
 const notifications = useNotificationsStore()
 const appStore = useAppStore()
 const midiDevices = useMidiDeviceStore()
@@ -616,6 +619,12 @@ const { handleMenuAction } = useAppMenuActions({
       v-if="projectPropertiesOpen"
       :open="projectPropertiesOpen"
       @close="projectPropertiesOpen = false"
+    />
+
+    <RecordAudioDialog
+      v-if="recording.dialogOpen"
+      :open="recording.dialogOpen"
+      @close="recording.closeDialog()"
     />
 
     <ProjectImportDialog

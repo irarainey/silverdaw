@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.8.0
+    VERSION 1.9.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -439,6 +439,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ScratchSessionCommands.cpp
     src/commands/ScratchPatternCommands.cpp
     src/commands/ScratchSaveCommands.cpp
+    src/commands/RecordingCommands.cpp
     src/commands/ScratchPatternReplayCommands.cpp
     src/commands/StemSeparationCommands.cpp
     src/commands/TrackCommands.cpp
@@ -469,6 +470,12 @@ add_library(silverdaw_backend_core STATIC
     src/scratch/ScratchSessionMidi.cpp
     src/scratch/ScratchPatternEvaluator.cpp
     src/scratch/ScratchPatternBake.cpp
+    # recording
+    src/recording/CaptureDevice.cpp
+    src/recording/InputCaptureTap.cpp
+    src/recording/RecordingWriter.cpp
+    src/recording/RecordingFinalise.cpp
+    src/recording/RecordingSessionController.cpp
     # dsp
     src/dsp/BpmDetector.cpp
     src/dsp/BpmAnalysisHelpers.cpp
@@ -595,6 +602,7 @@ target_include_directories(silverdaw_backend_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mixdown
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins
     ${CMAKE_CURRENT_SOURCE_DIR}/src/project
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/recording
     ${CMAKE_CURRENT_SOURCE_DIR}/src/stems)
 
 target_link_libraries(silverdaw_backend_core PUBLIC
@@ -844,6 +852,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/PluginCatalogueTests.cpp
         tests/PluginChainTests.cpp
         tests/PluginLatencyTests.cpp
+        tests/RecordingTests.cpp
         tests/AudioEngineTests.cpp
         tests/FxDspTests.cpp
         tests/LoudnessTests.cpp
@@ -880,6 +889,15 @@ tests/MixdownRenderTests.cpp
         tools/scratch_dsp_eval/ScratchDspEval.cpp)
     target_link_libraries(SilverdawScratchDspEval PRIVATE
         silverdaw_backend_core)
+
+    # Phase A capture spike for ADR 0030: measures whether a standalone
+    # input-only device disturbs the running playback stream, and reports
+    # round-trip latency, relative clock drift and capture failure signals on
+    # real hardware (dev tool, not shipped, not a CTest test). Run:
+    # SilverdawCaptureProbe [--seconds N] [--input "<name>"] [--type "<type>"]
+    #                       [--tone] [--list]
+    add_executable(SilverdawCaptureProbe tools/capture_probe/CaptureProbe.cpp)
+    target_link_libraries(SilverdawCaptureProbe PRIVATE silverdaw_backend_core)
 
     # Offline stem-separation quality harness (dev tool, not shipped, not a CTest
     # test). Run: SilverdawStemEval <manifest>

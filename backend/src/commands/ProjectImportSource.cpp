@@ -57,6 +57,7 @@ std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& i
     const auto stemsRoot = sourceDirectory.getChildFile("stems");
     const auto samplesRoot = sourceDirectory.getChildFile("samples");
     const auto scratchesRoot = sourceDirectory.getChildFile("scratches");
+    const auto recordingsRoot = sourceDirectory.getChildFile("recordings");
     const juce::File file(filePath);
 
     if (kind == "stem" && isManagedSourceFile(file, stemsRoot))
@@ -66,6 +67,10 @@ std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& i
     if (kind == "sample" && data.getProperty("scratchOrigin", false)
         && isManagedSourceFile(file, scratchesRoot))
         return SourceLibraryItem{data, id, kind, file, scratchesRoot};
+    // A recording is an ordinary sample living in its own category folder, so
+    // containment alone identifies it (ADR 0030).
+    if (kind == "sample" && isManagedSourceFile(file, recordingsRoot))
+        return SourceLibraryItem{data, id, kind, file, recordingsRoot};
     return std::nullopt;
 }
 

@@ -122,6 +122,8 @@ declare global {
       setAutosaveConfig(partial: { enabled?: boolean; intervalSeconds?: number }): void
       getAudioOutput(): Promise<{ typeName: string | null; deviceName: string | null }>
       setAudioOutput(partial: { typeName: string | null; deviceName: string | null }): void
+      getAudioInput(): Promise<{ typeName: string | null; deviceName: string | null }>
+      setAudioInput(partial: { typeName: string | null; deviceName: string | null }): void
       getKeepAwakeByDevice(): Promise<Record<string, boolean>>
       setKeepAwakeForDevice(deviceName: string, enabled: boolean): void
       getEnabledMidiInputs(): Promise<Record<string, boolean>>

@@ -24,6 +24,15 @@ import type {
 
 export * from './midi-inbound'
 
+import type {
+  RecordingInputLevelPayload,
+  RecordingInputsListPayload,
+  RecordingReadyPayload,
+  RecordingSessionStatePayload
+} from './recording'
+
+export * from './recording'
+
 // ─── Backend → Renderer (inbound) ───────────────────────────────────────────
 
 /** Per-clip warp processor mode; kept local to avoid importing outbound aliases. */
@@ -536,6 +545,8 @@ export const ProjectStateLibraryItemSchema = z
     scratchPatternId: z.string().optional(),
     /** Self-contained source-window snapshot WAV used to re-prepare the scratch editor. */
     scratchSourcePath: z.string().optional(),
+    /** True when this sample came from a recording (ADR 0030). */
+    recordingOrigin: z.boolean().optional(),
     /** Media GUID minted at first import; key into the project's metadata/covers store. */
     mediaId: z.string().optional(),
     collapsed: z.boolean().optional(),
@@ -760,6 +771,9 @@ const SampleSavedSuccessSchema = z.object({
   scratchOrigin: z.boolean().optional(),
   scratchPatternId: z.string().optional(),
   scratchSourcePath: z.string().optional(),
+  /** Set for a committed recording (ADR 0030), mirroring `scratchOrigin`: a
+   *  recording is an ordinary sample that remembers where it came from. */
+  recordingOrigin: z.boolean().optional(),
   /** Batch slice-to-samples progress, so the renderer shows one summary toast. */
   batchIndex: z.number().int().optional(),
   batchTotal: z.number().int().optional(),
@@ -1161,6 +1175,10 @@ export interface BridgeInboundMap {
   SCRATCH_SESSION_STATE: ScratchSessionStatePayload
   SCRATCH_PATTERN_RECORDED: ScratchPatternRecordedPayload
   SCRATCH_SOURCE_PEAKS_READY: ScratchSourcePeaksReadyPayload
+  RECORD_INPUTS_LIST: RecordingInputsListPayload
+  RECORD_SESSION_STATE: RecordingSessionStatePayload
+  RECORD_INPUT_LEVEL: RecordingInputLevelPayload
+  RECORD_RECORDING_READY: RecordingReadyPayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -1245,6 +1263,10 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'SCRATCH_SESSION_STATE',
   'SCRATCH_PATTERN_RECORDED',
   'SCRATCH_SOURCE_PEAKS_READY',
+  'RECORD_INPUTS_LIST',
+  'RECORD_SESSION_STATE',
+  'RECORD_INPUT_LEVEL',
+  'RECORD_RECORDING_READY',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',

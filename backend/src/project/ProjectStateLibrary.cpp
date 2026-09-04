@@ -330,10 +330,12 @@ int ProjectState::repairLibraryItemKinds(juce::ValueTree& library, const juce::F
     if (!library.isValid()) return 0;
 
     // Category folder → the kind an item stored under it must have. Channel splits
-    // reuse the stem kind (badge, cleanup, serialisation); scratch bakes are samples.
+    // reuse the stem kind (badge, cleanup, serialisation); scratch bakes and
+    // recordings are samples.
     struct ArtifactKind { const char* folder; const char* kind; };
     static const ArtifactKind kArtifactKinds[] = {
-        {"stems", "stem"}, {"channels", "stem"}, {"samples", "sample"}, {"scratches", "sample"}};
+        {"stems", "stem"}, {"channels", "stem"}, {"samples", "sample"}, {"scratches", "sample"},
+        {"recordings", "sample"}};
 
     int repaired = 0;
     for (int i = 0; i < library.getNumChildren(); ++i)
@@ -475,6 +477,13 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("scratchSourcePath",
                              item.getProperty(kScratchSourcePath).toString());
+        }
+        // Provenance only (ADR 0030): a recording is an ordinary sample, so this
+        // marks where it came from without introducing a library kind.
+        if (item.hasProperty(kRecordingOrigin)
+            && static_cast<bool>(item.getProperty(kRecordingOrigin)))
+        {
+            obj->setProperty("recordingOrigin", true);
         }
         if (item.hasProperty(kSourceItemId))
         {

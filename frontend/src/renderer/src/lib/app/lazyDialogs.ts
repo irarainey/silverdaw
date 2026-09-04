@@ -44,3 +44,6 @@ export const UnsavedChangesDialog = defineAsyncComponent(
   () => import('@/components/UnsavedChangesDialog.vue')
 )
 export const RelinkDialog = defineAsyncComponent(() => import('@/components/RelinkDialog.vue'))
+export const RecordAudioDialog = defineAsyncComponent(
+  () => import('@/components/RecordAudioDialog.vue')
+)

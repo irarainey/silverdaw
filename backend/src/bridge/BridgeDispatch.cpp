@@ -22,6 +22,7 @@
 #include "ProjectFxCommands.h"
 #include "ProjectSession.h"
 #include "ProjectSettingsCommands.h"
+#include "RecordingCommands.h"
 #include "TempoCorrectionCommands.h"
 #include "ProjectState.h"
 #include "SampleExport.h"
@@ -424,6 +425,38 @@ bool dispatchScratch(const DispatchContext& ctx)
     else if (ctx.type == "SCRATCH_PATTERN_REPLAY_STOP")
     {
         handleScratchPatternReplayStop(ctx.payload, ctx.engine, ctx.bridge);
+    }
+    else
+    {
+        return false;
+    }
+    return true;
+}
+
+bool dispatchRecording(const DispatchContext& ctx)
+{
+    if (ctx.type == "RECORD_INPUTS_REQUEST")
+    {
+        handleRecordInputsRequest(ctx.bridge);
+    }
+    else if (ctx.type == "RECORD_SESSION_OPEN")
+    {
+        handleRecordSessionOpen(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge, ctx.peakPool,
+                                ctx.cache, ctx.session);
+    }
+    else if (ctx.type == "RECORD_SESSION_CONTROL")
+    {
+        handleRecordSessionControl(ctx.payload, ctx.projectState, ctx.bridge);
+    }
+    else if (ctx.type == "RECORD_SESSION_CLOSE")
+    {
+        handleRecordSessionClose(ctx.payload, ctx.bridge);
+    }
+    else if (ctx.type == "RECORD_RECORDING_COMMIT")
+    {
+        handleRecordRecordingCommit(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
+                                    ctx.peakPool, ctx.cache, ctx.decodedCache, ctx.peakJobs,
+                                    ctx.session);
     }
     else
     {
@@ -1049,7 +1082,8 @@ void dispatchBridgeMessage(const juce::String& type, const juce::var& payload, s
     const DispatchContext ctx{type, payload, engine, projectState, bridge, peakPool,
                               cache, decodedCache, peakJobs, session};
     const bool handled = dispatchClip(ctx) || dispatchLibrary(ctx) || dispatchTransport(ctx) ||
-                         dispatchPreview(ctx) || dispatchScratch(ctx) || dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
+                         dispatchPreview(ctx) || dispatchScratch(ctx) || dispatchRecording(ctx) ||
+                         dispatchTrack(ctx) || dispatchProjectFx(ctx) ||
                          dispatchWaveform(ctx) || dispatchProject(ctx) || dispatchMarker(ctx) ||
                          dispatchAudioDevice(ctx) || dispatchMidi(ctx) || dispatchMixdown(ctx) ||
                          dispatchStem(ctx) || dispatchUndo(ctx) || dispatchTransition(ctx);

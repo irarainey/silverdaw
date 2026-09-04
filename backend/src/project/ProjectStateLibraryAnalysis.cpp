@@ -377,8 +377,26 @@ bool ProjectState::setLibraryItemScratchMeta(const juce::String& itemId,
     return false;
 }
 
-juce::String ProjectState::getLibraryItemScratchPatternId(const juce::String& itemId) const
+/** Provenance marker for a committed recording (ADR 0030). A recording is an
+ *  ordinary sample; this only records that it was performed rather than
+ *  imported, so no new library kind is introduced. */
+bool ProjectState::setLibraryItemRecordingOrigin(const juce::String& itemId, bool undoable)
 {
+    auto library = root.getChildWithName(kLibrary);
+    if (!library.isValid()) return false;
+    for (int i = 0; i < library.getNumChildren(); ++i)
+    {
+        auto item = library.getChild(i);
+        if (item.getProperty(kId).toString() == itemId)
+        {
+            item.setProperty(kRecordingOrigin, true, undoable ? &undoManager : nullptr);
+            return true;
+        }
+    }
+    return false;
+}
+
+juce::String ProjectState::getLibraryItemScratchPatternId(const juce::String& itemId) const{
     const auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return {};
     for (int i = 0; i < library.getNumChildren(); ++i)

@@ -672,6 +672,17 @@ class AudioEngine : private AudioEngineGraphState,
     AudioDevicesSnapshot devicesSnapshot;
     DeviceListChangedCallback deviceListChangedCallback;
     bool hasFullyScanned = false;
+    // The output the user actually chose, remembered so a device-list change can
+    // put it back. JUCE re-initialises to the system default when it decides the
+    // open endpoint went away, and a capture device opening is enough to make it
+    // look that way — which silently moves playback to the laptop speakers.
+    juce::String chosenOutputTypeName;
+    juce::String chosenOutputDeviceName;
+    bool restoringChosenOutput = false;
+    /** Set when a restore attempt failed, so a device that cannot be reopened is
+     *  not retried on every subsequent list change. Cleared by an explicit
+     *  selection. */
+    juce::String failedRestoreDeviceName;
 
     class DeviceChangeListener : public juce::ChangeListener
     {

@@ -801,6 +801,40 @@ Backend → renderer:
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
 
+Recording adds a smaller domain (full schemas in
+[`frontend/src/shared/bridge/recording.ts`](../frontend/src/shared/bridge/recording.ts);
+every payload carries `protocolVersion: 1`). Renderer → backend:
+
+- `RECORD_INPUTS_REQUEST` asks for the capture devices; `RECORD_SESSION_OPEN
+  { input? }` opens the one recording session, optionally on a remembered
+  device, and `RECORD_SESSION_CLOSE { sessionId }` tears it down — discarding an
+  uncommitted recording and aborting one still rolling.
+- `RECORD_SESSION_CONTROL { sessionId, action, … }` carries one action:
+  `selectInput { input }`, `selectChannels { firstChannel, channelCount }`,
+  `setCountInBars { bars }`, `setInputGain { gainDb }`, `setWindowMode { mode }`,
+  `start`, `stop`, and `discard` (Record Again). `setInputGain` is the only
+  action accepted while rolling. There is deliberately no monitoring action.
+- `RECORD_RECORDING_COMMIT { sessionId, recordingId, itemId, name, destination,
+  trackId?, clipId? }` keeps the finished recording as a library item, and for
+  `destination: "timeline"` places a clip at its anchor in the same undo
+  transaction.
+
+Backend → renderer:
+
+- `RECORD_INPUTS_LIST` enumerates devices grouped by driver type.
+- `RECORD_SESSION_STATE` is the session snapshot — `status`, the `input` as it
+  actually resolved, channel selection, `countInBars`, `inputGainDb`,
+  `windowMode`,
+  `hasSelection`, `anchorMs` / `windowEndMs`, `recordedMs`, `droppedSamples` and
+  any `errorCode` / `error`.
+- `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
+  is excluded from bridge logging.
+- `RECORD_RECORDING_READY` announces the finished file by **path** with its
+  peaks cache, anchor, tempo and the corrections applied (`latencyOffsetMs`,
+  `driftPpm`). Recorded audio never crosses the socket.
+- A commit is acknowledged by the existing `SAMPLE_SAVED` envelope, correlated
+  by the renderer-generated `itemId`, for both success and failure.
+
 ## VST3 plugins
 
 Silverdaw hosts **VST3 effect plugins that process stereo audio**, as per-track
@@ -3659,6 +3693,132 @@ sent in the save payload, so "Open in Scratch Editor" on that tile (see
 **Opening**, above) can show the original source context rather than the baked
 audio.
 
+## Recording
+
+**Record Audio** captures live input — vocals, an instrument, a line input, a
+sound effect — while the arrangement plays, and turns the result into an
+ordinary library item. It is a transactional modal, not a record-armed track:
+the full design contract lives in
+[ADR 0030](adr/0030-audio-recording-capture-model.md), and this section covers
+the module layout and behaviour that ADR does not.
+
+**Opening.** The transport's record button and **File ▸ Record Audio…** both
+open the one dialog, hosted lazily in `App.vue` and driven by
+`useRecordingSessionStore`. `R` records and stops **inside the dialog only**,
+exactly as the Scratch Editor claims it, so there is no global record shortcut.
+
+**Session model.** `useRecordingSession` opens a backend session with the dialog
+and closes it with the dialog — including on unmount, on engine recovery, and
+for a session whose first state arrives after the dialog has gone — so an
+abandoned dialog can never leave a capture device held open. The store mirrors
+`RECORD_SESSION_STATE` and rejects broadcasts from sessions the renderer has
+already closed. Only one session can exist; opening a second closes the stale
+one.
+
+**Capture path.** The engine is opened output-only, so recording runs its own
+standalone input-only `juce::AudioIODevice` (`CaptureDevice`) outside the
+engine's `AudioDeviceManager`: playback is never reconfigured or restarted, and
+the input may come from a different driver type entirely. `InputCaptureTap` is
+the capture-side real-time callback — it allocates nothing, publishes atomics
+for metering and drift measurement, and hands blocks to a
+`juce::AudioFormatWriter::ThreadedWriter` that does its file I/O on its own
+thread (`RecordingWriter`). A device that presents many inputs is narrowed to
+one chosen channel or one adjacent pair rather than captured whole. Nothing from
+the engine is ever mixed into a recording — the tap writes only the capture
+device's own input channels — so a backing track or metronome audible in a take
+was picked up acoustically, or came from a loopback input (a "Stereo Mix" style
+device) chosen as the source. **Input gain** is applied here too, in the same
+callback: a pre-sized scratch buffer holds the gain-applied copy, so the file
+and the meter always show the same signal and nothing is allocated on the audio
+thread. It is the one setting that can be changed while rolling — a performer
+who is clipping should not have to lose the take to fix it.
+
+**The record window.** A recording belongs to a window in time, not to a track:
+either from the playhead until **Stop**, or over the existing timeline range
+selection, which stops itself at the end of the range. The optional count-in is
+one bar or none — a second bar was a choice nobody needed to make — and is the
+existing metronome over a preroll: the
+transport simply starts early and the preroll is trimmed at finalise. The
+count-in only borrows the metronome: the click through the take itself is the
+project's own metronome setting, which the dialog exposes as **Click While
+Recording** so it can be changed without leaving the dialog (the same state the
+`K` shortcut toggles, and monitoring only — the click is never captured).
+Capture is capped at `MAX_RECORDING_SECONDS`; hitting the cap stops the
+recording and keeps everything captured up to that point. **Cancel** (and
+Escape) work at any point before a commit, including mid-take: closing the
+session stops the transport, abandons the capture and deletes the part-written
+file, so there is never a half-recording to clean up. Only an in-flight commit
+holds the dialog open, because closing then would race the `SAMPLE_SAVED` ack.
+
+**Finalise.** Input and output are two unrelated clocks, so latency and drift
+are corrected **once, offline**, in `finaliseRecording` on a worker thread:
+round-trip latency (plus any count-in) is trimmed from the head, and clock drift
+is corrected by resampling to the ratio measured from the capture callback's
+own tick stamps. Streamed in blocks, so a long recording never has to fit in
+memory. A recording over a range selection is also trimmed at the tail to the
+exact length of its record window: capture always overruns the window end by
+however long the auto-stop takes to reach the message thread, and a beat count
+claimed for a file that is fractionally longer than it says resolves to a tempo
+that is not the project's (ADR 0024 derives a source BPM from beats ÷ duration
+in preference to a stored one). The trim makes the claim true of the audio;
+material too short to trim keeps its length and carries no beat count. The
+finished file lands in the project's `recordings/` artifact folder and is
+announced by path with `RECORD_RECORDING_READY`; recorded audio never crosses
+the bridge.
+
+**Choosing an input.** The dialog lists one row per physical input device,
+deduplicated across the drivers that expose it and with driver aliases (the
+DirectSound "Primary Sound Capture Driver", the legacy Sound Mapper) filtered
+out — the same treatment `useUniqueAudioDevices` gives the output picker, from
+which `recordingInputOptions` borrows `isPseudoDeviceName` and the backend
+preference order. Which *driver* those devices come from is a machine-wide setup
+decision, so it lives in **Preferences ▸ Audio** (`useRecordingInputDriver`,
+default automatic) next to the output driver, not in the dialog: picking a
+microphone never means picking a backend first. The preference is stored in the
+existing user-scope `audioInput` pair, and the dialog writes back only the
+device it resolved to, leaving the driver as the user set it. A device that
+presents many inputs is offered as **Mono** or **Stereo** from its first
+channels rather than as a raw channel list — "Channel 5" means nothing to
+someone holding a microphone. Input and output remain independent: a recording
+device is chosen here and never follows the project's output device.
+
+**Review and commit.** The dialog's review state draws the finished recording
+from its peaks cache, auditions it through the shared preview voice, and offers
+**Record Again** (throws the file away and re-arms), **Add to Library**, and
+**Add to Timeline**. The take can be heard on its own or, with **Play With the
+Arrangement**, against what was playing under it: the preview voice carries the
+take while the project transport rolls from the recording's anchor, and the
+timeline is parked back at that anchor when playback stops. `PREVIEW_PLAY`
+pauses the transport, so the arrangement is always started after the audition is
+actually rolling, never before. A commit writes a normal `sample` library item —
+no new library kind — marked `recordingOrigin`, with `audioType = "music"` and
+the project's own BPM applied as a **known** tempo rather than a detected one,
+so a later project-tempo change warps it like any other clip. The timeline exit adds
+the item and places a clip at the recording's anchor inside a single undo
+transaction. Its destination is resolved by `resolveRecordingTrackId`: the
+selected track only when that track holds no clips at all, otherwise a track of
+its own, and either way the row is scrolled into view (`requestRevealTrack`) so
+a recording never lands out of sight or on top of what is already arranged. The
+backend applies the same rule for a commit that names no track. Commits are
+acknowledged by `SAMPLE_SAVED`, correlated by the renderer-generated `itemId`.
+Recordings are named `Recording 1`, `Recording 2`, … and renamed later like any
+library item or clip.
+
+**Failure reporting.** Each failure is a distinct thing that happened, because
+"recording failed" on its own makes a working feature look broken: no input, the
+device refused to open, the device delivered nothing but digital silence (the
+signature of absent Windows microphone consent — the MSIX package therefore
+declares the `microphone` device capability), the device went away, no disk
+space, the file could not be written, and the length cap. `recordingMessages.ts`
+maps each to a sentence saying what to do next, and an overrun that dropped
+samples is reported rather than handed over as a silently damaged recording.
+
+**Out of scope for the first release.** Track record-arm, multi-input capture,
+punch-in and stacked passes, comping, live-growing clips on the timeline, and
+low-latency software monitoring — input metering is always live, but Silverdaw
+does not play the input back, so performers use headphones or their interface's
+own direct monitoring.
+
 ## Preferences
 
 User preferences are persisted as JSON at `%APPDATA%/Silverdaw/preferences.json`
@@ -3802,8 +3962,18 @@ Persisted fields:
   unavailable (e.g. a USB DAC is unplugged), **falls back to the next available
   device** while leaving the preference intact so re-plugging restores it. The
   backend receives the pair as `SILVERDAW_OUTPUT_DEVICE_TYPE` /
-  `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time. May be overridden per
+  `SILVERDAW_OUTPUT_DEVICE_NAME` env vars at spawn time. The engine also
+  remembers whichever output it last opened successfully and re-selects it, once
+  per device-list change, if JUCE has quietly reverted to the system default —
+  which it does whenever it decides the open endpoint went away, including on an
+  unrelated event such as a capture device being opened for a recording. A
+  restore that fails is not retried for that device, so a genuinely gone device
+  still falls back rather than looping. May be overridden per
   project (see [Project properties](#project-properties)).
+- **Recording input driver** — the driver recording inputs are listed from,
+  stored in the same user-scope `audioInput` pair (a `null` `typeName` means
+  automatic). Chosen in Preferences ▸ Audio, never in the Record Audio dialog;
+  see [Recording](#recording).
 - **Default project sample rate** — `ui.defaultProjectSampleRate`, `44100` or
   `48000`. Seeds new projects' effective sample rate when the project hasn't
   set `targetSampleRate` itself. See [Project sample rate](#project-sample-rate).
@@ -4242,6 +4412,17 @@ gestures on the platter and crossfader are described in the
 | Right-click a notation point | Delete that editable point. |
 | `Ctrl` + mouse wheel over notation | Zoom the notation timeline. |
 | `Escape` | Close the editor, or dismiss the unsaved-changes prompt. |
+
+### Record Audio shortcuts
+
+When the Record Audio dialog is open, `R` is claimed by the dialog only — there
+is no global record shortcut. See the [Recording](#recording) section.
+
+| Input | Effect |
+|---|---|
+| `R` | Start recording, or stop one that is rolling. Does not run while editing a text field, or once a recording is in review. |
+| `Enter` | Activate the footer's primary button — **Record**, or **Add to Timeline** while reviewing. |
+| `Escape` | Close the dialog, discarding an uncommitted recording. Ignored while a recording is rolling or a commit is in flight, so nothing is thrown away by accident. |
 
 
 Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected track**

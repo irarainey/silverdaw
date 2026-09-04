@@ -134,7 +134,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.8.0" } }
+{ "type": "READY", "payload": { "version": "1.9.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -2172,7 +2172,7 @@ the clip nor its siblings.
 5. [x] **Tempo detection on imported MP3s.** Some files failed to decode to the WAV
    playback cache and so were left with no tempo, taking their stems with them.
 
-### 1.8.0 - Correcting a Mis-Detected Tempo *(current release)*
+### 1.8.0 - Correcting a Mis-Detected Tempo *(released)*
 
 **Goal:** give the user a way to say "the detected BPM is simply wrong" and have
 the beat grid and the clips using that source follow, without the arrangement
@@ -2291,6 +2291,41 @@ samples) that JUCE left in place, so decoded MP3 audio now starts about 12 ms
 earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
 its markers, but a beat anchor adjusted by hand in a project saved before this
 sits 12 ms off and wants correcting once.
+
+### 1.9.0 - Record Audio *(current release)*
+
+**Goal:** let a user record live input over the running arrangement without
+Silverdaw becoming a track-recording DAW. A recording belongs to a window in
+time, not to a track, and the result is an ordinary `sample` library item that
+is placed like any other clip. Design contract, evidence and rejected
+alternatives: [ADR 0030](adr/0030-audio-recording-capture-model.md); the full
+feature shape, device-layer risks and what remains out of scope are recorded in
+§11.6, and the implementation is described under
+[Recording](developer-guide.md#recording).
+
+1. [x] **Capture engine** (`backend/src/recording/`) — a standalone input-only
+   capture device outside the engine's `AudioDeviceManager`, a real-time tap that
+   allocates nothing, a threaded WAV writer, an offline finalise that corrects
+   latency and drift, and a session controller owning the lifecycle.
+2. [x] **Five `RECORD_*` bridge envelopes** and the Record Audio dialog, with
+   **Add to Library** and **Add to Timeline** exits, review, audition against the
+   arrangement, and rename before commit.
+3. [x] **Musical by construction.** The take carries the project BPM as a known
+   tempo, and a range recording is trimmed at finalise to the exact length of the
+   beats it claims, so its markers land on the grid.
+4. [x] **Simplified for the common case, after hardware testing.** One-bar
+   count-in or none; mono or stereo rather than a raw channel list; an input gain
+   slider that can be moved while rolling; the metronome toggled from the dialog;
+   and the input *driver* moved to Preferences ▸ Audio, where the output driver
+   already lives, so choosing a microphone never means choosing a backend first.
+5. [x] **The chosen output device survives a device-list change.** Opening a
+   capture device makes JUCE re-enumerate, and it falls back to the system
+   default if it believes the open endpoint went away — which sent take playback
+   to the laptop speakers while the backing played to headphones. The engine now
+   remembers the user's choice and restores it, once, per device-list change.
+
+Remaining before §11.6 can be ticked off: verification of device removal
+mid-capture and of the packaged-MSIX microphone consent prompt on real hardware.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3229,11 +3264,17 @@ sequencing into the phase plan is still to be decided.
     to a track: either from the playhead until Stop, or over the existing
     timeline range selection with auto-stop at its end. The recording keeps its
     anchor, so it can be dropped back exactly where it was played — onto the
-    selected track, or a new track appended if there is none.
+    selected track when that track is empty, otherwise onto a new track of its
+    own, scrolled into view so a take never lands out of sight or on top of
+    clips that are already arranged.
   - **The play-along is the real transport**, not a prepared backing bed. Nothing
     like the Scratch Editor's offline `SCRATCH_BACKING_PREPARE` window is needed,
     and existing mute/solo already answers "play along with only these tracks".
-    An optional count-in (off, one bar, two bars) reuses the existing metronome.
+    An optional count-in (one bar, or none) reuses the existing metronome,
+    which it hands back at the anchor so the click through the take itself is the
+    project's own metronome setting — surfaced in the dialog rather than
+    duplicated. A finished take can be auditioned on its own or against the
+    arrangement it was recorded over.
   - **The result is a normal `sample` library item** in a new `recordings/`
     artifact folder, with a `recordingOrigin` marker mirroring `scratchOrigin`.
     No new library kind. `Add to Library` and `Add to Timeline` are the two
@@ -3241,7 +3282,9 @@ sequencing into the phase plan is still to be decided.
   - **Every recording is musical**: written with the project BPM and
     `audioType = "music"` so a later project-tempo change warps it like any other
     clip, with no BPM detection run at all. `musicalBeats` is written only when
-    the record window makes the beat count true by construction (ADR 0024).
+    the record window makes the beat count true by construction (ADR 0024), which
+    means finalise also trims the capture's overrun past the window end — a file
+    fractionally longer than the beats it claims resolves to the wrong tempo.
   - Named `Recording 1`, `Recording 2`, … — renaming already exists at both
     library and clip level.
   - Entry point is a transport record button; `R` is claimed inside the dialog
@@ -3256,26 +3299,46 @@ sequencing into the phase plan is still to be decided.
   - **Input and output are assumed to be different devices**, so capture runs on
     its own standalone input-only `juce::AudioIODevice` outside the engine's
     `AudioDeviceManager`. Playback is then never reconfigured or restarted, and
-    the input may even come from another driver type.
+    the input may even come from another driver type. The picker therefore lists
+    physical devices, deduplicated across the drivers that expose them, exactly
+    as the output picker does; the driver itself is a machine-wide setup choice
+    and lives in Preferences ▸ Audio, not in the dialog. A device that presents
+    many inputs is offered as mono or stereo rather than as a raw channel list,
+    and an input gain slider — applied in the capture callback so the file and
+    the meter agree — can be moved while the recording rolls.
   - The price is two unrelated clocks. Latency (capture input + playback output)
     and clock drift are both corrected **offline at finalise** — drift by
     resampling the finished file to the measured ratio — rather than in real
     time. This is the file-first fix and it is what keeps a long recording in
     time for its whole length.
-  - Software monitoring stays **off by default** (round-trip monitoring is
-    20–40 ms and worse across two devices); input metering is always live.
-  - The MSIX package declares only `runFullTrust` today, so the Store build needs
-    the `microphone` capability and a plain message when Windows consent is
-    absent — a denied capture device opens and returns silence, which looks
+  - Software monitoring is **not** in the first release (round-trip monitoring
+    is 20–40 ms and worse across two devices); input metering is always live.
+  - The MSIX package now declares the `microphone` capability alongside
+    `runFullTrust`, because a packaged app is subject to Windows microphone
+    consent and a denied capture device opens and returns silence, which looks
     exactly like a broken feature.
 
   Sequencing: a device spike plus an ADR fixing capture-device ownership and the
-  drift-correction method comes first and is not folded into the build. Then the
-  capture engine (tap, lock-free ring, writer thread, WAV output, finalise), then
-  the dialog, then review/commit, then documentation. Out of scope for the first
-  release: track record-arm, multi-input capture, punch-in and stacked repeat
-  passes, comping, live-growing clips on the timeline, and low-latency software
-  monitoring.
+  drift-correction method comes first and is not folded into the build. **The
+  spike is done** — `SilverdawCaptureProbe` (`backend/tools/capture_probe/`)
+  measured a standalone capture device running beside live playback and found
+  zero playback restarts and no added callback gaps, 20 ms reported round-trip
+  latency and 4.5 ppm relative drift (0.27 ms/min) on a Windows Audio shared
+  mode pair; device enumeration was instant, so listing inputs is safe. Two
+  findings feed the build: drift is small but real, so the correction ratio must
+  be measured per recording, and a device may present many more inputs than are
+  wanted (an 8-channel array here), so the recording captures one chosen channel
+  or pair rather than the device's whole channel set. Device removal mid-capture
+  and packaged-MSIX consent are still unmeasured. **The capture engine
+  (`backend/src/recording/`: capture device, tap, writer, offline finalise,
+  session controller), the five `RECORD_*` bridge envelopes, and the Record
+  Audio dialog with its review-and-commit exits are implemented** and covered by
+  unit tests; see [Recording](developer-guide.md#recording). Remaining before
+  this can be ticked off: an end-to-end journey test, and verification on real
+  hardware including device removal mid-capture and a packaged MSIX consent
+  prompt. Out of scope for the first release: track
+  record-arm, multi-input capture, punch-in and stacked repeat passes, comping,
+  live-growing clips on the timeline, and low-latency software monitoring.
 
 ### 11.7 MIDI & DJ control — *deck input and Scratch Editor shipped*
 

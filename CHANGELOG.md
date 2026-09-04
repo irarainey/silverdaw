@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.0
+
+### Added
+
+- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline.
+- Recording runs from the playhead until stopped, or over the selected timeline range with an automatic stop at its end.
+- Optional one-bar count-in, a metronome toggle and an input gain slider in the Record Audio dialog.
+- Live input metering, mono or stereo capture, and the chosen input device remembered between sessions.
+- A finished take can be auditioned alone or against the arrangement, renamed, and re-recorded before it is kept.
+- Recordings carry the project tempo, so a later BPM change warps them like any other clip.
+- The recording input driver is chosen in **Preferences ▸ Audio**.
+
+### Fixed
+
+- Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
+
 ## 1.8.0
 
 ### Added

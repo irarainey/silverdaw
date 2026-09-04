@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-08-31 · Owner: @irarainey_
+_Last reviewed: 2026-09-04 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -60,7 +60,7 @@ clip's exact position in the source so identical windows render identically, and
 a clip's beat-grid phase became a per-clip fact, so correcting one clip's markers
 moves the audio inside that clip alone and leaves both its position and its
 siblings' markers where they were — see `docs/development-plan.md` §1.7.1.
-The current release is **1.8.0**, which closes the gap between changing a tempo and
+The **1.8.0** release closed the gap between changing a tempo and
 correcting one: **Edit BPM** — reached from a library item's context menu, the
 Edit button on its information dialog, or the beat grid in the Clip Editor
 opened on a timeline clip — rewrites the source tempo alone in one undoable step,
@@ -75,6 +75,10 @@ than to onset-function peaks, which had been leaving markers a few milliseconds
 late on bass-heavy material (ADR 0028). Underneath both, MP3 is now decoded by
 the bundled LAME rather than JUCE's own reader, which mis-parsed some files
 badly enough that they could not be played or analysed at all.
+The current release is **1.9.0**: **Record Audio**, which captures live input
+against the running arrangement and commits the take as an ordinary library item
+or clip — never onto a track as it records, so the clip-first, non-destructive
+model is untouched (ADR 0030, `docs/development-plan.md` §11.6).
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

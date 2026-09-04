@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { describeBackend, type UniqueDevice } from '@/lib/audio/audioOutputPicker'
+import {
+  AUTOMATIC_INPUT_DRIVER,
+  useRecordingInputDriver
+} from '@/lib/preferences/useRecordingInputDriver'
 
 const props = defineProps<{
   uniqueDevices: readonly UniqueDevice[]
@@ -23,6 +27,15 @@ const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { requir
 
 function onKeepAwakeChange(deviceName: string, event: Event): void {
   props.setDeviceKeepAwake(deviceName, (event.target as HTMLInputElement).checked)
+}
+
+// Which driver recording inputs are taken from. A machine-wide setup decision, so
+// it belongs here rather than in the Record Audio dialog, where the only choice
+// that matters in the moment is which microphone.
+const inputDriver = useRecordingInputDriver()
+
+function onInputDriverChange(event: Event): void {
+  inputDriver.pick((event.target as HTMLSelectElement).value)
 }
 </script>
 
@@ -117,6 +130,35 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
           </label>
         </div>
       </div>
+    </div>
+
+    <div>
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        Recording input driver
+      </h2>
+      <p class="mb-3 text-zinc-500">
+        Which driver <strong class="text-zinc-300">Record Audio</strong> takes microphones and
+        interfaces from. Windows offers the same input through several drivers; leave this on
+        automatic unless yours is missing or sounds wrong. The input itself is chosen in the
+        Record Audio dialog.
+      </p>
+      <select
+        class="app-select w-full"
+        aria-label="Recording input driver"
+        :value="inputDriver.selected.value"
+        @change="onInputDriverChange"
+      >
+        <option :value="AUTOMATIC_INPUT_DRIVER">
+          Automatic — recommended
+        </option>
+        <option
+          v-for="driver in inputDriver.driverNames.value"
+          :key="driver"
+          :value="driver"
+        >
+          {{ driver }} — {{ describeBackend(driver) }}
+        </option>
+      </select>
     </div>
 
     <div

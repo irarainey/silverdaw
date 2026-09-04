@@ -145,6 +145,7 @@ export function applyProjectLibrary(
         coverArtOverride: item.coverArtOverride,
         scratchOrigin: item.scratchOrigin === true ? true : undefined,
         scratchPatternId: item.scratchPatternId,
+        recordingOrigin: item.recordingOrigin === true ? true : undefined,
         fromSnapshot: true
       })
       // Classify first: a one-shot may not hold a tempo, so the analysis block below

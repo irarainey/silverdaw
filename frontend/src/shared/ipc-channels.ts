@@ -58,6 +58,8 @@ export const IPC = {
     setAutosaveConfig: 'prefs:setAutosaveConfig',
     getAudioOutput: 'prefs:getAudioOutput',
     setAudioOutput: 'prefs:setAudioOutput',
+    getAudioInput: 'prefs:getAudioInput',
+    setAudioInput: 'prefs:setAudioInput',
     getKeepAwakeByDevice: 'prefs:getKeepAwakeByDevice',
     setKeepAwakeForDevice: 'prefs:setKeepAwakeForDevice',
     getEnabledMidiInputs: 'prefs:getEnabledMidiInputs',

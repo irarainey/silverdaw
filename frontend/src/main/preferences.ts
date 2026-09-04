@@ -117,6 +117,14 @@ export interface AudioOutputPrefs {
   deviceName: string | null
 }
 
+// Remembered capture device for the Record Audio dialog (ADR 0030). Deliberately
+// separate from `audioOutput`: input and output are routinely different devices,
+// and the capture device is opened only while the record surface is open.
+export interface AudioInputPrefs {
+  typeName: string | null
+  deviceName: string | null
+}
+
 // Per-device keep-awake is a simple on/off toggle stored per output device (keyed by the
 // device's reported name). Default off: a device is kept awake only when explicitly enabled —
 // and the toggle is remembered even while the device is unplugged, so it re-applies on
@@ -164,6 +172,8 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
+  /** Remembered capture device; null/null means "first available". */
+  audioInput: AudioInputPrefs
   /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
   keepAwakeByDevice: Record<string, boolean>
   /** Enabled MIDI inputs, keyed by JUCE's stable device identifier. */
@@ -253,6 +263,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
+    audioInput: { typeName: null, deviceName: null },
     keepAwakeByDevice: {},
     enabledMidiInputs: {},
     midiDeckSelections: {},
@@ -430,6 +441,15 @@ export function sanitiseScratchPrefs(partial: unknown, base: ScratchPrefs): Scra
 // Single source of truth for the per-device keep-awake map. Only non-empty device names
 // that are explicitly enabled (value === true) are kept — off is the default, so `false` /
 // absent entries are dropped and a corrupt prefs file can never inject a wrong-typed value.
+/** A stored device selection is a type/device name pair; anything else, including
+ *  a half-written pair, degrades to "no preference" rather than a broken pick. */
+export function sanitiseDeviceSelection(input: unknown): AudioOutputPrefs {
+  const source = (input ?? {}) as Partial<AudioOutputPrefs>
+  const clean = (value: unknown): string | null =>
+    typeof value === 'string' && value.length > 0 ? value : null
+  return { typeName: clean(source.typeName), deviceName: clean(source.deviceName) }
+}
+
 export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolean> {
   const out: Record<string, boolean> = {}
   if (!input || typeof input !== 'object') return out

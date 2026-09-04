@@ -224,6 +224,13 @@ const api = {
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },
+  // ─── Audio input (capture) device preference ────────────────────────────
+  getAudioInput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
+    ipcRenderer.invoke(IPC.prefs.getAudioInput),
+  /** Remember the capture device chosen in the Record Audio dialog. */
+  setAudioInput: (partial: { typeName: string | null; deviceName: string | null }): void => {
+    ipcRenderer.send(IPC.prefs.setAudioInput, partial)
+  },
   // ─── Per-device output keep-awake toggles (on / off) ────────────────────
   getKeepAwakeByDevice: (): Promise<Record<string, boolean>> =>
     ipcRenderer.invoke(IPC.prefs.getKeepAwakeByDevice),

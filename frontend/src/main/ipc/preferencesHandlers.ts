@@ -14,7 +14,7 @@ import type {
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAutosaveSeconds, sanitiseDeviceSelection, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -164,6 +164,27 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
       return
     }
     store.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
+    prefs.schedulePrefsSave()
+  })
+
+  // ─── Audio input (capture) device preference ────────────────────────────
+  // Remembered separately from the output: the Record Audio dialog assumes the two
+  // are different devices (ADR 0030).
+  ipcMain.handle(
+    IPC.prefs.getAudioInput,
+    (): { typeName: string | null; deviceName: string | null } => ({ ...prefs.get().audioInput })
+  )
+
+  ipcMain.on(IPC.prefs.setAudioInput, (_evt, partial: unknown) => {
+    const next = sanitiseDeviceSelection(partial)
+    const store = prefs.get()
+    if (
+      store.audioInput.typeName === next.typeName &&
+      store.audioInput.deviceName === next.deviceName
+    ) {
+      return
+    }
+    store.audioInput = next
     prefs.schedulePrefsSave()
   })
 

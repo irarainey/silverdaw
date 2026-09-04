@@ -9,6 +9,8 @@ defineProps<{
   playButtonTitle: string
   playDisabled: boolean
   skipForwardTitle: string
+  /** True while the Record Audio dialog is open. */
+  recordDialogOpen: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +19,7 @@ const emit = defineEmits<{
   skipForward: []
   toggleFollow: []
   toggleLoopSelection: []
+  record: []
 }>()
 </script>
 
@@ -86,6 +89,31 @@ const emit = defineEmits<{
         class="h-5 w-5"
       >
         <path d="M16 5h2v14h-2V5zM4 5l11 7-11 7V5z" />
+      </svg>
+    </button>
+    <div class="mx-1 h-7 w-px bg-zinc-800" />
+    <button
+      type="button"
+      data-borderless-button="true"
+      class="rounded p-2 outline-none"
+      :class="recordDialogOpen ? 'bg-sky-600/30 text-sky-200 hover:bg-sky-600/40' : 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100'"
+      title="Record Audio… — capture a performance as a new recording"
+      @click="emit('record')"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        class="h-5 w-5"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="6"
+          fill="currentColor"
+        />
       </svg>
     </button>
     <div class="mx-1 h-7 w-px bg-zinc-800" />

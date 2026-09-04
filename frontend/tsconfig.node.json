@@ -19,7 +19,10 @@
     "baseUrl": ".",
     "paths": {
       "@main/*": ["src/main/*"],
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      // tests/main sweeps the renderer's menu definition through main's action
+      // router, so the renderer alias has to resolve here too.
+      "@/*": ["src/renderer/src/*"]
     },
     "outDir": "out"
   },

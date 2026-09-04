@@ -55,7 +55,9 @@ the timeline, and no new "live clip" state is introduced into `ProjectState`.
 The two exits are **Add to Library** and **Add to Timeline**; the latter is the
 former plus an ordinary clip placement, bracketed in a single undo group. With
 no track owning the recording, the timeline exit resolves a destination at
-commit time: the selected track, or a new track appended if there is none.
+commit time: the selected track when it holds no clips at all, otherwise a new
+track appended for it, scrolled into view either way. A recording is never
+stacked on top of clips that are already arranged.
 
 ### A recording is bounded by a window in time, not by a track
 
@@ -82,7 +84,7 @@ exactly where it was played.
 
 Recording rolls the real transport rather than preparing a separate bed. Mute
 and solo already express "play along with only these tracks", and an optional
-count-in (off, one bar, two bars) reuses the existing metronome. Nothing
+count-in (one bar, or none) reuses the existing metronome. Nothing
 equivalent to `SCRATCH_BACKING_PREPARE` is built.
 
 ### Capture runs on a standalone input device, outside the engine's device manager
@@ -102,6 +104,28 @@ Consequences of that ownership split, all deliberate:
 - The capture device is opened **lazily** when the record surface opens and
   released when it closes, so the startup stall the output-only comment protects
   against cannot return.
+- The recording captures **one selected source**, not every channel the device
+  exposes: mono, or a stereo pair, taken from the device's first channels.
+  Devices routinely present far more inputs than a performer means to record —
+  the machine this was measured on offers an 8-channel microphone array — so
+  opening the device's full channel set and writing it verbatim would produce a
+  file nobody asked for. The surface offers the *shape* of the recording rather
+  than a channel list, because "Channel 5" means nothing to someone holding a
+  microphone; the backend keeps a general first-channel/count selection, so an
+  interface-specific picker can be added later without a protocol change.
+- **Input gain** is applied in the capture callback, into a pre-sized scratch
+  buffer, so the written file and the meter always show the same signal. It is
+  the only setting changeable while rolling: a performer who is clipping should
+  not have to lose the take to fix it.
+- The **driver** the input comes from is a machine-wide setup decision and lives
+  in Preferences ▸ Audio beside the output driver, not on the record surface.
+  Choosing a microphone must not mean choosing a backend first.
+- Opening a capture device makes JUCE re-enumerate devices, and its device
+  manager reverts to the system default whenever it decides the open output
+  endpoint went away. That is how the split shows up in practice: the backing
+  played to headphones while the finished take came out of the laptop speakers.
+  The engine therefore remembers the output it last opened and restores it once
+  per device-list change, rather than the recording subsystem touching playback.
 - The capture callback is a **second real-time thread**, on a device the engine
   does not own. It obeys ADR 0006 in full and may not touch engine state: it
   writes into a preallocated lock-free ring, publishes an input peak as
@@ -138,8 +162,21 @@ any other music clip. **No BPM detection is run on a recording.**
 
 `musicalBeats` outranks everything else under ADR 0024, so it is written only
 when it is true by construction — a recording bounded by a grid-aligned record
-window. A recording stopped by hand mid-beat carries the tempo but claims no bar
-count it never played.
+window. Because the capture always runs past the window end by however long the
+auto-stop takes to reach the message thread, finalise also trims the tail back
+to the exact musical length; without that the beat count divided by the file's
+real duration resolves to a tempo that is not the project's, and the clip's beat
+markers and warping are wrong even though the item stores the right BPM. A
+recording too short to trim, or stopped by hand mid-beat, carries the tempo but
+claims no bar count it never played.
+
+### The count-in only borrows the metronome
+
+A count-in forces the click on for the preroll and hands the metronome straight
+back at the anchor, so what the performer hears through the take itself is the
+project's own metronome setting. The dialog exposes that setting rather than
+owning a second one, and the click is monitoring only: it is mixed post-master
+into the output, never into the capture.
 
 ### Storage, provenance and naming
 
@@ -167,10 +204,11 @@ count it never played.
 - New envelopes live in `shared/bridge/recording.ts` and are added to the zod
   schema first (ADR 0004). The finished file is announced with a `*_READY`
   envelope naming a path, never carried over the socket (ADR 0003).
-- **Software monitoring is off by default**; input metering is always live.
-  Round-trip monitoring is 20–40 ms on WASAPI shared mode and worse across two
-  devices, so the honest default is to point the user at headphones or their
-  interface's own direct monitoring.
+- **There is no software monitoring in the first release**; input metering is
+  always live. Round-trip monitoring is 20–40 ms on WASAPI shared mode and worse
+  across two devices, so the honest answer is to point the user at headphones or
+  their interface's own direct monitoring, and the wire contract carries no
+  monitoring control at all rather than a toggle nothing can honour.
 - The user-visible artefact is a **recording**, and that word is used
   everywhere — menu (**Record Audio…**), dialog (**Record Audio**), item
   (`Recording 1`), folder (`recordings/`) and code
@@ -193,12 +231,40 @@ consent is absent is a device that opens and yields **silence**, which looks
 exactly like a broken feature, so it must be detected and reported plainly.
 Confirming the precise packaged behaviour is part of the spike below.
 
-**A device spike gates the work.** Standing up a standalone capture device
-beside the running engine, confirming playback is never disturbed by opening and
-closing it, measuring real round-trip latency and drift across two devices and
-two driver types, and establishing behaviour when the output watchdog restarts
-mid-recording or the capture device is unplugged, all precede any UI work. Every
-other decision here is cheap to revisit; this one is not.
+**The device spike has been run, and it supports this decision.** A dev tool,
+`backend/tools/capture_probe/CaptureProbe.cpp` (built as `SilverdawCaptureProbe`
+under `SILVERDAW_BUILD_TESTS`), opens playback exactly as
+`openDefaultOutputOnly()` does, then creates, starts, runs and closes a
+standalone input-only device beside it while counting callbacks, inter-callback
+gaps, device restarts, sample totals and input peak. On a Windows Audio shared
+mode pair (Realtek output, Intel Smart Sound microphone array input, both
+48 kHz, 480-sample buffers) over a 60-second run:
+
+- **Playback was never disturbed.** Callback counts before, during and after
+  capture were identical to the expected block rate, the largest inter-callback
+  gap stayed at jitter level throughout (≈11.8 ms against a 10 ms nominal
+  period, unchanged across all three windows), and the device reported **zero**
+  restarts or stops. Opening and closing a standalone capture device beside the
+  running engine is genuinely free.
+- **Round-trip latency was 20.0 ms** — 480 samples input plus 480 samples
+  output, both self-reported by the devices, consistent with WASAPI shared mode
+  and within the range that made monitoring off-by-default the right call.
+- **Relative clock drift was 4.5 ppm, or 0.27 ms per minute.** Small, but not
+  zero, and the two endpoints here likely share a mainboard clock; a USB
+  interface against onboard output should be expected to be worse. Offline
+  correction stays justified, and the correction ratio must be *measured* per
+  recording rather than assumed.
+- **Device enumeration did not stall.** Scanning inputs across all four driver
+  types returned immediately, so the output-only comment's tens-of-seconds
+  hazard is about *opening* a problematic default capture client, not about
+  listing devices — enumerating for the record surface is safe.
+
+Two failure modes remain unmeasured and stay as spike work: behaviour when the
+capture device is removed mid-recording, and the packaged-MSIX consent path,
+where the expected signature is a device that opens cleanly and returns digital
+silence. The probe already detects and reports both (`audioDeviceStopped`
+mid-run, and a zero peak over the whole capture), so the tool is the vehicle for
+closing them.
 
 **Recording is not free at runtime.** A capture ring, a writer thread and a
 growing WAV run alongside normal playback. The writer enforces a hard length cap

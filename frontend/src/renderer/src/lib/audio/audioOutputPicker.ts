@@ -55,13 +55,23 @@ export function sortByBackendPreference(names: readonly string[]): string[] {
 }
 
 // Windows/JUCE report a couple of pseudo "devices" that are not real endpoints — the
-// DirectSound default alias ("Primary Sound Driver") and the legacy "Microsoft Sound
-// Mapper". They can't carry a per-device keep-awake setting and only confuse the picker,
-// so they are filtered out; the picker lists real named devices only.
+// DirectSound default aliases ("Primary Sound Driver" / "Primary Sound Capture Driver")
+// and the legacy "Microsoft Sound Mapper". They can't carry a per-device keep-awake
+// setting and only confuse the picker, so they are filtered out; the pickers list real
+// named devices only. Recording shares this list: the same aliases appear on the input
+// side of the very same drivers.
 const PSEUDO_DEVICE_NAMES: ReadonlySet<string> = new Set([
   'primary sound driver',
-  'microsoft sound mapper'
+  'primary sound capture driver',
+  'microsoft sound mapper',
+  'microsoft sound mapper - input',
+  'microsoft sound mapper - output'
 ])
+
+/** Whether `name` is a driver alias rather than a real endpoint. */
+export function isPseudoDeviceName(name: string): boolean {
+  return PSEUDO_DEVICE_NAMES.has(name.trim().toLowerCase())
+}
 
 export interface UniqueDevice {
   /** Canonical (display) name — the first capitalisation we saw. */
@@ -82,7 +92,7 @@ export function useUniqueAudioDevices(): ComputedRef<UniqueDevice[]> {
     for (const type of audioDevices.types) {
       for (const dev of type.devices) {
         const key = dev.trim().toLowerCase()
-        if (PSEUDO_DEVICE_NAMES.has(key)) continue
+        if (isPseudoDeviceName(dev)) continue
         const existing = map.get(key)
         if (existing) {
           if (!existing.backends.includes(type.name)) existing.backends.push(type.name)

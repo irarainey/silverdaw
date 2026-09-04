@@ -31,6 +31,12 @@ import type {
   ScratchPatternReplayStartPayload,
   ScratchPatternReplayStopPayload
 } from './scratch'
+import type {
+  RecordingCommitPayload,
+  RecordingSessionClosePayload,
+  RecordingSessionControlPayload,
+  RecordingSessionOpenPayload
+} from './recording'
 
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
 
@@ -731,6 +737,11 @@ export interface BridgeOutboundMap {
   SCRATCH_PATTERN_REMOVE: ScratchPatternRemovePayload
   SCRATCH_PATTERN_REPLAY_START: ScratchPatternReplayStartPayload
   SCRATCH_PATTERN_REPLAY_STOP: ScratchPatternReplayStopPayload
+  RECORD_INPUTS_REQUEST: undefined
+  RECORD_SESSION_OPEN: RecordingSessionOpenPayload
+  RECORD_SESSION_CONTROL: RecordingSessionControlPayload
+  RECORD_SESSION_CLOSE: RecordingSessionClosePayload
+  RECORD_RECORDING_COMMIT: RecordingCommitPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
@@ -1414,6 +1425,11 @@ export const bridgeOutboundPayloadKinds: {
   SCRATCH_PATTERN_REMOVE: 'payload',
   SCRATCH_PATTERN_REPLAY_START: 'payload',
   SCRATCH_PATTERN_REPLAY_STOP: 'payload',
+  RECORD_INPUTS_REQUEST: 'none',
+  RECORD_SESSION_OPEN: 'payload',
+  RECORD_SESSION_CONTROL: 'payload',
+  RECORD_SESSION_CLOSE: 'payload',
+  RECORD_RECORDING_COMMIT: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',

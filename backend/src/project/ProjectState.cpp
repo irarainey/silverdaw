@@ -68,6 +68,7 @@ const juce::Identifier ProjectState::kKey{"key"};
 const juce::Identifier ProjectState::kKind{"kind"};
 const juce::Identifier ProjectState::kSourceItemId{"sourceItemId"};
 const juce::Identifier ProjectState::kScratchSourcePath{"scratchSourcePath"};
+const juce::Identifier ProjectState::kRecordingOrigin{"recordingOrigin"};
 const juce::Identifier ProjectState::kSourceClipId{"sourceClipId"};
 const juce::Identifier ProjectState::kSourceInMs{"sourceInMs"};
 const juce::Identifier ProjectState::kSourceDurationMs{"sourceDurationMs"};
