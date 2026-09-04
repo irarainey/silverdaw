@@ -3214,13 +3214,68 @@ arrangement of existing audio). They are large, cross-layer efforts (engine,
 bridge, UI). Rough relative priority is noted on each subsection heading; final
 sequencing into the phase plan is still to be decided.
 
-- [ ] **Record audio to a clip** (issue #35) — considered near-essential: the app
-  should offer a **simple** way to record live input straight onto a new clip,
-  without becoming a full recording studio. Record from any input device — vocals,
+- [ ] **Record audio** (issue #35) — considered near-essential: the app should
+  offer a **simple** way to record live input, without becoming a full recording
+  studio. Record from any input device — vocals,
   an instrument or line input, music, or sound effects — while playing along with
-  the selected existing tracks. Needs input-device selection, monitoring, a
-  count-in and a record-enabled transport path; a finished take becomes a normal,
-  non-destructive editable clip. Keep the surface deliberately minimal.
+  the existing arrangement, and turn the result into an ordinary clip in one
+  step. Design contract and the evidence behind it:
+  [ADR 0030](adr/0030-audio-recording-capture-model.md).
+
+  Agreed shape — **Record Audio**, a transactional modal that records against the
+  running arrangement and produces an ordinary library item:
+
+  - **No track is record-armed.** A recording belongs to a *window in time*, not
+    to a track: either from the playhead until Stop, or over the existing
+    timeline range selection with auto-stop at its end. The recording keeps its
+    anchor, so it can be dropped back exactly where it was played — onto the
+    selected track, or a new track appended if there is none.
+  - **The play-along is the real transport**, not a prepared backing bed. Nothing
+    like the Scratch Editor's offline `SCRATCH_BACKING_PREPARE` window is needed,
+    and existing mute/solo already answers "play along with only these tracks".
+    An optional count-in (off, one bar, two bars) reuses the existing metronome.
+  - **The result is a normal `sample` library item** in a new `recordings/`
+    artifact folder, with a `recordingOrigin` marker mirroring `scratchOrigin`.
+    No new library kind. `Add to Library` and `Add to Timeline` are the two
+    exits; the timeline exit is one undo group over both steps.
+  - **Every recording is musical**: written with the project BPM and
+    `audioType = "music"` so a later project-tempo change warps it like any other
+    clip, with no BPM detection run at all. `musicalBeats` is written only when
+    the record window makes the beat count true by construction (ADR 0024).
+  - Named `Recording 1`, `Recording 2`, … — renaming already exists at both
+    library and clip level.
+  - Entry point is a transport record button; `R` is claimed inside the dialog
+    only, as the Scratch Editor already does, so there is no new global shortcut.
+
+  The engineering risk is entirely in the audio device layer, not the UI:
+
+  - The engine is **deliberately opened output-only**
+    (`AudioEngine::openDefaultOutputOnly()`) because opening the default capture
+    client stalled startup for tens of seconds on a problematic default mic.
+    Input must be opened lazily by the record surface and released with it.
+  - **Input and output are assumed to be different devices**, so capture runs on
+    its own standalone input-only `juce::AudioIODevice` outside the engine's
+    `AudioDeviceManager`. Playback is then never reconfigured or restarted, and
+    the input may even come from another driver type.
+  - The price is two unrelated clocks. Latency (capture input + playback output)
+    and clock drift are both corrected **offline at finalise** — drift by
+    resampling the finished file to the measured ratio — rather than in real
+    time. This is the file-first fix and it is what keeps a long recording in
+    time for its whole length.
+  - Software monitoring stays **off by default** (round-trip monitoring is
+    20–40 ms and worse across two devices); input metering is always live.
+  - The MSIX package declares only `runFullTrust` today, so the Store build needs
+    the `microphone` capability and a plain message when Windows consent is
+    absent — a denied capture device opens and returns silence, which looks
+    exactly like a broken feature.
+
+  Sequencing: a device spike plus an ADR fixing capture-device ownership and the
+  drift-correction method comes first and is not folded into the build. Then the
+  capture engine (tap, lock-free ring, writer thread, WAV output, finalise), then
+  the dialog, then review/commit, then documentation. Out of scope for the first
+  release: track record-arm, multi-input capture, punch-in and stacked repeat
+  passes, comping, live-growing clips on the timeline, and low-latency software
+  monitoring.
 
 ### 11.7 MIDI & DJ control — *deck input and Scratch Editor shipped*
 
