@@ -737,7 +737,7 @@ export interface BridgeOutboundMap {
   SCRATCH_PATTERN_REMOVE: ScratchPatternRemovePayload
   SCRATCH_PATTERN_REPLAY_START: ScratchPatternReplayStartPayload
   SCRATCH_PATTERN_REPLAY_STOP: ScratchPatternReplayStopPayload
-  RECORD_INPUTS_REQUEST: undefined
+  RECORD_INPUTS_REQUEST: RecordingInputsRequestPayload
   RECORD_SESSION_OPEN: RecordingSessionOpenPayload
   RECORD_SESSION_CONTROL: RecordingSessionControlPayload
   RECORD_SESSION_CLOSE: RecordingSessionClosePayload
@@ -1213,6 +1213,12 @@ export interface AudioDevicesRequestPayload {
   refresh?: boolean
 }
 
+/** Ask the backend for the capture input list; omit `refresh` for the cached snapshot. */
+export interface RecordingInputsRequestPayload {
+  /** True = rescan every driver type before responding (what the Rescan button sends). */
+  refresh?: boolean
+}
+
 /** Replace the set of MIDI inputs opened by the backend. */
 export interface MidiInputsSetPayload {
   identifiers: string[]
@@ -1425,7 +1431,7 @@ export const bridgeOutboundPayloadKinds: {
   SCRATCH_PATTERN_REMOVE: 'payload',
   SCRATCH_PATTERN_REPLAY_START: 'payload',
   SCRATCH_PATTERN_REPLAY_STOP: 'payload',
-  RECORD_INPUTS_REQUEST: 'none',
+  RECORD_INPUTS_REQUEST: 'payload',
   RECORD_SESSION_OPEN: 'payload',
   RECORD_SESSION_CONTROL: 'payload',
   RECORD_SESSION_CLOSE: 'payload',

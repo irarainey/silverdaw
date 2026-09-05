@@ -2,6 +2,7 @@
 
 #include "recording/InputCaptureTap.h"
 #include "recording/RecordingFinalise.h"
+#include "recording/RecordingSessionController.h"
 #include "recording/RecordingWriter.h"
 
 #include <cmath>
@@ -178,6 +179,23 @@ void testCaptureTapStopsAtLengthCap()
     tap.setWriter(nullptr);
     writer.finish();
     dir.deleteRecursively();
+}
+
+void testCountInMovesAnAnchorThatHasNoRoomForIt()
+{
+    using silverdaw::recording::resolveCountInAnchorMs;
+    constexpr double bar = 2000.0;
+
+    requireNear(resolveCountInAnchorMs(0.0, bar, false), bar, 0.0,
+                "a count-in at the project start must move the anchor, not vanish");
+    requireNear(resolveCountInAnchorMs(500.0, bar, false), bar, 0.0,
+                "an anchor inside the first bar moves to the bar line the count-in needs");
+    requireNear(resolveCountInAnchorMs(8000.0, bar, false), 8000.0, 0.0,
+                "an anchor with room in front of it is left exactly where it was");
+    requireNear(resolveCountInAnchorMs(0.0, 0.0, false), 0.0, 0.0,
+                "no count-in means no reason to move the anchor");
+    requireNear(resolveCountInAnchorMs(0.0, bar, true), 0.0, 0.0,
+                "a range recording keeps its anchor: the window is what makes its beats true");
 }
 
 void testCaptureTapAppliesInputGain()
@@ -377,6 +395,24 @@ void testFinaliseLeavesShortRecordingUntrimmed()
 
     dir.deleteRecursively();
 }
+
+void testSessionBorrowsTheMetronomeInBothDirections()
+{
+    using silverdaw::recording::sessionMetronomeEnabled;
+
+    require(sessionMetronomeEnabled("countIn", false),
+            "a count-in must click even when the session's click is off");
+    require(! sessionMetronomeEnabled("review", true),
+            "review must not click over a take, whatever the session asked for");
+    require(sessionMetronomeEnabled("recording", true),
+            "Click While Recording is the session's own setting through the take");
+    require(! sessionMetronomeEnabled("recording", false),
+            "a recording must not click when the session's click is off");
+    require(sessionMetronomeEnabled("idle", true),
+            "an idle session keeps the click it was opened with");
+    require(sessionMetronomeEnabled("finalising", true),
+            "the click comes back as soon as the take is over");
+}
 } // namespace
 
 void addRecordingTests(std::vector<TestCase>& tests)
@@ -387,6 +423,10 @@ void addRecordingTests(std::vector<TestCase>& tests)
     tests.push_back({"capture tap detects silent input", testCaptureTapDetectsSilentInput});
     tests.push_back({"capture tap stops at length cap", testCaptureTapStopsAtLengthCap});
     tests.push_back({"capture tap applies input gain", testCaptureTapAppliesInputGain});
+    tests.push_back({"recording count-in moves an anchor with no room for it",
+                     testCountInMovesAnAnchorThatHasNoRoomForIt});
+    tests.push_back({"recording session borrows the metronome in both directions",
+                     testSessionBorrowsTheMetronomeInBothDirections});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
     tests.push_back({"recording finalise rejects a recording shorter than latency",

@@ -21,14 +21,23 @@ export interface RecordingPeaks {
  *  session, so a short history is enough to reject them all. */
 const CLOSED_SESSION_MEMORY = 8
 
+/** Give up on the Rescan spinner if the backend never answers, so the button
+ *  cannot be left disabled. Mirrors the output-device rescan. */
+const INPUT_RESCAN_SAFETY_MS = 6000
+let inputRescanSafetyTimer: ReturnType<typeof setTimeout> | null = null
+
 interface RecordingSessionState {
   /** True while the Record Audio dialog is open. One dialog, hosted once in
    *  App.vue, so its visibility lives with the session it drives. */
   dialogOpen: boolean
   /** Mirror of the backend session; null when no session is open. */
   current: RecordingSessionStatePayload | null
-  /** Input devices as the backend enumerated them. */
+  /** Input devices as the backend enumerated them. Kept across dialog opens:
+   *  scanning every driver is slow and the device set rarely changes, so the
+   *  dialog shows the cached list and Rescan is the way to refresh it. */
   inputs: RecordingInputsListPayload | null
+  /** True from a user-initiated Rescan until the refreshed list arrives. */
+  rescanningInputs: boolean
   /** User-scope remembered input, resolved by the renderer from Electron
    *  preferences (the backend never sees it). */
   rememberedInput: RecordingInputSelection | null
@@ -36,6 +45,9 @@ interface RecordingSessionState {
    *  from the resolved session input so opening the dialog on a different driver
    *  never rewrites the user's choice. */
   preferredInputTypeName: string | null
+  /** Input gain remembered from the last session, applied as soon as the next one
+   *  opens: a microphone's level belongs to the setup, not to one take. */
+  rememberedInputGainDb: number
   /** Live input peaks, always metered even with monitoring off. */
   inputPeakL: number
   inputPeakR: number
@@ -58,8 +70,10 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     dialogOpen: false,
     current: null,
     inputs: null,
+    rescanningInputs: false,
     rememberedInput: null,
     preferredInputTypeName: null,
+    rememberedInputGainDb: 0,
     inputPeakL: 0,
     inputPeakR: 0,
     ready: null,
@@ -103,6 +117,7 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     async openDialog(): Promise<void> {
       const saved = await window.silverdaw.getAudioInput().catch(() => null)
       this.preferredInputTypeName = saved?.typeName ?? null
+      this.rememberedInputGainDb = saved?.gainDb ?? 0
       this.rememberedInput = saved?.deviceName
         ? { typeName: saved.typeName ?? '', deviceName: saved.deviceName }
         : null
@@ -123,6 +138,26 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
 
     applyInputs(payload: RecordingInputsListPayload): void {
       this.inputs = payload
+      this.finishInputRescan()
+    },
+
+    /** Show rescan progress until the refreshed list arrives. */
+    beginInputRescan(): void {
+      this.rescanningInputs = true
+      if (inputRescanSafetyTimer) clearTimeout(inputRescanSafetyTimer)
+      inputRescanSafetyTimer = setTimeout(() => {
+        inputRescanSafetyTimer = null
+        this.rescanningInputs = false
+      }, INPUT_RESCAN_SAFETY_MS)
+    },
+
+    /** Clear the rescan state, including its fallback timeout. */
+    finishInputRescan(): void {
+      if (inputRescanSafetyTimer) {
+        clearTimeout(inputRescanSafetyTimer)
+        inputRescanSafetyTimer = null
+      }
+      this.rescanningInputs = false
     },
 
     applyState(payload: RecordingSessionStatePayload): void {

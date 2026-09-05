@@ -16,7 +16,7 @@ struct ProjectSession;
 // device, finalised offline and only then offered as an ordinary library
 // sample: nothing touches the project until the user commits.
 
-void handleRecordInputsRequest(BridgeServer& bridge);
+void handleRecordInputsRequest(const juce::var& payload, BridgeServer& bridge);
 
 void handleRecordSessionOpen(const juce::var& payload, AudioEngine& engine,
                              ProjectState& projectState, BridgeServer& bridge,

@@ -148,6 +148,7 @@ juce::var buildStateEnvelope(const recording::RecordingStateSnapshot& snapshot)
     obj->setProperty("firstChannel", snapshot.firstChannel);
     obj->setProperty("channelCount", snapshot.channelCount);
     obj->setProperty("countInBars", snapshot.countInBars);
+    obj->setProperty("clickEnabled", snapshot.clickEnabled);
     obj->setProperty("inputGainDb", snapshot.inputGainDb);
     obj->setProperty("windowMode", snapshot.windowMode);
     obj->setProperty("hasSelection", snapshot.hasSelection);
@@ -315,11 +316,12 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
 }
 } // namespace
 
-void handleRecordInputsRequest(BridgeServer& bridge)
+void handleRecordInputsRequest(const juce::var& payload, BridgeServer& bridge)
 {
+    const bool refresh = static_cast<bool>(payload.getProperty("refresh", false));
     auto* obj = new juce::DynamicObject();
     juce::Array<juce::var> types;
-    for (const auto& listing : recording::enumerateCaptureInputs())
+    for (const auto& listing : recording::enumerateCaptureInputs(refresh))
     {
         auto* type = new juce::DynamicObject();
         type->setProperty("name", listing.typeName);
@@ -394,6 +396,11 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
     {
         active.setCountInBars(sessionId,
                               static_cast<int>(tryGetNumber(payload, "bars").value_or(0.0)));
+    }
+    else if (action == "setClickEnabled")
+    {
+        active.setClickEnabled(sessionId,
+                               static_cast<bool>(payload.getProperty("enabled", false)));
     }
     else if (action == "setInputGain")
     {

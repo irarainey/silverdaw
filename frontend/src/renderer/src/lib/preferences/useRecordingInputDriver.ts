@@ -29,8 +29,9 @@ export function useRecordingInputDriver(): RecordingInputDriverPreference {
 
   onMounted(() => {
     // Enumerating inputs needs no session: the backend answers from the device
-    // manager, so nothing is opened and no microphone is held.
-    sendBridge('RECORD_INPUTS_REQUEST')
+    // manager, so nothing is opened and no microphone is held. The answer is
+    // cached both sides, so re-opening Preferences costs nothing.
+    if (store.inputs === null) sendBridge('RECORD_INPUTS_REQUEST', {})
     void window.silverdaw
       .getAudioInput()
       .then((saved) => {

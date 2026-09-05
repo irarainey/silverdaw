@@ -31,6 +31,43 @@ constexpr int kMaxCountInBars = 1;
 constexpr double kMinInputGainDb = -24.0;
 constexpr double kMaxInputGainDb = 24.0;
 
+/**
+ * Where a recording anchor has to sit for its count-in to fit.
+ *
+ * A count-in is a preroll through the arrangement, so it needs `countInMs` of
+ * arrangement in front of the anchor. Near the project start there is none, and
+ * shortening the preroll instead throws the count-in away and records from the
+ * top. The anchor moves to the first bar line that leaves room — the user asked
+ * to be counted in, not to start immediately. A recording bounded by a range
+ * keeps its anchor: the window is the user's explicit choice, and its length is
+ * what makes the beat count it claims true (ADR 0024).
+ */
+constexpr double resolveCountInAnchorMs(double anchorMs, double countInMs, bool hasWindowEnd)
+{
+    if (countInMs <= 0.0 || hasWindowEnd || anchorMs >= countInMs) return anchorMs;
+    return countInMs;
+}
+
+/**
+ * What the engine's click should be doing for a recording session in `status`,
+ * given the session's own **Click While Recording** setting.
+ *
+ * A session only ever *borrows* the click, and it borrows it in both directions:
+ * a count-in forces it on for the preroll, and review forces it off — the click
+ * is a recording aid, so a take played back against the arrangement must be
+ * heard as it was captured and not over a click that sounds like part of it.
+ * Everywhere else the session's own setting stands, including through the take
+ * itself. That setting is seeded from the project's metronome and never written
+ * back to it: opening the dialog and clicking through a take is not a reason for
+ * the timeline's metronome to come back on afterwards.
+ */
+inline bool sessionMetronomeEnabled(const juce::String& status, bool clickEnabled)
+{
+    if (status == "countIn") return true;
+    if (status == "review") return false;
+    return clickEnabled;
+}
+
 struct RecordingInputInfo
 {
     juce::String typeName;
@@ -49,6 +86,9 @@ struct RecordingStateSnapshot
     int firstChannel = 0;
     int channelCount = 1;
     int countInBars = 0;
+    /** Whether the click keeps going through the take itself. Session-scoped: it
+     *  starts from the project's metronome but never writes back to it. */
+    bool clickEnabled = false;
     /** Input gain applied to the captured signal, in dB. */
     double inputGainDb = 0.0;
     juce::String windowMode{"playhead"};
@@ -130,6 +170,10 @@ class RecordingSessionController final : private juce::Timer
                      const juce::String& deviceName);
     bool selectChannels(const juce::String& sessionId, int firstChannel, int channelCount);
     bool setCountInBars(const juce::String& sessionId, int bars);
+    /** Whether the click carries on through the take. Seeded from the project's
+     *  metronome when the session opens and kept to the session: recording is not
+     *  a reason for the timeline's own metronome to change. */
+    bool setClickEnabled(const juce::String& sessionId, bool enabled);
     /** Input gain in dB, applied to the capture before it is written and metered.
      *  Changeable while rolling: it is a monitoring-and-capture level, and a
      *  performer who is clipping should not have to stop to fix it. */
@@ -161,6 +205,7 @@ class RecordingSessionController final : private juce::Timer
         int firstChannel = 0;
         int channelCount = 1;
         int countInBars = 0;
+        bool clickEnabled = false;
         double inputGainDb = 0.0;
         juce::String windowMode{"playhead"};
         double anchorMs = 0.0;
@@ -179,6 +224,7 @@ class RecordingSessionController final : private juce::Timer
     void closeDevice();
     void finishCapture(const juce::String& errorCode, const juce::String& message);
     void setStatus(const juce::String& status);
+    void applySessionMetronome();
     double barLengthMs() const;
     void refreshWindow();
 

@@ -43,10 +43,14 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
 
     Session fresh;
     fresh.sessionId = makeId("rec-");
+    // The dialog starts from what the timeline is already doing, then keeps the
+    // choice to itself.
+    fresh.clickEnabled = projectStateRef.getMetronomeEnabled();
     session = fresh;
 
     openDevice(typeName, deviceName);
     refreshWindow();
+    applySessionMetronome();
     startTimer(kTimerIntervalMs);
     if (onStateChanged) onStateChanged();
     return session->sessionId;
@@ -68,6 +72,9 @@ void RecordingSessionController::close(const juce::String& sessionId)
     stopTimer();
     closeDevice();
     session.reset();
+    // Whatever the session borrowed the click for — forced on for a count-in, off
+    // through review — the project's own setting is what survives the dialog.
+    applySessionMetronome();
     if (onStateChanged) onStateChanged();
 }
 
@@ -152,6 +159,17 @@ bool RecordingSessionController::setCountInBars(const juce::String& sessionId, i
     return true;
 }
 
+bool RecordingSessionController::setClickEnabled(const juce::String& sessionId, bool enabled)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    session->clickEnabled = enabled;
+    // Audible immediately, including mid-take: the click is monitoring, and a
+    // performer who wants it gone should not have to stop to lose it.
+    applySessionMetronome();
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
 bool RecordingSessionController::setInputGain(const juce::String& sessionId, double gainDb)
 {
     if (! session.has_value() || session->sessionId != sessionId) return false;
@@ -215,12 +233,15 @@ bool RecordingSessionController::start(const juce::String& sessionId,
 
     refreshWindow();
 
+    const double countInMs = session->countInBars * barLengthMs();
+    session->anchorMs =
+        resolveCountInAnchorMs(session->anchorMs, countInMs, session->windowEndMs.has_value());
+
     const double sampleRate = device.getSampleRate();
     const double windowSeconds =
         session->windowEndMs.has_value()
             ? juce::jmax(1.0, (*session->windowEndMs - session->anchorMs) / 1000.0)
             : kMaxRecordingSeconds;
-    const auto countInMs = session->countInBars * barLengthMs();
     const auto expectedSamples =
         static_cast<juce::int64>((windowSeconds + countInMs / 1000.0 + 1.0) * sampleRate);
 
@@ -245,16 +266,19 @@ bool RecordingSessionController::start(const juce::String& sessionId,
     // Count-in is the existing metronome over a preroll, not a new audio path:
     // the transport simply starts early and the preroll is trimmed at finalise.
     session->transportStartMs = juce::jmax(0.0, session->anchorMs - countInMs);
-    if (countInMs > 0.0) engine->setMetronomeEnabled(true);
 
     tap.resetCaptureStats();
     tap.setMaxSamples(static_cast<juce::int64>(kMaxRecordingSeconds * sampleRate));
     tap.setWriter(writer->getThreadedWriter());
 
+    // Status (and so the click) is settled before the transport rolls: a count-in
+    // whose first beat is at the preroll's start must not miss it by a block.
+    session->status = session->transportStartMs < session->anchorMs ? "countIn" : "recording";
+    applySessionMetronome();
+
     engine->setPositionMs(session->transportStartMs, true);
     engine->play();
     session->rollTicks = juce::Time::getHighResolutionTicks();
-    session->status = session->transportStartMs < session->anchorMs ? "countIn" : "recording";
     if (onStateChanged) onStateChanged();
     return true;
 }
@@ -273,12 +297,7 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
 {
     if (! session.has_value()) return;
 
-    if (engine != nullptr)
-    {
-        engine->stop();
-        if (session->countInBars > 0) engine->setMetronomeEnabled(projectState != nullptr
-                                                                  && projectState->getMetronomeEnabled());
-    }
+    if (engine != nullptr) engine->stop();
 
     // Detach here, but let the caller flush the writer: draining the ThreadedWriter
     // and waiting for the capture callback to quiesce must not block the message
@@ -372,6 +391,8 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     session->status = failure.isEmpty() ? "finalising" : "error";
     session->errorCode = failure.isEmpty() ? juce::String() : failure;
     session->error = failure.isEmpty() ? juce::String() : failureMessage;
+    // The take is over: whatever the count-in borrowed goes back to the project.
+    applySessionMetronome();
     if (onStateChanged) onStateChanged();
     if (onCaptureComplete) onCaptureComplete(std::move(pending));
 }
@@ -384,9 +405,21 @@ bool RecordingSessionController::discard(const juce::String& sessionId)
     session->status = device.isOpen() ? "idle" : "error";
     session->errorCode = device.isOpen() ? juce::String() : session->errorCode;
     session->error = device.isOpen() ? juce::String() : session->error;
+    applySessionMetronome();
     refreshWindow();
     if (onStateChanged) onStateChanged();
     return true;
+}
+
+/** Point the engine's click at whatever the session's current status calls for.
+ *  With no session left, that is simply the project's own setting. */
+void RecordingSessionController::applySessionMetronome()
+{
+    if (engine == nullptr) return;
+    const bool projectEnabled = projectState != nullptr && projectState->getMetronomeEnabled();
+    engine->setMetronomeEnabled(
+        session.has_value() ? sessionMetronomeEnabled(session->status, session->clickEnabled)
+                            : projectEnabled);
 }
 
 void RecordingSessionController::enterReview(const juce::String& sessionId,
@@ -395,6 +428,7 @@ void RecordingSessionController::enterReview(const juce::String& sessionId,
     if (! session.has_value() || session->sessionId != sessionId) return;
     if (session->recordingId != recordingId) return;
     session->status = "review";
+    applySessionMetronome();
     if (onStateChanged) onStateChanged();
 }
 
@@ -432,11 +466,8 @@ void RecordingSessionController::timerCallback()
     const double positionMs = engine != nullptr ? engine->getPositionMs() : 0.0;
     if (session->status == "countIn" && positionMs >= session->anchorMs)
     {
-        // The count-in only borrows the metronome; hand it straight back so the
-        // click through the take itself is the user's project setting.
-        if (engine != nullptr)
-            engine->setMetronomeEnabled(projectState != nullptr
-                                        && projectState->getMetronomeEnabled());
+        // The count-in only borrows the metronome; `setStatus` hands it straight
+        // back, so the click through the take itself is the project's setting.
         setStatus("recording");
     }
 
@@ -460,6 +491,9 @@ void RecordingSessionController::setStatus(const juce::String& status)
 {
     if (! session.has_value() || session->status == status) return;
     session->status = status;
+    // The click follows the status: forced on for a count-in, off through review,
+    // the project's own setting everywhere else.
+    applySessionMetronome();
     if (onStateChanged) onStateChanged();
 }
 
@@ -489,6 +523,7 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
     snapshot.firstChannel = session->firstChannel;
     snapshot.channelCount = session->channelCount;
     snapshot.countInBars = session->countInBars;
+    snapshot.clickEnabled = session->clickEnabled;
     snapshot.inputGainDb = session->inputGainDb;
     snapshot.windowMode = session->windowMode;
     snapshot.anchorMs = session->anchorMs;

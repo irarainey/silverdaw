@@ -35,6 +35,7 @@ function makeState(
     firstChannel: 0,
     channelCount: 1,
     countInBars: 0,
+    clickEnabled: false,
     inputGainDb: 0,
     windowMode: 'playhead',
     hasSelection: false,
@@ -76,6 +77,9 @@ describe('useRecordingSession', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(sendBridge).mockClear()
+    // The real client reports a queued-while-disconnected send with `false`, and
+    // the rescan spinner depends on knowing the request went out.
+    vi.mocked(sendBridge).mockReturnValue(true)
     setAudioInput.mockClear()
     vi.stubGlobal('window', {
       silverdaw: { setAudioInput },
@@ -100,6 +104,34 @@ describe('useRecordingSession', () => {
     scope.stop()
   })
 
+  it('reuses the cached input list on the next open, and rescans only on request', async () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyInputs({ types: [{ name: 'Windows Audio', devices: ['Microphone'] }] })
+    open.value = false
+    await nextTick()
+    vi.mocked(sendBridge).mockClear()
+
+    // Enumerating every driver is slow, so a second open must show the list it
+    // already has rather than making the dialog wait for another scan.
+    open.value = true
+    await nextTick()
+    expect(sentEnvelopes()).not.toContain('RECORD_INPUTS_REQUEST')
+
+    session.rescanInputs()
+    const rescan = vi.mocked(sendBridge).mock.calls.find((call) => call[0] === 'RECORD_INPUTS_REQUEST')
+    expect(rescan?.[1]).toEqual({ refresh: true })
+    expect(store.rescanningInputs).toBe(true)
+
+    // The refreshed list is what ends the spinner.
+    store.applyInputs({ types: [{ name: 'Windows Audio', devices: ['Microphone', 'Interface'] }] })
+    expect(store.rescanningInputs).toBe(false)
+    scope.stop()
+  })
+
   it('clamps the input gain to the range the backend accepts', () => {
     const open = ref(true)
     const store = useRecordingSessionStore()
@@ -117,6 +149,43 @@ describe('useRecordingSession', () => {
       .filter((payload) => payload.action === 'setInputGain')
       .map((payload) => payload.gainDb)
     expect(gains).toEqual([MAX_RECORDING_INPUT_GAIN_DB, MIN_RECORDING_INPUT_GAIN_DB])
+    scope.stop()
+  })
+
+  it('re-applies the remembered input gain as soon as a session opens', async () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    store.rememberedInputGainDb = -6
+    const scope = effectScope()
+    scope.run(() => useRecordingSession(open))
+
+    store.applyState(makeState())
+    await nextTick()
+
+    const applied = vi
+      .mocked(sendBridge)
+      .mock.calls.filter((call) => call[0] === 'RECORD_SESSION_CONTROL')
+      .map((call) => call[1] as { action: string; gainDb?: number })
+      .find((payload) => payload.action === 'setInputGain')
+    expect(applied?.gainDb).toBe(-6)
+    // Re-applying what was already remembered must not write the gain preference back.
+    expect(setAudioInput).not.toHaveBeenCalledWith(
+      expect.objectContaining({ gainDb: expect.anything() })
+    )
+    scope.stop()
+  })
+
+  it('remembers a gain the user sets so it survives the dialog closing', () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyState(makeState())
+    session.setInputGain(-3.5)
+
+    expect(store.rememberedInputGainDb).toBe(-3.5)
+    expect(setAudioInput).toHaveBeenCalledWith({ gainDb: -3.5 })
     scope.stop()
   })
 

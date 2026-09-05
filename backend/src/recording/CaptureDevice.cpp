@@ -24,8 +24,15 @@ CaptureDevice::~CaptureDevice()
     close();
 }
 
-std::vector<CaptureInputListing> enumerateCaptureInputs()
+std::vector<CaptureInputListing> enumerateCaptureInputs(bool refresh)
 {
+    // Message-thread only, like every other command handler, so a plain static is
+    // the whole cache: scanning all driver types costs hundreds of milliseconds and
+    // the dialog opens on it.
+    static std::vector<CaptureInputListing> cached;
+    static bool scanned = false;
+    if (scanned && ! refresh) return cached;
+
     juce::AudioDeviceManager manager;
     std::vector<CaptureInputListing> listings;
     for (auto* type : manager.getAvailableDeviceTypes())
@@ -34,7 +41,9 @@ std::vector<CaptureInputListing> enumerateCaptureInputs()
         type->scanForDevices();
         listings.push_back({type->getTypeName(), type->getDeviceNames(/*wantInputNames*/ true)});
     }
-    return listings;
+    cached = std::move(listings);
+    scanned = true;
+    return cached;
 }
 
 CaptureOpenResult CaptureDevice::open(const juce::String& typeName, const juce::String& deviceName,

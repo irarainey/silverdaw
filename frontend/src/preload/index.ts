@@ -225,10 +225,18 @@ const api = {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },
   // ─── Audio input (capture) device preference ────────────────────────────
-  getAudioInput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
-    ipcRenderer.invoke(IPC.prefs.getAudioInput),
-  /** Remember the capture device chosen in the Record Audio dialog. */
-  setAudioInput: (partial: { typeName: string | null; deviceName: string | null }): void => {
+  getAudioInput: (): Promise<{
+    typeName: string | null
+    deviceName: string | null
+    gainDb: number
+  }> => ipcRenderer.invoke(IPC.prefs.getAudioInput),
+  /** Remember the capture device, driver or input gain. Any field may be omitted;
+   *  what is left out keeps its stored value. */
+  setAudioInput: (partial: {
+    typeName?: string | null
+    deviceName?: string | null
+    gainDb?: number
+  }): void => {
     ipcRenderer.send(IPC.prefs.setAudioInput, partial)
   },
   // ─── Per-device output keep-awake toggles (on / off) ────────────────────

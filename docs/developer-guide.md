@@ -805,7 +805,10 @@ Recording adds a smaller domain (full schemas in
 [`frontend/src/shared/bridge/recording.ts`](../frontend/src/shared/bridge/recording.ts);
 every payload carries `protocolVersion: 1`). Renderer → backend:
 
-- `RECORD_INPUTS_REQUEST` asks for the capture devices; `RECORD_SESSION_OPEN
+- `RECORD_INPUTS_REQUEST { refresh? }` asks for the capture devices; the backend
+  caches the scan (enumerating every driver is slow enough to be felt when the
+  dialog opens) and rescans only when `refresh` is set, which is what the
+  dialog's **Rescan devices** button sends. `RECORD_SESSION_OPEN
   { input? }` opens the one recording session, optionally on a remembered
   device, and `RECORD_SESSION_CLOSE { sessionId }` tears it down — discarding an
   uncommitted recording and aborting one still rolling.
@@ -821,7 +824,9 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
 
 Backend → renderer:
 
-- `RECORD_INPUTS_LIST` enumerates devices grouped by driver type.
+- `RECORD_INPUTS_LIST` enumerates devices grouped by driver type. The renderer
+  keeps it across dialog opens, so the picker is populated immediately and shows
+  the device used last.
 - `RECORD_SESSION_STATE` is the session snapshot — `status`, the `input` as it
   actually resolved, channel selection, `countInBars`, `inputGainDb`,
   `windowMode`,
@@ -3737,12 +3742,26 @@ who is clipping should not have to lose the take to fix it.
 either from the playhead until **Stop**, or over the existing timeline range
 selection, which stops itself at the end of the range. The optional count-in is
 one bar or none — a second bar was a choice nobody needed to make — and is the
-existing metronome over a preroll: the
-transport simply starts early and the preroll is trimmed at finalise. The
-count-in only borrows the metronome: the click through the take itself is the
-project's own metronome setting, which the dialog exposes as **Click While
-Recording** so it can be changed without leaving the dialog (the same state the
-`K` shortcut toggles, and monitoring only — the click is never captured).
+existing metronome over a preroll: the transport simply starts early and the
+preroll is trimmed at finalise. A preroll cannot run before the start of the
+project, so when the anchor sits inside the first bar the *anchor* moves out to
+the bar line rather than the count-in being silently shortened away
+(`resolveCountInAnchorMs`) — the recording starts one bar in, which is what a
+count-in asks for. A range recording keeps its anchor: its length is what makes
+its claimed beat count true (ADR 0024), so moving it would misreport the tempo.
+A session only ever *borrows* the click, and it borrows it in both
+directions: `sessionMetronomeEnabled` forces it on through a count-in and off
+through review, and hands the project's own setting back everywhere else, so
+the project preference is never written. The click through the take itself is
+therefore the project's own metronome setting, which the dialog exposes as
+**Click While Recording** so it can be changed without leaving the dialog (the
+same state the `K` shortcut toggles, and monitoring only — the click is only
+ever in the output stream, never in the capture). Silencing it through review
+matters because a take auditioned **with the arrangement** rolls the real
+transport: a click over the playback is easily mistaken for a click baked into
+the recording. If a take really does contain the backing or the click, it was
+picked up acoustically — monitor on headphones, and watch the input gain, which
+amplifies bleed along with the performance.
 Capture is capped at `MAX_RECORDING_SECONDS`; hitting the cap stops the
 recording and keeps everything captured up to that point. **Cancel** (and
 Escape) work at any point before a commit, including mid-take: closing the
@@ -3775,12 +3794,17 @@ preference order. Which *driver* those devices come from is a machine-wide setup
 decision, so it lives in **Preferences ▸ Audio** (`useRecordingInputDriver`,
 default automatic) next to the output driver, not in the dialog: picking a
 microphone never means picking a backend first. The preference is stored in the
-existing user-scope `audioInput` pair, and the dialog writes back only the
-device it resolved to, leaving the driver as the user set it. A device that
-presents many inputs is offered as **Mono** or **Stereo** from its first
-channels rather than as a raw channel list — "Channel 5" means nothing to
-someone holding a microphone. Input and output remain independent: a recording
-device is chosen here and never follows the project's output device.
+existing user-scope `audioInput` pair, which also carries the input gain: a
+microphone's level belongs to the setup rather than to one take, so it is
+restored the moment the next session opens. Each of the three writers (the
+dialog's device, the Preferences driver, the gain slider) sends only its own
+field and the main process merges, so none of them can clear the others. The
+dialog writes back only the device it resolved to, leaving the driver as the
+user set it. A device that presents many inputs is offered as **Mono** or
+**Stereo** from its first channels rather than as a raw channel list —
+"Channel 5" means nothing to someone holding a microphone. Input and output
+remain independent: a recording device is chosen here and never follows the
+project's output device.
 
 **Review and commit.** The dialog's review state draws the finished recording
 from its peaks cache, auditions it through the shared preview voice, and offers

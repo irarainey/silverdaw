@@ -134,6 +134,11 @@ export const RecordingSessionControlPayloadSchema = z.discriminatedUnion('action
   }),
   z.object({
     ...RecordingSessionControlBase,
+    action: z.literal('setClickEnabled'),
+    enabled: z.boolean()
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
     action: z.literal('setInputGain'),
     gainDb: RecordingInputGainDbSchema
   }),
@@ -203,6 +208,9 @@ export const RecordingSessionStatePayloadSchema = z.object({
   firstChannel: z.number().int().nonnegative(),
   channelCount: RecordingChannelCountSchema,
   countInBars: RecordingCountInBarsSchema,
+  /** Whether the click keeps going through the take. Session-scoped: it starts
+   *  from the project's metronome and never writes back to it. */
+  clickEnabled: z.boolean(),
   /** Input gain currently applied to the capture, in dB. */
   inputGainDb: RecordingInputGainDbSchema,
   windowMode: RecordingWindowModeSchema,

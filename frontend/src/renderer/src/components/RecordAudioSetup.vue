@@ -13,18 +13,15 @@ import {
   findDeviceOptionForInput
 } from '@/lib/recording/recordingInputOptions'
 import type { RecordingSession } from '@/lib/recording/useRecordingSession'
-import { useProjectStore } from '@/stores/projectStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import {
   MAX_RECORDING_INPUT_GAIN_DB,
-  MIN_RECORDING_INPUT_GAIN_DB,
-  type RecordingChannelCount
+  MIN_RECORDING_INPUT_GAIN_DB
 } from '@shared/bridge-protocol'
 
 const props = defineProps<{ session: RecordingSession }>()
 
 const store = useRecordingSessionStore()
-const project = useProjectStore()
 
 const deviceOptions = computed(() => buildDeviceOptions(store.inputs))
 const openInput = computed(() => store.current?.input ?? null)
@@ -77,16 +74,13 @@ function onCountInChange(event: Event): void {
   props.session.setCountInBars((event.target as HTMLInputElement).checked ? 1 : 0)
 }
 
-function channelSummary(count: RecordingChannelCount): string {
-  return count === 2 ? 'Recording in stereo.' : 'Recording in mono.'
-}
-
-// The same project metronome the timeline uses, so the dialog and the K shortcut
-// never disagree. A count-in clicks either way.
-const metronomeEnabled = computed(() => project.metronomeEnabled)
+// The click is the session's own, seeded from the project's metronome when the
+// dialog opens: recording with a click is not a reason for the timeline's
+// metronome to be left on afterwards.
+const clickEnabled = computed(() => store.current?.clickEnabled === true)
 
 function onMetronomeChange(event: Event): void {
-  project.setMetronomeEnabled((event.target as HTMLInputElement).checked)
+  props.session.setClickEnabled((event.target as HTMLInputElement).checked)
 }
 </script>
 
@@ -118,6 +112,38 @@ function onMetronomeChange(event: Event): void {
           {{ device.deviceName }}
         </option>
       </select>
+
+      <div class="flex justify-end">
+        <button
+          type="button"
+          :disabled="locked || store.rescanningInputs"
+          class="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          @click="props.session.rescanInputs()"
+        >
+          <svg
+            v-if="store.rescanningInputs"
+            class="h-3 w-3 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              class="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+            />
+            <path
+              class="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          {{ store.rescanningInputs ? 'Rescanning…' : 'Rescan devices' }}
+        </button>
+      </div>
 
       <select
         class="app-select w-full"
@@ -151,11 +177,6 @@ function onMetronomeChange(event: Event): void {
           :segment-size="3"
           :segment-gap="1"
         />
-        <span class="text-xs text-zinc-400">
-          {{
-            store.current ? channelSummary(store.current.channelCount) : 'Waiting for the input…'
-          }}
-        </span>
       </div>
 
       <label class="flex items-center gap-3">
@@ -175,14 +196,6 @@ function onMetronomeChange(event: Event): void {
           {{ inputGainDb > 0 ? '+' : '' }}{{ inputGainDb.toFixed(1) }} dB
         </span>
       </label>
-      <p class="text-xs text-zinc-500">
-        Set the level so the meter peaks well short of the end. Gain is applied to what is
-        recorded, and can be adjusted while recording.
-      </p>
-      <p class="text-xs text-zinc-500">
-        Silverdaw does not play your input back — listen on headphones, or use your interface's own
-        monitoring.
-      </p>
     </section>
 
     <section class="flex flex-col gap-2">
@@ -230,7 +243,7 @@ function onMetronomeChange(event: Event): void {
 
     <section class="flex flex-col gap-2">
       <h2 class="text-[11px] uppercase tracking-wider text-zinc-500">
-        Count-In
+        Metronome
       </h2>
       <div class="space-y-2">
         <label
@@ -258,7 +271,7 @@ function onMetronomeChange(event: Event): void {
           type="checkbox"
           class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
           :disabled="locked"
-          :checked="metronomeEnabled"
+          :checked="clickEnabled"
           @change="onMetronomeChange"
         >
         <span class="min-w-0 flex-1 truncate leading-tight">
@@ -266,10 +279,6 @@ function onMetronomeChange(event: Event): void {
           <span class="text-zinc-500"> — keeps clicking after the count-in</span>
         </span>
       </label>
-      <p class="text-xs text-zinc-500">
-        The click is monitoring only and is never captured. This is the same metronome as the
-        timeline's.
-      </p>
     </section>
   </div>
 </template>

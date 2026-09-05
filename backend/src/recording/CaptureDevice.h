@@ -15,8 +15,14 @@ struct CaptureInputListing
 };
 
 /** Enumeration only: no device is opened, so this cannot reintroduce the
- *  capture-open stall that AudioEngine::openDefaultOutputOnly avoids. */
-std::vector<CaptureInputListing> enumerateCaptureInputs();
+ *  capture-open stall that AudioEngine::openDefaultOutputOnly avoids.
+ *
+ *  Scanning every driver type is slow enough to be felt when the Record Audio
+ *  dialog opens, and the answer rarely changes, so the result is cached the same
+ *  way the output device list is. `refresh` forces a rescan — what the dialog's
+ *  Rescan button asks for, and the only way a device plugged in since the last
+ *  scan appears. */
+std::vector<CaptureInputListing> enumerateCaptureInputs(bool refresh = false);
 
 enum class CaptureOpenResult
 {

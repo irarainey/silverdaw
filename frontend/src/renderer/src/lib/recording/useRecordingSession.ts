@@ -34,8 +34,14 @@ export interface RecordingSession {
   /** True once the backend has answered with a session to control. */
   ready: ComputedRef<boolean>
   selectInput(input: RecordingInputSelection): void
+  /** Re-enumerate capture devices. The list is cached, so this is the only way a
+   *  device plugged in since the last scan appears. */
+  rescanInputs(): void
   selectChannels(firstChannel: number, channelCount: RecordingChannelCount): void
   setCountInBars(bars: RecordingCountInBars): void
+  /** Whether the click carries on through the take. Kept to the session: the
+   *  timeline's own metronome is left exactly as it was found. */
+  setClickEnabled(enabled: boolean): void
   /** Input gain in dB; changeable while rolling, so a clipping performer can fix
    *  it without losing the take. */
   setInputGain(gainDb: number): void
@@ -59,10 +65,18 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
   const store = useRecordingSessionStore()
   const transport = useTransportStore()
 
+  function requestInputs(refresh: boolean): void {
+    if (refresh) store.beginInputRescan()
+    const sent = sendBridge('RECORD_INPUTS_REQUEST', refresh ? { refresh: true } : {})
+    if (!sent && refresh) store.finishInputRescan()
+  }
+
   function openSession(): void {
     store.clear()
     const input = store.rememberedInput
-    sendBridge('RECORD_INPUTS_REQUEST')
+    // The device list is cached across opens — enumerating every driver is slow
+    // enough to be felt, and Rescan is there for when the hardware changes.
+    if (store.inputs === null) requestInputs(false)
     sendBridge('RECORD_SESSION_OPEN', {
       protocolVersion: RECORDING_PROTOCOL_VERSION,
       ...(input ? { input } : {})
@@ -102,6 +116,23 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
     },
     { immediate: true }
   )
+
+  // A new session starts at unity, so the remembered level is re-applied as soon
+  // as there is a session to apply it to. The gain belongs to the setup, not to
+  // one take, so it must survive the dialog closing.
+  watch(
+    () => store.activeSessionId,
+    (sessionId) => {
+      if (sessionId === null || !open.value) return
+      if (store.rememberedInputGainDb === 0) return
+      const base = withSession('setInputGain')
+      if (base) control({ ...base, gainDb: store.rememberedInputGainDb })
+    }
+  )
+
+  // Persist whatever the user sets, rather than watching the session state back:
+  // the state also carries the unity gain a fresh session starts at, which would
+  // race the re-apply above and wipe the remembered level. See `setInputGain`.
 
   // A session whose first state arrives after the dialog has gone (the user
   // closed it before the backend answered) still holds the capture device.
@@ -167,6 +198,11 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       if (base) control({ ...base, input })
     },
 
+    rescanInputs(): void {
+      if (store.rescanningInputs) return
+      requestInputs(true)
+    },
+
     selectChannels(firstChannel: number, channelCount: RecordingChannelCount): void {
       const base = withSession('selectChannels')
       if (base) control({ ...base, firstChannel, channelCount })
@@ -177,21 +213,26 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       if (base) control({ ...base, bars })
     },
 
+    setClickEnabled(enabled: boolean): void {
+      const base = withSession('setClickEnabled')
+      if (base) control({ ...base, enabled })
+    },
+
     setWindowMode(mode: RecordingWindowMode): void {
       const base = withSession('setWindowMode')
       if (base) control({ ...base, mode })
     },
 
     setInputGain(gainDb: number): void {
+      const clamped = Math.min(
+        MAX_RECORDING_INPUT_GAIN_DB,
+        Math.max(MIN_RECORDING_INPUT_GAIN_DB, gainDb)
+      )
       const base = withSession('setInputGain')
-      if (base)
-        control({
-          ...base,
-          gainDb: Math.min(
-            MAX_RECORDING_INPUT_GAIN_DB,
-            Math.max(MIN_RECORDING_INPUT_GAIN_DB, gainDb)
-          )
-        })
+      if (base) control({ ...base, gainDb: clamped })
+      if (clamped === store.rememberedInputGainDb) return
+      store.rememberedInputGainDb = clamped
+      window.silverdaw.setAudioInput({ gainDb: clamped })
     },
 
     start(): void {

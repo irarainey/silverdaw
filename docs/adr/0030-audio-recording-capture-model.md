@@ -65,7 +65,11 @@ The recording owns a start anchor and, optionally, an end. Two modes, and no
 more:
 
 - **From playhead** — starts at the playhead after any count-in, runs until
-  Stop.
+  Stop. A preroll cannot run before the start of the project, so when the anchor
+  sits inside the first bar the anchor moves out to the bar line rather than the
+  count-in being quietly dropped: a count-in that was asked for is always
+  heard, and the recording simply starts one bar in. A range recording keeps
+  its anchor, because its length is what makes its claimed beat count true.
 - **Over the selected range** — the existing timeline range selection *is* the
   record window, with auto-stop at its end.
 
@@ -116,7 +120,9 @@ Consequences of that ownership split, all deliberate:
 - **Input gain** is applied in the capture callback, into a pre-sized scratch
   buffer, so the written file and the meter always show the same signal. It is
   the only setting changeable while rolling: a performer who is clipping should
-  not have to lose the take to fix it.
+  not have to lose the take to fix it. It is remembered with the input device
+  preference, because a microphone's level is a property of the setup rather
+  than of one take.
 - The **driver** the input comes from is a machine-wide setup decision and lives
   in Preferences ▸ Audio beside the output driver, not on the record surface.
   Choosing a microphone must not mean choosing a backend first.
@@ -170,13 +176,28 @@ markers and warping are wrong even though the item stores the right BPM. A
 recording too short to trim, or stopped by hand mid-beat, carries the tempo but
 claims no bar count it never played.
 
-### The count-in only borrows the metronome
+### A session borrows the metronome, in both directions
 
 A count-in forces the click on for the preroll and hands the metronome straight
 back at the anchor, so what the performer hears through the take itself is the
 project's own metronome setting. The dialog exposes that setting rather than
 owning a second one, and the click is monitoring only: it is mixed post-master
 into the output, never into the capture.
+
+Review borrows it the other way, forcing the click **off** for as long as the
+dialog holds a finished take. Auditioning "with the arrangement" rolls the real
+transport, so a click there sounds exactly like one baked into the recording,
+and judging a take means hearing what was captured and nothing else. One rule,
+`sessionMetronomeEnabled(status, projectEnabled)`, decides this for every status
+so the borrow can never leak: the project's setting is what survives the dialog,
+and it is never written by the session.
+
+Bleed of the backing or the click into a take is therefore always acoustic (or a
+loopback input chosen as the source): the capture device is opened input-only
+and the tap writes nothing but its input channels. Measured on the development
+machine, output through headphones produced no measurable energy in the capture
+at all, while output through the laptop speakers raised its noise floor
+threefold — the mitigation is monitoring, not code.
 
 ### Storage, provenance and naming
 

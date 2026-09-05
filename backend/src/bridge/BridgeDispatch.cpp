@@ -437,7 +437,7 @@ bool dispatchRecording(const DispatchContext& ctx)
 {
     if (ctx.type == "RECORD_INPUTS_REQUEST")
     {
-        handleRecordInputsRequest(ctx.bridge);
+        handleRecordInputsRequest(ctx.payload, ctx.bridge);
     }
     else if (ctx.type == "RECORD_SESSION_OPEN")
     {

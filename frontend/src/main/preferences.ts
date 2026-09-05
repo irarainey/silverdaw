@@ -123,6 +123,26 @@ export interface AudioOutputPrefs {
 export interface AudioInputPrefs {
   typeName: string | null
   deviceName: string | null
+  /** Record Audio's input gain in dB, remembered so a level set once survives the
+   *  dialog being closed — a microphone's level is a property of the setup, not
+   *  of one take. */
+  gainDb: number
+}
+
+export const MIN_AUDIO_INPUT_GAIN_DB = -24
+export const MAX_AUDIO_INPUT_GAIN_DB = 24
+
+export function sanitiseAudioInputPrefs(value: unknown): AudioInputPrefs {
+  const device = sanitiseDeviceSelection(value)
+  const gainDb = (value as Partial<AudioInputPrefs> | undefined)?.gainDb
+  return { ...device, gainDb: clampAudioInputGainDb(gainDb) }
+}
+
+/** Unity for anything that is not a usable number, so a corrupt preference can
+ *  never silence or blow out an input. */
+export function clampAudioInputGainDb(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.min(MAX_AUDIO_INPUT_GAIN_DB, Math.max(MIN_AUDIO_INPUT_GAIN_DB, value))
 }
 
 // Per-device keep-awake is a simple on/off toggle stored per output device (keyed by the
@@ -263,7 +283,7 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
-    audioInput: { typeName: null, deviceName: null },
+    audioInput: { typeName: null, deviceName: null, gainDb: 0 },
     keepAwakeByDevice: {},
     enabledMidiInputs: {},
     midiDeckSelections: {},

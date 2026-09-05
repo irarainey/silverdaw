@@ -21,6 +21,7 @@ import {
   sanitiseScratchRealismPrefs,
   sanitiseScratchPrefs,
   sanitiseKeepAwakeByDevice,
+  sanitiseAudioInputPrefs,
   sanitiseDeviceSelection,
   sanitiseEnabledMidiInputs,
   sanitiseMidiDeckSelections,
@@ -101,7 +102,7 @@ export class PrefsService {
           )
         },
         audioOutput: sanitiseDeviceSelection(parsed.audioOutput),
-        audioInput: sanitiseDeviceSelection(parsed.audioInput),
+        audioInput: sanitiseAudioInputPrefs(parsed.audioInput),
         keepAwakeByDevice: sanitiseKeepAwakeByDevice(parsed.keepAwakeByDevice),
         enabledMidiInputs: sanitiseEnabledMidiInputs(parsed.enabledMidiInputs),
         midiDeckSelections: sanitiseMidiDeckSelections(parsed.midiDeckSelections),
