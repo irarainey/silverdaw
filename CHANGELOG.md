@@ -14,6 +14,7 @@
 
 ### Changed
 
+- Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds. A recording or any other dynamic take no longer appears as a thin line beside a commercially mastered track at the same loudness. Louder clips are still drawn taller than quieter ones.
 - Audio device wording throughout the app now says whether a device is the audio output or the recording input.
 
 ### Fixed

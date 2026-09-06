@@ -6,6 +6,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { WAVEFORM_COLORS } from '@/lib/waveform/waveformPalette'
 import { waveformFillScale } from '@/lib/waveform/fillScale'
+import { waveformColumnDown, waveformColumnUp } from '@/lib/timeline/waveformColumn'
 
 const props = defineProps<{
   /** Alternating min/max pairs from the peaks cache. */
@@ -66,8 +67,8 @@ function draw(): void {
         min = Math.min(min, props.peaks[pair * 2] ?? 0)
         max = Math.max(max, props.peaks[pair * 2 + 1] ?? 0)
       }
-      const top = mid - Math.min(1, max * scale) * mid
-      const bottom = mid - Math.max(-1, min * scale) * mid
+      const top = mid - waveformColumnUp(max * scale, mid, 1)
+      const bottom = mid + waveformColumnDown(min * scale, mid, 1)
       ctx.fillRect(x, top, 1, Math.max(1, bottom - top))
     }
   }

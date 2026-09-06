@@ -9,14 +9,34 @@ import {
 } from '@/lib/timeline/waveformColumn'
 
 describe('waveformColumnExcursion', () => {
-  it('returns the unscaled excursion at unity gain (no-envelope parity)', () => {
-    // At gain 1 the result must match the previous `max * laneHalf` /
-    // `-min * laneHalf` mapping exactly so unenveloped clips are unchanged.
-    expect(waveformColumnExcursion(-0.5, 0.8, 20, 1)).toEqual({ up: 16, down: 10 })
+  const up = (amplitude: number, laneHalf: number): number => Math.sqrt(amplitude) * laneHalf
+
+  it('draws full scale at the full lane half-height and silence flat', () => {
+    // The curve fixes both ends, so a clip that genuinely peaks at full scale
+    // still fills its lane and an empty passage is still a flat line.
+    expect(waveformColumnExcursion(-1, 1, 20, 1)).toEqual({ up: 20, down: 20 })
+    expect(waveformColumnExcursion(0, 0, 20, 1)).toEqual({ up: 0, down: 0 })
+  })
+
+  it('draws a quiet-but-audible column taller than its raw amplitude', () => {
+    // The point of the curve: a take peaking at -18 dBFS is not quiet, it is
+    // merely un-limited, and drawn linearly it reads as a thin line.
+    const amplitude = 0.125
+    const { up: drawn } = waveformColumnExcursion(-amplitude, amplitude, 20, 1)
+    expect(drawn).toBeCloseTo(up(amplitude, 20))
+    expect(drawn).toBeGreaterThan(amplitude * 20 * 2)
+  })
+
+  it('keeps a louder column taller than a quieter one', () => {
+    // One shared scale across every clip is what makes lanes comparable, so the
+    // curve has to stay monotonic.
+    const quiet = waveformColumnExcursion(-0.1, 0.1, 20, 1).up
+    const loud = waveformColumnExcursion(-0.6, 0.6, 20, 1).up
+    expect(loud).toBeGreaterThan(quiet)
   })
 
   it('scales the excursion down for sub-unity gain', () => {
-    expect(waveformColumnExcursion(-1, 1, 20, 0.5)).toEqual({ up: 10, down: 10 })
+    expect(waveformColumnExcursion(-1, 1, 20, 0.25)).toEqual({ up: 10, down: 10 })
   })
 
   it('collapses to zero excursion at zero (or negative) gain', () => {
@@ -25,7 +45,6 @@ describe('waveformColumnExcursion', () => {
   })
 
   it('clamps a greater-than-unity boost to the lane half-height', () => {
-    // 0.8 * 20 * 4 = 64 → clamped to 20; -0.5 * -1 ... -min=0.5, 0.5*20*4=40 → 20.
     expect(waveformColumnExcursion(-0.5, 0.8, 20, 4)).toEqual({ up: 20, down: 20 })
   })
 
@@ -34,7 +53,10 @@ describe('waveformColumnExcursion', () => {
   })
 
   it('handles asymmetric peaks independently', () => {
-    expect(waveformColumnExcursion(-0.25, 0.75, 40, 1)).toEqual({ up: 30, down: 10 })
+    const { up: drawnUp, down } = waveformColumnExcursion(-0.25, 0.75, 40, 1)
+    expect(drawnUp).toBeCloseTo(up(0.75, 40))
+    expect(down).toBeCloseTo(up(0.25, 40))
+    expect(drawnUp).toBeGreaterThan(down)
   })
 
   it('matches the allocation-free scalar helpers exactly', () => {

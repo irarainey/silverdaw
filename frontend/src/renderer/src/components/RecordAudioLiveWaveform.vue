@@ -22,6 +22,7 @@ import {
 } from '@/lib/recording/liveWaveform'
 import { DEFAULT_BEATS_PER_BAR, formatTime } from '@/lib/musicTime'
 import { waveformFillScale } from '@/lib/waveform/fillScale'
+import { waveformColumnUp } from '@/lib/timeline/waveformColumn'
 import {
   WAVEFORM_BAR_ALPHA,
   WAVEFORM_BEAT_ALPHA,
@@ -124,8 +125,7 @@ function draw(): void {
   const scale = waveformFillScale(loudest)
   ctx.fillStyle = WAVEFORM_COLORS.wave
   for (let index = 0; index < columns.length; index += 1) {
-    const magnitude = Math.min(1, (columns[index] ?? 0) * scale)
-    const half = Math.max(ratio, magnitude * mid)
+    const half = Math.max(ratio, waveformColumnUp((columns[index] ?? 0) * scale, mid, 1))
     ctx.fillRect(index * columnWidth, mid - half, columnWidth, half * 2)
   }
 }

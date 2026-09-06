@@ -1962,6 +1962,27 @@ greater-than-unity boosts are clamped to the lane so the waveform never spills
 outside the clip block. The clamped excursion maths is the pure, unit-tested
 `waveformColumnExcursion` helper (`lib/timeline/waveformColumn.ts`).
 
+**Waveform height is perceptual, not linear.** `waveformColumn.ts` raises a
+column's amplitude to `WAVEFORM_GAMMA` (0.5, a square root) before scaling it to
+the lane. Drawn linearly, a waveform only looks like it sounds if every clip has
+the same crest factor, and they do not: a limited commercial master peaks barely
+above its own average, while a vocal or any live take peaks well above it. At
+*equal perceived loudness* the take therefore has far smaller sample values, so a
+linear waveform draws it as a thin line beside a track that fills its lane —
+which reads as "this recording is quiet" when it is not. The square root halves
+the distance from full scale in decibels, which lifts a dynamic take towards the
+material it sits against without flattening the difference between loud and
+quiet. It is a **fixed** curve, so one shared scale still applies to every clip:
+a genuinely louder clip is always drawn taller, which is what makes lanes
+comparable. Per-clip normalisation would break exactly that, which is why the
+recording dialog — where the question is "is this a good take", not "how does
+this sit against that" — is the one place that auto-fits, and it applies the same
+curve on top so a take does not change *shape* between review and the timeline.
+Silence maps to zero, so an empty passage stays flat rather than having its noise
+bed drawn up into something that looks like content. Every waveform in the app
+draws through this one helper — timeline, Clip Editor, Scratch Editor and the
+recording dialog — so they cannot disagree about how loud a clip looks.
+
 The cache survives backend restarts.
 
 ## Audio analysis
@@ -3924,6 +3945,7 @@ that sounds equally loud — is still readable as a shape. The cap stops a
 near-silent take being drawn as a performance, and silence stays flat rather than
 having its noise bed amplified. The timeline is deliberately *not* fitted this
 way: one shared scale across every clip is what lets lanes be compared by eye.
+What that shared scale is *not* is linear — see the waveform gamma below.
 The elapsed time and the count-in are drawn **over** the box rather than below
 it: a readout in the dialog's flow appears and disappears as a take starts and
 stops, which resizes the dialog under a performance in progress.
