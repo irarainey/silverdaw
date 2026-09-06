@@ -814,9 +814,13 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   uncommitted recording and aborting one still rolling.
 - `RECORD_SESSION_CONTROL { sessionId, action, … }` carries one action:
   `selectInput { input }`, `selectChannels { firstChannel, channelCount }`,
-  `setCountInBars { bars }`, `setInputGain { gainDb }`, `setWindowMode { mode }`,
-  `start`, `stop`, and `discard` (Record Again). `setInputGain` is the only
-  action accepted while rolling. There is deliberately no monitoring action.
+  `setCountInBars { bars }`, `setClickEnabled { enabled }`,
+  `setBackingTracks { trackIds }`, `setBackingGain { gain }`,
+  `setInputGain { gainDb }`,
+  `setWindowMode { mode }`,
+  `start`, `stop`, and `discard` (Record Again). `setInputGain`,
+  `setBackingGain` and `setClickEnabled` are the only actions accepted while
+  rolling. There is deliberately no monitoring action.
 - `RECORD_RECORDING_COMMIT { sessionId, recordingId, itemId, name, destination,
   trackId?, clipId? }` keeps the finished recording as a library item, and for
   `destination: "timeline"` places a clip at its anchor in the same undo
@@ -828,7 +832,8 @@ Backend → renderer:
   keeps it across dialog opens, so the picker is populated immediately and shows
   the device used last.
 - `RECORD_SESSION_STATE` is the session snapshot — `status`, the `input` as it
-  actually resolved, channel selection, `countInBars`, `inputGainDb`,
+  actually resolved, channel selection, `countInBars`, `clickEnabled`,
+  `backingTrackIds`, `backingGain`, `inputGainDb`,
   `windowMode`,
   `hasSelection`, `anchorMs` / `windowEndMs`, `recordedMs`, `droppedSamples` and
   any `errorCode` / `error`.
@@ -3753,15 +3758,62 @@ A session only ever *borrows* the click, and it borrows it in both
 directions: `sessionMetronomeEnabled` forces it on through a count-in and off
 through review, and hands the project's own setting back everywhere else, so
 the project preference is never written. The click through the take itself is
-therefore the project's own metronome setting, which the dialog exposes as
-**Click While Recording** so it can be changed without leaving the dialog (the
-same state the `K` shortcut toggles, and monitoring only — the click is only
-ever in the output stream, never in the capture). Silencing it through review
+the session's own **Click While Recording**, seeded from the project's
+metronome when the dialog opens and kept to the session — recording to a click
+is not a reason for the timeline's metronome to be left on afterwards. It is
+monitoring only: the click is only ever in the output stream, never in the
+capture. Silencing it through review
 matters because a take auditioned **with the arrangement** rolls the real
 transport: a click over the playback is easily mistaken for a click baked into
 the recording. If a take really does contain the backing or the click, it was
 picked up acoustically — monitor on headphones, and watch the input gain, which
 amplifies bleed along with the performance.
+
+**Choosing the backing.** A take is normally played against the whole
+arrangement, but it need not be: the dialog's **Backing** list picks which
+tracks are heard — all of them, some, or none at all for an unaccompanied take.
+This is borrowed exactly like the click. The chosen set is engine-level
+audibility only (`setTracksAudible`, the same seam mute and solo already drive),
+so the project's own mute and solo are never written, the project is never
+marked edited, and closing the dialog gives the arrangement straight back.
+`backingTrackAudible` states the one rule: while there is a session the
+selection alone decides, and with no session the project alone decides. That
+makes the borrow work in both directions — a track the timeline is muting can be
+ticked into the backing for a single take, and is muted again the moment the
+dialog goes — so the dialog can override the arrangement without ever changing
+it. The selection is seeded with whatever the timeline is currently playing
+(mute and solo folded in, so the default sounds like the arrangement does),
+applies to the review audition too (so a take is heard against what it was
+played against), and is locked while rolling because it is what the performer is
+playing to.
+
+**Backing level.** The **Volume** slider under the list is the same borrow again,
+for level rather than membership: it trims the arrangement in the engine only,
+0..1, defaulting to unity, and `sessionBackingGain` hands the arrangement back at
+unity the moment there is no session. It deliberately does **not** move the
+project's master volume — that would be a project edit and would dirty the file —
+and it is not a track gain either, which would have to be written back per clip.
+The trim sits on `MasterClockSource` (`setMonitorTrim`, via
+`AudioEngine::setArrangementMonitorGain`), *upstream* of master gain: the click
+and the preview voice are mixed downstream of that source, so pulling the backing
+down leaves the count-in audible and the review audition of the take at full
+level, which is the whole point of turning the backing down. It stays live while
+rolling, unlike the track selection, because level is monitoring and changes
+nothing about what is captured — a performer who cannot hear themselves should
+not have to stop to fix it. Double-clicking the slider returns it to 100%.
+
+**Settings that outlive the dialog.** The record window, backing selection and
+level, count-in and Click While Recording belong to how the user is working — the take
+they are chasing — not to one session, so the renderer remembers each one the
+user sets and re-applies it as soon as the next session opens
+(`useRecordingSession`'s `activeSessionId` watcher). They are held in the store,
+not in preferences or the project file: they are app-session working state, and
+the backing is a list of track ids that only means anything in the project it
+was chosen in. A setting the user has never touched is `null`, so the backend's
+own seed stands; a remembered backing whose tracks have all gone means a
+different project is open, and the seed wins there too. Settings are remembered
+from the user's action rather than from broadcast state, or the defaults a fresh
+session reports would immediately overwrite them.
 Capture is capped at `MAX_RECORDING_SECONDS`; hitting the cap stops the
 recording and keeps everything captured up to that point. **Cancel** (and
 Escape) work at any point before a commit, including mid-take: closing the

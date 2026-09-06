@@ -11,6 +11,11 @@ void AudioEngine::setMasterGain(float gain)
     masterMeter.setTargetGain(clamped);
 }
 
+void AudioEngine::setArrangementMonitorGain(float gain)
+{
+    master.setMonitorTrim(gain);
+}
+
 void AudioEngine::setSafetyLimiterEnabled(bool enabled, bool snap)
 {
     masterMeter.setSafetyLimiterEnabled(enabled, snap);

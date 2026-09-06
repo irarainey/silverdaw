@@ -413,6 +413,35 @@ void testSessionBorrowsTheMetronomeInBothDirections()
     require(sessionMetronomeEnabled("finalising", true),
             "the click comes back as soon as the take is over");
 }
+
+void testBackingIsBorrowedInBothDirections()
+{
+    using silverdaw::recording::backingTrackAudible;
+
+    require(backingTrackAudible(true, true, true), "a chosen track the project plays must be heard");
+    require(! backingTrackAudible(true, false, true),
+            "a track left out of the backing must be silent for the take");
+    require(backingTrackAudible(true, true, false),
+            "a muted track ticked into the backing must be heard for the take");
+    require(! backingTrackAudible(true, false, false),
+            "a muted track left out of the backing stays silent");
+    require(backingTrackAudible(false, false, true),
+            "with no session the project alone decides, whatever the last selection was");
+    require(! backingTrackAudible(false, true, false),
+            "closing the dialog must hand a muted track straight back to the project");
+}
+
+void testBackingLevelIsSessionScoped()
+{
+    using silverdaw::recording::sessionBackingGain;
+
+    require(sessionBackingGain(true, 0.25) == 0.25,
+            "an open session sets the level the backing plays at");
+    require(sessionBackingGain(true, 0.0) == 0.0,
+            "a backing turned all the way down must be silent, not unity");
+    require(sessionBackingGain(false, 0.25) == 1.0,
+            "closing the dialog must return the arrangement to its own level");
+}
 } // namespace
 
 void addRecordingTests(std::vector<TestCase>& tests)
@@ -427,6 +456,10 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testCountInMovesAnAnchorThatHasNoRoomForIt});
     tests.push_back({"recording session borrows the metronome in both directions",
                      testSessionBorrowsTheMetronomeInBothDirections});
+    tests.push_back({"recording backing is borrowed in both directions",
+                     testBackingIsBorrowedInBothDirections});
+    tests.push_back({"recording backing level is session scoped",
+                     testBackingLevelIsSessionScoped});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
     tests.push_back({"recording finalise rejects a recording shorter than latency",

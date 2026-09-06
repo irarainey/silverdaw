@@ -39,6 +39,7 @@ void MasterClockSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
         juce::AudioSourceChannelInfo scrubInfo(info.buffer, info.startSample, renderSamples);
         child.getNextAudioBlock(scrubInfo);
         mixGlue.process(*info.buffer, info.startSample, renderSamples);
+        applyMonitorTrim(*info.buffer, info.startSample, renderSamples);
         if (scrubDirection.load(std::memory_order_relaxed) < 0)
         {
             for (int ch = 0; ch < info.buffer->getNumChannels(); ++ch)
@@ -108,6 +109,7 @@ void MasterClockSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
 
     child.getNextAudioBlock(info);
     mixGlue.process(*info.buffer, info.startSample, info.numSamples);
+    applyMonitorTrim(*info.buffer, info.startSample, info.numSamples);
     applyTransportFade(*info.buffer, info.startSample, info.numSamples, transportTarget);
 
     positionSamples.fetch_add(static_cast<juce::int64>(info.numSamples), std::memory_order_relaxed);
@@ -136,6 +138,22 @@ void MasterClockSource::applyTransportFade(juce::AudioBuffer<float>& buffer, int
             break;
         }
     }
+}
+
+/** Apply the recording session's backing trim, ramped across the block so a
+ *  fader move is inaudible. Unity is the overwhelmingly common case and costs
+ *  nothing but the compare. */
+void MasterClockSource::applyMonitorTrim(juce::AudioBuffer<float>& buffer, int startSample,
+                                         int numSamples) noexcept
+{
+    monitorTrim.setTargetValue(monitorTrimTarget.load(std::memory_order_acquire));
+    const float startGain = monitorTrim.getNextValue();
+    if (numSamples > 1) monitorTrim.skip(numSamples - 1);
+    const float endGain = monitorTrim.getCurrentValue();
+    if (startGain == 1.0F && endGain == 1.0F) return;
+
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        buffer.applyGainRamp(ch, startSample, numSamples, startGain, endGain);
 }
 
 } // namespace silverdaw

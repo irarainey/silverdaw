@@ -106,6 +106,9 @@ class ProjectState : public juce::ValueTree::Listener
     /** Number of tracks in the tree, ignoring sibling LIBRARY/MARKERS nodes. */
     int getTrackCount() const noexcept;
 
+    /** Track ids in arrangement order, ignoring sibling LIBRARY/MARKERS nodes. */
+    juce::StringArray getTrackIds() const;
+
     // `newIndex` is track-ordinal; moveChild keeps ordering undoable.
     bool moveTrack(const juce::String& trackId, int newIndex);
 

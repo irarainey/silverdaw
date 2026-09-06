@@ -6,7 +6,10 @@
 
 - **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline.
 - Recording runs from the playhead until stopped, or over a selected timeline range with an automatic stop at its end.
+- The take can be played against the whole arrangement, a chosen few tracks, or none at all — including tracks muted on the timeline — without changing the project's own mute and solo.
+- A backing volume in the record dialog sets how loud the arrangement plays under the performance, leaving the count-in, the take and the project's own levels untouched.
 - Choice of input device, mono or stereo capture, input gain and live metering, with the device and gain remembered between sessions.
+- The record window, backing choice, backing volume, count-in and metronome settings are kept between recordings.
 - Optional one-bar count-in and a metronome that clicks through the take without disturbing the timeline's own metronome.
 - A finished take can be auditioned alone or against the arrangement, renamed, and re-recorded before it is kept.
 - Recordings carry the project tempo, so a later BPM change warps them like any other clip.

@@ -68,6 +68,38 @@ inline bool sessionMetronomeEnabled(const juce::String& status, bool clickEnable
     return clickEnabled;
 }
 
+/**
+ * Whether a track should be heard, given a session's backing selection.
+ *
+ * Backing selection is a *session* choice, borrowed the same way the click is:
+ * while the dialog is open the selection alone decides what plays, and engine
+ * audibility is handed straight back to the project when it closes. It is
+ * borrowed in both directions — a track the timeline is muting can be ticked
+ * into the backing for one take, and is muted again the moment the dialog goes —
+ * because what you want to play along to is not the same question as what the
+ * arrangement should sound like. Nothing here reads or writes the project's own
+ * mute and solo; the seeding at `open` is what makes the default match what the
+ * timeline already sounds like.
+ */
+constexpr bool backingTrackAudible(bool hasSession, bool selected, bool projectAudible)
+{
+    return hasSession ? selected : projectAudible;
+}
+
+/**
+ * The arrangement monitor trim a session in this state calls for.
+ *
+ * Backing level is borrowed exactly like the click and the backing selection:
+ * while the dialog is open the session's own trim decides how loud the
+ * arrangement sits under the performer, and with no session the arrangement is
+ * back at unity. It is monitoring only — nothing here reaches the project's
+ * master volume, a recorded take, or a bounce.
+ */
+constexpr double sessionBackingGain(bool hasSession, double gain)
+{
+    return hasSession ? gain : 1.0;
+}
+
 struct RecordingInputInfo
 {
     juce::String typeName;
@@ -89,6 +121,12 @@ struct RecordingStateSnapshot
     /** Whether the click keeps going through the take itself. Session-scoped: it
      *  starts from the project's metronome but never writes back to it. */
     bool clickEnabled = false;
+    /** Tracks audible as backing while the session is open. Seeded with every
+     *  track, so the default is the whole arrangement; an empty list records
+     *  against silence. */
+    juce::StringArray backingTrackIds;
+    /** How loud the backing sits under the performer, 0..1. Monitoring only. */
+    double backingGain = 1.0;
     /** Input gain applied to the captured signal, in dB. */
     double inputGainDb = 0.0;
     juce::String windowMode{"playhead"};
@@ -174,6 +212,14 @@ class RecordingSessionController final : private juce::Timer
      *  metronome when the session opens and kept to the session: recording is not
      *  a reason for the timeline's own metronome to change. */
     bool setClickEnabled(const juce::String& sessionId, bool enabled);
+    /** Which tracks are heard as backing. Silencing is engine-only and lasts as
+     *  long as the session: the project's own mute and solo are untouched. */
+    bool setBackingTracks(const juce::String& sessionId, const juce::StringArray& trackIds);
+    /** How loud the backing plays under the performer, 0..1. Monitoring only: it
+     *  trims the arrangement in the engine, never the project's master volume or
+     *  any track, and it is gone the moment the dialog closes. Changeable while
+     *  rolling — it changes nothing about what is captured. */
+    bool setBackingGain(const juce::String& sessionId, double gain);
     /** Input gain in dB, applied to the capture before it is written and metered.
      *  Changeable while rolling: it is a monitoring-and-capture level, and a
      *  performer who is clipping should not have to stop to fix it. */
@@ -206,6 +252,8 @@ class RecordingSessionController final : private juce::Timer
         int channelCount = 1;
         int countInBars = 0;
         bool clickEnabled = false;
+        juce::StringArray backingTrackIds;
+        double backingGain = 1.0;
         double inputGainDb = 0.0;
         juce::String windowMode{"playhead"};
         double anchorMs = 0.0;
@@ -225,6 +273,8 @@ class RecordingSessionController final : private juce::Timer
     void finishCapture(const juce::String& errorCode, const juce::String& message);
     void setStatus(const juce::String& status);
     void applySessionMetronome();
+    void applySessionBacking();
+    void applySessionBackingGain();
     double barLengthMs() const;
     void refreshWindow();
 

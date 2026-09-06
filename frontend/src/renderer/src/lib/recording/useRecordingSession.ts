@@ -19,6 +19,7 @@ import {
 } from '@shared/bridge-protocol'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
+import { useProjectStore } from '@/stores/projectStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { useTransportStore } from '@/stores/transportStore'
 
@@ -42,6 +43,14 @@ export interface RecordingSession {
   /** Whether the click carries on through the take. Kept to the session: the
    *  timeline's own metronome is left exactly as it was found. */
   setClickEnabled(enabled: boolean): void
+  /** Which tracks are heard while recording. Engine-only and borrowed in both
+   *  directions — a muted track can be brought in for a take — and audibility
+   *  goes back to the project when the dialog closes. */
+  setBackingTracks(trackIds: readonly string[]): void
+  /** How loud the backing plays under the performer, 0..1. Monitoring only: it
+   *  trims the arrangement in the engine and never touches the project's master
+   *  volume, so the timeline sounds unchanged once the dialog closes. */
+  setBackingGain(gain: number): void
   /** Input gain in dB; changeable while rolling, so a clipping performer can fix
    *  it without losing the take. */
   setInputGain(gainDb: number): void
@@ -63,6 +72,7 @@ type ControlBase<T extends RecordingSessionControlPayload['action']> = {
 
 export function useRecordingSession(open: Ref<boolean>): RecordingSession {
   const store = useRecordingSessionStore()
+  const project = useProjectStore()
   const transport = useTransportStore()
 
   function requestInputs(refresh: boolean): void {
@@ -117,16 +127,50 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
     { immediate: true }
   )
 
-  // A new session starts at unity, so the remembered level is re-applied as soon
-  // as there is a session to apply it to. The gain belongs to the setup, not to
-  // one take, so it must survive the dialog closing.
+  // A fresh session starts from the backend's own seeds, so anything the user
+  // chose in this app session is re-applied as soon as there is a session to
+  // apply it to. These settings belong to how the user is working — the take
+  // they are chasing — not to one session, so they must survive the dialog
+  // closing. Anything untouched (null) keeps the backend's seed.
   watch(
     () => store.activeSessionId,
     (sessionId) => {
       if (sessionId === null || !open.value) return
-      if (store.rememberedInputGainDb === 0) return
-      const base = withSession('setInputGain')
-      if (base) control({ ...base, gainDb: store.rememberedInputGainDb })
+      if (store.rememberedInputGainDb !== 0) {
+        const base = withSession('setInputGain')
+        if (base) control({ ...base, gainDb: store.rememberedInputGainDb })
+      }
+      if (store.rememberedWindowMode !== null) {
+        // A selection-scoped window is only meaningful while a selection exists;
+        // the backend falls back to the playhead when it does not.
+        const base = withSession('setWindowMode')
+        if (base) control({ ...base, mode: store.rememberedWindowMode })
+      }
+      if (store.rememberedCountInBars !== null) {
+        const base = withSession('setCountInBars')
+        if (base) control({ ...base, bars: store.rememberedCountInBars })
+      }
+      if (store.rememberedClickEnabled !== null) {
+        const base = withSession('setClickEnabled')
+        if (base) control({ ...base, enabled: store.rememberedClickEnabled })
+      }
+      if (store.rememberedBackingGain !== null) {
+        const base = withSession('setBackingGain')
+        if (base) control({ ...base, gain: store.rememberedBackingGain })
+      }
+      if (store.rememberedBackingTrackIds !== null) {
+        // Ids of tracks deleted since the last open are dropped by the backend.
+        // A remembered selection whose tracks are all gone means a different
+        // project is open, so the backend's seed — what the timeline is playing
+        // — is the better answer than silence.
+        const remembered = store.rememberedBackingTrackIds
+        const present = new Set(project.tracks.map((track) => track.id))
+        const stillHere = remembered.filter((trackId) => present.has(trackId))
+        if (remembered.length === 0 || stillHere.length > 0) {
+          const base = withSession('setBackingTracks')
+          if (base) control({ ...base, trackIds: stillHere })
+        }
+      }
     }
   )
 
@@ -209,16 +253,32 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
     },
 
     setCountInBars(bars: RecordingCountInBars): void {
+      store.rememberedCountInBars = bars
       const base = withSession('setCountInBars')
       if (base) control({ ...base, bars })
     },
 
     setClickEnabled(enabled: boolean): void {
+      store.rememberedClickEnabled = enabled
       const base = withSession('setClickEnabled')
       if (base) control({ ...base, enabled })
     },
 
+    setBackingTracks(trackIds: readonly string[]): void {
+      store.rememberedBackingTrackIds = [...trackIds]
+      const base = withSession('setBackingTracks')
+      if (base) control({ ...base, trackIds: [...trackIds] })
+    },
+
+    setBackingGain(gain: number): void {
+      const clamped = Math.min(1, Math.max(0, gain))
+      store.rememberedBackingGain = clamped
+      const base = withSession('setBackingGain')
+      if (base) control({ ...base, gain: clamped })
+    },
+
     setWindowMode(mode: RecordingWindowMode): void {
+      store.rememberedWindowMode = mode
       const base = withSession('setWindowMode')
       if (base) control({ ...base, mode })
     },

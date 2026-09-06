@@ -90,6 +90,11 @@ class AudioEngine : private AudioEngineGraphState,
     void stop();
 
     void setMasterGain(float gain);
+    /** Monitor-only trim on the arrangement (0..1), used by the record dialog to
+     *  set the backing level. Applied ahead of master gain, the click and the
+     *  preview voice, so it lowers what the performer plays along to and nothing
+     *  else. Never persisted and never part of a bounce. */
+    void setArrangementMonitorGain(float gain);
     void setSafetyLimiterEnabled(bool enabled, bool snap);
     void setProjectMixGlue(float amount, bool snap);
 

@@ -86,10 +86,57 @@ exactly where it was played.
 
 ### The play-along is the arrangement transport
 
-Recording rolls the real transport rather than preparing a separate bed. Mute
-and solo already express "play along with only these tracks", and an optional
-count-in (one bar, or none) reuses the existing metronome. Nothing
-equivalent to `SCRATCH_BACKING_PREPARE` is built.
+Recording rolls the real transport rather than preparing a separate bed.
+Nothing equivalent to `SCRATCH_BACKING_PREPARE` is built: an optional count-in
+(one bar, or none) reuses the existing metronome, and the take is played against
+the arrangement as it stands.
+
+Which tracks that means is a *session* choice, made in the dialog's **Backing**
+list: all of them, some, or none for an unaccompanied take. Deferring to mute
+and solo alone was tried first and rejected — muting three tracks to record over
+the fourth is an edit to the project, it marks the file dirty, it lands in the
+undo history, and the user then has to remember to put it back. Instead the
+session borrows engine-level audibility (`setTracksAudible`, the seam mute and
+solo already drive) for as long as the dialog is open, exactly as it borrows the
+click. The project's mute and solo are never written, and the arrangement is
+handed back untouched when the dialog closes.
+
+One rule bounds it (`backingTrackAudible`): while a session is open the
+selection alone decides what is heard, and with no session the project alone
+decides. The borrow therefore runs in both directions — a track the timeline is
+muting can be ticked into the backing for one take, and is muted again the
+moment the dialog goes. That is deliberate: what a performer wants to play
+along to is a different question from what the arrangement should sound like,
+and answering the first must never change the answer to the second. To keep the
+default honest the selection is *seeded* from what the timeline is currently
+playing, mute and solo folded in, so the dialog opens sounding like the
+arrangement and any departure from it is something the user asked for. The
+selection applies to the review audition as well as the take, and is locked
+while rolling — it is what the performer is playing to.
+
+How *loud* that backing sits under the performer is the same borrow applied to
+level. The dialog's **Volume** slider is a 0..1 monitor trim on the arrangement
+that lasts exactly as long as the session (`sessionBackingGain`). Two nearer
+alternatives were rejected: the project's master volume, because that is a
+project edit with all the dirty-file and undo problems that made mute the wrong
+answer for the selection; and per-track gain, which would have to be written back
+through every clip and would fight any edit made while the dialog is open.
+Instead the trim sits on `MasterClockSource`, upstream of master gain. That
+position is the point of it — the click and the preview voice are mixed
+downstream of that source, so turning the backing down leaves the count-in
+audible and the review audition of the take at full level, which is precisely
+what someone reaching for the control wants. Unlike the selection it stays live
+while rolling: level is monitoring, it changes nothing about what is captured,
+and a performer buried under the arrangement should not have to abandon a take to
+fix it.
+
+The record window, backing (both which tracks and how loud), count-in and click
+are remembered by the renderer between dialog opens: they describe the take being
+chased, not one session.
+They are app-session state rather than a preference or project data — the
+backing is a list of track ids that only means anything in one project — so a
+setting the user has not touched keeps the backend's seed, and a remembered
+backing whose tracks have all gone defers to the seed as well.
 
 ### Capture runs on a standalone input device, outside the engine's device manager
 

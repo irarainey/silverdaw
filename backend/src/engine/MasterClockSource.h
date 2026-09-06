@@ -35,6 +35,8 @@ class MasterClockSource : public juce::AudioSource
                              "prepareToPlay block=" + juce::String(blockSize) + " sr=" + juce::String(newSampleRate));
         child.prepareToPlay(blockSize, newSampleRate);
         mixGlue.prepare(newSampleRate, 2);
+        monitorTrim.reset(newSampleRate, 0.01);
+        monitorTrim.setCurrentAndTargetValue(monitorTrimTarget.load(std::memory_order_acquire));
     }
 
     void releaseResources() override
@@ -112,6 +114,17 @@ class MasterClockSource : public juce::AudioSource
         mixGlue.setParams(amount, snap);
     }
 
+    /** Monitor-only trim on the arrangement, 0..1. A recording session borrows it
+     *  to set how loud the backing sits under the performer; it is never
+     *  persisted, never part of the mix, and never reaches a bounce. It sits here
+     *  rather than on the master gain deliberately: the click and the preview
+     *  voice are mixed downstream of this source, so trimming the backing leaves
+     *  the count-in and the review audition of the take at full level. */
+    void setMonitorTrim(float gain) noexcept
+    {
+        monitorTrimTarget.store(juce::jlimit(0.0F, 1.0F, gain), std::memory_order_release);
+    }
+
     void setPositionSamples(juce::int64 p) noexcept
     {
         positionSamples.store(juce::jmax(static_cast<juce::int64>(0), p), std::memory_order_relaxed);
@@ -169,6 +182,8 @@ class MasterClockSource : public juce::AudioSource
   private:
     void applyTransportFade(juce::AudioBuffer<float>& buffer, int startSample,
                             int numSamples, float target) noexcept;
+    void applyMonitorTrim(juce::AudioBuffer<float>& buffer, int startSample,
+                          int numSamples) noexcept;
 
     // Audio-thread hot path: allocation/lock/IO free. Publishes raw block timing
     // to atomics for a non-RT timer to format and log; the real-time invariant
@@ -211,6 +226,9 @@ class MasterClockSource : public juce::AudioSource
     std::atomic<float> transportGainTarget{1.0F};
     std::atomic<bool> outputFadeOutComplete{false};
     float transportGain = 1.0F;
+    // Session-scoped arrangement trim; smoothed so a fader move cannot click.
+    std::atomic<float> monitorTrimTarget{1.0F};
+    juce::LinearSmoothedValue<float> monitorTrim{1.0F};
     bool holdOutputSilence{false};
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};

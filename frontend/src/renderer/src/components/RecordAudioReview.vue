@@ -119,7 +119,7 @@ onBeforeUnmount(() => releaseAudition(ready.value?.filePath ?? null))
 <template>
   <div
     v-if="ready"
-    class="flex flex-col gap-4"
+    class="flex flex-col gap-4 text-xs leading-relaxed"
   >
     <RecordAudioWaveform
       :peaks="peaks"
@@ -154,8 +154,8 @@ onBeforeUnmount(() => releaseAudition(ready.value?.filePath ?? null))
         type="checkbox"
         class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
       >
-      <span class="min-w-0 flex-1 truncate text-sm leading-tight">
-        <span class="text-zinc-200">Play With the Arrangement</span>
+      <span class="min-w-0 flex-1 truncate leading-tight">
+        <span class="font-medium text-zinc-200">Play With the Arrangement</span>
         <span class="text-zinc-500"> — hear it against what you recorded over</span>
       </span>
     </label>
@@ -169,14 +169,14 @@ onBeforeUnmount(() => releaseAudition(ready.value?.filePath ?? null))
       >
     </label>
 
-    <p class="text-sm text-zinc-400">
+    <p class="text-zinc-400">
       Adding this to the timeline places it where you recorded it — on the selected track when
       that track is empty, otherwise on a new track of its own.
     </p>
 
     <p
       v-if="droppedWarning"
-      class="rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-sm text-amber-200"
+      class="rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
     >
       {{ droppedWarning }}
     </p>

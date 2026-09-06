@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
 import type {
+  RecordingCountInBars,
   RecordingInputLevelPayload,
   RecordingInputSelection,
   RecordingInputsListPayload,
   RecordingReadyPayload,
-  RecordingSessionStatePayload
+  RecordingSessionStatePayload,
+  RecordingWindowMode
 } from '@shared/bridge-protocol'
 
 /** Review-waveform peaks for the finished recording. Peaks, not audio: the file
@@ -48,6 +50,17 @@ interface RecordingSessionState {
   /** Input gain remembered from the last session, applied as soon as the next one
    *  opens: a microphone's level belongs to the setup, not to one take. */
   rememberedInputGainDb: number
+  /** Dialog settings carried across opens within this app session. They belong to
+   *  how the user is working right now, not to the project, so they are held in
+   *  memory rather than written to preferences or the project file. Null means
+   *  the user has not chosen yet, so the backend's own seed stands. */
+  rememberedWindowMode: RecordingWindowMode | null
+  rememberedBackingTrackIds: string[] | null
+  /** Backing level (0..1) carried across opens; monitoring only, so it is never
+   *  written to the project or to preferences. */
+  rememberedBackingGain: number | null
+  rememberedCountInBars: RecordingCountInBars | null
+  rememberedClickEnabled: boolean | null
   /** Live input peaks, always metered even with monitoring off. */
   inputPeakL: number
   inputPeakR: number
@@ -74,6 +87,11 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     rememberedInput: null,
     preferredInputTypeName: null,
     rememberedInputGainDb: 0,
+    rememberedWindowMode: null,
+    rememberedBackingTrackIds: null,
+    rememberedBackingGain: null,
+    rememberedCountInBars: null,
+    rememberedClickEnabled: null,
     inputPeakL: 0,
     inputPeakR: 0,
     ready: null,

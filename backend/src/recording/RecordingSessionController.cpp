@@ -20,6 +20,18 @@ juce::String makeId(const juce::String& prefix)
 {
     return prefix + juce::Uuid().toDashedString();
 }
+
+/** The tracks the arrangement is currently playing — mute and solo already
+ *  folded in — used to seed a fresh session's backing selection. */
+juce::StringArray audibleTrackIds(const ProjectState& projectState)
+{
+    juce::StringArray audible;
+    for (const auto& trackId : projectState.getTrackIds())
+    {
+        if (projectState.getEffectiveTrackGain(trackId) > 0.0F) audible.add(trackId);
+    }
+    return audible;
+}
 } // namespace
 
 RecordingSessionController::RecordingSessionController() = default;
@@ -46,11 +58,16 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
     // The dialog starts from what the timeline is already doing, then keeps the
     // choice to itself.
     fresh.clickEnabled = projectStateRef.getMetronomeEnabled();
+    // Start from what the timeline is already playing, so the default backing
+    // sounds like the arrangement does; from there the selection is the session's
+    // own, and a muted track can be ticked in for a single take.
+    fresh.backingTrackIds = audibleTrackIds(projectStateRef);
     session = fresh;
 
     openDevice(typeName, deviceName);
     refreshWindow();
     applySessionMetronome();
+    applySessionBackingGain();
     startTimer(kTimerIntervalMs);
     if (onStateChanged) onStateChanged();
     return session->sessionId;
@@ -75,6 +92,11 @@ void RecordingSessionController::close(const juce::String& sessionId)
     // Whatever the session borrowed the click for — forced on for a count-in, off
     // through review — the project's own setting is what survives the dialog.
     applySessionMetronome();
+    // Same for the backing: audibility goes straight back to what the project
+    // says, whether the session had silenced a track or brought a muted one in.
+    applySessionBacking();
+    // And the backing level: the arrangement plays at its own volume again.
+    applySessionBackingGain();
     if (onStateChanged) onStateChanged();
 }
 
@@ -166,6 +188,40 @@ bool RecordingSessionController::setClickEnabled(const juce::String& sessionId, 
     // Audible immediately, including mid-take: the click is monitoring, and a
     // performer who wants it gone should not have to stop to lose it.
     applySessionMetronome();
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
+bool RecordingSessionController::setBackingTracks(const juce::String& sessionId,
+                                                  const juce::StringArray& trackIds)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    // Mid-take the backing is what the performer is playing to; changing it under
+    // them would leave a take recorded against something that no longer exists.
+    if (session->status == "countIn" || session->status == "recording") return false;
+
+    juce::StringArray resolved;
+    if (projectState != nullptr)
+    {
+        for (const auto& trackId : trackIds)
+        {
+            if (projectState->hasTrack(trackId) && ! resolved.contains(trackId))
+                resolved.add(trackId);
+        }
+    }
+    session->backingTrackIds = resolved;
+    applySessionBacking();
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
+bool RecordingSessionController::setBackingGain(const juce::String& sessionId, double gain)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    session->backingGain = juce::jlimit(0.0, 1.0, gain);
+    // Live, including mid-take: the backing level is monitoring, and a performer
+    // who cannot hear themselves over it should not have to stop to fix it.
+    applySessionBackingGain();
     if (onStateChanged) onStateChanged();
     return true;
 }
@@ -422,6 +478,37 @@ void RecordingSessionController::applySessionMetronome()
                             : projectEnabled);
 }
 
+/** Silence the tracks the session is not playing along to, bring in the ones it
+ *  is, and hand audibility back to the project when there is no session.
+ *  Engine-only, so nothing here touches the project's mute or solo — or marks
+ *  the project as edited. */
+void RecordingSessionController::applySessionBacking()
+{
+    if (engine == nullptr || projectState == nullptr) return;
+
+    std::vector<std::pair<juce::String, bool>> audibility;
+    const auto trackIds = projectState->getTrackIds();
+    audibility.reserve(static_cast<std::size_t>(trackIds.size()));
+    for (const auto& trackId : trackIds)
+    {
+        const bool projectAudible = projectState->getEffectiveTrackGain(trackId) > 0.0F;
+        const bool selected = session.has_value() && session->backingTrackIds.contains(trackId);
+        audibility.emplace_back(
+            trackId, backingTrackAudible(session.has_value(), selected, projectAudible));
+    }
+    engine->setTracksAudible(audibility);
+}
+
+/** Trim the arrangement to the session's backing level, and hand it back at
+ *  unity when there is no session. Engine-only, ahead of the click and the
+ *  preview voice, so neither the count-in nor the review audition is affected. */
+void RecordingSessionController::applySessionBackingGain()
+{
+    if (engine == nullptr) return;
+    engine->setArrangementMonitorGain(static_cast<float>(
+        sessionBackingGain(session.has_value(), session.has_value() ? session->backingGain : 1.0)));
+}
+
 void RecordingSessionController::enterReview(const juce::String& sessionId,
                                              const juce::String& recordingId)
 {
@@ -524,6 +611,8 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
     snapshot.channelCount = session->channelCount;
     snapshot.countInBars = session->countInBars;
     snapshot.clickEnabled = session->clickEnabled;
+    snapshot.backingTrackIds = session->backingTrackIds;
+    snapshot.backingGain = session->backingGain;
     snapshot.inputGainDb = session->inputGainDb;
     snapshot.windowMode = session->windowMode;
     snapshot.anchorMs = session->anchorMs;

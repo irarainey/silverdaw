@@ -149,6 +149,11 @@ juce::var buildStateEnvelope(const recording::RecordingStateSnapshot& snapshot)
     obj->setProperty("channelCount", snapshot.channelCount);
     obj->setProperty("countInBars", snapshot.countInBars);
     obj->setProperty("clickEnabled", snapshot.clickEnabled);
+    juce::Array<juce::var> backingTrackIds;
+    for (const auto& trackId : snapshot.backingTrackIds)
+        backingTrackIds.add(trackId);
+    obj->setProperty("backingTrackIds", backingTrackIds);
+    obj->setProperty("backingGain", snapshot.backingGain);
     obj->setProperty("inputGainDb", snapshot.inputGainDb);
     obj->setProperty("windowMode", snapshot.windowMode);
     obj->setProperty("hasSelection", snapshot.hasSelection);
@@ -401,6 +406,22 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
     {
         active.setClickEnabled(sessionId,
                                static_cast<bool>(payload.getProperty("enabled", false)));
+    }
+    else if (action == "setBackingTracks")
+    {
+        juce::StringArray trackIds;
+        if (const auto* ids = payload.getProperty("trackIds", juce::var()).getArray())
+        {
+            for (const auto& id : *ids)
+            {
+                if (id.isString()) trackIds.add(id.toString());
+            }
+        }
+        active.setBackingTracks(sessionId, trackIds);
+    }
+    else if (action == "setBackingGain")
+    {
+        active.setBackingGain(sessionId, tryGetNumber(payload, "gain").value_or(1.0));
     }
     else if (action == "setInputGain")
     {

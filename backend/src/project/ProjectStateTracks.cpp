@@ -64,6 +64,18 @@ int ProjectState::getTrackCount() const noexcept
     return count;
 }
 
+juce::StringArray ProjectState::getTrackIds() const
+{
+    juce::StringArray ids;
+    for (int i = 0; i < root.getNumChildren(); ++i)
+    {
+        const auto child = root.getChild(i);
+        if (! child.hasType(kTrack)) continue;
+        ids.add(child.getProperty(juce::Identifier{"id"}).toString());
+    }
+    return ids;
+}
+
 bool ProjectState::moveTrack(const juce::String& trackId, int newIndex)
 {
     // Visible track order ignores sibling LIBRARY/MARKERS nodes.

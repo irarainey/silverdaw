@@ -34,6 +34,11 @@ export const RecordingInputGainDbSchema = z
   .min(MIN_RECORDING_INPUT_GAIN_DB)
   .max(MAX_RECORDING_INPUT_GAIN_DB)
 
+/** Backing level for the record dialog, 0..1 linear — the same shape the Scratch
+ *  Editor's `backingGain` uses, and for the same reason: it is a monitor trim on
+ *  what the performer plays along to, so it only ever attenuates. */
+export const RecordingBackingGainSchema = z.number().min(0).max(1)
+
 /**
  * The record window (ADR 0030). A recording is bounded by time, never by a
  * track. `selection` uses the project's existing timeline range as the window
@@ -139,6 +144,21 @@ export const RecordingSessionControlPayloadSchema = z.discriminatedUnion('action
   }),
   z.object({
     ...RecordingSessionControlBase,
+    action: z.literal('setBackingTracks'),
+    /** Tracks to play along to. Empty records against silence; the backend
+     *  silences the rest in the engine only, never in the project. */
+    trackIds: z.array(z.string())
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
+    action: z.literal('setBackingGain'),
+    /** How loud the backing plays under the performer, 0..1. Monitoring only:
+     *  the backend trims the arrangement in the engine, never the project's
+     *  master volume, and the trim is gone when the dialog closes. */
+    gain: RecordingBackingGainSchema
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
     action: z.literal('setInputGain'),
     gainDb: RecordingInputGainDbSchema
   }),
@@ -211,6 +231,12 @@ export const RecordingSessionStatePayloadSchema = z.object({
   /** Whether the click keeps going through the take. Session-scoped: it starts
    *  from the project's metronome and never writes back to it. */
   clickEnabled: z.boolean(),
+  /** Tracks heard as backing while the dialog is open; every track by default,
+   *  empty means the take is recorded against silence. */
+  backingTrackIds: z.array(z.string()),
+  /** How loud that backing plays under the performer, 0..1. Monitoring only and
+   *  session-scoped: it never touches the project's master volume. */
+  backingGain: RecordingBackingGainSchema,
   /** Input gain currently applied to the capture, in dB. */
   inputGainDb: RecordingInputGainDbSchema,
   windowMode: RecordingWindowModeSchema,

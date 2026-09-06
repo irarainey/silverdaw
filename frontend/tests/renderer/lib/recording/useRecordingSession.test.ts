@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref } from 'vue'
 import { useRecordingSession } from '@/lib/recording/useRecordingSession'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { useTransportStore } from '@/stores/transportStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import type { RecordingReadyPayload, RecordingSessionStatePayload } from '@shared/bridge-protocol'
@@ -36,6 +37,8 @@ function makeState(
     channelCount: 1,
     countInBars: 0,
     clickEnabled: false,
+    backingTrackIds: [],
+    backingGain: 1,
     inputGainDb: 0,
     windowMode: 'playhead',
     hasSelection: false,
@@ -67,6 +70,10 @@ function makeReady(): RecordingReadyPayload {
     driftPpm: 4.5,
     droppedSamples: 0
   }
+}
+
+function makeTrack(id: string): never {
+  return { id, name: `Track ${id}`, clipIds: [], volume: 1, lengthMs: 10_000 } as never
 }
 
 function sentEnvelopes(): string[] {
@@ -132,6 +139,26 @@ describe('useRecordingSession', () => {
     scope.stop()
   })
 
+  it('sends the backing selection as a session control, not a project change', () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyState(makeState({ backingTrackIds: ['track-1', 'track-2'] }))
+    session.setBackingTracks(['track-1'])
+
+    const control = vi
+      .mocked(sendBridge)
+      .mock.calls.filter((call) => call[0] === 'RECORD_SESSION_CONTROL')
+      .map((call) => call[1] as { action: string; trackIds?: string[] })
+      .find((payload) => payload.action === 'setBackingTracks')
+    expect(control?.trackIds).toEqual(['track-1'])
+    // Recording against part of the arrangement is not an edit to it.
+    expect(sentEnvelopes()).not.toContain('TRACK_SET_MUTED')
+    scope.stop()
+  })
+
   it('clamps the input gain to the range the backend accepts', () => {
     const open = ref(true)
     const store = useRecordingSessionStore()
@@ -186,6 +213,90 @@ describe('useRecordingSession', () => {
 
     expect(store.rememberedInputGainDb).toBe(-3.5)
     expect(setAudioInput).toHaveBeenCalledWith({ gainDb: -3.5 })
+    scope.stop()
+  })
+
+  it('carries the dialog settings across opens so the setup survives the dialog', async () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const project = useProjectStore()
+    project.tracks = [makeTrack('track-1'), makeTrack('track-2')]
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyState(makeState())
+    session.setWindowMode('selection')
+    session.setCountInBars(1)
+    session.setClickEnabled(true)
+    session.setBackingTracks(['track-2'])
+    session.setBackingGain(0.4)
+
+    open.value = false
+    await nextTick()
+    vi.mocked(sendBridge).mockClear()
+
+    open.value = true
+    await nextTick()
+    store.applyState(makeState({ sessionId: 'rec-2' }))
+    await nextTick()
+
+    const applied = new Map(
+      vi
+        .mocked(sendBridge)
+        .mock.calls.filter((call) => call[0] === 'RECORD_SESSION_CONTROL')
+        .map((call) => call[1] as Record<string, unknown>)
+        .map((payload) => [payload.action as string, payload])
+    )
+    expect(applied.get('setWindowMode')?.mode).toBe('selection')
+    expect(applied.get('setCountInBars')?.bars).toBe(1)
+    expect(applied.get('setClickEnabled')?.enabled).toBe(true)
+    expect(applied.get('setBackingTracks')?.trackIds).toEqual(['track-2'])
+    expect(applied.get('setBackingGain')?.gain).toBe(0.4)
+    scope.stop()
+  })
+
+  it('sends the backing level as a session control, never as a master volume change', () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyState(makeState())
+    session.setBackingGain(2)
+    session.setBackingGain(-1)
+
+    const gains = vi
+      .mocked(sendBridge)
+      .mock.calls.filter((call) => call[0] === 'RECORD_SESSION_CONTROL')
+      .map((call) => call[1] as { action: string; gain: number })
+      .filter((payload) => payload.action === 'setBackingGain')
+      .map((payload) => payload.gain)
+    expect(gains).toEqual([1, 0])
+    // The backing level is monitoring, so it must never reach the project.
+    expect(sentEnvelopes()).not.toContain('PROJECT_SET_MASTER_VOLUME')
+    scope.stop()
+  })
+
+  it('leaves the backing to the backend when the remembered tracks are from another project', async () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const project = useProjectStore()
+    project.tracks = [makeTrack('other-1')]
+    store.rememberedBackingTrackIds = ['track-1', 'track-2']
+    const scope = effectScope()
+    scope.run(() => useRecordingSession(open))
+
+    store.applyState(makeState())
+    await nextTick()
+
+    // Every remembered track is gone, so this is a different project: the seed
+    // — what the timeline is playing — beats recording against silence.
+    const applied = vi
+      .mocked(sendBridge)
+      .mock.calls.filter((call) => call[0] === 'RECORD_SESSION_CONTROL')
+      .map((call) => call[1] as { action: string })
+      .find((payload) => payload.action === 'setBackingTracks')
+    expect(applied).toBeUndefined()
     scope.stop()
   })
 

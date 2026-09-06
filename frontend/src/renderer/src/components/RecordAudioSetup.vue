@@ -13,6 +13,7 @@ import {
   findDeviceOptionForInput
 } from '@/lib/recording/recordingInputOptions'
 import type { RecordingSession } from '@/lib/recording/useRecordingSession'
+import { useProjectStore } from '@/stores/projectStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import {
   MAX_RECORDING_INPUT_GAIN_DB,
@@ -22,6 +23,52 @@ import {
 const props = defineProps<{ session: RecordingSession }>()
 
 const store = useRecordingSessionStore()
+const project = useProjectStore()
+
+// What the take is played along to. The selection starts as whatever the
+// timeline is currently playing — mute and solo folded in — but from there it is
+// the dialog's own: a muted track can be brought in for a single take, and the
+// arrangement is handed straight back when the dialog closes.
+const backingTracks = computed(() =>
+  project.tracks.map((track) => ({
+    id: track.id,
+    name: track.name,
+    silenced: track.muted || (project.anySoloed && !track.soloed)
+  }))
+)
+const backingSelection = computed(() => new Set(store.current?.backingTrackIds ?? []))
+const selectedBackingCount = computed(
+  () => backingTracks.value.filter((track) => backingSelection.value.has(track.id)).length
+)
+
+function toggleBackingTrack(trackId: string): void {
+  const next = new Set(backingSelection.value)
+  if (next.has(trackId)) next.delete(trackId)
+  else next.add(trackId)
+  props.session.setBackingTracks([...next])
+}
+
+function selectAllBacking(): void {
+  props.session.setBackingTracks(backingTracks.value.map((track) => track.id))
+}
+
+function selectNoBacking(): void {
+  props.session.setBackingTracks([])
+}
+
+// How loud the backing sits under the performer. Monitoring only, so unlike the
+// track selection it stays live while rolling: someone who cannot hear
+// themselves over the arrangement should not have to stop to fix it.
+const backingGain = computed(() => store.current?.backingGain ?? 1)
+const backingGainPercent = computed(() => Math.round(backingGain.value * 100))
+
+function onBackingGainChange(event: Event): void {
+  props.session.setBackingGain(Number((event.target as HTMLInputElement).value) / 100)
+}
+
+function onBackingGainReset(): void {
+  props.session.setBackingGain(1)
+}
 
 const deviceOptions = computed(() => buildDeviceOptions(store.inputs))
 const openInput = computed(() => store.current?.input ?? null)
@@ -66,6 +113,11 @@ function onGainChange(event: Event): void {
   props.session.setInputGain(Number((event.target as HTMLInputElement).value))
 }
 
+/** Double-click resets to unity, matching the pan and FX controls. */
+function onGainReset(): void {
+  props.session.setInputGain(0)
+}
+
 function onWindowMode(mode: 'playhead' | 'selection'): void {
   props.session.setWindowMode(mode)
 }
@@ -85,9 +137,9 @@ function onMetronomeChange(event: Event): void {
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
+  <div class="flex flex-col gap-5 text-xs leading-relaxed">
     <section class="flex flex-col gap-2">
-      <h2 class="text-[11px] uppercase tracking-wider text-zinc-500">
+      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
         Input
       </h2>
       <select
@@ -169,6 +221,7 @@ function onMetronomeChange(event: Event): void {
       </select>
 
       <div class="flex items-center gap-3">
+        <span class="w-16 shrink-0 text-zinc-400">Level</span>
         <PeakMeter
           :source="meterSource"
           orientation="horizontal"
@@ -180,17 +233,19 @@ function onMetronomeChange(event: Event): void {
       </div>
 
       <label class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-xs text-zinc-400">Input gain</span>
+        <span class="w-16 shrink-0 text-zinc-400">Input gain</span>
         <input
           type="range"
-          class="min-w-0 flex-1 cursor-pointer accent-sky-500"
+          class="app-range min-w-0 flex-1"
           aria-label="Input gain"
           :min="MIN_RECORDING_INPUT_GAIN_DB"
           :max="MAX_RECORDING_INPUT_GAIN_DB"
           step="0.5"
           :disabled="!store.current"
           :value="inputGainDb"
+          title="Double-click to reset to 0 dB"
           @input="onGainChange"
+          @dblclick="onGainReset"
         >
         <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
           {{ inputGainDb > 0 ? '+' : '' }}{{ inputGainDb.toFixed(1) }} dB
@@ -199,7 +254,7 @@ function onMetronomeChange(event: Event): void {
     </section>
 
     <section class="flex flex-col gap-2">
-      <h2 class="text-[11px] uppercase tracking-wider text-zinc-500">
+      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
         Record Window
       </h2>
       <div class="space-y-2">
@@ -242,7 +297,91 @@ function onMetronomeChange(event: Event): void {
     </section>
 
     <section class="flex flex-col gap-2">
-      <h2 class="text-[11px] uppercase tracking-wider text-zinc-500">
+      <div class="flex items-center justify-between">
+        <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+          Backing
+        </h2>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[11px] tabular-nums text-zinc-500">
+            {{ selectedBackingCount }} of {{ backingTracks.length }}
+          </span>
+          <button
+            type="button"
+            class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="locked || backingTracks.length === 0"
+            @click="selectAllBacking"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="locked || backingTracks.length === 0"
+            @click="selectNoBacking"
+          >
+            None
+          </button>
+        </div>
+      </div>
+      <p
+        v-if="backingTracks.length === 0"
+        class="text-xs text-zinc-500"
+      >
+        There are no tracks to play along to yet.
+      </p>
+      <div
+        v-else
+        class="silverdaw-scroll max-h-40 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/40 p-1"
+      >
+        <label
+          v-for="track in backingTracks"
+          :key="track.id"
+          class="flex items-center gap-3 rounded px-2 py-1.5 text-xs"
+          :class="locked
+            ? 'cursor-not-allowed text-zinc-600'
+            : 'cursor-pointer text-zinc-200 hover:bg-zinc-900'"
+        >
+          <input
+            type="checkbox"
+            class="h-4 w-4 shrink-0 accent-sky-500 disabled:cursor-not-allowed"
+            :disabled="locked"
+            :checked="backingSelection.has(track.id)"
+            @change="toggleBackingTrack(track.id)"
+          >
+          <span class="min-w-0 flex-1 truncate">{{ track.name }}</span>
+          <span
+            v-if="track.silenced"
+            class="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500"
+          >Muted</span>
+        </label>
+      </div>
+
+      <label
+        v-if="backingTracks.length > 0"
+        class="flex items-center gap-3"
+      >
+        <span class="w-16 shrink-0 text-zinc-400">Volume</span>
+        <input
+          type="range"
+          class="app-range min-w-0 flex-1"
+          aria-label="Backing volume"
+          min="0"
+          max="100"
+          step="1"
+          :disabled="!store.current"
+          :value="backingGainPercent"
+          title="Double-click to reset to 100%"
+          @input="onBackingGainChange"
+          @dblclick="onBackingGainReset"
+        >
+        <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
+          {{ backingGainPercent }}%
+        </span>
+      </label>
+    </section>
+
+    <section class="flex flex-col gap-2">
+      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
         Metronome
       </h2>
       <div class="space-y-2">
@@ -262,23 +401,23 @@ function onMetronomeChange(event: Event): void {
             <span class="text-zinc-500"> — one bar of clicks before recording</span>
           </span>
         </label>
-      </div>
-      <label
-        class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-        :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
-      >
-        <input
-          type="checkbox"
-          class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
-          :disabled="locked"
-          :checked="clickEnabled"
-          @change="onMetronomeChange"
+        <label
+          class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+          :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
         >
-        <span class="min-w-0 flex-1 truncate leading-tight">
-          <span class="font-medium text-zinc-200">Click While Recording</span>
-          <span class="text-zinc-500"> — keeps clicking after the count-in</span>
-        </span>
-      </label>
+          <input
+            type="checkbox"
+            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
+            :disabled="locked"
+            :checked="clickEnabled"
+            @change="onMetronomeChange"
+          >
+          <span class="min-w-0 flex-1 truncate leading-tight">
+            <span class="font-medium text-zinc-200">Click While Recording</span>
+            <span class="text-zinc-500"> — keeps clicking after the count-in</span>
+          </span>
+        </label>
+      </div>
     </section>
   </div>
 </template>
