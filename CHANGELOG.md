@@ -23,6 +23,7 @@
 
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on. The re-editable scratch source is still kept, so the pattern can be edited again.
 - A recording kept as **Music** appeared in the library with no tempo and no beat markers until the project was reloaded.
+- The metronome ran ahead of the music whenever a track used an effect that adds latency, such as a mastering limiter, so anything played or recorded to the click landed early. The click now sounds in step with the audio you are hearing.
 - Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
 - Deleting a stem, sample or recording with **Clean up project files** on left the project marked as having unsaved changes even when nothing else had changed since the last save.
 

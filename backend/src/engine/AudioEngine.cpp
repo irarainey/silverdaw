@@ -13,6 +13,10 @@ AudioEngine::AudioEngine()
                                        &master.sampleRateAtomicRef(),
                                        &outputKeepAlive.playingAtomicRef());
     busGraph.setPluginPlayHead(&pluginPlayHead);
+
+    // The click is mixed post-master, downstream of the compensation delay lines, so it must
+    // step back by the alignment to stay with the music it is counting (ADR 0026).
+    masterMeter.setMetronomeLeadSource(&busGraph.latencyCompensationAtomicRef());
 }
 
 AudioEngine::~AudioEngine()

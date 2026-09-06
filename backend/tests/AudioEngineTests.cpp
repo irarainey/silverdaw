@@ -1494,6 +1494,75 @@ void testMetronomeClicksOnBeatBoundaries()
     }
 }
 
+// The click is mixed post-master-gain in MeteringSource, downstream of the per-track plugin
+// delay compensation lines, so it is NOT delayed with the arrangement. The transport's render
+// cursor meanwhile deliberately LEADS the audible output by the alignment (primePluginPipeline
+// pre-rolls the graph and advances the transport by it), so a click rendered against the raw
+// cursor sounds early by exactly the alignment and a performer following it plays early
+// (ADR 0026, ADR 0030). Stepping the click's own position back by the alignment fixes it.
+void testMetronomeClickStepsBackByPluginLatencyCompensation()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    constexpr double kBpm = 120.0; // beat period = 24000 samples = 50 blocks
+    // 100 ms of compensation: far more than a click is long, so a shift cannot be mistaken
+    // for the same click landing in an adjacent block.
+    constexpr int kLead = 4800;
+    constexpr float kClickThreshold = 0.1F; // above the 0.05 wake burst, below the 0.25 click
+
+    struct SilentSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            info.clearActiveBufferRegion();
+        }
+    };
+
+    // Plays from transport sample 0 and reports the absolute sample index at which the first
+    // click is heard, with `lead` samples of compensation in effect.
+    auto firstClickIndex = [&](int lead) {
+        silverdaw::OutputKeepAlive keepAlive;
+        SilentSource src;
+        silverdaw::MasterClockSource master(src, keepAlive);
+        silverdaw::Metronome metro;
+        silverdaw::MeteringSource meter(master, keepAlive, master, metro);
+
+        std::atomic<int> compensation{lead};
+        meter.setMetronomeLeadSource(&compensation);
+        metro.setBpm(kBpm);
+        metro.setEnabled(true);
+        meter.prepareToPlay(kBlock, kRate);
+        master.setPositionSamples(0);
+        keepAlive.setPlaying(true);
+
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+        // Two beats' worth of blocks: long enough to find the click however far it is shifted.
+        for (int block = 0; block < 100; ++block)
+        {
+            buf.clear();
+            meter.getNextAudioBlock(info);
+            for (int i = 0; i < kBlock; ++i)
+                if (std::abs(buf.getSample(0, i)) > kClickThreshold)
+                    return static_cast<juce::int64>(block) * kBlock + i;
+        }
+        return juce::int64{-1};
+    };
+
+    // Absolute indices depend on the silent wake pre-roll (which does not advance the transport),
+    // so the invariant under test is the DIFFERENCE the alignment makes, not where the click lands.
+    const auto uncompensated = firstClickIndex(0);
+    require(uncompensated >= 0, "the downbeat click must sound at all with no plugin latency");
+
+    const auto compensated = firstClickIndex(kLead);
+    require(compensated >= 0, "the downbeat click must still sound with plugin latency in play");
+    require(compensated - uncompensated == static_cast<juce::int64>(kLead),
+            "the click must sound one alignment LATER, when the arrangement's downbeat is "
+            "actually audible — not when the leading render cursor passes it");
+}
+
 // Regression: a project tempo change used to hand the engine an unset `enabled`,
 // which it reads as "keep whatever this clip already is". A clip the same command
 // had only just auto-warped in project state was therefore *disabled* in the
@@ -1861,6 +1930,8 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
     tests.push_back({"loadPreview sniffs content when the extension is unclaimed", testLoadPreviewFallsBackToContentSniffing});
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
+    tests.push_back({"Metronome click steps back by the PDC alignment",
+                     testMetronomeClickStepsBackByPluginLatencyCompensation});
     tests.push_back({"A new project disarms the previous project's timeline loop", testNewProjectDisarmsPreviousProjectTimelineLoop});
     tests.push_back({"Suspending the timeline loop leaves it armed", testSuspendingTheTimelineLoopLeavesItArmed});
     tests.push_back({"Transport start stamp skips the wake pre-roll and stopped blocks", testTransportStartStampSkipsPrerollAndSilence});

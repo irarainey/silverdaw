@@ -13,13 +13,27 @@ namespace silverdaw
 
 // Apply master gain before metering and inject keep-alive after gain so the endpoint floor is
 // volume-independent. The metronome click is also mixed post-gain so the project master volume
-// never silences the monitoring tick.
+// never silences the monitoring tick — which means the click bypasses the plugin delay
+// compensation delay lines, so it has to offset its own position to stay with the music
+// (see `setMetronomeLeadSource`).
 class MeteringSource : public juce::AudioSource
 {
   public:
     MeteringSource(juce::AudioSource& s, OutputKeepAlive& keepAlive, MasterClockSource& clock,
                    Metronome& metronome)
         : source(s), keepAlive(keepAlive), clock(clock), metronome(metronome) {}
+
+    /** Point the click at the PDC alignment (`BusGraph::latencyCompensationAtomicRef()`), which
+     *  the audio thread then reads live. The transport's render cursor deliberately leads the
+     *  audible output by this many samples — `AudioEngine::primePluginPipeline` pre-rolls the
+     *  graph and advances the transport by the alignment — so a click rendered against the raw
+     *  cursor would lead the music by it too, and a performer following the click would play
+     *  early. Left null (lead 0) the click is rendered against the raw cursor, which is exactly
+     *  right when nothing adds latency. */
+    void setMetronomeLeadSource(const std::atomic<int>* leadSamples) noexcept
+    {
+        metronomeLead = leadSamples;
+    }
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override
     {
@@ -75,10 +89,10 @@ class MeteringSource : public juce::AudioSource
 
         // Mix the metronome click post master gain. A recording count-in owns the click while it
         // runs: the transport is deliberately parked, so the click is driven by the count-in's own
-        // counter rather than the playhead. Otherwise the click only sounds when the transport
-        // actually advanced this block (real playback — not a stopped block or a wake pre-roll,
-        // where the position is frozen), which keeps it phase-aligned to the playhead and
-        // seek-correct.
+        // counter rather than the playhead (and needs no PDC offset, as nothing is playing to be
+        // out of step with). Otherwise the click only sounds when the transport actually advanced
+        // this block (real playback — not a stopped block or a wake pre-roll, where the position is
+        // frozen), which keeps it phase-aligned to the playhead and seek-correct.
         const juce::int64 countIn = countInRemaining.load(std::memory_order_acquire);
         if (countIn > 0)
         {
@@ -89,7 +103,19 @@ class MeteringSource : public juce::AudioSource
         }
         else if (clock.getPositionSamples() == posBefore + static_cast<juce::int64>(n))
         {
-            metronome.render(*info.buffer, info.startSample, n, posBefore, clock.getSampleRate());
+            // Step back by the PDC alignment so the click sounds with the arrangement content the
+            // listener is actually hearing, not with the render cursor that leads it (ADR 0026). A
+            // plugin added mid-playback moves the alignment, which shifts the click by the delta
+            // for one block — the compensation delay lines are being resized in the same moment, so
+            // the mix itself is discontinuous there too, and both settle on the next block.
+            const juce::int64 lead =
+                metronomeLead != nullptr
+                    ? static_cast<juce::int64>(metronomeLead->load(std::memory_order_relaxed))
+                    : 0;
+            // A negative position simply yields no clicks: with an alignment in play the beats
+            // before the start of the timeline are not audible yet.
+            metronome.render(*info.buffer, info.startSample, n, posBefore - lead,
+                             clock.getSampleRate());
         }
 
         limiter.process(*info.buffer, info.startSample, n);
@@ -165,6 +191,8 @@ class MeteringSource : public juce::AudioSource
     OutputKeepAlive& keepAlive;
     MasterClockSource& clock;
     Metronome& metronome;
+    // Live PDC alignment, owned by BusGraph; null until wired (and in tests), meaning no lead.
+    const std::atomic<int>* metronomeLead{nullptr};
     juce::LinearSmoothedValue<float> smoothedGain;
     SafetyLimiter limiter;
     std::atomic<float> targetGain{1.0F};
