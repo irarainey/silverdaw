@@ -47,7 +47,15 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
                                               const juce::String& typeName,
                                               const juce::String& deviceName)
 {
-    if (session.has_value()) return {};
+    if (session.has_value())
+    {
+        // Only one record surface exists, so a second open means the previous
+        // session was abandoned without a close — a renderer that never adopted a
+        // session id cannot send one. Retiring it here is what stops the borrowed
+        // click, backing, loop and monitor from outliving the dialog.
+        log::warn("recording", "opening over abandoned session " + session->sessionId);
+        close(session->sessionId);
+    }
 
     engine = &engineRef;
     projectState = &projectStateRef;
@@ -67,7 +75,9 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
     openDevice(typeName, deviceName);
     refreshWindow();
     applySessionMetronome();
+    applySessionLoop();
     applySessionBackingGain();
+    applySessionMonitor();
     startTimer(kTimerIntervalMs);
     if (onStateChanged) onStateChanged();
     return session->sessionId;
@@ -75,7 +85,11 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
 
 void RecordingSessionController::close(const juce::String& sessionId)
 {
-    if (! session.has_value() || session->sessionId != sessionId) return;
+    if (! session.has_value()) return;
+    // An empty id means "whichever session is open". The renderer sends that when
+    // it never adopted an id — a state broadcast it had already noted as closed,
+    // say — and the borrowed engine state has to come back either way.
+    if (sessionId.isNotEmpty() && session->sessionId != sessionId) return;
 
     if (session->status == "countIn" || session->status == "recording")
     {
@@ -95,8 +109,13 @@ void RecordingSessionController::close(const juce::String& sessionId)
     // Same for the backing: audibility goes straight back to what the project
     // says, whether the session had silenced a track or brought a muted one in.
     applySessionBacking();
+    // The project's loop is its own again, exactly as it was armed.
+    applySessionLoop();
     // And the backing level: the arrangement plays at its own volume again.
     applySessionBackingGain();
+    // The monitor goes with it — nothing should be listening to an input once the
+    // dialog has gone.
+    applySessionMonitor();
     if (onStateChanged) onStateChanged();
 }
 
@@ -132,6 +151,9 @@ void RecordingSessionController::openDevice(const juce::String& typeName,
 
     tap.setChannelSelection(session->firstChannel, session->channelCount);
     tap.setGain(juce::Decibels::decibelsToGain(static_cast<float>(session->inputGainDb)));
+    // The tap feeds the monitor for as long as the device is open; whether any of
+    // it is heard is the source's own decision.
+    if (engine != nullptr) tap.setMonitorSink(&engine->getInputMonitor());
     tap.resetCaptureStats();
     device.start(tap);
 }
@@ -139,6 +161,8 @@ void RecordingSessionController::openDevice(const juce::String& typeName,
 void RecordingSessionController::closeDevice()
 {
     tap.setWriter(nullptr);
+    tap.setMonitorSink(nullptr);
+    if (engine != nullptr) engine->getInputMonitor().setEnabled(false);
     if (device.isOpen())
     {
         device.stop();
@@ -235,11 +259,40 @@ bool RecordingSessionController::setInputGain(const juce::String& sessionId, dou
     return true;
 }
 
-bool RecordingSessionController::setWindowMode(const juce::String& sessionId,
-                                               const juce::String& mode)
+bool RecordingSessionController::setRecordingMode(const juce::String& sessionId,
+                                                   const juce::String& mode)
 {
     if (! session.has_value() || session->sessionId != sessionId) return false;
-    if (mode != "playhead" && mode != "selection") return false;
+    if (mode != "music" && mode != "simple") return false;
+    // Nothing about the capture changes: the mode only decides what the finished
+    // file is committed as, so it can be changed right up to the commit.
+    session->recordingMode = mode;
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
+bool RecordingSessionController::setMonitorEnabled(const juce::String& sessionId, bool enabled)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    session->monitorEnabled = enabled;
+    applySessionMonitor();
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
+bool RecordingSessionController::setCleanupEnabled(const juce::String& sessionId, bool enabled)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    session->cleanupEnabled = enabled;
+    if (onStateChanged) onStateChanged();
+    return true;
+}
+
+bool RecordingSessionController::setWindowMode(const juce::String& sessionId,
+                                                const juce::String& mode)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    if (mode != "playhead" && mode != "start" && mode != "selection") return false;
     session->windowMode = mode;
     refreshWindow();
     if (onStateChanged) onStateChanged();
@@ -259,17 +312,14 @@ void RecordingSessionController::refreshWindow()
 
     const auto selection = projectState->getViewTimelineSelection();
     const bool usable = selection.has_value() && selection->endMs > selection->startMs;
-    if (session->windowMode == "selection" && usable)
-    {
-        session->anchorMs = selection->startMs;
-        session->windowEndMs = selection->endMs;
-    }
-    else
-    {
-        session->windowMode = usable ? session->windowMode : "playhead";
-        session->anchorMs = juce::jmax(0.0, engine->getPositionMs());
-        session->windowEndMs.reset();
-    }
+    const auto window = resolveRecordWindow(session->windowMode,
+                                            engine->getPositionMs(),
+                                            usable,
+                                            usable ? selection->startMs : 0.0,
+                                            usable ? selection->endMs : 0.0);
+    session->windowMode = window.mode;
+    session->anchorMs = window.anchorMs;
+    session->windowEndMs = window.endMs;
 }
 
 bool RecordingSessionController::start(const juce::String& sessionId,
@@ -380,6 +430,8 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     pending.droppedSamples = tap.getDroppedSamples();
     pending.anchorMs = session->anchorMs;
     pending.bpm = projectState != nullptr ? projectState->getBpm() : 120.0;
+    pending.musical = recordingModeIsMusical(session->recordingMode);
+    pending.cleanup = session->cleanupEnabled;
 
     // The performer heard the arrangement late and Silverdaw received them late,
     // so the round trip is trimmed off the head along with the count-in.
@@ -407,7 +459,7 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // reach the message thread, so the finalised file is trimmed back to the exact
     // musical length — otherwise the beat count divided by the file's real duration
     // would resolve to a tempo slightly off the project's.
-    if (errorCode.isEmpty() && session->windowEndMs.has_value())
+    if (errorCode.isEmpty() && pending.musical && session->windowEndMs.has_value())
     {
         const double windowBeats = (*session->windowEndMs - session->anchorMs) / beatMs;
         const double rounded = std::round(windowBeats);
@@ -499,6 +551,17 @@ void RecordingSessionController::applySessionBacking()
     engine->setTracksAudible(audibility);
 }
 
+/** Hold the project's loop off for as long as the dialog is open, and hand it
+ *  back on close. A take over a selected range has to stop at the end of that
+ *  range; a wrapping transport would carry the capture round again and never
+ *  reach the stop check (ADR 0030, Amendment 5). Engine-only: the range itself
+ *  stays exactly as the project armed it. */
+void RecordingSessionController::applySessionLoop()
+{
+    if (engine == nullptr) return;
+    engine->setTimelineLoopSuspended(session.has_value());
+}
+
 /** Trim the arrangement to the session's backing level, and hand it back at
  *  unity when there is no session. Engine-only, ahead of the click and the
  *  preview voice, so neither the count-in nor the review audition is affected. */
@@ -509,6 +572,20 @@ void RecordingSessionController::applySessionBackingGain()
         sessionBackingGain(session.has_value(), session.has_value() ? session->backingGain : 1.0)));
 }
 
+/** Route the capture into the engine's monitor source, or unhook it. The tap
+ *  always feeds the sink while a device is open; the source's own enable is what
+ *  decides audibility, so toggling monitoring never has to touch the capture
+ *  thread's routing (ADR 0030, Amendment 1). */
+void RecordingSessionController::applySessionMonitor()
+{
+    if (engine == nullptr) return;
+    auto& monitor = engine->getInputMonitor();
+    monitor.setEnabled(sessionMonitorAudible(session.has_value(),
+                                             session.has_value() && session->monitorEnabled,
+                                             session.has_value() ? session->status
+                                                                 : juce::String()));
+}
+
 void RecordingSessionController::enterReview(const juce::String& sessionId,
                                              const juce::String& recordingId)
 {
@@ -516,6 +593,7 @@ void RecordingSessionController::enterReview(const juce::String& sessionId,
     if (session->recordingId != recordingId) return;
     session->status = "review";
     applySessionMetronome();
+    applySessionMonitor();
     if (onStateChanged) onStateChanged();
 }
 
@@ -581,6 +659,9 @@ void RecordingSessionController::setStatus(const juce::String& status)
     // The click follows the status: forced on for a count-in, off through review,
     // the project's own setting everywhere else.
     applySessionMetronome();
+    // And so does the monitor: audible while you are performing, silent once the
+    // take is playing back to you.
+    applySessionMonitor();
     if (onStateChanged) onStateChanged();
 }
 
@@ -614,6 +695,9 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
     snapshot.backingTrackIds = session->backingTrackIds;
     snapshot.backingGain = session->backingGain;
     snapshot.inputGainDb = session->inputGainDb;
+    snapshot.recordingMode = session->recordingMode;
+    snapshot.monitorEnabled = session->monitorEnabled;
+    snapshot.cleanupEnabled = session->cleanupEnabled;
     snapshot.windowMode = session->windowMode;
     snapshot.anchorMs = session->anchorMs;
     snapshot.windowEndMs = session->windowEndMs;

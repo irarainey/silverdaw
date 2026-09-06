@@ -30,6 +30,9 @@ void AudioEngine::initialiseGraph()
     topMixer.addInputSource(&master, false);
     topMixer.addInputSource(&scratchSource, false);
     topMixer.addInputSource(&backingSource, false);
+    // Recording's software monitor. Silent unless the record dialog turns it on,
+    // and outside the master gain so the backing trim cannot duck the performer.
+    topMixer.addInputSource(&inputMonitorSource, false);
     sourcePlayer.setSource(&masterMeter);
 }
 

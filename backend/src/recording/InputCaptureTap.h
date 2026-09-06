@@ -1,5 +1,7 @@
 #pragma once
 
+#include "InputMonitorSource.h"
+
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -28,6 +30,14 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
      *  writing. The caller must not destroy a writer until waitForQuiescence()
      *  has confirmed the audio thread cannot still be inside write(). */
     void setWriter(juce::AudioFormatWriter::ThreadedWriter* writer) noexcept;
+
+    /** Where monitored audio goes, or nullptr for none. The sink decides whether
+     *  it is actually audible; the tap only ever hands it blocks. Must outlive
+     *  the capture device — the engine's monitor source does. */
+    void setMonitorSink(InputMonitorSource* sink) noexcept
+    {
+        monitorSink.store(sink, std::memory_order_release);
+    }
 
     /** Hard length cap in samples; zero means no cap. */
     void setMaxSamples(juce::int64 samples) noexcept { maxSamples.store(samples); }
@@ -71,6 +81,7 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     static void atomicMaxFloat(std::atomic<float>& target, float value) noexcept;
 
     std::atomic<juce::AudioFormatWriter::ThreadedWriter*> activeWriter{nullptr};
+    std::atomic<InputMonitorSource*> monitorSink{nullptr};
     // Packed as (firstChannel << 8) | channelCount so one atomic read gives a
     // consistent pair.
     std::atomic<int> channelSelection{1};

@@ -390,3 +390,115 @@ first release rather than rejected forever.
   are exclusive-mode WASAPI or ASIO on the capture device plus a dedicated
   monitor path — a substantial feature in its own right, on a code path that
   does not exist yet.
+
+## Amendments
+
+### Amendment 1 — Software input monitoring is in, opt-in and best-effort
+
+The decision above ruled software monitoring out entirely. Use showed that to be
+wrong for the common case this feature exists for: recording a vocal over a
+backing. A performer wearing headphones hears the arrangement and hears nothing
+of themselves, and no amount of pointing at "your interface's direct monitoring"
+helps someone using the laptop's own microphone, which is exactly the audience
+Silverdaw is for.
+
+Monitoring is therefore a session control (`setMonitorEnabled`), **off by
+default**, implemented as `recording::InputMonitorSource` — a `juce::AudioSource`
+added to `topMixer` alongside the scratch and backing sources, fed by
+`InputCaptureTap` through a lock-free `juce::AbstractFifo` ring.
+
+What this deliberately does not claim:
+
+- **It is not low latency.** The original latency argument still holds: on
+  shared-mode WASAPI across two devices this is a round trip of tens of
+  milliseconds. It is useful for pitching and phrasing, not for judging timing,
+  and the recorded file is unaffected either way — monitoring is downstream of
+  the tap, and latency is still corrected offline at finalise.
+- **It is best-effort across two clocks.** Capture and output remain separate
+  devices with separate clocks (that decision is unchanged), so the ring will
+  eventually over- or under-run. It drops the oldest audio on overflow and plays
+  silence on underrun rather than blocking either thread, and counts both.
+- **It is a feedback risk.** A monitored microphone in front of speakers will
+  howl. That is why it is opt-in, why the control says "use headphones, or it
+  will feed back", and why `sessionMonitorAudible(...)` forces it off in review
+  and with no session at all.
+
+### Amendment 2 — A recording is musical *by default*, not always
+
+"Every recording is musical" above is right for the feature's main use and wrong
+for its edges: a spoken intro, a sound effect or a found recording has no tempo,
+and giving it one means the clip shows beat markers that describe nothing and
+warps when the project tempo changes.
+
+The dialog therefore offers a **recording mode**, and it maps onto the library's
+existing `audioType` rather than introducing a recording-only concept:
+
+- **Music** (the default) is the behaviour described above — project BPM,
+  `beatAnchorSec`, `audioType = "music"` and, where the window makes it true,
+  `musicalBeats`.
+- **Simple** commits `audioType = "simple"` with no tempo and no beat count,
+  which is what already suppresses beat markers everywhere in the app and is
+  exactly what the Scratch Editor's bake does.
+
+The mode changes nothing about the capture, so it is read at commit and can be
+changed right up to keeping the take.
+
+### Amendment 3 — Optional post-record noise cleanup
+
+A close microphone in a bedroom records a constant low-level bed that is
+inaudible while performing and obvious in the gaps once the take sits under a
+mix. `recording::cleanRecording(...)` is an opt-in pass, run on the worker
+thread after finalise and before the peaks are computed, so the waveform the
+user reviews is the audio that was kept.
+
+It is deliberately conservative, because a cleanup that eats breaths and word
+tails does more damage than the noise it removed:
+
+- An 80 Hz high-pass, below any sung or spoken fundamental and above hum and
+  stand rumble.
+- A downward expander keyed on the take's **own** measured floor — the tenth
+  percentile of its window RMS, so one silent block cannot claim a floor no real
+  recording has — with a bounded reduction rather than a gate to silence.
+- A take already quieter than the pass could usefully act on is left completely
+  untouched rather than rewritten for no gain.
+
+A cleanup that fails is logged and the original take is kept: a take that could
+not be cleaned is still a good take.
+
+### Amendment 4 — A third record window: From Start
+
+"Two modes, and no more" held while both modes were relative to something the
+user had already positioned. It missed the most common way a remix is built up:
+the take is meant to run over the whole arrangement from the top, and getting it
+there meant moving the playhead first, or drawing a range over the entire
+project just to say "the beginning".
+
+**From Start** anchors at 0 and, like From Playhead, runs until Stop. It adds no
+new concept — it is one more answer to the anchor question `resolveRecordWindow`
+already asks, and it carries no end, so nothing downstream (auto-stop, tail trim,
+claimed beat count) changes. The count-in rule above applies unchanged and is
+most visible here: a counted-in take From Start begins at the second bar, because
+the preroll has to play somewhere and the alternative is dropping the count-in
+that was asked for.
+
+### Amendment 5 — A session holds the project's loop off
+
+The record window promises a take over a selected range stops at the end of that
+range. A looping selection broke that promise: the engine wraps the transport on
+its own timer, so the position never reached the range end the session was
+watching for, and the take ran round the loop until Stop was pressed by hand.
+
+A session now holds the loop off for as long as the dialog is open
+(`AudioEngine::setTimelineLoopSuspended`), alongside the click, the backing
+selection, the backing level and the monitor. The hold suspends rather than
+disarms: the range stays exactly as the project armed it, so releasing the hold
+on close restores what the user had without the session having to remember and
+replay it - and without racing whoever else sets the range.
+
+The same close path is what hands every borrowed piece of engine state back, so
+it must not be possible to skip. Two ways it could be: a dialog that never
+adopted a session id sent no close at all, and a second open over a session that
+had been abandoned that way was refused rather than replacing it. Closing with
+an empty id now means "whichever session is open", and opening retires an
+abandoned session first. An abandoned session was the one way the click could
+outlive the dialog.

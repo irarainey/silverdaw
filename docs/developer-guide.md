@@ -816,11 +816,16 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   `selectInput { input }`, `selectChannels { firstChannel, channelCount }`,
   `setCountInBars { bars }`, `setClickEnabled { enabled }`,
   `setBackingTracks { trackIds }`, `setBackingGain { gain }`,
-  `setInputGain { gainDb }`,
+  `setInputGain { gainDb }`, `setMonitorEnabled { enabled }`,
+  `setRecordingMode { mode }`, `setCleanupEnabled { enabled }`,
   `setWindowMode { mode }`,
   `start`, `stop`, and `discard` (Record Again). `setInputGain`,
-  `setBackingGain` and `setClickEnabled` are the only actions accepted while
-  rolling. There is deliberately no monitoring action.
+  `setBackingGain`, `setClickEnabled`, `setMonitorEnabled`,
+  `setRecordingMode` and `setCleanupEnabled` are the actions accepted while
+  rolling — the first four are monitoring, and the last two are read at commit,
+  so none of them changes what is being captured. `setMonitorEnabled` reverses
+  ADR 0030's original no-monitoring non-goal (its Amendment 1) and is off by
+  default.
 - `RECORD_RECORDING_COMMIT { sessionId, recordingId, itemId, name, destination,
   trackId?, clipId? }` keeps the finished recording as a library item, and for
   `destination: "timeline"` places a clip at its anchor in the same undo
@@ -833,15 +838,17 @@ Backend → renderer:
   the device used last.
 - `RECORD_SESSION_STATE` is the session snapshot — `status`, the `input` as it
   actually resolved, channel selection, `countInBars`, `clickEnabled`,
-  `backingTrackIds`, `backingGain`, `inputGainDb`,
+  `backingTrackIds`, `backingGain`, `inputGainDb`, `monitorEnabled`,
+  `recordingMode`, `cleanupEnabled`,
   `windowMode`,
   `hasSelection`, `anchorMs` / `windowEndMs`, `recordedMs`, `droppedSamples` and
   any `errorCode` / `error`.
 - `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
   is excluded from bridge logging.
 - `RECORD_RECORDING_READY` announces the finished file by **path** with its
-  peaks cache, anchor, tempo and the corrections applied (`latencyOffsetMs`,
-  `driftPpm`). Recorded audio never crosses the socket.
+  peaks cache, anchor, tempo, whether it is `musical`, and the corrections
+  applied (`latencyOffsetMs`, `driftPpm`). Recorded audio never crosses the
+  socket.
 - A commit is acknowledged by the existing `SAMPLE_SAVED` envelope, correlated
   by the renderer-generated `itemId`, for both success and failure.
 
@@ -3744,15 +3751,21 @@ thread. It is the one setting that can be changed while rolling — a performer
 who is clipping should not have to lose the take to fix it.
 
 **The record window.** A recording belongs to a window in time, not to a track:
-either from the playhead until **Stop**, or over the existing timeline range
-selection, which stops itself at the end of the range. The optional count-in is
+from the top of the project, from the playhead, or over the existing timeline
+range selection. The first two run until **Stop**; only the range window stops
+itself, at the end of the range. `resolveRecordWindow` resolves the three to an
+anchor and an optional end. Two of them anchor themselves, so only the range
+window can be invalidated: chosen with the selection since cleared, it falls back
+to the playhead rather than recording over a span the user can no longer see. The
+optional count-in is
 one bar or none — a second bar was a choice nobody needed to make — and is the
 existing metronome over a preroll: the transport simply starts early and the
 preroll is trimmed at finalise. A preroll cannot run before the start of the
 project, so when the anchor sits inside the first bar the *anchor* moves out to
 the bar line rather than the count-in being silently shortened away
 (`resolveCountInAnchorMs`) — the recording starts one bar in, which is what a
-count-in asks for. A range recording keeps its anchor: its length is what makes
+count-in asks for, and is why a counted-in **From Start** take begins at the
+second bar. A range recording keeps its anchor: its length is what makes
 its claimed beat count true (ADR 0024), so moving it would misreport the tempo.
 A session only ever *borrows* the click, and it borrows it in both
 directions: `sessionMetronomeEnabled` forces it on through a count-in and off
@@ -3802,8 +3815,86 @@ rolling, unlike the track selection, because level is monitoring and changes
 nothing about what is captured — a performer who cannot hear themselves should
 not have to stop to fix it. Double-clicking the slider returns it to 100%.
 
+**The loop.** A looping timeline selection is borrowed too, and this one is a
+hold rather than a choice: `AudioEngine::setTimelineLoopSuspended` keeps the
+armed range from wrapping the transport for as long as the dialog is open. Over
+the Selected Range promises the take stops at the end of the range, and the
+engine wraps on its own message-thread timer, so a looping selection used to
+carry the capture round again before the session's end check ever saw the range
+end. Suspending rather than disarming means the range stays exactly as the
+project armed it: closing the dialog releases the hold and the user's loop is
+back, with nothing for the session to remember or replay and no race with
+whoever else sets the range (ADR 0030, Amendment 5).
+
+Every one of these borrows is handed back by the same close path, which is why
+close must not be skippable. A dialog that never adopted a session id sends
+`RECORD_SESSION_CLOSE` with an empty `sessionId`, which the backend reads as
+"whichever session is open", and opening over a session that was abandoned
+anyway retires it first rather than refusing. An abandoned session was the one
+way the click could still be ticking after the dialog had gone.
+
+**Hearing yourself.** ADR 0030 originally ruled software monitoring out; its
+Amendment 1 reverses that, because a performer on headphones over a backing
+hears everything except themselves, and telling someone using their laptop's own
+microphone to use their interface's direct monitoring helps nobody. **Hear
+Yourself** is opt-in and off by default. `InputCaptureTap` pushes the
+gain-applied capture into `recording::InputMonitorSource` — a
+`juce::AudioSource` in `topMixer` beside the scratch and backing sources — over a
+lock-free `juce::AbstractFifo` ring, so neither real-time thread ever blocks on
+the other. It is best-effort by construction: capture and output are separate
+devices with separate clocks, so the ring drops the oldest audio on overflow and
+plays silence on underrun rather than stalling, and it is a round trip of tens of
+milliseconds — useful for pitching, not for judging timing. It is downstream of
+the tap, so it changes nothing about what is recorded. `sessionMonitorAudible`
+forces it off in review and with no session at all, because a monitor left open
+over a take playing back is the easiest way to find a feedback loop by accident.
+
+**Music or simple.** ADR 0030 also said every recording is musical, which is
+right for the main case and wrong at the edges: a spoken intro or a sound effect
+has no tempo, and giving it one draws beat markers that describe nothing. The
+**Recording** section's mode maps onto the library's existing `audioType` rather
+than inventing a recording-only concept (`recordingModeIsMusical`). **Music**,
+the default, commits the project BPM, a `beatAnchorSec` and — where the window
+makes it true — `musicalBeats`. **Simple** commits `audioType = "simple"` with
+neither, which is already what suppresses beat markers everywhere, and is exactly
+what a baked scratch does. The mode changes nothing about the capture, so it is
+read at commit and stays live while rolling. It also drives the live waveform's
+beat grid, so what the take will become is visible while it is being played.
+
+**The live waveform.** The renderer never receives recorded audio (ADR 0003), so
+the waveform drawn while a take rolls is built from the `RECORD_INPUT_LEVEL`
+meter the backend already broadcasts: one column per ~33 ms tick, sampled on a
+RAF loop into a fixed-size ring (`liveWaveform.ts`), so a long take costs a fixed
+amount of memory. Nothing is drawn during a count-in — the columns start at the
+take itself, so a count-in reads as counting in to something rather than as a
+take already under way, even though the capture runs through the preroll so it
+can be trimmed for latency at finalise. The take is drawn from the left edge
+and, once it is longer
+than the view has columns for, `readFittedColumns` summarises it — each drawn
+column takes the loudest of the columns it covers — so a recording is always
+shown end to end rather than scrolling its own start out of sight. It is a
+picture of the input, not of the file — the real waveform, drawn from the peaks
+cache, arrives with the finished recording. In music mode `liveBeatFractions`
+draws the project's beat grid across the same span, measured from the start of
+the take. Both dialog waveforms take their colours from the shared
+`waveformPalette`, which the Clip Editor's Pixi theme also derives from, so every
+waveform in Silverdaw is drawn the same way.
+
+**Cleaning up a take.** **Clean Up Background Noise** is an opt-in pass
+(`recording::cleanRecording`) run on the worker thread after finalise and
+*before* the peaks are computed, so the waveform the user reviews is the audio
+that was kept. It is deliberately conservative — a cleanup that eats breaths and
+word tails does more damage than the noise it removed: an 80 Hz high-pass below
+any spoken or sung fundamental, then a downward expander keyed on the take's
+**own** measured floor (the tenth percentile of its window RMS, so one silent
+block cannot claim a floor no real recording has) with a bounded reduction rather
+than a gate to digital silence. A take already quieter than the pass could
+usefully act on is left completely untouched rather than rewritten for no gain,
+and a cleanup that fails is logged with the original take kept: a take that could
+not be cleaned is still a good take.
 **Settings that outlive the dialog.** The record window, backing selection and
-level, count-in and Click While Recording belong to how the user is working — the take
+level, count-in, Click While Recording, Hear Yourself, the recording mode and
+Clean Up Background Noise belong to how the user is working — the take
 they are chasing — not to one session, so the renderer remembers each one the
 user sets and re-applies it as soon as the next session opens
 (`useRecordingSession`'s `activeSessionId` watcher). They are held in the store,
@@ -3867,9 +3958,11 @@ take while the project transport rolls from the recording's anchor, and the
 timeline is parked back at that anchor when playback stops. `PREVIEW_PLAY`
 pauses the transport, so the arrangement is always started after the audition is
 actually rolling, never before. A commit writes a normal `sample` library item —
-no new library kind — marked `recordingOrigin`, with `audioType = "music"` and
-the project's own BPM applied as a **known** tempo rather than a detected one,
-so a later project-tempo change warps it like any other clip. The timeline exit adds
+no new library kind — marked `recordingOrigin`. A **Music** take carries
+`audioType = "music"` and the project's own BPM applied as a **known** tempo
+rather than a detected one, so a later project-tempo change warps it like any
+other clip; a **Simple** take carries `audioType = "simple"` and no tempo at
+all. The timeline exit adds
 the item and places a clip at the recording's anchor inside a single undo
 transaction. Its destination is resolved by `resolveRecordingTrackId`: the
 selected track only when that track holds no clips at all, otherwise a track of

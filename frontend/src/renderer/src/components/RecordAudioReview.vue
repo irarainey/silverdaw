@@ -30,6 +30,26 @@ const withArrangement = ref(false)
 let arrangementRolling = false
 let pendingArrangement = false
 
+/**
+ * The take this pane is auditioning, held outside the store.
+ *
+ * Closing the dialog clears the recording session *before* this component
+ * unmounts, so by the time the audition has to be let go there is no longer a
+ * `ready` payload to read the file path off — and the preview voice would be
+ * left playing under a dialog that is no longer there.
+ */
+let audition: { filePath: string; anchorMs: number } | null = null
+
+watch(
+  ready,
+  (next) => {
+    // Deliberately keeps the last take when `ready` goes null: that is the close
+    // path, and the file path is exactly what is needed to release the voice.
+    if (next) audition = { filePath: next.filePath, anchorMs: next.anchorMs }
+  },
+  { immediate: true }
+)
+
 const summary = computed(() => {
   const payload = ready.value
   if (!payload) return ''
@@ -77,8 +97,7 @@ function stopArrangement(): void {
   if (!arrangementRolling) return
   arrangementRolling = false
   sendBridge('TRANSPORT_PAUSE')
-  const payload = ready.value
-  if (payload) sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs })
+  if (audition) sendBridge('TRANSPORT_SEEK', { positionMs: audition.anchorMs })
 }
 
 /** Release the shared preview voice; the Clip Editor and file browser use it too. */
@@ -113,7 +132,7 @@ watch(withArrangement, (on) => {
   if (!on) stopArrangement()
 })
 
-onBeforeUnmount(() => releaseAudition(ready.value?.filePath ?? null))
+onBeforeUnmount(() => releaseAudition(audition?.filePath ?? null))
 </script>
 
 <template>

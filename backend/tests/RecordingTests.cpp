@@ -1,6 +1,7 @@
 #include "TestRegistry.h"
 
 #include "recording/InputCaptureTap.h"
+#include "recording/RecordingCleanup.h"
 #include "recording/RecordingFinalise.h"
 #include "recording/RecordingSessionController.h"
 #include "recording/RecordingWriter.h"
@@ -196,6 +197,32 @@ void testCountInMovesAnAnchorThatHasNoRoomForIt()
                 "no count-in means no reason to move the anchor");
     requireNear(resolveCountInAnchorMs(0.0, bar, true), 0.0, 0.0,
                 "a range recording keeps its anchor: the window is what makes its beats true");
+}
+
+void testRecordWindowAnchorsWhereTheModeSays()
+{
+    using silverdaw::recording::resolveRecordWindow;
+
+    const auto fromStart = resolveRecordWindow("start", 9000.0, true, 1000.0, 5000.0);
+    require(fromStart.mode == "start" && fromStart.anchorMs == 0.0 && ! fromStart.endMs.has_value(),
+            "From Start records from the top whatever the playhead and selection are doing");
+
+    const auto fromPlayhead = resolveRecordWindow("playhead", 9000.0, true, 1000.0, 5000.0);
+    require(fromPlayhead.anchorMs == 9000.0 && ! fromPlayhead.endMs.has_value(),
+            "From Playhead anchors where the playhead is and runs until it is stopped");
+    require(resolveRecordWindow("playhead", -50.0, false, 0.0, 0.0).anchorMs == 0.0,
+            "a playhead before the project start still anchors at the start");
+
+    const auto range = resolveRecordWindow("selection", 9000.0, true, 1000.0, 5000.0);
+    require(range.anchorMs == 1000.0 && range.endMs == 5000.0,
+            "a range window takes both its ends from the timeline selection");
+
+    const auto lost = resolveRecordWindow("selection", 9000.0, false, 0.0, 0.0);
+    require(lost.mode == "playhead" && lost.anchorMs == 9000.0 && ! lost.endMs.has_value(),
+            "a range that has been cleared falls back to the playhead, not to a stale span");
+
+    require(resolveRecordWindow("start", 9000.0, false, 0.0, 0.0).mode == "start",
+            "having no selection is no reason to disturb From Start");
 }
 
 void testCaptureTapAppliesInputGain()
@@ -442,6 +469,70 @@ void testBackingLevelIsSessionScoped()
     require(sessionBackingGain(false, 0.25) == 1.0,
             "closing the dialog must return the arrangement to its own level");
 }
+
+void testMonitorIsSessionScopedAndSilentInReview()
+{
+    using silverdaw::recording::sessionMonitorAudible;
+
+    require(sessionMonitorAudible(true, true, "recording"),
+            "a performer who asked to hear themselves must hear themselves");
+    require(! sessionMonitorAudible(true, false, "recording"),
+            "monitoring is opt-in and must stay off until it is asked for");
+    require(! sessionMonitorAudible(true, true, "review"),
+            "an open monitor over a take playing back is a feedback loop");
+    require(! sessionMonitorAudible(false, true, "recording"),
+            "nothing should be listening to an input once the dialog has gone");
+}
+
+void testRecordingModeDecidesMusicality()
+{
+    using silverdaw::recording::recordingModeIsMusical;
+
+    require(recordingModeIsMusical("music"), "a music take carries the project tempo");
+    require(! recordingModeIsMusical("simple"),
+            "a simple take must carry no tempo, so nothing draws beat markers on it");
+    require(recordingModeIsMusical(""),
+            "an unrecognised mode must fall back to musical, not silently drop the tempo");
+}
+
+void testCleanupFindsTheNoiseFloorFromQuietWindows()
+{
+    using silverdaw::recording::noiseFloorDbFromWindowRms;
+
+    // Mostly performance with a quiet bed under it: the floor is the bed, not the
+    // average and not the single quietest block.
+    std::vector<float> windows(100, 0.5F);
+    for (int i = 0; i < 12; ++i)
+        windows[static_cast<std::size_t>(i)] = 0.01F;
+    const auto floorDb = noiseFloorDbFromWindowRms(windows);
+    require(floorDb < -35.0 && floorDb > -45.0,
+            "the floor should measure the quiet bed, around -40 dB");
+
+    std::vector<float> empty;
+    require(noiseFloorDbFromWindowRms(empty) <= -100.0,
+            "a take with no windows has nothing to remove");
+}
+
+void testCleanupExpanderLeavesThePerformanceAlone()
+{
+    using silverdaw::recording::expanderGain;
+    using silverdaw::recording::kMaxReductionDb;
+
+    require(expanderGain(-6.0, -50.0) == 1.0F,
+            "a signal above the threshold must pass through untouched");
+    require(expanderGain(-50.0, -50.0) == 1.0F, "the threshold itself is not attenuated");
+
+    const auto deep = expanderGain(-90.0, -50.0);
+    const auto expected =
+        static_cast<float>(juce::Decibels::decibelsToGain(-kMaxReductionDb));
+    require(std::abs(deep - expected) < 1.0e-5F,
+            "material far below the threshold is attenuated, but only to the cap");
+    require(deep > 0.0F, "the expander must never gate to digital silence");
+
+    const auto partial = expanderGain(-54.0, -50.0);
+    require(partial < 1.0F && partial > deep,
+            "a word tail just under the threshold is attenuated gradually");
+}
 } // namespace
 
 void addRecordingTests(std::vector<TestCase>& tests)
@@ -454,12 +545,22 @@ void addRecordingTests(std::vector<TestCase>& tests)
     tests.push_back({"capture tap applies input gain", testCaptureTapAppliesInputGain});
     tests.push_back({"recording count-in moves an anchor with no room for it",
                      testCountInMovesAnAnchorThatHasNoRoomForIt});
+    tests.push_back({"recording window anchors where its mode says",
+                     testRecordWindowAnchorsWhereTheModeSays});
     tests.push_back({"recording session borrows the metronome in both directions",
                      testSessionBorrowsTheMetronomeInBothDirections});
     tests.push_back({"recording backing is borrowed in both directions",
                      testBackingIsBorrowedInBothDirections});
     tests.push_back({"recording backing level is session scoped",
                      testBackingLevelIsSessionScoped});
+    tests.push_back({"recording monitor is session scoped and silent in review",
+                     testMonitorIsSessionScopedAndSilentInReview});
+    tests.push_back({"recording mode decides whether a take is musical",
+                     testRecordingModeDecidesMusicality});
+    tests.push_back({"recording cleanup finds the noise floor from quiet windows",
+                     testCleanupFindsTheNoiseFloorFromQuietWindows});
+    tests.push_back({"recording cleanup leaves the performance alone",
+                     testCleanupExpanderLeavesThePerformanceAlone});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
     tests.push_back({"recording finalise rejects a recording shorter than latency",

@@ -35,12 +35,13 @@ constexpr double kMaxInputGainDb = 24.0;
  * Where a recording anchor has to sit for its count-in to fit.
  *
  * A count-in is a preroll through the arrangement, so it needs `countInMs` of
- * arrangement in front of the anchor. Near the project start there is none, and
- * shortening the preroll instead throws the count-in away and records from the
- * top. The anchor moves to the first bar line that leaves room — the user asked
- * to be counted in, not to start immediately. A recording bounded by a range
- * keeps its anchor: the window is the user's explicit choice, and its length is
- * what makes the beat count it claims true (ADR 0024).
+ * arrangement in front of the anchor. Near the project start there is none —
+ * always, for **From Start** — and shortening the preroll instead throws the
+ * count-in away and records from the top. The anchor moves to the first bar line
+ * that leaves room — the user asked to be counted in, not to start immediately.
+ * A recording bounded by a range keeps its anchor: the window is the user's
+ * explicit choice, and its length is what makes the beat count it claims true
+ * (ADR 0024).
  */
 constexpr double resolveCountInAnchorMs(double anchorMs, double countInMs, bool hasWindowEnd)
 {
@@ -100,6 +101,64 @@ constexpr double sessionBackingGain(bool hasSession, double gain)
     return hasSession ? gain : 1.0;
 }
 
+/**
+ * Whether input monitoring should actually be audible.
+ *
+ * Monitoring is only ever wanted while a session is live, and it is a feedback
+ * loop waiting to happen: a monitored mic in front of a speaker will howl. So it
+ * is off with no session no matter what the last session asked for, and off
+ * again in review — playing a take back through a still-open monitor is the most
+ * likely way to find that loop by accident.
+ */
+inline bool sessionMonitorAudible(bool hasSession, bool enabled, const juce::String& status)
+{
+    if (! hasSession || ! enabled) return false;
+    return status != "review";
+}
+
+/**
+ * Whether a take should be committed as musical material.
+ *
+ * `music` gives the take the project's tempo and a beat count, so it snaps and
+ * shows beat markers like any other loop; `simple` deliberately gives it
+ * neither, because a spoken line or a found sound has no tempo and drawing beat
+ * markers over it is a lie. This maps onto the library's existing `audioType`
+ * rather than inventing a recording-only concept (ADR 0024).
+ */
+inline bool recordingModeIsMusical(const juce::String& mode) { return mode != "simple"; }
+
+/** Where a record window sits on the timeline: its anchor, and its end when it
+ *  has one. `mode` comes back normalised, because a mode can be asked for that
+ *  no longer applies. */
+struct RecordWindow
+{
+    juce::String mode;
+    double anchorMs = 0.0;
+    std::optional<double> endMs;
+};
+
+/**
+ * Where a recording starts, and where — if anywhere — it stops on its own.
+ *
+ * A recording is bounded by time, never by a track (ADR 0030). Two of the three
+ * windows anchor themselves and run open-ended until the performer stops: the
+ * top of the project, or wherever the playhead is. Only the range window depends
+ * on something outside the session, so only it can be invalidated — a range that
+ * has since been cleared falls back to the playhead rather than recording over a
+ * span the user can no longer see.
+ */
+inline RecordWindow resolveRecordWindow(const juce::String& mode,
+                                        double playheadMs,
+                                        bool hasSelection,
+                                        double selectionStartMs,
+                                        double selectionEndMs)
+{
+    if (mode == "selection" && hasSelection)
+        return {"selection", selectionStartMs, selectionEndMs};
+    if (mode == "start") return {"start", 0.0, std::nullopt};
+    return {"playhead", juce::jmax(0.0, playheadMs), std::nullopt};
+}
+
 struct RecordingInputInfo
 {
     juce::String typeName;
@@ -129,6 +188,12 @@ struct RecordingStateSnapshot
     double backingGain = 1.0;
     /** Input gain applied to the captured signal, in dB. */
     double inputGainDb = 0.0;
+    /** `music` (project tempo and beat markers) or `simple` (neither). */
+    juce::String recordingMode{"music"};
+    /** Whether the performer hears their own input through the monitor mix. */
+    bool monitorEnabled = false;
+    /** Whether the finished take gets the noise-reduction pass. */
+    bool cleanupEnabled = false;
     juce::String windowMode{"playhead"};
     bool hasSelection = false;
     double anchorMs = 0.0;
@@ -167,6 +232,11 @@ struct PendingFinalise
     /** Length `musicalBeats` claims, in ms. The finalised file is trimmed to it so
      *  the beat count is true of the audio, not just of the record window. */
     std::optional<double> exactDurationMs;
+    /** `music` takes get the project tempo and a beat count; `simple` takes get
+     *  neither, and commit as a plain sample. */
+    bool musical = true;
+    /** Whether to run the noise-reduction pass before the take is committed. */
+    bool cleanup = false;
     juce::int64 droppedSamples = 0;
     juce::String errorCode;
     juce::String error;
@@ -224,6 +294,14 @@ class RecordingSessionController final : private juce::Timer
      *  Changeable while rolling: it is a monitoring-and-capture level, and a
      *  performer who is clipping should not have to stop to fix it. */
     bool setInputGain(const juce::String& sessionId, double gainDb);
+    /** `music` or `simple`. Decides whether the committed take carries the
+     *  project's tempo and a beat count, so it is read at commit, not capture. */
+    bool setRecordingMode(const juce::String& sessionId, const juce::String& mode);
+    /** Whether the performer hears their own input in the monitor mix. Opt-in and
+     *  off by default: with speakers rather than headphones it will feed back. */
+    bool setMonitorEnabled(const juce::String& sessionId, bool enabled);
+    /** Whether the finished take gets the noise-reduction pass at finalise. */
+    bool setCleanupEnabled(const juce::String& sessionId, bool enabled);
     bool setWindowMode(const juce::String& sessionId, const juce::String& mode);
 
     bool start(const juce::String& sessionId, const juce::String& fileBaseName,
@@ -255,6 +333,9 @@ class RecordingSessionController final : private juce::Timer
         juce::StringArray backingTrackIds;
         double backingGain = 1.0;
         double inputGainDb = 0.0;
+        juce::String recordingMode{"music"};
+        bool monitorEnabled = false;
+        bool cleanupEnabled = false;
         juce::String windowMode{"playhead"};
         double anchorMs = 0.0;
         std::optional<double> windowEndMs;
@@ -274,7 +355,9 @@ class RecordingSessionController final : private juce::Timer
     void setStatus(const juce::String& status);
     void applySessionMetronome();
     void applySessionBacking();
+    void applySessionLoop();
     void applySessionBackingGain();
+    void applySessionMonitor();
     double barLengthMs() const;
     void refreshWindow();
 

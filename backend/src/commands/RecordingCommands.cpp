@@ -12,6 +12,7 @@
 #include "Waveform.h"
 #include "WaveformCommands.h"
 #include "recording/CaptureDevice.h"
+#include "recording/RecordingCleanup.h"
 #include "recording/RecordingFinalise.h"
 #include "recording/RecordingSessionController.h"
 
@@ -46,6 +47,9 @@ struct FinishedRecording
     double bpm = 120.0;
     double beatAnchorSec = 0.0;
     std::optional<int> musicalBeats;
+    /** Committed as musical material (project tempo, beat markers) or as a plain
+     *  sample with neither. */
+    bool musical = true;
     juce::File cacheFile;
     int peakCount = 0;
     int laneCount = 0;
@@ -155,6 +159,9 @@ juce::var buildStateEnvelope(const recording::RecordingStateSnapshot& snapshot)
     obj->setProperty("backingTrackIds", backingTrackIds);
     obj->setProperty("backingGain", snapshot.backingGain);
     obj->setProperty("inputGainDb", snapshot.inputGainDb);
+    obj->setProperty("recordingMode", snapshot.recordingMode);
+    obj->setProperty("monitorEnabled", snapshot.monitorEnabled);
+    obj->setProperty("cleanupEnabled", snapshot.cleanupEnabled);
     obj->setProperty("windowMode", snapshot.windowMode);
     obj->setProperty("hasSelection", snapshot.hasSelection);
     obj->setProperty("anchorMs", snapshot.anchorMs);
@@ -190,6 +197,7 @@ void broadcastReady(BridgeServer& bridge, const FinishedRecording& ready)
     obj->setProperty("bpm", ready.bpm);
     obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
     if (ready.musicalBeats.has_value()) obj->setProperty("musicalBeats", *ready.musicalBeats);
+    obj->setProperty("musical", ready.musical);
     obj->setProperty("cachePath", ready.cacheFile.getFullPathName());
     obj->setProperty("peakCount", ready.peakCount);
     obj->setProperty("peaksPerSecond", ready.peaksPerSecond);
@@ -272,6 +280,23 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
                 return;
             }
 
+            if (pending.cleanup)
+            {
+                // Before the peaks: the waveform the user reviews has to be the
+                // audio that was kept, not what it looked like before cleanup.
+                recording::CleanupRequest cleanupRequest;
+                cleanupRequest.file = ready.file;
+                cleanupRequest.sampleRate = result.sampleRate;
+                const auto cleaned =
+                    recording::cleanRecording(cleanupRequest, engine.getFormatManager());
+                if (! cleaned.ok)
+                {
+                    // A take that could not be cleaned is still a good take, so the
+                    // failure is logged and the original is kept rather than lost.
+                    log::warn("recording", "cleanup failed: " + cleaned.error);
+                }
+            }
+
             const auto peaks = waveform::computePeaks(ready.file, engine.getFormatManager(),
                                                       waveform::kDefaultPeaksPerSecond);
             if (peaks.peaks.empty())
@@ -294,6 +319,7 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
             ready.musicalBeats = (! pending.exactDurationMs.has_value() || result.exactLength)
                                      ? pending.musicalBeats
                                      : std::nullopt;
+            ready.musical = pending.musical;
             ready.cacheFile = cache.getCacheFilePath(ready.file, waveform::kDefaultPeaksPerSecond);
             ready.peakCount = peaks.bucketsPerLane();
             ready.laneCount = peaks.laneCount;
@@ -427,6 +453,21 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
     {
         active.setInputGain(sessionId, tryGetNumber(payload, "gainDb").value_or(0.0));
     }
+    else if (action == "setRecordingMode")
+    {
+        active.setRecordingMode(sessionId,
+                                tryGetRequiredString(payload, "mode").value_or(juce::String{}));
+    }
+    else if (action == "setMonitorEnabled")
+    {
+        active.setMonitorEnabled(sessionId,
+                                 static_cast<bool>(payload.getProperty("enabled", false)));
+    }
+    else if (action == "setCleanupEnabled")
+    {
+        active.setCleanupEnabled(sessionId,
+                                 static_cast<bool>(payload.getProperty("enabled", false)));
+    }
     else if (action == "setWindowMode")
     {
         active.setWindowMode(sessionId,
@@ -457,11 +498,14 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
 
 void handleRecordSessionClose(const juce::var& payload, BridgeServer& bridge)
 {
-    const auto sessionId = tryGetRequiredString(payload, "sessionId").value_or(juce::String{});
-    if (sessionId.isEmpty()) return;
+    // An absent or empty id means "whichever session is open": the dialog sends
+    // that when it never adopted an id, and the borrowed engine state still has
+    // to come back (ADR 0030, Amendment 5).
+    const auto sessionId = readOptionalString(payload, "sessionId").value_or(juce::String{});
     discardFinished();
     controller().close(sessionId);
-    log::info("recording", "RECORD_SESSION_CLOSE session=" + sessionId);
+    const auto label = sessionId.isNotEmpty() ? sessionId : juce::String("<current>");
+    log::info("recording", "RECORD_SESSION_CLOSE session=" + label);
     broadcastState(bridge);
 }
 
@@ -500,13 +544,19 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     projectState.addLibraryItem(itemId, ready.file.getFullPathName(), ready.file.getFileName(),
                                 ready.durationMs, static_cast<int>(ready.sampleRate),
                                 ready.channelCount, ready.file.getFullPathName(), {}, "sample", name);
-    projectState.setLibraryItemAudioType(itemId, "music");
+    projectState.setLibraryItemAudioType(itemId, ready.musical ? "music" : "simple");
     projectState.setLibraryItemRecordingOrigin(itemId);
     // The tempo is known, not detected: the recording was played against this
-    // project's grid, so it warps like any other music clip (ADR 0030).
-    applyManualTempo(itemId, ready.bpm, ready.beatAnchorSec, engine, projectState, bridge, false);
-    if (ready.musicalBeats.has_value())
-        projectState.setLibraryItemMusicalBeats(itemId, *ready.musicalBeats);
+    // project's grid, so it warps like any other music clip (ADR 0030). A simple
+    // take gets none of it — no tempo, no beat count, so nothing draws beat
+    // markers over material that has no beats.
+    if (ready.musical)
+    {
+        applyManualTempo(itemId, ready.bpm, ready.beatAnchorSec, engine, projectState, bridge,
+                         false);
+        if (ready.musicalBeats.has_value())
+            projectState.setLibraryItemMusicalBeats(itemId, *ready.musicalBeats);
+    }
 
     auto* obj = new juce::DynamicObject();
     obj->setProperty("itemId", itemId);
@@ -521,7 +571,7 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     obj->setProperty("peakCount", ready.peakCount);
     obj->setProperty("laneCount", ready.laneCount);
     obj->setProperty("peaksPerSecond", ready.peaksPerSecond);
-    obj->setProperty("audioType", "music");
+    obj->setProperty("audioType", ready.musical ? "music" : "simple");
     obj->setProperty("recordingOrigin", true);
     bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
 

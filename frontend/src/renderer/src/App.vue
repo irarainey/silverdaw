@@ -205,6 +205,7 @@ function isInteractionBlocked(): boolean {
     relinkDialogOpen.value ||
     unsavedPromptOpen.value ||
     recoveryDialogOpen.value ||
+    recording.dialogOpen ||
     startupScreenVisible.value ||
     ui.clipEditorOpen ||
     transport.engineRecovery !== 'ok'

@@ -473,8 +473,10 @@ add_library(silverdaw_backend_core STATIC
     # recording
     src/recording/CaptureDevice.cpp
     src/recording/InputCaptureTap.cpp
+    src/recording/InputMonitorSource.cpp
     src/recording/RecordingWriter.cpp
     src/recording/RecordingFinalise.cpp
+    src/recording/RecordingCleanup.cpp
     src/recording/RecordingSessionController.cpp
     # dsp
     src/dsp/BpmDetector.cpp

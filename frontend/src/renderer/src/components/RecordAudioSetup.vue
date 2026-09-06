@@ -5,6 +5,7 @@
 
 import { computed } from 'vue'
 import PeakMeter from '@/components/PeakMeter.vue'
+import RecordAudioLiveWaveform from '@/components/RecordAudioLiveWaveform.vue'
 import {
   buildChannelOptions,
   buildDeviceOptions,
@@ -84,6 +85,9 @@ const hasSelection = computed(() => store.current?.hasSelection === true)
 const windowMode = computed(() => store.current?.windowMode ?? 'playhead')
 const countInEnabled = computed(() => (store.current?.countInBars ?? 0) > 0)
 const inputGainDb = computed(() => store.current?.inputGainDb ?? 0)
+const recordingMode = computed(() => store.current?.recordingMode ?? 'music')
+const monitorEnabled = computed(() => store.current?.monitorEnabled === true)
+const cleanupEnabled = computed(() => store.current?.cleanupEnabled === true)
 
 const meterSource = (): { peakL: number; peakR: number } => ({
   peakL: store.inputPeakL,
@@ -118,7 +122,7 @@ function onGainReset(): void {
   props.session.setInputGain(0)
 }
 
-function onWindowMode(mode: 'playhead' | 'selection'): void {
+function onWindowMode(mode: 'playhead' | 'start' | 'selection'): void {
   props.session.setWindowMode(mode)
 }
 
@@ -134,290 +138,407 @@ const clickEnabled = computed(() => store.current?.clickEnabled === true)
 function onMetronomeChange(event: Event): void {
   props.session.setClickEnabled((event.target as HTMLInputElement).checked)
 }
+
+// What the take is committed as. It changes nothing about the capture, only
+// whether the finished clip carries the project's tempo and beat markers, so it
+// stays live even while rolling.
+function onRecordingMode(mode: 'music' | 'simple'): void {
+  props.session.setRecordingMode(mode)
+}
+
+function onMonitorChange(event: Event): void {
+  props.session.setMonitorEnabled((event.target as HTMLInputElement).checked)
+}
+
+function onCleanupChange(event: Event): void {
+  props.session.setCleanupEnabled((event.target as HTMLInputElement).checked)
+}
 </script>
 
 <template>
-  <div class="flex flex-col gap-5 text-xs leading-relaxed">
-    <section class="flex flex-col gap-2">
-      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Input
-      </h2>
-      <select
-        class="app-select w-full"
-        :disabled="locked || deviceOptions.length === 0"
-        aria-label="Recording input device"
-        :value="selectedDeviceValue"
-        @change="onDeviceChange"
-      >
-        <option
-          v-if="selectedDeviceValue === ''"
-          value=""
-          disabled
-        >
-          No input available
-        </option>
-        <option
-          v-for="device in deviceOptions"
-          :key="device.value"
-          :value="device.value"
-        >
-          {{ device.deviceName }}
-        </option>
-      </select>
+  <div class="flex flex-col gap-4 text-xs leading-relaxed">
+    <RecordAudioLiveWaveform :musical="recordingMode === 'music'" />
 
-      <div class="flex justify-end">
-        <button
-          type="button"
-          :disabled="locked || store.rescanningInputs"
-          class="flex items-center gap-1.5 rounded bg-zinc-800 px-3 py-1 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-          @click="props.session.rescanInputs()"
-        >
-          <svg
-            v-if="store.rescanningInputs"
-            class="h-3 w-3 animate-spin"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            />
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          {{ store.rescanningInputs ? 'Rescanning…' : 'Rescan devices' }}
-        </button>
-      </div>
-
-      <select
-        class="app-select w-full"
-        :disabled="locked || channelOptions.length === 0"
-        aria-label="Recording input channels"
-        :value="selectedChannelValue"
-        @change="onChannelChange"
-      >
-        <option
-          v-if="channelOptions.length === 0"
-          value=""
-          disabled
-        >
-          No channels available
-        </option>
-        <option
-          v-for="option in channelOptions"
-          :key="option.value"
-          :value="option.value"
-        >
-          {{ option.label }}
-        </option>
-      </select>
-
-      <div class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-zinc-400">Level</span>
-        <PeakMeter
-          :source="meterSource"
-          orientation="horizontal"
-          :width="220"
-          :height="12"
-          :segment-size="3"
-          :segment-gap="1"
-        />
-      </div>
-
-      <label class="flex items-center gap-3">
-        <span class="w-16 shrink-0 text-zinc-400">Input gain</span>
-        <input
-          type="range"
-          class="app-range min-w-0 flex-1"
-          aria-label="Input gain"
-          :min="MIN_RECORDING_INPUT_GAIN_DB"
-          :max="MAX_RECORDING_INPUT_GAIN_DB"
-          step="0.5"
-          :disabled="!store.current"
-          :value="inputGainDb"
-          title="Double-click to reset to 0 dB"
-          @input="onGainChange"
-          @dblclick="onGainReset"
-        >
-        <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
-          {{ inputGainDb > 0 ? '+' : '' }}{{ inputGainDb.toFixed(1) }} dB
-        </span>
-      </label>
-    </section>
-
-    <section class="flex flex-col gap-2">
-      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Record Window
-      </h2>
-      <div class="space-y-2">
-        <label
-          class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-        >
-          <input
-            type="radio"
-            name="record-window"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-            value="playhead"
-            :disabled="locked"
-            :checked="windowMode === 'playhead'"
-            @change="onWindowMode('playhead')"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">From Playhead</span>
-            <span class="text-zinc-500"> — runs until you stop</span>
-          </span>
-        </label>
-        <label
-          class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-          :class="hasSelection && !locked ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
-        >
-          <input
-            type="radio"
-            name="record-window"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-            value="selection"
-            :disabled="locked || !hasSelection"
-            :checked="windowMode === 'selection'"
-            @change="onWindowMode('selection')"
-          >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Over the Selected Range</span>
-            <span class="text-zinc-500"> — stops at the end of the range</span>
-          </span>
-        </label>
-      </div>
-    </section>
-
-    <section class="flex flex-col gap-2">
-      <div class="flex items-center justify-between">
+    <div class="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
+      <!-- Each row of the grid stretches its two cells to the same height, so the
+           bottom row of Input lines up with the bottom row of Backing — Gain
+           opposite Volume — and the option stacks below them end level in turn.
+           The headings stay tight to what follows them: any slack collects at
+           `mt-auto`, above the row that has to stay pinned to the bottom. -->
+      <section class="flex min-w-0 flex-col gap-2">
         <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-          Backing
+          Input
         </h2>
-        <div class="flex items-center gap-1.5">
-          <span class="text-[11px] tabular-nums text-zinc-500">
-            {{ selectedBackingCount }} of {{ backingTracks.length }}
-          </span>
+        <div class="flex min-w-0 items-center gap-2">
+          <select
+            class="app-select min-w-0 flex-1 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-900"
+            :disabled="locked || deviceOptions.length === 0"
+            aria-label="Recording input device"
+            :value="selectedDeviceValue"
+            @change="onDeviceChange"
+          >
+            <option
+              v-if="selectedDeviceValue === ''"
+              value=""
+              disabled
+            >
+              No input available
+            </option>
+            <option
+              v-for="device in deviceOptions"
+              :key="device.value"
+              :value="device.value"
+            >
+              {{ device.deviceName }}
+            </option>
+          </select>
           <button
             type="button"
-            class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="locked || backingTracks.length === 0"
-            @click="selectAllBacking"
+            :disabled="locked || store.rescanningInputs"
+            :aria-busy="store.rescanningInputs"
+            class="flex shrink-0 items-center gap-1.5 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            @click="props.session.rescanInputs()"
           >
-            All
-          </button>
-          <button
-            type="button"
-            class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="locked || backingTracks.length === 0"
-            @click="selectNoBacking"
-          >
-            None
+            <svg
+              v-if="store.rescanningInputs"
+              class="h-3 w-3 animate-spin"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            <!-- The label does not change while a scan runs: the spinner says that,
+                 and a wider label would squeeze the device picker beside it. -->
+            Rescan
           </button>
         </div>
-      </div>
-      <p
-        v-if="backingTracks.length === 0"
-        class="text-xs text-zinc-500"
-      >
-        There are no tracks to play along to yet.
-      </p>
-      <div
-        v-else
-        class="silverdaw-scroll max-h-40 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/40 p-1"
-      >
-        <label
-          v-for="track in backingTracks"
-          :key="track.id"
-          class="flex items-center gap-3 rounded px-2 py-1.5 text-xs"
-          :class="locked
-            ? 'cursor-not-allowed text-zinc-600'
-            : 'cursor-pointer text-zinc-200 hover:bg-zinc-900'"
-        >
-          <input
-            type="checkbox"
-            class="h-4 w-4 shrink-0 accent-sky-500 disabled:cursor-not-allowed"
-            :disabled="locked"
-            :checked="backingSelection.has(track.id)"
-            @change="toggleBackingTrack(track.id)"
-          >
-          <span class="min-w-0 flex-1 truncate">{{ track.name }}</span>
-          <span
-            v-if="track.silenced"
-            class="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500"
-          >Muted</span>
-        </label>
-      </div>
 
-      <label
-        v-if="backingTracks.length > 0"
-        class="flex items-center gap-3"
-      >
-        <span class="w-16 shrink-0 text-zinc-400">Volume</span>
-        <input
-          type="range"
-          class="app-range min-w-0 flex-1"
-          aria-label="Backing volume"
-          min="0"
-          max="100"
-          step="1"
-          :disabled="!store.current"
-          :value="backingGainPercent"
-          title="Double-click to reset to 100%"
-          @input="onBackingGainChange"
-          @dblclick="onBackingGainReset"
+        <select
+          class="app-select w-full bg-zinc-950/40 text-zinc-300 hover:bg-zinc-900"
+          :disabled="locked || channelOptions.length === 0"
+          aria-label="Recording input channels"
+          :value="selectedChannelValue"
+          @change="onChannelChange"
         >
-        <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
-          {{ backingGainPercent }}%
-        </span>
-      </label>
-    </section>
-
-    <section class="flex flex-col gap-2">
-      <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-        Metronome
-      </h2>
-      <div class="space-y-2">
-        <label
-          class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-          :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
-        >
-          <input
-            type="checkbox"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
-            :disabled="locked"
-            :checked="countInEnabled"
-            @change="onCountInChange"
+          <option
+            v-if="channelOptions.length === 0"
+            value=""
+            disabled
           >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Count Me In</span>
-            <span class="text-zinc-500"> — one bar of clicks before recording</span>
+            No channels available
+          </option>
+          <option
+            v-for="option in channelOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </option>
+        </select>
+
+        <div class="mt-auto flex items-center gap-3">
+          <span class="w-16 shrink-0 text-zinc-400">Level</span>
+          <PeakMeter
+            :source="meterSource"
+            orientation="horizontal"
+            :width="220"
+            :height="12"
+            :segment-size="3"
+            :segment-gap="1"
+          />
+        </div>
+
+        <label class="flex items-center gap-3">
+          <span class="w-16 shrink-0 text-zinc-400">Gain</span>
+          <input
+            type="range"
+            class="app-range min-w-0 flex-1"
+            aria-label="Input gain"
+            :min="MIN_RECORDING_INPUT_GAIN_DB"
+            :max="MAX_RECORDING_INPUT_GAIN_DB"
+            step="0.5"
+            :disabled="!store.current"
+            :value="inputGainDb"
+            title="Double-click to reset to 0 dB"
+            @input="onGainChange"
+            @dblclick="onGainReset"
+          >
+          <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
+            {{ inputGainDb > 0 ? '+' : '' }}{{ inputGainDb.toFixed(1) }} dB
           </span>
         </label>
-        <label
-          class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
-          :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+      </section>
+
+      <section class="flex min-w-0 flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Backing
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <span class="text-[11px] tabular-nums text-zinc-500">
+              {{ selectedBackingCount }} of {{ backingTracks.length }}
+            </span>
+            <button
+              type="button"
+              class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="locked || backingTracks.length === 0"
+              @click="selectAllBacking"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              class="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="locked || backingTracks.length === 0"
+              @click="selectNoBacking"
+            >
+              None
+            </button>
+          </div>
+        </div>
+        <div
+          class="silverdaw-scroll h-32 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/40 p-1"
         >
-          <input
-            type="checkbox"
-            class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
-            :disabled="locked"
-            :checked="clickEnabled"
-            @change="onMetronomeChange"
+          <p
+            v-if="backingTracks.length === 0"
+            class="px-2 py-1.5 text-xs text-zinc-500"
           >
-          <span class="min-w-0 flex-1 truncate leading-tight">
-            <span class="font-medium text-zinc-200">Click While Recording</span>
-            <span class="text-zinc-500"> — keeps clicking after the count-in</span>
+            There are no tracks to play along to yet.
+          </p>
+          <label
+            v-for="track in backingTracks"
+            :key="track.id"
+            class="flex items-center gap-3 rounded px-2 py-1.5 text-xs"
+            :class="locked
+              ? 'cursor-not-allowed text-zinc-600'
+              : 'cursor-pointer text-zinc-200 hover:bg-zinc-900'"
+          >
+            <input
+              type="checkbox"
+              class="h-4 w-4 shrink-0 accent-sky-500 disabled:cursor-not-allowed"
+              :disabled="locked"
+              :checked="backingSelection.has(track.id)"
+              @change="toggleBackingTrack(track.id)"
+            >
+            <span class="min-w-0 flex-1 truncate">{{ track.name }}</span>
+            <span
+              v-if="track.silenced"
+              class="shrink-0 text-[10px] uppercase tracking-wider text-zinc-500"
+            >Muted</span>
+          </label>
+        </div>
+
+        <label class="mt-auto flex items-center gap-3">
+          <span class="w-16 shrink-0 text-zinc-400">Volume</span>
+          <input
+            type="range"
+            class="app-range min-w-0 flex-1"
+            aria-label="Backing volume"
+            min="0"
+            max="100"
+            step="1"
+            :disabled="!store.current || backingTracks.length === 0"
+            :value="backingGainPercent"
+            title="Double-click to reset to 100%"
+            @input="onBackingGainChange"
+            @dblclick="onBackingGainReset"
+          >
+          <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
+            {{ backingGainPercent }}%
           </span>
         </label>
+      </section>
+
+      <div class="flex min-w-0 flex-col justify-between gap-5">
+        <section class="flex min-w-0 flex-col gap-2">
+          <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Record Window
+          </h2>
+          <div class="space-y-2">
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            >
+              <input
+                type="radio"
+                name="record-window"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                value="start"
+                :disabled="locked"
+                :checked="windowMode === 'start'"
+                @change="onWindowMode('start')"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">From Start</span>
+                <span class="text-zinc-500"> — begins at the top of the project</span>
+              </span>
+            </label>
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            >
+              <input
+                type="radio"
+                name="record-window"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                value="playhead"
+                :disabled="locked"
+                :checked="windowMode === 'playhead'"
+                @change="onWindowMode('playhead')"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">From Playhead</span>
+                <span class="text-zinc-500"> — runs until you stop</span>
+              </span>
+            </label>
+            <label
+              class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+              :class="hasSelection && !locked ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
+            >
+              <input
+                type="radio"
+                name="record-window"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                value="selection"
+                :disabled="locked || !hasSelection"
+                :checked="windowMode === 'selection'"
+                @change="onWindowMode('selection')"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Over the Selected Range</span>
+                <span class="text-zinc-500"> — stops at the end of the range</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="flex min-w-0 flex-col gap-2">
+          <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Metronome
+          </h2>
+          <div class="space-y-2">
+            <label
+              class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+              :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+            >
+              <input
+                type="checkbox"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
+                :disabled="locked"
+                :checked="countInEnabled"
+                @change="onCountInChange"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Count Me In</span>
+                <span class="text-zinc-500"> — one bar of clicks before recording</span>
+              </span>
+            </label>
+            <label
+              class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+              :class="locked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
+            >
+              <input
+                type="checkbox"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
+                :disabled="locked"
+                :checked="clickEnabled"
+                @change="onMetronomeChange"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Click While Recording</span>
+                <span class="text-zinc-500"> — keeps clicking after the count-in</span>
+              </span>
+            </label>
+          </div>
+        </section>
       </div>
-    </section>
+
+      <div class="flex min-w-0 flex-col justify-between gap-5">
+        <section class="flex min-w-0 flex-col gap-2">
+          <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Monitor
+          </h2>
+          <label
+            class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+          >
+            <input
+              type="checkbox"
+              class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+              :checked="monitorEnabled"
+              @change="onMonitorChange"
+            >
+            <span class="min-w-0 flex-1 truncate leading-tight">
+              <span class="font-medium text-zinc-200">Hear Yourself</span>
+              <span class="text-zinc-500"> — use headphones to prevent feedback</span>
+            </span>
+          </label>
+        </section>
+
+        <section class="flex min-w-0 flex-col gap-2">
+          <h2 class="text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+            Recording
+          </h2>
+          <div class="space-y-2">
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            >
+              <input
+                type="radio"
+                name="record-mode"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                value="music"
+                :checked="recordingMode === 'music'"
+                @change="onRecordingMode('music')"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Music</span>
+                <span class="text-zinc-500"> — takes the project tempo and beat markers</span>
+              </span>
+            </label>
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            >
+              <input
+                type="radio"
+                name="record-mode"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                value="simple"
+                :checked="recordingMode === 'simple'"
+                @change="onRecordingMode('simple')"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Simple</span>
+                <span class="text-zinc-500"> — no tempo, for speech and sound effects</span>
+              </span>
+            </label>
+            <label
+              class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            >
+              <input
+                type="checkbox"
+                class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+                :checked="cleanupEnabled"
+                @change="onCleanupChange"
+              >
+              <span class="min-w-0 flex-1 truncate leading-tight">
+                <span class="font-medium text-zinc-200">Clean Up Background Noise</span>
+                <span class="text-zinc-500"> — for microphone vocals</span>
+              </span>
+            </label>
+          </div>
+        </section>
+      </div>
+    </div>
   </div>
 </template>

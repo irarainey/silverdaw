@@ -37,6 +37,7 @@ import {
 import {
   COL_BASELINE,
   COL_BEAT,
+  COL_BEAT_ALPHA,
   COL_RULER_BG,
   COL_RULER_BORDER,
   COL_RULER_TICK,
@@ -280,7 +281,7 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
       lines.moveTo(x, g.waveTop).lineTo(x, g.H)
       lastX = x
     }
-    lines.stroke({ color: COL_BEAT, width: 1, alpha: 0.55 })
+    lines.stroke({ color: COL_BEAT, width: 1, alpha: COL_BEAT_ALPHA })
     layer.addChild(lines)
   }
 

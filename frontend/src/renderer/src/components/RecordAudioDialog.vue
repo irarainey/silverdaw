@@ -203,7 +203,7 @@ const errorMessage = computed(() => {
       <div
         ref="dialogEl"
         tabindex="-1"
-        class="dialog-card w-[min(560px,92vw)]"
+        class="dialog-card w-[min(820px,94vw)]"
         @keydown="onKeydown"
       >
         <div class="dialog-header">

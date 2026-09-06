@@ -1575,6 +1575,31 @@ void testNewProjectDisarmsPreviousProjectTimelineLoop()
             "a new project must disarm the previous project's timeline loop");
 }
 
+// A recording session holds the loop off rather than disarming it, so a take over a
+// looping selection reaches the end of the range and stops instead of being carried
+// round again (ADR 0030, Amendment 5). Holding it off has to leave the range itself
+// untouched: the project armed it, and the project gets it back on close without the
+// session having to remember and replay it.
+void testSuspendingTheTimelineLoopLeavesItArmed()
+{
+    silverdaw::AudioEngine engine;
+    silverdaw::ProjectState state;
+
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{1000.0, 5000.0, /*loop*/ true});
+    silverdaw::syncTimelineLoop(engine, state);
+    require(engine.isTimelineLoopArmed(), "a looping selection should arm the engine loop");
+    require(!engine.isTimelineLoopSuspended(), "a fresh loop should not be suspended");
+
+    engine.setTimelineLoopSuspended(true);
+    require(engine.isTimelineLoopSuspended(), "suspending should take effect");
+    require(engine.isTimelineLoopArmed(), "suspending must not disarm the range");
+
+    engine.setTimelineLoopSuspended(false);
+    require(!engine.isTimelineLoopSuspended(), "releasing the hold should take effect");
+    require(engine.isTimelineLoopArmed(), "the project's range should survive the hold");
+}
+
 // Regression: editing the project tempo auto-warped every unwarped clip that had a
 // source BPM at all, including one whose own tempo already matched the tempo just
 // typed. That clip gained the WARP badge, a stretch ratio and a resampled playback
@@ -1764,6 +1789,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"loadPreview sniffs content when the extension is unclaimed", testLoadPreviewFallsBackToContentSniffing});
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
     tests.push_back({"A new project disarms the previous project's timeline loop", testNewProjectDisarmsPreviousProjectTimelineLoop});
+    tests.push_back({"Suspending the timeline loop leaves it armed", testSuspendingTheTimelineLoopLeavesItArmed});
 }
 
 } // namespace silverdaw::tests

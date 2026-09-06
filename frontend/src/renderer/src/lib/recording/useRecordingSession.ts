@@ -14,6 +14,7 @@ import {
   type RecordingChannelCount,
   type RecordingCountInBars,
   type RecordingInputSelection,
+  type RecordingMode,
   type RecordingSessionControlPayload,
   type RecordingWindowMode
 } from '@shared/bridge-protocol'
@@ -55,6 +56,14 @@ export interface RecordingSession {
    *  it without losing the take. */
   setInputGain(gainDb: number): void
   setWindowMode(mode: RecordingWindowMode): void
+  /** Whether the take is committed as musical material or a plain sample. It is
+   *  read at commit, so it can be changed right up to keeping the take. */
+  setRecordingMode(mode: RecordingMode): void
+  /** Whether the performer hears their own input in the monitor mix. Opt-in:
+   *  with speakers rather than headphones it is a feedback loop. */
+  setMonitorEnabled(enabled: boolean): void
+  /** Whether the finished take gets the noise-reduction pass at finalise. */
+  setCleanupEnabled(enabled: boolean): void
   start(): void
   stop(): void
   /** Record Again: throws the finished file away without creating anything. */
@@ -95,13 +104,14 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
 
   function closeSession(): void {
     const sessionId = store.activeSessionId
-    if (sessionId !== null) {
-      store.noteClosed(sessionId)
-      sendBridge('RECORD_SESSION_CLOSE', {
-        protocolVersion: RECORDING_PROTOCOL_VERSION,
-        sessionId
-      })
-    }
+    if (sessionId !== null) store.noteClosed(sessionId)
+    // Sent even with no adopted id: the backend reads '' as "whichever session is
+    // open", which is what hands the click, backing, loop and monitor back when
+    // the dialog closes before it ever saw a state broadcast.
+    sendBridge('RECORD_SESSION_CLOSE', {
+      protocolVersion: RECORDING_PROTOCOL_VERSION,
+      sessionId: sessionId ?? ''
+    })
     store.clear()
   }
 
@@ -157,6 +167,18 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       if (store.rememberedBackingGain !== null) {
         const base = withSession('setBackingGain')
         if (base) control({ ...base, gain: store.rememberedBackingGain })
+      }
+      if (store.rememberedRecordingMode !== null) {
+        const base = withSession('setRecordingMode')
+        if (base) control({ ...base, mode: store.rememberedRecordingMode })
+      }
+      if (store.rememberedMonitorEnabled !== null) {
+        const base = withSession('setMonitorEnabled')
+        if (base) control({ ...base, enabled: store.rememberedMonitorEnabled })
+      }
+      if (store.rememberedCleanupEnabled !== null) {
+        const base = withSession('setCleanupEnabled')
+        if (base) control({ ...base, enabled: store.rememberedCleanupEnabled })
       }
       if (store.rememberedBackingTrackIds !== null) {
         // Ids of tracks deleted since the last open are dropped by the backend.
@@ -281,6 +303,24 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       store.rememberedWindowMode = mode
       const base = withSession('setWindowMode')
       if (base) control({ ...base, mode })
+    },
+
+    setRecordingMode(mode: RecordingMode): void {
+      store.rememberedRecordingMode = mode
+      const base = withSession('setRecordingMode')
+      if (base) control({ ...base, mode })
+    },
+
+    setMonitorEnabled(enabled: boolean): void {
+      store.rememberedMonitorEnabled = enabled
+      const base = withSession('setMonitorEnabled')
+      if (base) control({ ...base, enabled })
+    },
+
+    setCleanupEnabled(enabled: boolean): void {
+      store.rememberedCleanupEnabled = enabled
+      const base = withSession('setCleanupEnabled')
+      if (base) control({ ...base, enabled })
     },
 
     setInputGain(gainDb: number): void {

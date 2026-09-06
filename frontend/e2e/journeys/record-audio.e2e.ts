@@ -38,6 +38,12 @@ test('the Record Audio dialog opens a backend session and releases it on close',
   await expect(fromPlayhead).toBeChecked({ timeout: 30_000 })
   await expect(dialog.getByRole('radio', { name: /Over the Selected Range/ })).toBeDisabled()
 
+  // The window is the session's state, not the radio's: this choice is proven below by
+  // surviving the dialog being closed and reopened against a fresh backend session.
+  const fromStart = dialog.getByRole('radio', { name: /From Start/ })
+  await fromStart.click()
+  await expect(fromStart).toBeChecked()
+
   // Count-in is off unless asked for, and switching it on is a dialog-local choice.
   const countIn = dialog.getByRole('checkbox', { name: /Count Me In/ })
   await expect(countIn).not.toBeChecked()
@@ -66,6 +72,7 @@ test('the Record Audio dialog opens a backend session and releases it on close',
   await expect(menuRow).toBeVisible()
   await menuRow.click()
   await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('radio', { name: /From Start/ })).toBeChecked({ timeout: 30_000 })
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
 

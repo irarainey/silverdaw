@@ -219,9 +219,16 @@ void AudioEngine::setTimelineLoop(std::optional<LoopRange> range)
     updateTimelineLoopTimer();
 }
 
+void AudioEngine::setTimelineLoopSuspended(bool suspended)
+{
+    if (timelineLoopSuspended == suspended) return;
+    timelineLoopSuspended = suspended;
+    updateTimelineLoopTimer();
+}
+
 void AudioEngine::updateTimelineLoopTimer()
 {
-    if (timelineLoop.has_value() && master.isPlaying())
+    if (timelineLoop.has_value() && ! timelineLoopSuspended && master.isPlaying())
         timelineLoopTimer.startTimer(kTimelineLoopPollMs);
     else
         timelineLoopTimer.stopTimer();
@@ -234,7 +241,7 @@ void AudioEngine::updateTimelineLoopTimer()
 // fade-in ramp, and reverb and delay tails carry across the wrap.
 void AudioEngine::wrapTimelineLoopIfDue()
 {
-    if (! timelineLoop.has_value() || ! master.isPlaying())
+    if (! timelineLoop.has_value() || timelineLoopSuspended || ! master.isPlaying())
     {
         updateTimelineLoopTimer();
         return;

@@ -109,6 +109,12 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
     atomicMaxFloat(peakR, count > 1 ? right : left);
     if (left > 0.0F || right > 0.0F) sawSignal.store(true, std::memory_order_relaxed);
 
+    // Monitoring hears exactly what is captured, gain and all — and is fed
+    // whether or not a take is rolling, so the level can be judged before
+    // committing to a performance.
+    if (auto* monitor = monitorSink.load(std::memory_order_acquire))
+        monitor->push(selected, count, numSamples);
+
     if (auto* writer = activeWriter.load(std::memory_order_acquire))
     {
         const auto cap = maxSamples.load(std::memory_order_relaxed);

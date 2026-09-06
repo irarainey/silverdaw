@@ -41,12 +41,27 @@ export const RecordingBackingGainSchema = z.number().min(0).max(1)
 
 /**
  * The record window (ADR 0030). A recording is bounded by time, never by a
- * track. `selection` uses the project's existing timeline range as the window
- * and auto-stops at its end; the backend reads that range from project state
- * rather than having it sent, so there is one source of truth for it.
+ * track. `start` and `playhead` both run open-ended until the performer stops,
+ * differing only in where they anchor; `selection` uses the project's existing
+ * timeline range as the window and auto-stops at its end, and the backend reads
+ * that range from project state rather than having it sent, so there is one
+ * source of truth for it.
  */
-export const RecordingWindowModeSchema = z.enum(['playhead', 'selection'])
+export const RecordingWindowModeSchema = z.enum(['playhead', 'start', 'selection'])
 export type RecordingWindowMode = z.infer<typeof RecordingWindowModeSchema>
+
+/**
+ * What kind of material a take is, which maps straight onto the library's
+ * existing `audioType` rather than inventing a recording-only concept.
+ *
+ * `music` commits the take with the project's tempo and, where the window makes
+ * it true, a beat count — so it warps, snaps and shows beat markers like any
+ * other loop. `simple` commits it with neither, because a spoken line, a sound
+ * effect or a found recording has no tempo, and drawing beat markers over it
+ * would be telling the user something untrue.
+ */
+export const RecordingModeSchema = z.enum(['music', 'simple'])
+export type RecordingMode = z.infer<typeof RecordingModeSchema>
 
 /**
  * A device presents far more inputs than a performer means to record, so a
@@ -102,7 +117,10 @@ export type RecordingSessionOpenPayload = z.infer<typeof RecordingSessionOpenPay
 
 export const RecordingSessionClosePayloadSchema = z.object({
   protocolVersion: z.literal(RECORDING_PROTOCOL_VERSION),
-  sessionId: z.string().min(1)
+  /** The session to close, or '' for "whichever session is open" — the dialog
+   *  sends the empty form when it never adopted a session id, so an abandoned
+   *  session cannot keep the click, backing, loop or monitor borrowed. */
+  sessionId: z.string()
 })
 export type RecordingSessionClosePayload = z.infer<typeof RecordingSessionClosePayloadSchema>
 
@@ -117,8 +135,11 @@ const RecordingSessionControlBase = {
  * `discard` is Record Again: it throws the finished file away and returns to
  * the armed state without ever creating a library item.
  *
- * There is deliberately no monitoring control: software monitoring is out of
- * scope for the first release (ADR 0030), and input metering is always live.
+ * Software input monitoring is a `setMonitorEnabled` control rather than the
+ * non-goal ADR 0030 originally declared (see its Amendment 1): a performer
+ * recording a vocal has to hear themselves against the backing. It is opt-in
+ * and off by default because a monitored mic in front of speakers feeds back.
+ * Input metering is always live, monitoring or not.
  */
 export const RecordingSessionControlPayloadSchema = z.discriminatedUnion('action', [
   z.object({
@@ -161,6 +182,24 @@ export const RecordingSessionControlPayloadSchema = z.discriminatedUnion('action
     ...RecordingSessionControlBase,
     action: z.literal('setInputGain'),
     gainDb: RecordingInputGainDbSchema
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
+    action: z.literal('setRecordingMode'),
+    mode: RecordingModeSchema
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
+    action: z.literal('setMonitorEnabled'),
+    /** Whether the performer hears their own input in the monitor mix. Opt-in:
+     *  with speakers rather than headphones this is a feedback loop. */
+    enabled: z.boolean()
+  }),
+  z.object({
+    ...RecordingSessionControlBase,
+    action: z.literal('setCleanupEnabled'),
+    /** Whether the finished take gets the noise-reduction pass at finalise. */
+    enabled: z.boolean()
   }),
   z.object({
     ...RecordingSessionControlBase,
@@ -239,6 +278,12 @@ export const RecordingSessionStatePayloadSchema = z.object({
   backingGain: RecordingBackingGainSchema,
   /** Input gain currently applied to the capture, in dB. */
   inputGainDb: RecordingInputGainDbSchema,
+  /** What the take will be committed as: musical material or a plain sample. */
+  recordingMode: RecordingModeSchema,
+  /** Whether the performer's own input is in the monitor mix. */
+  monitorEnabled: z.boolean(),
+  /** Whether the finished take gets the noise-reduction pass. */
+  cleanupEnabled: z.boolean(),
   windowMode: RecordingWindowModeSchema,
   /** True when a timeline range exists, so the dialog can offer (and preselect)
    *  the selection window instead of guessing. */
@@ -290,8 +335,11 @@ export const RecordingReadyPayloadSchema = z.object({
   sampleRate: z.number().positive(),
   channelCount: RecordingChannelCountSchema,
   anchorMs: z.number().nonnegative(),
-  /** Project tempo at the time of recording; a recording is always musical, so
-   *  this is a known value and no BPM detection is run on it. */
+  /** Whether the take is being committed as musical material. False for a
+   *  `simple` recording, which gets no tempo and no beat count. */
+  musical: z.boolean(),
+  /** Project tempo at the time of recording; for a musical take this is a known
+   *  value, so no BPM detection is run on it. */
   bpm: z.number().positive(),
   beatAnchorSec: z.number(),
   /** Written only when a grid-aligned record window makes the beat count true

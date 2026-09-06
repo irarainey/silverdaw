@@ -90,6 +90,9 @@ class AudioEngine : private AudioEngineGraphState,
     void stop();
 
     void setMasterGain(float gain);
+    /** The record dialog's software monitor, fed by the capture callback and
+     *  summed alongside the arrangement. Silent until a session enables it. */
+    recording::InputMonitorSource& getInputMonitor() noexcept { return inputMonitorSource; }
     /** Monitor-only trim on the arrangement (0..1), used by the record dialog to
      *  set the backing level. Applied ahead of master gain, the click and the
      *  preview voice, so it lowers what the performer plays along to and nothing
@@ -224,6 +227,15 @@ class AudioEngine : private AudioEngineGraphState,
      *  loop is otherwise invisible from outside the engine, which is how one survived
      *  PROJECT_NEW and silently wrapped playback in the next project. */
     bool isTimelineLoopArmed() const noexcept { return timelineLoop.has_value(); }
+
+    /** Holds the armed loop off without disarming it. A recording session borrows this so a
+     *  take over a looped range stops at the range end instead of wrapping forever (ADR 0030);
+     *  the range itself is left alone, so releasing the hold restores exactly what the project
+     *  asked for without the borrower having to remember and replay it. */
+    void setTimelineLoopSuspended(bool suspended);
+
+    /** True while the armed loop is held off. */
+    bool isTimelineLoopSuspended() const noexcept { return timelineLoopSuspended; }
 
     bool setClipOffsetMs(const juce::String& clipId, double offsetMs);
     bool commitClipOffset(const juce::String& clipId);
@@ -591,7 +603,7 @@ class AudioEngine : private AudioEngineGraphState,
     static constexpr int kTransportFadePollMs = 1;
 
     void wrapTimelineLoopIfDue();
-    /** Runs the loop poll only while a range is armed and the transport is moving. */
+    /** Runs the loop poll only while a range is armed, unsuspended, and the transport moves. */
     void updateTimelineLoopTimer();
 
     class TimelineLoopTimer : public juce::Timer
@@ -605,6 +617,8 @@ class AudioEngine : private AudioEngineGraphState,
     };
     TimelineLoopTimer timelineLoopTimer{*this};
     std::optional<LoopRange> timelineLoop;
+    // Held off rather than disarmed, so whoever armed the range stays its only owner.
+    bool timelineLoopSuspended = false;
     // Overshoot past the loop end is this poll plus the block still being rendered, so a
     // tighter poll than a block period (~10 ms at 512 frames) would only add message-thread
     // wakeups for no audible gain.

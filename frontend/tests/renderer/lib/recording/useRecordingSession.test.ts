@@ -40,6 +40,9 @@ function makeState(
     backingTrackIds: [],
     backingGain: 1,
     inputGainDb: 0,
+    recordingMode: 'music',
+    monitorEnabled: false,
+    cleanupEnabled: false,
     windowMode: 'playhead',
     hasSelection: false,
     anchorMs: 0,
@@ -61,6 +64,7 @@ function makeReady(): RecordingReadyPayload {
     sampleRate: 48000,
     channelCount: 1,
     anchorMs: 2000,
+    musical: true,
     bpm: 120,
     beatAnchorSec: 0,
     cachePath: 'C:/cache/rec.peaks',
@@ -332,6 +336,24 @@ describe('useRecordingSession', () => {
       .mocked(sendBridge)
       .mock.calls.find((call) => call[0] === 'RECORD_SESSION_CLOSE')
     expect(close?.[1]).toMatchObject({ sessionId: 'late-session' })
+    scope.stop()
+  })
+
+  // A dialog that opened and closed before any state arrived has no session id to
+  // name, but the backend still has a session holding the click, the backing, the
+  // loop and the monitor. The empty id means "whichever session is open".
+  it('closes a session it never saw a state broadcast for', async () => {
+    const open = ref(true)
+    const scope = effectScope()
+    scope.run(() => useRecordingSession(open))
+
+    open.value = false
+    await nextTick()
+
+    const close = vi
+      .mocked(sendBridge)
+      .mock.calls.find((call) => call[0] === 'RECORD_SESSION_CLOSE')
+    expect(close?.[1]).toMatchObject({ sessionId: '' })
     scope.stop()
   })
 

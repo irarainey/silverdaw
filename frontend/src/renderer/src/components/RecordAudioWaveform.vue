@@ -4,6 +4,7 @@
 // stays on disk (ADR 0003).
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { WAVEFORM_COLORS } from '@/lib/waveform/waveformPalette'
 
 const props = defineProps<{
   /** Alternating min/max pairs from the peaks cache. */
@@ -36,11 +37,11 @@ function draw(): void {
   const mid = height / 2
   const pairCount = Math.floor(props.peaks.length / 2)
 
-  ctx.fillStyle = '#3f3f46'
+  ctx.fillStyle = WAVEFORM_COLORS.baseline
   ctx.fillRect(0, mid, width, Math.max(1, ratio))
 
   if (pairCount > 0) {
-    ctx.fillStyle = '#38bdf8'
+    ctx.fillStyle = WAVEFORM_COLORS.wave
     for (let x = 0; x < width; x += 1) {
       const from = Math.floor((x / width) * pairCount)
       const to = Math.max(from + 1, Math.floor(((x + 1) / width) * pairCount))
@@ -58,7 +59,7 @@ function draw(): void {
 
   if (props.durationMs > 0 && props.positionMs > 0) {
     const x = Math.round((props.positionMs / props.durationMs) * width)
-    ctx.fillStyle = '#fafafa'
+    ctx.fillStyle = WAVEFORM_COLORS.playhead
     ctx.fillRect(x, 0, Math.max(1, ratio), height)
   }
 }

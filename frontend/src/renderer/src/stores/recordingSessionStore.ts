@@ -4,6 +4,7 @@ import type {
   RecordingInputLevelPayload,
   RecordingInputSelection,
   RecordingInputsListPayload,
+  RecordingMode,
   RecordingReadyPayload,
   RecordingSessionStatePayload,
   RecordingWindowMode
@@ -61,6 +62,12 @@ interface RecordingSessionState {
   rememberedBackingGain: number | null
   rememberedCountInBars: RecordingCountInBars | null
   rememberedClickEnabled: boolean | null
+  /** Whether takes are committed as musical material, carried across opens. */
+  rememberedRecordingMode: RecordingMode | null
+  /** Whether the performer hears their own input, carried across opens. */
+  rememberedMonitorEnabled: boolean | null
+  /** Whether takes get the noise-reduction pass, carried across opens. */
+  rememberedCleanupEnabled: boolean | null
   /** Live input peaks, always metered even with monitoring off. */
   inputPeakL: number
   inputPeakR: number
@@ -92,6 +99,9 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     rememberedBackingGain: null,
     rememberedCountInBars: null,
     rememberedClickEnabled: null,
+    rememberedRecordingMode: null,
+    rememberedMonitorEnabled: null,
+    rememberedCleanupEnabled: null,
     inputPeakL: 0,
     inputPeakR: 0,
     ready: null,
