@@ -3924,6 +3924,9 @@ that sounds equally loud — is still readable as a shape. The cap stops a
 near-silent take being drawn as a performance, and silence stays flat rather than
 having its noise bed amplified. The timeline is deliberately *not* fitted this
 way: one shared scale across every clip is what lets lanes be compared by eye.
+The elapsed time and the count-in are drawn **over** the box rather than below
+it: a readout in the dialog's flow appears and disappears as a take starts and
+stops, which resizes the dialog under a performance in progress.
 Both dialog waveforms take their colours from the shared
 `waveformPalette`, which the Clip Editor's Pixi theme also derives from, so every
 waveform in Silverdaw is drawn the same way.
@@ -4093,7 +4096,10 @@ the value `Prompt`, and resolves it to `Allow` or `Deny` the first time capture
 actually opens a device. Capture runs in the headless backend, which owns no
 window, so a consent dialog may have nothing to attach to and the request can
 resolve to a denial with no visible prompt — hence the silence-detection failure
-above and the Settings walkthrough in `INSTALL.md`. Check the state with:
+above and the Settings walkthrough in `INSTALL.md`. In practice a signed `1.9.0`
+install captures correctly on real hardware, so the path is confirmed end to end
+and the silence detection is a safety net rather than the expected outcome. Check
+the state with:
 
 ```powershell
 Get-AppxPackage -Name Silverdaw | ForEach-Object {

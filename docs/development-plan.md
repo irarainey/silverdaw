@@ -2338,12 +2338,12 @@ scope are recorded in §11.6, and the implementation is described under
    remembers the user's choice and restores it, once, per device-list change.
 
 Remaining before §11.6 can be ticked off: verification of device removal
-mid-capture, and of the first-use microphone consent prompt on real hardware.
-Install-time registration **is** verified: a `1.9.0` sideload install of the
-signed package registers `<DeviceCapability Name="microphone"/>` and Windows
-creates the consent-store entry `Silverdaw_<hash>` with the value `Prompt`.
-There is deliberately no install-time permission dialog — Windows resolves a
-device capability at first use, not during installation.
+mid-capture. Microphone consent **is** verified end to end on a `1.9.0`
+sideload of the signed package: the install registers
+`<DeviceCapability Name="microphone"/>`, Windows creates the consent-store entry
+`Silverdaw_<hash>` with the value `Prompt`, and capture then works on real
+hardware. There is deliberately no install-time permission dialog — Windows
+resolves a device capability at first use, not during installation.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3352,9 +3352,9 @@ sequencing into the phase plan is still to be decided.
   but real, so the correction ratio is measured per recording, and a device may
   present many more inputs than are wanted (an 8-channel array here), so the
   recording captures one chosen channel or pair rather than the device's whole
-  channel set. Still unverified on real hardware: device removal mid-capture, and
-  the first-use consent prompt (install-time capability registration is
-  verified). Out of scope for this release: track
+  channel set. Still unverified on real hardware: device removal mid-capture.
+  Microphone consent is verified end to end on a signed MSIX install. Out of
+  scope for this release: track
   record-arm, multi-input capture, punch-in and stacked repeat passes, comping,
   live-growing clips on the timeline, and low-latency software monitoring.
 

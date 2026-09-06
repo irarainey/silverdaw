@@ -20,7 +20,7 @@ import {
   resetLiveWaveform,
   LIVE_COLUMN_MS
 } from '@/lib/recording/liveWaveform'
-import { DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
+import { DEFAULT_BEATS_PER_BAR, formatTime } from '@/lib/musicTime'
 import { waveformFillScale } from '@/lib/waveform/fillScale'
 import {
   WAVEFORM_BAR_ALPHA,
@@ -61,6 +61,22 @@ const waiting = computed(
     store.current?.status === 'error' ||
     store.current?.status === 'countIn'
 )
+
+// Elapsed time and the count-in read *over* the waveform rather than under it.
+// A readout in the dialog's flow appears and disappears as a take starts and
+// stops, which resizes the dialog under a performance in progress; the box here
+// is a fixed height, so nothing moves.
+const rollingReadout = computed(() => {
+  const state = store.current
+  if (!state) return ''
+  if (state.status === 'countIn') {
+    const bars = state.countInBarsRemaining ?? state.countInBars
+    return bars > 0 ? `Counting in — ${bars} bar${bars === 1 ? '' : 's'}` : 'Counting in…'
+  }
+  if (state.status === 'recording') return formatTime(state.recordedMs)
+  if (state.status === 'finalising') return 'Finishing…'
+  return ''
+})
 
 function draw(): void {
   const canvas = canvasEl.value
@@ -169,6 +185,12 @@ onBeforeUnmount(() => {
       class="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-zinc-600"
     >
       Your recording appears here
+    </p>
+    <p
+      v-if="rollingReadout"
+      class="pointer-events-none absolute top-2 right-2 rounded bg-zinc-950/80 px-2 py-1 font-mono text-xs tabular-nums text-sky-200"
+    >
+      {{ rollingReadout }}
     </p>
   </div>
 </template>

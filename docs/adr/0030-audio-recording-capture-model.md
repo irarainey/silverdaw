@@ -310,7 +310,9 @@ Confirming the precise packaged behaviour is part of the spike below.
 > entry `Silverdaw_<hash>` set to `Prompt`. There is **no install-time
 > permission dialog** — Windows resolves a device capability at first use. The
 > silence failure path above therefore remains the primary safety net, because
-> the backend has no window for a consent prompt to attach to.
+> the backend has no window for a consent prompt to attach to. Capture has since
+> been exercised on a signed MSIX install on real hardware and works, so the
+> consent path is confirmed end to end rather than only at registration.
 
 **The device spike has been run, and it supports this decision.** A dev tool,
 `backend/tools/capture_probe/CaptureProbe.cpp` (built as `SilverdawCaptureProbe`

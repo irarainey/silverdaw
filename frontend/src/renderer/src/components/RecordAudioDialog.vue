@@ -13,7 +13,6 @@ import {
   type RecordingDestination
 } from '@/lib/recording/recordingPlacement'
 import { useRecordingSession } from '@/lib/recording/useRecordingSession'
-import { formatTime } from '@/lib/musicTime'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 
@@ -46,18 +45,6 @@ const canRecord = computed(
 const canCommit = computed(
   () => isReviewing.value && !isCommitting.value && name.value.trim() !== ''
 )
-
-const rollingReadout = computed(() => {
-  const state = store.current
-  if (!state) return ''
-  if (state.status === 'countIn') {
-    const bars = state.countInBarsRemaining ?? state.countInBars
-    return bars > 0 ? `Counting in — ${bars} bar${bars === 1 ? '' : 's'}` : 'Counting in…'
-  }
-  if (state.status === 'recording') return `Recording — ${formatTime(state.recordedMs)}`
-  if (state.status === 'finalising') return 'Finishing the recording…'
-  return ''
-})
 
 // Seed the name from the backend's next free "Recording N"; the user can rename
 // it here, and again later as a library item or a clip.
@@ -226,12 +213,6 @@ const errorMessage = computed(() => {
             :session="session"
           />
 
-          <p
-            v-if="rollingReadout"
-            class="mt-4 font-mono text-xs tabular-nums text-sky-200"
-          >
-            {{ rollingReadout }}
-          </p>
           <p
             v-if="errorMessage"
             class="mt-4 rounded border border-red-700 bg-red-900/20 px-3 py-2 text-xs text-red-200"
