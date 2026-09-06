@@ -10,6 +10,7 @@
 - **Hear Yourself** adds the input to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
 - Takes are captured as **Music**, inheriting the project tempo so a later BPM change warps them like any other clip, or **Simple** for speech and sound effects, with an optional cleanup of low-level background noise.
 - A finished take can be auditioned alone or against the arrangement, renamed, saved as stereo when it was recorded in mono, and re-recorded before it is kept.
+- Recording starts and stops with the **R** key or the **space bar** while the Record Audio dialog is open.
 - **File ▸ Import from Project…** now offers another project's recordings alongside its stems and samples, under their own **Recordings** heading. An imported take is filed with this project's own recordings and stays identifiable as a recording.
 - The recording input driver is chosen in **Preferences ▸ Audio**.
 
@@ -24,6 +25,7 @@
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on. The re-editable scratch source is still kept, so the pattern can be edited again.
 - A recording kept as **Music** appeared in the library with no tempo and no beat markers until the project was reloaded.
 - The metronome ran ahead of the music whenever a track used an effect that adds latency, such as a mastering limiter, so anything played or recorded to the click landed early. The click now sounds in step with the audio you are hearing.
+- Layering recordings on top of one another gradually pulled the arrangement out of time, a little further with each new take. Silverdaw now measures the recording and playback devices against each other rather than against their stated rates, over the whole take rather than its two ends, and leaves a take alone when the difference is too small to measure reliably instead of correcting it by guesswork.
 - Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
 - Deleting a stem, sample or recording with **Clean up project files** on left the project marked as having unsaved changes even when nothing else had changed since the last save.
 

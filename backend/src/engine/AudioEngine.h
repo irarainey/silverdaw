@@ -470,6 +470,14 @@ class AudioEngine : private AudioEngineGraphState,
     // getOutputLatencyMs, which reports a device property to the UI.
     double getPluginLatencyMs() const;
 
+    /** The output device's measured frame rate — the rate the arrangement genuinely
+     *  advances at, which is what a recorded take must be resampled against rather than
+     *  the nominal rate (ADR 0030). Accumulated continuously since the device started. */
+    ClockRateEstimator::Estimate getMeasuredOutputRate() const
+    {
+        return master.outputRateEstimator().estimate();
+    }
+
     /** Wall-clock tick stamp of the first block the current play actually advanced
      *  the transport on, or 0 if it has not started rolling. See
      *  `MasterClockSource::getTransportStartTicks`. */

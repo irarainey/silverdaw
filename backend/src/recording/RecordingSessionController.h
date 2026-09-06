@@ -222,8 +222,10 @@ struct PendingFinalise
     int channelCount = 1;
     /** Count-in plus round-trip latency; trimmed from the head at finalise. */
     double headTrimMs = 0.0;
-    /** Capture rate as measured against the wall clock, for drift correction. */
+    /** Capture rate and output-device rate as measured against the wall clock. Their ratio
+     *  is the drift; equal rates mean none. See `finishCapture`. */
     double measuredSampleRate = 0.0;
+    double timelineSampleRate = 0.0;
     double latencyMs = 0.0;
     double anchorMs = 0.0;
     double bpm = 120.0;

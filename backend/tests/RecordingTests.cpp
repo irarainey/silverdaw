@@ -1,5 +1,6 @@
 #include "TestRegistry.h"
 
+#include "engine/ClockRateEstimator.h"
 #include "recording/InputCaptureTap.h"
 #include "recording/RecordingCleanup.h"
 #include "recording/RecordingFinalise.h"
@@ -322,6 +323,97 @@ void testFinaliseCorrectsClockDrift()
                 "drift correction should resample to the measured ratio");
 
     dir.deleteRecursively();
+}
+
+// Drift is a RATIO between two clocks, not a departure from nominal. Two devices that run
+// fast by the same amount stay in step with each other, and resampling for their shared
+// offset would introduce the very error the correction exists to remove.
+void testFinaliseDriftIsMeasuredAgainstTheOutputClock()
+{
+    const auto dir = makeTempDir("recording-finalise-relative-drift");
+    const auto source = dir.getChildFile("raw.wav");
+    const int sourceSamples = 48000;
+    writeRamp(source, sourceSamples, 1, kSampleRate);
+
+    silverdaw::recording::FinaliseRequest request;
+    request.sourceFile = source;
+    request.destinationFile = dir.getChildFile("together.wav");
+    request.nominalSampleRate = kSampleRate;
+    request.measuredSampleRate = kSampleRate * 1.001;
+    request.timelineSampleRate = kSampleRate * 1.001;
+    request.latencyMs = 0.0;
+
+    auto result = finaliseRecording(request, formats());
+    require(result.ok, "finalise should succeed when both clocks agree with each other");
+    requireNear(result.driftPpm, 0.0, 1.0, "clocks that agree with each other should show no drift");
+    auto reader = readerFor(request.destinationFile);
+    require(reader != nullptr, "the untouched recording should be readable");
+    requireNear(static_cast<double>(reader->lengthInSamples), sourceSamples, 2.0,
+                "a take that never drifted against the timeline should not be resampled");
+
+    // A slow output clock makes the arrangement take longer in wall-clock terms than the
+    // capture did, so the take has to be stretched to keep up with it.
+    request.destinationFile = dir.getChildFile("apart.wav");
+    request.timelineSampleRate = kSampleRate;
+    result = finaliseRecording(request, formats());
+    require(result.ok, "finalise should succeed when the clocks disagree");
+    requireNear(result.driftPpm, 1000.0, 1.0, "drift should be the ratio between the two clocks");
+    reader = readerFor(request.destinationFile);
+    require(reader != nullptr, "the drift-corrected recording should be readable");
+    requireNear(static_cast<double>(reader->lengthInSamples), sourceSamples / 1.001, 2.0,
+                "the take should be resampled by the ratio between the clocks");
+
+    dir.deleteRecursively();
+}
+
+void testClockRateEstimatorRecoversTheRateAndItsUncertainty()
+{
+    const auto perSecond =
+        static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
+    const double trueRate = 48000.0 * 1.00005; // 50 ppm fast, a realistic crystal error.
+    constexpr int kBlock = 480;
+
+    const auto feed = [&](silverdaw::ClockRateEstimator& estimator, int blocks, double noiseMs)
+    {
+        juce::Random random(1234);
+        for (int i = 0; i < blocks; ++i)
+        {
+            const double frames = static_cast<double>(i) * kBlock;
+            const double noise = (random.nextDouble() - 0.5) * 2.0 * noiseMs / 1000.0;
+            const double ticks = (frames / trueRate + noise) * perSecond;
+            estimator.addBlock(static_cast<juce::int64>(frames),
+                               static_cast<juce::int64>(ticks));
+        }
+    };
+
+    silverdaw::ClockRateEstimator tooShort;
+    feed(tooShort, 8, 0.0);
+    require(! tooShort.estimate().usable,
+            "an estimate should be refused before there are enough points to trust it");
+
+    silverdaw::ClockRateEstimator brief;
+    feed(brief, 500, 1.0); // ~5 seconds.
+    const auto briefEstimate = brief.estimate();
+    require(briefEstimate.usable, "five seconds of blocks should produce an estimate");
+
+    silverdaw::ClockRateEstimator long_;
+    feed(long_, 6000, 1.0); // ~60 seconds.
+    const auto longEstimate = long_.estimate();
+    require(longEstimate.usable, "a minute of blocks should produce an estimate");
+    requireNear(longEstimate.rate, trueRate, 5.0, "the fitted rate should recover the true rate");
+    require(longEstimate.ppmStdError < briefEstimate.ppmStdError,
+            "a longer measurement should report a tighter uncertainty");
+    require(longEstimate.ppmStdError < 5.0,
+            "a minute of blocks should resolve a 50 ppm error comfortably");
+
+    // A stalled callback displaces one stamp without changing the rate; it must not tilt
+    // the line, because a resample driven by a stall is worse than no correction at all.
+    silverdaw::ClockRateEstimator stalled;
+    feed(stalled, 6000, 1.0);
+    stalled.addBlock(static_cast<juce::int64>(6000) * kBlock,
+                     static_cast<juce::int64>((6000.0 * kBlock / trueRate + 0.5) * perSecond));
+    requireNear(stalled.estimate().rate, trueRate, 5.0,
+                "a single stalled callback should be discarded rather than tilt the fit");
 }
 
 void testFinaliseTrimsHeadInTheCapturedDomain()
@@ -856,6 +948,10 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testDuplicateMonoToStereoRefusesAStereoTake});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
+    tests.push_back({"recording finalise measures drift against the output clock",
+                     testFinaliseDriftIsMeasuredAgainstTheOutputClock});
+    tests.push_back({"recording clock rate estimator recovers the rate and its uncertainty",
+                     testClockRateEstimatorRecoversTheRateAndItsUncertainty});
     tests.push_back({"recording finalise trims the head in the captured domain", testFinaliseTrimsHeadInTheCapturedDomain});
     tests.push_back({"recording finalise rejects a recording shorter than latency",
                      testFinaliseRejectsRecordingShorterThanLatency});

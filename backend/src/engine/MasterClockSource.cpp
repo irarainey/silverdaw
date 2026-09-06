@@ -10,6 +10,14 @@ void MasterClockSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
     const juce::ScopedNoDenormals scopedNoDenormals;
     const auto startTicks = juce::Time::getHighResolutionTicks();
     callbackCount.fetch_add(1, std::memory_order_relaxed);
+    // Before any early return: the device consumes these frames whatever the transport is
+    // doing, and it is the device's own rate — the rate the arrangement really advances at —
+    // that a recorded take has to be resampled against (ADR 0026, ADR 0030).
+    if (info.numSamples > 0)
+    {
+        outputRate.addBlock(deviceFrames, startTicks);
+        deviceFrames += static_cast<juce::int64>(info.numSamples);
+    }
     const bool playing = keepAlive.isPlaying();
     // Latched with `playing` so a block that began under a previous play cannot stamp a
     // start that a stop/restart has since cleared.

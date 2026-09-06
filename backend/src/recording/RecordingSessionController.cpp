@@ -12,9 +12,14 @@ namespace
 {
 constexpr int kTimerIntervalMs = 33;
 constexpr int kBeatsPerBar = 4;
-// Below this the wall-clock span is too short for the drift ratio to mean
-// anything, so the nominal rate is used unchanged.
-constexpr double kMinDriftMeasurementSeconds = 5.0;
+// A drift ratio has to stand this many standard errors clear of unity before it is treated
+// as real. Below that it is scheduling noise, and resampling by it adds an error instead of
+// removing one — which is what compounds when takes are layered.
+constexpr double kDriftConfidenceSigmas = 3.0;
+// Real crystal mismatch between two consumer devices runs to tens of ppm; hundreds would be
+// remarkable. Anything past this is a broken measurement, and refusing to resample is far
+// safer than stretching the take by a bogus ratio.
+constexpr double kMaxPlausibleDriftPpm = 2000.0;
 
 juce::String makeId(const juce::String& prefix)
 {
@@ -545,11 +550,6 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
 
     const double sampleRate = device.getSampleRate();
     const auto captured = tap.getCapturedSamples();
-    const auto spanTicks = tap.getLastBlockTicks() - tap.getFirstBlockTicks();
-    const double spanSeconds =
-        spanTicks > 0 ? static_cast<double>(spanTicks)
-                            / static_cast<double>(juce::Time::getHighResolutionTicksPerSecond())
-                      : 0.0;
 
     PendingFinalise pending;
     pending.sessionId = session->sessionId;
@@ -592,20 +592,42 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     const double skewMs = measuredTransportSkewMs();
     pending.headTrimMs = juce::jmax(0.0, latencyMs + skewMs);
 
-    // Only trust the measured rate over a long enough span. The two stamps are taken at the
-    // start of their blocks, so they bracket every written block except the last, whose real
-    // length is what must come off the total — the configured buffer size is not a safe
-    // stand-in, since JUCE allows the block size to vary and the length cap can shorten it.
-    // Dropped blocks disqualify the measurement outright: their wall time is inside the span
-    // while their samples are not in the total, which biases the rate low, and resampling a
-    // file that has holes in it does not repair the holes anyway.
-    const auto lastBlock = static_cast<juce::int64>(tap.getLastBlockSamples());
-    const auto unbracketed = lastBlock > 0 ? lastBlock : static_cast<juce::int64>(device.getBufferSize());
-    pending.measuredSampleRate =
-        spanSeconds >= kMinDriftMeasurementSeconds && captured > unbracketed
-                && pending.droppedSamples == 0
-            ? static_cast<double>(captured - unbracketed) / spanSeconds
-            : sampleRate;
+    // Clock drift. What matters is not how far either device is from its nominal rate but
+    // the ratio BETWEEN them: the take is captured on the input clock and has to sit on a
+    // timeline that advances on the output clock, and the two are usually independent
+    // crystals. Measuring both against the same wall clock makes any error in that clock
+    // common-mode, so it cancels in the ratio.
+    //
+    // Correct only when the measurement can actually see the drift. A ratio that is not
+    // several sigma away from unity is indistinguishable from callback scheduling noise, and
+    // resampling by a noise reading injects a tempo error rather than removing one — which is
+    // exactly what stacks up when takes are layered over each other. Dropped blocks
+    // disqualify it outright: their wall time is inside the span while their samples are not,
+    // which biases the rate low, and resampling a file with holes in it does not repair the
+    // holes anyway.
+    pending.measuredSampleRate = sampleRate;
+    pending.timelineSampleRate = sampleRate;
+    const auto inputRate = tap.inputRateEstimator().estimate();
+    const auto outputRate =
+        engine != nullptr ? engine->getMeasuredOutputRate() : ClockRateEstimator::Estimate{};
+    if (pending.droppedSamples == 0 && inputRate.usable && outputRate.usable)
+    {
+        const double driftPpm = 1.0e6 * (inputRate.rate / outputRate.rate - 1.0);
+        const double uncertaintyPpm = std::hypot(inputRate.ppmStdError, outputRate.ppmStdError);
+        if (std::abs(driftPpm) > kDriftConfidenceSigmas * uncertaintyPpm
+            && std::abs(driftPpm) <= kMaxPlausibleDriftPpm)
+        {
+            pending.measuredSampleRate = inputRate.rate;
+            pending.timelineSampleRate = outputRate.rate;
+        }
+        else
+        {
+            log::info("recording",
+                      "drift not corrected: " + juce::String(driftPpm, 1) + "ppm +/-"
+                          + juce::String(uncertaintyPpm, 1) + "ppm over "
+                          + juce::String(inputRate.spanSeconds, 1) + "s");
+        }
+    }
 
     const double beatMs = 60000.0 / juce::jmax(1.0, pending.bpm);
     const double anchorBeats = session->anchorMs / beatMs;

@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Ten amendments follow the decision, several of
+The feature shipped in 1.9.0. Fifteen amendments follow the decision, several of
 which reverse a position taken here — software monitoring and "every recording
 is musical" most of all. **Read the amendments before relying on anything in the
 Decision section**; where the two disagree, the amendment is what was built.
@@ -802,3 +802,68 @@ One consequence is worth naming: a take this project recorded sits directly in
 other imported asset. Artifact cleanup was only pruning those per-asset folders
 under the other roots, so an imported take's folder would have been left behind
 empty once its file was deleted. `recordings/` is now pruned the same way.
+
+### Amendment 15 — Drift is measured against the output clock, and only corrected when it can be seen
+
+Amendment 12 closed the constant part of the offset. What was left behind was a
+*rate* error, and it showed up in the way that matters most: a performer who
+overdubs is playing along to what they can hear, so each take inherits the timing
+error of the take before it. The errors add rather than average, and by the third
+or fourth layer the arrangement no longer agrees with the project tempo.
+
+Two defects were behind it, and both are in the measurement rather than the
+correction.
+
+**The drift was measured against the wrong reference.** `speedRatio` was
+`measuredInputRate / nominalRate`, where the measured rate was input frames per
+wall-clock second. But the timeline the take will sit on does not advance at the
+nominal rate — it advances at the **output device's** rate, and input and output
+are usually separate devices on independent crystals. Only the ratio *between*
+them is audible as drift; a shared departure from nominal is not drift at all,
+and correcting for it injects an error. The ratio is now
+`measuredInput / measuredOutput`, which has a second useful property: both rates
+are measured against the same wall clock, so any error in that clock is
+common-mode and cancels exactly.
+
+**A two-endpoint span cannot resolve what it was being asked to resolve.** The
+old estimate divided the captured frames by the gap between the first and last
+callback stamp, so the scheduling noise at each end landed undiluted on the
+answer. Its fractional error is roughly that noise divided by the span: with a
+millisecond of jitter, five seconds of audio yields ~280 ppm — several times
+*larger* than the 20–100 ppm of genuine crystal mismatch it exists to correct.
+The gate compounded it: a five-second minimum span paired with a 1 ppm
+correction threshold meant it fired on almost everything, and corrected by far
+more than the error it was correcting.
+
+`ClockRateEstimator` replaces both with a least-squares fit of frames delivered
+against a stamp taken at each callback's entry, decimated into a fixed buffer so
+a long take costs bounded memory while still spanning its whole length. The fixed
+gap between "buffer filled" and "callback entered" is a constant, which the
+fitted intercept absorbs without biasing the slope. One outlier-trimming pass at
+three residual sigma keeps a single stalled callback from tilting the line.
+
+The estimator's real contribution is that it reports **how uncertain it is**, and
+that is what now gates the correction: drift is applied only when the ratio
+stands three standard errors clear of unity and inside a plausible ±2000 ppm.
+Otherwise it is logged and skipped, and the take is written through untouched.
+This is the load-bearing reversal. The old design assumed that some correction is
+always better than none; the opposite is true under overdubbing, because
+resampling by a noise reading adds a per-take tempo error, and it is precisely
+that error which stacks. Refusing to act on a measurement that cannot see the
+thing it is measuring is the safe answer.
+
+The output estimator is fed from `MasterClockSource::getNextAudioBlock` before
+any early return, against a monotonic device-frame counter that ignores the
+transport entirely — seeks, loops and stops must not appear as rate changes. It
+therefore accumulates from the moment the device starts and is reset only in
+`prepareToPlay`, where a device change invalidates the baseline anyway. This is
+deliberate: the output clock is a property of the device, not of a take, so a
+long session earns a progressively tighter estimate that every subsequent
+recording benefits from. The input estimator is reset per take with the rest of
+the capture statistics.
+
+Two limits are worth naming. This corrects a *rate*, not a constant offset, so
+whatever residual the reported driver latency leaves is untouched — that still
+needs a user offset or an acoustic loopback, and neither is decided here. And a
+take too short to accumulate `kMinPoints` blocks is never rate-corrected; over a
+few seconds, tens of ppm is microseconds, so there is nothing there to correct.

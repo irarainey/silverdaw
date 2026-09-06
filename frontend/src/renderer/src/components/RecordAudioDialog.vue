@@ -157,11 +157,16 @@ function onKeydown(event: KeyboardEvent): void {
     onClose()
     return
   }
-  // R records inside this dialog only — the same claim the Scratch Editor makes,
-  // so there is no global record shortcut to collide with.
+  // R and the space bar both record inside this dialog only — the same claim the Scratch
+  // Editor makes, so there is no global record shortcut to collide with. Buttons and
+  // checkboxes are excluded along with text fields: space already activates a focused
+  // control, and handling it here as well would toggle that control and start recording.
   const target = event.target as HTMLElement | null
-  const typing = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
-  if (!typing && (event.key === 'r' || event.key === 'R') && !isReviewing.value) {
+  const tag = target?.tagName
+  const typing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true
+  const activatable = typing || tag === 'BUTTON' || tag === 'SELECT'
+  const recordKey = event.key === 'r' || event.key === 'R' || event.key === ' '
+  if (!activatable && recordKey && !isReviewing.value) {
     event.preventDefault()
     onRecordOrStop()
   }
@@ -274,6 +279,7 @@ const errorMessage = computed(() => {
             v-if="isRolling"
             type="button"
             class="dialog-btn-primary"
+            title="Stop recording (R or Space)"
             @click="onRecordOrStop"
           >
             Stop
@@ -282,6 +288,7 @@ const errorMessage = computed(() => {
             v-else
             type="button"
             class="dialog-btn-primary"
+            title="Start recording (R or Space)"
             :disabled="!canRecord || isFinalising"
             @click="onRecordOrStop"
           >

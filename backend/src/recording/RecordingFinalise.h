@@ -9,10 +9,14 @@ struct FinaliseRequest
 {
     juce::File sourceFile;
     juce::File destinationFile;
-    /** Rate the file was written at, and the rate the capture clock actually
-     *  ran at as measured against the wall clock. Equal rates mean no drift. */
+    /** Rate the file was written at, the rate the capture clock actually ran at, and the
+     *  rate the output device — and so the timeline the take will sit on — really advances
+     *  at. All three measured against the same wall clock, so common-mode wall-clock error
+     *  cancels in the ratio. `measuredSampleRate == timelineSampleRate` means no drift;
+     *  `timelineSampleRate` of 0 falls back to the nominal rate. */
     double nominalSampleRate = 0.0;
     double measuredSampleRate = 0.0;
+    double timelineSampleRate = 0.0;
     /** Round trip the performer played against: input plus output latency. */
     double latencyMs = 0.0;
     /** Exact length the finished file should have, in ms; 0 leaves it untrimmed.

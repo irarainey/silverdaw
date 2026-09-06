@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InputMonitorSource.h"
+#include "engine/ClockRateEstimator.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -64,14 +65,13 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     bool wasDeviceStopped() const noexcept { return deviceStopped.load(); }
     juce::String getDeviceError() const { return deviceError; }
 
-    /** High-resolution tick stamps bracketing the captured audio. Their span
-     *  against the captured sample count is what measures clock drift. */
+    /** High-resolution tick stamp of the first captured block. The head trim is measured
+     *  against it, so it marks where the take's audio begins in wall-clock terms. */
     juce::int64 getFirstBlockTicks() const noexcept { return firstBlockTicks.load(); }
-    juce::int64 getLastBlockTicks() const noexcept { return lastBlockTicks.load(); }
 
-    /** Real length of the last written block — the one the tick span does not bracket.
-     *  Zero if nothing was written. */
-    int getLastBlockSamples() const noexcept { return lastBlockSamples.load(); }
+    /** The input device's measured frame rate, fitted over every written block. Reset with
+     *  the capture stats, so it describes this take only. */
+    const ClockRateEstimator& inputRateEstimator() const noexcept { return inputRate; }
 
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels,
                                           float* const* outputChannelData, int numOutputChannels,
@@ -100,8 +100,7 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     std::atomic<juce::int64> capturedSamples{0};
     std::atomic<juce::int64> droppedSamples{0};
     std::atomic<juce::int64> firstBlockTicks{0};
-    std::atomic<juce::int64> lastBlockTicks{0};
-    std::atomic<int> lastBlockSamples{0};
+    ClockRateEstimator inputRate;
     std::atomic<juce::int64> callbackTicks{0};
     std::atomic<bool> hitLengthCap{false};
     std::atomic<bool> sawSignal{false};

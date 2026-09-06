@@ -45,6 +45,12 @@ FinaliseResult finaliseRecording(const FinaliseRequest& request,
 
     const double measuredRate = request.measuredSampleRate > 0.0 ? request.measuredSampleRate
                                                                  : nominalRate;
+    // What the take has to line up with is the rate the OUTPUT device runs at, because that
+    // is the rate the arrangement the performer played along to actually advanced at. Two
+    // devices on independent crystals both differ from nominal, and only the ratio between
+    // them shows up as drift against the backing.
+    const double timelineRate = request.timelineSampleRate > 0.0 ? request.timelineSampleRate
+                                                                 : nominalRate;
 
     // Captured late by the round trip, so the head is trimmed rather than the
     // whole file being nudged at playback time. Converted at the *measured* rate
@@ -57,13 +63,14 @@ FinaliseResult finaliseRecording(const FinaliseRequest& request,
     if (sourceSamples <= 0)
         return fail("The recording was shorter than the input latency");
 
-    const double driftPpm = (measuredRate - nominalRate) / nominalRate * 1.0e6;
+    const double driftPpm = (measuredRate - timelineRate) / timelineRate * 1.0e6;
     const bool correctDrift = std::abs(driftPpm) >= kMinCorrectablePpm;
-    // Input samples consumed per output sample: the file must last the wall-clock
-    // time it actually took when played back at the nominal rate. Clamped because
-    // this corrects clock drift, not a wrongly reported sample rate.
+    // Input samples consumed per output sample. Over the same wall time the capture yields
+    // `measuredRate` frames a second while the timeline advances `timelineRate` of them, so
+    // the take has to be stretched by that ratio to stay in step. Clamped because this
+    // corrects clock drift, not a wrongly reported sample rate.
     const double speedRatio =
-        correctDrift ? juce::jlimit(0.5, 2.0, measuredRate / nominalRate) : 1.0;
+        correctDrift ? juce::jlimit(0.5, 2.0, measuredRate / timelineRate) : 1.0;
     auto outputSamples =
         juce::jmax<juce::int64>(1, static_cast<juce::int64>(static_cast<double>(sourceSamples)
                                                             / speedRatio));

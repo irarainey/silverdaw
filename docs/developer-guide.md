@@ -3776,8 +3776,11 @@ the module layout and behaviour that ADR does not.
 
 **Opening.** The transport's record button and **File ▸ Record Audio…** both
 open the one dialog, hosted lazily in `App.vue` and driven by
-`useRecordingSessionStore`. `R` records and stops **inside the dialog only**,
-exactly as the Scratch Editor claims it, so there is no global record shortcut.
+`useRecordingSessionStore`. `R` and the space bar record and stop **inside the
+dialog only**, exactly as the Scratch Editor claims `R`, so there is no global
+record shortcut. Both defer to a focused button, select or text field, because
+space already activates a focused control and handling it twice would toggle
+that control as well as the take.
 
 **Session model.** `useRecordingSession` opens a backend session with the dialog
 and closes it with the dialog — including on unmount, on engine recovery, and
@@ -4046,17 +4049,37 @@ holds the dialog open, because closing then would race the `SAMPLE_SAVED` ack.
 **Finalise.** Input and output are two unrelated clocks, so latency and drift
 are corrected **once, offline**, in `finaliseRecording` on a worker thread:
 round-trip latency is trimmed from the head (a count-in captures nothing, so
-there is no preroll to remove), and clock drift
-is corrected by resampling to the ratio measured from the capture callback's
-own tick stamps. Streamed in blocks, so a long recording never has to fit in
-memory. The head trim is converted to samples at the *measured* rate, not the
-nominal one, because it is applied before the resampling: one second of captured
-wall time holds `measuredRate` raw samples. The drift ratio itself discounts the
-real length of the last written block (the one the two stamps do not bracket —
-JUCE allows a varying block size, so the configured buffer size is not a safe
-stand-in) and is abandoned altogether if any block was dropped, since the dropped
-block's wall time sits inside the span while its samples do not sit in the total,
-and stretching a file with holes in it does not repair the holes.
+there is no preroll to remove), and clock drift is corrected by resampling.
+Streamed in blocks, so a long recording never has to fit in memory. The head trim
+is converted to samples at the *measured* rate, not the nominal one, because it is
+applied before the resampling: one second of captured wall time holds
+`measuredRate` raw samples.
+
+**Drift is a ratio between two clocks, and it is fitted, not spanned.** What a
+take has to stay in step with is not its nominal rate but the rate the *output*
+device runs at, because that is the rate the arrangement the performer played
+along to actually advanced at. Both rates come from `ClockRateEstimator`
+(`engine/ClockRateEstimator.h`), a least-squares fit of frames delivered against
+a high-resolution stamp taken at callback entry — `InputCaptureTap` feeds one per
+take, `MasterClockSource` feeds another continuously from the moment the device
+starts, since the output clock is a property of the device rather than of any one
+recording. `speedRatio` is then `measuredInput / measuredOutput`; measuring both
+against the same wall clock makes any error in that clock common-mode, so it
+cancels. Points are decimated to a fixed 4096-entry buffer, so a long take keeps
+a bounded cost while still spanning its whole length.
+
+Fitting matters because the estimate is also a *gate*. A two-endpoint span rests
+the whole answer on two stamps, so a millisecond of scheduling noise across five
+seconds reads as ~280 ppm — several times larger than the 20–100 ppm of real
+crystal mismatch it is meant to correct. The regression reports its own standard
+error, and drift is corrected only when it stands three sigma clear of that and
+stays within a plausible ±2000 ppm; otherwise it is logged and skipped. Refusing
+is the safe answer, because resampling by a noise reading *adds* a tempo error,
+and that error compounds every time a performer overdubs against a take that
+already carries one. The measurement is abandoned outright if any block was
+dropped, since the dropped block's wall time sits inside the span while its
+samples do not sit in the total, and stretching a file with holes in it does not
+repair the holes.
 
 **What the head trim is made of.** Not just the round trip. Capture is attached
 before `play()` is called, and `play()` then spends real message-thread time
@@ -4808,12 +4831,13 @@ gestures on the platter and crossfader are described in the
 
 ### Record Audio shortcuts
 
-When the Record Audio dialog is open, `R` is claimed by the dialog only — there
-is no global record shortcut. See the [Recording](#recording) section.
+When the Record Audio dialog is open, `R` and the space bar are claimed by the
+dialog only — there is no global record shortcut. See the
+[Recording](#recording) section.
 
 | Input | Effect |
 |---|---|
-| `R` | Start recording, or stop one that is rolling. Does not run while editing a text field, or once a recording is in review. |
+| `R` / `Space` | Start recording, or stop one that is rolling. Neither runs while a text field, button or select has focus — space already activates a focused control — nor once a recording is in review. |
 | `Enter` | Activate the footer's primary button — **Record**, or **Add to Timeline** while reviewing. |
 | `Escape` | Close the dialog, discarding an uncommitted recording. Ignored while a recording is rolling or a commit is in flight, so nothing is thrown away by accident. |
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioConstants.h"
+#include "ClockRateEstimator.h"
 #include "Leveler.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
@@ -29,6 +30,10 @@ class MasterClockSource : public juce::AudioSource
             positionSamples.store(rescaled, std::memory_order_relaxed);
         }
         sampleRate.store(newSampleRate, std::memory_order_release);
+        // A device (re)start invalidates the rate baseline: the frame counter restarts and
+        // the wall-clock gap across the stop would otherwise read as an enormous drift.
+        outputRate.reset();
+        deviceFrames = 0;
         prerollSamples =
             newSampleRate > 0.0 ? static_cast<int>(newSampleRate * (silverdaw::kWakePrerollMs / 1000.0)) : 0;
         silverdaw::log::info("master",
@@ -176,6 +181,13 @@ class MasterClockSource : public juce::AudioSource
      *  child renders, so the child sees the block-start position. */
     const std::atomic<juce::int64>& positionAtomicRef() const noexcept { return positionSamples; }
 
+    /** The output device's measured frame rate. Accumulated continuously — the device
+     *  pulls whether or not anything is playing — so a take can be aligned against the
+     *  rate the arrangement is really advancing at rather than the nominal one. Reset
+     *  only in `prepareToPlay`, which JUCE serialises against the callback, and where a
+     *  device change invalidates the baseline anyway. */
+    const ClockRateEstimator& outputRateEstimator() const noexcept { return outputRate; }
+
     /** The active device rate, for observers that read it on the audio thread. */
     const std::atomic<double>& sampleRateAtomicRef() const noexcept { return sampleRate; }
 
@@ -256,6 +268,10 @@ class MasterClockSource : public juce::AudioSource
     // prepareToPlay for the active rate); wakePrerollRemaining counts down the current pre-roll.
     int prerollSamples{0};
     int wakePrerollRemaining{0};
+    // Output clock measurement. Both are audio-thread-owned between prepareToPlay calls;
+    // `deviceFrames` counts frames the device has consumed, whatever the transport is doing.
+    ClockRateEstimator outputRate;
+    juce::int64 deviceFrames{0};
     std::atomic<std::uint32_t> scrubGeneration{0};
     std::atomic<int> scrubRequestedSamples{0};
     std::atomic<int> scrubDirection{1};

@@ -310,6 +310,7 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
             request.destinationFile = ready.file;
             request.nominalSampleRate = pending.sampleRate;
             request.measuredSampleRate = pending.measuredSampleRate;
+            request.timelineSampleRate = pending.timelineSampleRate;
             request.latencyMs = pending.headTrimMs;
             request.exactDurationMs = pending.exactDurationMs.value_or(0.0);
 
