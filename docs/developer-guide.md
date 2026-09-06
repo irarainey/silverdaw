@@ -3875,7 +3875,16 @@ it unmounts, so a retake plays to the guide mix again. Both go through the one
 `setBackingGain` control: there is a single engine trim, and the panes take turns
 holding it rather than the protocol growing a second one. The slider is enabled
 only with **Play With the Arrangement** on, because with it off there is no
-arrangement to trim.
+arrangement to trim. The checkbox itself is live while the take plays: switching
+it on picks the arrangement up at the take's own position
+(`anchorMs + positionMs`) rather than restarting it, and switching it off pauses
+the transport and parks it back at the anchor. "Does this sit right against the
+mix" is the question the review exists to answer, and having to stop and restart
+to ask it loses your place in the take. Starting the arrangement is driven off
+the "take is rolling" watch rather than the Play click, so the box is read at the
+moment audio actually starts and a toggle made while the file is still loading is
+honoured; `startArrangement` is guarded by `arrangementRolling` so the click path
+and the watch cannot both seek.
 
 **The loop.** A looping timeline selection is borrowed too, and this one is a
 hold rather than a choice: `AudioEngine::setTimelineLoopSuspended` keeps the

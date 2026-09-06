@@ -32,7 +32,6 @@ const isPlayingThis = computed(() => isAuditioning.value && preview.isPlaying)
 // so the arrangement can roll with it rather than only in isolation.
 const withArrangement = ref(false)
 let arrangementRolling = false
-let pendingArrangement = false
 
 // The review has its own backing level: a guide mix kept quiet under the
 // performer is not how the take wants to be heard back. Applied while this pane
@@ -113,16 +112,22 @@ function onPlay(): void {
     return
   }
   // Loading defers PREVIEW_PLAY until the file is open, and that command pauses
-  // the transport — so the arrangement can only be started once the take rolls.
-  pendingArrangement = withArrangement.value
+  // the transport — so the arrangement is left to the `isPlayingThis` watch,
+  // which starts it once the take is actually rolling.
   preview.loadFile(payload.filePath, true)
 }
 
-/** Roll the project from where the take was recorded, alongside the audition. */
-function startArrangement(): void {
+/**
+ * Roll the project alongside the audition, from `fromTakeMs` into the take.
+ *
+ * Guarded against a double start: the play path and the `withArrangement` watch
+ * can both reach here for the same take, and a second SEEK would jerk the
+ * arrangement back.
+ */
+function startArrangement(fromTakeMs = 0): void {
   const payload = ready.value
-  if (!payload) return
-  sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs })
+  if (!payload || arrangementRolling) return
+  sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs + fromTakeMs })
   sendBridge('TRANSPORT_PLAY')
   arrangementRolling = true
 }
@@ -134,7 +139,6 @@ function onStop(): void {
 
 /** Leave the timeline as the take found it: stopped, back at the record anchor. */
 function stopArrangement(): void {
-  pendingArrangement = false
   if (!arrangementRolling) return
   arrangementRolling = false
   sendBridge('TRANSPORT_PAUSE')
@@ -154,23 +158,32 @@ watch(
 )
 
 // The take runs out before the arrangement does; stop the timeline with it rather
-// than leaving it running under a dialog that looks stopped.
+// than leaving it running under a dialog that looks stopped. Starting is handled
+// here too, rather than at the click: the checkbox is read at the moment the take
+// actually rolls, so toggling it while the file is still loading is honoured.
 watch(isPlayingThis, (playing) => {
   if (playing) {
-    if (!pendingArrangement) return
-    pendingArrangement = false
-    startArrangement()
+    if (withArrangement.value) startArrangement()
     return
   }
   stopArrangement()
 })
 
+// The backing can be brought in and dropped again while the take is rolling —
+// hearing it against the arrangement is the question being asked, and having to
+// stop and start to answer it loses your place.
 watch(withArrangement, (on) => {
   const payload = ready.value
-  // Park the playhead where the take starts so the arrangement is primed there.
-  if (on && payload && !isPlayingThis.value)
-    sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs })
-  if (!on) stopArrangement()
+  if (!on) {
+    stopArrangement()
+    return
+  }
+  if (!payload) return
+  // Join a take that is already playing where it has got to, so the arrangement
+  // lines up with it instead of restarting from the top of the take.
+  if (isPlayingThis.value) startArrangement(positionMs.value)
+  // Otherwise park the playhead where the take starts so it is primed there.
+  else sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs })
 })
 
 onBeforeUnmount(() => {
