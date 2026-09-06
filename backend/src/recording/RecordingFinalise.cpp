@@ -43,17 +43,20 @@ FinaliseResult finaliseRecording(const FinaliseRequest& request,
     if (nominalRate <= 0.0 || channels <= 0)
         return fail("The recording has no usable audio");
 
+    const double measuredRate = request.measuredSampleRate > 0.0 ? request.measuredSampleRate
+                                                                 : nominalRate;
+
     // Captured late by the round trip, so the head is trimmed rather than the
-    // whole file being nudged at playback time.
+    // whole file being nudged at playback time. Converted at the *measured* rate
+    // because this happens before drift correction: one second of captured wall
+    // time holds `measuredRate` raw samples, not `nominalRate` of them.
     const auto latencySamples =
         juce::jlimit<juce::int64>(0, reader->lengthInSamples,
-                                  static_cast<juce::int64>(request.latencyMs * nominalRate / 1000.0));
+                                  static_cast<juce::int64>(request.latencyMs * measuredRate / 1000.0));
     const auto sourceSamples = reader->lengthInSamples - latencySamples;
     if (sourceSamples <= 0)
         return fail("The recording was shorter than the input latency");
 
-    const double measuredRate = request.measuredSampleRate > 0.0 ? request.measuredSampleRate
-                                                                 : nominalRate;
     const double driftPpm = (measuredRate - nominalRate) / nominalRate * 1.0e6;
     const bool correctDrift = std::abs(driftPpm) >= kMinCorrectablePpm;
     // Input samples consumed per output sample: the file must last the wall-clock

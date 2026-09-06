@@ -1759,6 +1759,79 @@ void testRemovingTheLastTrackClearsMarkersAndSelection()
             "removing a track that does not exist must not clear the selection");
 }
 
+/**
+ * The recording head trim is measured against the instant the transport genuinely
+ * started, so the stamp must skip every block that does not advance the playhead —
+ * above all the 250 ms wake pre-roll, which would otherwise be silently absorbed
+ * into the take and push it a quarter of a beat late.
+ */
+void testTransportStartStampSkipsPrerollAndSilence()
+{
+    struct SilentSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            info.clearActiveBufferRegion();
+        }
+    };
+
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+
+    SilentSource source;
+    silverdaw::OutputKeepAlive ka;
+    ka.setKeepAwakeEnabled(true); // arms the wake pre-roll; off by default
+    ka.setContentLoaded(true);
+    silverdaw::MasterClockSource clock(source, ka);
+    clock.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    // Stopped: blocks still arrive, but none of them start anything.
+    for (int b = 0; b < 4; ++b) clock.getNextAudioBlock(info);
+    require(clock.getTransportStartTicks() == 0,
+            "a stopped transport must not stamp a start");
+
+    const auto epochBefore = clock.getPlayEpoch();
+    clock.setPlaying(true);
+    require(clock.getPlayEpoch() != epochBefore, "a new play must bump the epoch");
+    require(clock.getTransportStartTicks() == 0,
+            "the stamp must be cleared before the play is published");
+
+    // Through the wake pre-roll the playhead does not move, so nothing may be stamped.
+    const int prerollSamples = static_cast<int>(kRate * (silverdaw::kWakePrerollMs / 1000.0));
+    const int prerollBlocks = prerollSamples / kBlock;
+    for (int b = 0; b < prerollBlocks; ++b)
+    {
+        clock.getNextAudioBlock(info);
+        require(clock.getPositionSamples() == 0, "the wake pre-roll must not advance the playhead");
+        require(clock.getTransportStartTicks() == 0,
+                "the wake pre-roll must not be mistaken for the transport starting");
+    }
+
+    // The pre-roll is spent: this block is the real start.
+    clock.getNextAudioBlock(info);
+    const auto firstStamp = clock.getTransportStartTicks();
+    require(firstStamp > 0, "the first advancing block must stamp the transport start");
+    require(clock.getPositionSamples() > 0, "the transport must be advancing by now");
+
+    // The stamp is the START of the play, not a running clock.
+    for (int b = 0; b < 8; ++b) clock.getNextAudioBlock(info);
+    require(clock.getTransportStartTicks() == firstStamp,
+            "later blocks must not overwrite the transport start stamp");
+
+    // A fresh play clears it and takes a new epoch, so a take can never trim against
+    // the previous play's start.
+    const auto epochRolling = clock.getPlayEpoch();
+    clock.setPlaying(false);
+    clock.setPlaying(true);
+    require(clock.getTransportStartTicks() == 0, "a new play must clear the previous stamp");
+    require(clock.getPlayEpoch() != epochRolling, "a new play must take a new epoch");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
@@ -1790,6 +1863,7 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
     tests.push_back({"A new project disarms the previous project's timeline loop", testNewProjectDisarmsPreviousProjectTimelineLoop});
     tests.push_back({"Suspending the timeline loop leaves it armed", testSuspendingTheTimelineLoopLeavesItArmed});
+    tests.push_back({"Transport start stamp skips the wake pre-roll and stopped blocks", testTransportStartStampSkipsPrerollAndSilence});
 }
 
 } // namespace silverdaw::tests

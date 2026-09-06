@@ -178,38 +178,49 @@ bool ProjectState::removeLibraryItemNonDirty(const juce::String& itemId)
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return false;
 
-    // Suppress the dirty listeners and remove without the undo manager, then mirror the
-    // removal into the clean snapshot so root stays equivalent to it (no pending change).
-    const SuppressDirtyScope suppress(*this);
     bool removed = false;
-    for (int i = library.getNumChildren() - 1; i >= 0; --i)
     {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
+        // Suppress the dirty listeners and remove without the undo manager, then mirror the
+        // removal into the clean snapshot so root stays equivalent to it (no pending change).
+        const SuppressDirtyScope suppress(*this);
+        for (int i = library.getNumChildren() - 1; i >= 0; --i)
         {
-            library.removeChild(item, nullptr);
-            removed = true;
-            break;
-        }
-    }
-    if (!removed) return false;
-
-    if (cleanSnapshot.isValid())
-    {
-        auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
-        if (snapLibrary.isValid())
-        {
-            for (int i = snapLibrary.getNumChildren() - 1; i >= 0; --i)
+            auto item = library.getChild(i);
+            if (item.getProperty(kId).toString() == itemId)
             {
-                auto snapItem = snapLibrary.getChild(i);
-                if (snapItem.getProperty(kId).toString() == itemId)
+                library.removeChild(item, nullptr);
+                removed = true;
+                break;
+            }
+        }
+        if (!removed) return false;
+
+        if (cleanSnapshot.isValid())
+        {
+            auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
+            if (snapLibrary.isValid())
+            {
+                for (int i = snapLibrary.getNumChildren() - 1; i >= 0; --i)
                 {
-                    snapLibrary.removeChild(snapItem, nullptr);
-                    break;
+                    auto snapItem = snapLibrary.getChild(i);
+                    if (snapItem.getProperty(kId).toString() == itemId)
+                    {
+                        snapLibrary.removeChild(snapItem, nullptr);
+                        break;
+                    }
                 }
             }
         }
     }
+
+    // The removal itself must never *raise* the flag — that is the whole point of this
+    // path — but suppression alone also stops it being *lowered*, and an item added since
+    // the last save is exactly what an unsaved project is usually dirty about. Record a
+    // take, put it on a track, then take the track and the item away again and the tree is
+    // back to what was saved, yet the flag stayed up with nothing left to attribute it to.
+    // Recomputing outside the scope re-reads the tree: still dirty if anything else moved,
+    // clean when the removal was the last outstanding difference.
+    recomputeDirty();
     return true;
 }
 

@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline, with a choice of input device, mono or stereo capture, input gain and live metering.
+- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline, with a choice of input device, mono or stereo capture, input gain and live metering. Takes are aligned to the timeline automatically, compensating for the round trip through your audio hardware and for the time the transport takes to start, so a performance lands where it was played rather than fractionally behind the beat.
 - Recording runs from the start of the project, from the playhead, or over a selected timeline range, with an optional count-in that plays before the take starts and costs it nothing, a metronome, and a live waveform of the performance as it is captured.
 - The backing heard under the performance is chosen and levelled in the dialog — including tracks muted on the timeline — leaving the project's own mutes, solos and levels untouched.
 - **Hear Yourself** adds the input to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
@@ -16,12 +16,14 @@
 
 - Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds. A recording or any other dynamic take no longer appears as a thin line beside a commercially mastered track at the same loudness. Louder clips are still drawn taller than quieter ones.
 - Audio device wording throughout the app now says whether a device is the audio output or the recording input.
+- The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs, and describe each driver the same way for the output and the recording input.
 
 ### Fixed
 
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on. The re-editable scratch source is still kept, so the pattern can be edited again.
 - A recording kept as **Music** appeared in the library with no tempo and no beat markers until the project was reloaded.
 - Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
+- Deleting a stem, sample or recording with **Clean up project files** on left the project marked as having unsaved changes even when nothing else had changed since the last save.
 
 ## 1.8.0
 

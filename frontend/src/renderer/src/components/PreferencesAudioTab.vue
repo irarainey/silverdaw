@@ -187,7 +187,7 @@ function onInputDriverChange(event: Event): void {
         class="mt-2 space-y-2 rounded border border-zinc-800 bg-zinc-950/40 p-2"
       >
         <p class="text-zinc-500">
-          Windows offers several backends for the same physical output device.
+          Windows offers several drivers for the same physical output device.
           Stick with the recommended one unless you have a reason to change.
         </p>
         <label
@@ -227,7 +227,7 @@ function onInputDriverChange(event: Event): void {
         @change="onInputDriverChange"
       >
         <option :value="AUTOMATIC_INPUT_DRIVER">
-          Automatic — recommended
+          Automatic — pick the best available
         </option>
         <option
           v-for="driver in inputDriver.driverNames.value"

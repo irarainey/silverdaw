@@ -53,13 +53,50 @@ class MasterClockSource : public juce::AudioSource
         // Arm the one-time wake pre-roll on a stopped->playing transition only (idempotent restarts
         // must not re-trigger it mid-playback).
         const bool wasPlaying = keepAlive.isPlaying();
-        keepAlive.setPlaying(p);
         if (p && ! wasPlaying)
         {
-            playStartPending.store(true, std::memory_order_release);
+            // Cleared and re-stamped BEFORE the play is published, so the audio thread
+            // cannot see `playing` and fail its stamp against the previous play's value
+            // only for the clear to land immediately after — that would cost a whole
+            // block of accuracy. The epoch closes the remaining hole: a callback from a
+            // previous play still in flight across a fast stop/restart carries the old
+            // epoch and is refused.
+            transportStartTicks.store(0, std::memory_order_relaxed);
+            playEpoch.fetch_add(1, std::memory_order_relaxed);
+            playStartPending.store(true, std::memory_order_relaxed);
             if (outputFadeOutComplete.load(std::memory_order_acquire))
-                transportGainTarget.store(1.0F, std::memory_order_release);
+                transportGainTarget.store(1.0F, std::memory_order_relaxed);
         }
+        // Publishes the play; everything above happens-before the audio thread sees it.
+        keepAlive.setPlaying(p);
+    }
+
+    /** Monotonic counter identifying the current play. A recording captures it at start
+     *  and refuses a start stamp that belongs to any other play. */
+    std::uint32_t getPlayEpoch() const noexcept
+    {
+        return playEpoch.load(std::memory_order_acquire);
+    }
+
+    /**
+     * High-resolution tick stamp of the first block this play actually advanced
+     * the transport on, or 0 if it has not started rolling yet.
+     *
+     * `play()` is not instantaneous: it primes read-ahead buffers and the plugin
+     * pipeline on the message thread and may then sit through a silent wake pre-roll
+     * on the audio thread, none of which moves the playhead. A recording that started
+     * capturing when `play()` was *called* is therefore already running by the time the
+     * arrangement is audible, and the take lands late by that much. Stamping the real
+     * start lets the capture measure the gap instead of assuming it is zero.
+     *
+     * `outEpoch` receives the play the stamp belongs to, so a caller can reject a
+     * stamp from a play other than its own.
+     */
+    juce::int64 getTransportStartTicks(std::uint32_t* outEpoch = nullptr) const noexcept
+    {
+        const auto ticks = transportStartTicks.load(std::memory_order_acquire);
+        if (outEpoch != nullptr) *outEpoch = playEpoch.load(std::memory_order_acquire);
+        return ticks;
     }
 
     void requestOutputFadeOut() noexcept
@@ -210,6 +247,11 @@ class MasterClockSource : public juce::AudioSource
     // Set on a stopped->playing transition (message thread), consumed by the audio thread on the
     // first block of the play to arm the wake pre-roll.
     std::atomic<bool> playStartPending{false};
+    // Wall-clock stamp of the first block this play advanced the transport on; 0 until then.
+    // Written by the audio thread, read by the message thread when a take is finalised.
+    std::atomic<juce::int64> transportStartTicks{0};
+    // Bumped on every stopped->playing transition so a stamp can be tied to one play.
+    std::atomic<std::uint32_t> playEpoch{0};
     // Wake pre-roll state — audio-thread only. prerollSamples is the armed length (set in
     // prepareToPlay for the active rate); wakePrerollRemaining counts down the current pre-roll.
     int prerollSamples{0};

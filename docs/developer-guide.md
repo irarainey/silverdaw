@@ -1542,7 +1542,13 @@ irreversible, a cleanup removal is sent as `LIBRARY_REMOVE { itemId, cleanup: tr
 and the backend removes the item via `removeLibraryItemNonDirty` — it is **not
 undoable and does not mark the project dirty** (mirrored into the clean snapshot),
 since the file can't be put back; the removal also bypasses the renderer's undo
-group. The backend then prunes just that item from the **already-saved project
+group. It does, however, **recompute** dirtiness once afterwards, outside the
+suppression scope: suppression is symmetric, so left alone it would also stop the
+flag being *lowered*, stranding "unsaved changes" on a project whose only
+outstanding change was the item just deleted (record a take, put it on a track,
+then remove the track and delete the take). Recomputing re-reads the tree, so
+nothing about the removal raises the flag and a project that is dirty for any other
+reason stays dirty. The backend then prunes just that item from the **already-saved project
 file in place** (`ProjectFile::removeLibraryItems` — a targeted JSON edit like
 `saveViewState`, not a full save), so the deleted file can never dangle in the saved
 project, **without committing the user's other unsaved edits** (they stay unsaved and
@@ -4038,12 +4044,57 @@ round-trip latency is trimmed from the head (a count-in captures nothing, so
 there is no preroll to remove), and clock drift
 is corrected by resampling to the ratio measured from the capture callback's
 own tick stamps. Streamed in blocks, so a long recording never has to fit in
-memory. A recording over a range selection is also trimmed at the tail to the
+memory. The head trim is converted to samples at the *measured* rate, not the
+nominal one, because it is applied before the resampling: one second of captured
+wall time holds `measuredRate` raw samples. The drift ratio itself discounts the
+real length of the last written block (the one the two stamps do not bracket —
+JUCE allows a varying block size, so the configured buffer size is not a safe
+stand-in) and is abandoned altogether if any block was dropped, since the dropped
+block's wall time sits inside the span while its samples do not sit in the total,
+and stretching a file with holes in it does not repair the holes.
+
+**What the head trim is made of.** Not just the round trip. Capture is attached
+before `play()` is called, and `play()` then spends real message-thread time
+flushing rebuilds, refilling read-ahead buffers and priming the plugin pipeline,
+after which the audio thread may burn a 250 ms wake pre-roll that emits silence
+*without advancing the playhead*. All of that is captured audio in front of the
+arrangement. `MasterClockSource` therefore stamps the instant of the first block
+that genuinely advances the transport, tagged with a monotonic play epoch, and
+`RecordingSessionController::measuredTransportSkewMs` measures the gap to
+`InputCaptureTap`'s first written block:
+
+```text
+headTrimMs = max(0, (transportStart - firstCapturedBlock) + outputLatency + inputLatency)
+```
+
+The skew is **signed** — the first input block landing after the first output
+block is normal on two independent devices, and clamping it would push those
+takes early — and the epoch is checked, so a stamp from any other play is refused
+in favour of the plain round trip. Plugin delay compensation is deliberately
+*excluded*: `primePluginPipeline` fills the delay lines before the gate opens, so
+the first live block already carries anchor audio and the performer never waits
+the alignment out. See ADR 0030, Amendment 12.
+
+**Starting the transport.** Recording cannot use ordinary `play()`. A seek
+requested while the transport is rolling is deferred behind an output fade, and
+`play()` then only cancels that fade and returns — without seeking, priming or
+beginning a new play — so a take started that way captured whatever region
+happened to be playing. `AudioEngine::playFromAnchorForRecording` parks the
+transport outright, applies the seek immediately, opens a genuine new play and
+reports whether it started; a take is abandoned rather than begun against a
+transport that never opened. The dialog pauses project playback as it opens, so
+that park happens from rest and is never heard as a cut.
+
+A recording over a range selection is also trimmed at the tail to the
 exact length of its record window: capture always overruns the window end by
 however long the auto-stop takes to reach the message thread, and a beat count
 claimed for a file that is fractionally longer than it says resolves to a tempo
 that is not the project's (ADR 0024 derives a source BPM from beats ÷ duration
-in preference to a stored one). The trim makes the claim true of the audio;
+in preference to a stored one). The auto-stop deliberately waits a round trip
+past the raw transport reaching the window end, because the performer is playing
+to what they can *hear*, not to the raw counter — stopping on the counter cut the
+last notes off every ranged take, and no offline trim can put them back. The
+trim makes the claim true of the audio;
 material too short to trim keeps its length and carries no beat count. The
 finished file lands in the project's `recordings/` artifact folder and is
 announced by path with `RECORD_RECORDING_READY`; recorded audio never crosses
@@ -4068,7 +4119,13 @@ user set it. A device that presents many inputs is offered as **Mono** or
 **Stereo** from its first channels rather than as a raw channel list —
 "Channel 5" means nothing to someone holding a microphone. Input and output
 remain independent: a recording device is chosen here and never follows the
-project's output device.
+project's output device. "No microphone or audio input was found." is decided
+by the same builder the picker fills itself from, so the two cannot disagree: a
+machine whose only capture endpoints are the filtered aliases has nothing to
+choose, and counting raw device names instead left it with a silent, empty,
+disabled picker — precisely the broken-looking state the message exists to
+replace. That state also disables **Record**, which otherwise only asks whether
+the session holds an open input.
 
 **Review and commit.** The dialog's review state draws the finished recording
 from its peaks cache, auditions it through the shared preview voice, and offers
@@ -4371,10 +4428,12 @@ to DirectSound, then the rest). The transport chip and the Preferences list shar
 composable, `lib/audio/audioOutputPicker.ts`.
 
 Advanced users can override the backend via the collapsed **Audio driver ▸** disclosure
-in Preferences (hidden until you've picked a non-default device). Each backend carries a
-plain-English description — e.g. *"Recommended. Modern Windows audio path; reliable
-latency and shares the device with other apps."* / *"ASIO — Lowest latency, but requires
-a vendor-supplied ASIO driver."* — so no outside docs are needed.
+in Preferences (hidden until you've picked a non-default device). Each driver carries a
+short trade-off phrase from `AUDIO_BACKEND_DESCRIPTIONS` — *"Windows Audio — recommended"*,
+*"ASIO — lowest latency, needs a vendor driver"* — so no outside docs are needed. They are
+fragments rather than sentences because the recording input driver picker shows the same
+phrases inside a `<select>` option, where a full sentence is truncated before it is read;
+sharing one map also keeps the input and output pickers describing a driver identically.
 
 Robustness:
 

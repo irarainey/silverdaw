@@ -388,7 +388,10 @@ bool RecordingSessionController::start(const juce::String& sessionId,
         // first beat is not missed by a block.
         session->status = "countIn";
         applySessionMetronome();
-        engine->setPositionMs(session->anchorMs, true);
+        // Parked outright rather than seeked: a seek requested while the transport is
+        // rolling is deferred behind an output fade, which would leave the project
+        // playing on under the count.
+        engine->parkTransportAt(session->anchorMs);
         engine->startCountInClick(session->countInBars * kBeatsPerBar);
     }
     else
@@ -396,8 +399,18 @@ bool RecordingSessionController::start(const juce::String& sessionId,
         session->status = "recording";
         applySessionMetronome();
         tap.setWriter(writer->getThreadedWriter());
-        engine->setPositionMs(session->anchorMs, true);
-        engine->play();
+        if (! beginTransport())
+        {
+            tap.setWriter(nullptr);
+            tap.waitForQuiescence();
+            writer->abort();
+            writer.reset();
+            session->status = "error";
+            session->errorCode = "transportFailed";
+            session->error = "Playback could not start, so the take was not begun.";
+            if (onStateChanged) onStateChanged();
+            return false;
+        }
     }
 
     session->rollTicks = juce::Time::getHighResolutionTicks();
@@ -416,9 +429,62 @@ void RecordingSessionController::beginRecordingAfterCountIn()
     // `setStatus` hands the borrowed click straight back, so the click through the
     // take itself is the session's own setting.
     setStatus("recording");
-    engine->setPositionMs(session->anchorMs, true);
-    engine->play();
+    if (! beginTransport())
+    {
+        tap.setWriter(nullptr);
+        tap.waitForQuiescence();
+        writer->abort();
+        writer.reset();
+        session->errorCode = "transportFailed";
+        session->error = "Playback could not start, so the take was not begun.";
+        setStatus("error");
+        return;
+    }
     session->rollTicks = juce::Time::getHighResolutionTicks();
+}
+
+/** Opens the transport at the anchor and latches the play the take belongs to, so
+ *  finalisation only trusts a start stamp from this very play. */
+bool RecordingSessionController::beginTransport()
+{
+    if (engine == nullptr || ! session.has_value()) return false;
+    if (! engine->playFromAnchorForRecording(session->anchorMs))
+    {
+        silverdaw::log::warn("recording", "transport did not start; take abandoned");
+        return false;
+    }
+    session->playEpoch = engine->getPlayEpoch();
+    return true;
+}
+
+/**
+ * Wall-clock gap between capture starting and the arrangement actually starting,
+ * in milliseconds, signed.
+ *
+ * Positive means capture was running before the transport opened — the usual case,
+ * because the writer is attached first and `play()` then spends real time priming
+ * read-ahead buffers and the plugin pipeline, possibly followed by a silent wake
+ * pre-roll on the audio thread. Negative means the first captured block landed after
+ * the transport's first advancing block, which is entirely normal when the two
+ * devices' callbacks happen to interleave that way; it must NOT be clamped away or
+ * every such take is pushed early by up to a full input period.
+ *
+ * Zero when either end is unavailable, which leaves the plain round-trip trim.
+ */
+double RecordingSessionController::measuredTransportSkewMs() const
+{
+    if (engine == nullptr || ! session.has_value()) return 0.0;
+
+    std::uint32_t epoch = 0;
+    const auto transportTicks = engine->getTransportStartTicks(&epoch);
+    const auto captureTicks = tap.getFirstBlockTicks();
+    // A stamp from any play but this take's says nothing about this take's start.
+    if (transportTicks <= 0 || captureTicks <= 0 || epoch != session->playEpoch) return 0.0;
+
+    const auto perSecond = juce::Time::getHighResolutionTicksPerSecond();
+    if (perSecond <= 0) return 0.0;
+    return static_cast<double>(transportTicks - captureTicks) * 1000.0
+           / static_cast<double>(perSecond);
 }
 
 bool RecordingSessionController::stop(const juce::String& sessionId)
@@ -503,16 +569,41 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // The performer heard the arrangement late and Silverdaw received them late, so the
     // round trip is trimmed off the head. There is no count-in preroll to trim any more:
     // the count-in clicks with the transport parked and capture only starts after it.
+    //
+    // Plugin delay compensation is deliberately NOT part of this sum. `primePluginPipeline`
+    // pushes the alignment through the delay lines before the gate opens (ADR 0026), so the
+    // first live block already carries anchor audio and the performer never waits out the
+    // alignment. `PlayheadEmitter` subtracts it only because the raw sample counter is run
+    // ahead to compensate — that is a counter offset, not an audible delay. Adding it here
+    // would drag every take early by the whole alignment.
     const double latencyMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
                              + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
     pending.latencyMs = latencyMs;
-    pending.headTrimMs = latencyMs;
+    // Capture is attached before `play()` is called, but `play()` primes read-ahead buffers and
+    // the plugin pipeline on the message thread and may then sit through a silent wake pre-roll
+    // on the audio thread — none of which moves the playhead. The take is late by that gap on
+    // top of the round trip, and it is far too big to ignore: priming runs to a budget of
+    // seconds and the wake pre-roll alone is 250 ms. Measure it from the two ends rather than
+    // assuming capture and the transport started together.
+    //
+    // The skew stays SIGNED. The first written input block landing after the first advancing
+    // output block is entirely normal, and clamping that to zero would push the take early by
+    // up to a full input period. Only the combined trim is floored at zero.
+    const double skewMs = measuredTransportSkewMs();
+    pending.headTrimMs = juce::jmax(0.0, latencyMs + skewMs);
 
-    // Only trust the measured rate over a long enough span; one buffer of the
-    // captured total was never bracketed by the two stamps.
-    const auto unbracketed = static_cast<juce::int64>(device.getBufferSize());
+    // Only trust the measured rate over a long enough span. The two stamps are taken at the
+    // start of their blocks, so they bracket every written block except the last, whose real
+    // length is what must come off the total — the configured buffer size is not a safe
+    // stand-in, since JUCE allows the block size to vary and the length cap can shorten it.
+    // Dropped blocks disqualify the measurement outright: their wall time is inside the span
+    // while their samples are not in the total, which biases the rate low, and resampling a
+    // file that has holes in it does not repair the holes anyway.
+    const auto lastBlock = static_cast<juce::int64>(tap.getLastBlockSamples());
+    const auto unbracketed = lastBlock > 0 ? lastBlock : static_cast<juce::int64>(device.getBufferSize());
     pending.measuredSampleRate =
         spanSeconds >= kMinDriftMeasurementSeconds && captured > unbracketed
+                && pending.droppedSamples == 0
             ? static_cast<double>(captured - unbracketed) / spanSeconds
             : sampleRate;
 
@@ -676,6 +767,30 @@ void RecordingSessionController::reportFailure(const juce::String& sessionId,
     if (onStateChanged) onStateChanged();
 }
 
+/**
+ * Raw transport position the auto-stop fires at for a bounded window.
+ *
+ * The window end is a musical instant the *performer* has to reach, but the raw
+ * transport counter runs ahead of what they can hear: by the output latency (audio
+ * already handed to the device but not yet played) and, with latency-inducing effects
+ * in use, by the plugin alignment as well (ADR 0026). Their response then needs the
+ * input latency to come back. Stopping the moment the raw counter hits the window end
+ * therefore detaches the writer before the last notes of the take have been captured,
+ * and no amount of offline trimming can put them back.
+ *
+ * Running on is safe: a musical take is trimmed back to its exact bar length during
+ * finalise, so the only cost is a little extra capture.
+ */
+double RecordingSessionController::windowStopPositionMs() const
+{
+    if (! session.has_value() || ! session->windowEndMs.has_value()) return 0.0;
+    if (engine == nullptr) return *session->windowEndMs;
+
+    const double roundTripMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
+                               + engine->getOutputLatencyMs() + engine->getPluginLatencyMs();
+    return *session->windowEndMs + juce::jmax(0.0, roundTripMs);
+}
+
 void RecordingSessionController::timerCallback()
 {
     if (! session.has_value()) return;
@@ -706,7 +821,7 @@ void RecordingSessionController::timerCallback()
     }
 
     if (tap.hasHitLengthCap()
-        || (session->windowEndMs.has_value() && positionMs >= *session->windowEndMs))
+        || (session->windowEndMs.has_value() && positionMs >= windowStopPositionMs()))
     {
         finishCapture({}, {});
         return;

@@ -675,3 +675,98 @@ delivered no signal.
 
 The monitor stays audible through the count-in, so a performer can hear
 themselves against the click before the take starts.
+
+### Amendment 12 — The head trim measures the transport start rather than assuming it
+
+A take laid over a backing track landed roughly a quarter of a beat late. The
+compensation was directionally right — the performer hears the arrangement late
+and Silverdaw receives them late, so the round trip comes off the head — but it
+was built on an assumption that does not hold: that capture and the transport
+start at the same instant.
+
+They do not. The writer is attached first, and `play()` then spends real time on
+the message thread flushing rebuilds, refilling read-ahead buffers to a budget of
+seconds, and priming the plugin pipeline. On a sleep-prone endpoint the audio
+thread may then burn a 250 ms wake pre-roll that deliberately emits silence
+*without advancing the playhead*. Every millisecond of that is captured audio
+that precedes the arrangement, and none of it was trimmed.
+
+`MasterClockSource` now stamps, from the audio thread, the instant of the first
+block that genuinely advances the transport, and tags it with a monotonic play
+epoch. `InputCaptureTap` already stamped its first written block. The head trim
+is the gap between the two, plus the round trip:
+
+```text
+headTrimMs = max(0, (transportStart - firstCapturedBlock) + outputLatency + inputLatency)
+```
+
+Three properties of that formula are load-bearing.
+
+**The skew is signed.** The first written input block landing *after* the first
+advancing output block is entirely normal — the two devices' callbacks are
+independent and interleave however they interleave. Clamping the skew at zero
+would push those takes early by up to a full input period. Only the combined trim
+is floored.
+
+**The epoch is checked.** A stamp belongs to exactly one play. A block still in
+flight across a fast stop/restart, or a stamp left over from a previous play,
+describes nothing about this take and is refused, falling back to the plain round
+trip.
+
+**Plugin delay compensation is excluded.** This is the counter-intuitive one.
+`primePluginPipeline` pushes the alignment through the delay lines *before* the
+gate opens (ADR 0026), so the first live block already carries anchor audio and
+the performer never waits the alignment out. `PlayheadEmitter` subtracts it only
+because the raw sample counter was run ahead to compensate — a counter offset,
+not an audible delay. Adding it here would drag every take early by the whole
+alignment.
+
+Recording also now owns the transport outright. Ordinary `play()` cannot start a
+take: a seek requested while the transport is rolling is deferred behind an output
+fade, and `play()` then merely cancels that fade and returns *without seeking,
+priming, or starting a new play* — so a take begun that way captured whatever
+region happened to be playing, with no start stamp to trim against.
+`playFromAnchorForRecording` parks the transport, applies the seek immediately and
+opens a genuine new play, and reports whether it succeeded; a take is abandoned
+rather than begun against a transport that never started. The dialog pauses
+project playback when it opens, so that park happens from rest.
+
+Two related corrections fall out of the same reasoning. A bounded window now stops
+capture a round trip *after* the raw transport reaches the window end, because the
+performer is playing to what they can hear, not to the raw counter — stopping on
+the counter truncated the last notes of every ranged take, and offline trimming
+cannot put them back. And the head trim is converted to samples at the *measured*
+capture rate rather than the nominal one, because it is applied before drift
+correction, where one second of captured wall time holds `measuredRate` samples.
+
+None of this can reach exactly zero. The estimate is only ever as good as the
+latency the driver reports, and shared-mode WASAPI reports a bound rather than a
+measurement. What it does remove is every source of error that is Silverdaw's own
+to remove. Closing the remaining gap needs either a user-set offset or an acoustic
+loopback calibration, and neither is decided here.
+
+### Amendment 13 — Deleting a take must be able to clear the dirty flag
+
+Record a take, put it on a track, then remove the track and delete the take again
+and the project stayed marked unsaved, with nothing left in it to point at. The
+cause was not in recording at all — recording just made it easy to hit.
+
+A take's audio lives in the project's own `recordings/` folder, so deleting the
+library item deletes that file: irreversible, and therefore neither undoable nor a
+dirtying edit (Amendment 8, and the same rule that already governs stems). That
+removal runs through `removeLibraryItemNonDirty`, which suppresses the dirty
+listeners and mirrors the removal into the clean snapshot so the tree stays
+equivalent to what was saved.
+
+Suppression, though, is symmetric: it stopped the flag being *raised*, but it also
+stopped it being *lowered*. The flag was left at whatever it was when the removal
+started — and an item added since the last save is precisely what an unsaved
+project is usually dirty about. The tree was back to the saved state and the marker
+disagreed.
+
+The removal now recomputes the flag once, outside the suppression scope, from the
+tree itself. Nothing about the removal marks the project dirty, and a project that
+is dirty for any other reason stays dirty; what changes is that when the item taken
+away was the last outstanding difference, the project is correctly clean again.
+This is Silverdaw's existing net-zero rule — the flag is a comparison against the
+clean snapshot, not a latch — reaching a path that had been quietly exempt from it.

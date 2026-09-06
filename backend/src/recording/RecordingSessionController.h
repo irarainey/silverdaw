@@ -344,6 +344,9 @@ class RecordingSessionController final : private juce::Timer
          *  so this is a UI/reporting value only — nothing is captured until it expires. */
         double countInMs = 0.0;
         juce::int64 rollTicks = 0;
+        /** The play this take belongs to. A transport start stamp from any other play
+         *  cannot describe this take's start, so it is refused. */
+        std::uint32_t playEpoch = 0;
         juce::String recordingId;
         juce::String suggestedName;
         juce::String errorCode;
@@ -356,6 +359,9 @@ class RecordingSessionController final : private juce::Timer
     void closeDevice();
     void finishCapture(const juce::String& errorCode, const juce::String& message);
     void beginRecordingAfterCountIn();
+    bool beginTransport();
+    double measuredTransportSkewMs() const;
+    double windowStopPositionMs() const;
     void abandonCountIn();
     void setStatus(const juce::String& status);
     void applySessionMetronome();

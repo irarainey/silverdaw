@@ -7,16 +7,19 @@
 namespace silverdaw
 {
 
-void AudioEngine::play()
+bool AudioEngine::play()
 {
     if (pendingTransportAction != PendingTransportAction::none)
     {
+        // Only cancels a fade that was already under way; no new play begins here, so a
+        // caller that needs a real start (recording) must not treat this as success.
         pendingTransportAction = PendingTransportAction::none;
         transportFadeTimer.stopTimer();
         master.requestOutputFadeIn();
         master.cancelScrub();
-        return;
+        return false;
     }
+
     master.cancelScrub();
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
@@ -30,7 +33,7 @@ void AudioEngine::play()
                                  juce::String(static_cast<int>(tracks.size())) +
                                  " pos=" + juce::String(master.getPositionSamples()) +
                                  ") — gate kept closed to avoid a silent first play");
-        return;
+        return false;
     }
     // Message-thread time spent rebuilding and refilling read-ahead buffers before the gate
     // opens. Near zero when a prior seek settle left them warm; anything above a few ms is
@@ -54,6 +57,30 @@ void AudioEngine::play()
                                        " pos=" + juce::String(master.getPositionSamples()) +
                                        " primeMs=" + juce::String(primeMs, 1) + " wakePreroll=" +
                                        (outputKeepAlive.isKeepAwakeEnabled() ? "on" : "off") + ")");
+    return true;
+}
+
+// Recording start. See the header for why ordinary play() will not do.
+bool AudioEngine::playFromAnchorForRecording(double anchorMs)
+{
+    parkTransportAt(anchorMs);
+    return play();
+}
+
+void AudioEngine::parkTransportAt(double ms)
+{
+    // Drop any fade that was mid-flight and park outright. Waiting the fade out would
+    // make the start asynchronous, and a take cannot begin on a maybe. The gain target
+    // is restored so the next play is not left faded down.
+    pendingTransportAction = PendingTransportAction::none;
+    pendingSeekAfterPauseMs.reset();
+    transportFadeTimer.stopTimer();
+    master.cancelScrub();
+    master.setPlaying(false);
+    master.cancelOutputFade();
+
+    // Now genuinely stopped, so this applies immediately rather than queueing behind a fade.
+    setPositionMsNow(ms, true);
 }
 
 bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)

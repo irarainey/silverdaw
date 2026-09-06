@@ -324,6 +324,40 @@ void testFinaliseCorrectsClockDrift()
     dir.deleteRecursively();
 }
 
+void testFinaliseTrimsHeadInTheCapturedDomain()
+{
+    const auto dir = makeTempDir("recording-finalise-head-domain");
+    const auto source = dir.getChildFile("raw.wav");
+    const auto destination = dir.getChildFile("final.wav");
+    const int sourceSamples = 96000;
+    writeRamp(source, sourceSamples, 1, kSampleRate);
+
+    silverdaw::recording::FinaliseRequest request;
+    request.sourceFile = source;
+    request.destinationFile = destination;
+    request.nominalSampleRate = kSampleRate;
+    // A capture clock running 1000 ppm fast: one second of wall time holds 1.001
+    // seconds' worth of raw samples.
+    request.measuredSampleRate = kSampleRate * 1.001;
+    request.latencyMs = 100.0;
+
+    const auto result = finaliseRecording(request, formats());
+    require(result.ok, "finalise should succeed with both a head trim and a drift correction");
+
+    const auto reader = readerFor(destination);
+    require(reader != nullptr, "the finalised recording should be readable");
+
+    // The head trim happens before resampling, so it must be converted at the measured
+    // rate: trimming `latencyMs * nominalRate` raw samples would remove the wrong span
+    // of captured time. What survives is (source - measuredTrim) resampled by the ratio.
+    const double measuredTrim = 100.0 * (kSampleRate * 1.001) / 1000.0;
+    const double expected = (sourceSamples - measuredTrim) / 1.001;
+    requireNear(static_cast<double>(reader->lengthInSamples), expected, 2.0,
+                "the head trim should be taken in the captured domain, not the nominal one");
+
+    dir.deleteRecursively();
+}
+
 void testFinaliseRejectsRecordingShorterThanLatency()
 {
     const auto dir = makeTempDir("recording-finalise-short");
@@ -822,6 +856,7 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testDuplicateMonoToStereoRefusesAStereoTake});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
+    tests.push_back({"recording finalise trims the head in the captured domain", testFinaliseTrimsHeadInTheCapturedDomain});
     tests.push_back({"recording finalise rejects a recording shorter than latency",
                      testFinaliseRejectsRecordingShorterThanLatency});
     tests.push_back({"recording finalise keeps stereo channels", testFinaliseKeepsStereoChannels});

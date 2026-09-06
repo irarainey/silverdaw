@@ -9,6 +9,9 @@ import type {
   RecordingSessionStatePayload,
   RecordingWindowMode
 } from '@shared/bridge-protocol'
+import { send as sendBridge } from '@/lib/bridgeService'
+import { buildDeviceOptions } from '@/lib/recording/recordingInputOptions'
+import { useTransportStore } from '@/stores/transportStore'
 
 /** Review-waveform peaks for the finished recording. Peaks, not audio: the file
  *  stays on disk and is only ever referenced by path (ADR 0003). */
@@ -138,11 +141,16 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     },
 
     /** No capture device at all — the dialog says so rather than showing an
-     *  empty picker that looks broken. */
+     *  empty picker that looks broken. Asked of the same builder the picker
+     *  fills itself from, so the two cannot disagree: Windows exposes pseudo
+     *  capture endpoints ("Primary Sound Capture Driver", "Microsoft Sound
+     *  Mapper") that are filtered out of the list, and counting raw device
+     *  names instead left a machine with only those showing an empty, disabled
+     *  picker and no explanation. */
     hasNoInput(): boolean {
       const listing = this.inputs
       if (listing === null) return false
-      return listing.types.every((type) => type.devices.length === 0)
+      return buildDeviceOptions(listing).length === 0
     }
   },
 
@@ -152,6 +160,15 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
      *  An empty driver is legitimate — it means Preferences has not pinned one,
      *  so the backend picks whichever driver offers the device. */
     async openDialog(): Promise<void> {
+      // Recording takes the transport over: it parks the playhead on the anchor and
+      // starts its own play. Pausing here means that happens from rest, well before
+      // Record is pressed, rather than cutting the project off mid-flow at the moment
+      // a take begins.
+      const transport = useTransportStore()
+      if (transport.isPlaying) {
+        sendBridge('TRANSPORT_PAUSE')
+        transport.setPlaybackState(false)
+      }
       const saved = await window.silverdaw.getAudioInput().catch(() => null)
       this.preferredInputTypeName = saved?.typeName ?? null
       this.rememberedInputGainDb = saved?.gainDb ?? 0

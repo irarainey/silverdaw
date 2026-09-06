@@ -32,6 +32,7 @@ void InputCaptureTap::resetCaptureStats() noexcept
     droppedSamples.store(0);
     firstBlockTicks.store(0);
     lastBlockTicks.store(0);
+    lastBlockSamples.store(0);
     hitLengthCap.store(false);
     sawSignal.store(false);
 }
@@ -57,6 +58,10 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
                                                        int numOutputChannels, int numSamples,
                                                        const juce::AudioIODeviceCallbackContext& /*context*/)
 {
+    // Taken at callback entry so the stamp describes when the block arrived, not when
+    // the tap finished gain, metering and monitoring — that work would otherwise shorten
+    // the measured gap to the transport start and under-trim the take by its duration.
+    const auto blockTicks = juce::Time::getHighResolutionTicks();
     // An input-only device should present no outputs; clear defensively.
     for (int channel = 0; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
@@ -125,19 +130,31 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
         }
         else
         {
-            const auto now = juce::Time::getHighResolutionTicks();
-            juce::int64 expected = 0;
-            firstBlockTicks.compare_exchange_strong(expected, now, std::memory_order_relaxed);
-            lastBlockTicks.store(now, std::memory_order_relaxed);
-
             const int toWrite = cap > 0
                                     ? static_cast<int>(juce::jmin(static_cast<juce::int64>(numSamples),
                                                                   cap - captured))
                                     : numSamples;
             if (writer->write(selected, toWrite))
+            {
+                // Stamped only once the block is genuinely in the file. A rejected leading
+                // block would otherwise put the first stamp before any audio the file
+                // actually holds, and both the head trim and the drift span would be wrong
+                // by its duration.
+                juce::int64 expected = 0;
+                firstBlockTicks.compare_exchange_strong(expected, blockTicks,
+                                                        std::memory_order_relaxed);
+                lastBlockTicks.store(blockTicks, std::memory_order_relaxed);
+                // The tick span brackets every written block except this last one, whose
+                // real length is what the drift measurement has to discount. JUCE allows a
+                // varying block size and the length cap can shorten it, so the device's
+                // configured buffer size is not a safe stand-in.
+                lastBlockSamples.store(toWrite, std::memory_order_relaxed);
                 capturedSamples.store(captured + toWrite, std::memory_order_relaxed);
+            }
             else
+            {
                 droppedSamples.fetch_add(toWrite, std::memory_order_relaxed);
+            }
         }
     }
 

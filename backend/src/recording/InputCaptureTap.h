@@ -69,6 +69,10 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     juce::int64 getFirstBlockTicks() const noexcept { return firstBlockTicks.load(); }
     juce::int64 getLastBlockTicks() const noexcept { return lastBlockTicks.load(); }
 
+    /** Real length of the last written block — the one the tick span does not bracket.
+     *  Zero if nothing was written. */
+    int getLastBlockSamples() const noexcept { return lastBlockSamples.load(); }
+
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels,
                                           float* const* outputChannelData, int numOutputChannels,
                                           int numSamples,
@@ -97,6 +101,7 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     std::atomic<juce::int64> droppedSamples{0};
     std::atomic<juce::int64> firstBlockTicks{0};
     std::atomic<juce::int64> lastBlockTicks{0};
+    std::atomic<int> lastBlockSamples{0};
     std::atomic<juce::int64> callbackTicks{0};
     std::atomic<bool> hitLengthCap{false};
     std::atomic<bool> sawSignal{false};

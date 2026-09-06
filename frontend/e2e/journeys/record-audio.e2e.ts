@@ -53,9 +53,16 @@ test('the Record Audio dialog opens a backend session and releases it on close',
 
   // Either the session found a capture device or it did not; both are real answers from the
   // backend, and both must leave the dialog honest rather than showing an empty picker.
+  // Which answer this machine gives is not known until the session's device listing lands,
+  // and the picker is on screen (disabled) the whole time — so wait for one of the two
+  // settled states before branching, rather than reading the picker mid-flight.
   const deviceSelect = dialog.getByLabel('Recording input device')
   const noInput = dialog.getByText('No microphone or audio input was found.', { exact: false })
-  await expect(deviceSelect.or(noInput).first()).toBeVisible()
+  await expect
+    .poll(async () => (await noInput.isVisible()) || (await deviceSelect.isEnabled()), {
+      timeout: 30_000
+    })
+    .toBe(true)
   if (await noInput.isVisible()) {
     await expect(dialog.getByRole('button', { name: 'Record', exact: true })).toBeDisabled()
   } else {

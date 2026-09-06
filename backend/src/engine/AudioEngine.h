@@ -79,7 +79,28 @@ class AudioEngine : private AudioEngineGraphState,
     void setTracksAudible(
         const std::vector<std::pair<juce::String, bool>>& audibility);
 
-    void play();
+    /** Starts the transport. Returns false if priming could not complete inside the
+     *  budget and the gate was therefore kept closed, or if the call only cancelled a
+     *  pending fade rather than beginning a new play. */
+    bool play();
+
+    /**
+     * Starts the transport at `anchorMs` for a recording, guaranteeing a genuine
+     * stopped->playing transition.
+     *
+     * Ordinary `play()` cannot be used: a seek requested while the transport is rolling
+     * is deferred behind an output fade, and `play()` then merely cancels that fade and
+     * returns without seeking, priming, or starting a new play. A take begun that way
+     * captures whatever region happened to be playing and has no start stamp to trim
+     * against. Recording is a deliberate, modal action, so it parks the transport
+     * outright instead of waiting out the fade.
+     */
+    bool playFromAnchorForRecording(double anchorMs);
+
+    /** Stops the transport immediately (no fade) and parks the playhead on `ms`.
+     *  Recording needs the playhead to actually be where it asked before a count-in
+     *  starts clicking; the ordinary seek defers behind a fade when rolling. */
+    void parkTransportAt(double ms);
 
     // Deep read-ahead priming avoids JUCE BufferingAudioSource dropping cold samples at play
     // start.
@@ -448,6 +469,17 @@ class AudioEngine : private AudioEngineGraphState,
     // playhead subtracts it alongside device latency (ADR 0026). Kept separate from
     // getOutputLatencyMs, which reports a device property to the UI.
     double getPluginLatencyMs() const;
+
+    /** Wall-clock tick stamp of the first block the current play actually advanced
+     *  the transport on, or 0 if it has not started rolling. See
+     *  `MasterClockSource::getTransportStartTicks`. */
+    juce::int64 getTransportStartTicks(std::uint32_t* outEpoch = nullptr) const noexcept
+    {
+        return master.getTransportStartTicks(outEpoch);
+    }
+
+    /** Identifies the current play, so a recording can tie its start stamp to one. */
+    std::uint32_t getPlayEpoch() const noexcept { return master.getPlayEpoch(); }
 
     juce::AudioFormatManager& getFormatManager() noexcept
     {

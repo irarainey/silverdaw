@@ -22,25 +22,26 @@ export const BACKEND_PREFERENCE: readonly string[] = [
 ]
 
 /**
- * Plain-English description for every audio backend JUCE may report.
- * Used by the driver picker's hover label.
+ * One short phrase per audio driver JUCE may report — the trade-off that decides
+ * the choice, not an explanation of the driver.
+ *
+ * Kept to a fragment because these read as the second half of a choice
+ * ("Windows Audio — recommended") in a `<select>` option and in the output
+ * driver's radio list, where a full sentence is truncated before it is read.
+ * The same phrases serve the input and output pickers so the two agree.
  */
 export const AUDIO_BACKEND_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  'Windows Audio':
-    'Recommended. Modern Windows audio path; reliable latency and shares the device with other apps.',
-  'Windows Audio (Exclusive Mode)':
-    'Lower latency, but takes the device exclusively — other apps fall silent while Silverdaw runs.',
-  DirectSound:
-    'Legacy backend. Use only if a device misbehaves with Windows Audio.',
-  ASIO:
-    'Lowest latency, but requires a vendor-supplied ASIO driver. Pick this for pro-audio interfaces.',
-  CoreAudio: 'macOS standard audio backend.',
-  ALSA: 'Linux standard audio backend.',
-  JACK: 'Pro-audio routing on Linux / macOS.'
+  'Windows Audio': 'recommended',
+  'Windows Audio (Exclusive Mode)': 'lower latency, silences other apps',
+  DirectSound: 'legacy fallback',
+  ASIO: 'lowest latency, needs a vendor driver',
+  CoreAudio: 'macOS standard',
+  ALSA: 'Linux standard',
+  JACK: 'pro-audio routing'
 }
 
 export function describeBackend(typeName: string): string {
-  return AUDIO_BACKEND_DESCRIPTIONS[typeName] ?? 'Audio backend.'
+  return AUDIO_BACKEND_DESCRIPTIONS[typeName] ?? 'audio driver'
 }
 
 /** Rank for `BACKEND_PREFERENCE` ordering; unknown backends sort last. */
