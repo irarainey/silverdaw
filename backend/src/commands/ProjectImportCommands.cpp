@@ -135,7 +135,24 @@ bool addImportedLibraryItem(ProjectState& projectState, const StagedLibraryItem&
         projectState.setLibraryItemVariableTempo(item.destinationId, true);
     if (source.getProperty("lowConfidence", false))
         projectState.setLibraryItemLowConfidence(item.destinationId, true);
+    // A take imported from another project is still a take: without this it would arrive
+    // as an anonymous sample and lose the provenance the rest of the app reads (ADR 0030).
+    if (source.getProperty("recordingOrigin", false)
+        && !projectState.setLibraryItemRecordingOrigin(item.destinationId, /* undoable= */ true))
+        return false;
     return true;
+}
+
+/** The artifact folder an imported item is written into. A stem and a recording each
+ *  keep their own category folder, so the destination project files them exactly as it
+ *  would file its own; anything else lands among the samples. */
+juce::String destinationCategoryFor(const SourceLibraryItem& item)
+{
+    if (item.kind == "stem")
+        return "stems";
+    if (item.category == "recordings")
+        return "recordings";
+    return "samples";
 }
 
 juce::var remapScratchPattern(const juce::var& source, const juce::String& destinationId)
@@ -210,6 +227,7 @@ void broadcastImportManifest(const juce::String& sourceProjectPath, const Source
 
     juce::Array<juce::var> stems;
     juce::Array<juce::var> samples;
+    juce::Array<juce::var> recordings;
     for (const auto& [id, item] : source.library)
     {
         auto* entry = new juce::DynamicObject();
@@ -218,11 +236,14 @@ void broadcastImportManifest(const juce::String& sourceProjectPath, const Source
                                                          item.file.getFileNameWithoutExtension()).toString());
         if (item.kind == "stem")
             stems.add(juce::var(entry));
+        else if (item.category == "recordings")
+            recordings.add(juce::var(entry));
         else
             samples.add(juce::var(entry));
     }
     payload->setProperty("stems", juce::var(stems));
     payload->setProperty("samples", juce::var(samples));
+    payload->setProperty("recordings", juce::var(recordings));
 
     bridge.broadcast("PROJECT_IMPORT_SOURCE_MANIFEST", juce::var(payload));
 }
@@ -336,10 +357,9 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
     {
         const auto& sourceItem = importableLibrary.at(id);
         const auto destinationId = juce::Uuid().toString();
-        const auto destinationRoot = projectArtifactsBaseDir(session.currentPath,
-                                                              sourceItem.kind == "stem" ? "stems" : "samples");
-        const auto stagingDirectory = stagingRoot.getChildFile(sourceItem.kind == "stem" ? "stems" : "samples")
-                                                 .getChildFile(destinationId);
+        const auto category = destinationCategoryFor(sourceItem);
+        const auto destinationRoot = projectArtifactsBaseDir(session.currentPath, category);
+        const auto stagingDirectory = stagingRoot.getChildFile(category).getChildFile(destinationId);
         if (!copyDirectoryOrFileToStaging(sourceItem.file, sourceItem.root, stagingDirectory, error))
         {
             fail(error);

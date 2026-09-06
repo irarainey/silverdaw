@@ -30,6 +30,14 @@ const samplesWriteRoots: Set<string> = new Set<string>()
 // stems/samples so the renderer can import the produced WAVs on CHANNEL_SPLIT_READY.
 const channelsWriteRoots: Set<string> = new Set<string>()
 
+// App-derived "recordings" folders beside a project (or in the temp workspace while
+// unsaved) where the backend writes captured takes. Read-trusted for the same reason
+// as channels: the renderer never chooses these paths, it is handed them, and it must
+// be able to decode a take's WAV to draw its waveform — which is exactly what happens
+// to a take imported from another project, whose file main never sees named anywhere
+// else. (Takes have no per-source sidecar, so no write confinement is needed.)
+const recordingsWriteRoots: Set<string> = new Set<string>()
+
 // Folders the user explicitly added to the file browser through the native
 // directory picker. Listing is confined to these, and they are read-trusted so
 // the browser can show tags/artwork and audition files before importing them.
@@ -139,14 +147,32 @@ export function registerChannelsWriteRoot(dir: string): void {
   trustedReadRoots.add(canonical)
 }
 
-// True only for a path STRICTLY inside a stems or samples write root — i.e. a
-// per-source subfolder, never a root itself. Used to safely prune an emptied
-// per-source artifact folder after its files are cleaned up, without ever
-// removing the top-level stems/samples folder.
+// Trust a project's "recordings" output folder (derived by main from a save/open
+// path, or the temp workspace while unsaved) for renderer audio reads, so a take
+// can be decoded for its waveform. Idempotent.
+export function registerRecordingsWriteRoot(dir: string): void {
+  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) {
+    logMain('WARN ', 'main', 'refusing to register non-absolute recordings root:', dir)
+    return
+  }
+  const canonical = canonicalisePath(dir)
+  recordingsWriteRoots.add(canonical)
+  trustedReadRoots.add(canonical)
+}
+
+// True only for a path STRICTLY inside a stems, samples, channels or recordings
+// write root — i.e. a per-source subfolder, never a root itself. Used to safely
+// prune an emptied per-source artifact folder after its files are cleaned up,
+// without ever removing the top-level artifact folder.
 export function isPrunableArtifactSubdir(dir: unknown): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const canonical = canonicalisePath(dir)
-  for (const root of [...stemsWriteRoots, ...samplesWriteRoots, ...channelsWriteRoots]) {
+  for (const root of [
+    ...stemsWriteRoots,
+    ...samplesWriteRoots,
+    ...channelsWriteRoots,
+    ...recordingsWriteRoots
+  ]) {
     const rel = relative(root, canonical)
     if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return true
   }
@@ -198,7 +224,8 @@ export function unregisterFileBrowserRoot(dir: string): void {
   const claimedElsewhere =
     stemsWriteRoots.has(canonical) ||
     samplesWriteRoots.has(canonical) ||
-    channelsWriteRoots.has(canonical)
+    channelsWriteRoots.has(canonical) ||
+    recordingsWriteRoots.has(canonical)
   if (!claimedElsewhere) trustedReadRoots.delete(canonical)
 }
 

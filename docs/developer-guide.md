@@ -198,12 +198,13 @@ Silverdaw currently supports the core arrangement workflow:
   remembered between sessions and are the only paths the browser may read. See
   [File browser (Files tab)](#file-browser-files-tab).
 - **File ▸ Import from Project…** lists saved projects from the configured
-  project folder, then lets you select their managed stems and samples. A
-  selected scratch sample also imports its linked Scratch pattern and original
-  source-audio snapshot. Its Scratch Editor playback and waveform use that
-  copied snapshot. The source project is read-only; imported items get
-  independent destination assets and one undo step. Tracks, timeline clips,
-  markers, automation, and settings are not imported.
+  project folder, then lets you select their managed stems, samples and
+  recordings. A selected scratch sample also imports its linked Scratch pattern
+  and original source-audio snapshot. Its Scratch Editor playback and waveform
+  use that copied snapshot. An imported recording arrives as a recording, kept
+  in this project's own recordings folder. The source project is read-only;
+  imported items get independent destination assets and one undo step. Tracks,
+  timeline clips, markers, automation, and settings are not imported.
 - Play, pause, seek, move, split, duplicate, cut, copy, paste, trim, delete and colour clips.
   Clip moves and non-linked edge trims snap to the beat grid by default; holding
   `Alt` switches either drag to freeform 1 ms placement.
@@ -621,10 +622,14 @@ Both are persisted in the project and returned in `PROJECT_STATE`.
 
 Cross-project import uses `PROJECT_IMPORT_SOURCE_INSPECT` to request a compact
 `PROJECT_IMPORT_SOURCE_MANIFEST`, then `PROJECT_IMPORT_ASSETS` with only the
-selected managed-library item IDs. Selecting a scratch sample automatically
-includes its linked pattern and source snapshot. `PROJECT_IMPORT_COMPLETED`
-reports the result. Audio and metadata remain disk-resident; the source project
-is never written.
+selected managed-library item IDs. The manifest groups the source's items as
+`stems`, `samples` and `recordings`: a recording is a `sample` by kind, so it is
+the artifact folder holding the file — not the kind — that assigns the group,
+routes the copy into the destination project's matching folder, and restores the
+item's `recordingOrigin` on the other side. Selecting a scratch sample
+automatically includes its linked pattern and source snapshot.
+`PROJECT_IMPORT_COMPLETED` reports the result. Audio and metadata remain
+disk-resident; the source project is never written.
 
 **Bulk data goes via disk, never via the socket.** When the backend has fresh waveform peaks
 ready it sends a `WAVEFORM_READY { clipId, cachePath, peakCount, peaksPerSecond, sampleRate, laneCount }`

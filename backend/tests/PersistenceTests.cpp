@@ -138,6 +138,16 @@ void testProjectFileSaveLoadAndViewState()
             "source scratch pattern should be added");
     require(sourceProject.addScratchPattern(makeValidPatternVar("sp-missing", "Incomplete Scratch Sample")),
             "incomplete scratch pattern should be added");
+    // A take is a sample by kind and sits directly in `recordings/`, so only the folder
+    // holding it tells the importer to offer it as a recording (ADR 0030).
+    const auto recordingFile = sourceDir.getChildFile("recordings").getChildFile("Recording 1.wav");
+    require(recordingFile.getParentDirectory().createDirectory(),
+            "source recordings directory should be created");
+    require(recordingFile.replaceWithText("test"), "source recording file should be created");
+    require(sourceProject.addLibraryItem("recording-1", recordingFile.getFullPathName(), "Recording 1.wav",
+                                         1000.0, 44100, 2, recordingFile.getFullPathName(), {}, "sample",
+                                         "Recording 1"),
+            "source recording should be added");
     require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
             "source project should be saved");
     juce::String sourceError;
@@ -150,6 +160,15 @@ void testProjectFileSaveLoadAndViewState()
             "source import should reject scratch samples without a source snapshot");
     require(importSource->scratchPatterns.count("sp-1") == 1,
             "source import should retain the linked scratch pattern");
+    require(importSource->library.count("recording-1") == 1,
+            "source import should expose recordings alongside stems and samples");
+    requireEqual(importSource->library.at("recording-1").category, juce::String("recordings"),
+                 "a recording should keep its own import category");
+    require(static_cast<bool>(
+                importSource->library.at("recording-1").data.getProperty("recordingOrigin", false)),
+            "an imported recording should carry its provenance");
+    requireEqual(importSource->library.at("stem-1").category, juce::String("stems"),
+                 "a stem should keep its own import category");
 
     silverdaw::ProjectState loaded;
     const auto loadResult = silverdaw::ProjectFile::load(file, loaded);

@@ -1,8 +1,8 @@
-// Sweeps EMPTY per-source artifact folders (stems/samples) left under a project's
-// write roots. The generated stem/sample WAVs themselves — and pruning the folder a
-// last file leaves empty — are deleted by the audio BACKEND over the bridge, which
-// owns those files and can remove them even when a cross-process (Electron) unlink is
-// blocked by an open handle. This module only clears stray EMPTY folders (e.g. a
+// Sweeps EMPTY per-source artifact folders (stems/samples/channels/recordings) left
+// under a project's write roots. The generated WAVs themselves — and pruning the
+// folder a last file leaves empty — are deleted by the audio BACKEND over the bridge,
+// which owns those files and can remove them even when a cross-process (Electron)
+// unlink is blocked by an open handle. This module only clears stray EMPTY folders (e.g. a
 // legacy leftover, or one whose files were removed by an older build) when a project's
 // roots are (re)registered, so nothing here ever races the backend for an open file.
 

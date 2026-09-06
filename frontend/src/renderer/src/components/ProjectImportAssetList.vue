@@ -7,6 +7,7 @@ type ProjectImportManifest = {
   name: string
   stems: readonly ProjectImportEntry[]
   samples: readonly ProjectImportEntry[]
+  recordings: readonly ProjectImportEntry[]
 }
 const props = defineProps<{
   manifest: ProjectImportManifest
@@ -22,7 +23,8 @@ type AssetGroup = {
 
 const assetGroups = computed<AssetGroup[]>(() => [
   { label: 'Stems', entries: props.manifest.stems },
-  { label: 'Samples', entries: props.manifest.samples }
+  { label: 'Samples', entries: props.manifest.samples },
+  { label: 'Recordings', entries: props.manifest.recordings }
 ])
 
 function isSelected(entry: ProjectImportEntry): boolean {

@@ -10,6 +10,7 @@
 - **Hear Yourself** adds the input to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
 - Takes are captured as **Music**, inheriting the project tempo so a later BPM change warps them like any other clip, or **Simple** for speech and sound effects, with an optional cleanup of low-level background noise.
 - A finished take can be auditioned alone or against the arrangement, renamed, saved as stereo when it was recorded in mono, and re-recorded before it is kept.
+- **File ▸ Import from Project…** now offers another project's recordings alongside its stems and samples, under their own **Recordings** heading. An imported take is filed with this project's own recordings and stays identifiable as a recording.
 - The recording input driver is chosen in **Preferences ▸ Audio**.
 
 ### Changed

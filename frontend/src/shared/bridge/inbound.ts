@@ -674,7 +674,8 @@ export const ProjectImportSourceManifestPayloadSchema = z.object({
   sourceProjectPath: z.string().min(1),
   name: z.string(),
   stems: z.array(ProjectImportEntrySchema),
-  samples: z.array(ProjectImportEntrySchema)
+  samples: z.array(ProjectImportEntrySchema),
+  recordings: z.array(ProjectImportEntrySchema)
 })
 export type ProjectImportSourceManifestPayload = z.infer<typeof ProjectImportSourceManifestPayloadSchema>
 

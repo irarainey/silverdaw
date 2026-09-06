@@ -271,7 +271,11 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
 
         const auto folder = file.getParentDirectory();
         if (folder.getParentDirectory() == stemsRoot || folder.getParentDirectory() == samplesRoot
-            || folder.getParentDirectory() == channelsRoot || folder.getParentDirectory() == scratchesRoot)
+            || folder.getParentDirectory() == channelsRoot || folder.getParentDirectory() == scratchesRoot
+            // A take this project made sits directly in `recordings/`, but one imported from
+            // another project gets its own `import-<id>` folder like any other imported asset,
+            // which would otherwise be left behind empty.
+            || folder.getParentDirectory() == recordingsRoot)
         {
             requestedByFolder[folder.getFullPathName()].add(file.getFileName());
         }

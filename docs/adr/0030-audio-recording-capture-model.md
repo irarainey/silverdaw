@@ -259,11 +259,14 @@ threefold — the mitigation is monitoring, not code.
 - The library item is `kind = "sample"` with an additive `recordingOrigin`
   marker, mirroring how a baked scratch is a `sample` carrying `scratchOrigin`.
   **No new library kind is introduced.**
-- Registering the category means four places: the `kCategories` list in
-  `ProjectSession.cpp`, the folder→kind map in `ProjectStateLibrary.cpp`, and
-  the cross-project import scan (`ProjectImportSource.cpp`,
+- Registering the category means five places: the `kCategories` list in
+  `ProjectSession.cpp`, the folder→kind map in `ProjectStateLibrary.cpp`, the
+  cross-project import scan (`ProjectImportSource.cpp`,
   `ProjectImportCommands.cpp`) so that "import assets from another project" sees
-  recordings. Portable relative-path rewriting is already generic.
+  recordings, and the Electron main audio path allow-list (`audioPaths.ts`,
+  registered from `projectHandlers.ts` and `stemHandlers.ts`) so the renderer
+  may decode a take's WAV for its waveform. Portable relative-path rewriting is
+  already generic.
 - Items are named `Recording 1`, `Recording 2`, … — the next free number in the
   project, matching the WAV filename. Renaming already exists at library and
   clip level, so the default only has to be unsurprising and unique.
@@ -770,3 +773,32 @@ is dirty for any other reason stays dirty; what changes is that when the item ta
 away was the last outstanding difference, the project is correctly clean again.
 This is Silverdaw's existing net-zero rule — the flag is a comparison against the
 clean snapshot, not a latch — reaching a path that had been quietly exempt from it.
+
+### Amendment 14 — A take imported from another project is still a take
+
+The original decision registered `recordings/` with the cross-project importer so
+that "import assets from another project" would *see* recordings. It saw them, but
+it could not tell them apart: the manifest grouped by library kind, and a take is a
+sample by kind, so a take arrived filed among the samples with its
+`recordingOrigin` marker dropped on the way in.
+
+That is the wrong end of the trade the category folder exists to make. The marker
+is additive precisely so a take can be an ordinary sample everywhere it needs to be
+while still being identifiable as a performance; an import that discards it makes
+the destination project unable to say where its own audio came from, and does so
+silently.
+
+The importer now carries a take's *category* — the artifact folder holding the
+file — alongside its kind, and that is what decides all three things kind was
+being asked to decide: the group it is offered under (its own **Recordings**
+heading, beside Stems and Samples), the folder it is copied into (the destination
+project's `recordings/`, filed exactly as that project files its own takes), and
+the `recordingOrigin` restored on the new item. Containment, not the persisted
+flag, is what identifies a recording on the way out, so a take whose provenance was
+somehow lost still imports back as a recording.
+
+One consequence is worth naming: a take this project recorded sits directly in
+`recordings/`, but an imported one gets its own `import-<id>` folder like every
+other imported asset. Artifact cleanup was only pruning those per-asset folders
+under the other roots, so an imported take's folder would have been left behind
+empty once its file was deleted. `recordings/` is now pruned the same way.
