@@ -73,11 +73,24 @@ class MeteringSource : public juce::AudioSource
                 info.buffer->applyGainRamp(ch, info.startSample, n, startGain, endGain);
         }
 
-        // Mix the metronome click post master gain, only when the transport actually advanced this
-        // block (real playback — not a stopped block or a wake pre-roll, where the position is
-        // frozen). This keeps the click phase-aligned to the playhead and seek-correct.
-        if (clock.getPositionSamples() == posBefore + static_cast<juce::int64>(n))
+        // Mix the metronome click post master gain. A recording count-in owns the click while it
+        // runs: the transport is deliberately parked, so the click is driven by the count-in's own
+        // counter rather than the playhead. Otherwise the click only sounds when the transport
+        // actually advanced this block (real playback — not a stopped block or a wake pre-roll,
+        // where the position is frozen), which keeps it phase-aligned to the playhead and
+        // seek-correct.
+        const juce::int64 countIn = countInRemaining.load(std::memory_order_acquire);
+        if (countIn > 0)
+        {
+            const juce::int64 pos = countInPos.load(std::memory_order_relaxed);
+            metronome.render(*info.buffer, info.startSample, n, pos, clock.getSampleRate());
+            countInPos.store(pos + n, std::memory_order_relaxed);
+            countInRemaining.store(juce::jmax(juce::int64{0}, countIn - n), std::memory_order_release);
+        }
+        else if (clock.getPositionSamples() == posBefore + static_cast<juce::int64>(n))
+        {
             metronome.render(*info.buffer, info.startSample, n, posBefore, clock.getSampleRate());
+        }
 
         limiter.process(*info.buffer, info.startSample, n);
 
@@ -107,6 +120,38 @@ class MeteringSource : public juce::AudioSource
         outR = peakR_.exchange(0.0F, std::memory_order_relaxed);
     }
 
+    // Recording count-in: click for `beats` at `bpm` with the transport parked, so the performer
+    // is counted in *to* the anchor instead of being carried past it. The click cannot ride the
+    // transport here (it is stopped, and the whole point is that it stays stopped), so it runs
+    // off this own free-running counter, phase-locked to beat 0 of the count-in.
+    void beginCountIn(double beats, double bpm) noexcept
+    {
+        const double sampleRate = clock.getSampleRate();
+        if (beats <= 0.0 || bpm <= 0.0 || sampleRate <= 0.0)
+        {
+            cancelCountIn();
+            return;
+        }
+        countInPos.store(0, std::memory_order_relaxed);
+        countInRemaining.store(static_cast<juce::int64>(beats * (60.0 / bpm) * sampleRate),
+                               std::memory_order_release);
+    }
+
+    void cancelCountIn() noexcept { countInRemaining.store(0, std::memory_order_release); }
+
+    bool isCountInActive() const noexcept
+    {
+        return countInRemaining.load(std::memory_order_acquire) > 0;
+    }
+
+    double getCountInRemainingMs() const noexcept
+    {
+        const double sampleRate = clock.getSampleRate();
+        if (sampleRate <= 0.0) return 0.0;
+        return static_cast<double>(countInRemaining.load(std::memory_order_acquire)) * 1000.0
+               / sampleRate;
+    }
+
   private:
     static void atomicMaxFloat(std::atomic<float>& a, float v) noexcept
     {
@@ -125,6 +170,10 @@ class MeteringSource : public juce::AudioSource
     std::atomic<float> targetGain{1.0F};
     std::atomic<float> peakL_{0.0F};
     std::atomic<float> peakR_{0.0F};
+    // Recording count-in click: samples left to click for, and the click's own play position.
+    // Written from the message thread only while the count-in is not running.
+    std::atomic<juce::int64> countInRemaining{0};
+    std::atomic<juce::int64> countInPos{0};
 };
 
 } // namespace silverdaw

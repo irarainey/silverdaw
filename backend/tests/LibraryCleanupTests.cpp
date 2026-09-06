@@ -1,7 +1,7 @@
-// Backend-side deletion of a removed library item's generated stem/sample files.
-// Every path is confined to the project's stems/samples artifact trees, and a
-// per-source folder is pruned once its last file is gone — so a user's original
-// imported source can never be removed.
+// Backend-side deletion of a removed library item's generated files (stems, samples,
+// split channels, recordings and baked scratches). Every path is confined to the
+// project's own artifact trees, and a per-source folder is pruned once its last file is
+// gone — so a user's original imported source can never be removed.
 
 #include "TestRegistry.h"
 
@@ -173,6 +173,69 @@ void testDeleteArtifactsPrunesChannelsFolder()
     projectDir.deleteRecursively();
 }
 
+// A recording is a sample-kind library item whose WAV sits directly under the
+// `recordings` root (ADR 0030) rather than in a per-source folder. Removing the item
+// must still take the file with it — the root itself is never removed.
+void testDeleteArtifactsDeletesRecording()
+{
+    const auto projectDir = makeTempDir("cleanup-recording");
+    const auto session = sessionFor(projectDir);
+
+    const auto recordingsRoot = projectDir.getChildFile("recordings");
+    const auto take = recordingsRoot.getChildFile("Take 1-recording-001.wav");
+    writeStub(take);
+
+    silverdaw::handleLibraryDeleteArtifacts(pathsPayload({take.getFullPathName()}), session, testEngine());
+    require(! take.existsAsFile(), "a recording WAV should be deleted with its library item");
+    require(recordingsRoot.isDirectory(), "the recordings root itself must never be removed");
+
+    projectDir.deleteRecursively();
+}
+
+// A baked scratch is a sample-kind item in `scratches/<patternId>/`. Removing it must
+// delete the bake, but `source.wav` — the snapshot that lets the pattern be re-edited
+// after its original source is gone — belongs to the pattern, not the bake, and must
+// survive along with its folder.
+void testDeleteArtifactsDeletesBakedScratchButKeepsItsSource()
+{
+    const auto projectDir = makeTempDir("cleanup-scratch");
+    const auto session = sessionFor(projectDir);
+
+    const auto scratchesRoot = projectDir.getChildFile("scratches");
+    const auto patternDir = scratchesRoot.getChildFile("pattern-1");
+    const auto bake = patternDir.getChildFile("Scratch-sample-001.wav");
+    const auto source = patternDir.getChildFile("source.wav");
+    writeStub(bake);
+    writeStub(source);
+
+    silverdaw::handleLibraryDeleteArtifacts(pathsPayload({bake.getFullPathName()}), session, testEngine());
+    require(! bake.existsAsFile(), "a baked scratch WAV should be deleted with its library item");
+    require(source.existsAsFile(), "the re-editable scratch source snapshot must be preserved");
+    require(patternDir.isDirectory(), "the pattern folder is kept while it still holds source.wav");
+
+    projectDir.deleteRecursively();
+}
+
+// With nothing else left in the pattern folder, it is pruned like any other per-source
+// folder — the scratches root itself is never removed.
+void testDeleteArtifactsPrunesEmptiedScratchFolder()
+{
+    const auto projectDir = makeTempDir("cleanup-scratch-prune");
+    const auto session = sessionFor(projectDir);
+
+    const auto scratchesRoot = projectDir.getChildFile("scratches");
+    const auto patternDir = scratchesRoot.getChildFile("pattern-2");
+    const auto bake = patternDir.getChildFile("Scratch-sample-001.wav");
+    writeStub(bake);
+
+    silverdaw::handleLibraryDeleteArtifacts(pathsPayload({bake.getFullPathName()}), session, testEngine());
+    require(! bake.existsAsFile(), "the baked scratch WAV should be deleted");
+    require(! patternDir.exists(), "an emptied scratch pattern folder should be pruned");
+    require(scratchesRoot.isDirectory(), "the scratches root itself must never be removed");
+
+    projectDir.deleteRecursively();
+}
+
 } // namespace
 
 void addLibraryCleanupTests(std::vector<TestCase>& tests)
@@ -188,6 +251,11 @@ void addLibraryCleanupTests(std::vector<TestCase>& tests)
         {"delete artifacts refuses paths outside the artifact roots", testDeleteArtifactsRefusesOutsideRoots});
     tests.push_back(
         {"delete artifacts prunes an emptied channels folder", testDeleteArtifactsPrunesChannelsFolder});
+    tests.push_back({"delete artifacts deletes a recording WAV", testDeleteArtifactsDeletesRecording});
+    tests.push_back({"delete artifacts deletes a baked scratch but keeps its source snapshot",
+                     testDeleteArtifactsDeletesBakedScratchButKeepsItsSource});
+    tests.push_back({"delete artifacts prunes an emptied scratch pattern folder",
+                     testDeleteArtifactsPrunesEmptiedScratchFolder});
 }
 
 } // namespace silverdaw::tests

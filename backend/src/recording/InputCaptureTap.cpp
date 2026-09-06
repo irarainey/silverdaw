@@ -55,7 +55,7 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
                                                        int numInputChannels,
                                                        float* const* outputChannelData,
                                                        int numOutputChannels, int numSamples,
-                                                       const juce::AudioIODeviceCallbackContext&)
+                                                       const juce::AudioIODeviceCallbackContext& /*context*/)
 {
     // An input-only device should present no outputs; clear defensively.
     for (int channel = 0; channel < numOutputChannels; ++channel)

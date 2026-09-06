@@ -1513,14 +1513,19 @@ store entry, even after the original library item is removed. The renderer reads
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
 `registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
 optional **Clean up project files** preference is on, removing a library item deletes
-its generated stem/sample/recording WAV and then prunes the per-source folder once nothing
-but the
+its generated WAV — a stem, a sample, a split channel, a recording or a baked scratch —
+and then prunes the per-source folder once nothing but the
 artifacts that removal took remains in it (another still-referenced stem/sample, or any
 file the app did not generate, keeps the folder) — all via the **audio backend** over the
 bridge (`LIBRARY_DELETE_ARTIFACTS { paths }`), which re-confines every path to the
-project's `stems/`, `samples/`, `channels/` and `recordings/` artifact trees so a user's
-original imported audio is never
-touched. The backend counts the folder's files **before** deleting, and when its own
+project's `stems/`, `samples/`, `channels/`, `recordings/` and `scratches/` artifact
+trees so a user's original imported audio is never
+touched. A baked scratch is the one case where the folder is deliberately kept: its
+`scratches/<patternId>/` folder also holds `source.wav`, the self-contained snapshot that
+lets the pattern be re-edited after its original source is gone. That snapshot belongs to
+the **pattern**, which is project data and outlives its bakes, so it is never one of
+`paths` and the foreign-file count below is what preserves it.
+The backend counts the folder's files **before** deleting, and when its own
 artifacts are the only contents it removes the whole directory in one `deleteRecursively`
 (no delete-then-prune window). It first clears the folder's **read-only attribute** —
 sync clients such as OneDrive stamp synced folders read-only, and Windows refuses
@@ -3776,14 +3781,19 @@ anchor and an optional end. Two of them anchor themselves, so only the range
 window can be invalidated: chosen with the selection since cleared, it falls back
 to the playhead rather than recording over a span the user can no longer see. The
 optional count-in is
-one bar or none — a second bar was a choice nobody needed to make — and is the
-existing metronome over a preroll: the transport simply starts early and the
-preroll is trimmed at finalise. A preroll cannot run before the start of the
-project, so when the anchor sits inside the first bar the *anchor* moves out to
-the bar line rather than the count-in being silently shortened away
-(`resolveCountInAnchorMs`) — the recording starts one bar in, which is what a
-count-in asks for, and is why a counted-in **From Start** take begins at the
-second bar. A range recording keeps its anchor: its length is what makes
+one bar or none — a second bar was a choice nobody needed to make — and it is
+stationary: it costs the take nothing. The transport is parked at the anchor for
+the counted beats and only starts, with the writer attached, once the count
+expires, so the anchor is exactly what the window asked for and a counted-in
+**From Start** take begins at the top of the project (ADR 0030, Amendment 11).
+Nothing is captured during the count, so there is no preroll to trim, and
+stopping mid-count abandons the count rather than finalising a take of no
+samples. The click needs its own path for this: `MeteringSource` renders the
+metronome only when the transport advanced during the block, so a count-in drives
+the same click off a free-running sample counter instead
+(`AudioEngine::startCountInClick`). The audio callback still runs while stopped,
+because `OutputKeepAlive` holds the endpoint open, so the click is audible with
+nothing playing. A range recording keeps its anchor: its length is what makes
 its claimed beat count true (ADR 0024), so moving it would misreport the tempo.
 A session only ever *borrows* the click, and it borrows it in both
 directions: `sessionMetronomeEnabled` forces it on through a count-in and off
@@ -3897,9 +3907,8 @@ the waveform drawn while a take rolls is built from the `RECORD_INPUT_LEVEL`
 meter the backend already broadcasts: one column per ~33 ms tick, sampled on a
 RAF loop into a fixed-size ring (`liveWaveform.ts`), so a long take costs a fixed
 amount of memory. Nothing is drawn during a count-in — the columns start at the
-take itself, so a count-in reads as counting in to something rather than as a
-take already under way, even though the capture runs through the preroll so it
-can be trimmed for latency at finalise. The take is drawn from the left edge
+take itself, which is now simply true rather than arranged for: nothing is
+captured until the count expires. The take is drawn from the left edge
 and, once it is longer
 than the view has columns for, `readFittedColumns` summarises it — each drawn
 column takes the loudest of the columns it covers — so a recording is always
@@ -3907,7 +3916,15 @@ shown end to end rather than scrolling its own start out of sight. It is a
 picture of the input, not of the file — the real waveform, drawn from the peaks
 cache, arrives with the finished recording. In music mode `liveBeatFractions`
 draws the project's beat grid across the same span, measured from the start of
-the take. Both dialog waveforms take their colours from the shared
+the take. Both dialog waveforms scale their loudest peak to fill the box
+(`waveformFillScale`, headroom 0.94, boost capped at 8×), so a take does not
+change size the moment it stops rolling, and a mic take at a correct level — with
+sample values genuinely several times smaller than a limited commercial track
+that sounds equally loud — is still readable as a shape. The cap stops a
+near-silent take being drawn as a performance, and silence stays flat rather than
+having its noise bed amplified. The timeline is deliberately *not* fitted this
+way: one shared scale across every clip is what lets lanes be compared by eye.
+Both dialog waveforms take their colours from the shared
 `waveformPalette`, which the Clip Editor's Pixi theme also derives from, so every
 waveform in Silverdaw is drawn the same way.
 
@@ -3983,7 +4000,8 @@ holds the dialog open, because closing then would race the `SAMPLE_SAVED` ack.
 
 **Finalise.** Input and output are two unrelated clocks, so latency and drift
 are corrected **once, offline**, in `finaliseRecording` on a worker thread:
-round-trip latency (plus any count-in) is trimmed from the head, and clock drift
+round-trip latency is trimmed from the head (a count-in captures nothing, so
+there is no preroll to remove), and clock drift
 is corrected by resampling to the ratio measured from the capture callback's
 own tick stamps. Streamed in blocks, so a long recording never has to fit in
 memory. A recording over a range selection is also trimmed at the tail to the

@@ -51,10 +51,11 @@ export function cleanupRemovedItemFiles(
 }
 
 /**
- * Capture the deletable-file info for a library item before it is removed. Only stems
- * and saved samples own a generated WAV in the project folders; a plain imported
- * source's file is the user's own and is never deleted (the media GUID may still be
- * cleaned up if it becomes orphaned).
+ * Capture the deletable-file info for a library item before it is removed. Only items
+ * that own a generated WAV in the project folders — a stem, a split channel, a saved
+ * sample, a recording or a baked scratch — have one to delete; a plain imported source's
+ * file is the user's own and is never deleted (the media GUID may still be cleaned up if
+ * it becomes orphaned).
  */
 export function removedItemFileInfo(
   item: LibraryItem,

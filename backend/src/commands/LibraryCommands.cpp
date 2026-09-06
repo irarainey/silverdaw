@@ -207,11 +207,11 @@ DeferredFolderPruner& deferredFolderPruner()
     return instance;
 }
 
-// Delete a removed library item's generated stem/sample/recording artifact files. Every
-// path is re-validated against the project's own artifact trees, so a user's original
-// imported source can never be removed. The decision is made by counting the per-source
-// folder's
-// files BEFORE deleting anything: if the files we were asked to remove are the folder's
+// Delete a removed library item's generated stem / sample / recording / baked-scratch
+// artifact files. Every path is re-validated against the project's own artifact trees, so
+// a user's original imported source can never be removed. The decision is made by counting
+// the per-source folder's files BEFORE deleting anything: if the files we were asked to
+// remove are the folder's
 // ONLY contents, the whole directory is removed in one `deleteRecursively` (files + dir
 // together) — this avoids leaving a just-deleted WAV in Windows "delete-pending" limbo
 // that would make the folder look non-empty and block its removal. If other files remain
@@ -240,6 +240,12 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
     // take its file with it — but it lives in its own artifact folder (ADR 0030), which
     // would otherwise fail the containment test below and be silently kept.
     const auto recordingsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "recordings");
+    // Same for a baked scratch (ADR 0022): it is a sample-kind item in `scratches/<patternId>/`.
+    // That folder also holds `source.wav` — the self-contained snapshot that lets the pattern
+    // be re-edited after its original source is gone. The pattern is project data and outlives
+    // its bakes, so `source.wav` is never one of `paths`; the foreign-file check below is what
+    // keeps it (and therefore the folder) when the last bake is removed.
+    const auto scratchesRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "scratches");
 
     // Group the requested deletions by their per-source folder (a direct child of a root),
     // WITHOUT deleting yet — so the folder's file count is read before any file goes into
@@ -254,7 +260,7 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
 
         const juce::File file(path);
         if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot) && ! file.isAChildOf(channelsRoot)
-            && ! file.isAChildOf(recordingsRoot))
+            && ! file.isAChildOf(recordingsRoot) && ! file.isAChildOf(scratchesRoot))
         {
             silverdaw::log::warn("bridge",
                                  "LIBRARY_DELETE_ARTIFACTS refusing path outside artifact roots: " + path);
@@ -265,7 +271,7 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
 
         const auto folder = file.getParentDirectory();
         if (folder.getParentDirectory() == stemsRoot || folder.getParentDirectory() == samplesRoot
-            || folder.getParentDirectory() == channelsRoot)
+            || folder.getParentDirectory() == channelsRoot || folder.getParentDirectory() == scratchesRoot)
         {
             requestedByFolder[folder.getFullPathName()].add(file.getFileName());
         }

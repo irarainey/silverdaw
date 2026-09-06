@@ -95,7 +95,11 @@ void RecordingSessionController::close(const juce::String& sessionId)
     if (session->status == "countIn" || session->status == "recording")
     {
         // An abandoned session leaves nothing behind, not even a file.
-        if (engine != nullptr) engine->stop();
+        if (engine != nullptr)
+        {
+            engine->cancelCountInClick();
+            engine->stop();
+        }
         tap.setWriter(nullptr);
         tap.waitForQuiescence();
         if (writer != nullptr) writer->abort();
@@ -340,17 +344,14 @@ bool RecordingSessionController::start(const juce::String& sessionId,
 
     refreshWindow();
 
-    const double countInMs = session->countInBars * barLengthMs();
-    session->anchorMs =
-        resolveCountInAnchorMs(session->anchorMs, countInMs, session->windowEndMs.has_value());
+    const double countInMs = countInLengthMs(session->countInBars, barLengthMs());
 
     const double sampleRate = device.getSampleRate();
     const double windowSeconds =
         session->windowEndMs.has_value()
             ? juce::jmax(1.0, (*session->windowEndMs - session->anchorMs) / 1000.0)
             : kMaxRecordingSeconds;
-    const auto expectedSamples =
-        static_cast<juce::int64>((windowSeconds + countInMs / 1000.0 + 1.0) * sampleRate);
+    const auto expectedSamples = static_cast<juce::int64>((windowSeconds + 1.0) * sampleRate);
 
     auto pending = std::make_shared<RecordingWriter>();
     juce::String error;
@@ -370,24 +371,54 @@ bool RecordingSessionController::start(const juce::String& sessionId,
     session->errorCode = {};
     session->error = {};
 
-    // Count-in is the existing metronome over a preroll, not a new audio path:
-    // the transport simply starts early and the preroll is trimmed at finalise.
-    session->transportStartMs = juce::jmax(0.0, session->anchorMs - countInMs);
+    // The take starts exactly where the user asked. A count-in no longer moves the
+    // transport, so there is no preroll in front of the anchor and nothing to trim
+    // but the round-trip latency (ADR 0030, Amendment 11).
+    session->transportStartMs = session->anchorMs;
+    session->countInMs = countInMs;
 
     tap.resetCaptureStats();
     tap.setMaxSamples(static_cast<juce::int64>(kMaxRecordingSeconds * sampleRate));
-    tap.setWriter(writer->getThreadedWriter());
 
-    // Status (and so the click) is settled before the transport rolls: a count-in
-    // whose first beat is at the preroll's start must not miss it by a block.
-    session->status = session->transportStartMs < session->anchorMs ? "countIn" : "recording";
-    applySessionMetronome();
+    if (countInMs > 0.0)
+    {
+        // Count in from a standstill: the playhead sits on the anchor while the click
+        // counts, and nothing is captured until it finishes — a count-in is not part of
+        // the performance. Status (and so the click) is settled first so the count's
+        // first beat is not missed by a block.
+        session->status = "countIn";
+        applySessionMetronome();
+        engine->setPositionMs(session->anchorMs, true);
+        engine->startCountInClick(session->countInBars * kBeatsPerBar);
+    }
+    else
+    {
+        session->status = "recording";
+        applySessionMetronome();
+        tap.setWriter(writer->getThreadedWriter());
+        engine->setPositionMs(session->anchorMs, true);
+        engine->play();
+    }
 
-    engine->setPositionMs(session->transportStartMs, true);
-    engine->play();
     session->rollTicks = juce::Time::getHighResolutionTicks();
     if (onStateChanged) onStateChanged();
     return true;
+}
+
+/** The count-in has finished: capture and the arrangement both start, together, on
+ *  the anchor. Called from the timer tick that saw the click expire. */
+void RecordingSessionController::beginRecordingAfterCountIn()
+{
+    if (! session.has_value() || engine == nullptr || writer == nullptr) return;
+
+    tap.resetCaptureStats();
+    tap.setWriter(writer->getThreadedWriter());
+    // `setStatus` hands the borrowed click straight back, so the click through the
+    // take itself is the session's own setting.
+    setStatus("recording");
+    engine->setPositionMs(session->anchorMs, true);
+    engine->play();
+    session->rollTicks = juce::Time::getHighResolutionTicks();
 }
 
 bool RecordingSessionController::stop(const juce::String& sessionId)
@@ -395,8 +426,39 @@ bool RecordingSessionController::stop(const juce::String& sessionId)
     if (! session.has_value() || session->sessionId != sessionId) return false;
     if (session->status != "countIn" && session->status != "recording") return false;
 
+    if (session->status == "countIn")
+    {
+        // Nothing has been captured yet, so there is no take to finalise — stopping
+        // during the count is a change of mind, not a failed recording. Finalising a
+        // zero-sample file here would report "the input delivered no signal", which is
+        // both wrong and alarming.
+        abandonCountIn();
+        return true;
+    }
+
     finishCapture({}, {});
     return true;
+}
+
+/** Drop a take that never started: cancel the click, throw the empty file away and go
+ *  back to idle exactly as if Record had not been pressed. */
+void RecordingSessionController::abandonCountIn()
+{
+    if (! session.has_value()) return;
+
+    if (engine != nullptr)
+    {
+        engine->cancelCountInClick();
+        engine->stop();
+    }
+    tap.setWriter(nullptr);
+    if (writer != nullptr) writer->abort();
+    writer.reset();
+
+    session->recordingId = {};
+    setStatus(device.isOpen() ? "idle" : "error");
+    refreshWindow();
+    if (onStateChanged) onStateChanged();
 }
 
 void RecordingSessionController::finishCapture(const juce::String& errorCode,
@@ -404,7 +466,11 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
 {
     if (! session.has_value()) return;
 
-    if (engine != nullptr) engine->stop();
+    if (engine != nullptr)
+    {
+        engine->cancelCountInClick();
+        engine->stop();
+    }
 
     // Detach here, but let the caller flush the writer: draining the ThreadedWriter
     // and waiting for the capture callback to quiesce must not block the message
@@ -434,12 +500,13 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     pending.musical = recordingModeIsMusical(session->recordingMode);
     pending.cleanup = session->cleanupEnabled;
 
-    // The performer heard the arrangement late and Silverdaw received them late,
-    // so the round trip is trimmed off the head along with the count-in.
+    // The performer heard the arrangement late and Silverdaw received them late, so the
+    // round trip is trimmed off the head. There is no count-in preroll to trim any more:
+    // the count-in clicks with the transport parked and capture only starts after it.
     const double latencyMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
                              + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
     pending.latencyMs = latencyMs;
-    pending.headTrimMs = (session->anchorMs - session->transportStartMs) + latencyMs;
+    pending.headTrimMs = latencyMs;
 
     // Only trust the measured rate over a long enough span; one buffer of the
     // captured total was never bracketed by the two stamps.
@@ -630,11 +697,12 @@ void RecordingSessionController::timerCallback()
     }
 
     const double positionMs = engine != nullptr ? engine->getPositionMs() : 0.0;
-    if (session->status == "countIn" && positionMs >= session->anchorMs)
+    if (session->status == "countIn")
     {
-        // The count-in only borrows the metronome; `setStatus` hands it straight
-        // back, so the click through the take itself is the project's setting.
-        setStatus("recording");
+        // Nothing is captured and the playhead has not moved yet; the click expiring on
+        // the audio thread is what starts the take.
+        if (engine == nullptr || ! engine->isCountInClickActive()) beginRecordingAfterCountIn();
+        return;
     }
 
     if (tap.hasHitLengthCap()
@@ -714,20 +782,20 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
 
     const double sampleRate = juce::jmax(1.0, device.getSampleRate());
     const double capturedMs = static_cast<double>(tap.getCapturedSamples()) * 1000.0 / sampleRate;
-    const double countInMs = session->anchorMs - session->transportStartMs;
     if (session->status == "countIn")
     {
-        const double elapsed = engine != nullptr
-                                   ? juce::jmax(0.0, engine->getPositionMs() - session->transportStartMs)
-                                   : 0.0;
+        // The count-in runs on the audio thread with the transport parked, so what is
+        // left of it comes from the click itself, not from the playhead.
+        const double remaining = engine != nullptr ? engine->getCountInClickRemainingMs() : 0.0;
         const double bar = juce::jmax(1.0, barLengthMs());
         snapshot.countInBarsRemaining =
-            juce::jlimit(0, 2, static_cast<int>(std::ceil((countInMs - elapsed) / bar)));
+            juce::jlimit(0, 2, static_cast<int>(std::ceil(remaining / bar)));
         snapshot.recordedMs = 0.0;
     }
     else
     {
-        snapshot.recordedMs = juce::jmax(0.0, capturedMs - countInMs);
+        // Capture only starts once the count-in is over, so everything captured is take.
+        snapshot.recordedMs = juce::jmax(0.0, capturedMs);
     }
     return snapshot;
 }

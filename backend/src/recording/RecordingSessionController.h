@@ -32,21 +32,18 @@ constexpr double kMinInputGainDb = -24.0;
 constexpr double kMaxInputGainDb = 24.0;
 
 /**
- * Where a recording anchor has to sit for its count-in to fit.
+ * How long a count-in of `bars` lasts at `barMs`.
  *
- * A count-in is a preroll through the arrangement, so it needs `countInMs` of
- * arrangement in front of the anchor. Near the project start there is none —
- * always, for **From Start** — and shortening the preroll instead throws the
- * count-in away and records from the top. The anchor moves to the first bar line
- * that leaves room — the user asked to be counted in, not to start immediately.
- * A recording bounded by a range keeps its anchor: the window is the user's
- * explicit choice, and its length is what makes the beat count it claims true
- * (ADR 0024).
+ * A count-in clicks with the transport parked at the anchor, so it costs the
+ * arrangement nothing and needs nothing in front of the anchor: **From Start**
+ * counts you in from a standstill and then records from 0 ms, rather than
+ * spending the count travelling and starting a bar late (ADR 0030,
+ * Amendment 11). The anchor is always exactly where the user asked to record
+ * from.
  */
-constexpr double resolveCountInAnchorMs(double anchorMs, double countInMs, bool hasWindowEnd)
+constexpr double countInLengthMs(int bars, double barMs)
 {
-    if (countInMs <= 0.0 || hasWindowEnd || anchorMs >= countInMs) return anchorMs;
-    return countInMs;
+    return juce::jmax(0, bars) * juce::jmax(0.0, barMs);
 }
 
 /**
@@ -54,7 +51,7 @@ constexpr double resolveCountInAnchorMs(double anchorMs, double countInMs, bool 
  * given the session's own **Click While Recording** setting.
  *
  * A session only ever *borrows* the click, and it borrows it in both directions:
- * a count-in forces it on for the preroll, and review forces it off — the click
+ * a count-in forces it on for the count, and review forces it off — the click
  * is a recording aid, so a take played back against the arrangement must be
  * heard as it was captured and not over a click that sounds like part of it.
  * Everywhere else the session's own setting stands, including through the take
@@ -343,6 +340,9 @@ class RecordingSessionController final : private juce::Timer
         double anchorMs = 0.0;
         std::optional<double> windowEndMs;
         double transportStartMs = 0.0;
+        /** How long this take's count-in ran for. The transport is parked throughout it,
+         *  so this is a UI/reporting value only — nothing is captured until it expires. */
+        double countInMs = 0.0;
         juce::int64 rollTicks = 0;
         juce::String recordingId;
         juce::String suggestedName;
@@ -355,6 +355,8 @@ class RecordingSessionController final : private juce::Timer
     void openDevice(const juce::String& typeName, const juce::String& deviceName);
     void closeDevice();
     void finishCapture(const juce::String& errorCode, const juce::String& message);
+    void beginRecordingAfterCountIn();
+    void abandonCountIn();
     void setStatus(const juce::String& status);
     void applySessionMetronome();
     void applySessionBacking();

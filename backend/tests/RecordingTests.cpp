@@ -182,21 +182,18 @@ void testCaptureTapStopsAtLengthCap()
     dir.deleteRecursively();
 }
 
-void testCountInMovesAnAnchorThatHasNoRoomForIt()
+void testCountInLeavesTheAnchorAloneAndCostsTheTakeNothing()
 {
-    using silverdaw::recording::resolveCountInAnchorMs;
+    using silverdaw::recording::countInLengthMs;
     constexpr double bar = 2000.0;
 
-    requireNear(resolveCountInAnchorMs(0.0, bar, false), bar, 0.0,
-                "a count-in at the project start must move the anchor, not vanish");
-    requireNear(resolveCountInAnchorMs(500.0, bar, false), bar, 0.0,
-                "an anchor inside the first bar moves to the bar line the count-in needs");
-    requireNear(resolveCountInAnchorMs(8000.0, bar, false), 8000.0, 0.0,
-                "an anchor with room in front of it is left exactly where it was");
-    requireNear(resolveCountInAnchorMs(0.0, 0.0, false), 0.0, 0.0,
-                "no count-in means no reason to move the anchor");
-    requireNear(resolveCountInAnchorMs(0.0, bar, true), 0.0, 0.0,
-                "a range recording keeps its anchor: the window is what makes its beats true");
+    // The count-in clicks with the transport parked, so its length is simply the bars
+    // asked for — it never has to be found in front of the anchor, and **From Start**
+    // still records from 0 ms instead of starting a bar late.
+    requireNear(countInLengthMs(1, bar), bar, 0.0, "one bar of count-in is one bar long");
+    requireNear(countInLengthMs(0, bar), 0.0, 0.0, "no count-in is no time at all");
+    requireNear(countInLengthMs(-1, bar), 0.0, 0.0, "a negative bar count cannot borrow time");
+    requireNear(countInLengthMs(1, 0.0), 0.0, 0.0, "an unusable tempo yields no count-in");
 }
 
 void testRecordWindowAnchorsWhereTheModeSays()
@@ -793,8 +790,8 @@ void addRecordingTests(std::vector<TestCase>& tests)
     tests.push_back({"capture tap detects silent input", testCaptureTapDetectsSilentInput});
     tests.push_back({"capture tap stops at length cap", testCaptureTapStopsAtLengthCap});
     tests.push_back({"capture tap applies input gain", testCaptureTapAppliesInputGain});
-    tests.push_back({"recording count-in moves an anchor with no room for it",
-                     testCountInMovesAnAnchorThatHasNoRoomForIt});
+    tests.push_back({"recording count-in leaves the anchor alone",
+                     testCountInLeavesTheAnchorAloneAndCostsTheTakeNothing});
     tests.push_back({"recording window anchors where its mode says",
                      testRecordWindowAnchorsWhereTheModeSays});
     tests.push_back({"recording session borrows the metronome in both directions",

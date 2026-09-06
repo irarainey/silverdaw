@@ -43,6 +43,26 @@ void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
     masterMeter.consumePeaks(outL, outR);
 }
 
+void AudioEngine::startCountInClick(double beats)
+{
+    masterMeter.beginCountIn(beats, metronome.getBpm());
+}
+
+void AudioEngine::cancelCountInClick()
+{
+    masterMeter.cancelCountIn();
+}
+
+bool AudioEngine::isCountInClickActive() const
+{
+    return masterMeter.isCountInActive();
+}
+
+double AudioEngine::getCountInClickRemainingMs() const
+{
+    return masterMeter.getCountInRemainingMs();
+}
+
 bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR)
 {
     return busGraph.consumeTrackPeaks(trackId, outL, outR);

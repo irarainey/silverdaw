@@ -645,3 +645,31 @@ that gives every other saved sample its grid never runs.
 take, exactly as it already carries `musicalBeats`, and the renderer
 synthesises the rigid grid from them once the item exists. Message ordering stops
 mattering, which is the same reason the `musicalBeats` field exists.
+
+### Amendment 11 — The count-in is stationary
+
+A count-in was costing the take the bars it counted. `resolveCountInAnchorMs`
+moved the anchor forward whenever there was no arrangement in front of it to
+count over — which, for the From Start window, is always — so a four-beat count
+started the recording a bar into the timeline and left that bar empty.
+
+The count-in no longer moves the anchor and no longer rolls the transport. The
+transport is parked at the anchor, the click runs for the counted beats, and only
+when it expires does the writer attach and the transport start. The anchor is
+whatever the window asked for, and the take begins exactly there.
+
+The click needed its own path to make this work. `MeteringSource` renders the
+metronome only when the transport advanced during the block, so a parked
+transport was silent; a count-in now drives the same click off a free-running
+sample counter that does not consult the clock. The audio callback still runs
+while stopped — `OutputKeepAlive` holds the endpoint open — so the click is
+audible with nothing playing.
+
+Two consequences follow. Nothing is captured during the count-in, so the preroll
+trim is gone and `headTrimMs` is round-trip latency alone; and stopping during a
+count-in abandons it rather than finalising a take of zero samples, which would
+otherwise have failed the silent-input check and reported that the input
+delivered no signal.
+
+The monitor stays audible through the count-in, so a performer can hear
+themselves against the click before the take starts.

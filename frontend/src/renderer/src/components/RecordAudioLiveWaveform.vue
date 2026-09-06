@@ -21,6 +21,7 @@ import {
   LIVE_COLUMN_MS
 } from '@/lib/recording/liveWaveform'
 import { DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
+import { waveformFillScale } from '@/lib/waveform/fillScale'
 import {
   WAVEFORM_BAR_ALPHA,
   WAVEFORM_BEAT_ALPHA,
@@ -99,10 +100,15 @@ function draw(): void {
   if (buffer.count > 0) ctx.fillRect(0, mid, width, Math.max(1, ratio))
 
   // Left-aligned and drawn edge to edge with no gap between columns, so the take
-  // reads as one continuous shape like every other waveform in the app.
+  // reads as one continuous shape like every other waveform in the app. Scaled to
+  // fill the box exactly as the review waveform is, so a take does not change size
+  // the moment it stops rolling (see `fillScale.ts`).
+  let loudest = 0
+  for (const magnitude of columns) loudest = Math.max(loudest, magnitude)
+  const scale = waveformFillScale(loudest)
   ctx.fillStyle = WAVEFORM_COLORS.wave
   for (let index = 0; index < columns.length; index += 1) {
-    const magnitude = columns[index] ?? 0
+    const magnitude = Math.min(1, (columns[index] ?? 0) * scale)
     const half = Math.max(ratio, magnitude * mid)
     ctx.fillRect(index * columnWidth, mid - half, columnWidth, half * 2)
   }

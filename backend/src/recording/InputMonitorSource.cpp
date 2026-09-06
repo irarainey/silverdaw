@@ -9,7 +9,7 @@ namespace
 constexpr double kRingSeconds = 0.25;
 } // namespace
 
-void InputMonitorSource::prepareToPlay(int, double outputSampleRate)
+void InputMonitorSource::prepareToPlay(int /*samplesPerBlockExpected*/, double outputSampleRate)
 {
     sampleRate = outputSampleRate > 0.0 ? outputSampleRate : 48000.0;
     const int capacity = juce::jmax(1024, static_cast<int>(sampleRate * kRingSeconds));

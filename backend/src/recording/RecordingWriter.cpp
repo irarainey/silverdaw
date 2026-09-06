@@ -10,7 +10,7 @@ constexpr int kBitsPerSample = 24;
 constexpr int kFifoBlocks = 32768;
 // Refuse to start unless the volume can hold the recording plus this margin, so
 // a full disk is reported before the performance rather than after it.
-constexpr juce::int64 kFreeSpaceMarginBytes = 32 * 1024 * 1024;
+constexpr juce::int64 kFreeSpaceMarginBytes = juce::int64{32} * 1024 * 1024;
 } // namespace
 
 RecordingWriter::RecordingWriter() = default;
@@ -94,7 +94,7 @@ void RecordingWriter::abort()
     writer.reset();
     backgroundThread.stopThread(2000);
     outputFile.deleteFile();
-    outputFile = {};
+    outputFile = juce::File();
 }
 
 } // namespace silverdaw::recording

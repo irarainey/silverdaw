@@ -106,6 +106,15 @@ class AudioEngine : private AudioEngineGraphState,
     void setMetronomeEnabled(bool enabled);
     void setMetronomeBpm(double bpm);
 
+    // Recording count-in click. Clicks for `beats` at the current metronome tempo with the
+    // transport left exactly where it is, so the performer is counted in *to* the anchor rather
+    // than carried past it (ADR 0030, Amendment 11). The count-in runs on the audio thread and
+    // expires on its own; the caller polls `isCountInClickActive()` to know when to roll.
+    void startCountInClick(double beats);
+    void cancelCountInClick();
+    bool isCountInClickActive() const;
+    double getCountInClickRemainingMs() const;
+
     void consumeMasterPeaks(float& outL, float& outR);
 
     bool consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR);
