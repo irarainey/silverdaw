@@ -273,7 +273,7 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
             }
             if (!foundType)
             {
-                return juce::String("Audio device type '") + wantType + "' not found";
+                return juce::String("Audio output device type '") + wantType + "' not found";
             }
             deviceManager.setCurrentAudioDeviceType(wantType, /*treatAsChosenDevice*/ false);
         }

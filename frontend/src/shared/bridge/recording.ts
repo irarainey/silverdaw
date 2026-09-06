@@ -334,6 +334,9 @@ export const RecordingReadyPayloadSchema = z.object({
   durationMs: z.number().nonnegative(),
   sampleRate: z.number().positive(),
   channelCount: RecordingChannelCountSchema,
+  /** True when the file is a stereo duplicate of a mono capture rather than the
+   *  capture itself, so the review's option shows what the take actually is. */
+  stereoDuplicated: z.boolean().optional().default(false),
   anchorMs: z.number().nonnegative(),
   /** Whether the take is being committed as musical material. False for a
    *  `simple` recording, which gets no tempo and no beat count. */
@@ -381,6 +384,21 @@ export const RecordingCommitPayloadSchema = z.object({
   clipId: z.string().min(1).optional()
 })
 export type RecordingCommitPayload = z.infer<typeof RecordingCommitPayloadSchema>
+
+/**
+ * `RECORD_RECORDING_SET_STEREO`. Switches the finished take between the mono
+ * capture and a stereo duplicate of it, before anything has been saved. The
+ * backend answers with a fresh `RECORD_RECORDING_READY`, so the review pane
+ * reloads the waveform and auditions the file that will actually be kept
+ * (ADR 0030, Amendment 9). Ignored for a take that was captured in stereo.
+ */
+export const RecordingSetStereoPayloadSchema = z.object({
+  protocolVersion: z.literal(RECORDING_PROTOCOL_VERSION),
+  sessionId: z.string().min(1),
+  recordingId: z.string().min(1),
+  enabled: z.boolean()
+})
+export type RecordingSetStereoPayload = z.infer<typeof RecordingSetStereoPayloadSchema>
 
 // ─── Guards ─────────────────────────────────────────────────────────────────
 

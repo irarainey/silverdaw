@@ -281,7 +281,7 @@ function onScrubAudioChange(identifier: string, event: Event): void {
             d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
           />
         </svg>
-        {{ rescanning ? 'Rescanning…' : 'Rescan devices' }}
+        {{ rescanning ? 'Rescanning…' : 'Rescan MIDI inputs' }}
       </button>
     </div>
     <p

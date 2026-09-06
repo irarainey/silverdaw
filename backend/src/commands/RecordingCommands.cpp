@@ -34,6 +34,20 @@ constexpr int kRecordingProtocolVersion = 1;
 
 // The finished recording, waiting for the user to keep or discard it. It is a
 // file on disk and nothing else: no library item exists until the commit.
+
+/** One writable form of the take: the file plus the peaks already computed for
+ *  it, so switching between the mono capture and its stereo duplicate never
+ *  recomputes what is already on disk. */
+struct TakeVariant
+{
+    juce::File file;
+    int channelCount = 0;
+    juce::File cacheFile;
+    int peakCount = 0;
+    int laneCount = 0;
+    double peaksPerSecond = 0.0;
+};
+
 struct FinishedRecording
 {
     juce::String sessionId;
@@ -50,6 +64,12 @@ struct FinishedRecording
     /** Committed as musical material (project tempo, beat markers) or as a plain
      *  sample with neither. */
     bool musical = true;
+    /** True while `file` is the stereo duplicate of a mono capture. */
+    bool stereoDuplicated = false;
+    /** The take's other form, once it has been built: the mono capture while the
+     *  duplicate is in hand, and the duplicate again after switching back. Kept so
+     *  the choice is instant and reversible, and deleted with the take. */
+    std::optional<TakeVariant> alternate;
     juce::File cacheFile;
     int peakCount = 0;
     int laneCount = 0;
@@ -58,6 +78,23 @@ struct FinishedRecording
     double driftPpm = 0.0;
     juce::int64 droppedSamples = 0;
 };
+
+/** The form the take is currently in, ready to be put aside for the other one. */
+TakeVariant currentVariant(const FinishedRecording& take)
+{
+    return {take.file,      take.channelCount, take.cacheFile,
+            take.peakCount, take.laneCount,    take.peaksPerSecond};
+}
+
+void adoptVariant(FinishedRecording& take, const TakeVariant& variant)
+{
+    take.file = variant.file;
+    take.channelCount = variant.channelCount;
+    take.cacheFile = variant.cacheFile;
+    take.peakCount = variant.peakCount;
+    take.laneCount = variant.laneCount;
+    take.peaksPerSecond = variant.peaksPerSecond;
+}
 
 // One recording session at a time, message-thread owned. Held here rather than
 // in the engine because capture is deliberately outside the engine's device
@@ -79,6 +116,8 @@ void discardFinished()
     if (auto& pending = finished(); pending.has_value())
     {
         pending->file.deleteFile();
+        // The form the user did not settle on is a working file and goes with it.
+        if (pending->alternate.has_value()) pending->alternate->file.deleteFile();
         pending.reset();
     }
 }
@@ -193,6 +232,9 @@ void broadcastReady(BridgeServer& bridge, const FinishedRecording& ready)
     obj->setProperty("durationMs", ready.durationMs);
     obj->setProperty("sampleRate", ready.sampleRate);
     obj->setProperty("channelCount", ready.channelCount);
+    // What the take is right now, so the review's stereo option shows the truth
+    // rather than what the renderer last asked for.
+    obj->setProperty("stereoDuplicated", ready.stereoDuplicated);
     obj->setProperty("anchorMs", ready.anchorMs);
     obj->setProperty("bpm", ready.bpm);
     obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
@@ -509,6 +551,73 @@ void handleRecordSessionClose(const juce::var& payload, BridgeServer& bridge)
     broadcastState(bridge);
 }
 
+void handleRecordRecordingSetStereo(const juce::var& payload, AudioEngine& engine,
+                                    BridgeServer& bridge, const PeaksCache& cache)
+{
+    auto& pending = finished();
+    const auto recordingId = readOptionalString(payload, "recordingId").value_or(juce::String{});
+    if (! pending.has_value()) return;
+    if (recordingId.isNotEmpty() && pending->recordingId != recordingId) return;
+
+    const bool enabled = static_cast<bool>(payload.getProperty("enabled", false));
+    if (enabled == pending->stereoDuplicated) return;
+    // Only a mono capture has a duplicate to offer; a stereo take is already what
+    // it is going to be.
+    if (enabled && pending->channelCount != 1) return;
+
+    // The other form is built once and then kept: switching back and forth is a
+    // decision the user is allowed to change their mind about, and rewriting the
+    // file each time would make it feel like it costs something.
+    if (pending->alternate.has_value())
+    {
+        const auto next = *pending->alternate;
+        pending->alternate = currentVariant(*pending);
+        adoptVariant(*pending, next);
+        pending->stereoDuplicated = enabled;
+    }
+    else
+    {
+        if (! enabled) return;
+        const auto destination = pending->file.getSiblingFile(
+            pending->file.getFileNameWithoutExtension() + " (stereo).wav");
+        if (! recording::duplicateMonoToStereo(pending->file, destination,
+                                               engine.getFormatManager()))
+        {
+            log::warn("recording", "could not duplicate the take to stereo");
+            return;
+        }
+        const auto peaks = waveform::computePeaks(destination, engine.getFormatManager(),
+                                                  waveform::kDefaultPeaksPerSecond);
+        if (peaks.peaks.empty())
+        {
+            destination.deleteFile();
+            log::warn("recording", "stereo duplicate has no waveform; keeping the mono take");
+            return;
+        }
+        cache.store(destination, peaks);
+
+        TakeVariant stereo;
+        stereo.file = destination;
+        stereo.channelCount = 2;
+        stereo.cacheFile = cache.getCacheFilePath(destination, waveform::kDefaultPeaksPerSecond);
+        stereo.peakCount = peaks.bucketsPerLane();
+        stereo.laneCount = peaks.laneCount;
+        stereo.peaksPerSecond = effectivePeaksPerSecond(peaks);
+
+        pending->alternate = currentVariant(*pending);
+        adoptVariant(*pending, stereo);
+        pending->stereoDuplicated = true;
+    }
+
+    // The review is auditioning a file that has just been swapped underneath it,
+    // so the take is re-announced: the renderer reloads the waveform and plays the
+    // form that will actually be saved.
+    log::info("recording", juce::String("take now ")
+                               + (pending->stereoDuplicated ? "stereo" : "mono") + " for "
+                               + pending->recordingId);
+    broadcastReady(bridge, *pending);
+}
+
 void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
                                  ProjectState& projectState, BridgeServer& bridge,
                                  juce::ThreadPool& peakPool, const PeaksCache& cache,
@@ -533,6 +642,8 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     }
 
     const auto ready = *pending;
+    // The form that was not kept is a working file, not a library item.
+    if (pending->alternate.has_value()) pending->alternate->file.deleteFile();
     const auto name = tryGetRequiredString(payload, "name").value_or(ready.suggestedName);
     const auto destination =
         tryGetRequiredString(payload, "destination").value_or(juce::String{"library"});
@@ -572,6 +683,18 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     obj->setProperty("laneCount", ready.laneCount);
     obj->setProperty("peaksPerSecond", ready.peaksPerSecond);
     obj->setProperty("audioType", ready.musical ? "music" : "simple");
+    // The grid travels with the announcement, not only in the LIBRARY_ITEM_ANALYSIS
+    // that `applyManualTempo` has already broadcast: that one arrives *before* this
+    // message creates the item in the renderer, and analysis for an item the
+    // renderer does not have yet is dropped. A recording has no source item to
+    // inherit a grid from either, so without this the take would appear with no
+    // tempo and no beat markers until the project was reloaded.
+    if (ready.musical)
+    {
+        obj->setProperty("bpm", ready.bpm);
+        obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
+        if (ready.musicalBeats.has_value()) obj->setProperty("musicalBeats", *ready.musicalBeats);
+    }
     obj->setProperty("recordingOrigin", true);
     bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
 

@@ -11,6 +11,11 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
+The feature shipped in 1.9.0. Ten amendments follow the decision, several of
+which reverse a position taken here — software monitoring and "every recording
+is musical" most of all. **Read the amendments before relying on anything in the
+Decision section**; where the two disagree, the amendment is what was built.
+
 Three facts in the current codebase shape the whole design.
 
 **Everything downstream of import assumes a finished file.** A `CLIP` references
@@ -299,6 +304,14 @@ consent is absent is a device that opens and yields **silence**, which looks
 exactly like a broken feature, so it must be detected and reported plainly.
 Confirming the precise packaged behaviour is part of the spike below.
 
+> **Verified in 1.9.0.** The capability is declared and the packaged behaviour
+> is now known. Installing the signed `1.9.0` package registers
+> `<DeviceCapability Name="microphone"/>` and Windows creates the consent-store
+> entry `Silverdaw_<hash>` set to `Prompt`. There is **no install-time
+> permission dialog** — Windows resolves a device capability at first use. The
+> silence failure path above therefore remains the primary safety net, because
+> the backend has no window for a consent prompt to attach to.
+
 **The device spike has been run, and it supports this decision.** A dev tool,
 `backend/tools/capture_probe/CaptureProbe.cpp` (built as `SilverdawCaptureProbe`
 under `SILVERDAW_BUILD_TESTS`), opens playback exactly as
@@ -502,3 +515,133 @@ had been abandoned that way was refused rather than replacing it. Closing with
 an empty id now means "whichever session is open", and opening retires an
 abandoned session first. An abandoned session was the one way the click could
 outlive the dialog.
+
+### Amendment 6 — The cleanup denoises first and expands second
+
+Amendment 3's cleanup was a broadband downward expander, and in use it did not
+sound like it did much. It could not: an expander turns the *whole* take down,
+and only once all of it has fallen below one threshold. It therefore never
+touches the bed underneath a held note or a spoken word — the bed only comes
+down when nothing else is happening — and in speech it barely closes at all,
+because the gaps between words are shorter than the envelope's release. Two
+implementation faults made it quieter still: the gain was smoothed with the
+release coefficient in *both* directions, so it also opened slowly and ducked
+the front of every phrase, and the release itself was long enough that a
+sub-half-second gap ended before the gain had closed.
+
+A hand-written spectral suppressor was written and rejected. It worked, but it
+duplicated a capability the repository already ships and had to guess a noise
+profile from the take, which is exactly the part that is hard to get right: on
+a take with no clear gap it mistook a sustained note for the bed and suppressed
+the performance.
+
+The cleanup now runs the chain the vocal stem cleanup already uses, in the same
+order and for the same reasons:
+
+1. The 80 Hz high-pass, unchanged. The denoiser was not trained on rumble.
+2. `VocalDenoiser` — the vendored RNNoise suppressor. This is the stage that
+   does the work. A network trained on speech in noise removes the bed from
+   *under* the performance, which is the part no expander can reach, and it is
+   run short of fully wet so a gap still sounds like a room rather than like a
+   mute.
+3. The expander, on what the denoiser left, keyed on the **residual** floor
+   measured after it. Its job is now only the bleed that survives between
+   phrases, which is a job an expander is actually good at. Its threshold has to
+   be re-measured: the floor from before the denoiser sits far above the bed
+   that is left, and would take the performance with it.
+
+The expander's two faults are fixed with it: the gain now moves on the attack
+when opening and the release when closing, and the release is short enough to be
+closed well inside the gap between two words.
+
+Reusing the stem denoiser rather than writing a second one is the whole point of
+the change. It is already tuned, already tested, already offline and
+worker-safe, already a guaranteed no-op when it fails, and it is the same
+problem — a vocal with a noise bed under it. The cleanup is still opt-in, still
+conservative, still skips a take that is already clean, and a cleanup that fails
+is still logged with the original take kept.
+
+### Amendment 7 — What a fresh dialog offers
+
+The defaults were assembled piecemeal as each control was added, and two of them
+inherited state rather than starting from a stated position. With nothing
+remembered — the first open of an app session — the dialog now offers:
+
+| Setting | Default | Why |
+| --- | --- | --- |
+| Record window | **From Start** | A take over the whole arrangement needs no setting up, and it is the only window that is always valid: the playhead and the range both depend on where the user happens to have left something. |
+| Count-in | None | Nothing that delays the take without being asked for. |
+| Click While Recording | **Off** | Was seeded from the project's metronome. A project that clicks while arranging is not a request to click through a take, and the inherited value made the click look like a setting the dialog had chosen. |
+| Backing | The arrangement | Every track the timeline is currently playing, mute and solo folded in, at unity — so the default sounds like the project does. Seeded by `open`, because it is the one default that cannot be a constant. |
+| Hear Yourself | Off | Monitoring routes an open microphone into the output; it has to be asked for. |
+| Recording mode | **Music** | A take laid over an arrangement is musical far more often than not, and the mode only adds tempo and beat markers — nothing is lost if the take turns out not to be. |
+| Clean Up Background Noise | Off | It changes the audio that is kept. A pass that alters the take must never run unasked. |
+
+`RecordingStateSnapshot`'s member initialisers state all of this in one place,
+bar the backing. The rule behind the two that changed: a default may inherit
+what the user can *see* (the arrangement they are recording against), but not
+what they will *hear* or *keep* without having chosen it.
+
+### Amendment 8 — The review has its own backing level
+
+The dialog's backing volume is a guide level: how far the arrangement has to come
+down for the performer to hear themselves over it. Reviewing the take at that
+same level is the wrong answer — the point of the review is hearing the take
+sitting in the arrangement, not hearing the guide mix again.
+
+The review pane therefore keeps its own remembered backing level, 100% until it
+is moved, applied when the pane mounts and handed back to the setup's level when
+it unmounts, so a retake plays to the guide mix again. Both sliders drive the one
+`setBackingGain` control: there is a single engine trim
+(`setArrangementMonitorGain`) and the two panes take turns holding it, rather
+than the protocol growing a second gain for a difference that only exists in the
+UI. Like every other borrow it is engine-only and gone the moment the dialog
+closes.
+
+The review waveform is drawn normalised for the same kind of reason: a take
+recorded at a sensible level peaks well below full scale, and drawn literally it
+is a thin line in a tall box. The loudest peak is scaled to 94% of the box, up to
+8x, and the file and its peaks cache are untouched.
+
+### Amendment 9 — Save as Stereo rewrites the take at review time
+
+A mono take is a one-channel file, and stays one when it is saved. That is
+usually right, but a mono vocal or instrument sitting in a stereo arrangement is
+often wanted as a stereo clip: some downstream work (stem separation, export,
+per-channel editing) treats a one-channel file differently, and the user should
+not have to convert it outside the app.
+
+**Save as Stereo** in the review pane duplicates the take into both channels. It
+is offered only for a mono take, and it runs *when it is ticked*, not at commit:
+
+- The audition then plays the exact file that will be saved. JUCE already reads a
+  mono file up into a stereo target, so the sound does not change — but "what you
+  heard is what you saved" is worth more than saving one file rewrite.
+- Both forms are kept on disk (a `… (stereo).wav` sibling), so toggling is
+  instant and reversible; the unused one is deleted at commit, discard or close.
+- The take is re-finalised, its peaks recomputed and stored, and
+  `RECORD_RECORDING_READY` re-broadcast, so the review pane redraws from the file
+  it is now auditioning rather than tracking two states.
+
+The duplicate is built on the message thread rather than the peak pool, unlike
+finalise. It is a block-streamed copy of a take that is minutes long at most, and
+the dialog is idle and waiting for the user at that moment — a second pool
+round-trip would buy nothing.
+
+### Amendment 10 — A recording carries its grid on SAMPLE_SAVED
+
+A committed musical recording appeared in the library with its tempo and beat
+markers missing, so it read as a simple clip until the project was reloaded.
+
+The grid *was* being broadcast, as `LIBRARY_ITEM_ANALYSIS` from
+`applyManualTempo` — but synchronously, before `SAMPLE_SAVED` was sent, and
+`setItemAnalysis` returns early for an item the renderer does not have yet.
+Swapping the two broadcasts does not fix it: the renderer's `SAMPLE_SAVED`
+handler is async (it awaits the peaks cache), so the analysis can still arrive
+first. A recording also has no `sourceItemId`, so the inherit-from-source path
+that gives every other saved sample its grid never runs.
+
+`SAMPLE_SAVED` therefore carries `bpm` and `beatAnchorSec` for a musical
+take, exactly as it already carries `musicalBeats`, and the renderer
+synthesises the rigid grid from them once the item exists. Message ordering stops
+mattering, which is the same reason the `musicalBeats` field exists.

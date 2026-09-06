@@ -45,4 +45,18 @@ struct FinaliseResult
 FinaliseResult finaliseRecording(const FinaliseRequest& request,
                                  juce::AudioFormatManager& formatManager);
 
+/**
+ * Writes `source` out as a two-channel WAV with its single channel on both
+ * sides, leaving the source untouched (ADR 0030, Amendment 9).
+ *
+ * A mono take is centred by every playback path already, so this is not about
+ * where it sounds: it is about what the file *is*, for anything downstream that
+ * treats a one-channel file differently — a stem separation, an export, another
+ * tool. Streamed in blocks like the finalise pass, so length costs no memory.
+ * Returns false and leaves nothing behind when the source is not mono or cannot
+ * be read. Worker or message thread; never the audio thread.
+ */
+bool duplicateMonoToStereo(const juce::File& source, const juce::File& destination,
+                           juce::AudioFormatManager& formatManager);
+
 } // namespace silverdaw::recording

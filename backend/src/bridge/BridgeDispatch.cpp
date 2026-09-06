@@ -452,6 +452,10 @@ bool dispatchRecording(const DispatchContext& ctx)
     {
         handleRecordSessionClose(ctx.payload, ctx.bridge);
     }
+    else if (ctx.type == "RECORD_RECORDING_SET_STEREO")
+    {
+        handleRecordRecordingSetStereo(ctx.payload, ctx.engine, ctx.bridge, ctx.cache);
+    }
     else if (ctx.type == "RECORD_RECORDING_COMMIT")
     {
         handleRecordRecordingCommit(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,

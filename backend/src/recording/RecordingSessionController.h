@@ -177,8 +177,9 @@ struct RecordingStateSnapshot
     int firstChannel = 0;
     int channelCount = 1;
     int countInBars = 0;
-    /** Whether the click keeps going through the take itself. Session-scoped: it
-     *  starts from the project's metronome but never writes back to it. */
+    /** Whether the click keeps going through the take itself. Session-scoped and
+     *  seeded off: a fresh dialog offers no click and no count-in, and it never
+     *  writes back to the project's own metronome. */
     bool clickEnabled = false;
     /** Tracks audible as backing while the session is open. Seeded with every
      *  track, so the default is the whole arrangement; an empty list records
@@ -194,7 +195,9 @@ struct RecordingStateSnapshot
     bool monitorEnabled = false;
     /** Whether the finished take gets the noise-reduction pass. */
     bool cleanupEnabled = false;
-    juce::String windowMode{"playhead"};
+    /** Seeded to `start`: a take laid over the arrangement from the top is the
+     *  one that needs no setting up, so it is what a fresh dialog offers. */
+    juce::String windowMode{"start"};
     bool hasSelection = false;
     double anchorMs = 0.0;
     std::optional<double> windowEndMs;
@@ -336,7 +339,7 @@ class RecordingSessionController final : private juce::Timer
         juce::String recordingMode{"music"};
         bool monitorEnabled = false;
         bool cleanupEnabled = false;
-        juce::String windowMode{"playhead"};
+        juce::String windowMode{"start"};
         double anchorMs = 0.0;
         std::optional<double> windowEndMs;
         double transportStartMs = 0.0;

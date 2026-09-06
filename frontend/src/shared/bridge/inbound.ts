@@ -763,6 +763,11 @@ const SampleSavedSuccessSchema = z.object({
   sourceItemId: z.string().optional(),
   /** Whole beats of music the saved window contains, when it was an exact beat count. */
   musicalBeats: z.number().int().optional(),
+  /** Tempo and grid phase for a sample whose grid cannot be inherited from a source
+   *  item — a recording. Carried here because the matching LIBRARY_ITEM_ANALYSIS is
+   *  broadcast before this message creates the item (ADR 0030). */
+  bpm: z.number().optional(),
+  beatAnchorSec: z.number().optional(),
   /** Source window start in ms; shifts the inherited beat grid for a music sample. */
   sourceInMs: z.number().optional(),
   /** Source window length in ms; persisted so a re-opened scratch windows its source. */

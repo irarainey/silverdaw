@@ -166,7 +166,7 @@ const {
 
           <!-- Audio output: device primary, driver override secondary. -->
           <label class="flex flex-col gap-1.5">
-            <span class="text-xs font-medium text-zinc-300">Audio device</span>
+            <span class="text-xs font-medium text-zinc-300">Audio output device</span>
             <select
               v-model="draftAudioDeviceValue"
               class="app-select w-full text-sm"
@@ -180,12 +180,12 @@ const {
               </option>
             </select>
             <span class="text-[11px] text-zinc-500">
-              Applied on every project load. Selecting <span class="text-zinc-300">Use Application Settings</span> clears the project override so the global Preferences ▸ Audio device applies instead.
+              Applied on every project load. Selecting <span class="text-zinc-300">Use Application Settings</span> clears the project override so the global Preferences ▸ Audio ▸ Output device applies instead.
             </span>
           </label>
 
           <label class="flex flex-col gap-1.5">
-            <span class="text-xs font-medium text-zinc-300">Audio driver</span>
+            <span class="text-xs font-medium text-zinc-300">Audio output driver</span>
             <select
               v-model="draftAudioTypeValue"
               :disabled="draftAudioDeviceName === null"

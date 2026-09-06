@@ -14,6 +14,7 @@ import { useScratchSessionStore } from '@/stores/scratchSessionStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
+import { buildRigidBeatGrid } from '@/lib/library/rigidBeatGrid'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import { clipHasCompleteWaveformData } from '@/stores/project-waveform-state'
@@ -339,6 +340,21 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     if (item) item.audioType = payload.audioType
     if (payload.audioType === 'music' && mediaSource) {
       inheritSourceAnalysis(library, payload.itemId, mediaSource, (payload.sourceInMs ?? 0) / 1000)
+    } else if (payload.audioType === 'music' && typeof payload.bpm === 'number' && payload.bpm > 0) {
+      // A recording has no source item to inherit from: its grid is the project's
+      // own, sent with this message. The matching LIBRARY_ITEM_ANALYSIS was
+      // broadcast before the item existed here, so this is the only chance to
+      // apply it short of a reload (ADR 0030).
+      const anchorSec = payload.beatAnchorSec ?? 0
+      library.setItemAnalysis(
+        payload.itemId,
+        payload.bpm,
+        anchorSec,
+        buildRigidBeatGrid(payload.bpm, anchorSec, payload.durationMs / 1000),
+        false,
+        undefined,
+        false
+      )
     }
     // Resolve the shared cover art + tags from the project media store by the GUID the
     // sample carries over from its source — works for both music and simple samples,

@@ -153,4 +153,53 @@ FinaliseResult finaliseRecording(const FinaliseRequest& request,
     return result;
 }
 
+bool duplicateMonoToStereo(const juce::File& source, const juce::File& destination,
+                           juce::AudioFormatManager& formatManager)
+{
+    if (! source.existsAsFile()) return false;
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(source));
+    if (reader == nullptr || reader->numChannels != 1 || reader->sampleRate <= 0.0) return false;
+
+    destination.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream(destination.createOutputStream());
+    if (stream == nullptr) return false;
+
+    juce::WavAudioFormat wav;
+    const auto options = juce::AudioFormatWriterOptions{}
+                             .withSampleRate(reader->sampleRate)
+                             .withNumChannels(2)
+                             .withBitsPerSample(kBitsPerSample);
+    std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, options));
+    if (writer == nullptr) return false;
+
+    juce::AudioBuffer<float> block(2, kBlockSamples);
+    juce::int64 position = 0;
+    while (position < reader->lengthInSamples)
+    {
+        const int thisBlock = static_cast<int>(
+            juce::jmin<juce::int64>(kBlockSamples, reader->lengthInSamples - position));
+        block.clear();
+        if (! reader->read(&block, 0, thisBlock, position, true, false))
+        {
+            writer.reset();
+            destination.deleteFile();
+            return false;
+        }
+        block.copyFrom(1, 0, block, 0, 0, thisBlock);
+        if (! writer->writeFromAudioSampleBuffer(block, 0, thisBlock))
+        {
+            writer.reset();
+            destination.deleteFile();
+            return false;
+        }
+        position += thisBlock;
+    }
+
+    writer.reset();
+    log::info("recording", "duplicated " + source.getFileName() + " to stereo as "
+                               + destination.getFileName());
+    return true;
+}
+
 } // namespace silverdaw::recording

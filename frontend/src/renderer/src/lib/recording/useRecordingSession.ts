@@ -52,6 +52,12 @@ export interface RecordingSession {
    *  trims the arrangement in the engine and never touches the project's master
    *  volume, so the timeline sounds unchanged once the dialog closes. */
   setBackingGain(gain: number): void
+  /** How loud the arrangement plays under the take being reviewed, 0..1. Held
+   *  apart from `setBackingGain`, and applied on entering review and given back
+   *  on leaving it, so a quiet guide mix is not also how the take is heard back. */
+  setReviewBackingGain(gain: number): void
+  /** Put the setup's backing level back after a review. */
+  restoreBackingGain(): void
   /** Input gain in dB; changeable while rolling, so a clipping performer can fix
    *  it without losing the take. */
   setInputGain(gainDb: number): void
@@ -64,6 +70,10 @@ export interface RecordingSession {
   setMonitorEnabled(enabled: boolean): void
   /** Whether the finished take gets the noise-reduction pass at finalise. */
   setCleanupEnabled(enabled: boolean): void
+  /** Whether a mono take is saved as a stereo file with the capture on both
+   *  sides. Applied to the take itself before it is saved, so the review
+   *  auditions what will be kept. Ignored for a stereo capture. */
+  setStereoDuplicated(enabled: boolean): void
   start(): void
   stop(): void
   /** Record Again: throws the finished file away without creating anything. */
@@ -299,6 +309,20 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       if (base) control({ ...base, gain: clamped })
     },
 
+    setReviewBackingGain(gain: number): void {
+      const clamped = Math.min(1, Math.max(0, gain))
+      store.rememberedReviewBackingGain = clamped
+      const base = withSession('setBackingGain')
+      if (base) control({ ...base, gain: clamped })
+    },
+
+    restoreBackingGain(): void {
+      // Null means the setup slider was never touched, so the session opened at
+      // the backend's own unity seed and that is what to go back to.
+      const base = withSession('setBackingGain')
+      if (base) control({ ...base, gain: store.rememberedBackingGain ?? 1 })
+    },
+
     setWindowMode(mode: RecordingWindowMode): void {
       store.rememberedWindowMode = mode
       const base = withSession('setWindowMode')
@@ -321,6 +345,19 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       store.rememberedCleanupEnabled = enabled
       const base = withSession('setCleanupEnabled')
       if (base) control({ ...base, enabled })
+    },
+
+    setStereoDuplicated(enabled: boolean): void {
+      store.rememberedStereoDuplicated = enabled
+      const sessionId = store.activeSessionId
+      const recordingId = store.ready?.recordingId
+      if (sessionId === null || !recordingId) return
+      sendBridge('RECORD_RECORDING_SET_STEREO', {
+        protocolVersion: RECORDING_PROTOCOL_VERSION,
+        sessionId,
+        recordingId,
+        enabled
+      })
     },
 
     setInputGain(gainDb: number): void {

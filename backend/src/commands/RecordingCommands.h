@@ -28,6 +28,11 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
 
 void handleRecordSessionClose(const juce::var& payload, BridgeServer& bridge);
 
+/** Switches the finished take between the mono capture and a stereo duplicate of
+ *  it, re-announcing the take so the review auditions what will be saved. */
+void handleRecordRecordingSetStereo(const juce::var& payload, AudioEngine& engine,
+                                    BridgeServer& bridge, const PeaksCache& cache);
+
 void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
                                  ProjectState& projectState, BridgeServer& bridge,
                                  juce::ThreadPool& peakPool, const PeaksCache& cache,

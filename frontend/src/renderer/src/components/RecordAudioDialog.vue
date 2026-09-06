@@ -219,6 +219,7 @@ const errorMessage = computed(() => {
           <RecordAudioReview
             v-if="isReviewing"
             v-model:name="name"
+            :session="session"
           />
           <RecordAudioSetup
             v-else

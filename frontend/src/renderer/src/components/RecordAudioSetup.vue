@@ -82,7 +82,7 @@ const selectedChannelValue = computed(() =>
 
 const locked = computed(() => store.isRolling)
 const hasSelection = computed(() => store.current?.hasSelection === true)
-const windowMode = computed(() => store.current?.windowMode ?? 'playhead')
+const windowMode = computed(() => store.current?.windowMode ?? 'start')
 const countInEnabled = computed(() => (store.current?.countInBars ?? 0) > 0)
 const inputGainDb = computed(() => store.current?.inputGainDb ?? 0)
 const recordingMode = computed(() => store.current?.recordingMode ?? 'music')
@@ -196,6 +196,7 @@ function onCleanupChange(event: Event): void {
             type="button"
             :disabled="locked || store.rescanningInputs"
             :aria-busy="store.rescanningInputs"
+            aria-label="Rescan audio input devices"
             class="flex shrink-0 items-center gap-1.5 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             @click="props.session.rescanInputs()"
           >

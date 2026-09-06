@@ -18,6 +18,25 @@ const emit = defineEmits<{ seek: [ms: number] }>()
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 let observer: ResizeObserver | null = null
 
+/** Leaves the loudest peak just short of the edge so it reads as a peak. */
+const FILL_HEADROOM = 0.94
+/** A quiet take is drawn up, but only so far: past this the bed comes with it. */
+const MAX_BOOST = 8
+
+/**
+ * How much to scale the peaks by so the take fills the box.
+ *
+ * A guide vocal recorded at a sensible level peaks well below full scale, and
+ * drawn literally it is a thin line in a tall box. This is display only — the
+ * file, its peaks cache and everything downstream are untouched.
+ */
+function fillScale(): number {
+  let loudest = 0
+  for (const value of props.peaks) loudest = Math.max(loudest, Math.abs(value))
+  if (loudest <= 0) return 1
+  return Math.min(MAX_BOOST, FILL_HEADROOM / loudest)
+}
+
 function draw(): void {
   const canvas = canvasEl.value
   const ctx = canvas?.getContext('2d')
@@ -41,6 +60,7 @@ function draw(): void {
   ctx.fillRect(0, mid, width, Math.max(1, ratio))
 
   if (pairCount > 0) {
+    const scale = fillScale()
     ctx.fillStyle = WAVEFORM_COLORS.wave
     for (let x = 0; x < width; x += 1) {
       const from = Math.floor((x / width) * pairCount)
@@ -51,8 +71,8 @@ function draw(): void {
         min = Math.min(min, props.peaks[pair * 2] ?? 0)
         max = Math.max(max, props.peaks[pair * 2 + 1] ?? 0)
       }
-      const top = mid - max * mid
-      const bottom = mid - min * mid
+      const top = mid - Math.min(1, max * scale) * mid
+      const bottom = mid - Math.max(-1, min * scale) * mid
       ctx.fillRect(x, top, 1, Math.max(1, bottom - top))
     }
   }
@@ -92,7 +112,7 @@ watch(() => [props.peaks, props.durationMs, props.positionMs] as const, draw)
 <template>
   <canvas
     ref="canvasEl"
-    class="block h-24 w-full cursor-pointer rounded border border-zinc-800 bg-zinc-950"
+    class="block h-44 w-full cursor-pointer rounded border border-zinc-800 bg-zinc-950"
     role="img"
     aria-label="Recording waveform"
     @click="onClick"

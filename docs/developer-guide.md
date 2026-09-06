@@ -65,7 +65,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a local WebSocket bridge that is guarded by a token unique to each run.
 
 - **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
-  audio device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
+  audio output device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
   commands over an [IXWebSocket](https://github.com/machinezone/IXWebSocket) server bound to
   `127.0.0.1` and gated by a per-session AUTH token.
 - **Frontend** (`frontend/`) — An Electron 42 + Vue 3 (Composition API, `<script setup>`) app
@@ -131,6 +131,9 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
     scratch/             Scratch Editor domain: source/backing preparation,
                          session control, MIDI routing, recording, pattern
                          evaluator, save-as-sample bake
+    recording/           Record Audio domain: standalone input capture device,
+                         real-time tap, threaded WAV writer, offline finalise
+                         and noise cleanup, session controller
   resources/
     midi-mappings/       Controller model aliases and MIDI input/output bindings
   tests/                 SilverdawBackendTests custom harness (wired into CTest)
@@ -147,11 +150,15 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
                          automation/transport/export/stems helpers, plus
                          lib/scratch/ (one composable per Scratch Editor
                          concern: session, pointer dispatch, record control,
-                         transport, backing, notation, replay, save/reopen);
+                         transport, backing, notation, replay, save/reopen) and
+                         lib/recording/ (Record Audio session, input options,
+                         live waveform, take placement);
                          stores/ holds Pinia stores, including the scratch
                          session and pattern-persistence stores; components/
                          holds .vue files, including the Scratch* dialog,
-                         platter, notation, and transport components
+                         platter, notation, and transport components, and the
+                         RecordAudio* dialog, setup, review and waveform
+                         components
     shared/              Bridge wire-protocol facade (bridge-protocol.ts re-exports)
                          → bridge/inbound.ts (zod inbound schemas + guards)
                          → bridge/outbound.ts (outbound typed payload contracts)
@@ -187,7 +194,7 @@ Silverdaw currently supports the core arrangement workflow:
   dropping several files creates one new track per file at the drop position.
 - The library panel's **Files** tab browses folders of audio on disk, showing
   each track's artwork, title, artist, album, type and length. Audition a file
-  through your chosen audio device before importing it. Added folders are
+  through your chosen audio output device before importing it. Added folders are
   remembered between sessions and are the only paths the browser may read. See
   [File browser (Files tab)](#file-browser-files-tab).
 - **File ▸ Import from Project…** lists saved projects from the configured
@@ -808,7 +815,7 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
 - `RECORD_INPUTS_REQUEST { refresh? }` asks for the capture devices; the backend
   caches the scan (enumerating every driver is slow enough to be felt when the
   dialog opens) and rescans only when `refresh` is set, which is what the
-  dialog's **Rescan devices** button sends. `RECORD_SESSION_OPEN
+  dialog's **Rescan** button sends. `RECORD_SESSION_OPEN
   { input? }` opens the one recording session, optionally on a remembered
   device, and `RECORD_SESSION_CLOSE { sessionId }` tears it down — discarding an
   uncommitted recording and aborting one still rolling.
@@ -826,6 +833,11 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   so none of them changes what is being captured. `setMonitorEnabled` reverses
   ADR 0030's original no-monitoring non-goal (its Amendment 1) and is off by
   default.
+- `RECORD_RECORDING_SET_STEREO { sessionId, recordingId, enabled }` duplicates a
+  mono take into both channels, or puts the mono form back. It rewrites the take
+  in review rather than converting at commit, so the audition plays exactly the
+  file that will be saved, and it re-broadcasts `RECORD_RECORDING_READY` with
+  fresh peaks (ADR 0030, Amendment 9).
 - `RECORD_RECORDING_COMMIT { sessionId, recordingId, itemId, name, destination,
   trackId?, clipId? }` keeps the finished recording as a library item, and for
   `destination: "timeline"` places a clip at its anchor in the same undo
@@ -846,11 +858,14 @@ Backend → renderer:
 - `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
   is excluded from bridge logging.
 - `RECORD_RECORDING_READY` announces the finished file by **path** with its
-  peaks cache, anchor, tempo, whether it is `musical`, and the corrections
-  applied (`latencyOffsetMs`, `driftPpm`). Recorded audio never crosses the
-  socket.
+  peaks cache, anchor, tempo, whether it is `musical`, whether it has been
+  `stereoDuplicated`, and the corrections applied (`latencyOffsetMs`,
+  `driftPpm`). Recorded audio never crosses the socket.
 - A commit is acknowledged by the existing `SAMPLE_SAVED` envelope, correlated
-  by the renderer-generated `itemId`, for both success and failure.
+  by the renderer-generated `itemId`, for both success and failure. A musical
+  recording's `bpm` and `beatAnchorSec` ride along on it, for the reason
+  `musicalBeats` already does — see **A recording's grid arrives with the
+  sample** below.
 
 ## VST3 plugins
 
@@ -1498,11 +1513,13 @@ store entry, even after the original library item is removed. The renderer reads
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
 `registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
 optional **Clean up project files** preference is on, removing a library item deletes
-its generated stem/sample WAV and then prunes the per-source folder once nothing but the
+its generated stem/sample/recording WAV and then prunes the per-source folder once nothing
+but the
 artifacts that removal took remains in it (another still-referenced stem/sample, or any
 file the app did not generate, keeps the folder) — all via the **audio backend** over the
 bridge (`LIBRARY_DELETE_ARTIFACTS { paths }`), which re-confines every path to the
-project's stems/samples artifact trees so a user's original imported audio is never
+project's `stems/`, `samples/`, `channels/` and `recordings/` artifact trees so a user's
+original imported audio is never
 touched. The backend counts the folder's files **before** deleting, and when its own
 artifacts are the only contents it removes the whole directory in one `deleteRecursively`
 (no delete-then-prune window). It first clears the folder's **read-only attribute** —
@@ -1791,7 +1808,7 @@ seam shared by live playback and mixdown, running Tone → Leveler → Saturatio
 mute/solo; further nodes are planned there — see the
 [Development Plan](development-plan.md).)
 
-To stop sleep-prone audio devices (notably generic USB-Audio-Class dongle DACs)
+To stop sleep-prone audio output devices (notably generic USB-Audio-Class dongle DACs)
 from soft-muting and swallowing the first instants of playback, the engine keeps such
 endpoints awake with an inaudible keep-alive signal owned by
 [`OutputKeepAlive`](../backend/src/engine/OutputKeepAlive.h) and injected by the
@@ -2187,7 +2204,8 @@ explicit override — while a reanalysis deliberately keeps it.
 On load, `ProjectState::repairLibraryItemKinds` promotes library items an older
 build persisted with the wrong `kind`: any `sample-`-prefixed item stored as a plain
 source back to `kind: "sample"`, and any item whose path sits under the project
-folder's `stems/`, `channels/`, `samples/` or `scratches/` back to the kind
+folder's `stems/`, `channels/`, `samples/`, `scratches/` or `recordings/` back to
+the kind
 that folder implies — a reanalysis used to demote a stem to a plain source, which
 then vanished from the import-from-project picker. It runs from
 `ProjectState::replaceTree`, so it covers `ProjectFile::load`, and separately from
@@ -3771,9 +3789,10 @@ A session only ever *borrows* the click, and it borrows it in both
 directions: `sessionMetronomeEnabled` forces it on through a count-in and off
 through review, and hands the project's own setting back everywhere else, so
 the project preference is never written. The click through the take itself is
-the session's own **Click While Recording**, seeded from the project's
-metronome when the dialog opens and kept to the session — recording to a click
-is not a reason for the timeline's metronome to be left on afterwards. It is
+the session's own **Click While Recording**, which starts **off** whatever the
+timeline is doing and is kept to the session — a fresh dialog offers no click
+and no count-in, and recording to a click is not a reason for the timeline's
+metronome to be left on afterwards. It is
 monitoring only: the click is only ever in the output stream, never in the
 capture. Silencing it through review
 matters because a take auditioned **with the arrangement** rolls the real
@@ -3814,6 +3833,18 @@ level, which is the whole point of turning the backing down. It stays live while
 rolling, unlike the track selection, because level is monitoring and changes
 nothing about what is captured — a performer who cannot hear themselves should
 not have to stop to fix it. Double-clicking the slider returns it to 100%.
+
+**The review's own backing level.** The review pane has a second **Backing
+volume** slider, and it is deliberately not the same value. The setup slider is a
+guide level — how quiet the arrangement has to sit for the performer to hear
+themselves — and hearing the take back at that level is not what anyone wants.
+`RecordAudioReview` applies its own remembered level (`rememberedReviewBackingGain`,
+100% until the user moves it) when it mounts and hands the setup level back when
+it unmounts, so a retake plays to the guide mix again. Both go through the one
+`setBackingGain` control: there is a single engine trim, and the panes take turns
+holding it rather than the protocol growing a second one. The slider is enabled
+only with **Play With the Arrangement** on, because with it off there is no
+arrangement to trim.
 
 **The loop.** A looping timeline selection is borrowed too, and this one is a
 hold rather than a choice: `AudioEngine::setTimelineLoopSuspended` keeps the
@@ -3880,18 +3911,39 @@ the take. Both dialog waveforms take their colours from the shared
 `waveformPalette`, which the Clip Editor's Pixi theme also derives from, so every
 waveform in Silverdaw is drawn the same way.
 
+The review waveform is the taller of the two, and it is drawn normalised: the
+loudest peak in the take is scaled to 94% of the box (up to 8× — past that a
+near-silent take would only bring its own noise floor up with it). A guide vocal
+recorded at a sensible level peaks far below full scale, and drawn literally it
+is a thin line in a tall box that says nothing about the performance. This is
+display only: the file, its peaks cache and everything downstream keep the levels
+that were captured.
+
 **Cleaning up a take.** **Clean Up Background Noise** is an opt-in pass
 (`recording::cleanRecording`) run on the worker thread after finalise and
 *before* the peaks are computed, so the waveform the user reviews is the audio
-that was kept. It is deliberately conservative — a cleanup that eats breaths and
-word tails does more damage than the noise it removed: an 80 Hz high-pass below
-any spoken or sung fundamental, then a downward expander keyed on the take's
-**own** measured floor (the tenth percentile of its window RMS, so one silent
-block cannot claim a floor no real recording has) with a bounded reduction rather
-than a gate to digital silence. A take already quieter than the pass could
+that was kept. It is the same chain the vocal stem cleanup uses, in the same
+order: an 80 Hz high-pass below any spoken or sung fundamental (the denoiser was
+not trained on rumble), then `VocalDenoiser` — the vendored RNNoise suppressor —
+which is the stage that does the work, and finally a downward expander on what
+the denoiser left. The order matters and so does the split of labour: only the
+network can take the bed out from *under* the performance, and an expander on its
+own barely acts at all on speech, because it can only turn the whole take down
+once all of it has fallen below one threshold and the gaps between words are
+shorter than its release. The expander's threshold is measured on the
+**denoised** take, not the captured one — the floor from before sits far above
+the bed that is left, and would take the performance with it — and its job is
+only the residual bleed between phrases.
+
+It stays conservative, because a cleanup that eats breaths and word tails does
+more damage than the noise it removed: the denoiser runs short of fully wet, the
+expander's reduction is bounded rather than a gate to digital silence, and the
+floor is the tenth percentile of the window RMS so one silent block cannot claim
+a floor no real recording has. A take already quieter than the pass could
 usefully act on is left completely untouched rather than rewritten for no gain,
 and a cleanup that fails is logged with the original take kept: a take that could
 not be cleaned is still a good take.
+
 **Settings that outlive the dialog.** The record window, backing selection and
 level, count-in, Click While Recording, Hear Yourself, the recording mode and
 Clean Up Background Noise belong to how the user is working — the take
@@ -3905,11 +3957,28 @@ own seed stands; a remembered backing whose tracks have all gone means a
 different project is open, and the seed wins there too. Settings are remembered
 from the user's action rather than from broadcast state, or the defaults a fresh
 session reports would immediately overwrite them.
-Capture is capped at `MAX_RECORDING_SECONDS`; hitting the cap stops the
-recording and keeps everything captured up to that point. **Cancel** (and
+
+**What a fresh dialog offers.** With nothing remembered — the first open of the
+app session — the backend's seeds are: **From Start** (a take over the whole
+arrangement needs no setting up, and it is the only window that is always
+valid), no count-in and **Click While Recording off** (both metronome
+controls, off), backing matching the arrangement (every track the timeline is
+currently playing, mute and solo folded in) at unity, **Hear Yourself** off,
+and a **Music** take with **Clean Up Background Noise** off. The two "off"
+defaults that could be inherited deliberately are not: the click no longer
+starts from the project's metronome, and the cleanup never runs unasked,
+because both change what the user hears or keeps without them having chosen it.
+`RecordingStateSnapshot`'s member initialisers are the single statement of all
+of this bar the backing, which `RecordingSessionController::open` has to seed
+from the project.
+
+**Closing.** Capture is capped at `MAX_RECORDING_SECONDS`; hitting the cap stops
+the recording and keeps everything captured up to that point. **Cancel** (and
 Escape) work at any point before a commit, including mid-take: closing the
 session stops the transport, abandons the capture and deletes the part-written
-file, so there is never a half-recording to clean up. Only an in-flight commit
+file, so there is never a half-recording to clean up. It also releases the
+review audition and its arrangement playback, whichever exit is taken — nothing
+the dialog started is left sounding once it has gone. Only an in-flight commit
 holds the dialog open, because closing then would race the `SAMPLE_SAVED` ack.
 
 **Finalise.** Input and output are two unrelated clocks, so latency and drift
@@ -3962,7 +4031,8 @@ no new library kind — marked `recordingOrigin`. A **Music** take carries
 `audioType = "music"` and the project's own BPM applied as a **known** tempo
 rather than a detected one, so a later project-tempo change warps it like any
 other clip; a **Simple** take carries `audioType = "simple"` and no tempo at
-all. The timeline exit adds
+all. **Save as Stereo**, offered only when the take is mono, duplicates it into
+both channels. The timeline exit adds
 the item and places a clip at the recording's anchor inside a single undo
 transaction. Its destination is resolved by `resolveRecordingTrackId`: the
 selected track only when that track holds no clips at all, otherwise a track of
@@ -3973,6 +4043,20 @@ acknowledged by `SAMPLE_SAVED`, correlated by the renderer-generated `itemId`.
 Recordings are named `Recording 1`, `Recording 2`, … and renamed later like any
 library item or clip.
 
+**A recording's grid arrives with the sample.** A committed **Music** take used
+to appear with no tempo and no beat markers until the project was reloaded — it
+read as a simple clip. The grid was broadcast as `LIBRARY_ITEM_ANALYSIS`
+*synchronously, before* `SAMPLE_SAVED`, and `setItemAnalysis` returns early for
+an item the renderer has not created yet. Reordering the two would not fix it,
+because the renderer's `SAMPLE_SAVED` handler is async — it awaits the peaks
+cache — so the analysis could still arrive first. A recording also has no
+`sourceItemId`, so `inheritSourceAnalysis`, which gives every other saved sample
+its grid, never runs. `SAMPLE_SAVED` therefore carries `bpm` and `beatAnchorSec`
+for a musical take, exactly as it already carries `musicalBeats`, and
+`peaksCache.ts` synthesises the rigid grid from them (`buildRigidBeatGrid`, now
+shared with `inheritSourceAnalysis`) once the item exists. Ordering stops
+mattering (ADR 0030, Amendment 10).
+
 **Failure reporting.** Each failure is a distinct thing that happened, because
 "recording failed" on its own makes a working feature look broken: no input, the
 device refused to open, the device delivered nothing but digital silence (the
@@ -3982,11 +4066,32 @@ space, the file could not be written, and the length cap. `recordingMessages.ts`
 maps each to a sentence saying what to do next, and an overrun that dropped
 samples is reported rather than handed over as a silently damaged recording.
 
-**Out of scope for the first release.** Track record-arm, multi-input capture,
+**Microphone consent is a first-use step, not an install step.** Windows never
+asks about a device capability while a package installs — App Installer surfaces
+only the restricted `runFullTrust` line. A `1.9.0` sideload install was verified
+to register the capability: Windows creates
+`HKCU\…\CapabilityAccessManager\ConsentStore\microphone\Silverdaw_<hash>` with
+the value `Prompt`, and resolves it to `Allow` or `Deny` the first time capture
+actually opens a device. Capture runs in the headless backend, which owns no
+window, so a consent dialog may have nothing to attach to and the request can
+resolve to a denial with no visible prompt — hence the silence-detection failure
+above and the Settings walkthrough in `INSTALL.md`. Check the state with:
+
+```powershell
+Get-AppxPackage -Name Silverdaw | ForEach-Object {
+  (Get-AppxPackageManifest $_.PackageFullName).Package.Capabilities.InnerXml
+}
+Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone' |
+  Where-Object PSChildName -like '*Silverdaw*'
+```
+
+**Out of scope for this release.** Track record-arm, multi-input capture,
 punch-in and stacked passes, comping, live-growing clips on the timeline, and
-low-latency software monitoring — input metering is always live, but Silverdaw
-does not play the input back, so performers use headphones or their interface's
-own direct monitoring.
+*low-latency* software monitoring. **Hear Yourself** is the best-effort
+monitor it is possible to give across two independent devices — a round trip of
+tens of milliseconds, useful for pitching rather than for judging timing — so a
+performer who needs a tight monitor still uses their interface's own direct
+monitoring.
 
 ## Preferences
 
@@ -4009,12 +4114,14 @@ sidebar:
   configuration, and **clean up project files on remove** (with a *cannot be
   undone* warning; a file-deleting removal is non-undoable and doesn't dirty the
   project).
-- **Audio** — output device + driver selection (see below, with a per-device
-  **Keep awake** checkbox — off by default — on each device row), and the
-  **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
-  `PROJECT.targetSampleRate` on new projects.
+- **Audio** — **Output device** + its driver (see below, with a per-device
+  **Keep awake** checkbox — off by default — on each device row), the
+  **Recording input driver** the Record Audio dialog lists microphones from,
+  and the **Default project sample rate** (44.1 kHz / 48 kHz) used to seed
+  `PROJECT.targetSampleRate` on new projects. Output and input are separate
+  headings: the tab holds both, so nothing on it is labelled just "device".
 - **MIDI** — detected MIDI inputs, supported-deck enablement, connection and
-  activity state, and a manual device rescan. Unsupported devices remain
+  activity state, and a manual **Rescan MIDI inputs**. Unsupported devices remain
   visible with disabled checkboxes.
 - **Effects** — global defaults for the per-clip DJ turntable effects: the
   **Brake** Duration (short ~0.4 s / medium ~0.6 s / long ~0.9 s) and Curve
@@ -4043,7 +4150,7 @@ sidebar:
 ### MIDI controller preferences
 
 The MIDI tab requests a fresh backend device list whenever Preferences opens.
-The **Rescan devices** action repeats that enumeration and shows progress until
+The **Rescan MIDI inputs** action repeats that enumeration and shows progress until
 the refreshed list arrives or a six-second safety timeout expires. Each row
 shows the Windows device name, supported-profile label, connection state, and
 latest activity time.
@@ -4247,10 +4354,8 @@ Robustness:
   its initial response. The renderer's first `AUDIO_DEVICES_LIST` arrives
   immediately with the current device + its type; the post-scan envelope
   follows when the scan completes. The pre-scan envelope carries a
-  `scanInProgress: true` flag that the startup screen surfaces as
-  "Scanning audio devices…" so the user knows what's happening. The
-  user-initiated **Rescan devices** button stays synchronous (the user is
-  explicitly waiting on it).
+  `scanInProgress: true` flag. The user-initiated **Rescan output devices**
+  button stays synchronous (the user is explicitly waiting on it).
 
 Latency compensation:
 
@@ -4593,7 +4698,9 @@ is no global record shortcut. See the [Recording](#recording) section.
 | `Enter` | Activate the footer's primary button — **Record**, or **Add to Timeline** while reviewing. |
 | `Escape` | Close the dialog, discarding an uncommitted recording. Ignored while a recording is rolling or a commit is in flight, so nothing is thrown away by accident. |
 
+### Selection model
 
+A click selects two things at once: the **selected clip** (thick outline) is the target of
 Cut, Copy, Duplicate, Delete, and Split-at-playhead shortcuts; the **selected track**
 (highlighted row border) is the destination of Paste. Clicking a clip selects both the clip
 and its host track. Clicking an empty area of a track row selects just that track and moves

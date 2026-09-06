@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-09-04 · Owner: @irarainey_
+_Last reviewed: 2026-09-06 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -37,8 +37,8 @@ however its tempo is later re-detected, and changing the project tempo keeps the
 arrangement's musical shape — clips, their warps, an active timeline selection,
 the markers and the playhead all move with it; a reanalysis likewise brings the
 clips already using that source onto its new tempo. It also detects an audio
-device that has silently stopped delivering audio and restarts it, rather than
-leaving the transport showing playback with a playhead that never moves.
+output device that has silently stopped delivering audio and restarts it, rather
+than leaving the transport showing playback with a playhead that never moves.
 **1.6.0** added a user-scoped **file browser** (the library panel's Files tab)
 for browsing folders of audio on disk, auditioning a file before importing it,
 and importing it — see `docs/development-plan.md` §1.6.0.
@@ -78,7 +78,9 @@ badly enough that they could not be played or analysed at all.
 The current release is **1.9.0**: **Record Audio**, which captures live input
 against the running arrangement and commits the take as an ordinary library item
 or clip — never onto a track as it records, so the clip-first, non-destructive
-model is untouched (ADR 0030, `docs/development-plan.md` §11.6).
+model is untouched. A take is kept as **Music**, carrying the project tempo as a
+known BPM, or **Simple** with no grid at all (ADR 0030,
+`docs/development-plan.md` §1.9.0).
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

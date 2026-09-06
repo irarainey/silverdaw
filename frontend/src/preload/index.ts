@@ -220,7 +220,7 @@ const api = {
   // ─── Audio output device preference ─────────────────────────────────────
   getAudioOutput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
     ipcRenderer.invoke(IPC.prefs.getAudioOutput),
-  /** Persist only backend-acknowledged audio device selections. */
+  /** Persist only backend-acknowledged audio output device selections. */
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
   },

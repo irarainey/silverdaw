@@ -63,9 +63,10 @@ juce::String RecordingSessionController::open(AudioEngine& engineRef, ProjectSta
 
     Session fresh;
     fresh.sessionId = makeId("rec-");
-    // The dialog starts from what the timeline is already doing, then keeps the
-    // choice to itself.
-    fresh.clickEnabled = projectStateRef.getMetronomeEnabled();
+    // The click starts off, whatever the timeline is doing: a fresh dialog offers
+    // no count-in and no click, and the performer asks for one if they want it.
+    // The session still hands the project's own metronome setting back on close.
+    fresh.clickEnabled = false;
     // Start from what the timeline is already playing, so the default backing
     // sounds like the arrangement does; from there the selection is the session's
     // own, and a muted track can be ticked in for a single take.

@@ -533,6 +533,256 @@ void testCleanupExpanderLeavesThePerformanceAlone()
     require(partial < 1.0F && partial > deep,
             "a word tail just under the threshold is attenuated gradually");
 }
+
+// The residual stage, stated as audio: a noise bed either side of a phrase has to
+// come down, and the phrase itself has to come through at the level it was
+// performed at. This is the stage that runs *after* the denoiser has taken the
+// bed out from under the performance, so what it is asked to remove here is what
+// the denoiser left between phrases.
+void testCleanupRemovesTheBedAndKeepsThePerformance()
+{
+    using silverdaw::recording::expandBelowFloorInPlace;
+    using silverdaw::recording::kMaxReductionDb;
+    using silverdaw::recording::kThresholdAboveFloorDb;
+    using silverdaw::recording::measureNoiseFloorDb;
+
+    constexpr int kSeconds = 3;
+    const int total = static_cast<int>(kSampleRate) * kSeconds;
+    const int toneStart = total / 3;
+    const int toneEnd = 2 * total / 3;
+
+    // A hiss bed all the way through, with a sung note over the middle third.
+    juce::Random random(20260906);
+    const double bedAmplitude = juce::Decibels::decibelsToGain(-52.0);
+    const double toneAmplitude = juce::Decibels::decibelsToGain(-12.0);
+    juce::AudioBuffer<float> audio(1, total);
+    auto* samples = audio.getWritePointer(0);
+    for (int i = 0; i < total; ++i)
+    {
+        double value = bedAmplitude * (random.nextDouble() * 2.0 - 1.0);
+        if (i >= toneStart && i < toneEnd)
+            value += toneAmplitude
+                     * std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * i / kSampleRate);
+        samples[i] = static_cast<float>(value);
+    }
+
+    const auto rmsDb = [](const juce::AudioBuffer<float>& buffer, int start, int length)
+    {
+        return juce::Decibels::gainToDecibels(buffer.getRMSLevel(0, start, length));
+    };
+    // Away from the transitions, where the envelope is deliberately still moving.
+    const int settle = static_cast<int>(kSampleRate) / 4;
+    const int gapStart = settle;
+    const int gapLength = toneStart - gapStart - settle;
+    const int toneMeasureStart = toneStart + settle;
+    const int toneMeasureLength = toneEnd - toneMeasureStart - settle;
+
+    const auto bedBefore = rmsDb(audio, gapStart, gapLength);
+    const auto toneBefore = rmsDb(audio, toneMeasureStart, toneMeasureLength);
+
+    const auto floorDb = measureNoiseFloorDb(audio, kSampleRate);
+    expandBelowFloorInPlace(audio, kSampleRate, floorDb + kThresholdAboveFloorDb);
+
+    const auto bedAfter = rmsDb(audio, gapStart, gapLength);
+    const auto toneAfter = rmsDb(audio, toneMeasureStart, toneMeasureLength);
+
+    require(bedBefore - bedAfter > 4.0,
+            "the bed in the gaps must come down by an amount the user would hear");
+    require(bedAfter > -140.0, "the gaps must keep room tone, not become digital silence");
+    require(bedBefore - bedAfter <= kMaxReductionDb + 3.0,
+            "the reduction must stay bounded, so a gap still sounds like a room");
+    require(std::abs(toneBefore - toneAfter) < 1.0,
+            "the performance must come through at the level it was performed at");
+}
+
+// The timing, which is what made the old expander inaudible: it has to close
+// inside the gap between two words rather than only between phrases, and it has
+// to open again fast enough that the next word starts at full level.
+void testCleanupExpanderClosesInAShortGapAndOpensOnTime()
+{
+    using silverdaw::recording::expandBelowFloorInPlace;
+    using silverdaw::recording::kThresholdAboveFloorDb;
+    using silverdaw::recording::measureNoiseFloorDb;
+
+    const int rate = static_cast<int>(kSampleRate);
+    const int phrase = rate / 2;      // half a second of word
+    const int gap = (rate * 3) / 10;  // 300 ms between the two, as speech has
+    const int total = phrase + gap + phrase;
+    const int secondPhraseStart = phrase + gap;
+
+    juce::Random random(20260908);
+    const double bedAmplitude = juce::Decibels::decibelsToGain(-52.0);
+    const double toneAmplitude = juce::Decibels::decibelsToGain(-12.0);
+    juce::AudioBuffer<float> audio(1, total);
+    auto* samples = audio.getWritePointer(0);
+    for (int i = 0; i < total; ++i)
+    {
+        double value = bedAmplitude * (random.nextDouble() * 2.0 - 1.0);
+        if (i < phrase || i >= secondPhraseStart)
+            value += toneAmplitude
+                     * std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * i / kSampleRate);
+        samples[i] = static_cast<float>(value);
+    }
+
+    const auto rmsDb = [](const juce::AudioBuffer<float>& buffer, int start, int length)
+    {
+        return juce::Decibels::gainToDecibels(buffer.getRMSLevel(0, start, length));
+    };
+    // The last third of the gap, by which time a release measured in tens of
+    // milliseconds has had every chance to close.
+    const int gapMeasureStart = phrase + (gap * 2) / 3;
+    const int gapMeasureLength = gap / 3;
+    // The first 50 ms of the next word, which is where a gain that opens on the
+    // release coefficient audibly ducks the start of the phrase.
+    const int onsetLength = rate / 20;
+
+    const auto gapBefore = rmsDb(audio, gapMeasureStart, gapMeasureLength);
+    const auto onsetBefore = rmsDb(audio, secondPhraseStart, onsetLength);
+
+    const auto floorDb = measureNoiseFloorDb(audio, kSampleRate);
+    expandBelowFloorInPlace(audio, kSampleRate, floorDb + kThresholdAboveFloorDb);
+
+    const auto gapAfter = rmsDb(audio, gapMeasureStart, gapMeasureLength);
+    const auto onsetAfter = rmsDb(audio, secondPhraseStart, onsetLength);
+
+    require(gapBefore - gapAfter > 4.0,
+            "the expander must close inside a gap between words, not only between phrases");
+    require(onsetBefore - onsetAfter < 1.0,
+            "the word after the gap must start at full level, not fade in");
+}
+
+// The whole chain over a real file, which is the only thing that proves the
+// denoiser stage is actually reached: a take is read, high-passed, denoised,
+// expanded and written back in place, and what comes back is still a playable
+// file of the same shape holding the performance it went in with.
+void testCleanupRewritesTheTakeInPlace()
+{
+    const auto dir = makeTempDir("recording-cleanup");
+    const auto file = dir.getChildFile("take.wav");
+
+    const int total = static_cast<int>(kSampleRate) * 2;
+    const int toneStart = total / 3;
+    const int toneEnd = 2 * total / 3;
+    juce::Random random(20260909);
+    const double bedAmplitude = juce::Decibels::decibelsToGain(-52.0);
+    const double toneAmplitude = juce::Decibels::decibelsToGain(-12.0);
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(kSampleRate)
+                                 .withNumChannels(1)
+                                 .withBitsPerSample(24);
+        std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, options));
+        require(writer != nullptr, "cleanup test writer should be created");
+        juce::AudioBuffer<float> buffer(1, total);
+        for (int i = 0; i < total; ++i)
+        {
+            double value = bedAmplitude * (random.nextDouble() * 2.0 - 1.0);
+            if (i >= toneStart && i < toneEnd)
+                value += toneAmplitude
+                         * std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * i
+                                    / kSampleRate);
+            buffer.setSample(0, i, static_cast<float>(value));
+        }
+        require(writer->writeFromAudioSampleBuffer(buffer, 0, total),
+                "cleanup test take should be written");
+    }
+
+    silverdaw::recording::CleanupRequest request;
+    request.file = file;
+    request.sampleRate = kSampleRate;
+    const auto result = silverdaw::recording::cleanRecording(request, formats());
+
+    require(result.ok, "a readable take should clean without error");
+    require(! result.skipped, "a take with an audible bed should not be skipped");
+    require(result.noiseFloorDb > -75.0 && result.noiseFloorDb < -30.0,
+            "the measured floor should land on the bed that was written");
+    require(result.residualFloorDb < result.noiseFloorDb - 6.0,
+            "the denoiser stage must measurably lower the bed before the expander runs");
+    require(! dir.getChildFile("take.cleanup.wav").existsAsFile(),
+            "the temporary file should not be left behind");
+
+    const auto reader = readerFor(file);
+    require(reader != nullptr, "the cleaned take should still be readable");
+    require(reader->lengthInSamples == total, "cleanup must not change the take's length");
+    require(static_cast<int>(reader->numChannels) == 1, "cleanup must not change the channels");
+
+    juce::AudioBuffer<float> cleaned(1, total);
+    require(reader->read(&cleaned, 0, total, 0, true, true), "the cleaned take should read back");
+    const int settle = static_cast<int>(kSampleRate) / 4;
+    const auto toneDb = juce::Decibels::gainToDecibels(
+        cleaned.getRMSLevel(0, toneStart + settle, toneEnd - toneStart - 2 * settle));
+    require(toneDb > -30.0, "the performance must survive the whole chain");
+}
+
+// What a dialog with nothing remembered offers: a take over the whole
+// arrangement from the top, no click and no count-in, nothing monitored, and a
+// musical take kept exactly as it was performed. The backing is seeded from the
+// project by `open`, so "match the arrangement" is the one default that cannot be
+// a constant here.
+void testFreshSessionDefaults()
+{    const silverdaw::recording::RecordingStateSnapshot fresh;
+
+    require(fresh.windowMode == "start", "a fresh dialog records from the start of the project");
+    require(fresh.countInBars == 0, "a fresh dialog counts nobody in");
+    require(! fresh.clickEnabled, "a fresh dialog does not click through the take");
+    require(! fresh.monitorEnabled, "a fresh dialog does not monitor the input");
+    require(! fresh.cleanupEnabled, "a fresh dialog keeps the take exactly as performed");
+    require(fresh.recordingMode == "music", "a fresh dialog records to the project's tempo");
+    require(fresh.backingGain == 1.0, "a fresh dialog plays the backing at its own level");
+    require(fresh.inputGainDb == 0.0, "a fresh dialog does not trim the input");
+}
+
+// The stereo option must not change the performance, only how many copies of it
+// the file holds: both channels have to be the mono take, sample for sample.
+void testDuplicateMonoToStereoCopiesTheTake()
+{
+    const auto dir = makeTempDir("recording-stereo-duplicate");
+    const auto source = dir.getChildFile("mono.wav");
+    const auto destination = dir.getChildFile("stereo.wav");
+    writeRamp(source, 12000, 1, kSampleRate);
+
+    require(silverdaw::recording::duplicateMonoToStereo(source, destination, formats()),
+            "a mono take should duplicate to stereo");
+
+    const auto monoReader = readerFor(source);
+    const auto stereoReader = readerFor(destination);
+    require(monoReader != nullptr && stereoReader != nullptr, "both takes should read back");
+    require(stereoReader->numChannels == 2, "the duplicate should have two channels");
+    require(stereoReader->lengthInSamples == monoReader->lengthInSamples,
+            "the duplicate should be the same length as the take");
+
+    juce::AudioBuffer<float> mono(1, 12000);
+    juce::AudioBuffer<float> stereo(2, 12000);
+    require(monoReader->read(&mono, 0, 12000, 0, true, false), "the mono take should read");
+    require(stereoReader->read(&stereo, 0, 12000, 0, true, true), "the duplicate should read");
+    for (int i = 0; i < 12000; i += 997)
+    {
+        requireNear(stereo.getSample(0, i), mono.getSample(0, i), 1.0e-4,
+                    "the left channel should be the take");
+        requireNear(stereo.getSample(1, i), mono.getSample(0, i), 1.0e-4,
+                    "the right channel should be the take too");
+    }
+
+    dir.deleteRecursively();
+}
+
+// A take that is already stereo has nothing to duplicate, and must not be
+// rewritten behind the user's back.
+void testDuplicateMonoToStereoRefusesAStereoTake()
+{
+    const auto dir = makeTempDir("recording-stereo-refuse");
+    const auto source = dir.getChildFile("stereo.wav");
+    const auto destination = dir.getChildFile("copy.wav");
+    writeRamp(source, 4800, 2, kSampleRate);
+
+    require(! silverdaw::recording::duplicateMonoToStereo(source, destination, formats()),
+            "a stereo take should not be duplicated");
+    require(! destination.existsAsFile(), "a refused duplicate should leave no file behind");
+
+    dir.deleteRecursively();
+}
 } // namespace
 
 void addRecordingTests(std::vector<TestCase>& tests)
@@ -561,6 +811,18 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testCleanupFindsTheNoiseFloorFromQuietWindows});
     tests.push_back({"recording cleanup leaves the performance alone",
                      testCleanupExpanderLeavesThePerformanceAlone});
+    tests.push_back({"recording cleanup removes the bed and keeps the performance",
+                     testCleanupRemovesTheBedAndKeepsThePerformance});
+    tests.push_back({"recording cleanup closes in a short gap and opens on time",
+                     testCleanupExpanderClosesInAShortGapAndOpensOnTime});
+    tests.push_back({"recording cleanup rewrites the take in place",
+                     testCleanupRewritesTheTakeInPlace});
+    tests.push_back({"recording session defaults with nothing remembered",
+                     testFreshSessionDefaults});
+    tests.push_back({"recording mono take duplicates to stereo",
+                     testDuplicateMonoToStereoCopiesTheTake});
+    tests.push_back({"recording stereo take is not duplicated",
+                     testDuplicateMonoToStereoRefusesAStereoTake});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
     tests.push_back({"recording finalise rejects a recording shorter than latency",

@@ -3,15 +3,19 @@
 // happens to it. Nothing has been added to the project at this point, so leaving
 // without committing leaves the project untouched.
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RecordAudioWaveform from '@/components/RecordAudioWaveform.vue'
 import { droppedSamplesMessage } from '@/lib/recording/recordingMessages'
 import { formatTime } from '@/lib/musicTime'
 import { send as sendBridge } from '@/lib/bridgeService'
+import type { RecordingSession } from '@/lib/recording/useRecordingSession'
 import { usePreviewStore } from '@/stores/previewStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 
+const props = defineProps<{ session: RecordingSession }>()
+
 const name = defineModel<string>('name', { required: true })
+
 
 const store = useRecordingSessionStore()
 const preview = usePreviewStore()
@@ -30,6 +34,34 @@ const withArrangement = ref(false)
 let arrangementRolling = false
 let pendingArrangement = false
 
+// The review has its own backing level: a guide mix kept quiet under the
+// performer is not how the take wants to be heard back. Applied while this pane
+// is up and handed back to the setup's level when it goes.
+const backingGainPercent = computed(() => Math.round(store.rememberedReviewBackingGain * 100))
+
+function onBackingGainChange(event: Event): void {
+  props.session.setReviewBackingGain(Number((event.target as HTMLInputElement).value) / 100)
+}
+
+function onBackingGainReset(): void {
+  props.session.setReviewBackingGain(1)
+}
+
+onMounted(() => props.session.setReviewBackingGain(store.rememberedReviewBackingGain))
+
+// Saving a mono take as stereo. It rewrites the take, not the commit, so the
+// audition below plays the file that will be kept — a mono capture heard on both
+// sides rather than one. Only offered for a capture that was mono in the first
+// place.
+const stereoDuplicated = computed(() => ready.value?.stereoDuplicated === true)
+const canDuplicateToStereo = computed(
+  () => ready.value !== null && (ready.value.channelCount === 1 || stereoDuplicated.value)
+)
+
+function onStereoChange(event: Event): void {
+  props.session.setStereoDuplicated((event.target as HTMLInputElement).checked)
+}
+
 /**
  * The take this pane is auditioning, held outside the store.
  *
@@ -46,6 +78,15 @@ watch(
     // Deliberately keeps the last take when `ready` goes null: that is the close
     // path, and the file path is exactly what is needed to release the voice.
     if (next) audition = { filePath: next.filePath, anchorMs: next.anchorMs }
+    // A retake arrives as a fresh mono file, so the choice made on the last one is
+    // re-applied rather than quietly forgotten between takes.
+    if (
+      next &&
+      store.rememberedStereoDuplicated &&
+      next.channelCount === 1 &&
+      next.stereoDuplicated !== true
+    )
+      props.session.setStereoDuplicated(true)
   },
   { immediate: true }
 )
@@ -132,7 +173,10 @@ watch(withArrangement, (on) => {
   if (!on) stopArrangement()
 })
 
-onBeforeUnmount(() => releaseAudition(audition?.filePath ?? null))
+onBeforeUnmount(() => {
+  releaseAudition(audition?.filePath ?? null)
+  props.session.restoreBackingGain()
+})
 </script>
 
 <template>
@@ -176,6 +220,42 @@ onBeforeUnmount(() => releaseAudition(audition?.filePath ?? null))
       <span class="min-w-0 flex-1 truncate leading-tight">
         <span class="font-medium text-zinc-200">Play With the Arrangement</span>
         <span class="text-zinc-500"> — hear it against what you recorded over</span>
+      </span>
+    </label>
+
+    <label class="flex items-center gap-3">
+      <span class="w-28 shrink-0 text-zinc-400">Backing volume</span>
+      <input
+        type="range"
+        class="app-range min-w-0 flex-1"
+        aria-label="Backing volume"
+        min="0"
+        max="100"
+        step="1"
+        :disabled="!withArrangement"
+        :value="backingGainPercent"
+        title="Double-click to reset to 100%"
+        @input="onBackingGainChange"
+        @dblclick="onBackingGainReset"
+      >
+      <span class="w-14 shrink-0 text-right font-mono text-xs text-zinc-400">
+        {{ backingGainPercent }}%
+      </span>
+    </label>
+
+    <label
+      v-if="canDuplicateToStereo"
+      class="flex cursor-pointer items-center gap-3"
+    >
+      <input
+        type="checkbox"
+        class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+        :checked="stereoDuplicated"
+        @change="onStereoChange"
+      >
+      <span class="min-w-0 flex-1 truncate leading-tight">
+        <span class="font-medium text-zinc-200">Save as Stereo</span>
+        <span class="text-zinc-500"> — the mono take on both channels</span>
       </span>
     </label>
 

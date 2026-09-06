@@ -60,6 +60,10 @@ interface RecordingSessionState {
   /** Backing level (0..1) carried across opens; monitoring only, so it is never
    *  written to the project or to preferences. */
   rememberedBackingGain: number | null
+  /** Backing level (0..1) for the review pane, held apart from the one above: a
+   *  guide mix deliberately kept quiet under the performer is not how anyone
+   *  wants to hear the take back. Full by default. */
+  rememberedReviewBackingGain: number
   rememberedCountInBars: RecordingCountInBars | null
   rememberedClickEnabled: boolean | null
   /** Whether takes are committed as musical material, carried across opens. */
@@ -68,6 +72,9 @@ interface RecordingSessionState {
   rememberedMonitorEnabled: boolean | null
   /** Whether takes get the noise-reduction pass, carried across opens. */
   rememberedCleanupEnabled: boolean | null
+  /** Whether a mono take is saved as a stereo file, carried across takes so a
+   *  retake does not have to be told again. */
+  rememberedStereoDuplicated: boolean
   /** Live input peaks, always metered even with monitoring off. */
   inputPeakL: number
   inputPeakR: number
@@ -97,11 +104,13 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     rememberedWindowMode: null,
     rememberedBackingTrackIds: null,
     rememberedBackingGain: null,
+    rememberedReviewBackingGain: 1,
     rememberedCountInBars: null,
     rememberedClickEnabled: null,
     rememberedRecordingMode: null,
     rememberedMonitorEnabled: null,
     rememberedCleanupEnabled: null,
+    rememberedStereoDuplicated: false,
     inputPeakL: 0,
     inputPeakR: 0,
     ready: null,

@@ -35,7 +35,8 @@ import type {
   RecordingCommitPayload,
   RecordingSessionClosePayload,
   RecordingSessionControlPayload,
-  RecordingSessionOpenPayload
+  RecordingSessionOpenPayload,
+  RecordingSetStereoPayload
 } from './recording'
 
 // ─── Renderer → Backend (outbound) ──────────────────────────────────────────
@@ -742,6 +743,7 @@ export interface BridgeOutboundMap {
   RECORD_SESSION_CONTROL: RecordingSessionControlPayload
   RECORD_SESSION_CLOSE: RecordingSessionClosePayload
   RECORD_RECORDING_COMMIT: RecordingCommitPayload
+  RECORD_RECORDING_SET_STEREO: RecordingSetStereoPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
@@ -1436,6 +1438,7 @@ export const bridgeOutboundPayloadKinds: {
   RECORD_SESSION_CONTROL: 'payload',
   RECORD_SESSION_CLOSE: 'payload',
   RECORD_RECORDING_COMMIT: 'payload',
+  RECORD_RECORDING_SET_STEREO: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',

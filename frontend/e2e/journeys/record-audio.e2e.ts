@@ -32,17 +32,18 @@ test('the Record Audio dialog opens a backend session and releases it on close',
   const dialog = page.getByRole('dialog', { name: 'Record Audio' })
   await expect(dialog).toBeVisible()
 
-  // A recording belongs to a window in time, not a track. With nothing selected the
-  // range option is offered but inert, so it cannot be chosen without a selection.
-  const fromPlayhead = dialog.getByRole('radio', { name: /From Playhead/ })
-  await expect(fromPlayhead).toBeChecked({ timeout: 30_000 })
+  // A recording belongs to a window in time, not a track. A fresh dialog offers From
+  // Start, the one window that is always valid; with nothing selected the range option
+  // is offered but inert, so it cannot be chosen without a selection.
+  const fromStart = dialog.getByRole('radio', { name: /From Start/ })
+  await expect(fromStart).toBeChecked({ timeout: 30_000 })
   await expect(dialog.getByRole('radio', { name: /Over the Selected Range/ })).toBeDisabled()
 
   // The window is the session's state, not the radio's: this choice is proven below by
   // surviving the dialog being closed and reopened against a fresh backend session.
-  const fromStart = dialog.getByRole('radio', { name: /From Start/ })
-  await fromStart.click()
-  await expect(fromStart).toBeChecked()
+  const fromPlayhead = dialog.getByRole('radio', { name: /From Playhead/ })
+  await fromPlayhead.click()
+  await expect(fromPlayhead).toBeChecked()
 
   // Count-in is off unless asked for, and switching it on is a dialog-local choice.
   const countIn = dialog.getByRole('checkbox', { name: /Count Me In/ })
@@ -72,7 +73,9 @@ test('the Record Audio dialog opens a backend session and releases it on close',
   await expect(menuRow).toBeVisible()
   await menuRow.click()
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('radio', { name: /From Start/ })).toBeChecked({ timeout: 30_000 })
+  await expect(dialog.getByRole('radio', { name: /From Playhead/ })).toBeChecked({
+    timeout: 30_000
+  })
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
 

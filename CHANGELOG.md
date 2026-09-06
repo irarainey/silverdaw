@@ -4,23 +4,22 @@
 
 ### Added
 
-- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline.
-- Recording runs from the start of the project or from the playhead until stopped, or over a selected timeline range with an automatic stop at its end.
-- The take can be played against the whole arrangement, a chosen few tracks, or none at all — including tracks muted on the timeline — without changing the project's own mute and solo.
-- A backing volume in the record dialog sets how loud the arrangement plays under the performance, leaving the count-in, the take and the project's own levels untouched.
-- Choice of input device, mono or stereo capture, input gain and live metering, with the device and gain remembered between sessions.
-- A live waveform in the record dialog draws the whole performance as it is captured, with beat markers in music mode.
-- **Hear Yourself** adds the input being recorded to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
-- Recordings can be captured as **Music**, taking the project tempo and beat markers, or **Simple** for speech and sound effects, which take neither.
-- An optional cleanup removes low-level background noise from a finished take, for vocals recorded on a microphone.
-- The record window, backing choice, backing volume, count-in, metronome, monitoring, recording mode and cleanup settings are kept between recordings.
-- Optional one-bar count-in and a metronome that clicks through the take without disturbing the timeline's own metronome.
-- A finished take can be auditioned alone or against the arrangement, renamed, and re-recorded before it is kept.
-- Recordings carry the project tempo, so a later BPM change warps them like any other clip.
+- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline, with a choice of input device, mono or stereo capture, input gain and live metering.
+- Recording runs from the start of the project, from the playhead, or over a selected timeline range, with an optional count-in, a metronome, and a live waveform of the performance as it is captured.
+- The backing heard under the performance is chosen and levelled in the dialog — including tracks muted on the timeline — leaving the project's own mutes, solos and levels untouched.
+- **Hear Yourself** adds the input to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
+- Takes are captured as **Music**, inheriting the project tempo so a later BPM change warps them like any other clip, or **Simple** for speech and sound effects, with an optional cleanup of low-level background noise.
+- A finished take can be auditioned alone or against the arrangement, renamed, saved as stereo when it was recorded in mono, and re-recorded before it is kept.
 - The recording input driver is chosen in **Preferences ▸ Audio**.
+
+### Changed
+
+- Audio device wording throughout the app now says whether a device is the audio output or the recording input.
+- Removing a recording from the library now deletes its generated file when **Clean up project files** is on.
 
 ### Fixed
 
+- A recording kept as **Music** appeared in the library with no tempo and no beat markers until the project was reloaded.
 - Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
 
 ## 1.8.0

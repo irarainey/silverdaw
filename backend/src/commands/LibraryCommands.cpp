@@ -207,9 +207,10 @@ DeferredFolderPruner& deferredFolderPruner()
     return instance;
 }
 
-// Delete a removed library item's generated stem/sample artifact files. Every path is
-// re-validated against the project's stems/samples trees, so a user's original imported
-// source can never be removed. The decision is made by counting the per-source folder's
+// Delete a removed library item's generated stem/sample/recording artifact files. Every
+// path is re-validated against the project's own artifact trees, so a user's original
+// imported source can never be removed. The decision is made by counting the per-source
+// folder's
 // files BEFORE deleting anything: if the files we were asked to remove are the folder's
 // ONLY contents, the whole directory is removed in one `deleteRecursively` (files + dir
 // together) — this avoids leaving a just-deleted WAV in Windows "delete-pending" limbo
@@ -235,6 +236,10 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
     const auto stemsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "stems");
     const auto samplesRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "samples");
     const auto channelsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "channels");
+    // A recording is an ordinary sample to the library, so removing one has to be able to
+    // take its file with it — but it lives in its own artifact folder (ADR 0030), which
+    // would otherwise fail the containment test below and be silently kept.
+    const auto recordingsRoot = silverdaw::projectArtifactsBaseDir(session.currentPath, "recordings");
 
     // Group the requested deletions by their per-source folder (a direct child of a root),
     // WITHOUT deleting yet — so the folder's file count is read before any file goes into
@@ -248,7 +253,8 @@ void handleLibraryDeleteArtifacts(const juce::var& payload, const ProjectSession
         if (path.isEmpty() || ! juce::File::isAbsolutePath(path)) continue;
 
         const juce::File file(path);
-        if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot) && ! file.isAChildOf(channelsRoot))
+        if (! file.isAChildOf(stemsRoot) && ! file.isAChildOf(samplesRoot) && ! file.isAChildOf(channelsRoot)
+            && ! file.isAChildOf(recordingsRoot))
         {
             silverdaw::log::warn("bridge",
                                  "LIBRARY_DELETE_ARTIFACTS refusing path outside artifact roots: " + path);
