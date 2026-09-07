@@ -1204,6 +1204,44 @@ void testAutomaticCaptureTypeExcludesTheDisruptiveDrivers()
     require(! isAutomaticCaptureType("DirectSound"),
             "DirectSound is a fallback, not an automatic choice");
 }
+
+/**
+ * The starvation watchdog. A capture device pulled mid-take reports nothing — measured on
+ * real hardware — so a stalled callback is the only evidence of loss, and the threshold has
+ * to clear every honest gap because a false positive aborts a good take.
+ */
+void testCaptureStarvationNeedsARealStall()
+{
+    using silverdaw::recording::captureHasStarved;
+    using silverdaw::recording::kCaptureStarvationMs;
+
+    // A tick per millisecond keeps the arithmetic legible.
+    constexpr double perSecond = 1000.0;
+    const juce::int64 reference = 5000;
+    const auto after = [&](double ms) { return reference + static_cast<juce::int64>(ms); };
+
+    require(! captureHasStarved(reference, after(0.0), perSecond),
+            "a device that has just delivered has not starved");
+    require(! captureHasStarved(reference, after(53.0), perSecond),
+            "DirectSound's 53 ms period is a legitimate gap");
+    require(! captureHasStarved(reference, after(kCaptureStarvationMs), perSecond),
+            "the threshold itself should not trip it");
+    require(captureHasStarved(reference, after(kCaptureStarvationMs + 1.0), perSecond),
+            "a stall past the threshold is a lost input");
+
+    // The margin over the worst honest driver period is the whole safety argument.
+    require(kCaptureStarvationMs > 53.0 * 20.0,
+            "the threshold must clear the slowest driver period by a wide margin");
+
+    // No reference at all: capture never opened and nothing was ever delivered. Reporting a
+    // loss here would abort sessions that had not begun.
+    require(! captureHasStarved(0, after(10000.0), perSecond),
+            "an absent reference must never report a loss");
+    require(! captureHasStarved(reference, after(10000.0), 0.0),
+            "an unusable clock must never report a loss");
+    require(! captureHasStarved(reference, reference - 1000, perSecond),
+            "a clock that appears to run backwards must never report a loss");
+}
 } // namespace
 void addRecordingTests(std::vector<TestCase>& tests)
 {
@@ -1273,6 +1311,8 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testPreRollKeepsTheAnchorOnTheAnchor});
     tests.push_back({"recording automatic capture type excludes the disruptive drivers",
                      testAutomaticCaptureTypeExcludesTheDisruptiveDrivers});
+    tests.push_back({"recording capture starvation needs a real stall",
+                     testCaptureStarvationNeedsARealStall});
 }
 
 } // namespace silverdaw::tests

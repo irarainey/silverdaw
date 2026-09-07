@@ -472,6 +472,7 @@ void RecordingSessionController::openCaptureForPreRoll()
 {
     if (captureOpen || writer == nullptr) return;
     captureOpen = true;
+    captureOpenTicks = juce::Time::getHighResolutionTicks();
     tap.setWriter(writer->getThreadedWriter());
 }
 
@@ -882,6 +883,23 @@ void RecordingSessionController::timerCallback()
         const auto detail = tap.getDeviceError();
         finishCapture("deviceLost",
                       detail.isNotEmpty() ? detail : juce::String("The audio input was disconnected"));
+        return;
+    }
+
+    // A device that is unplugged mid-take reports nothing at all — measured on real
+    // hardware, JUCE called neither `audioDeviceStopped` nor `audioDeviceError` and the
+    // callbacks simply stopped (ADR 0030, Amendment 22). Without this the session would go
+    // on "recording" indefinitely while capturing nothing, and the take would be finalised
+    // against a drift measurement taken over audio that never arrived.
+    if (captureOpen
+        && captureHasStarved(juce::jmax(captureOpenTicks, tap.getLastBlockTicks()),
+                             juce::Time::getHighResolutionTicks(),
+                             static_cast<double>(juce::Time::getHighResolutionTicksPerSecond())))
+    {
+        log::warn("recording", "capture starved for more than "
+                                   + juce::String(kCaptureStarvationMs, 0)
+                                   + " ms; treating the input as lost");
+        finishCapture("deviceLost", "The audio input stopped responding");
         return;
     }
 

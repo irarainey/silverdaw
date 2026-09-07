@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Twenty-one amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty-two amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -1177,3 +1177,42 @@ claimed to switch it on would be lying on most hardware.
 **Buffer size is not the escape hatch either** — Amendment Twenty measured what
 happens when capture asks for less than the driver's period, and the answer is
 that the take silently loses audio. The round trip is what it is.
+
+## Amendment Twenty-Two: a lost input announces itself with silence
+
+Pulling the capture device's cable mid-take was the last of the failure-mode
+spikes, and it found a real defect. Measured on real hardware with the capture
+probe, a USB microphone unplugged during a run stops calling back at the moment
+the cable leaves the socket and **JUCE reports nothing at all** — neither
+`audioDeviceStopped` nor `audioDeviceError` fires, and the device object still
+claims to be open. `InputCaptureTap::wasDeviceStopped()` stays false forever, so
+the controller's existing `deviceLost` branch could never run.
+
+Left alone the session would sit in `recording` indefinitely, capturing nothing,
+with no way out but Cancel — and if it were stopped, the take would be finalised
+against a drift figure fitted over audio that stopped arriving. The same run
+measured 1382 ppm, or 83 ms per minute, which would have been applied to the
+file as if it were a real clock error.
+
+**A stalled callback is therefore the only evidence of loss, so that is what is
+watched.** `RecordingSessionController::timerCallback` compares the later of the
+last delivered block and the moment capture opened against the clock, and calls
+`finishCapture("deviceLost", …)` once the gap passes `kCaptureStarvationMs`.
+Taking the *later* of the two means a device that never delivers a single block
+is caught by the same rule as one that dies mid-take. The predicate is pure so
+the threshold is tested without a device.
+
+The threshold is 1500 ms, which is roughly thirty times the slowest driver
+period Silverdaw will open — DirectSound's 53 ms. The margin is deliberately
+lopsided because the two failure directions are not symmetrical: waiting a
+second and a half to report a dead input costs the performer nothing they had
+not already lost, whereas tripping early aborts a take that was going fine. No
+new error plumbing was needed; `deviceLost` already surfaces as *"The input was
+disconnected. Reconnect it, or choose a different input."*
+
+**The same measurement confirmed the standalone-capture premise under the worst
+case this decision anticipated.** While capture died, playback carried on
+completely undisturbed — every callback delivered, no device restarts, the
+output still open. Losing the input costs the input and nothing else, which is
+exactly why capture is opened as its own device rather than folded into the
+playback device.

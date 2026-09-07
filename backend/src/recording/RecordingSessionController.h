@@ -36,6 +36,35 @@ constexpr double kMaxRecordingSeconds = 30.0 * 60.0;
 constexpr double kCapturePreRollMs = 250.0;
 constexpr double kRecordPreRollMs = 120.0;
 
+/** How long capture may deliver nothing before the input is declared lost
+ *  (ADR 0030, Amendment 22).
+ *
+ *  A capture device unplugged mid-take was measured to simply stop calling back: JUCE
+ *  invoked neither `audioDeviceStopped` nor `audioDeviceError`, so nothing raised the
+ *  loss and the session would have gone on "recording" silence until the user noticed.
+ *  A stalled callback is therefore the signal, and the only one available.
+ *
+ *  The threshold has to clear the longest legitimate gap by a wide margin, because a false
+ *  positive aborts a take that was going fine. The slowest driver period Silverdaw will
+ *  open is DirectSound's 53 ms default, so this is roughly thirty times the worst honest
+ *  gap — long enough that only a genuinely dead device trips it, short enough that the
+ *  performer is told while they are still standing at the microphone. */
+constexpr double kCaptureStarvationMs = 1500.0;
+
+/** Whether capture has gone quiet for long enough to call the input lost.
+ *
+ *  `referenceTicks` is the later of the last delivered block and the moment capture was
+ *  opened, so a device that never delivers anything at all is caught by the same rule as
+ *  one that dies mid-take. Pure so the threshold can be tested without a device. */
+inline bool captureHasStarved(juce::int64 referenceTicks, juce::int64 nowTicks,
+                              double ticksPerSecond) noexcept
+{
+    if (referenceTicks <= 0 || ticksPerSecond <= 0.0 || nowTicks <= referenceTicks) return false;
+    const double elapsedMs =
+        1000.0 * static_cast<double>(nowTicks - referenceTicks) / ticksPerSecond;
+    return elapsedMs > kCaptureStarvationMs;
+}
+
 /** How a take's captured lead-in is split: what gets trimmed, and what is kept in front of
  *  the anchor. See `planHeadTrim`. */
 struct HeadTrimPlan
@@ -461,6 +490,9 @@ class RecordingSessionController final : private juce::Timer
     std::optional<Session> session;
     /** Whether the writer is attached to the tap, so a count-in tick cannot open it twice. */
     bool captureOpen = false;
+    /** When capture was opened, as the starvation watchdog's reference until the device has
+     *  delivered its first block. */
+    juce::int64 captureOpenTicks = 0;
     int stateTicks = 0;
 };
 

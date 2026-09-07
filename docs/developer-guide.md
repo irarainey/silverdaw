@@ -3879,6 +3879,20 @@ than by name matters, because "Windows Audio (Low Latency Mode)" is not one — 
 runs at the same 10 ms period as plain shared mode and offers no other size at
 all. An explicitly chosen type is still honoured exactly as given.
 
+**A lost input is detected by silence, because nothing else reports it** (ADR
+0030, Amendment 22). A capture device unplugged mid-take was measured to stop
+calling back without JUCE ever firing `audioDeviceStopped` or
+`audioDeviceError`, so `wasDeviceStopped` stays false and the session would sit
+in `recording` indefinitely, capturing nothing. `timerCallback` therefore also
+watches for a stalled callback: `captureHasStarved` compares the later of
+`InputCaptureTap::getLastBlockTicks()` and the moment capture opened — so a
+device that never delivers a first block is caught by the same rule — against
+`kCaptureStarvationMs`, and finishes the take as `deviceLost`. The threshold is
+1500 ms, about thirty times DirectSound's 53 ms period, because a false positive
+aborts a take that was going fine while a late report costs nothing already
+lost. Playback was verified undisturbed throughout the same failure, which is
+the standalone capture device earning its keep.
+
 **The record window.** A recording belongs to a window in time, not to a track:
 from the top of the project, from the playhead, or over the existing timeline
 range selection. The first two run until **Stop**; only the range window stops
@@ -4208,6 +4222,19 @@ everything they could not see; adding the two would double-count the buffer. The
 skew term still applies, because it measures this particular play. The
 finalise log says `(calibrated)` or `(driver)` so which path ran is never in
 doubt. See ADR 0030, Amendment 17.
+
+**The return path is the user's problem, not the calibrator's.** `findBurstOnsets`
+gates on an absolute floor and then backtracks from each burst's own peak, so it
+does not care how the clicks got back to the input: a microphone hearing
+speakers, a headphone earpiece held against one, or a cable patched from an
+output into a line input all yield the same round trip. A patch cable is in fact
+the most accurate of the three, since it carries no air travel and no room, which
+matters because a line-level, DI or mixer input has no acoustic path at all and
+would otherwise look like a case the feature could not serve. Only the copy ever
+assumed a microphone. A hot loopback does not need padding down for the sake of
+detection — the onset search is peak-relative, so even a clipped burst gives a
+clean edge — though an input left at microphone gain will still be unpleasant to
+listen back to.
 
 **A take keeps 120 ms in front of the anchor.** Trimming the whole lead-in lands
 the take exactly on the anchor, which shaves the attack off a note played a hair

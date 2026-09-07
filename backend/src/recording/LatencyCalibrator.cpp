@@ -178,8 +178,8 @@ CalibrationOutcome measureRoundTrip(const juce::File& captureFile,
 
     if (onsets.empty())
     {
-        outcome.error = "The clicks were not heard. Turn the output up, or move the microphone "
-                        "closer to the speakers.";
+        outcome.error = "The clicks were not heard. Turn the output up, or check that the sound "
+                        "can reach the input you chose.";
         return outcome;
     }
 

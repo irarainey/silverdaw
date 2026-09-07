@@ -61,6 +61,9 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
     // the tap finished gain, metering and monitoring — that work would otherwise shorten
     // the measured gap to the transport start and under-trim the take by its duration.
     const auto blockTicks = juce::Time::getHighResolutionTicks();
+    // Stamped before any early return: a block that carries no usable audio still proves
+    // the device is alive, and the starvation watchdog must not mistake it for a loss.
+    lastBlockTicks.store(blockTicks, std::memory_order_relaxed);
     // An input-only device should present no outputs; clear defensively.
     for (int channel = 0; channel < numOutputChannels; ++channel)
         if (outputChannelData[channel] != nullptr)
@@ -160,6 +163,7 @@ void InputCaptureTap::audioDeviceIOCallbackWithContext(const float* const* input
 void InputCaptureTap::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
     deviceStopped.store(false, std::memory_order_relaxed);
+    lastBlockTicks.store(0, std::memory_order_relaxed);
     // Sized here, on the device thread before streaming starts, so the callback
     // itself never allocates. Headroom for a device that hands over a longer block
     // than it advertises.

@@ -7,8 +7,10 @@
 // heard as a take that sits late against the backing.
 //
 // This dialog plays a short run of clicks and listens for them, which is the only way to see the
-// whole path. It is offered, never forced: recording works without it, and a user on headphones
-// (where nothing can be heard by the microphone) types the figure in instead.
+// whole path. It does not care how the clicks get back — a microphone hearing speakers, a
+// headphone earpiece held against one, or a cable patched from an output into a line input all
+// measure the same round trip. It is offered, never forced: recording works without it, and a
+// user whose input cannot hear the clicks at all types the figure in instead.
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import BusySpinner from '@/components/BusySpinner.vue'
@@ -135,9 +137,10 @@ onBeforeUnmount(() => {
             recordings line up with the backing instead of landing late.
           </p>
           <p class="text-zinc-400">
-            Turn the volume up a little, point the microphone at your speakers, and keep quiet
-            for a few seconds. On headphones, hold one earpiece against the microphone
-            instead — that works just as well.
+            Turn the volume up a little and keep quiet for a few seconds. The clicks have to
+            reach the input you record from: point a microphone at your speakers, or hold a
+            headphone earpiece against it. For a line input, mixer or DI, patch an output back
+            into that input instead — a cable is the most accurate way of all.
           </p>
 
           <div class="rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">

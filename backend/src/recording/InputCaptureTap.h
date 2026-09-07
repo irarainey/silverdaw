@@ -69,6 +69,15 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
      *  against it, so it marks where the take's audio begins in wall-clock terms. */
     juce::int64 getFirstBlockTicks() const noexcept { return firstBlockTicks.load(); }
 
+    /** High-resolution tick stamp of the most recent capture callback, whether or not it
+     *  carried usable audio. Zero until the device has delivered one.
+     *
+     *  This is the only reliable evidence that an input has gone away. A USB device
+     *  unplugged mid-take was measured to stop calling back **without** JUCE ever invoking
+     *  `audioDeviceStopped` or `audioDeviceError`, so `wasDeviceStopped` stays false and
+     *  nothing else reports the loss (ADR 0030, Amendment 22). */
+    juce::int64 getLastBlockTicks() const noexcept { return lastBlockTicks.load(); }
+
     /** The input device's measured frame rate, fitted over every written block. Reset with
      *  the capture stats, so it describes this take only. */
     const ClockRateEstimator& inputRateEstimator() const noexcept { return inputRate; }
@@ -100,6 +109,7 @@ class InputCaptureTap final : public juce::AudioIODeviceCallback
     std::atomic<juce::int64> capturedSamples{0};
     std::atomic<juce::int64> droppedSamples{0};
     std::atomic<juce::int64> firstBlockTicks{0};
+    std::atomic<juce::int64> lastBlockTicks{0};
     ClockRateEstimator inputRate;
     std::atomic<juce::int64> callbackTicks{0};
     std::atomic<bool> hitLengthCap{false};
