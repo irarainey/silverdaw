@@ -25,9 +25,22 @@ Before hand-rolling chrome, use the existing component classes from
 - `.dialog-btn-primary`, `.dialog-btn-cancel`, `.dialog-btn-destructive`
 - `.app-select` (+ `.app-select-dense`) — every native dropdown
 
+Shared components, likewise:
+
+- `BusySpinner.vue` — the app's only spinner. Never paste the SVG again; the
+  markup had already been duplicated into a dozen panels, where it was free to
+  drift in size and opacity between one dialog and the next.
+
 If a visual needs to change globally, **edit `style.css` once** rather than
 overriding per-component. Add a new shared class there when a pattern repeats in
 3+ components.
+
+**Say what a wait is, and never as a failure.** A panel waiting on slow work
+shows the values it is about to settle on (a remembered choice, the device it
+asked for) rather than a hardcoded default that will snap a moment later, and
+labels the wait — `BusySpinner`, `cursor-wait`, `aria-busy` — instead of
+rendering an empty-state message. "No input available" is a *result*; showing it
+before the search has finished is a lie the user has to act on.
 
 ## 1. Colour system
 

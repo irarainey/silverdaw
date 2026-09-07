@@ -95,21 +95,26 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
   const transport = useTransportStore()
 
   function requestInputs(refresh: boolean): void {
-    if (refresh) store.beginInputRescan()
+    store.beginInputRescan()
     const sent = sendBridge('RECORD_INPUTS_REQUEST', refresh ? { refresh: true } : {})
-    if (!sent && refresh) store.finishInputRescan()
+    if (!sent) store.finishInputRescan()
   }
 
   function openSession(): void {
     store.clear()
     const input = store.rememberedInput
-    // The device list is cached across opens — enumerating every driver is slow
-    // enough to be felt, and Rescan is there for when the hardware changes.
-    if (store.inputs === null) requestInputs(false)
+    // Session open goes first, and deliberately so. Enumerating every driver type
+    // costs hundreds of milliseconds on the backend's message thread, and every
+    // control in the dialog reads from the session state — so asking for the
+    // device list first parks the whole form behind a scan it does not need. The
+    // list fills one dropdown; the session fills the rest of the dialog.
     sendBridge('RECORD_SESSION_OPEN', {
       protocolVersion: RECORDING_PROTOCOL_VERSION,
       ...(input ? { input } : {})
     })
+    // The device list is cached across opens — enumerating every driver is slow
+    // enough to be felt, and Rescan is there for when the hardware changes.
+    if (store.inputs === null) requestInputs(false)
   }
 
   function closeSession(): void {

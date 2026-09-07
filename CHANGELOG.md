@@ -28,6 +28,7 @@
 - The metronome ran ahead of the music whenever a track used an effect that adds latency, such as a mastering limiter, so anything played or recorded to the click landed early. The click now sounds in step with the audio you are hearing.
 - Layering recordings on top of one another gradually pulled the arrangement out of time, a little further with each new take. Silverdaw now measures the recording and playback devices against each other rather than against their stated rates, over the whole take rather than its two ends, and leaves a take alone when the difference is too small to measure reliably instead of correcting it by guesswork.
 - Checkboxes and radio buttons showed the browser's own white focus outline instead of the app's own styling.
+- The **Record Audio** dialog sat half-built for a moment on the first open, while every audio driver on the machine was scanned for inputs. The dialog now opens the recording input first and looks for the device list second, shows every setting it is about to use straight away, and says it is still searching — with a spinner and a wait cursor — instead of reporting **No input available** before it has finished looking.
 - Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
 - Deleting a stem, sample or recording with **Clean up project files** on left the project marked as having unsaved changes even when nothing else had changed since the last save.
 

@@ -42,7 +42,9 @@ interface RecordingSessionState {
    *  scanning every driver is slow and the device set rarely changes, so the
    *  dialog shows the cached list and Rescan is the way to refresh it. */
   inputs: RecordingInputsListPayload | null
-  /** True from a user-initiated Rescan until the refreshed list arrives. */
+  /** True while the device list is being fetched — the first load when the dialog
+   *  opens as well as a user-initiated Rescan. Both are the same wait to the user
+   *  and the same spinner. */
   rescanningInputs: boolean
   /** User-scope remembered input, resolved by the renderer from Electron
    *  preferences (the backend never sees it). */
@@ -140,6 +142,14 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       return this.current?.status === 'review' && this.ready !== null
     },
 
+    /** True between opening the dialog and the backend's first session state.
+     *  Opening a capture device is not instant, so the form shows the settings it
+     *  is about to settle on and says it is still working rather than presenting
+     *  a dead, half-built panel. */
+    awaitingSession(): boolean {
+      return this.dialogOpen && this.current === null
+    },
+
     /** No capture device at all — the dialog says so rather than showing an
      *  empty picker that looks broken. Asked of the same builder the picker
      *  fills itself from, so the two cannot disagree: Windows exposes pseudo
@@ -195,7 +205,7 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       this.finishInputRescan()
     },
 
-    /** Show rescan progress until the refreshed list arrives. */
+    /** Show scan progress until the list arrives. */
     beginInputRescan(): void {
       this.rescanningInputs = true
       if (inputRescanSafetyTimer) clearTimeout(inputRescanSafetyTimer)

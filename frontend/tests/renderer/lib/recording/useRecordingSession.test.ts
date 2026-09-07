@@ -105,7 +105,10 @@ describe('useRecordingSession', () => {
     const scope = effectScope()
     scope.run(() => useRecordingSession(open))
 
-    expect(sentEnvelopes()).toEqual(['RECORD_INPUTS_REQUEST', 'RECORD_SESSION_OPEN'])
+    // Session open goes first: enumerating the drivers is slow, and the whole
+    // form is driven by the session state, so the scan must not be queued in
+    // front of it.
+    expect(sentEnvelopes()).toEqual(['RECORD_SESSION_OPEN', 'RECORD_INPUTS_REQUEST'])
 
     store.applyState(makeState())
     open.value = false
@@ -140,6 +143,24 @@ describe('useRecordingSession', () => {
 
     // The refreshed list is what ends the spinner.
     store.applyInputs({ types: [{ name: 'Windows Audio', devices: ['Microphone', 'Interface'] }] })
+    expect(store.rescanningInputs).toBe(false)
+    scope.stop()
+  })
+
+  it('shows scan progress for the first load, not just for a user rescan', async () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    scope.run(() => useRecordingSession(open))
+    await nextTick()
+
+    // The first open is the slow one — it is the scan that has no cache to fall
+    // back on — so it is the open that most needs to say it is working.
+    const request = vi.mocked(sendBridge).mock.calls.find((call) => call[0] === 'RECORD_INPUTS_REQUEST')
+    expect(request?.[1]).toEqual({})
+    expect(store.rescanningInputs).toBe(true)
+
+    store.applyInputs({ types: [{ name: 'Windows Audio', devices: ['Microphone'] }] })
     expect(store.rescanningInputs).toBe(false)
     scope.stop()
   })

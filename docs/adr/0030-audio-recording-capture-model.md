@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Fifteen amendments follow the decision, several of
+The feature shipped in 1.9.0. Sixteen amendments follow the decision, several of
 which reverse a position taken here — software monitoring and "every recording
 is musical" most of all. **Read the amendments before relying on anything in the
 Decision section**; where the two disagree, the amendment is what was built.
@@ -867,3 +867,38 @@ whatever residual the reported driver latency leaves is untouched — that still
 needs a user offset or an acoustic loopback, and neither is decided here. And a
 take too short to accumulate `kMinPoints` blocks is never rate-corrected; over a
 few seconds, tens of ppm is microseconds, so there is nothing there to correct.
+
+### Amendment 16 — Opening the session comes before enumerating the drivers
+
+`enumerateCaptureInputs` scans every driver type, and its own comment has always
+said what that costs: hundreds of milliseconds, on the backend's message thread,
+which is where every command handler runs. The dialog asked for the device list
+first and the session second, so `RECORD_SESSION_OPEN` sat in the queue behind
+that scan.
+
+The consequence was out of proportion to what was being waited for. The device
+list fills exactly one dropdown; `RECORD_SESSION_STATE` fills everything else —
+window, count-in, click, backing, monitor, gain, mode, channels — so ordering the
+scan first parked the *whole* form behind a scan that only one control needed.
+On the first open of an app session, where the cache is empty and the scan is
+genuinely slow, the dialog appeared as a shell of disabled controls holding
+hardcoded defaults, which then visibly snapped into place.
+
+The order is now reversed: session first, list second. Nothing depends on the
+other way round — the session opens on the device remembered in preferences, not
+on anything in the enumerated list — so this is ordering, not redesign, and the
+protocol is unchanged.
+
+Two rules follow from it, and they are the part worth keeping.
+
+**A control with a remembered value shows it immediately.** Every dialog setting
+already has a `remembered*` counterpart that the session re-applies the moment it
+opens (Amendment 7). Falling back to those while the state is in flight shows
+what the dialog is *about to* settle on, rather than a hardcoded default that
+will be replaced a moment later. It is showing the truth early, not guessing.
+
+**Waiting is stated, and never as a failure.** An empty picker used to read "No
+input available" while the scan was still running — an alarming thing to say to
+someone who is about to record, and untrue. It now names the device the session
+was asked for, or says it is still looking, and reports no input only once the
+scan has actually come back empty. A wait cursor and a spinner carry the rest.

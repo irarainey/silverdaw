@@ -4,17 +4,20 @@
 // none of it can change under a performance in progress.
 
 import { computed } from 'vue'
+import BusySpinner from '@/components/BusySpinner.vue'
 import PeakMeter from '@/components/PeakMeter.vue'
 import RecordAudioLiveWaveform from '@/components/RecordAudioLiveWaveform.vue'
 import {
   buildChannelOptions,
   buildDeviceOptions,
   channelOptionValue,
+  deviceOptionValue,
   findDeviceOption,
   findDeviceOptionForInput
 } from '@/lib/recording/recordingInputOptions'
 import type { RecordingSession } from '@/lib/recording/useRecordingSession'
 import { useProjectStore } from '@/stores/projectStore'
+import { isTrackSilenced } from '@/stores/projectTypes'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import {
   MAX_RECORDING_INPUT_GAIN_DB,
@@ -34,10 +37,12 @@ const backingTracks = computed(() =>
   project.tracks.map((track) => ({
     id: track.id,
     name: track.name,
-    silenced: track.muted || (project.anySoloed && !track.soloed)
+    silenced: isTrackSilenced(track, project.anySoloed)
   }))
 )
-const backingSelection = computed(() => new Set(store.current?.backingTrackIds ?? []))
+const backingSelection = computed(
+  () => new Set(store.current?.backingTrackIds ?? store.rememberedBackingTrackIds ?? [])
+)
 const selectedBackingCount = computed(
   () => backingTracks.value.filter((track) => backingSelection.value.has(track.id)).length
 )
@@ -60,7 +65,7 @@ function selectNoBacking(): void {
 // How loud the backing sits under the performer. Monitoring only, so unlike the
 // track selection it stays live while rolling: someone who cannot hear
 // themselves over the arrangement should not have to stop to fix it.
-const backingGain = computed(() => store.current?.backingGain ?? 1)
+const backingGain = computed(() => store.current?.backingGain ?? store.rememberedBackingGain ?? 1)
 const backingGainPercent = computed(() => Math.round(backingGain.value * 100))
 
 function onBackingGainChange(event: Event): void {
@@ -73,21 +78,54 @@ function onBackingGainReset(): void {
 
 const deviceOptions = computed(() => buildDeviceOptions(store.inputs))
 const openInput = computed(() => store.current?.input ?? null)
-const selectedDevice = computed(() => findDeviceOptionForInput(deviceOptions.value, openInput.value))
-const selectedDeviceValue = computed(() => selectedDevice.value?.value ?? '')
+// Until the session reports which device it opened, show the one it was asked
+// for. The picker is otherwise empty for as long as the scan takes, which reads
+// as "no microphone" at the exact moment someone is about to record.
+const displayInput = computed(() => openInput.value ?? store.rememberedInput)
+const selectedDevice = computed(() =>
+  findDeviceOptionForInput(deviceOptions.value, displayInput.value)
+)
+const selectedDeviceValue = computed(
+  () =>
+    selectedDevice.value?.value ??
+    (displayInput.value ? deviceOptionValue(displayInput.value.deviceName) : '')
+)
+// A stand-in row for a device the list cannot name yet. It disappears the moment
+// the real option exists, so the picker never carries the same device twice.
+const pendingDeviceName = computed(() =>
+  selectedDevice.value === null && displayInput.value !== null
+    ? displayInput.value.deviceName
+    : ''
+)
+// Channels come from the device the session actually opened — a remembered name
+// says nothing about how many inputs it has.
 const channelOptions = computed(() => buildChannelOptions(openInput.value?.channelNames ?? []))
 const selectedChannelValue = computed(() =>
   store.current ? channelOptionValue(store.current.firstChannel, store.current.channelCount) : ''
 )
 
+// Every setting below falls back to what this app session last used rather than
+// to a hardcoded default. The session re-applies exactly these values the moment
+// it opens, so showing them straight away is showing the truth early — not a
+// guess that snaps to something else a moment later.
 const locked = computed(() => store.isRolling)
 const hasSelection = computed(() => store.current?.hasSelection === true)
-const windowMode = computed(() => store.current?.windowMode ?? 'start')
-const countInEnabled = computed(() => (store.current?.countInBars ?? 0) > 0)
-const inputGainDb = computed(() => store.current?.inputGainDb ?? 0)
-const recordingMode = computed(() => store.current?.recordingMode ?? 'music')
-const monitorEnabled = computed(() => store.current?.monitorEnabled === true)
-const cleanupEnabled = computed(() => store.current?.cleanupEnabled === true)
+const windowMode = computed(
+  () => store.current?.windowMode ?? store.rememberedWindowMode ?? 'start'
+)
+const countInEnabled = computed(
+  () => (store.current?.countInBars ?? store.rememberedCountInBars ?? 0) > 0
+)
+const inputGainDb = computed(() => store.current?.inputGainDb ?? store.rememberedInputGainDb)
+const recordingMode = computed(
+  () => store.current?.recordingMode ?? store.rememberedRecordingMode ?? 'music'
+)
+const monitorEnabled = computed(
+  () => store.current?.monitorEnabled ?? store.rememberedMonitorEnabled ?? false
+)
+const cleanupEnabled = computed(
+  () => store.current?.cleanupEnabled ?? store.rememberedCleanupEnabled ?? false
+)
 
 const meterSource = (): { peakL: number; peakR: number } => ({
   peakL: store.inputPeakL,
@@ -133,7 +171,9 @@ function onCountInChange(event: Event): void {
 // The click is the session's own, seeded from the project's metronome when the
 // dialog opens: recording with a click is not a reason for the timeline's
 // metronome to be left on afterwards.
-const clickEnabled = computed(() => store.current?.clickEnabled === true)
+const clickEnabled = computed(
+  () => store.current?.clickEnabled ?? store.rememberedClickEnabled ?? false
+)
 
 function onMetronomeChange(event: Event): void {
   props.session.setClickEnabled((event.target as HTMLInputElement).checked)
@@ -172,17 +212,30 @@ function onCleanupChange(event: Event): void {
         <div class="flex min-w-0 items-center gap-2">
           <select
             class="app-select min-w-0 flex-1 bg-zinc-950/40 text-zinc-300 hover:bg-zinc-900"
+            :class="{ 'cursor-wait': store.rescanningInputs && deviceOptions.length === 0 }"
             :disabled="locked || deviceOptions.length === 0"
+            :aria-busy="store.rescanningInputs"
             aria-label="Recording input device"
             :value="selectedDeviceValue"
             @change="onDeviceChange"
           >
+            <!-- Three different states, and saying the wrong one is worse than
+                 saying nothing: the device the session was asked for while the
+                 scan runs, "Finding…" when there is not even that, and only
+                 once the scan is back does an empty list mean no input. -->
             <option
-              v-if="selectedDeviceValue === ''"
+              v-if="pendingDeviceName !== ''"
+              :value="selectedDeviceValue"
+              disabled
+            >
+              {{ pendingDeviceName }}
+            </option>
+            <option
+              v-else-if="selectedDeviceValue === ''"
               value=""
               disabled
             >
-              No input available
+              {{ store.rescanningInputs ? 'Finding audio devices…' : 'No input available' }}
             </option>
             <option
               v-for="device in deviceOptions"
@@ -198,29 +251,10 @@ function onCleanupChange(event: Event): void {
             :aria-busy="store.rescanningInputs"
             aria-label="Rescan audio input devices"
             class="flex shrink-0 items-center gap-1.5 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            :class="{ 'cursor-wait': store.rescanningInputs }"
             @click="props.session.rescanInputs()"
           >
-            <svg
-              v-if="store.rescanningInputs"
-              class="h-3 w-3 animate-spin"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              />
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
+            <BusySpinner v-if="store.rescanningInputs" />
             <!-- The label does not change while a scan runs: the spinner says that,
                  and a wider label would squeeze the device picker beside it. -->
             Rescan
@@ -229,7 +263,9 @@ function onCleanupChange(event: Event): void {
 
         <select
           class="app-select w-full bg-zinc-950/40 text-zinc-300 hover:bg-zinc-900"
+          :class="{ 'cursor-wait': store.awaitingSession }"
           :disabled="locked || channelOptions.length === 0"
+          :aria-busy="store.awaitingSession"
           aria-label="Recording input channels"
           :value="selectedChannelValue"
           @change="onChannelChange"
@@ -239,7 +275,10 @@ function onCleanupChange(event: Event): void {
             value=""
             disabled
           >
-            No channels available
+            <!-- The channel count comes from the open device, so before the
+                 session exists this is still loading, not a device with no
+                 usable channels. -->
+            {{ store.awaitingSession ? 'Opening input…' : 'No channels available' }}
           </option>
           <option
             v-for="option in channelOptions"

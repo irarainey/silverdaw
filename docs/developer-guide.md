@@ -824,6 +824,18 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   { input? }` opens the one recording session, optionally on a remembered
   device, and `RECORD_SESSION_CLOSE { sessionId }` tears it down — discarding an
   uncommitted recording and aborting one still rolling.
+  **The dialog sends `RECORD_SESSION_OPEN` before `RECORD_INPUTS_REQUEST`, and
+  the order matters** (ADR 0030, Amendment 16): both are handled on the
+  backend's message thread, so an uncached enumeration — hundreds of
+  milliseconds — blocks whatever is queued behind it. The device list fills one
+  dropdown; the session state fills every other control in the dialog, so
+  asking for the list first parked the whole form behind a scan only one control
+  needed. Nothing depends on the reverse order: the session opens on the device
+  remembered in Electron preferences, not on anything in the enumerated list.
+  While the list is outstanding the picker names the device the session was asked
+  for and the rest of the form renders its `remembered*` values — the same ones
+  the session re-applies on arrival — so it shows what it is about to settle on
+  instead of hardcoded defaults that visibly snap.
 - `RECORD_SESSION_CONTROL { sessionId, action, … }` carries one action:
   `selectInput { input }`, `selectChannels { firstChannel, channelCount }`,
   `setCountInBars { bars }`, `setClickEnabled { enabled }`,

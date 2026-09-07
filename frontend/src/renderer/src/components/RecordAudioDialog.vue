@@ -4,6 +4,7 @@
 // closing this dialog at any point leaves the project exactly as it was.
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import BusySpinner from '@/components/BusySpinner.vue'
 import RecordAudioReview from '@/components/RecordAudioReview.vue'
 import RecordAudioSetup from '@/components/RecordAudioSetup.vue'
 import { recordingErrorMessage } from '@/lib/recording/recordingMessages'
@@ -230,6 +231,8 @@ const errorMessage = computed(() => {
         ref="dialogEl"
         tabindex="-1"
         class="dialog-card w-[min(820px,94vw)]"
+        :class="{ 'cursor-wait': store.awaitingSession }"
+        :aria-busy="store.awaitingSession"
       >
         <div class="dialog-header">
           <h1
@@ -321,11 +324,21 @@ const errorMessage = computed(() => {
             v-else
             type="button"
             class="dialog-btn-primary"
-            title="Start recording (R or Space)"
+            :class="{ 'cursor-wait': store.awaitingSession }"
+            :title="
+              store.awaitingSession
+                ? 'Opening the recording input…'
+                : 'Start recording (R or Space)'
+            "
             :disabled="!canRecord || isFinalising"
             @click="onRecordOrStop"
           >
-            Record
+            <!-- The spinner replaces nothing: the word stays put so the footer
+                 does not resize under the pointer as the session arrives. -->
+            <BusySpinner
+              v-if="store.awaitingSession"
+              class="mr-1.5 inline-block align-[-1px]"
+            />Record
           </button>
         </div>
       </div>
