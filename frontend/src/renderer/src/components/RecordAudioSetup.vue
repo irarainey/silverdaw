@@ -195,6 +195,11 @@ function onCleanupChange(event: Event): void {
   props.session.setCleanupEnabled((event.target as HTMLInputElement).checked)
 }
 
+// Monitoring delay (ADR 0030, Amendment 21). The round trip the head trim removes from the
+// take is also, unavoidably, how late the performer hears themselves — so the figure is
+// already known and worth stating rather than leaving as an unexplained flam.
+const monitorDelayMs = computed(() => Math.round(store.current?.latencyMs ?? 0))
+
 // Recording latency (ADR 0030, Amendment 17). Shown here because it is a property of the input
 // the user has just chosen, and stated plainly whether it is set or not — an uncalibrated setup
 // records late, so hiding that would leave the user hunting for a fault in their playing.
@@ -557,6 +562,14 @@ const calibrationLabel = computed(() => {
               <span class="text-zinc-500"> — use headphones to prevent feedback</span>
             </span>
           </label>
+          <p
+            v-if="monitorEnabled && monitorDelayMs > 0"
+            class="text-[11px] text-zinc-500"
+          >
+            You will hear yourself about {{ monitorDelayMs }} ms late. The delay is only in what
+            you hear — the take still lands on the beat. Leave this off if you can already hear
+            yourself in the room.
+          </p>
         </section>
 
         <section class="flex min-w-0 flex-col gap-2">

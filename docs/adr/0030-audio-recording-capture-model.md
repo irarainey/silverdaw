@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Twenty amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty-one amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -1119,3 +1119,54 @@ inside the calibrator's agreement window, and recording is unreleased.
 performer: any shift applied ahead of them is absorbed by them playing to what
 they hear. Only a physically shorter round trip, or monitoring that never enters
 the computer, changes it.
+
+## Amendment Twenty-One: monitoring delay is stated, not compensated
+
+The obvious next thought, having compensated the take for the round trip, is to
+compensate what the performer hears by the same figure — shift the backing so
+the voice they hear through **Hear Yourself** lands on the beat. It does not
+work, and the reason is worth writing down because the idea is a good one right
+up until it is examined.
+
+**The performer is inside the loop.** Aligning the take is open-loop
+bookkeeping: the timeline is a fixed reference, the take is late against it by
+the round trip, subtract it, done. Monitoring is not. Delay the backing by the
+round trip and the performer does not keep singing at the old moment — they sing
+to the backing they now hear, a round trip later, and their voice returns a
+round trip after that. **The flam is unchanged.** Any shift applied ahead of the
+performer is absorbed by the performer. Closing it would mean emitting the sound
+before the microphone captured it.
+
+**Every comparable application agrees.** A survey of Tracktion Engine, Ardour,
+Audacity, and the documented behaviour of six commercial DAWs found no product
+that delays the backing to compensate monitoring, and no such technique in the
+networked-music-performance literature either. What they all do is compensate
+the *recording* — Tracktion's `DeviceManager::getRecordAdjustmentSamples()` is
+literally `getInputLatencyInSamples() + getOutputLatencyInSamples()`, the same
+sum as `effectiveRoundTripMs` — and then offer the performer a menu for
+monitoring that is always some combination of: use the interface's direct
+monitoring, shorten the monitor path, or turn monitoring off. Ardour's manual
+puts software monitoring in the explicitly *non-compensable* bucket, in contrast
+to recording, where "latency … can easily be compensated for".
+
+**So Silverdaw states the figure instead of pretending to fix it.** With **Hear
+Yourself** on, the dialog says how late the performer will hear themselves,
+using the same `latencyMs` the take is trimmed by, and says plainly that the
+delay is in what they hear and not in the take. That second half is the part
+that matters: a performer who hears a flam will otherwise assume the recording
+is being captured late and start compensating for a fault that does not exist —
+which would genuinely damage the take, whereas the flam alone does not.
+
+The advice attached to it is to leave monitoring off when the performer can
+already hear themselves acoustically. This is not a fudge: for a singer or any
+acoustic instrument in headphones, the unmonitored path has no delay at all, so
+**off is the low-latency option** and it is already the default. Monitoring
+earns its place for a quiet or DI'd source that cannot be heard otherwise.
+
+No attempt is made to drive interface direct monitoring. It is the real answer
+to the flam, but it lives in the interface's own control panel, and a DAW that
+claimed to switch it on would be lying on most hardware.
+
+**Buffer size is not the escape hatch either** — Amendment Twenty measured what
+happens when capture asks for less than the driver's period, and the answer is
+that the take silently loses audio. The round trip is what it is.
