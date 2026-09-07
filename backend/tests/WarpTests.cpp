@@ -137,22 +137,54 @@ void testWarpTimelineDurationMapping()
 void testWarpPitchStrategy()
 {
     using Stretcher = RubberBand::RubberBandStretcher;
+    constexpr auto transientsMask = Stretcher::OptionTransientsCrisp
+                                    | Stretcher::OptionTransientsMixed
+                                    | Stretcher::OptionTransientsSmooth;
+
     const auto tempoOnly = silverdaw::WarpProcessor::realtimeOptionsFor(
-        Stretcher::OptionEngineFaster, 1.0);
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsCrisp, 1.0);
     require((tempoOnly & Stretcher::OptionProcessRealTime) != 0,
             "warp playback must use Rubber Band real-time mode");
     require((tempoOnly & Stretcher::OptionPitchHighConsistency) == 0,
             "tempo-only warp should use Rubber Band's lower-cost pitch strategy");
+    require((tempoOnly & Stretcher::OptionPitchHighQuality) == 0,
+            "tempo-only warp does not pitch shift, so it needs no pitch-quality option");
+    require((tempoOnly & transientsMask) == Stretcher::OptionTransientsCrisp,
+            "tempo-only warp must keep crisp transients so time-stretched drums stay sharp");
 
+    // A pitch shift resamples, and crisp phase resets then fire on sustained tones
+    // as well as real transients. Mixed protects musical fundamentals while still
+    // resetting outside that range, so percussive attacks survive.
     const auto pitchShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
-        Stretcher::OptionEngineFaster, 1.25);
-    require((pitchShifted & Stretcher::OptionPitchHighConsistency) != 0,
-            "pitch-shifted warp should preserve dynamic-pitch consistency");
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsCrisp, 1.25);
+    require((pitchShifted & transientsMask) == Stretcher::OptionTransientsMixed,
+            "a pitch-shifted R2 warp must not reset phases on musical fundamentals");
+    require((pitchShifted & Stretcher::OptionPitchHighQuality) != 0,
+            "a pitch shift fixed at construction should use the high-quality pitch method");
+    require((pitchShifted & Stretcher::OptionPitchHighConsistency) == 0,
+            "high consistency is for live pitch changes and is escalated to on demand");
+
+    // A mode that already states its transient handling keeps it.
+    const auto tonalShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsSmooth
+            | Stretcher::OptionWindowLong,
+        1.25);
+    require((tonalShifted & transientsMask) == Stretcher::OptionTransientsSmooth,
+            "an explicit transient choice must survive the pitch-shift adjustment");
 
     const auto finerAtUnity = silverdaw::WarpProcessor::realtimeOptionsFor(
         Stretcher::OptionEngineFiner, 1.0);
     require((finerAtUnity & Stretcher::OptionPitchHighConsistency) != 0,
             "finer warp must configure immutable dynamic-pitch consistency at construction");
+
+    // R3 refuses setPitchOption after construction, so it cannot use the
+    // escalate-on-live-change route and keeps high consistency throughout.
+    const auto finerShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFiner, 1.25);
+    require((finerShifted & Stretcher::OptionPitchHighConsistency) != 0,
+            "finer warp must keep dynamic-pitch consistency when pitch shifting");
+    require((finerShifted & Stretcher::OptionPitchHighQuality) == 0,
+            "finer warp must not combine two pitch methods");
 }
 
 void testWarpFeedsRubberBandOnDemand()

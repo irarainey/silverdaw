@@ -105,6 +105,16 @@ export function useClipWarpDialogController(
     return semitonesValue !== 0 || centsValue !== 0
   }
 
+  // The mode governs the stretcher whenever it runs, which includes a pitch-only
+  // clip with no tempo warp — so the picker must not be gated on `draftEnabled`.
+  const modeApplies = computed(
+    () => draftEnabled.value || pitchNeedsProcessor(draftSemitones.value, draftCents.value)
+  )
+
+  // Recordings are committed with the project tempo already known, so the
+  // "reanalyse to get key presets" advice does not apply to them (ADR 0030).
+  const sourceIsRecording = computed(() => libItem.value?.recordingOrigin === true)
+
   function applyKeyPreset(semitones: number): void {
     draftSemitones.value = semitones
     draftCents.value = 0
@@ -236,6 +246,8 @@ export function useClipWarpDialogController(
     draftStretchPercent,
     draftSemitones,
     draftCents,
+    modeApplies,
+    sourceIsRecording,
     sourceKey,
     keyPresets,
     currentPitchKey,

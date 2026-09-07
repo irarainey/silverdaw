@@ -3358,6 +3358,29 @@ Within the dialog:
   drags and loops. The renderer coalesces draft updates to roughly 30 Hz so
   Rubber Band isn't re-tuned per pointer event.
 
+**Mode applies to pitch as well as tempo.** The mode chooses the Rubber Band
+engine and window for everything the stretcher does, so it governs a pitch shift
+even when the clip has no tempo warp. The picker is therefore enabled whenever
+the processor runs — `draftProcessorEnabled` in `useClipEditorWarpDraft`, and
+`modeApplies` in `useClipWarpDialogController` — rather than being gated on
+**Enable Warp**.
+
+`WarpProcessor::realtimeOptionsFor` then adjusts two options from the pitch
+scale itself, because the mode name cannot express them (ADR 0031):
+
+- A pitch-shifted R2 clip still on the default `OptionTransientsCrisp` is moved
+  to `OptionTransientsMixed`. Crisp resets component phases at every detected
+  onset, which while resampling fires on sustained tones too and detunes the
+  result by up to a quarter of a semitone. A mode that names its own transient
+  handling keeps it, and the R3 engine behind `complex` is untouched.
+- A shift supplied at construction is fixed, so R2 uses
+  `OptionPitchHighQuality`. `applyPendingParams` escalates to
+  `OptionPitchHighConsistency` on the first live pitch change. R3 keeps
+  `OptionPitchHighConsistency` from construction because it refuses
+  `setPitchOption` afterwards.
+
+A clip that only stretches time is unaffected by both adjustments.
+
 ### File browser (Files tab)
 
 The bottom panel's **Files** tab browses folders of audio on disk so a track can

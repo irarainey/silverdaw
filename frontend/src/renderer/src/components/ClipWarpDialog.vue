@@ -25,6 +25,8 @@ const {
   draftStretchPercent,
   draftSemitones,
   draftCents,
+  modeApplies,
+  sourceIsRecording,
   sourceKey,
   keyPresets,
   currentPitchKey,
@@ -154,12 +156,12 @@ const {
             </div>
           </div>
 
-          <!-- Mode picker -->
+          <!-- Mode picker. Shown on both panels: the mode governs the pitch
+               shift as much as the time stretch. -->
           <fieldset
-            v-if="panel === 'tempo'"
             class="flex flex-col gap-1"
-            :disabled="!draftEnabled"
-            :class="!draftEnabled ? 'opacity-50' : ''"
+            :disabled="!modeApplies"
+            :class="!modeApplies ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
               Mode
@@ -370,7 +372,9 @@ const {
                 v-else
                 class="text-[11px] text-zinc-500"
               >
-                No source key has been detected yet. Reanalyse the source file to generate key presets.
+                {{ sourceIsRecording
+                  ? 'Recordings have no detected key, so set the shift by ear.'
+                  : 'No source key has been detected yet. Reanalyse the source file to generate key presets.' }}
               </p>
             </div>
           </fieldset>

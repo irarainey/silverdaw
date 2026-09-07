@@ -25,6 +25,8 @@
 
 ### Changed
 
+- Pitch-shifted clips now play in tune and without smearing, changing how an existing project that uses pitch shift sounds.
+- The warp **Mode** can now be chosen on a clip that is pitch shifted without a tempo warp.
 - Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds.
 - Audio device wording throughout the app now says whether a device is the audio output or the recording input.
 - The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs.
@@ -32,6 +34,7 @@
 
 ### Fixed
 
+- The Pitch panel no longer advises reanalysing a recording to generate key presets.
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on.
 - The metronome ran ahead of the music whenever a track used an effect that adds latency, so anything played to the click landed early.
 - Checkboxes and radio buttons showed the browser's own white focus outline instead of the app's own styling.

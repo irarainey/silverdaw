@@ -25,6 +25,7 @@ const draftPinnedBpm = props.draft.draftPinnedBpm
 const draftStretchPercent = props.draft.draftStretchPercent
 const draftEffectiveBpm = props.draft.draftEffectiveBpm
 const draftEffectiveRatio = props.draft.draftEffectiveRatio
+const draftProcessorEnabled = props.draft.draftProcessorEnabled
 const setTempoMode = props.draft.setTempoMode
 
 // The pinned-BPM and stretch fields are shown always formatted to two decimals
@@ -81,10 +82,12 @@ function onPinnedBpmWheel(e: WheelEvent): void {
       </div>
     </div>
 
+    <!-- The mode governs the stretcher whenever it runs, which includes a
+         pitch-only clip with no tempo warp, so it is not gated on Enable Warp. -->
     <fieldset
       class="flex flex-col gap-1"
-      :disabled="!draftTempoEnabled"
-      :class="!draftTempoEnabled ? 'opacity-50' : ''"
+      :disabled="!draftProcessorEnabled"
+      :class="!draftProcessorEnabled ? 'opacity-50' : ''"
     >
       <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
         Mode

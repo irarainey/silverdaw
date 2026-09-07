@@ -288,6 +288,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 <ClipEditorPitchPanel
                   :draft="warpDraft"
                   :source-key="sourceKey"
+                  :source-is-recording="sourceItem?.recordingOrigin === true"
                 />
               </ClipEffectModule>
               <ClipEffectModule

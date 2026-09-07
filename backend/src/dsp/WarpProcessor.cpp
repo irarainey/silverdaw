@@ -42,8 +42,39 @@ RubberBandStretcher::Options WarpProcessor::realtimeOptionsFor(
     auto options = modeOptions | RubberBandStretcher::OptionProcessRealTime;
     const bool finerEngine =
         (modeOptions & RubberBandStretcher::OptionEngineFiner) != 0;
-    if (finerEngine || std::abs(initialPitchScale - 1.0) > 1.0e-4)
+    const bool pitchShifting = std::abs(initialPitchScale - 1.0) > 1.0e-4;
+
+    // Rubber Band publishes no mask constant, so derive one from the flags themselves.
+    constexpr auto transientsMask = RubberBandStretcher::OptionTransientsCrisp
+                                    | RubberBandStretcher::OptionTransientsMixed
+                                    | RubberBandStretcher::OptionTransientsSmooth;
+
+    // R2's crisp transient handling resets component phases at every detected
+    // onset, which Rubber Band warns "may cause interruptions in stable sounds".
+    // While resampling for a pitch shift it fires on sustained tones too, smearing
+    // them and detuning the result by up to a quarter of a semitone. Mixed resets
+    // phases only outside the range of musical fundamentals, so it keeps crisp's
+    // attack definition on percussive material while leaving tones intact — the
+    // right trade when the clip could be a vocal, a guitar, a synth or a drum take.
+    // Only the crisp default is overridden: "tonal" and "complex" pick their own.
+    if (pitchShifting && !finerEngine && (options & transientsMask) == RubberBandStretcher::OptionTransientsCrisp)
+    {
+        options |= RubberBandStretcher::OptionTransientsMixed;
+    }
+
+    if (finerEngine)
+    {
+        // R3 can only set a pitch option on construction, so it keeps the option
+        // that tolerates a later live pitch drag.
         options |= RubberBandStretcher::OptionPitchHighConsistency;
+    }
+    else if (pitchShifting)
+    {
+        // A shift supplied at construction is a fixed one, which is what
+        // HighQuality is for. `applyPendingParams` escalates to HighConsistency
+        // if the pitch is later changed live.
+        options |= RubberBandStretcher::OptionPitchHighQuality;
+    }
     return options;
 }
 
