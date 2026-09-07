@@ -242,6 +242,11 @@ struct RecordingStateSnapshot
     juce::String windowMode{"start"};
     bool hasSelection = false;
     double anchorMs = 0.0;
+    /** The round trip that will be trimmed off the take's head: the calibrated figure when
+     *  one exists for this device pair, the drivers' own sum otherwise. Sent while a session
+     *  is open because the live waveform has to draw the input where it will end up rather
+     *  than where it arrived — an on-time performance arrives this long after the beat. */
+    double latencyMs = 0.0;
     std::optional<double> windowEndMs;
     std::optional<int> countInBarsRemaining;
     double recordedMs = 0.0;
@@ -426,6 +431,11 @@ class RecordingSessionController final : private juce::Timer
     void closeDevice();
     void finishCapture(const juce::String& errorCode, const juce::String& message);
     void beginRecordingAfterCountIn();
+    /** The round trip in force for this session: the calibrated measurement when one exists
+     *  for the device pair, the drivers' own sum otherwise, never both (ADR 0030,
+     *  Amendment 17). Shared by the head trim and the state broadcast so the number the live
+     *  waveform is drawn against is the number the take is actually trimmed by. */
+    double effectiveRoundTripMs() const;
     /** Attaches the writer so capture is already running when the count-in expires. Safe to
      *  call repeatedly; only the first call opens anything. */
     void openCaptureForPreRoll();

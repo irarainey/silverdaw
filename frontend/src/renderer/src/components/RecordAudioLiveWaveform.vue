@@ -10,6 +10,14 @@
 // In `music` mode the project's beat grid is drawn over it, which is what makes
 // a bar-locked take reviewable at a glance; in `simple` mode there is no grid,
 // because a spoken line has no beats to mark.
+//
+// The columns are placed on the timeline rather than simply starting at the
+// anchor. Input arriving now is a performance from a round trip ago — the
+// performer heard the backing late and Silverdaw heard them late again — so the
+// first column belongs at `anchor - latency`, which is exactly the audio the
+// head trim discards at finalise. Drawing it from the anchor instead puts an
+// on-time performance a round trip behind the beat it was played on, so the
+// live picture disagrees with the take that comes out of it.
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
@@ -102,9 +110,11 @@ function draw(): void {
   const spanMs = Math.max(visible * LIVE_COLUMN_MS, buffer.count * LIVE_COLUMN_MS)
 
   if (props.musical && buffer.count > 0) {
-    // The take starts at the left edge, so the grid is measured from there.
+    // Where the left edge sits on the project's timeline, so the grid lines up with the
+    // beats the performer is actually hearing rather than with the start of the buffer.
+    const viewStartMs = (store.current?.anchorMs ?? 0) - (store.current?.latencyMs ?? 0)
     ctx.fillStyle = WAVEFORM_COLORS.beat
-    for (const line of liveBeatFractions(spanMs, spanMs, transport.bpm, DEFAULT_BEATS_PER_BAR)) {
+    for (const line of liveBeatFractions(viewStartMs, spanMs, transport.bpm, DEFAULT_BEATS_PER_BAR)) {
       ctx.globalAlpha = line.bar ? WAVEFORM_BAR_ALPHA : WAVEFORM_BEAT_ALPHA
       ctx.fillRect(Math.round(line.fraction * width), 0, Math.max(1, ratio), height)
     }

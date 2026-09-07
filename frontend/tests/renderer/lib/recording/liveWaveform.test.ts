@@ -97,9 +97,9 @@ describe('fitted live waveform', () => {
 })
 
 describe('live beat grid', () => {
-  it('places beats across the span, measured from where the take starts', () => {
+  it('places beats across the span, measured from where the view starts', () => {
     // 120 BPM is a 500 ms beat; four seconds of view ends exactly on a beat.
-    const lines = liveBeatFractions(4000, 4000, 120, 4)
+    const lines = liveBeatFractions(0, 4000, 120, 4)
 
     expect(lines).toHaveLength(9)
     expect(lines[0]).toEqual({ fraction: 0, bar: true })
@@ -108,21 +108,36 @@ describe('live beat grid', () => {
   })
 
   it('marks bar lines every four beats', () => {
-    const bars = liveBeatFractions(4000, 4000, 120, 4).filter((line) => line.bar)
+    const bars = liveBeatFractions(0, 4000, 120, 4).filter((line) => line.bar)
     expect(bars).toHaveLength(3)
   })
 
-  it('draws nothing before the first beat has elapsed', () => {
-    expect(liveBeatFractions(200, 4000, 120, 4)).toEqual([{ fraction: expect.any(Number), bar: true }])
+  // A take started from the playhead rarely begins on a beat, and the round trip moves
+  // the left edge again. Numbering beats from the view would draw the grid under the
+  // wrong audio and call the wrong beats bar lines.
+  it('keeps the grid on the project beats when the view starts off them', () => {
+    // Half a beat past beat four, so the next whole beat is an eighth of the way in.
+    const lines = liveBeatFractions(2250, 4000, 120, 4)
+
+    expect(lines[0]).toEqual({ fraction: expect.closeTo(0.0625, 5), bar: false })
+    const bars = lines.filter((line) => line.bar)
+    expect(bars).toHaveLength(2)
+    expect(bars[0]?.fraction).toBeCloseTo(0.4375, 5)
+  })
+
+  it('draws no beats before the start of the timeline', () => {
+    const lines = liveBeatFractions(-200, 4000, 120, 4)
+    expect(lines[0]).toEqual({ fraction: expect.closeTo(0.05, 5), bar: true })
+    expect(lines.every((line) => line.fraction >= 0)).toBe(true)
   })
 
   it('gives up rather than drawing a grid too fine to read', () => {
-    expect(liveBeatFractions(600_000, 600_000, 240, 4)).toEqual([])
+    expect(liveBeatFractions(0, 600_000, 240, 4)).toEqual([])
   })
 
   it('draws nothing without a usable tempo or span', () => {
-    expect(liveBeatFractions(4000, 0, 120, 4)).toEqual([])
-    expect(liveBeatFractions(4000, 4000, 0, 4)).toEqual([])
-    expect(liveBeatFractions(4000, 4000, 120, 0)).toEqual([])
+    expect(liveBeatFractions(0, 0, 120, 4)).toEqual([])
+    expect(liveBeatFractions(0, 4000, 0, 4)).toEqual([])
+    expect(liveBeatFractions(0, 4000, 120, 0)).toEqual([])
   })
 })

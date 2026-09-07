@@ -8,6 +8,7 @@
 - The capture device, mono or stereo channels, input gain and live input metering are set in the record dialog.
 - A take is aligned to the timeline automatically, compensating for audio hardware latency and transport start.
 - A take keeps a moment of audio ahead of where recording began, so a note played fractionally early is not clipped.
+- The waveform and beat grid drawn while recording now show a take where it will actually sit on the timeline.
 - Recording runs from the start of the project, from the playhead, or over a selected range, with an optional count-in.
 - The backing heard under a performance is chosen and levelled in the dialog, leaving the project's own mutes, solos and levels untouched.
 - A metronome and a live waveform of the performance are available while recording.

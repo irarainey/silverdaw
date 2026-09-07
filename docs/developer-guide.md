@@ -880,8 +880,10 @@ Backend → renderer:
   `backingTrackIds`, `backingGain`, `inputGainDb`, `monitorEnabled`,
   `recordingMode`, `cleanupEnabled`,
   `windowMode`,
-  `hasSelection`, `anchorMs` / `windowEndMs`, `recordedMs`, `droppedSamples` and
-  any `errorCode` / `error`.
+  `hasSelection`, `anchorMs` / `windowEndMs`, `latencyMs`, `recordedMs`,
+  `droppedSamples` and any `errorCode` / `error`. `latencyMs` is the round trip
+  the take will be trimmed by, sent so the live waveform can be drawn where the
+  finished file will sit rather than where the input arrived.
 - `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
   is excluded from bridge logging.
 - `RECORD_CALIBRATE_STATE { status, clicksDetected, clicksTotal, roundTripMs,
@@ -3997,17 +3999,21 @@ beat grid, so what the take will become is visible while it is being played.
 the waveform drawn while a take rolls is built from the `RECORD_INPUT_LEVEL`
 meter the backend already broadcasts: one column per ~33 ms tick, sampled on a
 RAF loop into a fixed-size ring (`liveWaveform.ts`), so a long take costs a fixed
-amount of memory. Nothing is drawn during a count-in — the columns start at the
-take itself, which is now simply true rather than arranged for: nothing is
-captured until the count expires. The take is drawn from the left edge
+amount of memory. Nothing is drawn during a count-in, so a count reads as
+counting in to something rather than as a take already under way. The take is
+drawn from the left edge
 and, once it is longer
 than the view has columns for, `readFittedColumns` summarises it — each drawn
 column takes the loudest of the columns it covers — so a recording is always
 shown end to end rather than scrolling its own start out of sight. It is a
 picture of the input, not of the file — the real waveform, drawn from the peaks
 cache, arrives with the finished recording. In music mode `liveBeatFractions`
-draws the project's beat grid across the same span, measured from the start of
-the take. Both dialog waveforms scale their loudest peak to fill the box
+draws the project's beat grid across the same span, placed on the timeline:
+the left edge is `anchorMs - latencyMs`, because input arriving now is a
+performance from a round trip ago, and beats are numbered from the start of the
+timeline so a take that begins off the grid still gets its bar lines on real
+bars. Without both, a take that plays back perfectly in time is drawn out of
+time while it is being recorded (ADR 0030, Amendment 19). Both dialog waveforms scale their loudest peak to fill the box
 (`waveformFillScale`, headroom 0.94, boost capped at 8×), so a take does not
 change size the moment it stops rolling, and a mic take at a correct level — with
 sample values genuinely several times smaller than a limited commercial track

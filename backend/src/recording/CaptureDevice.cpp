@@ -15,7 +15,67 @@ juce::AudioIODeviceType* findType(juce::AudioDeviceManager& manager, const juce:
     }
     return nullptr;
 }
+
+// Driver types Silverdaw will not choose on its own, though a user may still pin either
+// in Preferences.
+//
+// Exclusive mode seizes the endpoint: while a take rolls nothing else on the machine can
+// use the microphone, and — worse for a default — opening fails outright if anything
+// already holds it, which presents as an input that inexplicably will not start. It is
+// not reliably quicker either; a WASAPI endpoint in exclusive mode reports double
+// buffering, so it can measure slower than the shared path it replaced.
+//
+// DirectSound is the legacy fallback, and its default buffer is several times longer than
+// any WASAPI path — 53 ms against 10 ms on test hardware. Every one of those milliseconds
+// is delay the performer hears while monitoring, so it is a poor automatic choice even
+// though it is a necessary last resort.
+const char* const kExclusiveTypeName = "Windows Audio (Exclusive Mode)";
+const char* const kDirectSoundTypeName = "DirectSound";
+
+/**
+ * The candidate device whose driver runs at the shortest period.
+ *
+ * Driver types are ranked by what they actually do rather than by what they are called: on
+ * test hardware the type named for low latency runs at exactly the same 10 ms period as the
+ * plain shared type, so a name-based preference would be superstition. Each candidate is
+ * created — not opened — and asked for its default buffer, which is the period the endpoint
+ * will really run at.
+ */
+std::unique_ptr<juce::AudioIODevice> createQuickestDevice(juce::AudioDeviceManager& factory,
+                                                          const juce::String& wantedName)
+{
+    std::unique_ptr<juce::AudioIODevice> best;
+    double bestMs = 0.0;
+
+    for (auto* type : factory.getAvailableDeviceTypes())
+    {
+        if (type == nullptr || ! isAutomaticCaptureType(type->getTypeName())) continue;
+        type->scanForDevices();
+        const auto names = type->getDeviceNames(/*wantInputNames*/ true);
+        const auto name = wantedName.isNotEmpty() ? wantedName : names[0];
+        if (name.isEmpty() || ! names.contains(name)) continue;
+
+        std::unique_ptr<juce::AudioIODevice> candidate(type->createDevice(/*output*/ {}, name));
+        if (candidate == nullptr) continue;
+
+        const auto rate =
+            candidate->getCurrentSampleRate() > 0.0 ? candidate->getCurrentSampleRate() : 48000.0;
+        const double ms = 1000.0 * candidate->getDefaultBufferSize() / rate;
+        if (best == nullptr || ms < bestMs)
+        {
+            best = std::move(candidate);
+            bestMs = ms;
+        }
+    }
+    return best;
+}
 } // namespace
+
+bool isAutomaticCaptureType(const juce::String& typeName)
+{
+    return typeName != kExclusiveTypeName && typeName != kDirectSoundTypeName;
+}
+
 
 CaptureDevice::CaptureDevice() = default;
 
@@ -68,7 +128,12 @@ CaptureOpenResult CaptureDevice::open(const juce::String& typeName, const juce::
         }
     };
 
-    createFrom(findType(typeFactory, typeName), deviceName);
+    // An explicit driver choice is honoured as given. Without one, rank the candidates by
+    // what they can actually be driven at rather than accepting whichever type the platform
+    // happens to list first (ADR 0030, Amendment 20).
+    if (typeName.isNotEmpty()) createFrom(findType(typeFactory, typeName), deviceName);
+    else device = createQuickestDevice(typeFactory, deviceName);
+
     for (auto* type : typeFactory.getAvailableDeviceTypes())
         createFrom(type, deviceName);
     for (auto* type : typeFactory.getAvailableDeviceTypes())
@@ -84,6 +149,13 @@ CaptureOpenResult CaptureDevice::open(const juce::String& typeName, const juce::
     inputChannels.setRange(0, juce::jmax(1, device->getInputChannelNames().size()), true);
     const juce::BigInteger noOutputs;
     const auto rate = device->getCurrentSampleRate() > 0.0 ? device->getCurrentSampleRate() : 48000.0;
+    // The driver's default, and deliberately not a shorter buffer from
+    // `getAvailableBufferSizes` (ADR 0030, Amendment 20). A shared WASAPI endpoint advertises
+    // sizes from 3 ms upwards but runs at a fixed period regardless, and a shorter request is
+    // honoured by handing over only part of each period and *discarding the remainder*:
+    // measured on test hardware, a 256-frame request against a 480-frame period lost 47% of
+    // the audio while reporting no error and no dropped block. Buffer size is not a latency
+    // lever here, and shortening it silently corrupts takes.
     error = device->open(inputChannels, noOutputs, rate, device->getDefaultBufferSize());
     if (error.isNotEmpty())
     {

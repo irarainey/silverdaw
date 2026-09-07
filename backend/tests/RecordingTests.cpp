@@ -2,6 +2,7 @@
 
 #include "engine/ClockRateEstimator.h"
 #include "recording/CalibrationClickSource.h"
+#include "recording/CaptureDevice.h"
 #include "recording/InputCaptureTap.h"
 #include "recording/LatencyCalibration.h"
 #include "recording/LatencyCalibrator.h"
@@ -1183,6 +1184,26 @@ void testPreRollKeepsTheAnchorOnTheAnchor()
     require(negative.headTrimMs == 0.0 && negative.preRollMs == 0.0,
             "a take with no lead-in at all should neither trim nor keep");
 }
+
+/**
+ * Which driver types "automatic" will pick from. Both exclusions are behavioural, not
+ * cosmetic: exclusive mode locks the microphone away from every other application and
+ * fails to open if anything already holds it, and DirectSound runs at several times the
+ * period of any WASAPI path.
+ */
+void testAutomaticCaptureTypeExcludesTheDisruptiveDrivers()
+{
+    using silverdaw::recording::isAutomaticCaptureType;
+
+    require(isAutomaticCaptureType("Windows Audio"), "the shared WASAPI path is the mainstay");
+    require(isAutomaticCaptureType("Windows Audio (Low Latency Mode)"),
+            "a low-latency WASAPI path should stay eligible even though it is not preferred by name");
+    require(isAutomaticCaptureType("ASIO"), "an unknown type should be eligible rather than excluded");
+    require(! isAutomaticCaptureType("Windows Audio (Exclusive Mode)"),
+            "exclusive mode must never be chosen without being asked for");
+    require(! isAutomaticCaptureType("DirectSound"),
+            "DirectSound is a fallback, not an automatic choice");
+}
 } // namespace
 void addRecordingTests(std::vector<TestCase>& tests)
 {
@@ -1250,6 +1271,8 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testCalibrationRefusesToMeasureSilence});
     tests.push_back({"recording pre-roll keeps the anchor on the anchor",
                      testPreRollKeepsTheAnchorOnTheAnchor});
+    tests.push_back({"recording automatic capture type excludes the disruptive drivers",
+                     testAutomaticCaptureTypeExcludesTheDisruptiveDrivers});
 }
 
 } // namespace silverdaw::tests

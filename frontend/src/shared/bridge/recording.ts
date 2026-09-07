@@ -303,6 +303,11 @@ export const RecordingSessionStatePayloadSchema = z.object({
   /** Where the recording starts on the timeline; the anchor kept on the
    *  finished file so a clip can be placed exactly where it was played. */
   anchorMs: z.number().nonnegative(),
+  /** Round trip that will be trimmed off the take's head, in ms: a calibrated measurement
+   *  where one exists for the device pair, the drivers' own figures otherwise. The live
+   *  waveform is drawn against it — input arriving now is a performance from this long ago,
+   *  so without it an on-time take is drawn behind the beat it was played on. */
+  latencyMs: z.number().nonnegative().optional().default(0),
   /** End of the record window for `selection`, null for `playhead`. */
   windowEndMs: z.number().nonnegative().nullable(),
   /** Bars left before rolling, while counting in. */

@@ -46,6 +46,7 @@ function makeState(
     windowMode: 'playhead',
     hasSelection: false,
     anchorMs: 0,
+    latencyMs: 0,
     windowEndMs: null,
     recordedMs: 0,
     droppedSamples: 0,

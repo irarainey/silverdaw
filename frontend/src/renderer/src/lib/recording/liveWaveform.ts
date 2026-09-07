@@ -89,15 +89,17 @@ export function readFittedColumns(buffer: LiveWaveformBuffer, targetColumns: num
 }
 
 /**
- * Where beat lines fall across the visible columns, as fractions of the view.
+ * Where the project's beat lines fall across the visible columns, as fractions of the view.
  *
- * `elapsedMs` is the time at the *right* edge, because that is where a live
- * waveform is always writing; the lines therefore scroll left with the audio
- * rather than sitting still under it. Returns an empty list for a tempo or a
- * span that could not produce a sensible grid, so the caller never has to guard.
+ * `viewStartMs` is the timeline position the LEFT edge of the view sits at, and beats are
+ * numbered from the start of the timeline rather than from the start of the take. Both
+ * matter: a take that begins off the grid — from the playhead, say — would otherwise be
+ * drawn as though it began on a beat, and its bar lines would fall on the wrong beats of
+ * the bar. Returns an empty list for a tempo or a span that could not produce a sensible
+ * grid, so the caller never has to guard.
  */
 export function liveBeatFractions(
-  elapsedMs: number,
+  viewStartMs: number,
   spanMs: number,
   bpm: number,
   beatsPerBar: number
@@ -106,12 +108,13 @@ export function liveBeatFractions(
   const beatMs = 60_000 / bpm
   // A grid finer than a few pixels a beat is noise, not information.
   if (beatMs <= 0 || spanMs / beatMs > 256) return []
-  const startMs = Math.max(0, elapsedMs - spanMs)
-  const firstBeat = Math.ceil(startMs / beatMs)
-  const lastBeat = Math.floor(elapsedMs / beatMs)
+  // Nothing before the start of the timeline: a take at the very top of the project can
+  // see past it once the input's latency is allowed for, and there are no beats there.
+  const firstBeat = Math.max(0, Math.ceil(viewStartMs / beatMs))
+  const lastBeat = Math.floor((viewStartMs + spanMs) / beatMs)
   const out: { fraction: number; bar: boolean }[] = []
   for (let beat = firstBeat; beat <= lastBeat; beat += 1) {
-    const fraction = (beat * beatMs - startMs) / spanMs
+    const fraction = (beat * beatMs - viewStartMs) / spanMs
     if (fraction < 0 || fraction > 1) continue
     out.push({ fraction, bar: beat % beatsPerBar === 0 })
   }

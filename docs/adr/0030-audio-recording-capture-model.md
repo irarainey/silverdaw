@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Eighteen amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -1029,3 +1029,93 @@ heard against the backing exactly where it will sit. Auditioning from the anchor
 would play the take a pre-roll late against the very backing it was recorded to
 — which is the bug the head trim exists to prevent, reintroduced in the one
 place a user would go to check for it.
+
+## Amendment Nineteen: the live waveform is drawn on the timeline
+
+The waveform drawn while a take rolls is built from the input meter, not from
+audio (ADR 0003 keeps samples off the socket), and it was drawn as though the
+take began at the left edge on beat zero. Neither is true, and both errors are
+visible: a performance that plays back perfectly in time looked out of time
+while it was being recorded, which is worse than a cosmetic flaw — it invites
+someone to correct a timing problem that does not exist.
+
+**Input arriving now is a performance from a round trip ago.** The performer
+heard the backing late and Silverdaw heard them late again, so a note played on
+the beat reaches the meter a round trip after the transport passed that beat.
+Drawing the first column at the anchor therefore pushes an on-time take a round
+trip behind the grid — exactly the offset the head trim removes at finalise. The
+first column is instead placed at `anchor − latency`, so the live picture shows
+the take where the finished file will put it. With a calibration in force that
+offset is often over 100 ms, a fifth of a beat at 120 BPM, and plainly visible.
+
+**The round trip is sent, not recomputed.** `RECORD_SESSION_STATE` carries
+`latencyMs`, produced by the same `effectiveRoundTripMs` the head trim uses, so
+the figure the waveform is drawn against is by construction the figure the take
+is trimmed by — including the substitution of a calibration for the driver sum.
+A renderer-side copy of that rule would be free to drift out of step with it.
+
+**Beats are numbered from the start of the timeline, not the start of the
+take.** A take started from the playhead rarely begins on a beat, so a grid
+measured from the left edge sits under the wrong audio, and its bar lines fall
+on the wrong beats of the bar. `liveBeatFractions` takes the timeline position
+of the view's left edge and derives absolute beat indices from it.
+
+This changes only what is drawn. No captured audio and no alignment behaviour
+depends on it, and the live view remains a picture of the input rather than of
+the file — the real waveform still arrives with the finished take.
+
+## Amendment Twenty: the capture buffer is the driver's, and the driver type is chosen by period
+
+Monitoring delay is the round trip, and the round trip is mostly the two device
+buffers, so shortening the capture buffer looks like the obvious lever. It is
+not a lever at all, and the way it fails is dangerous enough to record here so
+that nobody tries it twice.
+
+**A shared WASAPI endpoint advertises buffer sizes it will not honour.** The
+capture device on the test machine offers every size from 144 frames (3 ms) up,
+and defaults to 480 (10 ms). Opening it at 256 succeeds, reports no error, and
+reports an input latency of 5.33 ms — and then delivers 256 frames per 10 ms
+period and **silently discards the remaining 224**. Measured over five seconds
+with `SilverdawCaptureProbe --capture-buffer`, a 256-frame request captured
+128000 samples where 240000 were rendered: 47% of the performance was thrown
+away, with no dropped-block count and no fault reported anywhere. The shortfall
+scales exactly with the request — 288 loses 40%, 320 loses 33%, 384 loses 20% —
+which is the signature of a fixed device period being partially drained.
+
+Capture therefore opens at `getDefaultBufferSize()` and nowhere else.
+`getAvailableBufferSizes` is not trustworthy for an input in shared mode, and a
+shorter buffer trades a few milliseconds of monitoring comfort for a corrupted
+take. The probe keeps its `--capture-buffer` override so the claim stays
+measurable rather than becoming folklore.
+
+**The driver type is still worth choosing deliberately.** With the buffer fixed
+at the driver's period, the period itself is what differs between types, and
+"automatic" previously took whichever type the platform happened to enumerate
+first. It now creates each candidate — creating is not opening, so this cannot
+reintroduce the capture-open stall — and takes the one with the shortest
+default period. Two types are excluded from automatic selection, both for
+behaviour rather than speed:
+
+- **Exclusive Mode** seizes the endpoint. While a take rolls nothing else on the
+  machine can use the microphone, and worse for a default, opening fails outright
+  if anything already holds it — which presents as an input that inexplicably
+  will not start. It measured 20 ms against shared mode's 10 ms on the test
+  machine, so it is not even the fast path its name suggests.
+- **DirectSound** defaults to 2560 frames, 53 ms, against 10 ms for any WASAPI
+  path. It remains available as a last-resort fallback and as an explicit choice.
+
+Ranking by measured period rather than by name matters because the type named
+for low latency is not one: "Windows Audio (Low Latency Mode)" runs at the same
+10 ms period as plain shared mode and offers no other size at all. Preferring it
+because of its name would be superstition, and would have locked out the shared
+path that is at least as quick.
+
+An explicitly chosen type is still honoured exactly as given. This changes only
+what "automatic" resolves to, and can move a user's input latency, so a
+calibration taken before the change may be a few milliseconds stale — well
+inside the calibrator's agreement window, and recording is unreleased.
+
+**None of this helps the monitor flam**, which is a closed loop through the
+performer: any shift applied ahead of them is absorbed by them playing to what
+they hear. Only a physically shorter round trip, or monitoring that never enters
+the computer, changes it.

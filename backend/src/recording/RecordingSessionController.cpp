@@ -603,7 +603,7 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // its own processing reports no latency at all, and a shared-mode output reports little
     // beyond its buffer, so the driver sum can be short by most of the real delay. The two are
     // alternatives, never added — the measurement already contains everything the drivers
-    // would have reported.
+    // would have reported. See `effectiveRoundTripMs`.
     //
     // Plugin delay compensation is deliberately NOT part of this sum. `primePluginPipeline`
     // pushes the alignment through the delay lines before the gate opens (ADR 0026), so the
@@ -611,10 +611,8 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // alignment. `PlayheadEmitter` subtracts it only because the raw sample counter is run
     // ahead to compensate — that is a counter offset, not an audible delay. Adding it here
     // would drag every take early by the whole alignment.
-    const double driverLatencyMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
-                                   + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
     const bool calibrated = session->calibratedRoundTripMs.has_value();
-    const double latencyMs = calibrated ? *session->calibratedRoundTripMs : driverLatencyMs;
+    const double latencyMs = effectiveRoundTripMs();
     pending.latencyMs = latencyMs;
     // Capture is attached before `play()` is called, but `play()` primes read-ahead buffers and
     // the plugin pipeline on the message thread and may then sit through a silent wake pre-roll
@@ -946,6 +944,14 @@ juce::String RecordingSessionController::getPendingRecordingId() const
     return session.has_value() ? session->recordingId : juce::String();
 }
 
+double RecordingSessionController::effectiveRoundTripMs() const
+{
+    if (! session.has_value()) return 0.0;
+    if (session->calibratedRoundTripMs.has_value()) return *session->calibratedRoundTripMs;
+    return (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
+           + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
+}
+
 RecordingStateSnapshot RecordingSessionController::getSnapshot() const
 {
     RecordingStateSnapshot snapshot;
@@ -966,6 +972,7 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
     snapshot.cleanupEnabled = session->cleanupEnabled;
     snapshot.windowMode = session->windowMode;
     snapshot.anchorMs = session->anchorMs;
+    snapshot.latencyMs = effectiveRoundTripMs();
     snapshot.windowEndMs = session->windowEndMs;
     snapshot.errorCode = session->errorCode;
     snapshot.error = session->error;

@@ -208,6 +208,7 @@ juce::var buildStateEnvelope(const recording::RecordingStateSnapshot& snapshot)
     obj->setProperty("windowMode", snapshot.windowMode);
     obj->setProperty("hasSelection", snapshot.hasSelection);
     obj->setProperty("anchorMs", snapshot.anchorMs);
+    obj->setProperty("latencyMs", snapshot.latencyMs);
     obj->setProperty("windowEndMs", snapshot.windowEndMs.has_value() ? juce::var(*snapshot.windowEndMs)
                                                                      : juce::var());
     if (snapshot.countInBarsRemaining.has_value())

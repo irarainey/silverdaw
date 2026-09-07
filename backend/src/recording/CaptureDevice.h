@@ -24,6 +24,14 @@ struct CaptureInputListing
  *  scan appears. */
 std::vector<CaptureInputListing> enumerateCaptureInputs(bool refresh = false);
 
+/**
+ * Whether Silverdaw will choose this driver type on its own (ADR 0030, Amendment 20).
+ * A user may still pin any type in Preferences; this only governs "automatic".
+ *
+ * Pure and free-standing so the policy can be tested without a sound card.
+ */
+bool isAutomaticCaptureType(const juce::String& typeName);
+
 enum class CaptureOpenResult
 {
     ok,

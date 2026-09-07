@@ -21,6 +21,8 @@
 //   SilverdawCaptureProbe [--seconds N] [--input "<name>"] [--type "<type>"]
 //                         [--tone] [--list]
 
+#include "recording/CaptureDevice.h"
+
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include <atomic>
@@ -223,6 +225,12 @@ struct Options
     juce::String typeName;
     bool tone = false;
     bool listOnly = false;
+    /** Report each device's buffer-size options as well as its name. Creating every
+     *  device costs real time, so it is opt-in. */
+    bool buffers = false;
+    /** Force a capture buffer size instead of the policy's choice, so a size can be
+     *  measured rather than assumed. Zero means use the policy. */
+    int captureBuffer = 0;
 };
 
 Options parseOptions(int argc, char* argv[])
@@ -239,11 +247,13 @@ Options parseOptions(int argc, char* argv[])
         else if (arg == "--type") options.typeName = next();
         else if (arg == "--tone") options.tone = true;
         else if (arg == "--list") options.listOnly = true;
+        else if (arg == "--buffers") options.buffers = true;
+        else if (arg == "--capture-buffer") options.captureBuffer = next().getIntValue();
     }
     return options;
 }
 
-void printInputInventory(juce::AudioDeviceManager& manager)
+void printInputInventory(juce::AudioDeviceManager& manager, const Options& options)
 {
     std::cout << "\n== Input devices (by driver type) ==\n";
     for (auto* type : manager.getAvailableDeviceTypes())
@@ -254,7 +264,37 @@ void printInputInventory(juce::AudioDeviceManager& manager)
         std::cout << "  [" << type->getTypeName() << "]"
                   << (names.isEmpty() ? " (none)" : "") << "\n";
         for (const auto& name : names)
+        {
             std::cout << "      " << name << "\n";
+            if (! options.buffers) continue;
+            if (options.inputName.isNotEmpty() && name != options.inputName) continue;
+
+            // Buffer sizes are a property of the device, not of the open stream, so
+            // they can be read without starting anything.
+            std::unique_ptr<juce::AudioIODevice> probe(type->createDevice(/*output*/ {}, name));
+            if (probe == nullptr)
+            {
+                std::cout << "          (could not be created)\n";
+                continue;
+            }
+            const auto rate = probe->getCurrentSampleRate() > 0.0 ? probe->getCurrentSampleRate()
+                                                                  : 48000.0;
+            const auto sizes = probe->getAvailableBufferSizes();
+            const auto toMs = [rate](int frames) {
+                return juce::String(1000.0 * frames / juce::jmax(1.0, rate), 2);
+            };
+            std::cout << "          default=" << probe->getDefaultBufferSize() << " ("
+                      << toMs(probe->getDefaultBufferSize()) << " ms)";
+            if (! sizes.isEmpty())
+            {
+                std::cout << "  min=" << sizes[0] << " (" << toMs(sizes[0]) << " ms)"
+                          << "  max=" << sizes[sizes.size() - 1] << "  options=" << sizes.size()
+                          << "\n          sizes=";
+                for (int i = 0; i < sizes.size(); ++i)
+                    std::cout << (i > 0 ? ", " : "") << sizes[i];
+            }
+            std::cout << "\n";
+        }
     }
 }
 
@@ -311,7 +351,7 @@ int main(int argc, char* argv[])
     juce::AudioDeviceManager manager;
 
     std::cout << "Silverdaw capture probe (ADR 0030, Phase A)\n";
-    printInputInventory(manager);
+    printInputInventory(manager, options);
     if (options.listOnly) return 0;
 
     // Open playback exactly as AudioEngine::openDefaultOutputOnly() does, so the
@@ -371,8 +411,14 @@ int main(int argc, char* argv[])
     const juce::BigInteger noOutputs;
     const auto requestedRate =
         captureDevice->getCurrentSampleRate() > 0.0 ? captureDevice->getCurrentSampleRate() : outRate;
-    const auto openError = captureDevice->open(inputChannels, noOutputs, requestedRate,
-                                               captureDevice->getDefaultBufferSize());
+    // The same policy the recorder applies, so what the probe measures is what a take gets.
+    // The driver default, as the recorder uses: a shorter request is accepted and then
+    // silently under-delivers (ADR 0030, Amendment 20). `--capture-buffer` overrides it so
+    // that claim stays measurable rather than becoming folklore.
+    const auto requestedBuffer = options.captureBuffer > 0 ? options.captureBuffer
+                                                           : captureDevice->getDefaultBufferSize();
+    const auto openError =
+        captureDevice->open(inputChannels, noOutputs, requestedRate, requestedBuffer);
     if (openError.isNotEmpty())
     {
         std::cout << "  capture open FAILED: " << openError << "\n";
