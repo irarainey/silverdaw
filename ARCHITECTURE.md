@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-09-06 · Owner: @irarainey_
+_Last reviewed: 2026-09-07 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -129,7 +129,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/midi/` | Generic JSON-profile loader, MIDI decoder, and feedback encoder | `docs/developer-guide.md#midi-controller-architecture` |
 | `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
-| `backend/src/recording/` | Standalone input capture device, real-time tap, WAV writer, offline finalise and cleanup, session controller | ADR 0030 |
+| `backend/src/recording/` | Standalone input capture device, real-time tap, WAV writer, input monitor, latency calibration, offline finalise and cleanup, session controller | ADR 0030 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks), plus tempo and beat-grid detection | ADR 0028 |
 | `backend/src/plugins/` | VST3 catalogue and out-of-process scanning, hosted per-track insert chains, plugin play head, native editor windows | ADR 0025 |

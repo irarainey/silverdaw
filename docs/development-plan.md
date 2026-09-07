@@ -2298,7 +2298,7 @@ sits 12 ms off and wants correcting once.
 Silverdaw becoming a track-recording DAW. A recording belongs to a window in
 time, not to a track, and the result is an ordinary `sample` library item that
 is placed like any other clip. Design contract, evidence and rejected
-alternatives: [ADR 0030](adr/0030-audio-recording-capture-model.md) and its ten
+alternatives: [ADR 0030](adr/0030-audio-recording-capture-model.md) and its
 amendments; the full feature shape, device-layer risks and what remains out of
 scope are recorded in §11.6, and the implementation is described under
 [Recording](developer-guide.md#recording).
@@ -2307,7 +2307,7 @@ scope are recorded in §11.6, and the implementation is described under
    capture device outside the engine's `AudioDeviceManager`, a real-time tap that
    allocates nothing, a threaded WAV writer, an offline finalise that corrects
    latency and drift, and a session controller owning the lifecycle.
-2. [x] **Ten `RECORD_*` bridge envelopes** and the Record Audio dialog, with
+2. [x] **The `RECORD_*` bridge envelopes** and the Record Audio dialog, with
    **Add to Library** and **Add to Timeline** exits, review, audition against the
    arrangement, and rename before commit.
 3. [x] **Music or Simple.** A **Music** take carries the project BPM as a known
@@ -2329,16 +2329,19 @@ scope are recorded in §11.6, and the implementation is described under
    rolls, with beat markers in Music mode.
 6. [x] **Keeping the take.** Review auditions the take alone or against the
    arrangement at its own backing level, an opt-in cleanup pass removes low-level
-   background noise, and a mono take can be saved duplicated across both channels
-   (ADR 0030, Amendments 3, 6, 8 and 9).
+   background noise, a mono take can be saved duplicated across both channels,
+   and a stereo take from a mixer carrying two different sources can be split
+   back into two items on two tracks (ADR 0030, Amendments 3, 6, 8, 9 and 24).
 7. [x] **The chosen output device survives a device-list change.** Opening a
    capture device makes JUCE re-enumerate, and it falls back to the system
    default if it believes the open endpoint went away — which sent take playback
    to the laptop speakers while the backing played to headphones. The engine now
    remembers the user's choice and restores it, once, per device-list change.
 
-Remaining before §11.6 can be ticked off: verification of device removal
-mid-capture. Microphone consent **is** verified end to end on a `1.9.0`
+Device removal mid-capture **is** verified on real hardware: unplugging the
+input while a take is rolling stops it with the starvation watchdog rather than
+leaving the session rolling on a dead device. Microphone consent **is** verified
+end to end on a `1.9.0`
 sideload of the signed package: the install registers
 `<DeviceCapability Name="microphone"/>`, Windows creates the consent-store entry
 `Silverdaw_<hash>` with the value `Prompt`, and capture then works on real
@@ -3295,7 +3298,10 @@ sequencing into the phase plan is still to be decided.
   - **The result is a normal `sample` library item** in a `recordings/` artifact
     folder, with a `recordingOrigin` marker mirroring `scratchOrigin`. No new
     library kind. `Add to Library` and `Add to Timeline` are the two exits; the
-    timeline exit is one undo group over both steps.
+    timeline exit is one undo group over both steps. A stereo take can be split
+    at that point into its two channels — two items on two tracks — so a
+    two-channel hardware mixer can be used as the input device and its two
+    sources come apart again (ADR 0030, Amendment 24).
   - **A take is Music or Simple.** ADR 0030 originally made every recording
     musical; its Amendment 2 reversed that, because a spoken intro or a sound
     effect has no tempo. **Music**, the default, is written with the project BPM
@@ -3352,8 +3358,8 @@ sequencing into the phase plan is still to be decided.
   but real, so the correction ratio is measured per recording, and a device may
   present many more inputs than are wanted (an 8-channel array here), so the
   recording captures one chosen channel or pair rather than the device's whole
-  channel set. Still unverified on real hardware: device removal mid-capture.
-  Microphone consent is verified end to end on a signed MSIX install. Out of
+  channel set. Device removal mid-capture is verified on real hardware, and
+  microphone consent is verified end to end on a signed MSIX install. Out of
   scope for this release: track
   record-arm, multi-input capture, punch-in and stacked repeat passes, comping,
   live-growing clips on the timeline, and low-latency software monitoring.

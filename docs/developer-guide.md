@@ -13,6 +13,7 @@ design roadmap, see the [Development Plan](development-plan.md).
 - [Bridge protocol](#bridge-protocol)
 - [VST3 plugins](#vst3-plugins)
   - [Limitations](#limitations)
+  - [Where plugins are found](#where-plugins-are-found)
   - [Catalogue storage](#catalogue-storage)
 - [MIDI controller architecture](#midi-controller-architecture)
 - [Engine resilience and recovery](#engine-resilience-and-recovery)
@@ -29,9 +30,11 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Timeline snap grid](#timeline-snap-grid)
   - [Processing progress panel](#processing-progress-panel)
 - [Stem separation](#stem-separation)
+- [Decoding compressed sources](#decoding-compressed-sources)
 - [Library panel](#library-panel)
   - [File browser (Files tab)](#file-browser-files-tab)
 - [Scratch Editor](#scratch-editor)
+- [Recording](#recording)
 - [Preferences](#preferences)
   - [MIDI controller preferences](#midi-controller-preferences)
   - [Audio output device](#audio-output-device)
@@ -44,6 +47,8 @@ design roadmap, see the [Development Plan](development-plan.md).
   - [Timeline commands](#timeline-commands)
   - [Clip Editor](#clip-editor)
   - [Scratch Editor](#scratch-editor-shortcuts)
+  - [Record Audio](#record-audio-shortcuts)
+  - [Selection model](#selection-model)
   - [Track effect automation](#track-effect-automation)
 - [Rendering performance](#rendering-performance)
 - [Prerequisites](#prerequisites)
@@ -4342,7 +4347,11 @@ Stereo** beside it, disabled until the split is ticked so the pane does not
 resize under the pointer. The split is done at commit rather than in review, so
 the audition keeps playing the take as performed, and it is all or nothing: a
 failure deletes every file it created and leaves the take in review (ADR 0030,
-Amendment 24). The timeline exit adds the item and places a clip at the
+Amendment 24). It is deliberately not the clip-level `CLIP_SPLIT_CHANNELS`:
+that one starts from a placed clip, runs on the export thread pool and answers
+asynchronously, while a commit has no clip yet and must place both halves
+inside its own undo transaction — so finalise keeps its own file-to-file
+`splitStereoToMono`. The timeline exit adds the item and places a clip at the
 recording's anchor inside a single undo transaction. Its destination is
 resolved by `resolveRecordingTrackId`: the selected track only when that track
 holds no clips at all, otherwise a track of

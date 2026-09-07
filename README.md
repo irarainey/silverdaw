@@ -81,7 +81,9 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   speech and sound effects, with an optional clean-up of low-level background
   noise. Play the result back on its own or against the arrangement, re-record
   it until it's right, then add it to the library or drop it straight onto the
-  timeline where you played it. Recordings are ordinary library items, so
+  timeline where you played it. A stereo take can be split into its two channels
+  on the way in, so a two-channel mixer works as the input device and its two
+  sources land on separate tracks. Recordings are ordinary library items, so
   everything else here works on them.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the

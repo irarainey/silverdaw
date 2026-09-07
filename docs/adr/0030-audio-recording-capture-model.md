@@ -985,7 +985,7 @@ temporary file goes to the system temp directory rather than the project's
 `recordings/` folder — it is deleted immediately, and calibration has to work
 with no project open.
 
-## Amendment Eighteen: a take keeps a little audio in front of the anchor
+### Amendment 18 — A take keeps a little audio in front of the anchor
 
 Amendments 11, 12 and 17 between them land a take exactly on the anchor: the
 whole round trip and the transport skew are trimmed off the head, so the first
@@ -1030,7 +1030,7 @@ would play the take a pre-roll late against the very backing it was recorded to
 — which is the bug the head trim exists to prevent, reintroduced in the one
 place a user would go to check for it.
 
-## Amendment Nineteen: the live waveform is drawn on the timeline
+### Amendment 19 — The live waveform is drawn on the timeline
 
 The waveform drawn while a take rolls is built from the input meter, not from
 audio (ADR 0003 keeps samples off the socket), and it was drawn as though the
@@ -1064,7 +1064,7 @@ This changes only what is drawn. No captured audio and no alignment behaviour
 depends on it, and the live view remains a picture of the input rather than of
 the file — the real waveform still arrives with the finished take.
 
-## Amendment Twenty: the capture buffer is the driver's, and the driver type is chosen by period
+### Amendment 20 — The capture buffer is the driver's, and the driver type is chosen by period
 
 Monitoring delay is the round trip, and the round trip is mostly the two device
 buffers, so shortening the capture buffer looks like the obvious lever. It is
@@ -1120,7 +1120,7 @@ performer: any shift applied ahead of them is absorbed by them playing to what
 they hear. Only a physically shorter round trip, or monitoring that never enters
 the computer, changes it.
 
-## Amendment Twenty-One: monitoring delay is stated, not compensated
+### Amendment 21 — Monitoring delay is stated, not compensated
 
 The obvious next thought, having compensated the take for the round trip, is to
 compensate what the performer hears by the same figure — shift the backing so
@@ -1174,11 +1174,11 @@ No attempt is made to drive interface direct monitoring. It is the real answer
 to the flam, but it lives in the interface's own control panel, and a DAW that
 claimed to switch it on would be lying on most hardware.
 
-**Buffer size is not the escape hatch either** — Amendment Twenty measured what
+**Buffer size is not the escape hatch either** — Amendment 20 measured what
 happens when capture asks for less than the driver's period, and the answer is
 that the take silently loses audio. The round trip is what it is.
 
-## Amendment Twenty-Two: a lost input announces itself with silence
+### Amendment 22 — A lost input announces itself with silence
 
 Pulling the capture device's cable mid-take was the last of the failure-mode
 spikes, and it found a real defect. Measured on real hardware with the capture
@@ -1217,7 +1217,7 @@ output still open. Losing the input costs the input and nothing else, which is
 exactly why capture is opened as its own device rather than folded into the
 playback device.
 
-## Amendment Twenty-Three: reviewer findings, and the rules they settle
+### Amendment 23 — Reviewer findings, and the rules they settle
 
 Before the first end-to-end test run the whole capture path was reviewed by two
 models working independently. Ten of their findings held up against the code;
@@ -1302,7 +1302,7 @@ rejection — which the tolerant parse above removes. A resync command is worth
 having if recording ever gains a second surface, but inventing one for a
 hazard the transport does not exhibit is not.
 
-## Amendment Twenty-Four: a stereo take can be separated into its two channels
+### Amendment 24 — A stereo take can be separated into its two channels
 
 A hardware mixer is a common way into a single computer, and a two-channel one
 feeds two different sources — a vocal and a guitar, two turntables, two
@@ -1318,8 +1318,22 @@ first landed on — the entire reason for the split is that the two sources end 
 apart. Both go down at the same position, because they were performed together;
 they stay aligned by construction, not by the user nudging them.
 
+**It does not reuse `CLIP_SPLIT_CHANNELS`, the timeline clip's Split Stereo
+Channels, and the two are worth telling apart.** That one starts from a *placed
+clip*: it runs the sample-export pipeline over the clip's source window on the
+export thread pool and answers asynchronously with `CHANNEL_SPLIT_READY`, and
+its output is always a stereo file carrying the one channel on both sides,
+imported as a `stem` item. A commit has none of that to work with — there is no
+clip yet, and both halves have to appear inside the one undo transaction that
+`Add to Timeline` already is, so the split has to be synchronous and has to
+happen before the library items exist. The buffer-level helper the export uses
+(`duplicateChannelAcross`) is a different level of abstraction from a
+file-to-file rewrite, which is why finalise keeps its own `splitStereoToMono`
+beside `duplicateMonoToStereo` rather than borrowing it. A user who has already
+kept a stereo take whole still has the clip-level command available.
+
 **The split happens at commit, not at review, which is where it differs from
-Save as Stereo (Amendment Nine).** That option rewrites the take, so the
+Save as Stereo (Amendment 9).** That option rewrites the take, so the
 audition plays the file that will be kept. This one cannot: the review has one
 preview voice and one file, and there is no honest way to audition two clips
 through it. That turns out to be the right answer anyway. The review question is
@@ -1346,7 +1360,7 @@ an open handle.
 its own file.** It sits alongside rather than appearing when the split is
 ticked, because a control that materialises on a tick resizes the pane under
 the pointer; it is disabled until the split is on. The reasoning is Amendment
-Nine's: it is about what the file *is* for downstream tooling, not what it
-sounds like. It applies only under a split, and a mono take duplicated to
-stereo is never offered a split — both of its sides are the same recording, so
-separating them would quietly double the material.
+9's: it is about what the file *is* for downstream tooling, not what it sounds
+like. It applies only under a split, and a mono take duplicated to stereo is
+never offered a split — both of its sides are the same recording, so separating
+them would quietly double the material.

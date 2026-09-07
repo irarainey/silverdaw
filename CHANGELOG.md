@@ -16,6 +16,7 @@
 - Takes are captured as **Music**, which inherits the project tempo and warps with it, or **Simple** for speech and sound effects.
 - An optional cleanup removes low-level background noise from a take.
 - A finished take can be auditioned alone or against the arrangement, renamed, converted from mono to stereo, and re-recorded before it is kept.
+- A stereo take can be split into its two channels as it is kept, so a two-channel mixer can be used as the input device and its two sources land on separate tracks.
 - Recording starts and stops with the **R** key or the space bar anywhere in the Record Audio dialog.
 - **Calibrate timing** measures the audio hardware's true output-to-input round trip and applies it to every take on the same pair of devices.
 - A calibration can be typed in by hand where measuring acoustically is not possible.
