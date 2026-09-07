@@ -6,7 +6,6 @@
 
 import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraft'
 import { useDecimalFieldText } from '@/lib/useDecimalFieldText'
-import type { ClipWarpMode } from '@shared/bridge-protocol'
 
 const props = defineProps<{
   draft: ClipEditorWarpDraft
@@ -14,18 +13,14 @@ const props = defineProps<{
   projectBpm: number
 }>()
 
-const WARP_MODES: ClipWarpMode[] = ['rhythmic', 'tonal', 'complex']
-
 // Alias the draft's refs into local consts so the template never reaches
 // through the `draft` prop directly, keeping `vue/no-mutating-props` happy.
 const draftTempoEnabled = props.draft.draftTempoEnabled
-const draftMode = props.draft.draftMode
 const draftTempoMode = props.draft.draftTempoMode
 const draftPinnedBpm = props.draft.draftPinnedBpm
 const draftStretchPercent = props.draft.draftStretchPercent
 const draftEffectiveBpm = props.draft.draftEffectiveBpm
 const draftEffectiveRatio = props.draft.draftEffectiveRatio
-const draftProcessorEnabled = props.draft.draftProcessorEnabled
 const setTempoMode = props.draft.setTempoMode
 
 // The pinned-BPM and stretch fields are shown always formatted to two decimals
@@ -82,33 +77,8 @@ function onPinnedBpmWheel(e: WheelEvent): void {
       </div>
     </div>
 
-    <!-- The mode governs the stretcher whenever it runs, which includes a
-         pitch-only clip with no tempo warp, so it is not gated on Enable Warp. -->
-    <fieldset
-      class="flex flex-col gap-1"
-      :disabled="!draftProcessorEnabled"
-      :class="!draftProcessorEnabled ? 'opacity-50' : ''"
-    >
-      <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-        Mode
-      </legend>
-      <div class="flex gap-1">
-        <button
-          v-for="m in WARP_MODES"
-          :key="m"
-          type="button"
-          class="flex-1 rounded border px-2 py-1 text-xs capitalize transition-colors"
-          :class="draftMode === m
-            ? 'border-sky-500 bg-sky-600/30 text-zinc-100'
-            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-          "
-          @click="draftMode = m"
-        >
-          {{ m }}
-        </button>
-      </div>
-    </fieldset>
-
+    <!-- Mode is shared with pitch (one stretcher does both), so it lives in its
+         own rack module rather than here. -->
     <fieldset
       class="flex flex-col gap-1"
       :disabled="!draftTempoEnabled"

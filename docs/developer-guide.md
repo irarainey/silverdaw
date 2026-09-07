@@ -3349,13 +3349,15 @@ Within the dialog:
   selected range with you so a wider selection on the source can be tightened
   up at clip-level zoom.
 - **Warp + Pitch inspector** (existing-clip targets only): a right-hand panel
-  exposes draft controls for **Enable Warp**, warp **Mode** (rhythmic / tonal
-  / complex), **Playback tempo** (**Follow project BPM**, **Pin to** a specific
+  exposes draft controls for **Enable Warp**, **Playback tempo** (**Follow
+  project BPM**, **Pin to** a specific
   BPM, or a free **Stretch %** for material with no source tempo — e.g. spoken
   word, and **samples**, which are committed free-form audio that expose no
   source tempo to the warp controls so they offer Stretch only), pitch
   **Semitones** / **Cents** range sliders, and **Key presets**
-  computed from the source's detected key. The resulting **Playback BPM** +
+  computed from the source's detected key. The mode (rhythmic / tonal /
+  complex) is shared by warp and pitch and has its own rack module — see below.
+  The resulting **Playback BPM** +
   ratio and the current pitched key are shown alongside the controls (the source
   BPM lives in the sibling Beat grid panel, not duplicated here). Slider movement
   updates the preview voice **live** — Rubber Band's
@@ -3364,12 +3366,27 @@ Within the dialog:
   drags and loops. The renderer coalesces draft updates to roughly 30 Hz so
   Rubber Band isn't re-tuned per pointer event.
 
-**Mode applies to pitch as well as tempo.** The mode chooses the Rubber Band
-engine and window for everything the stretcher does, so it governs a pitch shift
-even when the clip has no tempo warp. The picker is therefore enabled whenever
-the processor runs — `draftProcessorEnabled` in `useClipEditorWarpDraft`, and
-`modeApplies` in `useClipWarpDialogController` — rather than being gated on
-**Enable Warp**.
+**Mode is one setting shared by warp and pitch.** `makeWarpProcessor` builds a
+single `WarpProcessor` — and therefore a single `RubberBandStretcher` — per
+clip, from one `parseWarpMode(mode)`, and then hands it both the tempo ratio and
+the pitch scale. Rubber Band performs the stretch and the shift in the same
+pass, so the engine, transient handling and window cannot differ between them.
+
+Chaining two stretchers to give warp and pitch independent modes was considered
+and rejected: they would have to run in series, so the second would analyse
+audio the first had already phase-smeared, compounding artefacts rather than
+combining characters. It would also roughly double the per-clip audio-thread
+cost (ADR 0017) and make the start-delay and seek arithmetic in `WarpProcessor`
+additive across two stages.
+
+Because the setting belongs to neither panel alone, it is surfaced as its own
+**Warp & Pitch Mode** module (`ClipEditorModePanel`) in the Clip Editor rack
+rather than living inside the Warp module, and the `ClipWarpDialog` picker
+carries the same name on both the tempo and pitch panels. The panel states that
+it applies to both. It is enabled whenever the processor runs —
+`draftProcessorEnabled` in `useClipEditorWarpDraft`, and `modeApplies` in
+`useClipWarpDialogController` — rather than being gated on **Enable Warp**, so a
+pitch-only clip can still reach it.
 
 `WarpProcessor::realtimeOptionsFor` then adjusts two options from the pitch
 scale itself, because the mode name cannot express them (ADR 0031):

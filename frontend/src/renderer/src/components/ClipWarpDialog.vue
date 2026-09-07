@@ -164,7 +164,7 @@ const {
             :class="!modeApplies ? 'opacity-50' : ''"
           >
             <legend class="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
-              Mode
+              Warp &amp; Pitch Mode
             </legend>
             <div class="flex gap-1">
               <button
