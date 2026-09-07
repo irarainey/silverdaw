@@ -17,6 +17,21 @@
     -webkit-user-select: text;
     user-select: text;
   }
+
+  /* The browser focus ring is never used (UI/UX §6): in Electron it draws as a
+   * white/orange outline that belongs to no part of the palette. Text fields,
+   * selects and ranges each carry their own reset — a checkbox or radio has
+   * nowhere to put one, since `accent-*` is its whole styling and there is no
+   * border to recolour, so its 60-odd call sites would each have to repeat an
+   * `outline-none` utility and any new one would silently reintroduce the ring.
+   * Resetting the two input types here fixes the class of bug in one place.
+   * Focus stays legible: these controls are always paired with a label, and the
+   * accent fill of a checked box moves with the keyboard. */
+  #app :is(input[type='checkbox'], input[type='radio']):focus,
+  #app :is(input[type='checkbox'], input[type='radio']):focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
 }
 
 /* ── Dialog primitives ─────────────────────────────────────────────────

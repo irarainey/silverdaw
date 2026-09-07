@@ -154,7 +154,8 @@ class="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-10
   `tabular-nums` for alignment; use the `no-spinner` class to hide native number
   spinners.
 - **Checkboxes / radios / native range:** tint with `accent-sky-500` (or
-  `accent-sky-400` for the master volume slider).
+  `accent-sky-400` for the master volume slider). Checkboxes and radios need no
+  focus utility — the browser ring is cleared for them in the base layer (§6).
 - **Choosing between a small fixed set of options** (a preference, a mode): use
   the **radio-card list** pattern — a `<label>` per option in a `space-y-2`
   column. **Canonical card:**
@@ -202,6 +203,12 @@ ever see that on a control, the control is wrong and must be fixed.
 - Every focusable element pairs `outline-none` (or `focus:outline-none`).
   Indicate focus by **recolouring the border to the accent**:
   `focus:border-sky-500`. Wrapper groups may use `focus-within:border-sky-500`.
+- **Checkboxes and radios are reset centrally** — `style.css` clears the outline
+  for `input[type=checkbox]` and `input[type=radio]` in the base layer, so their
+  call sites carry only `accent-sky-500` and sizing. They are the one control
+  with nowhere to put a per-call-site reset (no border to recolour, and `accent`
+  is their whole styling), so repeating `outline-none` on every one of them
+  would only mean the next new checkbox silently brings the ring back.
 - **Native `<select>` is the most common offender** — it does NOT inherit a
   global reset, so it must carry `outline-none focus:border-sky-500`. Using
   `.app-select` (§5) covers this; a bare `<select>` without `outline-none` shows

@@ -3778,9 +3778,24 @@ the module layout and behaviour that ADR does not.
 open the one dialog, hosted lazily in `App.vue` and driven by
 `useRecordingSessionStore`. `R` and the space bar record and stop **inside the
 dialog only**, exactly as the Scratch Editor claims `R`, so there is no global
-record shortcut. Both defer to a focused button, select or text field, because
-space already activates a focused control and handling it twice would toggle
-that control as well as the take.
+record shortcut. Space is taken from whatever holds focus, because starting and
+stopping is the one thing done with hands off the mouse and it cannot depend on
+where focus happens to be; `preventDefault` on the keydown is what stops a
+focused button or checkbox acting on the same press, since both activate on the
+keyup it suppresses. `R` alone defers to a focused `<select>`, whose letter keys
+drive the device picker's type-ahead. The rules are a pure function
+(`lib/recording/recordShortcut.ts`) so they can be tested without a DOM.
+
+The handler is bound to **`window` in the capture phase, not to the dialog
+element**, and that is load-bearing rather than incidental. Starting a take
+swaps the Record button for Stop and disables the setup controls, so the element
+the user just pressed is destroyed or disabled mid-gesture and focus falls to
+`<body>` — outside the card. An element-level handler stops seeing keys at
+exactly the moment the take needs stopping. Binding globally is safe because
+`App.vue`'s own capture-phase handler stands down for the whole app while
+`recording.dialogOpen` is true. Focus is also pulled back to the card whenever it
+escapes to `<body>`, so `Tab` does not restart from the top of the document
+behind the modal.
 
 **Session model.** `useRecordingSession` opens a backend session with the dialog
 and closes it with the dialog — including on unmount, on engine recovery, and
@@ -4837,7 +4852,7 @@ dialog only — there is no global record shortcut. See the
 
 | Input | Effect |
 |---|---|
-| `R` / `Space` | Start recording, or stop one that is rolling. Neither runs while a text field, button or select has focus — space already activates a focused control — nor once a recording is in review. |
+| `R` / `Space` | Start recording, or stop one that is rolling. Space is taken from whatever has focus — a performer's hands are off the mouse — and `preventDefault` stops a focused button or checkbox acting on it as well. `R` defers to a focused `<select>`, whose letter keys drive its type-ahead. Neither runs while a text field has focus, nor once a recording is in review. |
 | `Enter` | Activate the footer's primary button — **Record**, or **Add to Timeline** while reviewing. |
 | `Escape` | Close the dialog, discarding an uncommitted recording. Ignored while a recording is rolling or a commit is in flight, so nothing is thrown away by accident. |
 

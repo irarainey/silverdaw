@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import RecordAudioReview from '@/components/RecordAudioReview.vue'
 import RecordAudioSetup from '@/components/RecordAudioSetup.vue'
 import { recordingErrorMessage } from '@/lib/recording/recordingMessages'
+import { isRecordShortcutKey } from '@/lib/recording/recordShortcut'
 import {
   releaseRecordingTrack,
   resolveRecordingTrackId,
@@ -151,26 +152,59 @@ watch(isCommitting, (committing) => {
 
 onBeforeUnmount(clearCommitTimer)
 
+// Bound to `window` in the capture phase rather than to the dialog element, because the
+// dialog cannot rely on holding focus. Starting a take swaps the Record button for Stop
+// and disables the setup controls, so whichever element the user just pressed is
+// destroyed or disabled mid-gesture and focus falls to `<body>` — outside the card. A
+// handler on the card would then never see the keypress that is meant to stop the take.
+// This is safe to bind globally: `App.vue`'s own capture-phase handler already stands
+// down for the whole app while `recording.dialogOpen` is true, so there is nothing to
+// collide with.
 function onKeydown(event: KeyboardEvent): void {
+  if (!props.open) return
   if (event.key === 'Escape') {
     event.preventDefault()
     onClose()
     return
   }
   // R and the space bar both record inside this dialog only — the same claim the Scratch
-  // Editor makes, so there is no global record shortcut to collide with. Buttons and
-  // checkboxes are excluded along with text fields: space already activates a focused
-  // control, and handling it here as well would toggle that control and start recording.
+  // Editor makes, so there is no global record shortcut to collide with. The rules live
+  // in `isRecordShortcutKey` so they can be tested without a DOM.
   const target = event.target as HTMLElement | null
-  const tag = target?.tagName
-  const typing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true
-  const activatable = typing || tag === 'BUTTON' || tag === 'SELECT'
-  const recordKey = event.key === 'r' || event.key === 'R' || event.key === ' '
-  if (!activatable && recordKey && !isReviewing.value) {
+  const shouldRecord = isRecordShortcutKey({
+    key: event.key,
+    targetTagName: target?.tagName ?? null,
+    targetInputType: target instanceof HTMLInputElement ? target.type : null,
+    targetIsContentEditable: target?.isContentEditable === true,
+    isReviewing: isReviewing.value
+  })
+  if (shouldRecord) {
     event.preventDefault()
     onRecordOrStop()
   }
 }
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (isOpen) window.addEventListener('keydown', onKeydown, { capture: true })
+    else window.removeEventListener('keydown', onKeydown, { capture: true })
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown, { capture: true })
+})
+
+// Losing the focused control also breaks Tab, which would otherwise restart from the top
+// of the document behind the modal. Pull focus back to the card whenever it escapes.
+watch([isRolling, isReviewing], () => {
+  requestAnimationFrame(() => {
+    const active = document.activeElement
+    if (active === null || active === document.body) dialogEl.value?.focus()
+  })
+})
 
 // The dialog is the one place recording problems are shown: a failed commit
 // first, then whatever the session itself is complaining about.
@@ -196,7 +230,6 @@ const errorMessage = computed(() => {
         ref="dialogEl"
         tabindex="-1"
         class="dialog-card w-[min(820px,94vw)]"
-        @keydown="onKeydown"
       >
         <div class="dialog-header">
           <h1
