@@ -61,6 +61,29 @@ function onStereoChange(event: Event): void {
   props.session.setStereoDuplicated((event.target as HTMLInputElement).checked)
 }
 
+// Separating a stereo take's two channels — the mixer case, where one stereo input
+// carried two different sources. Unlike Save as Stereo this does not touch the take, so
+// the audition still plays the pair together, which is how they were performed. A mono
+// take duplicated to stereo is excluded: both of its sides are the same recording.
+const canSplitChannels = computed(
+  () => ready.value?.channelCount === 2 && !stereoDuplicated.value
+)
+const splitChannels = computed(() => canSplitChannels.value && store.rememberedSplitChannels)
+
+function onSplitChange(event: Event): void {
+  props.session.setSplitChannels((event.target as HTMLInputElement).checked)
+}
+
+function onSplitAsStereoChange(event: Event): void {
+  props.session.setSplitAsStereo((event.target as HTMLInputElement).checked)
+}
+
+const placementNotice = computed(() =>
+  splitChannels.value
+    ? 'Adding this to the timeline places both halves where you recorded them, each on a track of its own so the two sources stay apart.'
+    : 'Adding this to the timeline places it where you recorded it — on the selected track when that track is empty, otherwise on a new track of its own.'
+)
+
 /**
  * The take this pane is auditioning, held outside the store.
  *
@@ -284,11 +307,40 @@ onBeforeUnmount(() => {
         :checked="stereoDuplicated"
         @change="onStereoChange"
       >
-      <span class="min-w-0 flex-1 truncate leading-tight">
-        <span class="font-medium text-zinc-200">Save as Stereo</span>
-        <span class="text-zinc-500"> — the mono take on both channels</span>
+      <span class="min-w-0 flex-1 truncate leading-tight font-medium text-zinc-200">
+        Save as Stereo
       </span>
     </label>
+
+    <div
+      v-if="canSplitChannels"
+      class="flex items-center gap-6"
+    >
+      <label class="flex min-w-0 cursor-pointer items-center gap-3">
+        <input
+          type="checkbox"
+          class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
+          :checked="splitChannels"
+          @change="onSplitChange"
+        >
+        <span class="truncate leading-tight font-medium text-zinc-200">Split Channels</span>
+      </label>
+      <!-- Always present, disabled until the split is on: appearing with the tick would
+           resize the pane under the pointer. -->
+      <label
+        class="flex shrink-0 items-center gap-3"
+        :class="splitChannels ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
+      >
+        <input
+          type="checkbox"
+          class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500 disabled:cursor-not-allowed"
+          :disabled="!splitChannels"
+          :checked="store.rememberedSplitAsStereo"
+          @change="onSplitAsStereoChange"
+        >
+        <span class="leading-tight font-medium text-zinc-200">Each as Stereo</span>
+      </label>
+    </div>
 
     <label class="flex items-center gap-3">
       <span class="text-[11px] uppercase tracking-wider text-zinc-500">Name</span>
@@ -300,8 +352,7 @@ onBeforeUnmount(() => {
     </label>
 
     <p class="text-zinc-400">
-      Adding this to the timeline places it where you recorded it — on the selected track when
-      that track is empty, otherwise on a new track of its own.
+      {{ placementNotice }}
     </p>
 
     <p

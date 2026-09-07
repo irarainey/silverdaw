@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Twenty-three amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty-four amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -1301,3 +1301,52 @@ reorder, so the only realistic way to lose one was renderer-side schema
 rejection — which the tolerant parse above removes. A resync command is worth
 having if recording ever gains a second surface, but inventing one for a
 hazard the transport does not exhibit is not.
+
+## Amendment Twenty-Four: a stereo take can be separated into its two channels
+
+A hardware mixer is a common way into a single computer, and a two-channel one
+feeds two different sources — a vocal and a guitar, two turntables, two
+performers — down the left and right of one stereo input. Silverdaw captured
+that as it arrived: a single stereo take with a different performance on each
+side, which is unmixable, because gain, panning, warping and effects all belong
+to a clip and there is only one clip.
+
+**Split Channels, offered in review for a stereo take, keeps the two sides as
+two separate recordings.** Each becomes a library item of its own, and on the
+timeline the second always takes a track of its own rather than the one the
+first landed on — the entire reason for the split is that the two sources end up
+apart. Both go down at the same position, because they were performed together;
+they stay aligned by construction, not by the user nudging them.
+
+**The split happens at commit, not at review, which is where it differs from
+Save as Stereo (Amendment Nine).** That option rewrites the take, so the
+audition plays the file that will be kept. This one cannot: the review has one
+preview voice and one file, and there is no honest way to audition two clips
+through it. That turns out to be the right answer anyway. The review question is
+whether the take is any good, and the two sources were performed together
+against the same backing, so hearing them together *is* hearing the take.
+Splitting is a decision about where the material goes — like library-versus-
+timeline — not about what the take is. Doing it eagerly would also write two
+extra files every time the box was ticked, real I/O on a long take, thrown away
+the moment the user changed their mind.
+
+**Building the pair is all or nothing.** A commit that wrote one half, failed on
+the second and placed it anyway would be worse than refusing: the user would
+have half a recording on the timeline and no obvious sign the other half was
+missing. Anything that fails deletes every file it created and reports the
+commit as failed, leaving the take intact in review to try again.
+
+**The original stereo file is not kept.** What the user asked for is the pair
+that came out of it, and leaving the mixed-together version in the project
+folder is clutter that no library item points at. It is released from the
+preview voice before it is deleted, because Windows will not remove a file with
+an open handle.
+
+**Each as Stereo, beside the split, puts each half back across both channels of
+its own file.** It sits alongside rather than appearing when the split is
+ticked, because a control that materialises on a tick resizes the pane under
+the pointer; it is disabled until the split is on. The reasoning is Amendment
+Nine's: it is about what the file *is* for downstream tooling, not what it
+sounds like. It applies only under a split, and a mono take duplicated to
+stereo is never offered a split — both of its sides are the same recording, so
+separating them would quietly double the material.

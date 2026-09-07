@@ -440,6 +440,49 @@ describe('useRecordingSession', () => {
     scope.stop()
   })
 
+  it('only asks for a split when the take has two channels to separate', () => {
+    const open = ref(true)
+    const store = useRecordingSessionStore()
+    const scope = effectScope()
+    const session = scope.run(() => useRecordingSession(open))!
+
+    store.applyState(makeState({ status: 'review' }))
+    store.applyRecordingReady({ ...makeReady(), channelCount: 1 })
+    session.setSplitChannels(true)
+    session.setSplitAsStereo(true)
+
+    // A mono take holds one source. Asking to split it would double the material.
+    session.commit({ name: 'Take one', destination: 'timeline' })
+    const monoCommit = vi
+      .mocked(sendBridge)
+      .mock.calls.find((call) => call[0] === 'RECORD_RECORDING_COMMIT')?.[1] as Record<
+      string,
+      unknown
+    >
+    expect(monoCommit.splitChannels).toBe(false)
+    expect(monoCommit.secondItemId).toBeUndefined()
+
+    vi.mocked(sendBridge).mockClear()
+    store.resolveCommit(store.commitPendingItemId!, true, null)
+    store.applyRecordingReady({ ...makeReady(), channelCount: 2 })
+    session.commit({ name: 'Take one', destination: 'timeline' })
+    const stereoCommit = vi
+      .mocked(sendBridge)
+      .mock.calls.find((call) => call[0] === 'RECORD_RECORDING_COMMIT')?.[1] as Record<
+      string,
+      unknown
+    >
+    expect(stereoCommit.splitChannels).toBe(true)
+    expect(stereoCommit.splitAsStereo).toBe(true)
+    // The second half needs its own ids, generated here so both items correlate
+    // without a second ack envelope.
+    expect(typeof stereoCommit.secondItemId).toBe('string')
+    expect(stereoCommit.secondItemId).not.toBe(stereoCommit.itemId)
+    expect(typeof stereoCommit.secondClipId).toBe('string')
+    expect(stereoCommit.secondClipId).not.toBe(stereoCommit.clipId)
+    scope.stop()
+  })
+
   it('refuses a second commit while one is still in flight', () => {
     const open = ref(true)
     const store = useRecordingSessionStore()

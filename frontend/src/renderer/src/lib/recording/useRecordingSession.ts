@@ -74,6 +74,12 @@ export interface RecordingSession {
    *  sides. Applied to the take itself before it is saved, so the review
    *  auditions what will be kept. Ignored for a stereo capture. */
   setStereoDuplicated(enabled: boolean): void
+  /** Whether a stereo take is separated into its two channels when it is kept, and
+   *  whether each half is then put back across both channels of its own file. Unlike
+   *  Save as Stereo these do not touch the take, so they are only read at commit and
+   *  the review keeps auditioning the take as performed (ADR 0030, Amendment 24). */
+  setSplitChannels(enabled: boolean): void
+  setSplitAsStereo(enabled: boolean): void
   start(): void
   stop(): void
   /** Record Again: throws the finished file away without creating anything. */
@@ -378,6 +384,14 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       })
     },
 
+    setSplitChannels(enabled: boolean): void {
+      store.rememberedSplitChannels = enabled
+    },
+
+    setSplitAsStereo(enabled: boolean): void {
+      store.rememberedSplitAsStereo = enabled
+    },
+
     setInputGain(gainDb: number): void {
       const clamped = Math.min(
         MAX_RECORDING_INPUT_GAIN_DB,
@@ -412,6 +426,9 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
       // orphan the first ack.
       if (sessionId === null || ready === null || store.commitPendingItemId !== null) return null
       const itemId = `recording-${crypto.randomUUID()}`
+      // Only a stereo take has two channels to separate; the flag is meaningless
+      // otherwise and the backend ignores it, but sending it would be misleading.
+      const splitChannels = ready.channelCount === 2 && store.rememberedSplitChannels
       store.beginCommit(itemId)
       sendBridge('RECORD_RECORDING_COMMIT', {
         protocolVersion: RECORDING_PROTOCOL_VERSION,
@@ -421,7 +438,15 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
         name: request.name,
         destination: request.destination,
         ...(request.trackId ? { trackId: request.trackId } : {}),
-        ...(request.destination === 'timeline' ? { clipId: crypto.randomUUID() } : {})
+        ...(request.destination === 'timeline' ? { clipId: crypto.randomUUID() } : {}),
+        splitChannels,
+        splitAsStereo: splitChannels && store.rememberedSplitAsStereo,
+        ...(splitChannels
+          ? {
+              secondItemId: `recording-${crypto.randomUUID()}`,
+              ...(request.destination === 'timeline' ? { secondClipId: crypto.randomUUID() } : {})
+            }
+          : {})
       })
       return itemId
     }

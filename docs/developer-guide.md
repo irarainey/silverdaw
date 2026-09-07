@@ -857,9 +857,13 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   file that will be saved, and it re-broadcasts `RECORD_RECORDING_READY` with
   fresh peaks (ADR 0030, Amendment 9).
 - `RECORD_RECORDING_COMMIT { sessionId, recordingId, itemId, name, destination,
-  trackId?, clipId? }` keeps the finished recording as a library item, and for
+  trackId?, clipId?, splitChannels?, splitAsStereo?, secondItemId?,
+  secondClipId? }`
+  keeps the finished recording as a library item, and for
   `destination: "timeline"` places a clip at its anchor in the same undo
-  transaction.
+  transaction. `splitChannels` — only meaningful for a stereo take — keeps the
+  two channels as two items instead of one, using the `second*` ids for the
+  right-hand half, and always on a track of its own (ADR 0030, Amendment 24).
 - `RECORD_CALIBRATE_START { sessionId }` runs a latency calibration: the backend
   plays twelve tone bursts through the output and times their echoes in
   the capture stream (ADR 0030, Amendment 17). It is refused unless the session
@@ -4331,14 +4335,25 @@ no new library kind — marked `recordingOrigin`. A **Music** take carries
 rather than a detected one, so a later project-tempo change warps it like any
 other clip; a **Simple** take carries `audioType = "simple"` and no tempo at
 all. **Save as Stereo**, offered only when the take is mono, duplicates it into
-both channels. The timeline exit adds
-the item and places a clip at the recording's anchor inside a single undo
-transaction. Its destination is resolved by `resolveRecordingTrackId`: the
-selected track only when that track holds no clips at all, otherwise a track of
+both channels. **Split Channels**, offered only when the take is stereo and not
+a mono duplicate, separates the two sides into two library items — the mixer
+case, where one stereo input carried two different sources — with **Each as
+Stereo** beside it, disabled until the split is ticked so the pane does not
+resize under the pointer. The split is done at commit rather than in review, so
+the audition keeps playing the take as performed, and it is all or nothing: a
+failure deletes every file it created and leaves the take in review (ADR 0030,
+Amendment 24). The timeline exit adds the item and places a clip at the
+recording's anchor inside a single undo transaction. Its destination is
+resolved by `resolveRecordingTrackId`: the selected track only when that track
+holds no clips at all, otherwise a track of
 its own, and either way the row is scrolled into view (`requestRevealTrack`) so
 a recording never lands out of sight or on top of what is already arranged. The
-backend applies the same rule for a commit that names no track. Commits are
-acknowledged by `SAMPLE_SAVED`, correlated by the renderer-generated `itemId`.
+backend applies the same rule for a commit that names no track — and a split's
+second half always takes a fresh track, at the same position as the first.
+Commits are acknowledged by `SAMPLE_SAVED`, correlated by the
+renderer-generated `itemId`; a split's second item arrives on its own
+`SAMPLE_SAVED`, which creates the library item but is ignored by the commit
+tracker.
 Recordings are named `Recording 1`, `Recording 2`, … and renamed later like any
 library item or clip.
 

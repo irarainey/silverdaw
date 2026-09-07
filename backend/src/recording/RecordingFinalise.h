@@ -63,4 +63,19 @@ FinaliseResult finaliseRecording(const FinaliseRequest& request,
 bool duplicateMonoToStereo(const juce::File& source, const juce::File& destination,
                            juce::AudioFormatManager& formatManager);
 
+/**
+ * Writes the two channels of a stereo `source` out as a pair of mono WAVs, leaving the
+ * source untouched (ADR 0030, Amendment 24).
+ *
+ * This is the mixer case: two sources performed together into one stereo input, wanted
+ * back as the two separate things they were. Streamed in blocks like the finalise pass, so
+ * length costs no memory. Either both files are written or neither is — a half-written pair
+ * would let the commit place one track of a two-track recording and call it finished.
+ * Returns false and leaves nothing behind when the source is not stereo or cannot be read.
+ * Worker or message thread; never the audio thread.
+ */
+bool splitStereoToMono(const juce::File& source, const juce::File& leftDestination,
+                       const juce::File& rightDestination,
+                       juce::AudioFormatManager& formatManager);
+
 } // namespace silverdaw::recording

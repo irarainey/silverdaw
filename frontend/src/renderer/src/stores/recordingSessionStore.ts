@@ -94,6 +94,12 @@ interface RecordingSessionState {
   /** Whether a mono take is saved as a stereo file, carried across takes so a
    *  retake does not have to be told again. */
   rememberedStereoDuplicated: boolean
+  /** Whether a stereo take is separated into its two channels when it is kept, and whether
+   *  each half is then put back across both channels of its own file (ADR 0030,
+   *  Amendment 24). Carried across takes: a mixer feeding two sources into one stereo
+   *  input is a setup, not a one-off, so every take from it wants the same treatment. */
+  rememberedSplitChannels: boolean
+  rememberedSplitAsStereo: boolean
   /** Live input peaks, always metered even with monitoring off. */
   inputPeakL: number
   inputPeakR: number
@@ -143,6 +149,8 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     rememberedMonitorEnabled: null,
     rememberedCleanupEnabled: null,
     rememberedStereoDuplicated: false,
+    rememberedSplitChannels: false,
+    rememberedSplitAsStereo: false,
     inputPeakL: 0,
     inputPeakR: 0,
     ready: null,

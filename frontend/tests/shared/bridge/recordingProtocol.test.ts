@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { RecordingSessionStatePayloadSchema } from '@shared/bridge-protocol'
+import {
+  RecordingCommitPayloadSchema,
+  RecordingSessionStatePayloadSchema
+} from '@shared/bridge-protocol'
 
 // A recording state snapshot is the only thing that tells the dialog what the backend is
 // doing. Anything that makes the renderer reject one leaves the user looking at a stale
@@ -75,5 +78,37 @@ describe('RECORD_SESSION_STATE monitor availability', () => {
       makeState({ monitorAvailable: false })
     )
     expect(parsed.success && parsed.data.monitorAvailable).toBe(false)
+  })
+})
+
+describe('RECORD_RECORDING_COMMIT channel splitting', () => {
+  const base = {
+    protocolVersion: 1,
+    sessionId: 'session-1',
+    recordingId: 'capture-1',
+    itemId: 'recording-1',
+    name: 'Take one',
+    destination: 'library'
+  }
+
+  it('defaults to keeping the take whole', () => {
+    // An older renderer, or any commit that says nothing, must not start splitting takes.
+    const parsed = RecordingCommitPayloadSchema.safeParse(base)
+    expect(parsed.success && parsed.data.splitChannels).toBe(false)
+    expect(parsed.success && parsed.data.splitAsStereo).toBe(false)
+  })
+
+  it('carries the ids for the second half', () => {
+    const parsed = RecordingCommitPayloadSchema.safeParse({
+      ...base,
+      destination: 'timeline',
+      clipId: 'clip-1',
+      splitChannels: true,
+      splitAsStereo: true,
+      secondItemId: 'recording-2',
+      secondClipId: 'clip-2'
+    })
+    expect(parsed.success && parsed.data.secondItemId).toBe('recording-2')
+    expect(parsed.success && parsed.data.secondClipId).toBe('clip-2')
   })
 })

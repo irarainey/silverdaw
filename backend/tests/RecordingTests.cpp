@@ -926,6 +926,83 @@ void testDuplicateMonoToStereoRefusesAStereoTake()
 
     dir.deleteRecursively();
 }
+// Separating a stereo take must hand back exactly what was on each side: the whole point
+// is that a mixer's two sources come apart again unaltered.
+void testSplitStereoToMonoKeepsEachChannel()
+{
+    const auto dir = makeTempDir("recording-split");
+    const auto source = dir.getChildFile("stereo.wav");
+    const auto left = dir.getChildFile("left.wav");
+    const auto right = dir.getChildFile("right.wav");
+
+    constexpr int length = 9600;
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream(source.createOutputStream());
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(kSampleRate)
+                                 .withNumChannels(2)
+                                 .withBitsPerSample(24);
+        std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, options));
+        require(writer != nullptr, "the two-source take should be writable");
+        juce::AudioBuffer<float> buffer(2, length);
+        // Deliberately different per side, so a split that crossed or copied a channel
+        // cannot pass.
+        for (int i = 0; i < length; ++i)
+        {
+            buffer.setSample(0, i, static_cast<float>(i) / static_cast<float>(length) * 0.5F);
+            buffer.setSample(1, i, -static_cast<float>(i) / static_cast<float>(length) * 0.25F);
+        }
+        require(writer->writeFromAudioSampleBuffer(buffer, 0, length), "the take should write");
+    }
+
+    require(silverdaw::recording::splitStereoToMono(source, left, right, formats()),
+            "a stereo take should split into two");
+
+    const auto leftReader = readerFor(left);
+    const auto rightReader = readerFor(right);
+    require(leftReader != nullptr && rightReader != nullptr, "both halves should read back");
+    require(leftReader->numChannels == 1 && rightReader->numChannels == 1,
+            "each half should be a single channel");
+    require(leftReader->lengthInSamples == length && rightReader->lengthInSamples == length,
+            "each half should be the length of the take");
+
+    juce::AudioBuffer<float> leftBuffer(1, length);
+    juce::AudioBuffer<float> rightBuffer(1, length);
+    require(leftReader->read(&leftBuffer, 0, length, 0, true, false), "the left half should read");
+    require(rightReader->read(&rightBuffer, 0, length, 0, true, false),
+            "the right half should read");
+    for (int i = 0; i < length; i += 997)
+    {
+        requireNear(leftBuffer.getSample(0, i),
+                    static_cast<float>(i) / static_cast<float>(length) * 0.5F, 1.0e-4,
+                    "the left half should be the left channel");
+        requireNear(rightBuffer.getSample(0, i),
+                    -static_cast<float>(i) / static_cast<float>(length) * 0.25F, 1.0e-4,
+                    "the right half should be the right channel");
+    }
+
+    dir.deleteRecursively();
+}
+
+// A mono take holds one source, so there is nothing to separate — and a split that
+// produced two copies of it would quietly double the material on the timeline.
+void testSplitStereoToMonoRefusesAMonoTake()
+{
+    const auto dir = makeTempDir("recording-split-refuse");
+    const auto source = dir.getChildFile("mono.wav");
+    const auto left = dir.getChildFile("left.wav");
+    const auto right = dir.getChildFile("right.wav");
+    writeRamp(source, 4800, 1, kSampleRate);
+
+    require(! silverdaw::recording::splitStereoToMono(source, left, right, formats()),
+            "a mono take should not be split");
+    require(! left.existsAsFile() && ! right.existsAsFile(),
+            "a refused split should leave no files behind");
+
+    dir.deleteRecursively();
+}
+
 void testCalibrationFindsBurstOnsetsNotPeaks()
 {
     // A windowed burst peaks well after it starts, so timing the peak would report a round trip
@@ -1382,6 +1459,10 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testDuplicateMonoToStereoCopiesTheTake});
     tests.push_back({"recording stereo take is not duplicated",
                      testDuplicateMonoToStereoRefusesAStereoTake});
+    tests.push_back({"recording stereo take splits into its two channels",
+                     testSplitStereoToMonoKeepsEachChannel});
+    tests.push_back({"recording mono take is not split",
+                     testSplitStereoToMonoRefusesAMonoTake});
     tests.push_back({"recording finalise trims latency from the head", testFinaliseTrimsLatencyFromTheHead});
     tests.push_back({"recording finalise corrects clock drift", testFinaliseCorrectsClockDrift});
     tests.push_back({"recording finalise measures drift against the output clock",

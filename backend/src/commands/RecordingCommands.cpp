@@ -673,6 +673,124 @@ void handleRecordRecordingSetStereo(const juce::var& payload, AudioEngine& engin
     broadcastReady(bridge, *pending);
 }
 
+/** One library item a commit is going to create, and where it lands. A plain commit builds
+ *  one of these; a channel split builds two, and everything downstream treats them the same. */
+struct CommitPart
+{
+    juce::String itemId;
+    juce::String clipId;
+    juce::String name;
+    juce::File file;
+    int channelCount = 1;
+    juce::File cacheFile;
+    int peakCount = 0;
+    int laneCount = 0;
+    double peaksPerSecond = 0.0;
+    /** Force a track of its own rather than the selected one. The second half of a split
+     *  always does: the whole point is that the two sources end up apart. */
+    bool ownTrack = false;
+};
+
+/** Analyses `file` and fills in the peaks fields of `part`. False when it has no waveform,
+ *  which is how an unreadable or empty derived file is caught before it becomes an item. */
+bool describeCommitPart(CommitPart& part, AudioEngine& engine, const PeaksCache& cache)
+{
+    const auto peaks =
+        waveform::computePeaks(part.file, engine.getFormatManager(), waveform::kDefaultPeaksPerSecond);
+    if (peaks.peaks.empty()) return false;
+    cache.store(part.file, peaks);
+    part.cacheFile = cache.getCacheFilePath(part.file, waveform::kDefaultPeaksPerSecond);
+    part.peakCount = peaks.bucketsPerLane();
+    part.laneCount = peaks.laneCount;
+    part.peaksPerSecond = effectivePeaksPerSecond(peaks);
+    return true;
+}
+
+/**
+ * Writes the two channels of a finished stereo take out as the pair of items a split
+ * commit will create (ADR 0030, Amendment 24).
+ *
+ * All or nothing: anything that fails leaves no files behind and no parts, because a
+ * commit that placed one half of a two-track recording and called it done would be worse
+ * than refusing. `splitAsStereo` puts each half back across both channels of its own file,
+ * for the same downstream reasons as Save as Stereo.
+ */
+bool buildSplitParts(std::vector<CommitPart>& parts, const FinishedRecording& ready,
+                     const juce::String& name, const juce::var& payload, AudioEngine& engine,
+                     const PeaksCache& cache)
+{
+    const bool asStereo = static_cast<bool>(payload.getProperty("splitAsStereo", false));
+    const auto base = ready.file.getFileNameWithoutExtension();
+    const auto sibling = [&ready, &base](const juce::String& suffix)
+    { return ready.file.getSiblingFile(base + " (" + suffix + ").wav"); };
+
+    // Written under a working name when they are only the raw material for the stereo
+    // duplicates, so whatever is kept always ends up as the plainly named `… (left).wav`.
+    const auto leftMono = sibling(asStereo ? "left mono" : "left");
+    const auto rightMono = sibling(asStereo ? "right mono" : "right");
+    juce::Array<juce::File> written{leftMono, rightMono};
+    const auto abandon = [&written, &parts]
+    {
+        for (const auto& file : written) file.deleteFile();
+        parts.clear();
+        return false;
+    };
+
+    if (! recording::splitStereoToMono(ready.file, leftMono, rightMono, engine.getFormatManager()))
+    {
+        log::warn("recording", "could not split the take into separate channels");
+        return abandon();
+    }
+
+    auto leftFile = leftMono;
+    auto rightFile = rightMono;
+    if (asStereo)
+    {
+        leftFile = sibling("left");
+        rightFile = sibling("right");
+        written.add(leftFile);
+        written.add(rightFile);
+        if (! recording::duplicateMonoToStereo(leftMono, leftFile, engine.getFormatManager())
+            || ! recording::duplicateMonoToStereo(rightMono, rightFile, engine.getFormatManager()))
+        {
+            log::warn("recording", "could not put the split channels back across both sides");
+            return abandon();
+        }
+        // The mono halves were only ever the raw material for these.
+        leftMono.deleteFile();
+        rightMono.deleteFile();
+    }
+
+    const juce::String sides[2] = {"Left", "Right"};
+    const juce::File files[2] = {leftFile, rightFile};
+    const juce::String itemIds[2] = {
+        tryGetRequiredString(payload, "itemId").value_or(juce::String{}),
+        readOptionalString(payload, "secondItemId").value_or(juce::Uuid().toDashedString())};
+    const juce::String clipIds[2] = {
+        readOptionalString(payload, "clipId").value_or(juce::Uuid().toDashedString()),
+        readOptionalString(payload, "secondClipId").value_or(juce::Uuid().toDashedString())};
+
+    for (int side = 0; side < 2; ++side)
+    {
+        CommitPart part;
+        part.itemId = itemIds[side];
+        part.clipId = clipIds[side];
+        part.name = name + " (" + sides[side] + ")";
+        part.file = files[side];
+        part.channelCount = asStereo ? 2 : 1;
+        // The right-hand half never joins the track the left one took: separating the two
+        // sources is the entire reason for the split.
+        part.ownTrack = side == 1;
+        if (! describeCommitPart(part, engine, cache))
+        {
+            log::warn("recording", "a split channel has no waveform; keeping the take whole");
+            return abandon();
+        }
+        parts.push_back(std::move(part));
+    }
+    return true;
+}
+
 void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
                                  ProjectState& projectState, BridgeServer& bridge,
                                  juce::ThreadPool& peakPool, const PeaksCache& cache,
@@ -697,74 +815,117 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     }
 
     const auto ready = *pending;
-    // The form that was not kept is a working file, not a library item.
-    if (pending->alternate.has_value()) pending->alternate->file.deleteFile();
     const auto name = tryGetRequiredString(payload, "name").value_or(ready.suggestedName);
     const auto destination =
         tryGetRequiredString(payload, "destination").value_or(juce::String{"library"});
     const bool toTimeline = destination == "timeline";
+    // Only a stereo take has two things in it to separate (ADR 0030, Amendment 24).
+    const bool splitChannels =
+        static_cast<bool>(payload.getProperty("splitChannels", false)) && ready.channelCount == 2;
 
-    // One transaction covers the item and, for the timeline, the clip: a single
-    // Undo removes the whole thing.
+    std::vector<CommitPart> parts;
+    if (splitChannels)
+    {
+        if (! buildSplitParts(parts, ready, name, payload, engine, cache))
+        {
+            broadcastCommitFailure(bridge, itemId,
+                                   "The recording could not be split into separate channels");
+            return;
+        }
+    }
+    else
+    {
+        CommitPart only;
+        only.itemId = itemId;
+        only.clipId = readOptionalString(payload, "clipId").value_or(juce::Uuid().toDashedString());
+        only.name = name;
+        only.file = ready.file;
+        only.channelCount = ready.channelCount;
+        only.cacheFile = ready.cacheFile;
+        only.peakCount = ready.peakCount;
+        only.laneCount = ready.laneCount;
+        only.peaksPerSecond = ready.peaksPerSecond;
+        parts.push_back(std::move(only));
+    }
+
+    // The forms that were not kept are working files, not library items. With a split that
+    // includes the take itself: what is kept is the pair that came out of it.
+    if (pending->alternate.has_value()) pending->alternate->file.deleteFile();
+    if (splitChannels)
+    {
+        // The review was auditioning this through the preview voice, and Windows will not
+        // remove a file with an open handle — it only marks it pending.
+        engine.releaseReadersForFile(ready.file);
+        ready.file.deleteFile();
+    }
+
+    // One transaction covers the items and, for the timeline, the clips: a single
+    // Undo removes the whole thing however many tracks it turned into.
     projectState.getUndoManager().beginNewTransaction("Add recording");
-    projectState.addLibraryItem(itemId, ready.file.getFullPathName(), ready.file.getFileName(),
-                                ready.durationMs, static_cast<int>(ready.sampleRate),
-                                ready.channelCount, ready.file.getFullPathName(), {}, "sample", name);
-    projectState.setLibraryItemAudioType(itemId, ready.musical ? "music" : "simple");
-    projectState.setLibraryItemRecordingOrigin(itemId);
-    // The tempo is known, not detected: the recording was played against this
-    // project's grid, so it warps like any other music clip (ADR 0030). A simple
-    // take gets none of it — no tempo, no beat count, so nothing draws beat
-    // markers over material that has no beats.
-    if (ready.musical)
-    {
-        applyManualTempo(itemId, ready.bpm, ready.beatAnchorSec, engine, projectState, bridge,
-                         false);
-        if (ready.musicalBeats.has_value())
-            projectState.setLibraryItemMusicalBeats(itemId, *ready.musicalBeats);
-    }
 
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty("itemId", itemId);
-    obj->setProperty("ok", true);
-    obj->setProperty("filePath", ready.file.getFullPathName());
-    obj->setProperty("fileName", ready.file.getFileName());
-    obj->setProperty("name", name);
-    obj->setProperty("durationMs", ready.durationMs);
-    obj->setProperty("sampleRate", ready.sampleRate);
-    obj->setProperty("channelCount", ready.channelCount);
-    obj->setProperty("cachePath", ready.cacheFile.getFullPathName());
-    obj->setProperty("peakCount", ready.peakCount);
-    obj->setProperty("laneCount", ready.laneCount);
-    obj->setProperty("peaksPerSecond", ready.peaksPerSecond);
-    obj->setProperty("audioType", ready.musical ? "music" : "simple");
-    // The grid travels with the announcement, not only in the LIBRARY_ITEM_ANALYSIS
-    // that `applyManualTempo` has already broadcast: that one arrives *before* this
-    // message creates the item in the renderer, and analysis for an item the
-    // renderer does not have yet is dropped. A recording has no source item to
-    // inherit a grid from either, so without this the take would appear with no
-    // tempo and no beat markers until the project was reloaded.
-    if (ready.musical)
+    auto requestedTrackId = readOptionalString(payload, "trackId").value_or(juce::String{});
+    for (const auto& part : parts)
     {
-        obj->setProperty("bpm", ready.bpm);
-        obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
-        if (ready.musicalBeats.has_value()) obj->setProperty("musicalBeats", *ready.musicalBeats);
-    }
-    obj->setProperty("recordingOrigin", true);
-    bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
+        projectState.addLibraryItem(part.itemId, part.file.getFullPathName(),
+                                    part.file.getFileName(), ready.durationMs,
+                                    static_cast<int>(ready.sampleRate), part.channelCount,
+                                    part.file.getFullPathName(), {}, "sample", part.name);
+        projectState.setLibraryItemAudioType(part.itemId, ready.musical ? "music" : "simple");
+        projectState.setLibraryItemRecordingOrigin(part.itemId);
+        // The tempo is known, not detected: the recording was played against this
+        // project's grid, so it warps like any other music clip (ADR 0030). A simple
+        // take gets none of it — no tempo, no beat count, so nothing draws beat
+        // markers over material that has no beats.
+        if (ready.musical)
+        {
+            applyManualTempo(part.itemId, ready.bpm, ready.beatAnchorSec, engine, projectState,
+                             bridge, false);
+            if (ready.musicalBeats.has_value())
+                projectState.setLibraryItemMusicalBeats(part.itemId, *ready.musicalBeats);
+        }
 
-    if (toTimeline)
-    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("itemId", part.itemId);
+        obj->setProperty("ok", true);
+        obj->setProperty("filePath", part.file.getFullPathName());
+        obj->setProperty("fileName", part.file.getFileName());
+        obj->setProperty("name", part.name);
+        obj->setProperty("durationMs", ready.durationMs);
+        obj->setProperty("sampleRate", ready.sampleRate);
+        obj->setProperty("channelCount", part.channelCount);
+        obj->setProperty("cachePath", part.cacheFile.getFullPathName());
+        obj->setProperty("peakCount", part.peakCount);
+        obj->setProperty("laneCount", part.laneCount);
+        obj->setProperty("peaksPerSecond", part.peaksPerSecond);
+        obj->setProperty("audioType", ready.musical ? "music" : "simple");
+        // The grid travels with the announcement, not only in the LIBRARY_ITEM_ANALYSIS
+        // that `applyManualTempo` has already broadcast: that one arrives *before* this
+        // message creates the item in the renderer, and analysis for an item the
+        // renderer does not have yet is dropped. A recording has no source item to
+        // inherit a grid from either, so without this the take would appear with no
+        // tempo and no beat markers until the project was reloaded.
+        if (ready.musical)
+        {
+            obj->setProperty("bpm", ready.bpm);
+            obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
+            if (ready.musicalBeats.has_value())
+                obj->setProperty("musicalBeats", *ready.musicalBeats);
+        }
+        obj->setProperty("recordingOrigin", true);
+        bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
+
+        if (! toTimeline) continue;
+
         // The renderer normally resolves the destination — it owns selection and
         // scrolling — but the policy lives here too so a commit that names no track
         // still lands sensibly: a recording only joins the selected track when that
         // track is empty, otherwise it gets one of its own rather than stacking on
         // top of what is already arranged there.
-        auto trackId = readOptionalString(payload, "trackId").value_or(juce::String{});
+        auto trackId = part.ownTrack ? juce::String{} : requestedTrackId;
         if (trackId.isEmpty() || ! projectState.hasTrack(trackId))
         {
             const auto selected = projectState.getViewSelectedTrack();
-            trackId = projectState.hasTrack(selected)
+            trackId = ! part.ownTrack && projectState.hasTrack(selected)
                               && projectState.getTrackClipIds(selected).isEmpty()
                           ? selected
                           : juce::String{};
@@ -774,14 +935,16 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
             trackId = juce::Uuid().toDashedString();
             projectState.addTrack(trackId);
         }
+        // A second half must never land on the track the first one just took.
+        requestedTrackId = {};
 
         auto* clipPayload = new juce::DynamicObject();
         clipPayload->setProperty("trackId", trackId);
-        clipPayload->setProperty(
-            "clipId", readOptionalString(payload, "clipId").value_or(juce::Uuid().toDashedString()));
-        clipPayload->setProperty("libraryItemId", itemId);
+        clipPayload->setProperty("clipId", part.clipId);
+        clipPayload->setProperty("libraryItemId", part.itemId);
         // The take's first sample is its lead-in, not the anchor, so it goes down that far
         // ahead of it — which is what puts the audio played on the anchor onto the anchor.
+        // Both halves of a split take the same position: they were performed together.
         clipPayload->setProperty("positionMs", juce::jmax(0.0, ready.anchorMs - ready.preRollMs));
         clipPayload->setProperty("durationMs", ready.durationMs);
         clipPayload->setProperty("waveform", true);
@@ -791,7 +954,8 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
 
     bridge.broadcast("PROJECT_STATE", buildProjectStateEnvelope(session, projectState, false));
     broadcastEditUndoState(projectState, bridge);
-    log::info("recording", "recording committed item=" + itemId + " destination=" + destination);
+    log::info("recording", "recording committed item=" + itemId + " destination=" + destination
+                               + (splitChannels ? " split=2" : ""));
 
     pending.reset();
     controller().discard(controller().getSessionId());

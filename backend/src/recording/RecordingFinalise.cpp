@@ -212,4 +212,76 @@ bool duplicateMonoToStereo(const juce::File& source, const juce::File& destinati
     return true;
 }
 
+bool splitStereoToMono(const juce::File& source, const juce::File& leftDestination,
+                       const juce::File& rightDestination,
+                       juce::AudioFormatManager& formatManager)
+{
+    if (! source.existsAsFile()) return false;
+    if (leftDestination == rightDestination) return false;
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(source));
+    if (reader == nullptr || reader->numChannels != 2 || reader->sampleRate <= 0.0) return false;
+
+    // Both or neither: a half-written pair is worse than no split at all, because the commit
+    // that follows would place one track of a two-track recording and call it done.
+    const auto abandon = [&leftDestination, &rightDestination]
+    {
+        leftDestination.deleteFile();
+        rightDestination.deleteFile();
+        return false;
+    };
+
+    const juce::File* destinations[2] = {&leftDestination, &rightDestination};
+    std::unique_ptr<juce::AudioFormatWriter> writers[2];
+    juce::WavAudioFormat wav;
+    for (int side = 0; side < 2; ++side)
+    {
+        destinations[side]->deleteFile();
+        std::unique_ptr<juce::OutputStream> stream(destinations[side]->createOutputStream());
+        if (stream == nullptr) return abandon();
+
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(reader->sampleRate)
+                                 .withNumChannels(1)
+                                 .withBitsPerSample(kBitsPerSample);
+        writers[side] = wav.createWriterFor(stream, options);
+        if (writers[side] == nullptr) return abandon();
+    }
+
+    juce::AudioBuffer<float> block(2, kBlockSamples);
+    juce::int64 position = 0;
+    while (position < reader->lengthInSamples)
+    {
+        const int thisBlock = static_cast<int>(
+            juce::jmin<juce::int64>(kBlockSamples, reader->lengthInSamples - position));
+        block.clear();
+        if (! reader->read(&block, 0, thisBlock, position, true, true))
+        {
+            writers[0].reset();
+            writers[1].reset();
+            return abandon();
+        }
+        for (int side = 0; side < 2; ++side)
+        {
+            // One channel at a time out of the interleaved pair, so length costs no memory
+            // beyond the block — a half-hour take is streamed exactly like the finalise pass.
+            const float* channel = block.getReadPointer(side);
+            if (! writers[side]->writeFromFloatArrays(&channel, 1, thisBlock))
+            {
+                writers[0].reset();
+                writers[1].reset();
+                return abandon();
+            }
+        }
+        position += thisBlock;
+    }
+
+    writers[0].reset();
+    writers[1].reset();
+    log::info("recording", "split " + source.getFileName() + " into "
+                               + leftDestination.getFileName() + " and "
+                               + rightDestination.getFileName());
+    return true;
+}
+
 } // namespace silverdaw::recording
