@@ -22,6 +22,7 @@
 #include "ProjectFxCommands.h"
 #include "ProjectSession.h"
 #include "ProjectSettingsCommands.h"
+#include "RecordingCalibrationCommands.h"
 #include "RecordingCommands.h"
 #include "TempoCorrectionCommands.h"
 #include "ProjectState.h"
@@ -455,6 +456,14 @@ bool dispatchRecording(const DispatchContext& ctx)
     else if (ctx.type == "RECORD_RECORDING_SET_STEREO")
     {
         handleRecordRecordingSetStereo(ctx.payload, ctx.engine, ctx.bridge, ctx.cache);
+    }
+    else if (ctx.type == "RECORD_CALIBRATE_START")
+    {
+        handleRecordCalibrateStart(ctx.payload, ctx.engine, ctx.bridge, ctx.peakPool);
+    }
+    else if (ctx.type == "RECORD_CALIBRATE_CANCEL")
+    {
+        handleRecordCalibrateCancel(ctx.payload, ctx.bridge);
     }
     else if (ctx.type == "RECORD_RECORDING_COMMIT")
     {

@@ -69,14 +69,24 @@ function onStereoChange(event: Event): void {
  * `ready` payload to read the file path off — and the preview voice would be
  * left playing under a dialog that is no longer there.
  */
-let audition: { filePath: string; anchorMs: number } | null = null
+/**
+ * Where the take's first sample belongs on the timeline. A take keeps a little audio in
+ * front of the anchor so an early attack is not clipped, so the file starts before the
+ * anchor — and the audition has to roll the arrangement from there, not from the anchor,
+ * or the take is heard late against exactly the backing it was played to.
+ */
+function takeStartMs(payload: { anchorMs: number; preRollMs: number }): number {
+  return Math.max(0, payload.anchorMs - payload.preRollMs)
+}
+
+let audition: { filePath: string; startMs: number } | null = null
 
 watch(
   ready,
   (next) => {
     // Deliberately keeps the last take when `ready` goes null: that is the close
     // path, and the file path is exactly what is needed to release the voice.
-    if (next) audition = { filePath: next.filePath, anchorMs: next.anchorMs }
+    if (next) audition = { filePath: next.filePath, startMs: takeStartMs(next) }
     // A retake arrives as a fresh mono file, so the choice made on the last one is
     // re-applied rather than quietly forgotten between takes.
     if (
@@ -127,7 +137,7 @@ function onPlay(): void {
 function startArrangement(fromTakeMs = 0): void {
   const payload = ready.value
   if (!payload || arrangementRolling) return
-  sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs + fromTakeMs })
+  sendBridge('TRANSPORT_SEEK', { positionMs: takeStartMs(payload) + fromTakeMs })
   sendBridge('TRANSPORT_PLAY')
   arrangementRolling = true
 }
@@ -137,12 +147,12 @@ function onStop(): void {
   stopArrangement()
 }
 
-/** Leave the timeline as the take found it: stopped, back at the record anchor. */
+/** Leave the timeline as the take found it: stopped, back where the take starts. */
 function stopArrangement(): void {
   if (!arrangementRolling) return
   arrangementRolling = false
   sendBridge('TRANSPORT_PAUSE')
-  if (audition) sendBridge('TRANSPORT_SEEK', { positionMs: audition.anchorMs })
+  if (audition) sendBridge('TRANSPORT_SEEK', { positionMs: audition.startMs })
 }
 
 /** Release the shared preview voice; the Clip Editor and file browser use it too. */
@@ -183,7 +193,7 @@ watch(withArrangement, (on) => {
   // lines up with it instead of restarting from the top of the take.
   if (isPlayingThis.value) startArrangement(positionMs.value)
   // Otherwise park the playhead where the take starts so it is primed there.
-  else sendBridge('TRANSPORT_SEEK', { positionMs: payload.anchorMs })
+  else sendBridge('TRANSPORT_SEEK', { positionMs: takeStartMs(payload) })
 })
 
 onBeforeUnmount(() => {

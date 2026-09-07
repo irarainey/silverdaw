@@ -39,6 +39,10 @@ export const RecordingInputGainDbSchema = z
  *  what the performer plays along to, so it only ever attenuates. */
 export const RecordingBackingGainSchema = z.number().min(0).max(1)
 
+/** Ceiling on a round trip, measured or typed. Beyond this it is not a latency figure, and
+ *  accepting it would drag every take badly out of place. */
+export const MAX_CALIBRATION_ROUND_TRIP_MS = 600
+
 /**
  * The record window (ADR 0030). A recording is bounded by time, never by a
  * track. `start` and `playhead` both run open-ended until the performer stops,
@@ -206,6 +210,14 @@ export const RecordingSessionControlPayloadSchema = z.discriminatedUnion('action
     action: z.literal('setWindowMode'),
     mode: RecordingWindowModeSchema
   }),
+  z.object({
+    ...RecordingSessionControlBase,
+    action: z.literal('setCalibration'),
+    /** Measured round trip for this machine, or null to fall back to what the drivers
+     *  report. Pushed by the renderer because calibration lives in app preferences, not in
+     *  the project (ADR 0030, Amendment 17). */
+    roundTripMs: z.number().min(0).max(MAX_CALIBRATION_ROUND_TRIP_MS).nullable()
+  }),
   z.object({ ...RecordingSessionControlBase, action: z.literal('start') }),
   z.object({ ...RecordingSessionControlBase, action: z.literal('stop') }),
   z.object({ ...RecordingSessionControlBase, action: z.literal('discard') })
@@ -338,6 +350,10 @@ export const RecordingReadyPayloadSchema = z.object({
    *  capture itself, so the review's option shows what the take actually is. */
   stereoDuplicated: z.boolean().optional().default(false),
   anchorMs: z.number().nonnegative(),
+  /** Audio kept in front of the anchor so an early attack is not clipped, in ms. The
+   *  take's first sample belongs at `anchorMs - preRollMs` on the timeline, which is both
+   *  where it is placed and where the review audition has to start from. */
+  preRollMs: z.number().nonnegative().optional().default(0),
   /** Whether the take is being committed as musical material. False for a
    *  `simple` recording, which gets no tempo and no beat count. */
   musical: z.boolean(),
@@ -400,6 +416,52 @@ export const RecordingSetStereoPayloadSchema = z.object({
 })
 export type RecordingSetStereoPayload = z.infer<typeof RecordingSetStereoPayloadSchema>
 
+// ─── Latency calibration ────────────────────────────────────────────────────
+
+/**
+ * `RECORD_CALIBRATE_START` / `RECORD_CALIBRATE_CANCEL` / `RECORD_CALIBRATE_STATE`
+ * (ADR 0030, Amendment 17).
+ *
+ * Windows does not report the real recording round trip: a capture endpoint that does its own
+ * processing declares no latency at all, and a shared-mode output reports little beyond its
+ * buffer, so the head trim built from those figures can be short by most of the true delay.
+ * Playing a short run of clicks and listening for them through the microphone is the only way
+ * to see the whole path.
+ *
+ * The measurement is offered, never forced: the user can ignore it, and a take is still trimmed
+ * by the drivers' figures. The result is stored in app preferences per input+output device pair
+ * rather than in the project — it describes this machine, and a project carrying it would be
+ * wrong on anyone else's setup.
+ */
+export const RecordingCalibrateStartPayloadSchema = z.object({
+  protocolVersion: z.literal(RECORDING_PROTOCOL_VERSION),
+  sessionId: z.string().min(1)
+})
+export type RecordingCalibrateStartPayload = z.infer<typeof RecordingCalibrateStartPayloadSchema>
+
+export const RecordingCalibrateCancelPayloadSchema = z.object({
+  protocolVersion: z.literal(RECORDING_PROTOCOL_VERSION),
+  sessionId: z.string()
+})
+export type RecordingCalibrateCancelPayload = z.infer<typeof RecordingCalibrateCancelPayloadSchema>
+
+export const RecordingCalibrateStatusSchema = z.enum(['idle', 'measuring', 'measured', 'failed'])
+export type RecordingCalibrateStatus = z.infer<typeof RecordingCalibrateStatusSchema>
+
+export const RecordingCalibrateStatePayloadSchema = z.object({
+  protocolVersion: z.literal(RECORDING_PROTOCOL_VERSION),
+  status: RecordingCalibrateStatusSchema,
+  /** Clicks heard so far and in total, so the dialog can show real progress rather than an
+   *  indeterminate spinner over a run that takes a couple of seconds. */
+  clicksDetected: z.number().int().nonnegative(),
+  clicksTotal: z.number().int().nonnegative(),
+  /** The measured round trip, present only on `measured`. */
+  roundTripMs: z.number().min(0).max(MAX_CALIBRATION_ROUND_TRIP_MS).nullable(),
+  /** Why it failed, in terms the user can act on. */
+  error: z.string().min(1).optional()
+})
+export type RecordingCalibrateStatePayload = z.infer<typeof RecordingCalibrateStatePayloadSchema>
+
 // ─── Guards ─────────────────────────────────────────────────────────────────
 
 export function isRecordingInputsListPayload(
@@ -422,4 +484,10 @@ export function isRecordingInputLevelPayload(
 
 export function isRecordingReadyPayload(value: unknown): value is RecordingReadyPayload {
   return RecordingReadyPayloadSchema.safeParse(value).success
+}
+
+export function isRecordingCalibrateStatePayload(
+  value: unknown
+): value is RecordingCalibrateStatePayload {
+  return RecordingCalibrateStatePayloadSchema.safeParse(value).success
 }

@@ -58,6 +58,10 @@ struct FinishedRecording
     double sampleRate = 0.0;
     int channelCount = 1;
     double anchorMs = 0.0;
+    /** Lead-in kept in front of the anchor. The take's first sample belongs at
+     *  `anchorMs - preRollMs` on the timeline, which is where it is placed and where the
+     *  review audition seeks to. */
+    double preRollMs = 0.0;
     double bpm = 120.0;
     double beatAnchorSec = 0.0;
     std::optional<int> musicalBeats;
@@ -236,6 +240,7 @@ void broadcastReady(BridgeServer& bridge, const FinishedRecording& ready)
     // rather than what the renderer last asked for.
     obj->setProperty("stereoDuplicated", ready.stereoDuplicated);
     obj->setProperty("anchorMs", ready.anchorMs);
+    obj->setProperty("preRollMs", ready.preRollMs);
     obj->setProperty("bpm", ready.bpm);
     obj->setProperty("beatAnchorSec", ready.beatAnchorSec);
     if (ready.musicalBeats.has_value()) obj->setProperty("musicalBeats", *ready.musicalBeats);
@@ -354,6 +359,7 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
             ready.sampleRate = result.sampleRate;
             ready.channelCount = juce::jlimit(1, 2, result.channelCount);
             ready.anchorMs = pending.anchorMs;
+            ready.preRollMs = pending.preRollMs;
             ready.bpm = pending.bpm;
             ready.beatAnchorSec = pending.beatAnchorSec;
             // Only claim the beat count when the file really is that many beats long:
@@ -495,6 +501,13 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
     else if (action == "setInputGain")
     {
         active.setInputGain(sessionId, tryGetNumber(payload, "gainDb").value_or(0.0));
+    }
+    else if (action == "setCalibration")
+    {
+        // Absent or null clears it and puts the take back on the drivers' figures, so
+        // forgetting a calibration is a normal state rather than a stuck one.
+        const auto roundTrip = tryGetNumber(payload, "roundTripMs");
+        active.setCalibratedRoundTripMs(sessionId, roundTrip);
     }
     else if (action == "setRecordingMode")
     {
@@ -726,7 +739,9 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
         clipPayload->setProperty(
             "clipId", readOptionalString(payload, "clipId").value_or(juce::Uuid().toDashedString()));
         clipPayload->setProperty("libraryItemId", itemId);
-        clipPayload->setProperty("positionMs", ready.anchorMs);
+        // The take's first sample is its lead-in, not the anchor, so it goes down that far
+        // ahead of it — which is what puts the audio played on the anchor onto the anchor.
+        clipPayload->setProperty("positionMs", juce::jmax(0.0, ready.anchorMs - ready.preRollMs));
         clipPayload->setProperty("durationMs", ready.durationMs);
         clipPayload->setProperty("waveform", true);
         handleClipAdd(juce::var(clipPayload), engine, projectState, bridge, peakPool, cache,
@@ -740,6 +755,11 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
     pending.reset();
     controller().discard(controller().getSessionId());
     broadcastState(bridge);
+}
+
+recording::RecordingSessionController& activeRecordingSession()
+{
+    return controller();
 }
 
 } // namespace silverdaw

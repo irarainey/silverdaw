@@ -7,6 +7,7 @@ import type {
   FileBrowserFileTags as SharedFileBrowserFileTags,
   FileBrowserFolderIndex as SharedFileBrowserFolderIndex,
   FileBrowserIndexProgress as SharedFileBrowserIndexProgress,
+  LatencyCalibrationDto as SharedLatencyCalibrationDto,
   OpenedAudioFile as SharedOpenedAudioFile,
   UiPreferences as SharedUiPreferences,
   EnsureStemModelResult as SharedEnsureStemModelResult,
@@ -44,6 +45,7 @@ declare global {
   type FileBrowserFileTags = SharedFileBrowserFileTags
   type FileBrowserFolderIndex = SharedFileBrowserFolderIndex
   type FileBrowserIndexProgress = SharedFileBrowserIndexProgress
+  type LatencyCalibrationDto = SharedLatencyCalibrationDto
 
   interface Window {
     silverdaw: {
@@ -132,6 +134,8 @@ declare global {
         deviceName?: string | null
         gainDb?: number
       }): void
+      getLatencyCalibrations(): Promise<Record<string, LatencyCalibrationDto>>
+      setLatencyCalibration(key: string, value: LatencyCalibrationDto | null): void
       getKeepAwakeByDevice(): Promise<Record<string, boolean>>
       setKeepAwakeForDevice(deviceName: string, enabled: boolean): void
       getEnabledMidiInputs(): Promise<Record<string, boolean>>

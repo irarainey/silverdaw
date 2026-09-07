@@ -3,6 +3,7 @@
 #include "AudioEngine.h"
 #include "Log.h"
 #include "ProjectState.h"
+#include "recording/LatencyCalibration.h"
 
 #include <cmath>
 
@@ -309,6 +310,18 @@ bool RecordingSessionController::setWindowMode(const juce::String& sessionId,
     return true;
 }
 
+bool RecordingSessionController::setCalibratedRoundTripMs(const juce::String& sessionId,
+                                                          std::optional<double> roundTripMs)
+{
+    if (! session.has_value() || session->sessionId != sessionId) return false;
+    // Bounded rather than trusted: the value can be typed by hand, and a wild figure here would
+    // drag every take badly out of place. No state broadcast — it changes nothing visible.
+    if (roundTripMs.has_value() && (*roundTripMs < 0.0 || *roundTripMs > kMaxPlausibleRoundTripMs))
+        return false;
+    session->calibratedRoundTripMs = roundTripMs;
+    return true;
+}
+
 double RecordingSessionController::barLengthMs() const
 {
     const double bpm = projectState != nullptr ? projectState->getBpm() : 120.0;
@@ -384,13 +397,15 @@ bool RecordingSessionController::start(const juce::String& sessionId,
 
     tap.resetCaptureStats();
     tap.setMaxSamples(static_cast<juce::int64>(kMaxRecordingSeconds * sampleRate));
+    captureOpen = false;
 
     if (countInMs > 0.0)
     {
         // Count in from a standstill: the playhead sits on the anchor while the click
-        // counts, and nothing is captured until it finishes — a count-in is not part of
-        // the performance. Status (and so the click) is settled first so the count's
-        // first beat is not missed by a block.
+        // counts, and the capture opens near the end of the count rather than at its
+        // start — a count-in is not part of the performance, but the moments either
+        // side of the anchor are (ADR 0030, Amendment 18). Status (and so the click) is
+        // settled first so the count's first beat is not missed by a block.
         session->status = "countIn";
         applySessionMetronome();
         // Parked outright rather than seeked: a seek requested while the transport is
@@ -403,11 +418,12 @@ bool RecordingSessionController::start(const juce::String& sessionId,
     {
         session->status = "recording";
         applySessionMetronome();
-        tap.setWriter(writer->getThreadedWriter());
+        openCaptureForPreRoll();
         if (! beginTransport())
         {
             tap.setWriter(nullptr);
             tap.waitForQuiescence();
+            captureOpen = false;
             writer->abort();
             writer.reset();
             session->status = "error";
@@ -423,14 +439,14 @@ bool RecordingSessionController::start(const juce::String& sessionId,
     return true;
 }
 
-/** The count-in has finished: capture and the arrangement both start, together, on
- *  the anchor. Called from the timer tick that saw the click expire. */
+/** The count-in has finished: the arrangement starts on the anchor, and capture — already
+ *  open for the last stretch of the count — carries straight on. Called from the timer tick
+ *  that saw the click expire. */
 void RecordingSessionController::beginRecordingAfterCountIn()
 {
     if (! session.has_value() || engine == nullptr || writer == nullptr) return;
 
-    tap.resetCaptureStats();
-    tap.setWriter(writer->getThreadedWriter());
+    openCaptureForPreRoll();
     // `setStatus` hands the borrowed click straight back, so the click through the
     // take itself is the session's own setting.
     setStatus("recording");
@@ -438,6 +454,7 @@ void RecordingSessionController::beginRecordingAfterCountIn()
     {
         tap.setWriter(nullptr);
         tap.waitForQuiescence();
+        captureOpen = false;
         writer->abort();
         writer.reset();
         session->errorCode = "transportFailed";
@@ -446,6 +463,16 @@ void RecordingSessionController::beginRecordingAfterCountIn()
         return;
     }
     session->rollTicks = juce::Time::getHighResolutionTicks();
+}
+
+/** Starts writing captured audio to the file. Idempotent, because the count-in opens the
+ *  capture a moment before it expires and the tick that sees it expire would otherwise open
+ *  it a second time — which would restart the file and lose the lead-in. */
+void RecordingSessionController::openCaptureForPreRoll()
+{
+    if (captureOpen || writer == nullptr) return;
+    captureOpen = true;
+    tap.setWriter(writer->getThreadedWriter());
 }
 
 /** Opens the transport at the anchor and latches the play the take belongs to, so
@@ -547,7 +574,7 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // and waiting for the capture callback to quiesce must not block the message
     // thread (ADR 0006).
     tap.setWriter(nullptr);
-
+    captureOpen = false;
     const double sampleRate = device.getSampleRate();
     const auto captured = tap.getCapturedSamples();
 
@@ -567,8 +594,16 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     pending.cleanup = session->cleanupEnabled;
 
     // The performer heard the arrangement late and Silverdaw received them late, so the
-    // round trip is trimmed off the head. There is no count-in preroll to trim any more:
-    // the count-in clicks with the transport parked and capture only starts after it.
+    // round trip is trimmed off the head — all but the deliberate lead-in kept below.
+    // A count-in adds nothing to the sum: it clicks with the transport parked, and the
+    // capture it opens near its end is measured by the same skew as any other take.
+    //
+    // A measured round trip is preferred over the drivers' own figures whenever the user has
+    // calibrated (ADR 0030, Amendment 17). It is not a refinement of them: an input that does
+    // its own processing reports no latency at all, and a shared-mode output reports little
+    // beyond its buffer, so the driver sum can be short by most of the real delay. The two are
+    // alternatives, never added — the measurement already contains everything the drivers
+    // would have reported.
     //
     // Plugin delay compensation is deliberately NOT part of this sum. `primePluginPipeline`
     // pushes the alignment through the delay lines before the gate opens (ADR 0026), so the
@@ -576,8 +611,10 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // alignment. `PlayheadEmitter` subtracts it only because the raw sample counter is run
     // ahead to compensate — that is a counter offset, not an audible delay. Adding it here
     // would drag every take early by the whole alignment.
-    const double latencyMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
-                             + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
+    const double driverLatencyMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
+                                   + (engine != nullptr ? engine->getOutputLatencyMs() : 0.0);
+    const bool calibrated = session->calibratedRoundTripMs.has_value();
+    const double latencyMs = calibrated ? *session->calibratedRoundTripMs : driverLatencyMs;
     pending.latencyMs = latencyMs;
     // Capture is attached before `play()` is called, but `play()` primes read-ahead buffers and
     // the plugin pipeline on the message thread and may then sit through a silent wake pre-roll
@@ -590,11 +627,7 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // output block is entirely normal, and clamping that to zero would push the take early by
     // up to a full input period. Only the combined trim is floored at zero.
     const double skewMs = measuredTransportSkewMs();
-    pending.headTrimMs = juce::jmax(0.0, latencyMs + skewMs);
-    // Broken out because the finalise log reports only the total, which reads as latency alone.
-    log::info("recording", "head trim " + juce::String(pending.headTrimMs, 1)
-                               + "ms = latency " + juce::String(latencyMs, 1) + "ms + skew "
-                               + juce::String(skewMs, 1) + "ms");
+    const double leadInMs = juce::jmax(0.0, latencyMs + skewMs);
 
     // Clock drift. What matters is not how far either device is from its nominal rate but
     // the ratio BETWEEN them: the take is captured on the input clock and has to sit on a
@@ -654,6 +687,23 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
             pending.exactDurationMs = rounded * beatMs;
         }
     }
+
+    // Everything before the anchor would otherwise be thrown away, and a performer who hits
+    // the first note a hair early loses its attack to the trim. Keep a slice of it instead:
+    // the take is placed `preRollMs` ahead of the anchor, so the audio played *at* the anchor
+    // still lands on it and the lead-in simply hangs off the front (ADR 0030, Amendment 18).
+    const auto trim = planHeadTrim(leadInMs, session->anchorMs, pending.exactDurationMs.has_value());
+    pending.headTrimMs = trim.headTrimMs;
+    pending.preRollMs = trim.preRollMs;
+    // The file now starts before the anchor, so the first whole beat of the grid sits that
+    // much further into it.
+    pending.beatAnchorSec += pending.preRollMs / 1000.0;
+    // Broken out because the finalise log reports only the total, which reads as latency alone.
+    log::info("recording", "head trim " + juce::String(pending.headTrimMs, 1)
+                               + "ms = latency " + juce::String(latencyMs, 1)
+                               + "ms (" + juce::String(calibrated ? "calibrated" : "driver")
+                               + ") + skew " + juce::String(skewMs, 1)
+                               + "ms - pre-roll " + juce::String(pending.preRollMs, 1) + "ms");
 
     juce::String failure = errorCode;
     juce::String failureMessage = message;
@@ -840,9 +890,15 @@ void RecordingSessionController::timerCallback()
     const double positionMs = engine != nullptr ? engine->getPositionMs() : 0.0;
     if (session->status == "countIn")
     {
-        // Nothing is captured and the playhead has not moved yet; the click expiring on
-        // the audio thread is what starts the take.
-        if (engine == nullptr || ! engine->isCountInClickActive()) beginRecordingAfterCountIn();
+        // The click expiring on the audio thread is what starts the take; capture opens a
+        // little ahead of that so a performer who comes in fractionally early is on the
+        // tape rather than trimmed off it.
+        if (engine == nullptr || ! engine->isCountInClickActive())
+        {
+            beginRecordingAfterCountIn();
+            return;
+        }
+        if (engine->getCountInClickRemainingMs() <= kCapturePreRollMs) openCaptureForPreRoll();
         return;
     }
 

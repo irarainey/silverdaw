@@ -6,6 +6,7 @@ import type {
   FileBrowserEntry,
   FileBrowserFolderIndex,
   FileBrowserIndexProgress,
+  LatencyCalibrationDto,
   MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
@@ -238,6 +239,13 @@ const api = {
     gainDb?: number
   }): void => {
     ipcRenderer.send(IPC.prefs.setAudioInput, partial)
+  },
+  // ─── Recording latency calibration, keyed by input+output device pair ───
+  getLatencyCalibrations: (): Promise<Record<string, LatencyCalibrationDto>> =>
+    ipcRenderer.invoke(IPC.prefs.getLatencyCalibrations),
+  /** `null` forgets the entry, so clearing and recalibrating share one path. */
+  setLatencyCalibration: (key: string, value: LatencyCalibrationDto | null): void => {
+    ipcRenderer.send(IPC.prefs.setLatencyCalibration, key, value)
   },
   // ─── Per-device output keep-awake toggles (on / off) ────────────────────
   getKeepAwakeByDevice: (): Promise<Record<string, boolean>> =>

@@ -1,7 +1,10 @@
 #include "TestRegistry.h"
 
 #include "engine/ClockRateEstimator.h"
+#include "recording/CalibrationClickSource.h"
 #include "recording/InputCaptureTap.h"
+#include "recording/LatencyCalibration.h"
+#include "recording/LatencyCalibrator.h"
 #include "recording/RecordingCleanup.h"
 #include "recording/RecordingFinalise.h"
 #include "recording/RecordingSessionController.h"
@@ -906,8 +909,281 @@ void testDuplicateMonoToStereoRefusesAStereoTake()
 
     dir.deleteRecursively();
 }
-} // namespace
+void testCalibrationFindsBurstOnsetsNotPeaks()
+{
+    // A windowed burst peaks well after it starts, so timing the peak would report a round trip
+    // several milliseconds too long. The onset is what arrives.
+    const int length = 4800;
+    const int burstLength = 288; // 6 ms at 48 kHz
+    std::vector<float> signal(static_cast<size_t>(length), 0.0F);
+    const std::vector<juce::int64> starts{500, 2000, 3500};
+    for (auto start : starts)
+    {
+        for (int i = 0; i < burstLength; ++i)
+        {
+            const double window =
+                0.5 - 0.5 * std::cos(juce::MathConstants<double>::twoPi * i / burstLength);
+            const double phase = juce::MathConstants<double>::twoPi * 1000.0 * i / kSampleRate;
+            signal[static_cast<size_t>(start + i)] =
+                static_cast<float>(std::sin(phase) * window * 0.5);
+        }
+    }
 
+    const auto onsets = silverdaw::recording::findBurstOnsets(signal.data(), length, 0.02F, 1000);
+    require(onsets.size() == starts.size(), "each burst should be found once");
+    for (size_t i = 0; i < onsets.size(); ++i)
+    {
+        // Within a millisecond of the true start: the onset threshold necessarily sits a little
+        // way into the window's rise, and that is the accuracy the round trip inherits.
+        require(std::abs(onsets[i] - starts[i]) < 48,
+                "onset should land within 1 ms of the burst start");
+    }
+}
+
+// The bursts must reach every output channel. A calibration heard on one side only is quieter
+// than it should be, and quieter is exactly what makes a measurement fail.
+void testCalibrationClicksReachEveryOutputChannel()
+{
+    silverdaw::recording::CalibrationClickSource clicks;
+
+    // Mirrors the engine: the click source is not the mixer's first input, so it is pulled with
+    // the mixer's own temporary buffer rather than the device buffer (AudioEngineDevice.cpp).
+    struct SilentSource final : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            info.clearActiveBufferRegion();
+        }
+    };
+    SilentSource silence;
+    juce::MixerAudioSource mixer;
+    mixer.addInputSource(&silence, false);
+    mixer.addInputSource(&clicks, false);
+    mixer.prepareToPlay(512, kSampleRate);
+
+    clicks.start(2, 20.0, 0.5F);
+
+    juce::AudioBuffer<float> block(2, 512);
+    float loudest = 0.0F;
+    double biggestChannelGap = 0.0;
+    for (int pull = 0; pull < 8; ++pull)
+    {
+        block.clear();
+        juce::AudioSourceChannelInfo info(&block, 0, 512);
+        mixer.getNextAudioBlock(info);
+        for (int i = 0; i < 512; ++i)
+        {
+            const auto left = block.getSample(0, i);
+            const auto right = block.getSample(1, i);
+            loudest = juce::jmax(loudest, std::abs(left));
+            biggestChannelGap = juce::jmax(biggestChannelGap,
+                                           static_cast<double>(std::abs(left - right)));
+        }
+    }
+    mixer.releaseResources();
+
+    require(loudest > 0.1F, "the bursts should be audible in the output");
+    require(biggestChannelGap < 1.0e-6, "both channels should carry the same burst");
+}
+
+// The burst was lengthened so it can be heard clearly, which is only safe because its attack
+// stayed fast. If the envelope ever softens, the onset drifts and every measurement is long.
+void testCalibrationBurstOnsetStaysSharp()
+{
+    silverdaw::recording::CalibrationClickSource clicks;
+    clicks.prepareToPlay(512, kSampleRate);
+    clicks.start(3, 200.0, 0.8F);
+
+    const int length = 48000;
+    juce::AudioBuffer<float> rendered(1, length);
+    rendered.clear();
+    juce::AudioBuffer<float> block(1, 512);
+    for (int offset = 0; offset + 512 <= length; offset += 512)
+    {
+        block.clear();
+        juce::AudioSourceChannelInfo info(&block, 0, 512);
+        clicks.getNextAudioBlock(info);
+        rendered.copyFrom(0, offset, block, 0, 0, 512);
+    }
+
+    const auto* data = rendered.getReadPointer(0);
+    juce::int64 trueStart = -1;
+    for (int i = 0; i < length; ++i)
+    {
+        if (std::abs(data[i]) > 0.0F)
+        {
+            trueStart = i;
+            break;
+        }
+    }
+    require(trueStart >= 0, "the source should have emitted something");
+
+    const auto onsets = silverdaw::recording::findBurstOnsets(
+        data, length, 0.05F, static_cast<juce::int64>(kSampleRate * 0.1));
+    require(! onsets.empty(), "the emitted bursts should be found");
+    require(std::abs(onsets[0] - trueStart) < static_cast<juce::int64>(kSampleRate * 0.002),
+            "the detected onset should sit within 2 ms of where the burst really began");
+}
+
+void testCalibrationAgreesOnlyWhenReadingsCorroborate()
+{
+    const auto agreed = silverdaw::recording::agreedRoundTripMs({95.0, 96.0, 97.0, 96.5}, 12.0);
+    require(agreed.has_value(), "consistent readings should agree");
+    require(std::abs(*agreed - 96.125) < 0.001, "the agreed value should average the cluster");
+
+    // One late reflection must not drag the answer.
+    const auto robust =
+        silverdaw::recording::agreedRoundTripMs({95.0, 96.0, 400.0, 97.0, 96.0}, 12.0);
+    require(robust.has_value(), "a majority cluster should still agree");
+    require(std::abs(*robust - 96.0) < 0.6, "an outlier should be excluded, not averaged in");
+
+    require(! silverdaw::recording::agreedRoundTripMs({10.0, 200.0, 400.0}, 12.0).has_value(),
+            "scattered readings should refuse to report a number");
+    require(! silverdaw::recording::agreedRoundTripMs({96.0, 96.0}, 12.0).has_value(),
+            "too few readings should refuse to report a number");
+    require(! silverdaw::recording::agreedRoundTripMs({0.2, 0.2, 0.2, 0.2}, 12.0).has_value(),
+            "an implausibly short round trip should be rejected");
+}
+
+// The round trip is the gap between a burst being written to the output and its echo landing in
+// the capture, measured across two clocks: emission stamps taken in the audio callback, and a
+// capture whose first sample carries a stamp of its own. This exercises that join end to end,
+// with a file standing in for the microphone.
+void testCalibrationRecoversTheRoundTripFromACapture()
+{
+    const auto dir = makeTempDir("recording-calibration");
+    const auto file = dir.getChildFile("calibration.wav");
+
+    constexpr double roundTripMs = 96.0;
+    constexpr int burstLength = 288; // 6 ms at 48 kHz
+    const std::vector<double> emitOffsetsMs{0.0, 250.0, 500.0, 750.0};
+
+    const int length = 60000;
+    juce::AudioBuffer<float> buffer(1, length);
+    buffer.clear();
+    for (auto emitMs : emitOffsetsMs)
+    {
+        const auto start = static_cast<int>((emitMs + roundTripMs) * kSampleRate / 1000.0);
+        for (int i = 0; i < burstLength; ++i)
+        {
+            const double window =
+                0.5 - 0.5 * std::cos(juce::MathConstants<double>::twoPi * i / burstLength);
+            const double phase = juce::MathConstants<double>::twoPi * 1000.0 * i / kSampleRate;
+            buffer.setSample(0, start + i, static_cast<float>(std::sin(phase) * window * 0.5));
+        }
+    }
+
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(kSampleRate)
+                                 .withNumChannels(1)
+                                 .withBitsPerSample(24);
+        std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, options));
+        require(writer != nullptr, "the calibration capture writer should be created");
+        require(writer->writeFromAudioSampleBuffer(buffer, 0, length),
+                "the calibration capture should be written");
+    }
+
+    // Capture sample 0 and the first emission share an instant, so an offset in the file is
+    // exactly the round trip. A non-zero base proves the maths uses the stamps, not the file.
+    const auto ticksPerSecond = juce::Time::getHighResolutionTicksPerSecond();
+    const juce::int64 firstBlockTicks = ticksPerSecond * 1234;
+    std::vector<juce::int64> emitTicks;
+    for (auto emitMs : emitOffsetsMs)
+        emitTicks.push_back(firstBlockTicks
+                            + static_cast<juce::int64>(emitMs * static_cast<double>(ticksPerSecond)
+                                                       / 1000.0));
+
+    const auto outcome =
+        silverdaw::recording::measureRoundTrip(file, formats(), firstBlockTicks, emitTicks);
+    require(outcome.ok, "a clean capture should measure");
+    require(outcome.detected == static_cast<int>(emitOffsetsMs.size()),
+            "every burst should be heard");
+    require(std::abs(outcome.roundTripMs - roundTripMs) < 1.5,
+            "the measured round trip should match what was played back");
+
+    dir.deleteRecursively();
+}
+
+// Silence is a failure with a cause the user can act on, not a round trip of zero — reporting
+// a number here would trim every take by nothing and look like the feature simply did not work.
+void testCalibrationRefusesToMeasureSilence()
+{
+    const auto dir = makeTempDir("recording-calibration-silent");
+    const auto file = dir.getChildFile("silent.wav");
+    juce::AudioBuffer<float> buffer(1, 24000);
+    buffer.clear();
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
+        const auto options = juce::AudioFormatWriterOptions{}
+                                 .withSampleRate(kSampleRate)
+                                 .withNumChannels(1)
+                                 .withBitsPerSample(24);
+        std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream, options));
+        require(writer->writeFromAudioSampleBuffer(buffer, 0, 24000), "silence should be written");
+    }
+
+    const auto outcome = silverdaw::recording::measureRoundTrip(
+        file, formats(), juce::Time::getHighResolutionTicksPerSecond(), {1, 2, 3, 4});
+    require(! outcome.ok, "silence should not measure");
+    require(outcome.roundTripMs == 0.0, "a failed measurement should report no round trip");
+    require(outcome.error.isNotEmpty(), "a failed measurement should say why");
+
+    dir.deleteRecursively();
+}
+
+/**
+ * The lead-in contract: whatever is kept in front of the anchor, the audio played *on* the
+ * anchor still lands on it once the take is placed at `anchorMs - preRollMs`. Everything
+ * captured ahead of the anchor is either trimmed or kept, never both and never lost.
+ */
+void testPreRollKeepsTheAnchorOnTheAnchor()
+{
+    using silverdaw::recording::kRecordPreRollMs;
+    using silverdaw::recording::planHeadTrim;
+
+    const auto ample = planHeadTrim(400.0, 8000.0, false);
+    require(std::abs(ample.preRollMs - kRecordPreRollMs) < 1.0e-9,
+            "a generous lead-in should keep the full pre-roll");
+    require(std::abs(ample.headTrimMs + ample.preRollMs - 400.0) < 1.0e-9,
+            "trim plus pre-roll should account for the whole lead-in");
+    require(std::abs((8000.0 - ample.preRollMs) + ample.preRollMs - 8000.0) < 1.0e-9,
+            "the anchor audio should land back on the anchor");
+
+    // Latency and skew are all there is to keep; a lead-in cannot be invented.
+    const auto scarce = planHeadTrim(30.0, 8000.0, false);
+    require(std::abs(scarce.preRollMs - 30.0) < 1.0e-9,
+            "the pre-roll should be capped by what was actually captured");
+    require(scarce.headTrimMs == 0.0, "a short lead-in should be kept whole, not trimmed");
+
+    // Nothing can sit before the start of the timeline.
+    const auto atZero = planHeadTrim(400.0, 0.0, false);
+    require(atZero.preRollMs == 0.0, "a take on the timeline start should keep no lead-in");
+    require(std::abs(atZero.headTrimMs - 400.0) < 1.0e-9, "the whole lead-in should be trimmed");
+
+    const auto nearZero = planHeadTrim(400.0, 40.0, false);
+    require(std::abs(nearZero.preRollMs - 40.0) < 1.0e-9,
+            "the pre-roll should be capped by the anchor");
+
+    // A claimed beat count is divided by the file's whole duration to recover a tempo,
+    // so a lead-in would make the take read as slower than it was played.
+    const auto musical = planHeadTrim(400.0, 8000.0, true);
+    require(musical.preRollMs == 0.0, "a take claiming a beat count should keep no lead-in");
+    require(std::abs(musical.headTrimMs - 400.0) < 1.0e-9,
+            "an exact-length take should still be trimmed flush to the anchor");
+
+    // A negative skew larger than the latency means the take starts after the anchor;
+    // there is nothing in front of it to trim or to keep.
+    const auto negative = planHeadTrim(-15.0, 8000.0, false);
+    require(negative.headTrimMs == 0.0 && negative.preRollMs == 0.0,
+            "a take with no lead-in at all should neither trim nor keep");
+}
+} // namespace
 void addRecordingTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"recording writer produces a readable file", testWriterProducesReadableFile});
@@ -960,6 +1236,20 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testFinaliseTrimsTailToTheExactMusicalLength});
     tests.push_back({"recording finalise leaves a short recording untrimmed",
                      testFinaliseLeavesShortRecordingUntrimmed});
+    tests.push_back({"recording calibration finds burst onsets not peaks",
+                     testCalibrationFindsBurstOnsetsNotPeaks});
+    tests.push_back({"recording calibration agrees only when readings corroborate",
+                     testCalibrationAgreesOnlyWhenReadingsCorroborate});
+    tests.push_back({"recording calibration burst onset stays sharp",
+                     testCalibrationBurstOnsetStaysSharp});
+    tests.push_back({"recording calibration clicks reach every output channel",
+                     testCalibrationClicksReachEveryOutputChannel});
+    tests.push_back({"recording calibration recovers the round trip from a capture",
+                     testCalibrationRecoversTheRoundTripFromACapture});
+    tests.push_back({"recording calibration refuses to measure silence",
+                     testCalibrationRefusesToMeasureSilence});
+    tests.push_back({"recording pre-roll keeps the anchor on the anchor",
+                     testPreRollKeepsTheAnchorOnTheAnchor});
 }
 
 } // namespace silverdaw::tests

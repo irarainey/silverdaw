@@ -843,6 +843,7 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   `setInputGain { gainDb }`, `setMonitorEnabled { enabled }`,
   `setRecordingMode { mode }`, `setCleanupEnabled { enabled }`,
   `setWindowMode { mode }`,
+  `setCalibration { roundTripMs }`,
   `start`, `stop`, and `discard` (Record Again). `setInputGain`,
   `setBackingGain`, `setClickEnabled`, `setMonitorEnabled`,
   `setRecordingMode` and `setCleanupEnabled` are the actions accepted while
@@ -859,6 +860,15 @@ every payload carries `protocolVersion: 1`). Renderer → backend:
   trackId?, clipId? }` keeps the finished recording as a library item, and for
   `destination: "timeline"` places a clip at its anchor in the same undo
   transaction.
+- `RECORD_CALIBRATE_START { sessionId }` runs a latency calibration: the backend
+  plays twelve tone bursts through the output and times their echoes in
+  the capture stream (ADR 0030, Amendment 17). It is refused unless the session
+  is `idle`, and the temporary capture is written to the system temp directory,
+  never the project.
+- `RECORD_CALIBRATE_CANCEL { sessionId }` abandons a run in flight. A
+  measurement already on the worker thread cannot land afterwards — a generation
+  counter discards it — so cancelling never reinstates a result the user walked
+  away from.
 
 Backend → renderer:
 
@@ -874,10 +884,20 @@ Backend → renderer:
   any `errorCode` / `error`.
 - `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
   is excluded from bridge logging.
+- `RECORD_CALIBRATE_STATE { status, clicksDetected, clicksTotal, roundTripMs,
+  error? }` reports a calibration run: `idle`, `measuring`, `measured` or
+  `failed`. The click counts drive real progress rather than an indeterminate
+  spinner. A result is reported only when a majority of the readings agree
+  within 12 ms; otherwise the status is `failed` with a reason the user can act
+  on. The renderer stores the number in **application preferences**, keyed on
+  the input and output device pair, and pushes it back with
+  `setCalibration` — the backend does not persist it, because latency is a
+  property of the machine and projects must stay portable.
 - `RECORD_RECORDING_READY` announces the finished file by **path** with its
-  peaks cache, anchor, tempo, whether it is `musical`, whether it has been
-  `stereoDuplicated`, and the corrections applied (`latencyOffsetMs`,
-  `driftPpm`). Recorded audio never crosses the socket.
+  peaks cache, anchor, the `preRollMs` kept in front of that anchor, tempo,
+  whether it is `musical`, whether it has been `stereoDuplicated`, and the
+  corrections applied (`latencyOffsetMs`, `driftPpm`). Recorded audio never
+  crosses the socket.
 - A commit is acknowledged by the existing `SAMPLE_SAVED` envelope, correlated
   by the renderer-generated `itemId`, for both success and failure. A musical
   recording's `bpm` and `beatAnchorSec` ride along on it, for the reason
@@ -4075,8 +4095,8 @@ holds the dialog open, because closing then would race the `SAMPLE_SAVED` ack.
 
 **Finalise.** Input and output are two unrelated clocks, so latency and drift
 are corrected **once, offline**, in `finaliseRecording` on a worker thread:
-round-trip latency is trimmed from the head (a count-in captures nothing, so
-there is no preroll to remove), and clock drift is corrected by resampling.
+round-trip latency is trimmed from the head (all but a small deliberate lead-in,
+below), and clock drift is corrected by resampling.
 Streamed in blocks, so a long recording never has to fit in memory. The head trim
 is converted to samples at the *measured* rate, not the nominal one, because it is
 applied before the resampling: one second of captured wall time holds
@@ -4129,6 +4149,32 @@ in favour of the plain round trip. Plugin delay compensation is deliberately
 *excluded*: `primePluginPipeline` fills the delay lines before the gate opens, so
 the first live block already carries anchor audio and the performer never waits
 the alignment out. See ADR 0030, Amendment 12.
+
+**A calibration replaces the driver figures.** Windows cannot report the real
+round trip — a processed capture endpoint declares no latency while adding tens
+of milliseconds, and a shared-mode output reports little beyond its own buffer —
+so on many machines the two `*Latency` terms above are a small fraction of the
+truth and takes land audibly late. When a calibration exists for the current
+input/output device pair it **substitutes for both**, because an acoustic
+measurement already contains everything the drivers would have reported plus
+everything they could not see; adding the two would double-count the buffer. The
+skew term still applies, because it measures this particular play. The
+finalise log says `(calibrated)` or `(driver)` so which path ran is never in
+doubt. See ADR 0030, Amendment 17.
+
+**A take keeps 120 ms in front of the anchor.** Trimming the whole lead-in lands
+the take exactly on the anchor, which shaves the attack off a note played a hair
+early. `planHeadTrim` (`recording/RecordingSessionController.h`) therefore splits
+the lead-in: `preRollMs` is kept, `headTrimMs` is the remainder, and the clip is
+placed at `anchorMs - preRollMs` so the audio played on the anchor still lands on
+it. The pre-roll is capped by what was captured, by the anchor, and is refused
+entirely for a take claiming a beat count — `musicalLengthBpm` divides that count
+by the file's whole duration, so a lead-in would resolve to the wrong tempo. With
+a count-in the capture opens `kCapturePreRollMs` before the count expires, since
+the transport is parked until then and there would otherwise be nothing in front
+of the anchor to keep. `preRollMs` rides on `RECORD_RECORDING_READY` because the
+review audition seeks to the take's start, not to the anchor. See ADR 0030,
+Amendment 18.
 
 **Starting the transport.** Recording cannot use ordinary `play()`. A seek
 requested while the transport is rolling is deferred behind an output fade, and

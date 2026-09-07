@@ -211,6 +211,19 @@ export function useRecordingSession(open: Ref<boolean>): RecordingSession {
     }
   )
 
+  // The backend cannot read app preferences, so the calibrated round trip is pushed to it
+  // (ADR 0030, Amendment 17). Keyed on the device pair rather than the session: changing input
+  // or output changes the round trip, and leaving a stale figure in place would trim every
+  // subsequent take by a number belonging to hardware that is no longer connected.
+  watch(
+    () => store.activeCalibrationKey,
+    (key) => {
+      if (key === null || !open.value) return
+      store.pushCalibrationToBackend()
+    },
+    { immediate: true }
+  )
+
   // Persist whatever the user sets, rather than watching the session state back:
   // the state also carries the unity gain a fresh session starts at, which would
   // race the re-apply above and wipe the remembered level. See `setInputGain`.

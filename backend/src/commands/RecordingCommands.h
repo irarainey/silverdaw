@@ -12,6 +12,11 @@ class PeaksCache;
 class ProjectState;
 struct ProjectSession;
 
+namespace recording
+{
+class RecordingSessionController;
+}
+
 // Audio recording (ADR 0030). A recording is captured on a standalone input
 // device, finalised offline and only then offered as an ordinary library
 // sample: nothing touches the project until the user commits.
@@ -38,5 +43,9 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
                                  juce::ThreadPool& peakPool, const PeaksCache& cache,
                                  const DecodedCache& decodedCache, PeakJobCoordinator& peakJobs,
                                  ProjectSession& session);
+
+/** The one live record session. Exposed so latency calibration can borrow the input device the
+ *  session already has open rather than fighting it for the endpoint. */
+recording::RecordingSessionController& activeRecordingSession();
 
 } // namespace silverdaw

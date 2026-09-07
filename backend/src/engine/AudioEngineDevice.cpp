@@ -33,6 +33,8 @@ void AudioEngine::initialiseGraph()
     // Recording's software monitor. Silent unless the record dialog turns it on,
     // and outside the master gain so the backing trim cannot duck the performer.
     topMixer.addInputSource(&inputMonitorSource, false);
+    // Latency calibration's bursts, silent unless a calibration is running.
+    topMixer.addInputSource(&calibrationClickSource, false);
     sourcePlayer.setSource(&masterMeter);
 }
 

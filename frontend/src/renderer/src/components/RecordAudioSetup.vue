@@ -25,6 +25,7 @@ import {
 } from '@shared/bridge-protocol'
 
 const props = defineProps<{ session: RecordingSession }>()
+const emit = defineEmits<{ calibrate: [] }>()
 
 const store = useRecordingSessionStore()
 const project = useProjectStore()
@@ -193,6 +194,20 @@ function onMonitorChange(event: Event): void {
 function onCleanupChange(event: Event): void {
   props.session.setCleanupEnabled((event.target as HTMLInputElement).checked)
 }
+
+// Recording latency (ADR 0030, Amendment 17). Shown here because it is a property of the input
+// the user has just chosen, and stated plainly whether it is set or not — an uncalibrated setup
+// records late, so hiding that would leave the user hunting for a fault in their playing.
+const calibration = computed(() => store.activeCalibration)
+const calibrationLabel = computed(() => {
+  if (store.current?.input == null) return 'Waiting for the input…'
+  const stored = calibration.value
+  if (stored === null) {
+    return 'Uncalibrated · using driver estimate'
+  }
+  if (store.isCalibrationStale) return `${Math.round(stored.roundTripMs)} ms · sample rate changed`
+  return `${Math.round(stored.roundTripMs)} ms${stored.manual ? ' · entered by hand' : ''}`
+})
 </script>
 
 <template>
@@ -288,6 +303,25 @@ function onCleanupChange(event: Event): void {
             {{ option.label }}
           </option>
         </select>
+
+        <div class="flex min-w-0 items-center gap-2">
+          <span class="w-16 shrink-0 text-zinc-400">Timing</span>
+          <span
+            class="min-w-0 flex-1 truncate"
+            :class="calibration === null || store.isCalibrationStale ? 'text-amber-300' : 'text-zinc-300'"
+            :title="calibrationLabel"
+          >
+            {{ calibrationLabel }}
+          </span>
+          <button
+            type="button"
+            :disabled="locked || store.current?.input == null"
+            class="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 focus:ring-2 focus:ring-sky-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            @click="emit('calibrate')"
+          >
+            {{ calibration === null ? 'Calibrate' : 'Recalibrate' }}
+          </button>
+        </div>
 
         <div class="mt-auto flex items-center gap-3">
           <span class="w-16 shrink-0 text-zinc-400">Level</span>

@@ -63,6 +63,31 @@ double AudioEngine::getCountInClickRemainingMs() const
     return masterMeter.getCountInRemainingMs();
 }
 
+void AudioEngine::startCalibrationClicks(int count, double spacingMs, float amplitude)
+{
+    calibrationClickSource.start(count, spacingMs, amplitude);
+}
+
+void AudioEngine::cancelCalibrationClicks()
+{
+    calibrationClickSource.cancel();
+}
+
+bool AudioEngine::isCalibrationClickActive() const
+{
+    return ! calibrationClickSource.isFinished();
+}
+
+int AudioEngine::getCalibrationClicksEmitted() const
+{
+    return calibrationClickSource.getEmittedCount();
+}
+
+juce::int64 AudioEngine::getCalibrationEmitTick(int index) const
+{
+    return calibrationClickSource.getEmitTick(index);
+}
+
 bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR)
 {
     return busGraph.consumeTrackPeaks(trackId, outL, outR);

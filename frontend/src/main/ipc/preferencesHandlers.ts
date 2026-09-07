@@ -11,11 +11,12 @@ import type {
   AudioOutputPrefs,
   AutosavePrefs,
   DebugPrefs,
+  LatencyCalibration,
   PathPrefs,
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAudioInputGainDb, clampAutosaveSeconds, sanitiseDeviceSelection, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAudioInputGainDb, clampAutosaveSeconds, sanitiseDeviceSelection, sanitiseLatencyCalibrations, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -200,6 +201,29 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
       return
     }
     store.audioInput = next
+    prefs.schedulePrefsSave()
+  })
+
+  // ─── Recording latency calibration, per input+output device pair ────────
+  ipcMain.handle(
+    IPC.prefs.getLatencyCalibrations,
+    (): Record<string, LatencyCalibration> => ({ ...prefs.get().latencyCalibrations })
+  )
+
+  // A null calibration forgets the entry, so "recalibrate" and "clear" are the same path.
+  ipcMain.on(IPC.prefs.setLatencyCalibration, (_evt, key: unknown, value: unknown) => {
+    if (typeof key !== 'string' || key.trim().length === 0) return
+    const store = prefs.get()
+    const next = { ...store.latencyCalibrations }
+    if (value === null) {
+      if (!(key in next)) return
+      delete next[key]
+    } else {
+      const sanitised = sanitiseLatencyCalibrations({ [key]: value })[key]
+      if (!sanitised) return
+      next[key] = sanitised
+    }
+    store.latencyCalibrations = next
     prefs.schedulePrefsSave()
   })
 

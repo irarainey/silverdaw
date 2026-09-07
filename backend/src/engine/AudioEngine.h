@@ -136,6 +136,15 @@ class AudioEngine : private AudioEngineGraphState,
     bool isCountInClickActive() const;
     double getCountInClickRemainingMs() const;
 
+    // Latency calibration bursts (ADR 0030). Emitted outside the transport so a calibration
+    // needs no project, and stamped as they are written so the round trip can be measured
+    // against the same reference point the arrangement is generated from.
+    void startCalibrationClicks(int count, double spacingMs, float amplitude);
+    void cancelCalibrationClicks();
+    bool isCalibrationClickActive() const;
+    int getCalibrationClicksEmitted() const;
+    juce::int64 getCalibrationEmitTick(int index) const;
+
     void consumeMasterPeaks(float& outL, float& outR);
 
     bool consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR);

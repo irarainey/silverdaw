@@ -1,7 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import type { RecordingInputsListPayload } from '@shared/bridge-protocol'
+import type { LatencyCalibrationDto } from '@shared/types'
 
 vi.mock('@/lib/bridgeService', () => ({
   send: vi.fn()
@@ -59,3 +61,131 @@ describe('recordingSessionStore.hasNoInput', () => {
     expect(store.hasNoInput).toBe(false)
   })
 })
+
+// Latency calibration (ADR 0030, Amendment 17). The round trip belongs to the input and the
+// output together, so everything here turns on the pair being resolved before a stored figure
+// is claimed to apply.
+describe('recordingSessionStore latency calibration', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.stubGlobal('window', {
+      ...globalThis.window,
+      silverdaw: { setLatencyCalibration: vi.fn(), getLatencyCalibrations: vi.fn() }
+    })
+  })
+
+  function openSession(deviceName: string, sampleRate = 48000): void {
+    const store = useRecordingSessionStore()
+    store.current = {
+      sessionId: 'session-1',
+      status: 'idle',
+      input: { deviceName, sampleRate, inputLatencyMs: 18 }
+    } as never
+    useAudioDeviceStore().currentDeviceName = 'Speakers (USB DAC)'
+  }
+
+  it('has no key until an input is open, so nothing claims to be calibrated', () => {
+    const store = useRecordingSessionStore()
+    store.calibrations = { anything: makeCalibration(96) }
+    expect(store.activeCalibrationKey).toBeNull()
+    expect(store.activeCalibration).toBeNull()
+  })
+
+  it('resolves the calibration stored for this input and output pair', () => {
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)')
+    const key = store.activeCalibrationKey
+    expect(key).not.toBeNull()
+    store.calibrations = { [key as string]: makeCalibration(96) }
+    expect(store.activeCalibration?.roundTripMs).toBe(96)
+  })
+
+  // The same microphone through a different output is a different round trip, so a figure
+  // measured against one output must not be reused for another.
+  it('does not reuse a calibration when the output device changes', () => {
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)')
+    store.calibrations = { [store.activeCalibrationKey as string]: makeCalibration(96) }
+    useAudioDeviceStore().currentDeviceName = 'Speakers (Laptop)'
+    expect(store.activeCalibration).toBeNull()
+  })
+
+  it('flags a measurement taken at a different sample rate as worth repeating', () => {
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)', 44100)
+    store.calibrations = {
+      [store.activeCalibrationKey as string]: makeCalibration(96, { sampleRate: 48000 })
+    }
+    expect(store.isCalibrationStale).toBe(true)
+  })
+
+  // A typed figure has no sample rate behind it, so calling it stale would be telling the user
+  // to re-measure something they deliberately set by hand.
+  it('never calls a hand-entered figure stale', () => {
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)', 44100)
+    store.calibrations = {
+      [store.activeCalibrationKey as string]: makeCalibration(96, { manual: true, sampleRate: 0 })
+    }
+    expect(store.isCalibrationStale).toBe(false)
+  })
+
+  it('stores an accepted measurement and tells the backend to trim by it', async () => {
+    const { send } = await import('@/lib/bridgeService')
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)')
+    vi.mocked(send).mockClear()
+    store.saveCalibration(96, false)
+
+    expect(store.activeCalibration?.roundTripMs).toBe(96)
+    expect(window.silverdaw.setLatencyCalibration).toHaveBeenCalledWith(
+      store.activeCalibrationKey,
+      expect.objectContaining({ roundTripMs: 96, manual: false })
+    )
+    expect(send).toHaveBeenCalledWith(
+      'RECORD_SESSION_CONTROL',
+      expect.objectContaining({ action: 'setCalibration', roundTripMs: 96 })
+    )
+  })
+
+  // Clearing has to reach the backend too: leaving the old figure in the session would keep
+  // trimming takes by a calibration the user has just thrown away.
+  it('sends a null round trip when the calibration is cleared', async () => {
+    const { send } = await import('@/lib/bridgeService')
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)')
+    store.saveCalibration(96, false)
+    vi.mocked(send).mockClear()
+    store.clearCalibration()
+
+    expect(store.activeCalibration).toBeNull()
+    expect(send).toHaveBeenCalledWith(
+      'RECORD_SESSION_CONTROL',
+      expect.objectContaining({ action: 'setCalibration', roundTripMs: null })
+    )
+  })
+
+  it('keeps a stored calibration when a measurement run is abandoned', () => {
+    const store = useRecordingSessionStore()
+    openSession('Microphone (USB)')
+    store.saveCalibration(96, false)
+    store.calibrateStatus = 'measuring'
+    store.resetCalibrationRun()
+
+    expect(store.calibrateStatus).toBe('idle')
+    expect(store.activeCalibration?.roundTripMs).toBe(96)
+  })
+})
+
+function makeCalibration(
+  roundTripMs: number,
+  overrides: Partial<LatencyCalibrationDto> = {}
+): LatencyCalibrationDto {
+  return {
+    roundTripMs,
+    manual: false,
+    sampleRate: 48000,
+    measuredAt: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  }
+}

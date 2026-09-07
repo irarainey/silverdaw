@@ -439,6 +439,7 @@ add_library(silverdaw_backend_core STATIC
     src/commands/ScratchSessionCommands.cpp
     src/commands/ScratchPatternCommands.cpp
     src/commands/ScratchSaveCommands.cpp
+    src/commands/RecordingCalibrationCommands.cpp
     src/commands/RecordingCommands.cpp
     src/commands/ScratchPatternReplayCommands.cpp
     src/commands/StemSeparationCommands.cpp
@@ -477,6 +478,8 @@ add_library(silverdaw_backend_core STATIC
     src/recording/RecordingWriter.cpp
     src/recording/RecordingFinalise.cpp
     src/recording/RecordingCleanup.cpp
+    src/recording/LatencyCalibration.cpp
+    src/recording/LatencyCalibrator.cpp
     src/recording/RecordingSessionController.cpp
     # dsp
     src/dsp/BpmDetector.cpp

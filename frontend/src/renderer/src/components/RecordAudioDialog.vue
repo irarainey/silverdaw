@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import BusySpinner from '@/components/BusySpinner.vue'
 import RecordAudioReview from '@/components/RecordAudioReview.vue'
 import RecordAudioSetup from '@/components/RecordAudioSetup.vue'
+import RecordCalibrationDialog from '@/components/RecordCalibrationDialog.vue'
 import { recordingErrorMessage } from '@/lib/recording/recordingMessages'
 import { isRecordShortcutKey } from '@/lib/recording/recordShortcut'
 import {
@@ -31,6 +32,9 @@ const name = ref('')
 const commitError = ref<string | null>(null)
 /** Timeline destination held for the in-flight commit, so a failure can release it. */
 const pendingTrack = ref<RecordingDestination | null>(null)
+/** The calibration dialog sits above this one, so this dialog's shortcuts stand down while
+ *  it is open — Space must not start a take from behind a modal the user is reading. */
+const calibrationOpen = ref(false)
 
 const status = computed(() => store.current?.status ?? 'idle')
 const isRolling = computed(() => store.isRolling)
@@ -162,7 +166,7 @@ onBeforeUnmount(clearCommitTimer)
 // down for the whole app while `recording.dialogOpen` is true, so there is nothing to
 // collide with.
 function onKeydown(event: KeyboardEvent): void {
-  if (!props.open) return
+  if (!props.open || calibrationOpen.value) return
   if (event.key === 'Escape') {
     event.preventDefault()
     onClose()
@@ -252,6 +256,7 @@ const errorMessage = computed(() => {
           <RecordAudioSetup
             v-else
             :session="session"
+            @calibrate="calibrationOpen = true"
           />
 
           <p
@@ -343,5 +348,9 @@ const errorMessage = computed(() => {
         </div>
       </div>
     </div>
+    <RecordCalibrationDialog
+      :open="calibrationOpen"
+      @close="calibrationOpen = false"
+    />
   </Teleport>
 </template>

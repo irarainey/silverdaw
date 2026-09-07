@@ -23,6 +23,51 @@ namespace silverdaw::recording
  *  schema. A forgotten session must not be able to fill a disk. */
 constexpr double kMaxRecordingSeconds = 30.0 * 60.0;
 
+/** How much audio is kept in front of the anchor, and how far before the anchor the capture
+ *  is opened to make sure that much exists (ADR 0030, Amendment 18).
+ *
+ *  Opening early is what makes the lead-in real rather than wishful: with a count-in the
+ *  transport is parked until the count expires, so capture that only opened then has nothing
+ *  before the anchor to keep. The open is bounded rather than moved to arm time because the
+ *  head trim is *measured*: if the transport start stamp is ever unavailable the trim falls
+ *  back to latency alone, and the untrimmed remainder is whatever was captured early. A
+ *  quarter of a second of count-in at the head of a take is a blemish; two bars of it is a
+ *  broken take. */
+constexpr double kCapturePreRollMs = 250.0;
+constexpr double kRecordPreRollMs = 120.0;
+
+/** How a take's captured lead-in is split: what gets trimmed, and what is kept in front of
+ *  the anchor. See `planHeadTrim`. */
+struct HeadTrimPlan
+{
+    double headTrimMs = 0.0;
+    double preRollMs = 0.0;
+};
+
+/**
+ * Splits the audio captured ahead of the anchor into the part that is thrown away and the
+ * part that is kept (ADR 0030, Amendment 18).
+ *
+ * `leadInMs` is the round trip plus the transport skew — everything sitting in front of the
+ * anchor audio. Trimming all of it lands the take exactly on the anchor, which clips the
+ * attack off a note played a hair early. Keeping `preRollMs` of it and placing the take at
+ * `anchorMs - preRollMs` puts that same anchor audio back on the anchor with the early part
+ * intact.
+ *
+ * Bounded by what was captured (a lead-in cannot be invented), by the anchor (nothing sits
+ * before the start of the timeline), and refused outright when the take claims a beat count:
+ * that count is divided by the whole file's duration to recover a tempo, so a lead-in would
+ * make the take read as slower than it was played.
+ */
+inline HeadTrimPlan planHeadTrim(double leadInMs, double anchorMs, bool exactLengthClaimed)
+{
+    const double available = juce::jmax(0.0, leadInMs);
+    const double preRoll = exactLengthClaimed
+                               ? 0.0
+                               : juce::jlimit(0.0, kRecordPreRollMs, juce::jmin(available, anchorMs));
+    return {available - preRoll, preRoll};
+}
+
 /** Count-in is one bar or none: two bars was a choice nobody needed to make. */
 constexpr int kMaxCountInBars = 1;
 
@@ -222,6 +267,12 @@ struct PendingFinalise
     int channelCount = 1;
     /** Count-in plus round-trip latency; trimmed from the head at finalise. */
     double headTrimMs = 0.0;
+    /** Lead-in deliberately left in front of the anchor, in ms, and so also how far ahead of
+     *  the anchor the take belongs on the timeline. A performer often comes in a fraction
+     *  early, and trimming flush to the anchor clips the front of that first note. Zero when
+     *  a beat count is claimed: `musicalLengthBpm` divides the count by the whole file's
+     *  duration, so a lead-in there would resolve to the wrong tempo. */
+    double preRollMs = 0.0;
     /** Capture rate and output-device rate as measured against the wall clock. Their ratio
      *  is the drift; equal rates mean none. See `finishCapture`. */
     double measuredSampleRate = 0.0;
@@ -305,6 +356,11 @@ class RecordingSessionController final : private juce::Timer
     /** Whether the finished take gets the noise-reduction pass at finalise. */
     bool setCleanupEnabled(const juce::String& sessionId, bool enabled);
     bool setWindowMode(const juce::String& sessionId, const juce::String& mode);
+    /** The measured output-to-input round trip for this machine, in ms, or nothing to fall back
+     *  to what the drivers report. Owned by the renderer because it lives in app preferences
+     *  (ADR 0030, Amendment 17); the session only holds it for the next finalise. */
+    bool setCalibratedRoundTripMs(const juce::String& sessionId,
+                                  std::optional<double> roundTripMs);
 
     bool start(const juce::String& sessionId, const juce::String& fileBaseName,
                const juce::String& suggestedName);
@@ -318,6 +374,11 @@ class RecordingSessionController final : private juce::Timer
                        const juce::String& message);
 
     bool hasSession() const noexcept { return session.has_value(); }
+    /** The open capture plumbing, so a latency calibration can borrow the input the dialog
+     *  already has rather than opening a second one. Null with no session; the tap outlives
+     *  any one take, so a borrower must still respect the session's status. */
+    CaptureDevice* getCaptureDevice() noexcept { return device.isOpen() ? &device : nullptr; }
+    InputCaptureTap* getCaptureTap() noexcept { return &tap; }
     juce::String getSessionId() const;
     juce::String getStatus() const;
     juce::String getPendingRecordingId() const;
@@ -339,6 +400,10 @@ class RecordingSessionController final : private juce::Timer
         bool monitorEnabled = false;
         bool cleanupEnabled = false;
         juce::String windowMode{"start"};
+        /** Measured round trip for this machine, when the user has calibrated. Preferred over
+         *  the drivers' own figures at finalise, which on a processed input can be short by
+         *  most of the real delay. */
+        std::optional<double> calibratedRoundTripMs;
         double anchorMs = 0.0;
         std::optional<double> windowEndMs;
         double transportStartMs = 0.0;
@@ -361,6 +426,9 @@ class RecordingSessionController final : private juce::Timer
     void closeDevice();
     void finishCapture(const juce::String& errorCode, const juce::String& message);
     void beginRecordingAfterCountIn();
+    /** Attaches the writer so capture is already running when the count-in expires. Safe to
+     *  call repeatedly; only the first call opens anything. */
+    void openCaptureForPreRoll();
     bool beginTransport();
     double measuredTransportSkewMs() const;
     double windowStopPositionMs() const;
@@ -381,6 +449,8 @@ class RecordingSessionController final : private juce::Timer
     InputCaptureTap tap;
     std::shared_ptr<RecordingWriter> writer;
     std::optional<Session> session;
+    /** Whether the writer is attached to the tap, so a count-in tick cannot open it twice. */
+    bool captureOpen = false;
     int stateTicks = 0;
 };
 

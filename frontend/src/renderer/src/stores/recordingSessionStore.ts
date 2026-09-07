@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import type {
+  RecordingCalibrateStatePayload,
+  RecordingCalibrateStatus,
   RecordingCountInBars,
   RecordingInputLevelPayload,
   RecordingInputSelection,
@@ -9,9 +11,21 @@ import type {
   RecordingSessionStatePayload,
   RecordingWindowMode
 } from '@shared/bridge-protocol'
+import { RECORDING_PROTOCOL_VERSION } from '@shared/bridge-protocol'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { buildDeviceOptions } from '@/lib/recording/recordingInputOptions'
+import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
 import { useTransportStore } from '@/stores/transportStore'
+
+/** Stable key for a stored calibration. Both device names take part: the same microphone
+ *  through a different output is a different round trip. Mirrors `latencyCalibrationKey` in
+ *  Electron main, which owns the persisted map. */
+function calibrationKey(
+  inputDeviceName: string | null | undefined,
+  outputDeviceName: string | null | undefined
+): string {
+  return `${(inputDeviceName ?? '').trim()}\u0000${(outputDeviceName ?? '').trim()}`
+}
 
 /** Review-waveform peaks for the finished recording. Peaks, not audio: the file
  *  stays on disk and is only ever referenced by path (ADR 0003). */
@@ -95,6 +109,19 @@ interface RecordingSessionState {
   /** Sessions this renderer has closed. A late broadcast for one of them must
    *  never replace the live session. */
   closedSessionIds: string[]
+  /** Stored round trips, keyed by input+output device pair (ADR 0030, Amendment 17).
+   *  Loaded from app preferences when the dialog opens; absent = uncalibrated, which is a
+   *  normal state the dialog shows rather than nags about. */
+  calibrations: Record<string, LatencyCalibrationDto>
+  /** Live progress of a measurement run. Separate from the session status because
+   *  calibration is a side errand, not a stage of recording. */
+  calibrateStatus: RecordingCalibrateStatus
+  calibrateClicksDetected: number
+  calibrateClicksTotal: number
+  /** The figure the last run produced, offered for the user to accept. Held apart from the
+   *  stored calibration so a measurement is never applied without being accepted. */
+  calibrateResultMs: number | null
+  calibrateError: string | null
 }
 
 export const useRecordingSessionStore = defineStore('recordingSession', {
@@ -123,7 +150,13 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
     commitPendingItemId: null,
     commitResultSeq: 0,
     commitResult: null,
-    closedSessionIds: []
+    closedSessionIds: [],
+    calibrations: {},
+    calibrateStatus: 'idle',
+    calibrateClicksDetected: 0,
+    calibrateClicksTotal: 0,
+    calibrateResultMs: null,
+    calibrateError: null
   }),
 
   getters: {
@@ -161,6 +194,36 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       const listing = this.inputs
       if (listing === null) return false
       return buildDeviceOptions(listing).length === 0
+    },
+
+    /** Key for the device pair currently in use, or null until an input is open — there is
+     *  nothing to calibrate against until both ends are known. */
+    activeCalibrationKey(): string | null {
+      const inputName = this.current?.input?.deviceName
+      if (!inputName) return null
+      return calibrationKey(inputName, useAudioDeviceStore().currentDeviceName)
+    },
+
+    /** The stored calibration for the current device pair, or null when uncalibrated. */
+    activeCalibration(): LatencyCalibrationDto | null {
+      const key = this.activeCalibrationKey
+      return key === null ? null : (this.calibrations[key] ?? null)
+    },
+
+    /** True when the stored calibration was measured at a different sample rate than the one
+     *  now in use. The figure is kept and still used — it is far closer than no calibration —
+     *  but the dialog says it is worth measuring again. */
+    isCalibrationStale(): boolean {
+      const stored = this.activeCalibration
+      const rate = this.current?.input?.sampleRate
+      if (stored === null || stored.manual || !rate || stored.sampleRate <= 0) return false
+      return Math.abs(stored.sampleRate - rate) > 1
+    },
+
+    /** What the take is actually being trimmed by when uncalibrated: the drivers' own figure,
+     *  which is the number the dialog contrasts a real measurement against. */
+    driverLatencyMs(): number {
+      return this.current?.input?.inputLatencyMs ?? 0
     }
   },
 
@@ -185,6 +248,7 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       this.rememberedInput = saved?.deviceName
         ? { typeName: saved.typeName ?? '', deviceName: saved.deviceName }
         : null
+      await this.loadCalibrations()
       this.dialogOpen = true
     },
 
@@ -282,6 +346,91 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       this.ready = null
       this.readyPeaks = null
       this.commitPendingItemId = null
+      this.resetCalibrationRun()
+    },
+
+    // ─── Latency calibration (ADR 0030, Amendment 17) ──────────────────────
+
+    async loadCalibrations(): Promise<void> {
+      this.calibrations = await window.silverdaw.getLatencyCalibrations().catch(() => ({}))
+    },
+
+    applyCalibrateState(payload: RecordingCalibrateStatePayload): void {
+      this.calibrateStatus = payload.status
+      this.calibrateClicksDetected = payload.clicksDetected
+      this.calibrateClicksTotal = payload.clicksTotal
+      this.calibrateResultMs = payload.status === 'measured' ? payload.roundTripMs : null
+      this.calibrateError = payload.error ?? null
+    },
+
+    /** Clears the run, not the stored calibration: closing the dialog abandons a measurement
+     *  but must never lose a figure the user already accepted. */
+    resetCalibrationRun(): void {
+      this.calibrateStatus = 'idle'
+      this.calibrateClicksDetected = 0
+      this.calibrateClicksTotal = 0
+      this.calibrateResultMs = null
+      this.calibrateError = null
+    },
+
+    startCalibration(): void {
+      const sessionId = this.activeSessionId
+      if (sessionId === null) return
+      this.resetCalibrationRun()
+      this.calibrateStatus = 'measuring'
+      sendBridge('RECORD_CALIBRATE_START', { protocolVersion: RECORDING_PROTOCOL_VERSION, sessionId })
+    },
+
+    cancelCalibration(): void {
+      sendBridge('RECORD_CALIBRATE_CANCEL', {
+        protocolVersion: RECORDING_PROTOCOL_VERSION,
+        sessionId: this.activeSessionId ?? ''
+      })
+      this.resetCalibrationRun()
+    },
+
+    /** Stores a round trip for the current device pair and pushes it to the backend, so the
+     *  very next take is trimmed by it. `manual` marks a typed figure, which a later
+     *  measurement offers to replace rather than silently overwriting. */
+    saveCalibration(roundTripMs: number, manual: boolean): void {
+      const key = this.activeCalibrationKey
+      if (key === null) return
+      const entry: LatencyCalibrationDto = {
+        roundTripMs,
+        manual,
+        sampleRate: this.current?.input?.sampleRate ?? 0,
+        measuredAt: new Date().toISOString()
+      }
+      this.calibrations = { ...this.calibrations, [key]: entry }
+      window.silverdaw.setLatencyCalibration(key, entry)
+      this.pushCalibrationToBackend()
+      this.resetCalibrationRun()
+    },
+
+    /** Forgets the calibration for this device pair; takes fall back to the drivers' figures. */
+    clearCalibration(): void {
+      const key = this.activeCalibrationKey
+      if (key === null) return
+      const next = { ...this.calibrations }
+      delete next[key]
+      this.calibrations = next
+      window.silverdaw.setLatencyCalibration(key, null)
+      this.pushCalibrationToBackend()
+      this.resetCalibrationRun()
+    },
+
+    /** Tells the backend what to trim by. Sent whenever the session or the device pair
+     *  changes, because the backend has no access to preferences and would otherwise keep
+     *  using a figure belonging to a device that is no longer open. */
+    pushCalibrationToBackend(): void {
+      const sessionId = this.activeSessionId
+      if (sessionId === null) return
+      sendBridge('RECORD_SESSION_CONTROL', {
+        protocolVersion: RECORDING_PROTOCOL_VERSION,
+        sessionId,
+        action: 'setCalibration',
+        roundTripMs: this.activeCalibration?.roundTripMs ?? null
+      })
     }
   }
 })

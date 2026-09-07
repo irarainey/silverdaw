@@ -32,6 +32,8 @@ import type {
   ScratchPatternReplayStopPayload
 } from './scratch'
 import type {
+  RecordingCalibrateCancelPayload,
+  RecordingCalibrateStartPayload,
   RecordingCommitPayload,
   RecordingSessionClosePayload,
   RecordingSessionControlPayload,
@@ -744,6 +746,8 @@ export interface BridgeOutboundMap {
   RECORD_SESSION_CLOSE: RecordingSessionClosePayload
   RECORD_RECORDING_COMMIT: RecordingCommitPayload
   RECORD_RECORDING_SET_STEREO: RecordingSetStereoPayload
+  RECORD_CALIBRATE_START: RecordingCalibrateStartPayload
+  RECORD_CALIBRATE_CANCEL: RecordingCalibrateCancelPayload
   AUDIO_DEVICE_SELECT: AudioDeviceSelectPayload
   AUDIO_KEEP_AWAKE_SET: AudioKeepAwakeSetPayload
   BRAKE_SETTINGS_SET: BrakeSettingsSetPayload
@@ -1439,6 +1443,8 @@ export const bridgeOutboundPayloadKinds: {
   RECORD_SESSION_CLOSE: 'payload',
   RECORD_RECORDING_COMMIT: 'payload',
   RECORD_RECORDING_SET_STEREO: 'payload',
+  RECORD_CALIBRATE_START: 'payload',
+  RECORD_CALIBRATE_CANCEL: 'payload',
   AUDIO_DEVICE_SELECT: 'payload',
   AUDIO_KEEP_AWAKE_SET: 'payload',
   BRAKE_SETTINGS_SET: 'payload',

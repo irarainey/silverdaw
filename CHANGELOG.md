@@ -4,33 +4,37 @@
 
 ### Added
 
-- **Record Audio** captures live input over the arrangement and saves the take as a library item or a clip on the timeline, with a choice of input device, mono or stereo capture, input gain and live metering. Takes are aligned to the timeline automatically, compensating for the round trip through your audio hardware and for the time the transport takes to start, so a performance lands where it was played rather than fractionally behind the beat.
-- Recording runs from the start of the project, from the playhead, or over a selected timeline range, with an optional count-in that plays before the take starts and costs it nothing, a metronome, and a live waveform of the performance as it is captured.
-- The backing heard under the performance is chosen and levelled in the dialog — including tracks muted on the timeline — leaving the project's own mutes, solos and levels untouched.
-- **Hear Yourself** adds the input to the backing you are monitoring, so a vocal can be performed against the arrangement on headphones.
-- Takes are captured as **Music**, inheriting the project tempo so a later BPM change warps them like any other clip, or **Simple** for speech and sound effects, with an optional cleanup of low-level background noise.
-- A finished take can be auditioned alone or against the arrangement, renamed, saved as stereo when it was recorded in mono, and re-recorded before it is kept.
-- Recording starts and stops with the **R** key or the **space bar** while the Record Audio dialog is open. The space bar works wherever you left the keyboard, so a take can be started and stopped with your hands off the mouse.
-- **File ▸ Import from Project…** now offers another project's recordings alongside its stems and samples, under their own **Recordings** heading. An imported take is filed with this project's own recordings and stays identifiable as a recording.
+- **Record Audio** captures live input over the arrangement and keeps the take as a library item or a clip on the timeline.
+- The capture device, mono or stereo channels, input gain and live input metering are set in the record dialog.
+- A take is aligned to the timeline automatically, compensating for audio hardware latency and transport start.
+- A take keeps a moment of audio ahead of where recording began, so a note played fractionally early is not clipped.
+- Recording runs from the start of the project, from the playhead, or over a selected range, with an optional count-in.
+- The backing heard under a performance is chosen and levelled in the dialog, leaving the project's own mutes, solos and levels untouched.
+- A metronome and a live waveform of the performance are available while recording.
+- **Hear Yourself** monitors the input alongside the backing.
+- Takes are captured as **Music**, which inherits the project tempo and warps with it, or **Simple** for speech and sound effects.
+- An optional cleanup removes low-level background noise from a take.
+- A finished take can be auditioned alone or against the arrangement, renamed, converted from mono to stereo, and re-recorded before it is kept.
+- Recording starts and stops with the **R** key or the space bar anywhere in the Record Audio dialog.
+- **Calibrate timing** measures the audio hardware's true output-to-input round trip and applies it to every take on the same pair of devices.
+- A calibration can be typed in by hand where measuring acoustically is not possible.
+- **File ▸ Import from Project…** offers another project's recordings alongside its stems and samples.
 - The recording input driver is chosen in **Preferences ▸ Audio**.
 
 ### Changed
 
-- Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds. A recording or any other dynamic take no longer appears as a thin line beside a commercially mastered track at the same loudness. Louder clips are still drawn taller than quieter ones.
+- Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds.
 - Audio device wording throughout the app now says whether a device is the audio output or the recording input.
-- The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs, and describe each driver the same way for the output and the recording input.
-- Clips on a silent track are drawn faded, so you can see at a glance which parts of the arrangement are not playing. A track counts as silent whether it is muted or held back by a solo on another track, matching the way its header already dims.
+- The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs.
+- Clips on a track silenced by a mute or another track's solo are drawn faded.
 
 ### Fixed
 
-- Removing a saved scratch left its audio file behind when **Clean up project files** was on. The re-editable scratch source is still kept, so the pattern can be edited again.
-- A recording kept as **Music** appeared in the library with no tempo and no beat markers until the project was reloaded.
-- The metronome ran ahead of the music whenever a track used an effect that adds latency, such as a mastering limiter, so anything played or recorded to the click landed early. The click now sounds in step with the audio you are hearing.
-- Layering recordings on top of one another gradually pulled the arrangement out of time, a little further with each new take. Silverdaw now measures the recording and playback devices against each other rather than against their stated rates, over the whole take rather than its two ends, and leaves a take alone when the difference is too small to measure reliably instead of correcting it by guesswork.
+- Removing a saved scratch left its audio file behind when **Clean up project files** was on.
+- The metronome ran ahead of the music whenever a track used an effect that adds latency, so anything played to the click landed early.
 - Checkboxes and radio buttons showed the browser's own white focus outline instead of the app's own styling.
-- The **Record Audio** dialog sat half-built for a moment on the first open, while every audio driver on the machine was scanned for inputs. The dialog now opens the recording input first and looks for the device list second, shows every setting it is about to use straight away, and says it is still searching — with a spinner and a wait cursor — instead of reporting **No input available** before it has finished looking.
-- Playback no longer falls back to the system default output when the audio device list changes; the chosen output device is restored.
-- Deleting a stem, sample or recording with **Clean up project files** on left the project marked as having unsaved changes even when nothing else had changed since the last save.
+- Playback no longer falls back to the system default output when the audio device list changes.
+- Deleting a stem or sample with **Clean up project files** on left the project marked as having unsaved changes when nothing else had changed.
 
 ## 1.8.0
 

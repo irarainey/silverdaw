@@ -11,10 +11,11 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Sixteen amendments follow the decision, several of
-which reverse a position taken here — software monitoring and "every recording
-is musical" most of all. **Read the amendments before relying on anything in the
-Decision section**; where the two disagree, the amendment is what was built.
+The feature shipped in 1.9.0. Eighteen amendments follow the decision, several
+of which reverse a position taken here — software monitoring and "every
+recording is musical" most of all. **Read the amendments before relying on
+anything in the Decision section**; where the two disagree, the amendment is
+what was built.
 
 Three facts in the current codebase shape the whole design.
 
@@ -902,3 +903,129 @@ input available" while the scan was still running — an alarming thing to say t
 someone who is about to record, and untrue. It now names the device the session
 was asked for, or says it is still looking, and reports no input only once the
 scan has actually come back empty. A wait cursor and a spinner carry the rest.
+
+### Amendment 17 — Windows cannot report the round trip, so measure it
+
+Amendment 12 trims the head by what the drivers declare: output latency, input
+latency, and the measured transport skew. On the hardware this was developed
+against those numbers came to 11.6–18 ms. The real round trip was 60–135 ms.
+Takes landed roughly a quarter of a beat late, and dragging every clip back by
+hand is exactly the kind of tedium this feature exists to remove.
+
+The gap is not drift. Amendment 15's estimator reported −1.4 to −5.7 ppm over a
+nine-second take — about 0.05 ms, three orders of magnitude too small to explain
+it. It is a constant under-compensation, and the reason is that the numbers
+being trusted are not measurements. A processed capture endpoint — the DSP mic
+arrays now standard on laptops — declares no latency at all while adding tens of
+milliseconds of beamforming and echo cancellation. A shared-mode output reports
+its own buffer and nothing of the mix graph, the DAC, or the USB stack beneath
+it. `outLatencyMs=10.0` at `buffer=480 sr=48000` is the buffer size restated,
+not a measurement.
+
+Nothing in the operating system knows the answer, so nothing can be asked for
+it. **The only ground truth is acoustic loopback**: play something, hear it come
+back, time the gap.
+
+**A run plays twelve tone bursts 300 ms apart and times each echo.** A burst
+rather than an impulse, because no speaker can reproduce an impulse. Onsets are
+timed, not peaks — timing the peak would report a round trip several
+milliseconds too long. The burst's envelope is a fast attack, a flat sustain and
+a short release rather than a window over the whole burst, which is what lets it
+be long and loud enough to hear clearly while its leading edge stays sharp
+enough to time. It sits at 3 kHz, where hearing is most sensitive and above the
+speech band a microphone's echo canceller works hardest on.
+
+**The emission stamp is taken when the burst is written into the output
+buffer**, not when the timer fired. That is the same reference point the
+arrangement's own audio is generated from, and the same one
+`measuredTransportSkewMs` uses, so the measured quantity is the one that matters
+to a take. The stamp includes the burst's sample offset within the block.
+
+**Each echo is matched to the emission it most recently followed**, by smallest
+non-negative delta rather than by index. A burst swallowed by echo cancellation
+then costs one reading instead of corrupting every reading after it.
+
+**A number is reported only when the readings corroborate each other.** The
+median is taken, a majority must fall within 12 ms of it, and only that cluster
+is averaged. Scattered readings return nothing at all. A calibration that
+silently reports a wrong number is worse than one that admits it failed, because
+the wrong number is then baked into every take.
+
+**A calibrated round trip replaces the driver figures; it does not add to
+them.** The measurement already contains everything the drivers would have
+reported, plus everything they could not see. Adding the two would double-count
+the buffer.
+
+**The result is stored in application preferences, not the project.** Latency is
+a property of the machine and its devices, and projects must stay portable
+between them. It is keyed on the input and output device pair; sample rate and
+buffer size are recorded as fields rather than as part of the key, so changing
+them warns that the measurement is stale instead of silently discarding it.
+Changing device falls back to driver behaviour and says so — reusing a
+measurement from other hardware would be a guess wearing the clothes of a
+measurement.
+
+**Calibration is offered, never forced.** It does not auto-prompt, it does not
+block recording, and it does not gate the dialog. What it does do is state
+plainly whether the current device pair has been calibrated, because someone
+whose takes are landing late needs to be able to find the reason. The entry
+point sits under the input device picker, where the choice it qualifies already
+is, and opens a dialog of its own.
+
+**Manual entry is the fallback, not the plan.** Acoustic loopback needs the
+output to reach the microphone, which usually means speakers — but holding one
+earpiece of a pair of headphones against the microphone measures the same round
+trip, so headphones are not excluded. What can defeat it is an aggressive echo
+canceller suppressing the bursts, and for that a hand-typed figure is the way
+out. It is marked as manual so a later run cannot quietly overwrite it.
+
+Two things are deliberately left alone. Plugin delay compensation still stays
+out of the head trim, for the reasons Amendment 12 gives. And the capture
+temporary file goes to the system temp directory rather than the project's
+`recordings/` folder — it is deleted immediately, and calibration has to work
+with no project open.
+
+## Amendment Eighteen: a take keeps a little audio in front of the anchor
+
+Amendments 11, 12 and 17 between them land a take exactly on the anchor: the
+whole round trip and the transport skew are trimmed off the head, so the first
+sample of the finished file is the audio the performer played at the anchor.
+That is correct and it is still wrong, because a performer does not play at the
+anchor. They play a few milliseconds either side of it, and the early side gets
+its attack shaved off by the trim. A vocal consonant or a struck drum loses
+precisely the part that carries the timing.
+
+**A take is trimmed to `anchor − preRoll` rather than to the anchor, and placed
+at `anchor − preRoll` on the timeline.** The two cancel: the audio played on the
+anchor still sits on the anchor, and what came fractionally before it now sits
+fractionally before it, where it was played. Nothing about the alignment model
+changes — the same head trim is computed the same way, and part of it is simply
+kept rather than discarded.
+
+The pre-roll is 120 ms. That is well beyond the few milliseconds a performer is
+early by, and short enough to stay inside a single beat at any plausible tempo,
+so a take never reaches back over the beat before it.
+
+**It is bounded three ways, and the third is not obvious.** It cannot exceed
+what was captured ahead of the anchor, because a lead-in cannot be invented. It
+cannot exceed the anchor, because nothing sits before the start of the timeline.
+And it is refused outright for a take that claims a beat count: `musicalLengthBpm`
+divides that count by the file's whole duration to recover a tempo, so a lead-in
+would make the take read as slower than it was played, and every clip stretched
+to it would drift.
+
+**With a count-in, the capture opens 250 ms before the count expires** rather
+than at the moment it does. Otherwise the lead-in is wishful: the transport is
+parked through a count-in, so a capture that only opens when it ends has nothing
+in front of the anchor to keep. The open is bounded rather than moved to arm
+time because the head trim is *measured* — if a transport start stamp is ever
+unavailable the trim falls back to latency alone and the untrimmed remainder is
+whatever was captured early. A quarter of a second of count-in at the head of a
+take is a blemish; two bars of it is a broken take.
+
+**The review audition has to know.** It rolls the arrangement against the take,
+and it now seeks to `anchor − preRoll` rather than to the anchor, so the take is
+heard against the backing exactly where it will sit. Auditioning from the anchor
+would play the take a pre-roll late against the very backing it was recorded to
+— which is the bug the head trim exists to prevent, reintroduced in the one
+place a user would go to check for it.

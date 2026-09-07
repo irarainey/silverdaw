@@ -65,6 +65,7 @@ function makeReady(): RecordingReadyPayload {
     channelCount: 1,
     stereoDuplicated: false,
     anchorMs: 2000,
+    preRollMs: 120,
     musical: true,
     bpm: 120,
     beatAnchorSec: 0,

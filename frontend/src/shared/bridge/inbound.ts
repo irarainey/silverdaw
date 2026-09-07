@@ -27,6 +27,7 @@ export * from './midi-inbound'
 import type {
   RecordingInputLevelPayload,
   RecordingInputsListPayload,
+  RecordingCalibrateStatePayload,
   RecordingReadyPayload,
   RecordingSessionStatePayload
 } from './recording'
@@ -1185,6 +1186,7 @@ export interface BridgeInboundMap {
   RECORD_SESSION_STATE: RecordingSessionStatePayload
   RECORD_INPUT_LEVEL: RecordingInputLevelPayload
   RECORD_RECORDING_READY: RecordingReadyPayload
+  RECORD_CALIBRATE_STATE: RecordingCalibrateStatePayload
   EDIT_UNDO_STATE: EditUndoStatePayload
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
@@ -1273,6 +1275,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'RECORD_SESSION_STATE',
   'RECORD_INPUT_LEVEL',
   'RECORD_RECORDING_READY',
+  'RECORD_CALIBRATE_STATE',
   'EDIT_UNDO_STATE',
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',

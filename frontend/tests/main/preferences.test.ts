@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 // validation helpers can be unit-tested in the node environment.
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getName: () => 'silverdaw' } }))
 
-import { sanitiseKeepAwakeByDevice, sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, type StemPrefs, type UiPrefs } from '@main/preferences'
+import { latencyCalibrationKey, sanitiseKeepAwakeByDevice, sanitiseLatencyCalibrations, sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, MAX_LATENCY_CALIBRATION_MS, type StemPrefs, type UiPrefs } from '@main/preferences'
 
 const base: UiPrefs = {
   trackHeaderWidth: 175,
@@ -220,5 +220,57 @@ describe('sanitiseKeepAwakeByDevice', () => {
     expect(sanitiseKeepAwakeByDevice(undefined)).toEqual({})
     expect(sanitiseKeepAwakeByDevice(42)).toEqual({})
     expect(sanitiseKeepAwakeByDevice(null)).toEqual({})
+  })
+})
+
+// Latency calibration (ADR 0030, Amendment 17). A calibration drags every recorded take, so a
+// corrupt or implausible stored value must be dropped rather than trusted.
+describe('sanitiseLatencyCalibrations', () => {
+  const good = {
+    roundTripMs: 96,
+    manual: false,
+    sampleRate: 48000,
+    measuredAt: '2026-01-01T00:00:00.000Z'
+  }
+
+  it('keeps a well-formed entry as it stands', () => {
+    expect(sanitiseLatencyCalibrations({ 'mic\u0000speakers': good })).toEqual({
+      'mic\u0000speakers': good
+    })
+  })
+
+  it('drops entries whose round trip is missing, negative or beyond a plausible delay', () => {
+    expect(
+      sanitiseLatencyCalibrations({
+        a: { ...good, roundTripMs: -1 },
+        b: { ...good, roundTripMs: MAX_LATENCY_CALIBRATION_MS + 1 },
+        c: { ...good, roundTripMs: 'lots' },
+        d: { manual: true }
+      })
+    ).toEqual({})
+  })
+
+  it('defaults the descriptive fields rather than dropping an otherwise usable figure', () => {
+    expect(sanitiseLatencyCalibrations({ k: { roundTripMs: 96 } })).toEqual({
+      k: { roundTripMs: 96, manual: false, sampleRate: 0, measuredAt: '' }
+    })
+  })
+
+  it('drops empty keys and tolerates non-object input', () => {
+    expect(sanitiseLatencyCalibrations({ '  ': good })).toEqual({})
+    expect(sanitiseLatencyCalibrations(undefined)).toEqual({})
+    expect(sanitiseLatencyCalibrations(42)).toEqual({})
+  })
+})
+
+describe('latencyCalibrationKey', () => {
+  // Both device names take part: the same microphone through a different output is a
+  // different round trip, and sharing a key would silently apply the wrong figure.
+  it('distinguishes the same input paired with different outputs', () => {
+    expect(latencyCalibrationKey('Mic', 'Speakers')).not.toBe(latencyCalibrationKey('Mic', 'DAC'))
+  })
+
+  it('treats missing and blank device names the same, so a half-known pair cannot collide', () => {
+    expect(latencyCalibrationKey(null, ' Speakers ')).toBe(latencyCalibrationKey('', 'Speakers'))
   })
 })

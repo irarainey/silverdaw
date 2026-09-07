@@ -60,6 +60,8 @@ export const IPC = {
     setAudioOutput: 'prefs:setAudioOutput',
     getAudioInput: 'prefs:getAudioInput',
     setAudioInput: 'prefs:setAudioInput',
+    getLatencyCalibrations: 'prefs:getLatencyCalibrations',
+    setLatencyCalibration: 'prefs:setLatencyCalibration',
     getKeepAwakeByDevice: 'prefs:getKeepAwakeByDevice',
     setKeepAwakeForDevice: 'prefs:setKeepAwakeForDevice',
     getEnabledMidiInputs: 'prefs:getEnabledMidiInputs',

@@ -82,6 +82,7 @@ import {
   isRecordingInputsListPayload,
   isRecordingSessionStatePayload,
   isRecordingInputLevelPayload,
+  isRecordingCalibrateStatePayload,
   isRecordingReadyPayload,
   type BridgeInboundMessage,
   type BridgeInboundType
@@ -265,6 +266,8 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isRecordingInputLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'RECORD_RECORDING_READY':
       return isRecordingReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_CALIBRATE_STATE':
+      return isRecordingCalibrateStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

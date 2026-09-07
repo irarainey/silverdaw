@@ -3,6 +3,7 @@ import { isAbsolute, join } from 'node:path'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '../shared/types'
 import type {
   DebugPreferences,
+  LatencyCalibrationDto,
   MidiDevicePreferences,
   MidiDeckSelection,
   RecentProject,
@@ -132,6 +133,56 @@ export interface AudioInputPrefs {
 export const MIN_AUDIO_INPUT_GAIN_DB = -24
 export const MAX_AUDIO_INPUT_GAIN_DB = 24
 
+// Measured recording round trip, per input+output device pair (ADR 0030, Amendment 17).
+//
+// Global rather than per-project: it describes this machine's audio path, and a project that
+// carried it would arrive on someone else's setup carrying a number that is wrong there.
+//
+// Keyed by the device pair because both ends contribute to the round trip. Sample rate and
+// buffer size are stored as fields rather than folded into the key so that changing them warns
+// that the measurement is stale instead of silently discarding it.
+export type LatencyCalibration = LatencyCalibrationDto
+
+/** Anything outside this is not a plausible audio round trip and is dropped. */
+export const MAX_LATENCY_CALIBRATION_MS = 600
+
+/** Stable key for a calibration entry. Both device names take part: the same microphone
+ *  through a different output is a different round trip. */
+export function latencyCalibrationKey(
+  inputDeviceName: string | null | undefined,
+  outputDeviceName: string | null | undefined
+): string {
+  return `${(inputDeviceName ?? '').trim()}\u0000${(outputDeviceName ?? '').trim()}`
+}
+
+export function sanitiseLatencyCalibrations(input: unknown): Record<string, LatencyCalibration> {
+  const out: Record<string, LatencyCalibration> = {}
+  if (!input || typeof input !== 'object') return out
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (key.trim().length === 0 || !value || typeof value !== 'object') continue
+    const candidate = value as Partial<LatencyCalibration>
+    const roundTripMs = candidate.roundTripMs
+    if (
+      typeof roundTripMs !== 'number' ||
+      !Number.isFinite(roundTripMs) ||
+      roundTripMs < 0 ||
+      roundTripMs > MAX_LATENCY_CALIBRATION_MS
+    ) {
+      continue
+    }
+    out[key] = {
+      roundTripMs,
+      manual: candidate.manual === true,
+      sampleRate:
+        typeof candidate.sampleRate === 'number' && Number.isFinite(candidate.sampleRate)
+          ? candidate.sampleRate
+          : 0,
+      measuredAt: typeof candidate.measuredAt === 'string' ? candidate.measuredAt : ''
+    }
+  }
+  return out
+}
+
 export function sanitiseAudioInputPrefs(value: unknown): AudioInputPrefs {
   const device = sanitiseDeviceSelection(value)
   const gainDb = (value as Partial<AudioInputPrefs> | undefined)?.gainDb
@@ -194,6 +245,8 @@ export interface Preferences {
   audioOutput: AudioOutputPrefs
   /** Remembered capture device; null/null means "first available". */
   audioInput: AudioInputPrefs
+  /** Measured recording round trips, keyed by `latencyCalibrationKey`; absent = uncalibrated. */
+  latencyCalibrations: Record<string, LatencyCalibration>
   /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
   keepAwakeByDevice: Record<string, boolean>
   /** Enabled MIDI inputs, keyed by JUCE's stable device identifier. */
@@ -284,6 +337,7 @@ export function buildDefaultPrefs(): Preferences {
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
     audioInput: { typeName: null, deviceName: null, gainDb: 0 },
+    latencyCalibrations: {},
     keepAwakeByDevice: {},
     enabledMidiInputs: {},
     midiDeckSelections: {},
