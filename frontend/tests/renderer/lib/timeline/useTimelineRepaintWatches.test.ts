@@ -143,4 +143,20 @@ describe('useTimelineRepaintWatches', () => {
     expect(deps.redraw).toHaveBeenCalledTimes(1)
     expect(deps.updatePlayhead).toHaveBeenCalledTimes(1)
   })
+
+  it('repaints when a track is muted or soloed so clip dimming follows', async () => {
+    const project = useProjectStore()
+    const trackId = project.addTrack()
+    await nextTick()
+    vi.mocked(deps.redraw).mockClear()
+
+    project.toggleMute(trackId)
+    await nextTick()
+    expect(deps.redraw).toHaveBeenCalledTimes(1)
+
+    vi.mocked(deps.redraw).mockClear()
+    project.toggleSolo(trackId)
+    await nextTick()
+    expect(deps.redraw).toHaveBeenCalledTimes(1)
+  })
 })

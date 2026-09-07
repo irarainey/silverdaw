@@ -277,6 +277,14 @@ Selected/active items use the `sky` accent consistently:
   leaves the accent free for the row's primary action (Open) sitting next to it.
 - Don't invent a second "selected" colour — accent tint + accent border + accent
   text is the pattern.
+- **Inaudible is shown by fading, and the same way everywhere.** A track that
+  cannot be heard — muted, or held back by a solo on another track — dims: the
+  header at `opacity-50`, and its timeline clips drawn from
+  `SILENCED_TRACK_PALETTE` (`TRACK_PALETTE` blended toward the canvas). Ask
+  `isTrackSilenced(track, project.anySoloed)` rather than re-spelling
+  `track.muted || (anySoloed && !track.soloed)`; the whole point is that these
+  surfaces can never disagree about what is playing. Fade, never hide: a faded
+  item stays legible and stays where it was.
 
 ## 10. Language & terminology
 

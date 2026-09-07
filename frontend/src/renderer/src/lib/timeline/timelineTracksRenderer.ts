@@ -3,7 +3,12 @@
 
 import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics } from 'pixi.js'
-import { useProjectStore, TRACK_PALETTE } from '@/stores/projectStore'
+import {
+  useProjectStore,
+  TRACK_PALETTE,
+  SILENCED_TRACK_PALETTE,
+  isTrackSilenced
+} from '@/stores/projectStore'
 import { trackStaticAutomationValue } from '@/stores/projectTrackActions'
 import { useTransportStore } from '@/stores/transportStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -207,16 +212,22 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
 
     let visibleClipCount = 0
     const ui = useUiStore()
+    const anySoloed = project.anySoloed
     const headerW = headerWidth()
     for (const { track, worldY, rowHeight, clipHeight } of visibleRows) {
       const lanes = ui.automationLanes[track.id] ?? []
-      const trackPalette = TRACK_PALETTE[track.colorIndex % TRACK_PALETTE.length]!
+      // A silenced track's clips are painted from the dimmed table so they read
+      // as present-but-not-playing at a glance, matching the track header.
+      const paletteTable = isTrackSilenced(track, anySoloed)
+        ? SILENCED_TRACK_PALETTE
+        : TRACK_PALETTE
+      const trackPalette = paletteTable[track.colorIndex % paletteTable.length]!
       for (const clipId of track.clipIds) {
         const clip = project.clips[clipId]
         if (!clip) continue
         const palette =
           typeof clip.colorIndex === 'number'
-            ? TRACK_PALETTE[clip.colorIndex % TRACK_PALETTE.length]!
+            ? paletteTable[clip.colorIndex % paletteTable.length]!
             : trackPalette
         clipRenderer.drawClip(clip, worldY, clipHeight, palette, worldLeft, worldRight, track.pan ?? 0)
         ++visibleClipCount

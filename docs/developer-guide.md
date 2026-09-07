@@ -4968,6 +4968,27 @@ and auto-follow during playback are O(1) layer translations — no clip iteratio
 allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
 move, peaks arrival, zoom, BPM, project length, header-column resize.
 
+**Silenced tracks are dimmed at the palette, not the alpha.** A track that cannot be
+heard — `isTrackSilenced(track, anySoloed)` in `projectTypes.ts`, i.e. muted outright
+*or* held back while another track is soloed — has its clips drawn from
+`SILENCED_TRACK_PALETTE` instead of `TRACK_PALETTE`. That table is `TRACK_PALETTE` with
+`fill` / `border` / `wave` blended toward the canvas background, computed once at module
+load. Substituting the palette at the single point in `timelineTracksRenderer` where it is
+already chosen dims the clip body, its outline, its waveform and its header strip together
+with no change to `clipRenderer` or `clipHeaderRenderer` at all, and costs nothing per
+frame. It is deliberately *not* done by lowering the display objects' `alpha`: the pooled
+Graphics and Mesh instances are reused across clips and frames on the contract that they
+never carry display props (`acquireGraphics` resets drawing commands only), so a stray
+alpha would leak onto an unrelated clip on the next frame — and a translucent clip would
+let the beat grid show through, reading as a rendering fault rather than a muted track.
+The clip name stays white and the badges keep their own colours: a muted clip still has to
+be identifiable while arranging. `isTrackSilenced` is shared with the track header's own
+dimming and the Scratch Editor's backing-track list, so the three cannot disagree about
+what is audible. Because neither `toggleMute` nor `toggleSolo` changes the arrangement,
+neither bumps `timelineRevision`; `useTimelineRepaintWatches` therefore carries a dedicated
+watch on the tracks' mute/solo flags, without which the dimming would not appear until some
+unrelated edit forced a rebuild.
+
 **The ruler is not in world space.** Clip hit regions are stored at absolute world
 coordinates, so a pointer is mapped by adding `scrollX` / `scrollY` — but the ruler
 is a fixed overlay that does not scroll with the tracks, so that mapping is only

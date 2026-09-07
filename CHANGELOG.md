@@ -19,6 +19,7 @@
 - Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds. A recording or any other dynamic take no longer appears as a thin line beside a commercially mastered track at the same loudness. Louder clips are still drawn taller than quieter ones.
 - Audio device wording throughout the app now says whether a device is the audio output or the recording input.
 - The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs, and describe each driver the same way for the output and the recording input.
+- Clips on a silent track are drawn faded, so you can see at a glance which parts of the arrangement are not playing. A track counts as silent whether it is muted or held back by a solo on another track, matching the way its header already dims.
 
 ### Fixed
 
