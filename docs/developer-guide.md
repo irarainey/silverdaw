@@ -4012,12 +4012,27 @@ gain-applied capture into `recording::InputMonitorSource` — a
 `juce::AudioSource` in `topMixer` beside the scratch and backing sources — over a
 lock-free `juce::AbstractFifo` ring, so neither real-time thread ever blocks on
 the other. It is best-effort by construction: capture and output are separate
-devices with separate clocks, so the ring drops the oldest audio on overflow and
-plays silence on underrun rather than stalling, and it is a round trip of tens of
-milliseconds — useful for pitching, not for judging timing. It is downstream of
-the tap, so it changes nothing about what is recorded. `sessionMonitorAudible`
-forces it off in review and with no session at all, because a monitor left open
-over a take playing back is the easiest way to find a feedback loop by accident.
+devices with separate clocks, so the ring plays silence on underrun and drops
+stale audio when it backs up, rather than stalling either side. That dropping
+happens **on the consumer**, and this is not a detail — `AbstractFifo` is
+strictly single-producer, single-consumer, and `finishedRead` is a non-atomic
+read-modify-write of the read index, so a producer that made room by advancing
+it would corrupt the ring for both threads (ADR 0030, Amendment 23). The
+producer writes only what fits; the playback thread bounds the backlog at 120 ms.
+The path is a round trip of tens of milliseconds — useful for pitching, not for
+judging timing. It is downstream of the tap, so it changes nothing about what is
+recorded. `sessionMonitorAudible` forces it off in review and with no session at
+all, because a monitor left open over a take playing back is the easiest way to
+find a feedback loop by accident.
+
+**Monitoring is refused outright when the two devices disagree on sample rate.**
+The ring hands captured frames to the output callback one for one and has no
+resampler, so a 44.1 kHz input against a 48 kHz output would be heard sharp
+through a ring that starves continuously — a worse answer than not monitoring.
+`monitorRatesAgree` decides it, `monitorAvailable` carries it on
+`RECORD_SESSION_STATE`, and `RecordAudioSetup` disables the control and says
+why. Capture is unaffected: the take is written at its own rate and resampled
+like any other library file.
 
 **The monitor delay cannot be compensated, only stated** (ADR 0030, Amendment
 21). The recurring suggestion is to shift the backing earlier by the round trip
@@ -4345,10 +4360,17 @@ mattering (ADR 0030, Amendment 10).
 "recording failed" on its own makes a working feature look broken: no input, the
 device refused to open, the device delivered nothing but digital silence (the
 signature of absent Windows microphone consent — the MSIX package therefore
-declares the `microphone` device capability), the device went away, no disk
-space, the file could not be written, and the length cap. `recordingMessages.ts`
-maps each to a sentence saying what to do next, and an overrun that dropped
-samples is reported rather than handed over as a silently damaged recording.
+declares the `microphone` device capability), the device went away, playback
+would not start, no disk space, and the file could not be written.
+`recordingMessages.ts` maps each to a sentence saying what to do next, and an
+overrun that dropped samples is reported rather than handed over as a silently
+damaged recording. Two rules govern this list. **An unknown code degrades to the
+generic message rather than rejecting the snapshot** — a strict enum meant a
+code the renderer had never heard of dropped the whole state and froze the
+dialog on the last thing it understood. And **the length cap is not in the
+list**: stopping at thirty minutes is not a failure, the take is kept in full,
+and it is carried as `hitLengthCap` on the ready payload and shown as a notice
+over a perfectly good recording (ADR 0030, Amendment 23).
 
 **Microphone consent is a first-use step, not an install step.** Windows never
 asks about a device capability while a package installs — App Installer surfaces

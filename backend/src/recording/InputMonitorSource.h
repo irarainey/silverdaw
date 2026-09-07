@@ -17,11 +17,17 @@ namespace silverdaw::recording
  * written by `InputCaptureTap` and drained by the engine's mixer.
  *
  * Monitoring is best-effort by construction. Two clocks that never quite agree
- * will eventually over- or under-run, so the ring drops the oldest audio when
- * it fills and plays silence when it empties, rather than stalling either
- * thread or trying to resample its way out. Both are momentary; neither can
- * affect what is captured, because the writer sees the same blocks whether
- * monitoring is on or not.
+ * will eventually over- or under-run, so the ring plays silence when it empties
+ * and drops stale audio when it backs up, rather than stalling either thread or
+ * trying to resample its way out. Both are momentary; neither can affect what is
+ * captured, because the writer sees the same blocks whether monitoring is on or
+ * not.
+ *
+ * The ring is strictly single-producer, single-consumer, which is what
+ * `juce::AbstractFifo` guarantees and no more: the capture thread only ever
+ * writes, and the read pointer is touched by the playback thread alone. Dropping
+ * stale audio therefore happens on the consumer, even though it is the producer
+ * that discovers the ring is full.
  *
  * Nothing here is ever recorded, bounced or written to disk: it exists purely
  * so the performer hears themselves over the backing.
@@ -46,7 +52,8 @@ class InputMonitorSource final : public juce::AudioSource
     }
 
     /** Capture-thread push of the selected channels, after capture gain. Never
-     *  blocks: a full ring drops its oldest audio and carries on. */
+     *  blocks and never moves the read pointer: a full ring refuses what will not
+     *  fit and the consumer bounds the backlog. */
     void push(const float* const* channels, int channelCount, int numSamples) noexcept;
 
     /** How many blocks were dropped or missing, for tests and diagnostics. */

@@ -239,12 +239,13 @@ export const RecordingErrorCodeSchema = z.enum([
   'silentInput',
   /** The device went away mid-session. */
   'deviceLost',
+  /** The arrangement would not start, so there was nothing to play along to and the
+   *  take was abandoned before a single sample was kept. */
+  'transportFailed',
   /** Not enough free space for the recording, checked before rolling. */
   'diskFull',
   /** The WAV could not be written or finalised. */
-  'writeFailed',
-  /** The recording hit MAX_RECORDING_SECONDS and was stopped. */
-  'lengthCap'
+  'writeFailed'
 ])
 export type RecordingErrorCode = z.infer<typeof RecordingErrorCodeSchema>
 
@@ -294,6 +295,10 @@ export const RecordingSessionStatePayloadSchema = z.object({
   recordingMode: RecordingModeSchema,
   /** Whether the performer's own input is in the monitor mix. */
   monitorEnabled: z.boolean(),
+  /** Whether monitoring can be offered at all. False when the input and output devices run
+   *  at different rates, which the monitor's one-for-one path cannot bridge: it would be
+   *  heard at the wrong pitch and glitching. Defaulted so an older backend still parses. */
+  monitorAvailable: z.boolean().default(true),
   /** Whether the finished take gets the noise-reduction pass. */
   cleanupEnabled: z.boolean(),
   windowMode: RecordingWindowModeSchema,
@@ -317,7 +322,10 @@ export const RecordingSessionStatePayloadSchema = z.object({
   /** Non-zero means the ring overflowed and the recording has holes; the user
    *  is told rather than handed a silently damaged file. */
   droppedSamples: z.number().int().nonnegative(),
-  errorCode: RecordingErrorCodeSchema.optional(),
+  /** An unrecognised code degrades to the generic message rather than taking the whole
+   *  snapshot with it: a state the renderer cannot fully name is still far more useful
+   *  than no state at all, and `error` carries the backend's own wording as a fallback. */
+  errorCode: RecordingErrorCodeSchema.optional().catch(undefined),
   error: z.string().min(1).optional()
 })
 export type RecordingSessionStatePayload = z.infer<typeof RecordingSessionStatePayloadSchema>
@@ -377,7 +385,10 @@ export const RecordingReadyPayloadSchema = z.object({
    *  than folded away invisibly. */
   latencyOffsetMs: z.number(),
   driftPpm: z.number(),
-  droppedSamples: z.number().int().nonnegative()
+  droppedSamples: z.number().int().nonnegative(),
+  /** Capture stopped itself at the maximum recording length. The take is kept in
+   *  full up to that point; this only explains why it ended on its own. */
+  hitLengthCap: z.boolean().default(false)
 })
 export type RecordingReadyPayload = z.infer<typeof RecordingReadyPayloadSchema>
 

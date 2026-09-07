@@ -109,7 +109,7 @@ const selectedChannelValue = computed(() =>
 // to a hardcoded default. The session re-applies exactly these values the moment
 // it opens, so showing them straight away is showing the truth early — not a
 // guess that snaps to something else a moment later.
-const locked = computed(() => store.isRolling)
+const locked = computed(() => store.isSetupLocked)
 const hasSelection = computed(() => store.current?.hasSelection === true)
 const windowMode = computed(
   () => store.current?.windowMode ?? store.rememberedWindowMode ?? 'start'
@@ -124,6 +124,9 @@ const recordingMode = computed(
 const monitorEnabled = computed(
   () => store.current?.monitorEnabled ?? store.rememberedMonitorEnabled ?? false
 )
+// Withheld by the backend when the input and output devices disagree on rate, because the
+// monitor path hands captured frames to the output one for one and cannot bridge them.
+const monitorAvailable = computed(() => store.current?.monitorAvailable !== false)
 const cleanupEnabled = computed(
   () => store.current?.cleanupEnabled ?? store.rememberedCleanupEnabled ?? false
 )
@@ -549,12 +552,14 @@ const calibrationLabel = computed(() => {
             Monitor
           </h2>
           <label
-            class="flex cursor-pointer items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            class="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-3 py-2.5"
+            :class="monitorAvailable ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
           >
             <input
               type="checkbox"
               class="h-4 w-4 shrink-0 cursor-pointer accent-sky-500"
-              :checked="monitorEnabled"
+              :checked="monitorEnabled && monitorAvailable"
+              :disabled="!monitorAvailable"
               @change="onMonitorChange"
             >
             <span class="min-w-0 flex-1 truncate leading-tight">
@@ -563,7 +568,13 @@ const calibrationLabel = computed(() => {
             </span>
           </label>
           <p
-            v-if="monitorEnabled && monitorDelayMs > 0"
+            v-if="!monitorAvailable"
+            class="text-[11px] leading-4 text-amber-400/80"
+          >
+            Unavailable: this input runs at a different sample rate to your output device.
+          </p>
+          <p
+            v-else-if="monitorEnabled && monitorDelayMs > 0"
             class="text-[11px] leading-4 text-zinc-500"
           >
             About {{ monitorDelayMs }} ms late in your ears — the take lands on the beat.

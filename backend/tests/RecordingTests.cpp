@@ -4,6 +4,7 @@
 #include "recording/CalibrationClickSource.h"
 #include "recording/CaptureDevice.h"
 #include "recording/InputCaptureTap.h"
+#include "recording/InputMonitorSource.h"
 #include "recording/LatencyCalibration.h"
 #include "recording/LatencyCalibrator.h"
 #include "recording/RecordingCleanup.h"
@@ -12,6 +13,7 @@
 #include "recording/RecordingWriter.h"
 
 #include <cmath>
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -21,6 +23,7 @@ namespace
 {
 using silverdaw::recording::finaliseRecording;
 using silverdaw::recording::InputCaptureTap;
+using silverdaw::recording::InputMonitorSource;
 using silverdaw::recording::RecordingWriter;
 
 constexpr double kSampleRate = 48000.0;
@@ -599,16 +602,29 @@ void testBackingLevelIsSessionScoped()
 
 void testMonitorIsSessionScopedAndSilentInReview()
 {
+    using silverdaw::recording::monitorRatesAgree;
     using silverdaw::recording::sessionMonitorAudible;
 
-    require(sessionMonitorAudible(true, true, "recording"),
+    require(sessionMonitorAudible(true, true, "recording", true),
             "a performer who asked to hear themselves must hear themselves");
-    require(! sessionMonitorAudible(true, false, "recording"),
+    require(! sessionMonitorAudible(true, false, "recording", true),
             "monitoring is opt-in and must stay off until it is asked for");
-    require(! sessionMonitorAudible(true, true, "review"),
+    require(! sessionMonitorAudible(true, true, "review", true),
             "an open monitor over a take playing back is a feedback loop");
-    require(! sessionMonitorAudible(false, true, "recording"),
+    require(! sessionMonitorAudible(false, true, "recording", true),
             "nothing should be listening to an input once the dialog has gone");
+    require(! sessionMonitorAudible(true, true, "recording", false),
+            "a monitor that cannot bridge the two clocks must not be heard at all");
+
+    require(monitorRatesAgree(48000.0, 48000.0), "matched rates are the ordinary case");
+    require(! monitorRatesAgree(44100.0, 48000.0),
+            "a 44.1k input against a 48k output would be heard sharp and glitching");
+    require(monitorRatesAgree(0.0, 48000.0),
+            "an unread capture rate is not evidence of a mismatch");
+    require(monitorRatesAgree(48000.0, 0.0),
+            "an unread output rate is not evidence of a mismatch");
+    require(monitorRatesAgree(48000.0, 48000.4),
+            "rates are reported as doubles, so agreement must have a tolerance");
 }
 
 void testRecordingModeDecidesMusicality()
@@ -1242,6 +1258,91 @@ void testCaptureStarvationNeedsARealStall()
     require(! captureHasStarved(reference, reference - 1000, perSecond),
             "a clock that appears to run backwards must never report a loss");
 }
+
+/**
+ * The monitor ring is strictly single-producer, single-consumer.
+ *
+ * The dangerous shape is a producer that "makes room" by advancing the read pointer:
+ * `AbstractFifo::finishedRead` is a non-atomic read-modify-write of the read index, so a
+ * capture thread calling it races the playback thread doing the same and corrupts the ring
+ * for both. Overfilling the ring must therefore lose the newest audio, not the oldest.
+ */
+void testMonitorRingKeepsOneOwnerOfTheReadPointer()
+{
+    InputMonitorSource monitor;
+    monitor.prepareToPlay(512, 48000.0);
+    monitor.setEnabled(true);
+
+    // A quarter-second ring at 48k holds 25 of these blocks. Push 40, each carrying its own
+    // recognisable value, so what survives says which end the ring discarded.
+    constexpr int block = 480;
+    constexpr int capacityBlocks = 25;
+    std::vector<float> samples(static_cast<size_t>(block));
+    const float* channels[1] = {samples.data()};
+    for (int index = 0; index < 40; ++index)
+    {
+        std::fill(samples.begin(), samples.end(), static_cast<float>(index + 1));
+        monitor.push(channels, 1, block);
+    }
+
+    require(monitor.getGlitchCount() > 0, "a ring pushed past full must own up to it");
+
+    // Drain it and keep the newest audio that was in there. If the producer had made room by
+    // advancing the read pointer, the ring would end on block 40; refusing what will not fit
+    // leaves it ending on block 25.
+    float newest = 0.0F;
+    juce::AudioBuffer<float> out(2, block);
+    for (int pass = 0; pass < 40; ++pass)
+    {
+        juce::AudioSourceChannelInfo info(&out, 0, block);
+        monitor.getNextAudioBlock(info);
+        const float value = out.getSample(0, block - 1);
+        if (value > newest) newest = value;
+    }
+
+    require(std::abs(newest - static_cast<float>(capacityBlocks)) < 0.5F,
+            "a full ring must refuse new audio, never discard audio the consumer owns");
+}
+
+/**
+ * Staleness is bounded on the consumer, which is the thread allowed to move the read
+ * pointer. Without it a capture clock that runs even slightly fast fills the ring and the
+ * performer hears themselves a quarter of a second late for the rest of the take.
+ */
+void testMonitorRingBoundsItsOwnBacklog()
+{
+    InputMonitorSource monitor;
+    monitor.prepareToPlay(512, 48000.0);
+    monitor.setEnabled(true);
+
+    constexpr int block = 480;
+    std::vector<float> samples(static_cast<size_t>(block));
+    const float* channels[1] = {samples.data()};
+    // 20 blocks is 200 ms, past the 120 ms the consumer will carry.
+    for (int index = 0; index < 20; ++index)
+    {
+        std::fill(samples.begin(), samples.end(), static_cast<float>(index + 1));
+        monitor.push(channels, 1, block);
+    }
+
+    juce::AudioBuffer<float> out(2, block);
+    juce::AudioSourceChannelInfo info(&out, 0, block);
+    monitor.getNextAudioBlock(info);
+    // Not block 1: the consumer skipped forward to the freshest audio it had.
+    require(out.getSample(0, 0) > 1.5F,
+            "a backed-up ring must drop forward rather than play the performer late");
+    require(std::abs(out.getSample(1, 0) - out.getSample(0, 0)) < 1.0e-6F,
+            "a mono capture must be monitored down both sides");
+
+    // And having dropped forward, it must be close to empty rather than still hoarding.
+    juce::AudioBuffer<float> drain(2, block);
+    juce::AudioSourceChannelInfo drainInfo(&drain, 0, block);
+    monitor.getNextAudioBlock(drainInfo);
+    const int before = monitor.getGlitchCount();
+    monitor.getNextAudioBlock(drainInfo);
+    require(monitor.getGlitchCount() > before,
+            "the backlog must genuinely be gone, not merely reported as gone");
+}
 } // namespace
 void addRecordingTests(std::vector<TestCase>& tests)
 {
@@ -1313,6 +1414,10 @@ void addRecordingTests(std::vector<TestCase>& tests)
                      testAutomaticCaptureTypeExcludesTheDisruptiveDrivers});
     tests.push_back({"recording capture starvation needs a real stall",
                      testCaptureStarvationNeedsARealStall});
+    tests.push_back({"recording monitor ring keeps one owner of the read pointer",
+                     testMonitorRingKeepsOneOwnerOfTheReadPointer});
+    tests.push_back({"recording monitor ring bounds its own backlog",
+                     testMonitorRingBoundsItsOwnBacklog});
 }
 
 } // namespace silverdaw::tests

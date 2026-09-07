@@ -11,7 +11,7 @@ so that the constraints it turns on are settled once rather than rediscovered
 per pull request. Where it describes behaviour that does not exist yet it is
 prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Twenty-two amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty-three amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -28,11 +28,11 @@ produced.
 **The engine is deliberately opened output-only.**
 `AudioEngine::openDefaultOutputOnly()` says why:
 
-```cpp
+``cpp
 // Request the default output with NO input endpoint: an empty input device plus
 // useDefaultInputChannels=false stops JUCE opening the default capture client,
 // which is the tens-of-seconds stall on a problematic default mic.
-```
+``
 
 `selectAudioDevice(...)` repeats the clearing, and `rebuildDevicesSnapshot(...)`
 enumerates with `getDeviceNames(/*wantInputNames*/ false)`. No audio-input
@@ -700,9 +700,9 @@ block that genuinely advances the transport, and tags it with a monotonic play
 epoch. `InputCaptureTap` already stamped its first written block. The head trim
 is the gap between the two, plus the round trip:
 
-```text
+``text
 headTrimMs = max(0, (transportStart - firstCapturedBlock) + outputLatency + inputLatency)
-```
+``
 
 Three properties of that formula are load-bearing.
 
@@ -1216,3 +1216,88 @@ completely undisturbed — every callback delivered, no device restarts, the
 output still open. Losing the input costs the input and nothing else, which is
 exactly why capture is opened as its own device rather than folded into the
 playback device.
+
+## Amendment Twenty-Three: reviewer findings, and the rules they settle
+
+Before the first end-to-end test run the whole capture path was reviewed by two
+models working independently. Ten of their findings held up against the code;
+two did not. The defects are fixed, but the rules underneath them are worth
+recording, because each is the kind of thing that gets reintroduced.
+
+**A lock-free FIFO has exactly one owner for each index.** `InputMonitorSource`
+made room in a full ring by advancing the *read* pointer from the capture
+thread. `juce::AbstractFifo` is strictly single-producer, single-consumer, and
+`finishedRead` is a non-atomic read-modify-write of the read index, so this
+raced the playback thread doing the same and corrupted the ring for both — every
+time monitoring backed up, which is the one condition it was written to handle.
+The producer now writes only what fits, and staleness is bounded on the
+consumer, which owns that index. The 120 ms backlog cap clears any pairing of
+device periods Silverdaw will open, so it fires on real drift accumulation
+rather than on jitter.
+
+**Hitting a limit is not failing.** The thirty-minute cap set an `errorCode`,
+and the finalise path deletes the raw file for any non-empty error code — so a
+capture that ran long was destroyed by the very branch meant to end it tidily,
+while the dialog promised the opposite in as many words. The cap is now carried
+as `hitLengthCap` on the ready payload and reported as a notice above a take
+that is kept in full. `lengthCap` is gone from the error enum entirely, so the
+shape of the protocol no longer invites the mistake.
+
+**A borrowed input must be handed back as it was found.** Latency calibration
+narrows the capture tap to one channel at unity gain. Nothing restored either.
+Input gain silently reverted to unity after any measurement, and worse: with the
+channel count stuck at one, a subsequent stereo take at non-unity gain
+dereferenced a null second gain channel inside JUCE's writer, on the audio
+thread. `reapplyInputSettings` now runs on both the completion and the cancel
+path, and the session re-applies its own settings when it arms.
+
+**A take is identified by its recording id, not its session id.** A session
+outlives its takes, so a failure published by a worker for an abandoned take
+landed on the retry that replaced it — putting a live capture into `error`,
+where Stop is refused and the only way out is closing the dialog. Both
+`enterReview` and `reportFailure` now require the recording id to match as
+well.
+
+**Transitions name the states they are legal from.** `selectInput` excluded
+only the rolling states, and opening a device resets the session to `idle`.
+Changing the input during `finalising` — which still shows the setup pane —
+therefore re-armed the dialog underneath a take that was still being written,
+losing it without telling anyone. It is now permitted from `idle` and
+`error` only, and the renderer treats `finalising` as locked rather than
+merely as "not rolling".
+
+**Validate the session before the side effects, not after.** Three command
+handlers threw the finished take away *before* the controller checked whose
+session the command was for, so a late or duplicated envelope for a replaced
+session deleted the current session's take while the controller correctly
+ignored the rest of the command. Both handlers now reject a stale id up front.
+
+**An unknown error code must not cost the user the whole state.** The backend
+could publish `transportFailed`, which was missing from the renderer's enum;
+the strict parse then dropped the entire state snapshot, leaving the dialog
+frozen on the last state it understood — showing `recording` for a take that
+had never started. The code has been added, and the field now degrades to the
+generic message instead of rejecting its message. A state the renderer cannot
+fully name is far more useful than no state at all.
+
+**Software monitoring is refused when the two devices disagree on rate.** The
+monitor hands captured frames to the output callback one for one and has no
+resampler, so a 44.1 kHz input against a 48 kHz output would be heard sharp
+through a ring that starves continuously. Rather than resample on the audio
+thread for a path nothing is recorded through, the control is disabled and says
+why. Capture itself is unaffected: the take is written at its own rate and the
+library resamples it like any other file.
+
+**Two findings did not survive checking**, and are recorded so they are not
+re-raised. Indexing an empty `juce::StringArray` is bounds-checked and returns
+an empty string, which the existing guard already catches. The
+`ClockRateEstimator` race is real only across its 4096-point compaction; the
+ordinary path is correctly published with release/acquire.
+
+**One risk is accepted rather than fixed.** Entering review takes two envelopes,
+`RECORD_RECORDING_READY` and a state change, and there is no snapshot command
+to recover from losing one. The bridge is loopback TCP and does not drop or
+reorder, so the only realistic way to lose one was renderer-side schema
+rejection — which the tolerant parse above removes. A resync command is worth
+having if recording ever gains a second surface, but inventing one for a
+hazard the transport does not exhibit is not.

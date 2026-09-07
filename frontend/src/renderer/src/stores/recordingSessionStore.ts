@@ -170,6 +170,14 @@ export const useRecordingSessionStore = defineStore('recordingSession', {
       return this.current?.status === 'countIn' || this.current?.status === 'recording'
     },
 
+    /** True whenever a take is in hand and the setup must not be touched: rolling, or
+     *  being written out. Finalising looks idle from the dialog's point of view — the
+     *  review pane has not appeared yet — but changing the input there would re-arm the
+     *  session underneath the take that is still being finished. */
+    isSetupLocked(): boolean {
+      return this.isRolling || this.current?.status === 'finalising'
+    },
+
     /** A finished recording is waiting to be kept or discarded. */
     isReviewing(): boolean {
       return this.current?.status === 'review' && this.ready !== null

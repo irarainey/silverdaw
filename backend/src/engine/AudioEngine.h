@@ -487,6 +487,9 @@ class AudioEngine : private AudioEngineGraphState,
         return master.outputRateEstimator().estimate();
     }
 
+    /** The output device's nominal rate, or 0 before a device is open. Message thread. */
+    double getOutputSampleRate() const noexcept { return devicesSnapshot.currentSampleRate; }
+
     /** Wall-clock tick stamp of the first block the current play actually advanced
      *  the transport on, or 0 if it has not started rolling. See
      *  `MasterClockSource::getTransportStartTicks`. */

@@ -7,6 +7,7 @@
 #include <juce_events/juce_events.h>
 
 #include <functional>
+#include <cmath>
 #include <memory>
 #include <optional>
 
@@ -180,11 +181,33 @@ constexpr double sessionBackingGain(bool hasSession, double gain)
  * is off with no session no matter what the last session asked for, and off
  * again in review — playing a take back through a still-open monitor is the most
  * likely way to find that loop by accident.
+ *
+ * `ratesAgree` is the other refusal. The monitor ring hands captured frames
+ * straight to the output callback one for one, so an input running at a
+ * different rate from the output would be heard at the wrong pitch through a
+ * ring that starves or floods continuously. Playing that back at the performer
+ * is worse than not monitoring at all, and resampling on the audio thread to
+ * rescue it is not worth the cost for a path nothing is recorded through.
  */
-inline bool sessionMonitorAudible(bool hasSession, bool enabled, const juce::String& status)
+inline bool sessionMonitorAudible(bool hasSession, bool enabled, const juce::String& status,
+                                  bool ratesAgree)
 {
-    if (! hasSession || ! enabled) return false;
+    if (! hasSession || ! enabled || ! ratesAgree) return false;
     return status != "review";
+}
+
+/**
+ * Whether the capture and output devices run at the same rate, given either
+ * figure may be unknown.
+ *
+ * Unknown means "no reason to refuse": monitoring is withheld only on a
+ * mismatch that has actually been observed, never on a missing reading. The
+ * tolerance is there because drivers report the nominal rate as a double.
+ */
+inline bool monitorRatesAgree(double captureRate, double outputRate)
+{
+    if (captureRate <= 0.0 || outputRate <= 0.0) return true;
+    return std::abs(captureRate - outputRate) < 1.0;
 }
 
 /**
@@ -264,6 +287,11 @@ struct RecordingStateSnapshot
     juce::String recordingMode{"music"};
     /** Whether the performer hears their own input through the monitor mix. */
     bool monitorEnabled = false;
+    /** Whether monitoring can be offered at all. False when the chosen input runs at a
+     *  different rate from the output device, which the monitor's one-for-one ring cannot
+     *  bridge. The renderer disables the control and says why rather than letting the user
+     *  turn on something that would be heard at the wrong pitch. */
+    bool monitorAvailable = true;
     /** Whether the finished take gets the noise-reduction pass. */
     bool cleanupEnabled = false;
     /** Seeded to `start`: a take laid over the arrangement from the top is the
@@ -325,6 +353,10 @@ struct PendingFinalise
     /** Whether to run the noise-reduction pass before the take is committed. */
     bool cleanup = false;
     juce::int64 droppedSamples = 0;
+    /** The take ran into `kMaxRecordingSeconds` and capture was stopped for it. Deliberately
+     *  NOT an `errorCode`: everything captured up to the cap is a good take and is kept, so
+     *  this rides along to the review as a notice rather than failing the finalise. */
+    bool hitLengthCap = false;
     juce::String errorCode;
     juce::String error;
     /** Held so the caller can flush and close the file off the message thread. */
@@ -402,10 +434,14 @@ class RecordingSessionController final : private juce::Timer
     /** Record Again: throws the finished recording away and re-arms. */
     bool discard(const juce::String& sessionId);
 
-    /** Called by the commands layer once the finished file exists (or failed). */
+    /** Called by the commands layer once the finished file exists (or failed). The recording
+     *  id is required as well as the session id: both are answers about one particular take,
+     *  and a session outlives its takes. Without it a failure from an abandoned take would
+     *  land on the retry that replaced it, putting a live capture into `error` — where Stop
+     *  is refused and the only way out is to close the dialog. */
     void enterReview(const juce::String& sessionId, const juce::String& recordingId);
-    void reportFailure(const juce::String& sessionId, const juce::String& errorCode,
-                       const juce::String& message);
+    void reportFailure(const juce::String& sessionId, const juce::String& recordingId,
+                       const juce::String& errorCode, const juce::String& message);
 
     bool hasSession() const noexcept { return session.has_value(); }
     /** The open capture plumbing, so a latency calibration can borrow the input the dialog
@@ -413,6 +449,17 @@ class RecordingSessionController final : private juce::Timer
      *  any one take, so a borrower must still respect the session's status. */
     CaptureDevice* getCaptureDevice() noexcept { return device.isOpen() ? &device : nullptr; }
     InputCaptureTap* getCaptureTap() noexcept { return &tap; }
+    /** Puts the tap back to the session's own gain and channel selection. A borrower —
+     *  currently only the latency calibration — narrows both for its own run, and the meter,
+     *  the monitor and the next take must not inherit that. */
+    void reapplyInputSettings();
+    /** The engine the session was opened against, or null before the first open. Outlives the
+     *  session deliberately: a finished take can still be auditioning through the engine's
+     *  preview voice after the session has closed, and its file cannot be deleted while that
+     *  reader is open. */
+    AudioEngine* getEngine() noexcept { return engine; }
+    /** Whether software monitoring can be offered for the open input. */
+    bool isMonitorAvailable() const;
     juce::String getSessionId() const;
     juce::String getStatus() const;
     juce::String getPendingRecordingId() const;

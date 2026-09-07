@@ -13,11 +13,11 @@ const MESSAGES: Record<RecordingErrorCode, string> = {
   silentInput:
     'This input is delivering silence. Windows may be blocking microphone access: check Settings ▸ Privacy & security ▸ Microphone, then try again.',
   deviceLost: 'The input was disconnected. Reconnect it, or choose a different input.',
+  transportFailed:
+    'Playback could not start, so the take was not begun. Try again, or check your output device in Settings.',
   diskFull: 'There is not enough free disk space to record. Free some space, then try again.',
   writeFailed:
-    'The recording could not be written to disk. Check that the project folder is writable, then try again.',
-  lengthCap:
-    'Recording stopped at the 30 minute limit. Everything captured up to that point has been kept.'
+    'The recording could not be written to disk. Check that the project folder is writable, then try again.'
 }
 
 /** A sentence for a recording failure. A known code always wins: its wording is
@@ -39,3 +39,8 @@ export function droppedSamplesMessage(droppedSamples: number, sampleRate: number
   const ms = sampleRate > 0 ? Math.round((droppedSamples / sampleRate) * 1000) : 0
   return `Your computer could not keep up and about ${Math.max(1, ms)} ms of audio was lost. Close other apps before recording again.`
 }
+
+/** Notice shown when capture stopped itself at the maximum length. Not a failure:
+ *  the take is kept in full up to the cap, and this only says why it ended. */
+export const LENGTH_CAP_NOTICE =
+  'Recording stopped at the 30 minute limit. Everything captured up to that point has been kept.'

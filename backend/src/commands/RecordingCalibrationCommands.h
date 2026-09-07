@@ -19,4 +19,10 @@ void handleRecordCalibrateStart(const juce::var& payload, AudioEngine& engine, B
 /** Abandons a measurement in progress. Harmless when none is running. */
 void handleRecordCalibrateCancel(const juce::var& payload, BridgeServer& bridge);
 
+/** Abandons a measurement without answering on the bridge, for when the surface that would
+ *  have received the answer is going away — closing the record dialog mid-run. Leaving it to
+ *  finish would keep clicking through a dialog that has gone and read a capture back off a
+ *  device that is being closed. */
+void abandonCalibration();
+
 } // namespace silverdaw

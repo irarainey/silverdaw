@@ -186,7 +186,11 @@ bool RecordingSessionController::selectInput(const juce::String& sessionId,
                                              const juce::String& deviceName)
 {
     if (! session.has_value() || session->sessionId != sessionId) return false;
-    if (session->status == "countIn" || session->status == "recording") return false;
+    // Named rather than excluded, because opening a device resets the session to `idle`.
+    // Allowing that from `finalising` or `review` would re-arm the dialog underneath a take
+    // that is still being written or still waiting to be kept, and the take would be lost
+    // without the user ever being told it had been.
+    if (session->status != "idle" && session->status != "error") return false;
 
     openDevice(typeName, deviceName);
     if (onStateChanged) onStateChanged();
@@ -206,6 +210,13 @@ bool RecordingSessionController::selectChannels(const juce::String& sessionId, i
     tap.setChannelSelection(session->firstChannel, session->channelCount);
     if (onStateChanged) onStateChanged();
     return true;
+}
+
+void RecordingSessionController::reapplyInputSettings()
+{
+    if (! session.has_value()) return;
+    tap.setChannelSelection(session->firstChannel, session->channelCount);
+    tap.setGain(juce::Decibels::decibelsToGain(static_cast<float>(session->inputGainDb)));
 }
 
 bool RecordingSessionController::setCountInBars(const juce::String& sessionId, int bars)
@@ -397,6 +408,11 @@ bool RecordingSessionController::start(const juce::String& sessionId,
 
     tap.resetCaptureStats();
     tap.setMaxSamples(static_cast<juce::int64>(kMaxRecordingSeconds * sampleRate));
+    // Re-applied here rather than assumed: a calibration run borrows the tap and leaves it
+    // narrowed to one channel at unity gain, and the writer below is built from
+    // `session->channelCount`. A stale selection would mean the take is written at the wrong
+    // gain, and a mono selection feeding a stereo writer hands it a null second channel.
+    reapplyInputSettings();
     captureOpen = false;
 
     if (countInMs > 0.0)
@@ -720,8 +736,10 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     }
     if (failure.isEmpty() && tap.hasHitLengthCap())
     {
-        pending.errorCode = "lengthCap";
-        pending.error = "The recording reached the maximum length and was stopped";
+        // Not a failure: capture stopped itself at the cap, and everything up to that
+        // point is a take the performer wants. It travels as a notice so the review can
+        // say why the recording ended on its own.
+        pending.hitLengthCap = true;
     }
     else if (failure.isNotEmpty())
     {
@@ -817,7 +835,16 @@ void RecordingSessionController::applySessionMonitor()
     monitor.setEnabled(sessionMonitorAudible(session.has_value(),
                                              session.has_value() && session->monitorEnabled,
                                              session.has_value() ? session->status
-                                                                 : juce::String()));
+                                                                 : juce::String(),
+                                             isMonitorAvailable()));
+}
+
+/** Whether the monitor can be offered at all: the ring hands captured frames to the output
+ *  callback one for one, so it can only be right when both devices run at the same rate. */
+bool RecordingSessionController::isMonitorAvailable() const
+{
+    if (engine == nullptr || ! device.isOpen()) return false;
+    return monitorRatesAgree(device.getSampleRate(), engine->getOutputSampleRate());
 }
 
 void RecordingSessionController::enterReview(const juce::String& sessionId,
@@ -832,10 +859,15 @@ void RecordingSessionController::enterReview(const juce::String& sessionId,
 }
 
 void RecordingSessionController::reportFailure(const juce::String& sessionId,
+                                               const juce::String& recordingId,
                                                const juce::String& errorCode,
                                                const juce::String& message)
 {
     if (! session.has_value() || session->sessionId != sessionId) return;
+    // The take this failure belongs to must still be the take in hand. A capture failure is
+    // published the moment it is detected and the worker's tidy-up lands later, by which time
+    // the user may already be part-way through a retry that has nothing wrong with it.
+    if (session->recordingId != recordingId) return;
     session->status = "error";
     session->errorCode = errorCode;
     session->error = message;
@@ -861,8 +893,12 @@ double RecordingSessionController::windowStopPositionMs() const
     if (! session.has_value() || ! session->windowEndMs.has_value()) return 0.0;
     if (engine == nullptr) return *session->windowEndMs;
 
-    const double roundTripMs = (session->input.has_value() ? session->input->inputLatencyMs : 0.0)
-                               + engine->getOutputLatencyMs() + engine->getPluginLatencyMs();
+    // The same round trip the head is trimmed by, so the stop and the trim agree: a
+    // calibration replaces the drivers' figures here exactly as it does there (ADR 0030,
+    // Amendment 17). Stopping on the driver sum while trimming a longer measured one would
+    // detach the writer before the end of the window had been captured, and finalise pads
+    // the shortfall with silence — the tail of the take would simply go missing.
+    const double roundTripMs = effectiveRoundTripMs() + engine->getPluginLatencyMs();
     return *session->windowEndMs + juce::jmax(0.0, roundTripMs);
 }
 
@@ -987,6 +1023,7 @@ RecordingStateSnapshot RecordingSessionController::getSnapshot() const
     snapshot.inputGainDb = session->inputGainDb;
     snapshot.recordingMode = session->recordingMode;
     snapshot.monitorEnabled = session->monitorEnabled;
+    snapshot.monitorAvailable = isMonitorAvailable();
     snapshot.cleanupEnabled = session->cleanupEnabled;
     snapshot.windowMode = session->windowMode;
     snapshot.anchorMs = session->anchorMs;

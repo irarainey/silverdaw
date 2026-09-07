@@ -9,6 +9,7 @@
 #include "PeaksCache.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
+#include "RecordingCalibrationCommands.h"
 #include "Waveform.h"
 #include "WaveformCommands.h"
 #include "recording/CaptureDevice.h"
@@ -81,6 +82,9 @@ struct FinishedRecording
     double latencyOffsetMs = 0.0;
     double driftPpm = 0.0;
     juce::int64 droppedSamples = 0;
+    /** Capture stopped itself at the maximum length. The take is kept — this only
+     *  explains to the performer why the recording ended without them stopping it. */
+    bool hitLengthCap = false;
 };
 
 /** The form the take is currently in, ready to be put aside for the other one. */
@@ -119,6 +123,15 @@ void discardFinished()
 {
     if (auto& pending = finished(); pending.has_value())
     {
+        // The review auditions the take through the engine's preview voice, which holds an
+        // open reader on it. On Windows a delete against an open handle leaves the file in
+        // delete-pending limbo rather than removing it, so let go of it first.
+        if (auto* engine = controller().getEngine())
+        {
+            engine->releaseReadersForFile(pending->file);
+            if (pending->alternate.has_value())
+                engine->releaseReadersForFile(pending->alternate->file);
+        }
         pending->file.deleteFile();
         // The form the user did not settle on is a working file and goes with it.
         if (pending->alternate.has_value()) pending->alternate->file.deleteFile();
@@ -204,6 +217,7 @@ juce::var buildStateEnvelope(const recording::RecordingStateSnapshot& snapshot)
     obj->setProperty("inputGainDb", snapshot.inputGainDb);
     obj->setProperty("recordingMode", snapshot.recordingMode);
     obj->setProperty("monitorEnabled", snapshot.monitorEnabled);
+    obj->setProperty("monitorAvailable", snapshot.monitorAvailable);
     obj->setProperty("cleanupEnabled", snapshot.cleanupEnabled);
     obj->setProperty("windowMode", snapshot.windowMode);
     obj->setProperty("hasSelection", snapshot.hasSelection);
@@ -252,6 +266,7 @@ void broadcastReady(BridgeServer& bridge, const FinishedRecording& ready)
     obj->setProperty("latencyOffsetMs", ready.latencyOffsetMs);
     obj->setProperty("driftPpm", ready.driftPpm);
     obj->setProperty("droppedSamples", static_cast<int>(ready.droppedSamples));
+    obj->setProperty("hitLengthCap", ready.hitLengthCap);
     bridge.broadcast("RECORD_RECORDING_READY", juce::var(obj));
 }
 
@@ -286,9 +301,10 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
             {
                 rawFile.deleteFile();
                 juce::MessageManager::callAsync(
-                    [&bridge, sessionId = pending.sessionId, code, message]
+                    [&bridge, sessionId = pending.sessionId,
+                     recordingId = pending.recordingId, code, message]
                     {
-                        controller().reportFailure(sessionId, code, message);
+                        controller().reportFailure(sessionId, recordingId, code, message);
                         broadcastState(bridge);
                     });
             };
@@ -377,6 +393,7 @@ void scheduleFinalise(recording::PendingFinalise pending, AudioEngine& engine, B
             ready.latencyOffsetMs = result.latencyOffsetMs;
             ready.driftPpm = result.driftPpm;
             ready.droppedSamples = pending.droppedSamples;
+            ready.hitLengthCap = pending.hitLengthCap;
 
             juce::MessageManager::callAsync(
                 [&bridge, ready]
@@ -461,6 +478,17 @@ void handleRecordSessionControl(const juce::var& payload, ProjectState& projectS
     if (sessionId.isEmpty() || action.isEmpty()) return;
 
     auto& active = controller();
+    // Named session or nothing. Every individual control is guarded by the same id inside the
+    // controller, but two of them — `start` and `discard` — throw the finished take away
+    // first, and that happens outside any guard. A late or duplicated envelope for a session
+    // that has since been replaced would therefore delete the *current* session's take while
+    // the controller was busy correctly ignoring the rest of the command.
+    if (active.getSessionId() != sessionId)
+    {
+        log::warn("recording", "RECORD_SESSION_CONTROL for a stale session=" + sessionId);
+        return;
+    }
+
     if (action == "selectInput")
     {
         const auto input = payload.getProperty("input", juce::var());
@@ -559,6 +587,18 @@ void handleRecordSessionClose(const juce::var& payload, BridgeServer& bridge)
     // that when it never adopted an id, and the borrowed engine state still has
     // to come back (ADR 0030, Amendment 5).
     const auto sessionId = readOptionalString(payload, "sessionId").value_or(juce::String{});
+    // Same stale-envelope guard as the control handler: the tear-down below is unconditional,
+    // so a close for a session that has already been replaced would take the current
+    // session's finished take with it.
+    if (sessionId.isNotEmpty() && controller().getSessionId() != sessionId)
+    {
+        log::warn("recording", "RECORD_SESSION_CLOSE for a stale session=" + sessionId);
+        broadcastState(bridge);
+        return;
+    }
+    // Before the device goes: a calibration still running would keep clicking into a closed
+    // dialog and read its capture back off an input that is being torn down.
+    abandonCalibration();
     discardFinished();
     controller().close(sessionId);
     const auto label = sessionId.isNotEmpty() ? sessionId : juce::String("<current>");

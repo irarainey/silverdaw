@@ -42,6 +42,7 @@ function makeState(
     inputGainDb: 0,
     recordingMode: 'music',
     monitorEnabled: false,
+    monitorAvailable: true,
     cleanupEnabled: false,
     windowMode: 'playhead',
     hasSelection: false,
@@ -75,7 +76,8 @@ function makeReady(): RecordingReadyPayload {
     peaksPerSecond: 100,
     latencyOffsetMs: 20,
     driftPpm: 4.5,
-    droppedSamples: 0
+    droppedSamples: 0,
+    hitLengthCap: false
   }
 }
 

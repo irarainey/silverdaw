@@ -5,7 +5,7 @@
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RecordAudioWaveform from '@/components/RecordAudioWaveform.vue'
-import { droppedSamplesMessage } from '@/lib/recording/recordingMessages'
+import { droppedSamplesMessage, LENGTH_CAP_NOTICE } from '@/lib/recording/recordingMessages'
 import { formatTime } from '@/lib/musicTime'
 import { send as sendBridge } from '@/lib/bridgeService'
 import type { RecordingSession } from '@/lib/recording/useRecordingSession'
@@ -113,12 +113,20 @@ const droppedWarning = computed(() => {
   return droppedSamplesMessage(payload.droppedSamples, payload.sampleRate)
 })
 
+// Capture stops itself at the length cap, so the performer never asked for the take
+// to end. Say why — the take itself is kept and reviewed like any other.
+const lengthCapNotice = computed(() =>
+  ready.value?.hitLengthCap === true ? LENGTH_CAP_NOTICE : null
+)
+
 function onPlay(): void {
   const payload = ready.value
   if (!payload) return
   if (isAuditioning.value && preview.isLoaded) {
     preview.play()
-    if (withArrangement.value) startArrangement()
+    // From wherever the take is resuming, not from its start: the user may have
+    // seeked into it, and a backing that restarts from the top is simply wrong.
+    if (withArrangement.value) startArrangement(positionMs.value)
     return
   }
   // Loading defers PREVIEW_PLAY until the file is open, and that command pauses
@@ -173,7 +181,7 @@ watch(
 // actually rolls, so toggling it while the file is still loading is honoured.
 watch(isPlayingThis, (playing) => {
   if (playing) {
-    if (withArrangement.value) startArrangement()
+    if (withArrangement.value) startArrangement(positionMs.value)
     return
   }
   stopArrangement()
@@ -294,6 +302,13 @@ onBeforeUnmount(() => {
     <p class="text-zinc-400">
       Adding this to the timeline places it where you recorded it — on the selected track when
       that track is empty, otherwise on a new track of its own.
+    </p>
+
+    <p
+      v-if="lengthCapNotice"
+      class="rounded border border-amber-700 bg-amber-900/30 px-3 py-2 text-amber-200"
+    >
+      {{ lengthCapNotice }}
     </p>
 
     <p

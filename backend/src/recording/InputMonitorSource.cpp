@@ -7,6 +7,11 @@ namespace
 // Long enough to absorb one device block from each side plus the difference
 // between them, short enough that the performer does not hear themselves late.
 constexpr double kRingSeconds = 0.25;
+// The backlog the consumer will tolerate before dropping down to the freshest block.
+// Comfortably above one capture period plus one output period on any driver Silverdaw
+// will open — DirectSound's 53 ms is the slowest — so ordinary jitter never trips it,
+// while drift can never accumulate into audible monitoring delay.
+constexpr double kMaxBacklogSeconds = 0.12;
 } // namespace
 
 void InputMonitorSource::prepareToPlay(int /*samplesPerBlockExpected*/, double outputSampleRate)
@@ -49,19 +54,15 @@ void InputMonitorSource::push(const float* const* channels, int channelCount,
         || numSamples <= 0)
         return;
 
-    // Make room rather than refuse the newest audio: a listener wants to hear
-    // now, so an over-full ring is stale by definition.
-    const int overflow = numSamples - fifo.getFreeSpace();
-    if (overflow > 0)
-    {
-        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-        fifo.prepareToRead(juce::jmin(overflow, fifo.getNumReady()), start1, size1, start2, size2);
-        fifo.finishedRead(size1 + size2);
-        glitches.fetch_add(1, std::memory_order_relaxed);
-    }
-
+    // Write only what fits. Making room here by advancing the read pointer would be the
+    // obvious way to prefer the newest audio, and it is exactly what a single-producer,
+    // single-consumer FIFO forbids: `AbstractFifo::finishedRead` is a non-atomic
+    // read-modify-write of the read index, so a producer calling it races the playback
+    // thread doing the same and corrupts the ring for both. Staleness is bounded by the
+    // consumer instead, which owns that index.
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     fifo.prepareToWrite(numSamples, start1, size1, start2, size2);
+    if (size1 + size2 < numSamples) glitches.fetch_add(1, std::memory_order_relaxed);
     for (int channel = 0; channel < ring.getNumChannels(); ++channel)
     {
         // A mono capture is monitored down both sides: the performer is listening,
@@ -81,6 +82,23 @@ void InputMonitorSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         return;
 
     const int wanted = info.numSamples;
+
+    // Bound the backlog here, on the only thread allowed to move the read pointer. Two
+    // free-running clocks drift apart, and a capture device that is even slightly fast
+    // would otherwise fill the ring and leave the performer hearing themselves a quarter
+    // of a second late — far worse than the momentary skip that dropping the stale audio
+    // costs. The cap clears any sane pairing of device periods, so it only ever fires on
+    // real accumulation rather than on normal jitter.
+    const int backlogCap =
+        juce::jmax(wanted * 2, static_cast<int>(sampleRate * kMaxBacklogSeconds));
+    if (fifo.getNumReady() > backlogCap)
+    {
+        int stale1 = 0, staleSize1 = 0, stale2 = 0, staleSize2 = 0;
+        fifo.prepareToRead(fifo.getNumReady() - wanted, stale1, staleSize1, stale2, staleSize2);
+        fifo.finishedRead(staleSize1 + staleSize2);
+        glitches.fetch_add(1, std::memory_order_relaxed);
+    }
+
     const int available = juce::jmin(wanted, fifo.getNumReady());
     if (available <= 0)
     {

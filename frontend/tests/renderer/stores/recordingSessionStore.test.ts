@@ -177,6 +177,34 @@ describe('recordingSessionStore latency calibration', () => {
   })
 })
 
+describe('recordingSessionStore.isSetupLocked', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function atStatus(status: string): boolean {
+    const store = useRecordingSessionStore()
+    store.current = { sessionId: 'session-1', status } as never
+    return store.isSetupLocked
+  }
+
+  it('leaves the setup open before a take and after one is kept or discarded', () => {
+    expect(atStatus('idle')).toBe(false)
+    expect(atStatus('error')).toBe(false)
+  })
+
+  it('locks the setup while audio is being captured', () => {
+    expect(atStatus('countIn')).toBe(true)
+    expect(atStatus('recording')).toBe(true)
+  })
+
+  it('locks the setup while a take is still being written out', () => {
+    // Finalising shows the setup pane rather than the review pane, so without this the
+    // input picker is live and changing it re-arms the session under the take.
+    expect(atStatus('finalising')).toBe(true)
+  })
+})
+
 function makeCalibration(
   roundTripMs: number,
   overrides: Partial<LatencyCalibrationDto> = {}

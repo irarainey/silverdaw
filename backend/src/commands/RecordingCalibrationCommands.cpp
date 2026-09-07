@@ -125,6 +125,9 @@ void handleRecordCalibrateStart(const juce::var&, AudioEngine& engine, BridgeSer
                     [&bridge, outcome, generation]
                     {
                         if (generation != calibrationGeneration()) return;
+                        // The run borrowed the tap and narrowed it; give the dialog's own
+                        // gain and channel selection back before anything meters or records.
+                        activeRecordingSession().reapplyInputSettings();
                         broadcastCalibrationState(bridge, outcome.ok ? "measured" : "failed",
                                                   outcome.detected, outcome.expected,
                                                   outcome.roundTripMs, outcome.error);
@@ -148,7 +151,14 @@ void handleRecordCalibrateCancel(const juce::var&, BridgeServer& bridge)
 {
     ++calibrationGeneration();
     calibrator().cancel();
+    activeRecordingSession().reapplyInputSettings();
     broadcastCalibrationState(bridge, "idle", 0, recording::kCalibrationClickCount, 0.0, {});
+}
+
+void abandonCalibration()
+{
+    ++calibrationGeneration();
+    calibrator().cancel();
 }
 
 } // namespace silverdaw
