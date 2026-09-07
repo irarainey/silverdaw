@@ -463,7 +463,13 @@ Silverdaw currently supports the core arrangement workflow:
   case the user is prompted and the edit is rejected). Linked clips show a small
   chain badge in their title strip and are locked against edge-resize on the timeline
   — to free a single instance for per-clip trim use **Library ▸ Unlink from
-  Library**. Removing a saved clip from the library is always allowed: every
+  Library**. The chain badge is drawn only for `kind === 'clip'`
+  (`libraryItemShowsLinkBadge`), matching the four gates that actually enforce
+  linkage: edit propagation (`findLinkedTimelineClips`), timeline trim
+  (`isClipLinkedToLibraryClip`), split, and the Clip Editor's
+  `timeline-linked` mode. A **sample** — a recording or a baked scratch — is a
+  reusable library entry, but each placement is independent and carries no badge.
+  Removing a saved clip from the library is always allowed: every
   dependent timeline clip is silently unlinked first so the audio plays on as an
   independent clip referencing the underlying source file.
 - Bake timeline clips or library clip items into new WAV samples. Timeline clips

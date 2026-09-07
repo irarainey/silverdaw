@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- Clips made from a recording or a sample no longer show the link icon used by saved clips.
 - The Pitch panel no longer advises reanalysing a recording to generate key presets.
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on.
 - The metronome ran ahead of the music whenever a track used an effect that adds latency, so anything played to the click landed early.

@@ -331,16 +331,19 @@ export function libraryItemIsSample(
 
 /**
  * Whether a timeline clip sourced from `item` should show the "linked to
- * library" badge in its header. True for saved clips and for samples (both
- * music and simple samples) — reusable library entries a placed clip stays
- * linked to, as opposed to a plain imported source file. Mirrored by the
- * clip renderer and the rename overlay so badge width stays in sync.
+ * library" badge in its header. True only for saved clips (`kind === 'clip'`),
+ * which are the placements that genuinely share state: their edits propagate
+ * to every sibling, they refuse timeline trim and split, and the Clip Editor
+ * opens them in shared mode. Samples — including recordings and baked
+ * scratches — are reusable library entries but each placement is independent,
+ * so they must not claim a link they do not have. Mirrored by the clip
+ * renderer and the rename overlay so badge width stays in sync.
  */
 export function libraryItemShowsLinkBadge(
   item: { kind?: LibraryItem['kind']; derivedFrom?: LibraryClipSource; audioType?: LibraryItem['audioType'] } | undefined | null
 ): boolean {
   if (!item) return false
-  return item.kind === 'clip' || libraryItemIsSample(item)
+  return item.kind === 'clip'
 }
 
 /**
