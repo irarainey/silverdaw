@@ -57,8 +57,8 @@ void broadcastFailure(BridgeServer& bridge, const juce::String& error)
 }
 } // namespace
 
-void handleRecordCalibrateStart(const juce::var&, AudioEngine& engine, BridgeServer& bridge,
-                                juce::ThreadPool& peakPool)
+void handleRecordCalibrateStart(const juce::var& /*payload*/, AudioEngine& engine,
+                                BridgeServer& bridge, juce::ThreadPool& peakPool)
 {
     auto& session = activeRecordingSession();
     if (! session.hasSession())
@@ -88,7 +88,7 @@ void handleRecordCalibrateStart(const juce::var&, AudioEngine& engine, BridgeSer
     active.onProgress = [&bridge]
     {
         broadcastCalibrationState(bridge, "measuring", calibrator().getEmittedCount(),
-                                  calibrator().getExpectedCount(), 0.0, {});
+                                  recording::kCalibrationClickCount, 0.0, {});
     };
     // Reading the capture back is file I/O and belongs off the message thread (ADR 0006), the
     // same split the recording finalise uses.
@@ -144,10 +144,10 @@ void handleRecordCalibrateStart(const juce::var&, AudioEngine& engine, BridgeSer
     }
 
     log::info("recording", "RECORD_CALIBRATE_START");
-    broadcastCalibrationState(bridge, "measuring", 0, active.getExpectedCount(), 0.0, {});
+    broadcastCalibrationState(bridge, "measuring", 0, recording::kCalibrationClickCount, 0.0, {});
 }
 
-void handleRecordCalibrateCancel(const juce::var&, BridgeServer& bridge)
+void handleRecordCalibrateCancel(const juce::var& /*payload*/, BridgeServer& bridge)
 {
     ++calibrationGeneration();
     calibrator().cancel();

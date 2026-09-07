@@ -27,7 +27,7 @@ inline constexpr int kMaxCalibrationClicks = 16;
 class CalibrationClickSource final : public juce::AudioSource
 {
   public:
-    void prepareToPlay(int, double newSampleRate) override
+    void prepareToPlay(int /*samplesPerBlockExpected*/, double newSampleRate) override
     {
         sampleRate = newSampleRate > 0.0 ? newSampleRate : 48000.0;
         buildBurst();

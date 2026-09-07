@@ -81,7 +81,6 @@ class LatencyCalibrator final : private juce::Timer
 
     bool isRunning() const noexcept { return running; }
     int getEmittedCount() const noexcept { return emittedCount; }
-    int getExpectedCount() const noexcept { return kCalibrationClickCount; }
 
   private:
     void timerCallback() override;
