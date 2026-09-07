@@ -91,9 +91,13 @@ CaptureOpenResult CaptureDevice::open(const juce::String& typeName, const juce::
         return CaptureOpenResult::openFailed;
     }
 
+    // Input latency is the term the head trim can least afford to get wrong (ADR 0030), and a
+    // processed endpoint reports none of its DSP delay — log it so a field log shows the claim.
     log::info("recording", "capture device open type=" + getTypeName() + " device=" + getDeviceName()
                                + " rate=" + juce::String(getSampleRate(), 1)
-                               + " channels=" + juce::String(getInputChannelCount()));
+                               + " buffer=" + juce::String(getBufferSize())
+                               + " channels=" + juce::String(getInputChannelCount())
+                               + " inLatencyMs=" + juce::String(getInputLatencyMs(), 1));
     return CaptureOpenResult::ok;
 }
 

@@ -591,6 +591,10 @@ void RecordingSessionController::finishCapture(const juce::String& errorCode,
     // up to a full input period. Only the combined trim is floored at zero.
     const double skewMs = measuredTransportSkewMs();
     pending.headTrimMs = juce::jmax(0.0, latencyMs + skewMs);
+    // Broken out because the finalise log reports only the total, which reads as latency alone.
+    log::info("recording", "head trim " + juce::String(pending.headTrimMs, 1)
+                               + "ms = latency " + juce::String(latencyMs, 1) + "ms + skew "
+                               + juce::String(skewMs, 1) + "ms");
 
     // Clock drift. What matters is not how far either device is from its nominal rate but
     // the ratio BETWEEN them: the take is captured on the input clock and has to sit on a

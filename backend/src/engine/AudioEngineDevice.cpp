@@ -108,6 +108,14 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                                         ? juce::String{}
                                         : (" [" + t.deviceNames.joinIntoString(", ") + "]")));
     }
+    // Recording head trim is built on the driver's latency figure (ADR 0030), and on WASAPI shared
+    // mode it can come back equal to the buffer — engine period only, nothing for the converter.
+    // Logged in samples beside the buffer so a field log shows that outright rather than implying it.
+    auto* openDevice = deviceManager.getCurrentAudioDevice();
+    const int driverLatencySamples =
+        openDevice != nullptr ? juce::jmax(0, openDevice->getOutputLatencyInSamples()) : 0;
+    const double heuristicMs = getHeuristicExtraLatencyMs();
+
     silverdaw::log::info("audio",
                          "open endpoint: type='" + devicesSnapshot.currentTypeName + "' name='"
                              + devicesSnapshot.currentDeviceName
@@ -115,7 +123,11 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                              + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
                              + " outCh=" + juce::String(devicesSnapshot.currentOutputChannels)
                              + " bits=" + juce::String(devicesSnapshot.currentBitDepth)
+                             + " outLatencySamples=" + juce::String(driverLatencySamples)
                              + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
+                             + (heuristicMs > 0.0
+                                    ? " (incl " + juce::String(heuristicMs, 0) + "ms heuristic)"
+                                    : juce::String{})
                              + (fellBack ? " (fell back to default)" : ""));
 
     // Publish readiness last so any thread that observes it sees the finalised device state.
