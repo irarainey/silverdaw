@@ -564,11 +564,9 @@ const calibrationLabel = computed(() => {
           </label>
           <p
             v-if="monitorEnabled && monitorDelayMs > 0"
-            class="text-[11px] text-zinc-500"
+            class="text-[11px] leading-4 text-zinc-500"
           >
-            You will hear yourself about {{ monitorDelayMs }} ms late. The delay is only in what
-            you hear — the take still lands on the beat. Leave this off if you can already hear
-            yourself in the room.
+            About {{ monitorDelayMs }} ms late in your ears — the take lands on the beat.
           </p>
         </section>
 

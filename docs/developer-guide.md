@@ -3857,6 +3857,28 @@ and the meter always show the same signal and nothing is allocated on the audio
 thread. It is the one setting that can be changed while rolling — a performer
 who is clipping should not have to lose the take to fix it.
 
+**Never shorten the capture buffer** (ADR 0030, Amendment 20). `CaptureDevice`
+opens at `getDefaultBufferSize()` and nothing else. A shared-mode WASAPI input
+advertises sizes from 3 ms up via `getAvailableBufferSizes`, and a shorter
+request appears to succeed — no error, and JUCE reports a proportionally lower
+input latency — but the endpoint keeps running at its own fixed period and hands
+over only the frames asked for, **discarding the rest**. Measured with
+`SilverdawCaptureProbe --capture-buffer`, a 256-frame request against a
+480-frame period captured 53% of the audio; 320 captured 67%; 384 captured 80%.
+Nothing reports a fault. Buffer size is not a latency lever on this path, and
+treating it as one silently corrupts takes.
+
+The driver *type* is chosen deliberately instead. With `typeName` empty,
+`createQuickestDevice` creates — not opens, so the capture-open stall cannot
+return — each candidate and takes the shortest default period. **Exclusive
+Mode** and **DirectSound** are excluded from automatic selection: the first
+seizes the endpoint, so nothing else can use the microphone and the open fails
+outright if anything already holds it, and it measured 20 ms against shared
+mode's 10 ms; the second defaults to 53 ms. Ranking by measured period rather
+than by name matters, because "Windows Audio (Low Latency Mode)" is not one — it
+runs at the same 10 ms period as plain shared mode and offers no other size at
+all. An explicitly chosen type is still honoured exactly as given.
+
 **The record window.** A recording belongs to a window in time, not to a track:
 from the top of the project, from the playhead, or over the existing timeline
 range selection. The first two run until **Stop**; only the range window stops
@@ -3982,6 +4004,25 @@ milliseconds — useful for pitching, not for judging timing. It is downstream o
 the tap, so it changes nothing about what is recorded. `sessionMonitorAudible`
 forces it off in review and with no session at all, because a monitor left open
 over a take playing back is the easiest way to find a feedback loop by accident.
+
+**The monitor delay cannot be compensated, only stated** (ADR 0030, Amendment
+21). The recurring suggestion is to shift the backing earlier by the round trip
+we already know, so the monitored voice lands on the beat. It does not work: the
+performer plays to whatever they hear, so moving the backing moves when they
+play by the same amount and the flam is unchanged. Aligning the take is
+open-loop — the timeline is a fixed reference — whereas monitoring is a closed
+loop through the performer, and closing it would mean emitting the sound before
+the microphone captured it. No comparable DAW does this either; Tracktion,
+Ardour, Audacity and the commercial tools all compensate the *recording* and
+then offer only direct monitoring, a shorter monitor path, or monitoring off.
+`RecordAudioSetup` therefore prints the round trip next to the toggle and says
+the delay is in what the user hears and not in the take — the second half being
+the point, because a performer who assumes the *recording* is late will start
+playing early to correct a fault that does not exist, and that does damage the
+take. It is deliberately one short line, shown only while monitoring is on, so
+that ticking the box does not resize the form. The corollary worth knowing but
+too long for the dialog: **off is the low-latency option** for anyone who can
+hear themselves acoustically, which is why it is the default.
 
 **Music or simple.** ADR 0030 also said every recording is musical, which is
 right for the main case and wrong at the edges: a spoken intro or a sound effect

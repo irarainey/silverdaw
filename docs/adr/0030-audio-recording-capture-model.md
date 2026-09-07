@@ -1157,11 +1157,18 @@ that matters: a performer who hears a flam will otherwise assume the recording
 is being captured late and start compensating for a fault that does not exist —
 which would genuinely damage the take, whereas the flam alone does not.
 
-The advice attached to it is to leave monitoring off when the performer can
-already hear themselves acoustically. This is not a fudge: for a singer or any
-acoustic instrument in headphones, the unmonitored path has no delay at all, so
-**off is the low-latency option** and it is already the default. Monitoring
-earns its place for a quiet or DI'd source that cannot be heard otherwise.
+It is one short line, shown only while monitoring is on. Two earlier drafts were
+rejected on layout grounds: three sentences of guidance resized the form when the
+box was ticked, and folding the figure into the checkbox label would have
+displaced the feedback warning, which is needed most exactly when monitoring is
+on. Advice about *when* to monitor was cut with them — it belongs in the
+documentation, not in a line that moves the dialog every time it is toggled.
+
+That advice, for the record, is to leave monitoring off when the performer can
+already hear themselves acoustically. For a singer or any acoustic instrument in
+headphones the unmonitored path has no delay at all, so **off is the low-latency
+option** and it is already the default. Monitoring earns its place for a quiet
+or DI'd source that cannot be heard otherwise.
 
 No attempt is made to drive interface direct monitoring. It is the real answer
 to the flam, but it lives in the interface's own control panel, and a DAW that
