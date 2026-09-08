@@ -180,6 +180,17 @@ function onStop(): void {
   stopArrangement()
 }
 
+/**
+ * The one entry point for the audition, shared by the button and the Space shortcut so
+ * the two can never drift apart.
+ */
+function togglePlayback(): void {
+  if (isPlayingThis.value) onStop()
+  else onPlay()
+}
+
+defineExpose({ togglePlayback })
+
 /** Leave the timeline as the take found it: stopped, back where the take starts. */
 function stopArrangement(): void {
   if (!arrangementRolling) return
@@ -249,20 +260,12 @@ onBeforeUnmount(() => {
 
     <div class="flex items-center gap-3">
       <button
-        v-if="!isPlayingThis"
         type="button"
-        class="rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-        @click="onPlay"
+        class="rounded bg-sky-600 px-3 py-1.5 text-xs font-medium text-zinc-50 hover:bg-sky-500"
+        :title="isPlayingThis ? 'Stop (Space)' : 'Play (Space)'"
+        @click="togglePlayback"
       >
-        Play
-      </button>
-      <button
-        v-else
-        type="button"
-        class="rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
-        @click="onStop"
-      >
-        Stop
+        {{ isPlayingThis ? 'Stop' : 'Play' }}
       </button>
       <span class="font-mono text-xs tabular-nums text-zinc-400">{{ summary }}</span>
     </div>

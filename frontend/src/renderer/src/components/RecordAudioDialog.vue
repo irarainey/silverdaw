@@ -9,7 +9,7 @@ import RecordAudioReview from '@/components/RecordAudioReview.vue'
 import RecordAudioSetup from '@/components/RecordAudioSetup.vue'
 import RecordCalibrationDialog from '@/components/RecordCalibrationDialog.vue'
 import { recordingErrorMessage } from '@/lib/recording/recordingMessages'
-import { isRecordShortcutKey } from '@/lib/recording/recordShortcut'
+import { isRecordShortcutKey, isReviewPlayShortcutKey } from '@/lib/recording/recordShortcut'
 import {
   releaseRecordingTrack,
   resolveRecordingTrackId,
@@ -28,6 +28,8 @@ const open = computed(() => props.open)
 const session = useRecordingSession(open)
 
 const dialogEl = ref<HTMLDivElement | null>(null)
+/** The review pane, for the Space shortcut — it owns the audition the key toggles. */
+const reviewPane = ref<InstanceType<typeof RecordAudioReview> | null>(null)
 const name = ref('')
 const commitError = ref<string | null>(null)
 /** Timeline destination held for the in-flight commit, so a failure can release it. */
@@ -174,18 +176,27 @@ function onKeydown(event: KeyboardEvent): void {
   }
   // R and the space bar both record inside this dialog only — the same claim the Scratch
   // Editor makes, so there is no global record shortcut to collide with. The rules live
-  // in `isRecordShortcutKey` so they can be tested without a DOM.
+  // in `recordShortcut` so they can be tested without a DOM.
   const target = event.target as HTMLElement | null
-  const shouldRecord = isRecordShortcutKey({
+  const shortcutContext = {
     key: event.key,
     targetTagName: target?.tagName ?? null,
     targetInputType: target instanceof HTMLInputElement ? target.type : null,
     targetIsContentEditable: target?.isContentEditable === true,
     isReviewing: isReviewing.value
-  })
-  if (shouldRecord) {
+  }
+  if (isRecordShortcutKey(shortcutContext)) {
     event.preventDefault()
     onRecordOrStop()
+    return
+  }
+  // The same key on the other side of the dialog: once there is a take, space auditions
+  // it. Handled here rather than in the review pane so this dialog keeps a single
+  // keyboard entry point, and so the claim is made in the capture phase before the
+  // focused control can act on the press.
+  if (isReviewPlayShortcutKey(shortcutContext)) {
+    event.preventDefault()
+    reviewPane.value?.togglePlayback()
   }
 }
 
@@ -250,6 +261,7 @@ const errorMessage = computed(() => {
         <div class="dialog-body silverdaw-scroll">
           <RecordAudioReview
             v-if="isReviewing"
+            ref="reviewPane"
             v-model:name="name"
             :session="session"
           />

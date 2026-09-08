@@ -3889,6 +3889,18 @@ keyup it suppresses. `R` alone defers to a focused `<select>`, whose letter keys
 drive the device picker's type-ahead. The rules are a pure function
 (`lib/recording/recordShortcut.ts`) so they can be tested without a DOM.
 
+Once a take exists, space changes hands rather than going quiet: the review pane
+claims it to play the take back and stop it, so the key means "hear what this
+does" from one end of the dialog to the other. `isReviewPlayShortcutKey` mirrors
+the record rule — same claim over focus, for the same reason turned around, as
+the controls being weighed up in review (the arrangement tick, the backing
+level, the channel options) are precisely the ones just clicked — with the take
+name excepted, since a space typed there has to be a space. Both rules read one
+context object from a single keydown, and a test asserts they can never both
+match, so no press can record and audition at once. The dialog keeps the one
+keyboard entry point and reaches the audition through an exposed
+`togglePlayback` on the review pane, which owns that state.
+
 The handler is bound to **`window` in the capture phase, not to the dialog
 element**, and that is load-bearing rather than incidental. Starting a take
 swaps the Record button for Stop and disables the setup controls, so the element
@@ -5094,6 +5106,7 @@ dialog only — there is no global record shortcut. See the
 | Input | Effect |
 |---|---|
 | `R` / `Space` | Start recording, or stop one that is rolling. Space is taken from whatever has focus — a performer's hands are off the mouse — and `preventDefault` stops a focused button or checkbox acting on it as well. `R` defers to a focused `<select>`, whose letter keys drive its type-ahead. Neither runs while a text field has focus, nor once a recording is in review. |
+| `Space` (reviewing) | Play the take back, or stop it. Once there is a recording the same key auditions it instead of starting another, so space means "hear what this does" throughout the dialog. Taken from whatever has focus for the same reason as above — the tick boxes and backing slider being weighed up are exactly what the user has just clicked — except the take name, where a typed space has to stay a space. |
 | `Enter` | Activate the footer's primary button — **Record**, or **Add to Timeline** while reviewing. |
 | `Escape` | Close the dialog, discarding an uncommitted recording. Ignored while a recording is rolling or a commit is in flight, so nothing is thrown away by accident. |
 
