@@ -294,6 +294,48 @@ void AudioEngine::pause()
     transportFadeTimer.startTimer(kTransportFadePollMs);
 }
 
+void AudioEngine::logWarpShortfalls()
+{
+    juce::uint32 total = 0;
+    int warpedClips = 0;
+    double worstFactor = 0.0;
+    double combinedCost = 0.0;
+    for (auto& [id, track] : tracks)
+    {
+        if (track->warp == nullptr) continue;
+        ++warpedClips;
+        total += track->warp->getShortfallCount();
+        if (const double factor = track->warp->getRealtimeFactor(); factor > 0.0)
+        {
+            if (worstFactor <= 0.0 || factor < worstFactor) worstFactor = factor;
+            // Each clip's share of one read-ahead thread. Above 1.0 in total means the
+            // thread cannot serve them all in real time however much slack it is given.
+            combinedCost += 1.0 / factor;
+        }
+    }
+    if (preview.warp != nullptr) total += preview.warp->getShortfallCount();
+
+    if (warpedClips == 0) return;
+
+    // A rebuilt processor starts its count again, so the running total can fall. Re-baseline
+    // rather than reporting a negative delta.
+    const juce::uint32 added = total > reportedWarpShortfalls
+                             ? total - reportedWarpShortfalls
+                             : 0;
+    reportedWarpShortfalls = total;
+
+    // Silent on a healthy run. Half the shared read-ahead thread is the point at which
+    // adding a few more warped clips would exhaust it, so it is worth saying so before
+    // the audio actually breaks up.
+    if (added == 0 && combinedCost < 0.5) return;
+
+    silverdaw::log::warn("engine",
+                         "warp under pressure: clips=" + juce::String(warpedClips)
+                             + " unfilledBlocks=" + juce::String(static_cast<int>(added))
+                             + " slowestRealtimeFactor=" + juce::String(worstFactor, 2)
+                             + " combinedThreadLoad=" + juce::String(combinedCost, 2));
+}
+
 void AudioEngine::stop()
 {
     master.cancelScrub();
@@ -312,6 +354,7 @@ void AudioEngine::stop()
         if (track->transportSource != nullptr)
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
     reclaimRetiredPlaybackSnapshots();
+    logWarpShortfalls();
     silverdaw::log::info("engine", "stop");
 }
 
@@ -351,6 +394,7 @@ void AudioEngine::completePendingTransportFade()
                 if (track->transportSource != nullptr)
                     track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
             reclaimRetiredPlaybackSnapshots();
+            logWarpShortfalls();
             silverdaw::log::info("engine", "stop");
             break;
 

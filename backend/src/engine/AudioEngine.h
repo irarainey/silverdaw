@@ -569,6 +569,12 @@ class AudioEngine : private AudioEngineGraphState,
     void scheduleTrackPrefetchAfterEdit(Track& track);
 
     void reclaimRetiredPlaybackSnapshots();
+
+    // Reports how often the warped clips in this run could not be fed fast enough. The
+    // offline render pulls the same processors with no deadline, so a count that appears
+    // here and not there points at read-ahead starvation rather than at Rubber Band.
+    void logWarpShortfalls();
+
     void setPositionMsNow(double ms, bool resetEffects);
     void completePendingTransportFade();
 

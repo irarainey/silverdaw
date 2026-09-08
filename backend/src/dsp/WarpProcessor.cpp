@@ -7,6 +7,14 @@ namespace silverdaw
 
 using RubberBand::RubberBandStretcher;
 
+// Rubber Band publishes no mask constant, so derive one from the flags themselves.
+namespace
+{
+constexpr auto kTransientsMask = RubberBandStretcher::OptionTransientsCrisp
+                                 | RubberBandStretcher::OptionTransientsMixed
+                                 | RubberBandStretcher::OptionTransientsSmooth;
+} // namespace
+
 WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
                              RubberBandStretcher::Options modeOptions,
                              double initialPitchScale,
@@ -21,6 +29,14 @@ WarpProcessor::WarpProcessor(int numChannelsArg, double sampleRateArg,
         (modeOptions & RubberBandStretcher::OptionEngineFiner) == 0;
     highConsistencyPitch = !canChangePitchOption ||
         (options & RubberBandStretcher::OptionPitchHighConsistency) != 0;
+    // Whether this mode is subject to the pitch-dependent transients choice, and where that
+    // choice currently stands. Pitch can change after construction without a rebuild, so the
+    // choice has to be revisited live rather than fixed here.
+    crispTransientsMode = canChangePitchOption
+                       && (modeOptions & kTransientsMask)
+                              == RubberBandStretcher::OptionTransientsCrisp;
+    transientsMixedForPitch =
+        (options & kTransientsMask) == RubberBandStretcher::OptionTransientsMixed;
     pendingPitchScale.store(clampedPitchScale, std::memory_order_relaxed);
     appliedPitchScale = clampedPitchScale;
     stretcher = std::make_unique<RubberBandStretcher>(static_cast<size_t>(sampleRate),
@@ -45,9 +61,7 @@ RubberBandStretcher::Options WarpProcessor::realtimeOptionsFor(
     const bool pitchShifting = std::abs(initialPitchScale - 1.0) > 1.0e-4;
 
     // Rubber Band publishes no mask constant, so derive one from the flags themselves.
-    constexpr auto transientsMask = RubberBandStretcher::OptionTransientsCrisp
-                                    | RubberBandStretcher::OptionTransientsMixed
-                                    | RubberBandStretcher::OptionTransientsSmooth;
+    constexpr auto transientsMask = kTransientsMask;
 
     // R2's crisp transient handling resets component phases at every detected
     // onset, which Rubber Band warns "may cause interruptions in stable sounds".
@@ -121,6 +135,21 @@ void WarpProcessor::doReset()
     }
 }
 
+void WarpProcessor::updateTransientsForPitch(double pitchScale) noexcept
+{
+    // `realtimeOptionsFor` makes this same choice from the pitch supplied at construction,
+    // which is all the offline render ever needs. Live, warp is often enabled before any
+    // pitch is dialled in and the stretcher is deliberately not rebuilt for a pitch change,
+    // so without this the crisp default would survive into a shift it is unsuited to —
+    // smearing sustained tones and detuning them, but only during playback.
+    if (!crispTransientsMode) return;
+    const bool wantMixed = std::abs(pitchScale - 1.0) > 1.0e-4;
+    if (wantMixed == transientsMixedForPitch) return;
+    stretcher->setTransientsOption(wantMixed ? RubberBandStretcher::OptionTransientsMixed
+                                             : RubberBandStretcher::OptionTransientsCrisp);
+    transientsMixedForPitch = wantMixed;
+}
+
 void WarpProcessor::applyPendingParams() noexcept
 {
     if (stretcher == nullptr) return;
@@ -134,6 +163,7 @@ void WarpProcessor::applyPendingParams() noexcept
     const double ps = pendingPitchScale.load(std::memory_order_acquire);
     if (ps != appliedPitchScale)
     {
+        updateTransientsForPitch(ps);
         if (canChangePitchOption && !highConsistencyPitch)
         {
             stretcher->setPitchOption(RubberBandStretcher::OptionPitchHighConsistency);
@@ -164,6 +194,11 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
     }
 
     applyPendingParams();
+
+    // Wall-clock cost of the stretch, measured against the audio it yields. Cheap and
+    // allocation-free; `process` runs on the read-ahead or render thread, never the
+    // device callback.
+    const auto processStartTicks = juce::Time::getHighResolutionTicks();
 
     const bool wantsSeek = seekPending.exchange(false, std::memory_order_acq_rel);
     const bool wantsReset = resetPending.exchange(false, std::memory_order_acq_rel);
@@ -228,6 +263,7 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
     // Silence-fill rare priming shortfalls to keep the output contract stable.
     if (produced < numOutputSamples)
     {
+        shortfallCount.fetch_add(1, std::memory_order_relaxed);
         for (int c = 0; c < numChannels; ++c)
         {
             std::fill(output[c] + produced, output[c] + numOutputSamples, 0.0f);
@@ -237,6 +273,10 @@ int WarpProcessor::process(float* const* output, int numOutputSamples,
         nextSourceSample = static_cast<juce::int64>(std::llround(logicalSourceSample));
         doReset();
     }
+
+    processTicks.fetch_add(juce::Time::getHighResolutionTicks() - processStartTicks,
+                           std::memory_order_relaxed);
+    processedOutputSamples.fetch_add(numOutputSamples, std::memory_order_relaxed);
     return produced;
 }
 

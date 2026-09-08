@@ -103,3 +103,35 @@ because both methods resample after stretching when shifting up.
 - **Use `OptionPitchHighQuality` for the R3 engine too.** It measured well, but
   R3 cannot change a pitch option after construction, so a later live pitch drag
   could not escalate to the consistent method.
+
+## Amendments
+
+### Amendment 1 — The transients choice is revisited when the pitch changes live
+
+`realtimeOptionsFor` decides the transients option from the pitch scale passed
+to the constructor. The offline render always builds its stretcher from the
+saved clip, so it always saw the final pitch and behaved as this ADR describes.
+Playback did not: a warp is normally enabled before any pitch is dialled in, and
+`AudioEngine::setClipWarp` deliberately does not rebuild the stretcher for a
+pitch-only change, because a rebuild resets the stretcher's history and is
+audible mid-playback. A clip in the default `rhythmic` mode therefore kept
+`OptionTransientsCrisp` through a live pitch shift and reproduced exactly the
+behaviour the table above measures as the previous one — while the same clip
+exported correctly.
+
+`WarpProcessor::applyPendingParams` now calls `updateTransientsForPitch`
+alongside the existing pitch-method escalation, using Rubber Band's
+`setTransientsOption`, which R2 accepts at any time in real-time mode. The
+choice is symmetric: returning the pitch to unity restores `Crisp`, so
+playback matches what the render would build at every pitch rather than only at
+the one the clip was created with.
+
+Measured as the share of output energy remaining on the intended tone, a 440 Hz
+sine shifted +5 semitones in `rhythmic` mode: pitch set at construction
+0.99999, pitch applied live 0.036 before this amendment and 0.99999 after.
+Forcing `Mixed` while leaving the pitch method on `HighConsistency` scores
+0.99999, which isolates the transients option as the whole of the difference;
+`tonal` and `complex` were never affected, as neither uses `Crisp`.
+
+`Warp live pitch change matches the render path` in `backend/tests/WarpTests.cpp`
+holds the two paths together.
