@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- Mono clips played only through the left speaker, so panning one to the right faded it out. Mono audio now plays centred, matching what was already exported.
 - Clips made from a recording or a sample no longer show the link icon used by saved clips.
 - The Pitch panel no longer advises reanalysing a recording to generate key presets.
 - Removing a saved scratch left its audio file behind when **Clean up project files** was on.

@@ -49,9 +49,11 @@ function onBackingGainReset(): void {
 onMounted(() => props.session.setReviewBackingGain(store.rememberedReviewBackingGain))
 
 // Saving a mono take as stereo. It rewrites the take, not the commit, so the
-// audition below plays the file that will be kept — a mono capture heard on both
-// sides rather than one. Only offered for a capture that was mono in the first
-// place.
+// audition below plays the file that will be kept. Every playback path centres a
+// mono take already, so this is about what the file *is* for anything downstream
+// that treats one channel differently — a stem separation, an export, another
+// tool — not about where it sounds. Only offered for a capture that was mono in
+// the first place.
 const stereoDuplicated = computed(() => ready.value?.stereoDuplicated === true)
 const canDuplicateToStereo = computed(
   () => ready.value !== null && (ready.value.channelCount === 1 || stereoDuplicated.value)

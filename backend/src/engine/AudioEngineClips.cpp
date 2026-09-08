@@ -99,7 +99,8 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
     auto track = std::make_unique<Track>();
     track->trackId = trackId;
     track->sampleRate = reader->sampleRate;
-    track->numChannels = static_cast<int>(reader->numChannels);
+    track->numChannels =
+        juce::jmax(kMinClipPlaybackChannels, static_cast<int>(reader->numChannels));
     trackAudibility[trackId] = initialGain > 0.0F;
 
     track->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);

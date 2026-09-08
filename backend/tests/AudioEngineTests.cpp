@@ -49,7 +49,7 @@ namespace
 // BufferingAudioSource → AudioTransportSource). A faint sine keeps it from
 // being pure silence; content is otherwise irrelevant to these tests.
 juce::File writeTestWav(const juce::File& dir, const juce::String& name,
-                        double seconds, double sampleRate = 44100.0)
+                        double seconds, double sampleRate = 44100.0, int numChannels = 2)
 {
     auto file = dir.getChildFile(name);
     juce::WavAudioFormat format;
@@ -57,15 +57,15 @@ juce::File writeTestWav(const juce::File& dir, const juce::String& name,
     require(stream != nullptr, "wav output stream should open");
     const auto writerOptions = juce::AudioFormatWriterOptions{}
                                    .withSampleRate(sampleRate)
-                                   .withNumChannels(2)
+                                   .withNumChannels(numChannels)
                                    .withBitsPerSample(16);
     std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream, writerOptions));
     require(writer != nullptr, "wav writer should create");
     // The writer took ownership of the stream on success.
 
     const int numSamples = juce::jmax(1, static_cast<int>(seconds * sampleRate));
-    juce::AudioBuffer<float> buffer(2, numSamples);
-    for (int ch = 0; ch < 2; ++ch)
+    juce::AudioBuffer<float> buffer(numChannels, numSamples);
+    for (int ch = 0; ch < numChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(ch);
         for (int i = 0; i < numSamples; ++i)
@@ -77,6 +77,71 @@ juce::File writeTestWav(const juce::File& dir, const juce::String& name,
     require(writer->writeFromAudioSampleBuffer(buffer, 0, numSamples), "wav write should succeed");
     writer.reset(); // flush + close
     return file;
+}
+
+// Renders the head of `wav` through the read-ahead stage a track's chain is built around,
+// asking it for `chainChannels` the way `addClip` sizes it, and reports the level that
+// reached each side of a stereo block.
+void renderChainHead(const juce::File& wav, int chainChannels, float& outLeftPeak, float& outRightPeak)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(wav));
+    require(reader != nullptr, "the test wav should decode");
+
+    juce::AudioFormatReaderSource readerSource(reader.release(), true);
+    juce::TimeSliceThread readAhead("mono-chain-test");
+    readAhead.startThread();
+    {
+        juce::BufferingAudioSource buffering(&readerSource, readAhead, false,
+                                             kTransportReadAheadSamples, chainChannels);
+        constexpr int kBlock = 512;
+        buffering.prepareToPlay(kBlock, 44100.0);
+
+        juce::AudioBuffer<float> block(2, kBlock);
+        block.clear();
+        juce::AudioSourceChannelInfo info(&block, 0, kBlock);
+        // The read-ahead fills on the background thread, so wait rather than race it.
+        require(buffering.waitForNextAudioBlockReady(info, 2000),
+                "the read-ahead should fill within the timeout");
+        buffering.getNextAudioBlock(info);
+        buffering.releaseResources();
+
+        outLeftPeak = block.getMagnitude(0, 0, kBlock);
+        outRightPeak = block.getMagnitude(1, 0, kBlock);
+    }
+    readAhead.stopThread(2000);
+}
+
+// A mono file must be heard centred, not hard left. JUCE's reader duplicates a single
+// channel across a two-channel block but fills only the left of a one-channel one, so a
+// chain sized from the file itself leaves a mono clip silent on the right — panning it
+// right would fade it out, and a split recording's two mono halves would both arrive on
+// the left. `kMinClipPlaybackChannels` is what stops that, so this pins both halves of
+// the mechanism: what the chain does at that width, and what it would do at one.
+void testMonoClipPlaysOnBothChannels()
+{
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                         .getChildFile("silverdaw-mono-playback-" + juce::Uuid().toDashedString());
+    require(dir.createDirectory().wasOk(), "temp dir should create");
+    const auto mono = writeTestWav(dir, "mono.wav", 0.5, 44100.0, /*numChannels=*/1);
+
+    float leftPeak = 0.0F;
+    float rightPeak = 0.0F;
+    renderChainHead(mono, kMinClipPlaybackChannels, leftPeak, rightPeak);
+    require(leftPeak > 0.01F, "a mono clip should be audible on the left");
+    require(rightPeak > 0.01F, "a mono clip should be audible on the right");
+    require(std::abs(leftPeak - rightPeak) < 1.0e-6F,
+            "a mono clip should arrive at the same level on both sides");
+
+    float narrowLeft = 0.0F;
+    float narrowRight = 0.0F;
+    renderChainHead(mono, 1, narrowLeft, narrowRight);
+    require(narrowLeft > 0.01F, "the one-channel chain should still fill the left");
+    require(narrowRight <= 1.0e-6F,
+            "the one-channel chain leaves the right silent — the reason for the minimum");
+
+    dir.deleteRecursively();
 }
 
 void testAudioEngineSetPreviewWarpUnderRapidCalls()
@@ -1906,6 +1971,7 @@ void testTransportStartStampSkipsPrerollAndSilence()
 void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
+    tests.push_back({"A mono clip is heard on both channels", testMonoClipPlaysOnBothChannels});
     tests.push_back({"Tempo change warps a previously unwarped clip in the engine", testTempoChangeWarpsPreviouslyUnwarpedClipInEngine});
     tests.push_back({"Tempo change leaves a clip already at the new tempo unwarped", testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped});
     tests.push_back({"Removing the last track clears markers and the timeline selection", testRemovingTheLastTrackClearsMarkersAndSelection});

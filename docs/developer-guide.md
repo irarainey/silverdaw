@@ -581,6 +581,20 @@ buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly. MP3 is decoded by the bundled LAME rather than by JUCE's own MP3
 reader — see *Decoding compressed sources*.
 
+**A mono clip is played as stereo.** A track's source chain is built with at
+least `kMinClipPlaybackChannels` (2) channels, however many the file has, so a
+one-channel file is heard centred. This is not cosmetic: JUCE's reader copies a
+single channel into both sides when it is asked for a two-channel block, but
+fills only the left when asked for one, and `juce::BufferingAudioSource` clamps
+its copy to the channel count it was constructed with. A chain sized from the
+file itself therefore left the right side silent, so a mono clip played hard
+left and panning it right faded it out — most visibly on a recording split into
+its two mono channels, where both halves arrived on the left. The offline
+mixdown has always duplicated mono (`ClipSummingSource`), so this is also what
+keeps what is heard and what is exported the same. The preview voice was never
+affected: it leaves `AudioTransportSource::setSource` on its two-channel
+default.
+
 The main remaining roadmap areas are region selection on timeline clips, library
 search / tags / list view, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain
@@ -4390,7 +4404,10 @@ both channels. **Split Channels**, offered only when the take is stereo and not
 a mono duplicate, separates the two sides into two library items — the mixer
 case, where one stereo input carried two different sources — with **Each as
 Stereo** beside it, disabled until the split is ticked so the pane does not
-resize under the pointer. The split is done at commit rather than in review, so
+resize under the pointer. Each half is a true one-channel file, so it plays
+centred and pans as a mono source; **Each as Stereo** instead copies each half
+across both channels of its own file, for the same downstream reasons as **Save
+as Stereo**. The split is done at commit rather than in review, so
 the audition keeps playing the take as performed, and it is all or nothing: a
 failure deletes every file it created and leaves the take in review (ADR 0030,
 Amendment 24). It is deliberately not the clip-level `CLIP_SPLIT_CHANNELS`:
