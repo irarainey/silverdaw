@@ -1364,3 +1364,56 @@ the pointer; it is disabled until the split is on. The reasoning is Amendment
 like. It applies only under a split, and a mono take duplicated to stereo is
 never offered a split — both of its sides are the same recording, so separating
 them would quietly double the material.
+
+### Amendment 25 — The space bar is claimed inside the dialog too
+
+The original decision claimed `R` inside the dialog only. `R` alone turned out
+to be the wrong shortcut for the moment it exists to serve: the performer's
+hands are on an instrument or a microphone, not on the mouse, and the key that
+every transport in every tool answers to is the space bar.
+
+**Space is co-claimed with `R` for start and stop, anywhere in the dialog.**
+Both are handled by one capture-phase `keydown` on `window`, so the shortcut
+does not depend on which control happens to hold focus — the failure mode it
+exists to remove. `R` is still refused while a `<select>` has focus, because a
+dropdown's own type-ahead is the more specific meaning of the key there; the
+space bar has no such competitor. The take's Name field is the one place both
+stand down, since typing a name is text entry.
+
+**Once a take exists, the space bar means "play it" instead.** Review has no
+recording to stop and a single obvious action — audition the take — so the same
+key is repurposed rather than left inert. The two intents are two pure
+predicates, `isRecordShortcutKey` and `isReviewPlayShortcutKey`, each of which
+bails on the wrong side of `isReviewing`; a test asserts they can never both
+match one press, which is what stops the repurposing becoming ambiguity.
+
+The global shortcut layer already stands down while the dialog is open, so
+binding to `window` here still introduces no new global shortcut and still
+cannot collide with the Scratch Editor's own claim.
+
+### Amendment 26 — Both recording waveforms follow the Waveform display preference
+
+The waveforms drawn while recording and while reviewing were the only ones in
+the app that ignored **Waveform display**, the preference that already decides
+whether the timeline, the Clip Editor and the Scratch Editor draw one combined
+lane or stacked left and right ones. A user who had asked for stereo lanes had
+no way to see, at the moment it mattered most, that one side of a two-channel
+input was silent.
+
+**Both now honour it, under the same fall-back rule as everywhere else:**
+stacked lanes require per-channel data to exist, and a mono source always falls
+back to the single summary lane regardless of the preference. Nothing new is
+computed to support this. The review peaks cache already carried the separable
+left and right lanes beside the summary — a three-lane file — and the live input
+meter was already per-channel; the live waveform had simply been flattening the
+two to `max(L, R)` on the way into its ring buffer.
+
+The two views key the decision off different facts, deliberately. Review keys
+off the take's own channel data, which is the truth once a file exists. The live
+view keys off the *selected input's* channel count, because a mono capture
+meters both sides identically — reading the meter would draw two lanes of the
+same signal for a mono input.
+
+The per-channel lanes are kept alongside the summary rather than derived from
+it, because the summary is `max(L, R)` and therefore lossy, and because the
+preference can change while a take is still being reviewed.

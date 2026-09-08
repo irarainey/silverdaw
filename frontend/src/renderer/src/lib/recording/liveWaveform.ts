@@ -16,6 +16,12 @@ export const LIVE_COLUMN_MS = 33
 export interface LiveWaveformBuffer {
   /** Column magnitudes, 0..1, oldest-first once `count` exceeds `capacity`. */
   readonly values: Float32Array
+  /** The same columns kept per channel, index 0 left and 1 right, for the stereo
+   *  display mode. Held alongside the summary rather than derived from it because
+   *  the summary is lossy — once two channels are flattened to their louder side
+   *  the quieter one cannot be recovered, and the display mode can be changed
+   *  mid-take. A mono capture meters both sides identically, so its lanes agree. */
+  readonly channels: readonly [Float32Array, Float32Array]
   /** Where the next column is written. */
   head: number
   /** Total columns ever pushed, so callers know the elapsed span. */
@@ -25,18 +31,39 @@ export interface LiveWaveformBuffer {
 
 export function createLiveWaveform(capacity: number): LiveWaveformBuffer {
   const size = Math.max(1, Math.floor(capacity))
-  return { values: new Float32Array(size), head: 0, count: 0, capacity: size }
+  return {
+    values: new Float32Array(size),
+    channels: [new Float32Array(size), new Float32Array(size)],
+    head: 0,
+    count: 0,
+    capacity: size
+  }
 }
 
 export function resetLiveWaveform(buffer: LiveWaveformBuffer): void {
   buffer.values.fill(0)
+  buffer.channels[0].fill(0)
+  buffer.channels[1].fill(0)
   buffer.head = 0
   buffer.count = 0
 }
 
-export function pushLiveColumn(buffer: LiveWaveformBuffer, magnitude: number): void {
-  const clamped = Math.min(1, Math.max(0, magnitude))
-  buffer.values[buffer.head] = clamped
+/**
+ * Add one column from the input meter.
+ *
+ * `right` defaults to `left` so a mono source needs only one reading — which is also
+ * what the backend sends for a mono capture, since both sides meter the one channel.
+ */
+export function pushLiveColumn(
+  buffer: LiveWaveformBuffer,
+  left: number,
+  right: number = left
+): void {
+  const clampedLeft = Math.min(1, Math.max(0, left))
+  const clampedRight = Math.min(1, Math.max(0, right))
+  buffer.channels[0][buffer.head] = clampedLeft
+  buffer.channels[1][buffer.head] = clampedRight
+  buffer.values[buffer.head] = Math.max(clampedLeft, clampedRight)
   buffer.head = (buffer.head + 1) % buffer.capacity
   buffer.count += 1
 }
@@ -49,12 +76,20 @@ export function pushLiveColumn(buffer: LiveWaveformBuffer, magnitude: number): v
  * know about.
  */
 export function readLiveColumns(buffer: LiveWaveformBuffer, limit: number): number[] {
+  return readLaneColumns(buffer, buffer.values, limit)
+}
+
+function readLaneColumns(
+  buffer: LiveWaveformBuffer,
+  lane: Float32Array,
+  limit: number
+): number[] {
   const available = Math.min(buffer.count, buffer.capacity)
   const wanted = Math.min(available, Math.max(0, Math.floor(limit)))
   const out: number[] = []
   for (let index = wanted; index > 0; index -= 1) {
     const position = (buffer.head - index + buffer.capacity * 2) % buffer.capacity
-    out.push(buffer.values[position] ?? 0)
+    out.push(lane[position] ?? 0)
   }
   return out
 }
@@ -69,10 +104,34 @@ export function readLiveColumns(buffer: LiveWaveformBuffer, limit: number): numb
  * transients stops looking like the audio it represents.
  */
 export function readFittedColumns(buffer: LiveWaveformBuffer, targetColumns: number): number[] {
+  return readFittedLane(buffer, buffer.values, targetColumns)
+}
+
+/**
+ * The same fitted columns, one array per channel, for the stereo display mode.
+ *
+ * Both lanes are fitted identically, so a column in one is the same span of time as
+ * the column above it — the two are read together as one picture of the input.
+ */
+export function readFittedChannelColumns(
+  buffer: LiveWaveformBuffer,
+  targetColumns: number
+): [number[], number[]] {
+  return [
+    readFittedLane(buffer, buffer.channels[0], targetColumns),
+    readFittedLane(buffer, buffer.channels[1], targetColumns)
+  ]
+}
+
+function readFittedLane(
+  buffer: LiveWaveformBuffer,
+  lane: Float32Array,
+  targetColumns: number
+): number[] {
   const available = Math.min(buffer.count, buffer.capacity)
   const target = Math.max(1, Math.floor(targetColumns))
   if (available <= 0) return []
-  if (available <= target) return readLiveColumns(buffer, available)
+  if (available <= target) return readLaneColumns(buffer, lane, available)
 
   const oldest = (buffer.head - available + buffer.capacity * 2) % buffer.capacity
   const out: number[] = []
@@ -81,7 +140,7 @@ export function readFittedColumns(buffer: LiveWaveformBuffer, targetColumns: num
     const to = Math.max(from + 1, Math.floor(((column + 1) * available) / target))
     let peak = 0
     for (let index = from; index < to && index < available; index += 1) {
-      peak = Math.max(peak, buffer.values[(oldest + index) % buffer.capacity] ?? 0)
+      peak = Math.max(peak, lane[(oldest + index) % buffer.capacity] ?? 0)
     }
     out.push(peak)
   }

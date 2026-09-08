@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-09-07 · Owner: @irarainey_
+_Last reviewed: 2026-09-08 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -80,7 +80,10 @@ against the running arrangement and commits the take as an ordinary library item
 or clip — never onto a track as it records, so the clip-first, non-destructive
 model is untouched. A take is kept as **Music**, carrying the project tempo as a
 known BPM, or **Simple** with no grid at all (ADR 0030,
-`docs/development-plan.md` §1.9.0).
+`docs/development-plan.md` §1.9.0). It also reworked **pitch-shift quality**:
+Rubber Band's transient and pitch options are now derived from the shift itself
+rather than from the warp mode alone, which changes how an already-released
+project that uses pitch shift sounds (ADR 0031).
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

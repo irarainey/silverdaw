@@ -252,7 +252,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   groove texture, with Off, Medium, and High levels in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels (the default), in Preferences —
-  applied across the timeline and the Clip Editor.
+  applied everywhere a waveform is drawn: the timeline, the Clip Editor, the
+  Scratch Editor, and the Record Audio dialog.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,

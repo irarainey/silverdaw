@@ -2016,10 +2016,11 @@ returns the summary plus (for stereo) the per-channel arrays.
 
 The renderer keeps the per-channel peaks in a session-only
 `libraryStore.channelPeaksByItemId` map (keyed by the source item id,
-each with its own LOD pyramid). The **Waveform display** preference (Preferences ▸
-General) chooses between *Single waveform* (summary) and *Left and
-right channels* (stacked L/R lanes for stereo sources, the default); the choice is persisted
-to `preferences.json` and applied to both the timeline and the Clip Editor. Mono
+each with its own LOD pyramid). The **Waveform display** preference
+(Preferences ▸ General) chooses between *Single waveform* (summary) and *Left
+and right* (stacked L/R lanes for stereo sources, the default); the
+choice is persisted to `preferences.json` and applied to the timeline, the Clip
+Editor, the Scratch Editor and both Record Audio waveforms. Mono
 sources, and rows too short to fit two readable lanes, always fall back to the
 single summary lane. On the timeline, stereo lanes also reflect the track's
 **pan**: each channel's lane height and opacity scale with its normalised
@@ -4179,6 +4180,22 @@ stops, which resizes the dialog under a performance in progress.
 Both dialog waveforms take their colours from the shared
 `waveformPalette`, which the Clip Editor's Pixi theme also derives from, so every
 waveform in Silverdaw is drawn the same way.
+
+**Both honour the Waveform display preference.** The live view and the review view
+stack left and right as separate lanes when the preference asks for stereo, matching
+the timeline, the Clip Editor and the Scratch Editor. Each falls back to the single
+summary lane when the take has no second channel to show — the review view when the
+peaks cache carried no separable lanes, the live view when the *selected input* is
+mono, since `InputCaptureTap` meters both sides from the one channel and two lanes
+would be the same picture drawn twice. Both lanes share one fill scale, so a channel
+that is genuinely quieter than the other still looks it rather than being normalised
+up to match; on a mixer feeding two sources into one stereo input, that difference is
+the whole point of looking.
+
+The live buffer keeps the two channels alongside the summary rather than deriving
+them from it. The summary is `max(L, R)` and therefore lossy — once flattened, the
+quieter side cannot be recovered — and the preference can be changed mid-take, so
+the data has to be there before it is asked for.
 
 The review waveform is the taller of the two, and it is drawn normalised: the
 loudest peak in the take is scaled to 94% of the box (up to 8× — past that a

@@ -254,7 +254,7 @@ Electron Shell
         ├── LibraryPanel        — source / stem / sample / clip tiles, metadata, drag source
         ├── ClipEditorDialog    — full-waveform clip editor with preview voice
         ├── TransportBar        — play/pause, BPM, position, audio-device chip
-        ├── PreferencesDialog   — General / Timeline / Project / Audio / Effects / Stems / Developer tabs
+        ├── PreferencesDialog   — General / Timeline / Project / Audio / MIDI / Effects / Stems / Developer tabs
         ├── RecoveryDialog      — autosave restore picker on launch
         └── ClipContextMenu     — edit actions, relink entry and colour swatches
 ```
@@ -515,6 +515,11 @@ The warp engine is implemented as per-clip Rubber Band processors managed by
 the backend and driven from the shared master transport clock.
 
 - **Modes:** rhythmic (drums/percussion), tonal (melodic material), complex (mixed)
+- **One engine serves both time-stretch and pitch shift,** so the mode governs
+  the stretcher whenever it runs — including a clip that is pitch shifted with
+  no tempo warp. Within a mode, the Rubber Band transient and pitch options are
+  derived from the pitch shift itself rather than from the mode alone
+  ([ADR 0031](adr/0031-pitch-shift-quality.md))
 - **Real-time mode** for playback; the same non-destructive warp is applied offline during mixdown export
 - Pitch and tempo adjusted independently, non-destructively (per-clip semitone + cents)
 - Warp settings stored in `ValueTree`; never baked into audio files
@@ -2326,17 +2331,41 @@ scope are recorded in §11.6, and the implementation is described under
    alongside the backing on headphones — opt-in, off by default, and downstream
    of the tap so it changes nothing about what is captured (ADR 0030,
    Amendment 1). A live waveform is drawn from the input meter while the take
-   rolls, with beat markers in Music mode.
+   rolls, with beat markers in Music mode. The space bar starts and stops the
+   take anywhere in the dialog, alongside `R`, because the performer's hands are
+   not on the mouse (ADR 0030, Amendment 25).
 6. [x] **Keeping the take.** Review auditions the take alone or against the
-   arrangement at its own backing level, an opt-in cleanup pass removes low-level
+   arrangement at its own backing level — the space bar toggles that playback —
+   an opt-in cleanup pass removes low-level
    background noise, a mono take can be saved duplicated across both channels,
    and a stereo take from a mixer carrying two different sources can be split
    back into two items on two tracks (ADR 0030, Amendments 3, 6, 8, 9 and 24).
+   Both the live and the review waveform follow the **Waveform display**
+   preference, so a stereo take is drawn as stacked left and right lanes
+   (ADR 0030, Amendment 26).
 7. [x] **The chosen output device survives a device-list change.** Opening a
    capture device makes JUCE re-enumerate, and it falls back to the system
    default if it believes the open endpoint went away — which sent take playback
    to the laptop speakers while the backing played to headphones. The engine now
    remembers the user's choice and restores it, once, per device-list change.
+8. [x] **Latency calibration.** Windows does not report a usable recording
+   latency — a processing microphone can report zero — so **Calibrate timing**
+   plays a series of clicks through the output, listens for them on the input,
+   and averages the measured round trip
+   (`backend/src/recording/LatencyCalibrator.h`, the `RECORD_CALIBRATE_*`
+   envelopes, `RecordCalibrationDialog.vue`). The result is stored in
+   preferences per output/input device pair and overrides the driver-reported
+   figures at finalise. It is optional, and a figure can be typed in by hand
+   where measuring acoustically is not possible (ADR 0030, Amendment 17).
+9. [x] **Pitch-shift quality.** Recording made pitch shifting a first-class
+   operation on clips that carry no detected tempo, which exposed how poor the
+   R2 stretcher's fixed options were for a pitch-only clip. The Rubber Band
+   transient and pitch options are now derived from the shift itself rather than
+   from the warp mode alone, and the Mode picker is no longer gated on Enable
+   Warp — one engine serves both the warp and the pitch shift, so the setting
+   governs the stretcher whenever it runs
+   ([ADR 0031](adr/0031-pitch-shift-quality.md)). This changes how an
+   already-released project containing pitch-shifted clips sounds.
 
 Device removal mid-capture **is** verified on real hardware: unplugging the
 input while a take is rolling stops it with the starvation watchdog rather than
@@ -2894,7 +2923,10 @@ playable at every point):
   generated file and its emptied folder, off by default, and that removal is
   non-undoable and doesn't mark the project dirty), **Audio** (output device selection —
   real named devices only, each with an off-by-default **Keep awake** toggle —
-  plus the driver picker with Bluetooth-latency heuristic), **Effects** (global
+  plus the output driver picker with Bluetooth-latency heuristic and the
+  separate **recording input driver** picker), **MIDI** (per-device enable /
+  disable with the matched controller profile shown, a device rescan, and deck
+  and crossfader defaults), **Effects** (global
   defaults for the per-clip DJ turntable **Brake** — duration + curve — and
   **Backspin** — duration + intensity), **Stems** (separation-model
   download / locate, per-stem cleanup, "Always use the backup model", GPU
@@ -3313,8 +3345,12 @@ sequencing into the phase plan is still to be decided.
     tempo. **Simple** carries neither.
   - Named `Recording 1`, `Recording 2`, … — renaming already exists at both
     library and clip level.
-  - Entry point is a transport record button; `R` is claimed inside the dialog
-    only, as the Scratch Editor already does, so there is no new global shortcut.
+  - Entry point is a transport record button; `R` and the space bar are claimed
+    inside the dialog only, as the Scratch Editor already claims `R` inside its
+    own, so there is no new global shortcut. Once a take exists the space bar
+    means "play it back" instead (ADR 0030, Amendment 25). Both waveforms — the
+    one drawn while rolling and the one in review — follow the **Waveform
+    display** preference (ADR 0030, Amendment 26).
 
   The engineering risk was entirely in the audio device layer, not the UI:
 
@@ -3336,7 +3372,11 @@ sequencing into the phase plan is still to be decided.
     and clock drift are both corrected **offline at finalise** — drift by
     resampling the finished file to the measured ratio — rather than in real
     time. This is the file-first fix and it is what keeps a long recording in
-    time for its whole length.
+    time for its whole length. The latency figure cannot be taken from the
+    driver, which reports zero on a processing microphone, so **Calibrate
+    timing** measures the true output-to-input round trip acoustically and
+    stores it per device pair, with a typed-in fallback (ADR 0030,
+    Amendment 17).
   - Software monitoring was ruled out of the first release and then reinstated by
     ADR 0030's Amendment 1: a performer on headphones over a backing hears
     everything except themselves. **Hear Yourself** is opt-in, off by default,

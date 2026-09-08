@@ -24,6 +24,7 @@ import {
   createLiveWaveform,
   liveBeatFractions,
   pushLiveColumn,
+  readFittedChannelColumns,
   readFittedColumns,
   resetLiveWaveform,
   LIVE_COLUMN_MS
@@ -38,6 +39,7 @@ import {
 } from '@/lib/waveform/waveformPalette'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { useTransportStore } from '@/stores/transportStore'
+import { useUiStore } from '@/stores/uiStore'
 
 const props = defineProps<{
   /** Draw the project's beat grid over the columns. */
@@ -46,6 +48,17 @@ const props = defineProps<{
 
 const store = useRecordingSessionStore()
 const transport = useTransportStore()
+const ui = useUiStore()
+
+/**
+ * Whether to stack the two channels as separate lanes, honouring the app's waveform
+ * preference. Only for a capture that actually is stereo: a mono input meters both
+ * sides identically, so two lanes would be the same picture drawn twice, and the
+ * timeline and Clip Editor fall back to one lane for mono sources for the same reason.
+ */
+const stereoLanes = computed(
+  () => ui.waveformDisplayMode === 'stereo' && store.current?.channelCount === 2
+)
 
 /** Roughly thirty minutes of columns: the length cap, past which the oldest
  *  audio is dropped rather than the buffer growing without bound. */
@@ -101,10 +114,8 @@ function draw(): void {
   }
 
   ctx.clearRect(0, 0, width, height)
-  const mid = height / 2
   const columnWidth = Math.max(1, Math.round(2 * ratio))
   const visible = Math.max(1, Math.floor(width / columnWidth))
-  const columns = readFittedColumns(buffer, visible)
   // The view holds a fixed span until the take fills it; after that the take is
   // summarised into the same columns, so the span is however long the take is.
   const spanMs = Math.max(visible * LIVE_COLUMN_MS, buffer.count * LIVE_COLUMN_MS)
@@ -121,23 +132,41 @@ function draw(): void {
     ctx.globalAlpha = 1
   }
 
-  ctx.fillStyle = WAVEFORM_COLORS.baseline
-  // No centre line on an empty view: it would run straight through the "your
-  // recording appears here" prompt.
-  if (buffer.count > 0) ctx.fillRect(0, mid, width, Math.max(1, ratio))
-
   // Left-aligned and drawn edge to edge with no gap between columns, so the take
   // reads as one continuous shape like every other waveform in the app. Scaled to
   // fill the box exactly as the review waveform is, so a take does not change size
   // the moment it stops rolling (see `fillScale.ts`).
+  const lanes = stereoLanes.value
+    ? readFittedChannelColumns(buffer, visible)
+    : [readFittedColumns(buffer, visible)]
+  const laneMid = (index: number): number => height * ((index + 0.5) / lanes.length)
+  const laneHalfHeight = height / (lanes.length * 2)
+
+  ctx.fillStyle = WAVEFORM_COLORS.baseline
+  // No centre line on an empty view: it would run straight through the "your
+  // recording appears here" prompt.
+  if (buffer.count > 0) {
+    for (let lane = 0; lane < lanes.length; lane += 1) {
+      ctx.fillRect(0, laneMid(lane), width, Math.max(1, ratio))
+    }
+  }
+
+  // One scale across both lanes, so a channel that is genuinely quieter than the
+  // other looks it rather than being normalised up to match.
   let loudest = 0
-  for (const magnitude of columns) loudest = Math.max(loudest, magnitude)
+  for (const lane of lanes) for (const magnitude of lane) loudest = Math.max(loudest, magnitude)
   const scale = waveformFillScale(loudest)
   ctx.fillStyle = WAVEFORM_COLORS.wave
-  for (let index = 0; index < columns.length; index += 1) {
-    const half = Math.max(ratio, waveformColumnUp((columns[index] ?? 0) * scale, mid, 1))
-    ctx.fillRect(index * columnWidth, mid - half, columnWidth, half * 2)
-  }
+  lanes.forEach((columns, laneIndex) => {
+    const mid = laneMid(laneIndex)
+    for (let index = 0; index < columns.length; index += 1) {
+      const half = Math.max(
+        ratio,
+        waveformColumnUp((columns[index] ?? 0) * scale, laneHalfHeight, 1)
+      )
+      ctx.fillRect(index * columnWidth, mid - half, columnWidth, half * 2)
+    }
+  })
 }
 
 function tick(now: number): void {
@@ -145,7 +174,7 @@ function tick(now: number): void {
   if (!capturing.value) return
   if (now - lastSampleAt < LIVE_COLUMN_MS) return
   lastSampleAt = now
-  pushLiveColumn(buffer, Math.max(store.inputPeakL, store.inputPeakR))
+  pushLiveColumn(buffer, store.inputPeakL, store.inputPeakR)
   hasColumns.value = true
   draw()
 }
@@ -164,6 +193,9 @@ watch(
 )
 
 watch(() => props.musical, draw)
+// The preference can be changed, and the input switched between mono and stereo,
+// while the dialog is open and nothing is rolling to repaint it.
+watch(stereoLanes, draw)
 
 onMounted(() => {
   draw()

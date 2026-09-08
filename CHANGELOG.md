@@ -18,6 +18,7 @@
 - A finished take can be auditioned alone or against the arrangement, renamed, converted from mono to stereo, and re-recorded before it is kept.
 - A stereo take can be split into its two channels as it is kept, so a two-channel mixer can be used as the input device and its two sources land on separate tracks.
 - Recording starts and stops with the **R** key or the space bar anywhere in the Record Audio dialog, and the space bar plays a finished take back while it is being reviewed.
+- The waveforms shown while recording and while reviewing a take now follow the **Waveform display** preference, so a stereo take is drawn as separate left and right channels.
 - **Calibrate timing** measures the audio hardware's true output-to-input round trip and applies it to every take on the same pair of devices.
 - A calibration can be typed in by hand where measuring acoustically is not possible.
 - **File ▸ Import from Project…** offers another project's recordings alongside its stems and samples.

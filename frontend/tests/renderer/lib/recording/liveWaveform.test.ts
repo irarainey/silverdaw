@@ -3,6 +3,7 @@ import {
   createLiveWaveform,
   liveBeatFractions,
   pushLiveColumn,
+  readFittedChannelColumns,
   readFittedColumns,
   readLiveColumns,
   resetLiveWaveform
@@ -93,6 +94,68 @@ describe('fitted live waveform', () => {
 
   it('draws nothing at all before the first column arrives', () => {
     expect(readFittedColumns(createLiveWaveform(8), 4)).toEqual([])
+  })
+})
+
+describe('live waveform channels', () => {
+  it('keeps the two channels apart instead of only their louder side', () => {
+    // The regression this guards: the summary is lossy, so a stereo view rebuilt from
+    // it would draw the same shape twice and a mixer's two sources would look identical.
+    const buffer = createLiveWaveform(8)
+    pushLiveColumn(buffer, 0.2, 0.8)
+    pushLiveColumn(buffer, 0.6, 0.1)
+
+    const [left, right] = readFittedChannelColumns(buffer, 8)
+    expect(left).toEqual([expect.closeTo(0.2, 5), expect.closeTo(0.6, 5)])
+    expect(right).toEqual([expect.closeTo(0.8, 5), expect.closeTo(0.1, 5)])
+  })
+
+  it('summarises the mono view from the louder side of each column', () => {
+    const buffer = createLiveWaveform(8)
+    pushLiveColumn(buffer, 0.2, 0.8)
+    pushLiveColumn(buffer, 0.6, 0.1)
+
+    expect(readFittedColumns(buffer, 8)).toEqual([
+      expect.closeTo(0.8, 5),
+      expect.closeTo(0.6, 5)
+    ])
+  })
+
+  it('meters both sides the same for a mono source, which passes one reading', () => {
+    const buffer = createLiveWaveform(8)
+    pushLiveColumn(buffer, 0.4)
+
+    const [left, right] = readFittedChannelColumns(buffer, 8)
+    expect(left).toEqual([expect.closeTo(0.4, 5)])
+    expect(right).toEqual([expect.closeTo(0.4, 5)])
+  })
+
+  it('fits both lanes to the same columns, so they line up', () => {
+    const buffer = createLiveWaveform(16)
+    for (const [l, r] of [[0.1, 0.9], [0.9, 0.1], [0.2, 0.8], [0.8, 0.2]]) {
+      pushLiveColumn(buffer, l!, r!)
+    }
+
+    const [left, right] = readFittedChannelColumns(buffer, 2)
+    expect(left).toEqual([expect.closeTo(0.9, 5), expect.closeTo(0.8, 5)])
+    expect(right).toEqual([expect.closeTo(0.9, 5), expect.closeTo(0.8, 5)])
+  })
+
+  it('clamps each channel independently', () => {
+    const buffer = createLiveWaveform(4)
+    pushLiveColumn(buffer, 3, -1)
+
+    const [left, right] = readFittedChannelColumns(buffer, 4)
+    expect(left).toEqual([1])
+    expect(right).toEqual([0])
+  })
+
+  it('empties both channels on reset', () => {
+    const buffer = createLiveWaveform(4)
+    pushLiveColumn(buffer, 0.5, 0.7)
+    resetLiveWaveform(buffer)
+
+    expect(readFittedChannelColumns(buffer, 4)).toEqual([[], []])
   })
 })
 

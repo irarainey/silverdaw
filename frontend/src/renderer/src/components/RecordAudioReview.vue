@@ -22,6 +22,8 @@ const preview = usePreviewStore()
 
 const ready = computed(() => store.ready)
 const peaks = computed(() => store.readyPeaks?.peaks ?? new Float32Array())
+/** Per-channel lanes for the stereo waveform preference; empty for a mono take. */
+const channelPeaks = computed<readonly Float32Array[]>(() => store.readyPeaks?.channels ?? [])
 const isAuditioning = computed(
   () => preview.filePath !== null && preview.filePath === ready.value?.filePath
 )
@@ -253,6 +255,7 @@ onBeforeUnmount(() => {
   >
     <RecordAudioWaveform
       :peaks="peaks"
+      :channel-peaks="channelPeaks"
       :duration-ms="ready.durationMs"
       :position-ms="positionMs"
       @seek="preview.seek($event)"
