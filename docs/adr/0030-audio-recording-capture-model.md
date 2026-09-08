@@ -8,10 +8,10 @@ Plan §11.6 (issue #35) calls for a simple way to record live input — vocals, 
 instrument, a line input, found sound — without Silverdaw becoming a multitrack
 recording studio. This ADR records the design agreed **before** implementation,
 so that the constraints it turns on are settled once rather than rediscovered
-per pull request. Where it describes behaviour that does not exist yet it is
-prescriptive, not descriptive.
+per pull request. Where it described behaviour that did not exist at the time it
+was prescriptive, not descriptive.
 
-The feature shipped in 1.9.0. Twenty-four amendments follow the decision, several
+The feature shipped in 1.9.0. Twenty-six amendments follow the decision, several
 of which reverse a position taken here — software monitoring and "every
 recording is musical" most of all. **Read the amendments before relying on
 anything in the Decision section**; where the two disagree, the amendment is
@@ -407,8 +407,9 @@ first release rather than rejected forever.
   point to a modal that nothing else in the app opens by keyboard.
 - **Low-latency software monitoring in the first release.** The honest options
   are exclusive-mode WASAPI or ASIO on the capture device plus a dedicated
-  monitor path — a substantial feature in its own right, on a code path that
-  does not exist yet.
+  monitor path — a substantial feature in its own right, on a code path that did
+  not exist when this was decided. *(Reversed in part by Amendment 1, which adds
+  best-effort shared-mode monitoring.)*
 
 ## Amendments
 
@@ -1113,7 +1114,8 @@ path that is at least as quick.
 An explicitly chosen type is still honoured exactly as given. This changes only
 what "automatic" resolves to, and can move a user's input latency, so a
 calibration taken before the change may be a few milliseconds stale — well
-inside the calibrator's agreement window, and recording is unreleased.
+inside the calibrator's agreement window, and recording had not yet shipped when
+this was decided.
 
 **None of this helps the monitor flam**, which is a closed loop through the
 performer: any shift applied ahead of them is absorbed by them playing to what

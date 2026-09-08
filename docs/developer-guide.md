@@ -3419,6 +3419,15 @@ scale itself, because the mode name cannot express them (ADR 0031):
 
 A clip that only stretches time is unaffected by both adjustments.
 
+Because `realtimeOptionsFor` reads the pitch scale passed to the constructor, and
+`setClipWarp` deliberately does not rebuild the stretcher for a pitch-only change
+(a rebuild resets its history and is audible mid-playback), the transients choice
+has to be revisited live. `applyPendingParams` calls `updateTransientsForPitch`,
+which uses `setTransientsOption` — accepted by R2 at any time in real-time mode —
+and restores `Crisp` if the pitch returns to unity. Without it a warp enabled
+before any pitch was dialled in kept `Crisp` through the shift, so playback and
+the offline render disagreed (ADR 0031, Amendment 1).
+
 ### File browser (Files tab)
 
 The bottom panel's **Files** tab browses folders of audio on disk so a track can

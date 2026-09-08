@@ -2363,7 +2363,9 @@ scope are recorded in §11.6, and the implementation is described under
    transient and pitch options are now derived from the shift itself rather than
    from the warp mode alone, and the Mode picker is no longer gated on Enable
    Warp — one engine serves both the warp and the pitch shift, so the setting
-   governs the stretcher whenever it runs
+   governs the stretcher whenever it runs. The transients choice is revisited
+   when the pitch changes live, so a clip warped before its pitch was dialled in
+   plays exactly as it exports
    ([ADR 0031](adr/0031-pitch-shift-quality.md)). This changes how an
    already-released project containing pitch-shifted clips sounds.
 
