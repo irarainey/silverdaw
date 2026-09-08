@@ -106,6 +106,9 @@ class ProjectState : public juce::ValueTree::Listener
     /** Number of tracks in the tree, ignoring sibling LIBRARY/MARKERS nodes. */
     int getTrackCount() const noexcept;
 
+    /** Track ids in arrangement order, ignoring sibling LIBRARY/MARKERS nodes. */
+    juce::StringArray getTrackIds() const;
+
     // `newIndex` is track-ordinal; moveChild keeps ordering undoable.
     bool moveTrack(const juce::String& trackId, int newIndex);
 
@@ -720,6 +723,11 @@ class ProjectState : public juce::ValueTree::Listener
                                    const juce::String& scratchSourcePath,
                                    bool undoable = false);
 
+    // Marks a kind="sample" item as having come from a recording (ADR 0030).
+    // Additive metadata in the same shape as the scratch markers above; older
+    // builds ignore the unknown property.
+    bool setLibraryItemRecordingOrigin(const juce::String& itemId, bool undoable = false);
+
     // Empty when the item is not a scratch-origin sample.
     juce::String getLibraryItemScratchPatternId(const juce::String& itemId) const;
     juce::String getLibraryItemScratchSourcePath(const juce::String& itemId) const;
@@ -1037,6 +1045,7 @@ class ProjectState : public juce::ValueTree::Listener
     static const juce::Identifier kKind;
     static const juce::Identifier kSourceItemId;
     static const juce::Identifier kScratchSourcePath;
+    static const juce::Identifier kRecordingOrigin;
     static const juce::Identifier kSourceClipId;
     static const juce::Identifier kSourceInMs;
     static const juce::Identifier kSourceDurationMs;

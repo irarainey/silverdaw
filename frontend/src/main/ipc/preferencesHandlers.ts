@@ -7,14 +7,16 @@ import { ipcMain, dialog, type BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 import { getDefaultDebugLogDirectory } from '../preferences'
 import type {
+  AudioInputPrefs,
   AudioOutputPrefs,
   AutosavePrefs,
   DebugPrefs,
+  LatencyCalibration,
   PathPrefs,
   ToastPrefs
 } from '../preferences'
 import type { MidiDeckSelection, MidiDevicePreferences } from '../../shared/types'
-import { clampAutosaveSeconds, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
+import { clampAudioInputGainDb, clampAutosaveSeconds, sanitiseDeviceSelection, sanitiseLatencyCalibrations, sanitiseStemPrefs, sanitiseBrakePrefs, sanitiseBackspinPrefs, sanitiseScratchRealismPrefs, sanitiseScratchPrefs, sanitiseUiPrefs } from '../preferences'
 import type { PrefsService } from '../prefsService'
 
 export interface PreferencesHandlersContext {
@@ -164,6 +166,64 @@ export function registerPreferencesHandlers(ctx: PreferencesHandlersContext): vo
       return
     }
     store.audioOutput = { typeName: nextTypeName, deviceName: nextDeviceName }
+    prefs.schedulePrefsSave()
+  })
+
+  // ─── Audio input (capture) device preference ────────────────────────────
+  // Remembered separately from the output: the Record Audio dialog assumes the two
+  // are different devices (ADR 0030).
+  ipcMain.handle(
+    IPC.prefs.getAudioInput,
+    (): AudioInputPrefs => ({ ...prefs.get().audioInput })
+  )
+
+  // A partial update: the dialog writes the device it resolved to, the gain slider
+  // writes a level, and Preferences writes a driver, without any of them clearing
+  // what the others set. `null` is a value here (no pin), so absence is the only
+  // way to say "leave this alone".
+  ipcMain.on(IPC.prefs.setAudioInput, (_evt, partial: unknown) => {
+    if (!partial || typeof partial !== 'object') return
+    const p = partial as Partial<AudioInputPrefs>
+    const store = prefs.get()
+    const device = sanitiseDeviceSelection({
+      typeName: 'typeName' in p ? p.typeName : store.audioInput.typeName,
+      deviceName: 'deviceName' in p ? p.deviceName : store.audioInput.deviceName
+    })
+    const next: AudioInputPrefs = {
+      ...device,
+      gainDb: 'gainDb' in p ? clampAudioInputGainDb(p.gainDb) : store.audioInput.gainDb
+    }
+    if (
+      store.audioInput.typeName === next.typeName &&
+      store.audioInput.deviceName === next.deviceName &&
+      store.audioInput.gainDb === next.gainDb
+    ) {
+      return
+    }
+    store.audioInput = next
+    prefs.schedulePrefsSave()
+  })
+
+  // ─── Recording latency calibration, per input+output device pair ────────
+  ipcMain.handle(
+    IPC.prefs.getLatencyCalibrations,
+    (): Record<string, LatencyCalibration> => ({ ...prefs.get().latencyCalibrations })
+  )
+
+  // A null calibration forgets the entry, so "recalibrate" and "clear" are the same path.
+  ipcMain.on(IPC.prefs.setLatencyCalibration, (_evt, key: unknown, value: unknown) => {
+    if (typeof key !== 'string' || key.trim().length === 0) return
+    const store = prefs.get()
+    const next = { ...store.latencyCalibrations }
+    if (value === null) {
+      if (!(key in next)) return
+      delete next[key]
+    } else {
+      const sanitised = sanitiseLatencyCalibrations({ [key]: value })[key]
+      if (!sanitised) return
+      next[key] = sanitised
+    }
+    store.latencyCalibrations = next
     prefs.schedulePrefsSave()
   })
 

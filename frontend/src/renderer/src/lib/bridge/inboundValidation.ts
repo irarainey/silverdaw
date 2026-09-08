@@ -79,6 +79,11 @@ import {
   isScratchSessionStatePayload,
   isScratchPatternRecordedPayload,
   isScratchSourcePeaksReadyPayload,
+  isRecordingInputsListPayload,
+  isRecordingSessionStatePayload,
+  isRecordingInputLevelPayload,
+  isRecordingCalibrateStatePayload,
+  isRecordingReadyPayload,
   type BridgeInboundMessage,
   type BridgeInboundType
 } from '@shared/bridge-protocol'
@@ -253,6 +258,16 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isScratchSessionStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'SCRATCH_PATTERN_RECORDED':
       return isScratchPatternRecordedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_INPUTS_LIST':
+      return isRecordingInputsListPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_SESSION_STATE':
+      return isRecordingSessionStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_INPUT_LEVEL':
+      return isRecordingInputLevelPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_RECORDING_READY':
+      return isRecordingReadyPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'RECORD_CALIBRATE_STATE':
+      return isRecordingCalibrateStatePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     default:
       return assertNeverType(type)
   }

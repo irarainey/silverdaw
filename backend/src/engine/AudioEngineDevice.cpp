@@ -30,6 +30,11 @@ void AudioEngine::initialiseGraph()
     topMixer.addInputSource(&master, false);
     topMixer.addInputSource(&scratchSource, false);
     topMixer.addInputSource(&backingSource, false);
+    // Recording's software monitor. Silent unless the record dialog turns it on,
+    // and outside the master gain so the backing trim cannot duck the performer.
+    topMixer.addInputSource(&inputMonitorSource, false);
+    // Latency calibration's bursts, silent unless a calibration is running.
+    topMixer.addInputSource(&calibrationClickSource, false);
     sourcePlayer.setSource(&masterMeter);
 }
 
@@ -105,6 +110,14 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                                         ? juce::String{}
                                         : (" [" + t.deviceNames.joinIntoString(", ") + "]")));
     }
+    // Recording head trim is built on the driver's latency figure (ADR 0030), and on WASAPI shared
+    // mode it can come back equal to the buffer — engine period only, nothing for the converter.
+    // Logged in samples beside the buffer so a field log shows that outright rather than implying it.
+    auto* openDevice = deviceManager.getCurrentAudioDevice();
+    const int driverLatencySamples =
+        openDevice != nullptr ? juce::jmax(0, openDevice->getOutputLatencyInSamples()) : 0;
+    const double heuristicMs = getHeuristicExtraLatencyMs();
+
     silverdaw::log::info("audio",
                          "open endpoint: type='" + devicesSnapshot.currentTypeName + "' name='"
                              + devicesSnapshot.currentDeviceName
@@ -112,7 +125,11 @@ void AudioEngine::finaliseAudioDevice(bool fellBack)
                              + " buffer=" + juce::String(devicesSnapshot.currentBufferSize)
                              + " outCh=" + juce::String(devicesSnapshot.currentOutputChannels)
                              + " bits=" + juce::String(devicesSnapshot.currentBitDepth)
+                             + " outLatencySamples=" + juce::String(driverLatencySamples)
                              + " outLatencyMs=" + juce::String(devicesSnapshot.outputLatencyMs, 1)
+                             + (heuristicMs > 0.0
+                                    ? " (incl " + juce::String(heuristicMs, 0) + "ms heuristic)"
+                                    : juce::String{})
                              + (fellBack ? " (fell back to default)" : ""));
 
     // Publish readiness last so any thread that observes it sees the finalised device state.
@@ -235,6 +252,8 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
     if (typeName.isEmpty() && deviceName.isEmpty())
     {
         const auto err = openDefaultOutputOnly();
+        chosenOutputTypeName = {};
+        chosenOutputDeviceName = {};
         rebuildDevicesSnapshot(/*rescan*/ false);
         devicesSnapshot.fellBackToDefault = false;
         rebuildBeatRepeatSnapshotsForCurrentSampleRate();
@@ -268,7 +287,7 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
             }
             if (!foundType)
             {
-                return juce::String("Audio device type '") + wantType + "' not found";
+                return juce::String("Audio output device type '") + wantType + "' not found";
             }
             deviceManager.setCurrentAudioDeviceType(wantType, /*treatAsChosenDevice*/ false);
         }
@@ -307,6 +326,9 @@ juce::String AudioEngine::selectOutputDeviceBlocking(const juce::String& typeNam
 
     rebuildDevicesSnapshot(/*rescan*/ false);
     devicesSnapshot.fellBackToDefault = false;
+    chosenOutputTypeName = typeName;
+    chosenOutputDeviceName = deviceName;
+    failedRestoreDeviceName = {};
     return {};
 }
 
@@ -403,6 +425,38 @@ void AudioEngine::onDeviceListChanged()
         silverdaw::log::warn("audio", "current output device disappeared; falling back to default");
         openDefaultOutputOnly();
         rebuildDevicesSnapshot(/*rescan*/ false);
+    }
+
+    // JUCE re-opens the system default whenever it decides the current endpoint
+    // went away, and a device-list change is fired by things as ordinary as a
+    // capture device opening. Without this, playback quietly moves to the laptop
+    // speakers mid-session even though nothing was unplugged.
+    if (! restoringChosenOutput && chosenOutputDeviceName.isNotEmpty()
+        && failedRestoreDeviceName != chosenOutputDeviceName)
+    {
+        const auto setup = deviceManager.getAudioDeviceSetup();
+        // Only when the chosen endpoint is actually back: a device that really was
+        // unplugged must not be chased on every list change.
+        bool available = false;
+        for (const auto& type : devicesSnapshot.types)
+            if (type.typeName == chosenOutputTypeName)
+                available = type.deviceNames.contains(chosenOutputDeviceName);
+
+        if (available && setup.outputDeviceName != chosenOutputDeviceName)
+        {
+            const juce::String movedTo = setup.outputDeviceName;
+            juce::String err;
+            {
+                const juce::ScopedValueSetter<bool> guard(restoringChosenOutput, true);
+                err = selectOutputDeviceBlocking(chosenOutputTypeName, chosenOutputDeviceName);
+            }
+            if (err.isNotEmpty()) failedRestoreDeviceName = chosenOutputDeviceName;
+            silverdaw::log::warn("audio",
+                                 "output moved to '" + movedTo + "'; restoring '"
+                                     + chosenOutputDeviceName + "'"
+                                     + (err.isEmpty() ? juce::String{} : (" failed: " + err)));
+            rebuildDevicesSnapshot(/*rescan*/ false);
+        }
     }
     rebuildBeatRepeatSnapshotsForCurrentSampleRate();
 

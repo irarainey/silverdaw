@@ -35,6 +35,7 @@ import { audioDeviceBridgeHandlers } from '@/lib/bridge/handlers/audioDeviceHand
 import { pluginBridgeHandlers } from '@/lib/bridge/handlers/pluginHandlers'
 import { midiDeviceBridgeHandlers } from '@/lib/bridge/handlers/midiDeviceHandlers'
 import { scratchSessionBridgeHandlers } from '@/lib/bridge/handlers/scratchSessionHandlers'
+import { recordingBridgeHandlers } from '@/lib/bridge/handlers/recordingHandlers'
 import { mixdownBridgeHandlers } from '@/lib/bridge/handlers/mixdownHandlers'
 import { stemBridgeHandlers } from '@/lib/bridge/handlers/stemHandlers'
 import { channelSplitBridgeHandlers } from '@/lib/bridge/handlers/channelSplitHandlers'
@@ -429,6 +430,7 @@ const inboundHandlers = {
   ...pluginBridgeHandlers,
   ...midiDeviceBridgeHandlers,
   ...scratchSessionBridgeHandlers,
+  ...recordingBridgeHandlers,
   ...mixdownBridgeHandlers,
   ...stemBridgeHandlers,
   ...channelSplitBridgeHandlers,
@@ -445,6 +447,7 @@ function dispatch(msg: BridgeInboundMessage): void {
     msg.type !== 'PREVIEW_POSITION' &&
     msg.type !== 'MASTER_LEVEL' &&
     msg.type !== 'TRACK_LEVELS' &&
+    msg.type !== 'RECORD_INPUT_LEVEL' &&
     msg.type !== 'MIDI_CONTROL'
   ) {
     log.info('bridge', `recv ${msg.type}`)

@@ -103,6 +103,31 @@ class WarpProcessor
         return pendingTempoRatio.load(std::memory_order_acquire);
     }
 
+    // Counts blocks `process` could not fill, each of which silence-fills and re-primes
+    // the stretcher. The offline render pulls the same processor with no deadline, so a
+    // count that is non-zero live and zero offline identifies read-ahead starvation
+    // rather than a difference in Rubber Band's configuration.
+    juce::uint32 getShortfallCount() const noexcept
+    {
+        return shortfallCount.load(std::memory_order_relaxed);
+    }
+
+    // Output samples produced per second of wall clock spent producing them, divided by the
+    // sample rate: 1.0 is exactly real time. Live playback needs every warped clip sharing
+    // the read-ahead thread to sustain well above 1.0 between them; the offline render has
+    // no such floor, which is why the same processor can sound clean exported and not live.
+    // Returns 0.0 before any measurable work.
+    double getRealtimeFactor() const noexcept
+    {
+        const auto ticks = processTicks.load(std::memory_order_relaxed);
+        const auto samples = processedOutputSamples.load(std::memory_order_relaxed);
+        if (ticks <= 0 || samples <= 0 || sampleRate <= 0.0) return 0.0;
+        const double seconds = static_cast<double>(ticks)
+                             / static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
+        if (seconds <= 0.0) return 0.0;
+        return static_cast<double>(samples) / (seconds * sampleRate);
+    }
+
     /** Keeps Rubber Band input planes aligned with source-file channels. */
     int getNumChannels() const noexcept
     {
@@ -111,6 +136,7 @@ class WarpProcessor
 
   private:
     void applyPendingParams() noexcept;
+    void updateTransientsForPitch(double pitchScale) noexcept;
     void doReset();
 
     const int numChannels;
@@ -124,12 +150,19 @@ class WarpProcessor
     std::atomic<bool> resetPending{true};
     std::atomic<bool> seekPending{false};
     std::atomic<juce::int64> pendingSourceSeek{0};
+    std::atomic<juce::uint32> shortfallCount{0};
+    std::atomic<juce::int64> processedOutputSamples{0};
+    std::atomic<juce::int64> processTicks{0};
 
     // Audio-thread mirror avoids redundant Rubber Band parameter calls.
     double appliedTempoRatio{1.0};
     double appliedPitchScale{1.0};
     bool canChangePitchOption = false;
     bool highConsistencyPitch = false;
+    // True for an R2 mode whose transient handling is crisp, which is the only case where
+    // the pitch-dependent transients choice applies.
+    bool crispTransientsMode = false;
+    bool transientsMixedForPitch = false;
 
     // Audio-thread source cursor.
     juce::int64 nextSourceSample{0};

@@ -11,6 +11,11 @@ void AudioEngine::setMasterGain(float gain)
     masterMeter.setTargetGain(clamped);
 }
 
+void AudioEngine::setArrangementMonitorGain(float gain)
+{
+    master.setMonitorTrim(gain);
+}
+
 void AudioEngine::setSafetyLimiterEnabled(bool enabled, bool snap)
 {
     masterMeter.setSafetyLimiterEnabled(enabled, snap);
@@ -36,6 +41,51 @@ void AudioEngine::setMetronomeBpm(double bpm)
 void AudioEngine::consumeMasterPeaks(float& outL, float& outR)
 {
     masterMeter.consumePeaks(outL, outR);
+}
+
+void AudioEngine::startCountInClick(double beats)
+{
+    masterMeter.beginCountIn(beats, metronome.getBpm());
+}
+
+void AudioEngine::cancelCountInClick()
+{
+    masterMeter.cancelCountIn();
+}
+
+bool AudioEngine::isCountInClickActive() const
+{
+    return masterMeter.isCountInActive();
+}
+
+double AudioEngine::getCountInClickRemainingMs() const
+{
+    return masterMeter.getCountInRemainingMs();
+}
+
+void AudioEngine::startCalibrationClicks(int count, double spacingMs, float amplitude)
+{
+    calibrationClickSource.start(count, spacingMs, amplitude);
+}
+
+void AudioEngine::cancelCalibrationClicks()
+{
+    calibrationClickSource.cancel();
+}
+
+bool AudioEngine::isCalibrationClickActive() const
+{
+    return ! calibrationClickSource.isFinished();
+}
+
+int AudioEngine::getCalibrationClicksEmitted() const
+{
+    return calibrationClickSource.getEmittedCount();
+}
+
+juce::int64 AudioEngine::getCalibrationEmitTick(int index) const
+{
+    return calibrationClickSource.getEmitTick(index);
 }
 
 bool AudioEngine::consumeTrackPeaks(const juce::String& trackId, float& outL, float& outR)

@@ -49,5 +49,6 @@ void addScratchPatternReplayProjectStateTests(std::vector<TestCase>& tests);
 void addPluginCatalogueTests(std::vector<TestCase>& tests);
 void addPluginChainTests(std::vector<TestCase>& tests);
 void addPluginLatencyTests(std::vector<TestCase>& tests);
+void addRecordingTests(std::vector<TestCase>& tests);
 
 } // namespace silverdaw::tests

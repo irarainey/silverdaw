@@ -171,6 +171,19 @@ export interface MidiDeckSelection {
   deck2Enabled: boolean
 }
 
+// ─── Recording latency calibration (ADR 0030, Amendment 17) ───────────────────
+
+/** A measured output-to-input round trip for one input+output device pair. Shared because
+ *  the record dialog reads it, main persists it, and the bridge pushes it to the backend. */
+export interface LatencyCalibrationDto {
+  roundTripMs: number
+  /** True when typed rather than measured — headphones cannot be measured acoustically. */
+  manual: boolean
+  sampleRate: number
+  /** ISO timestamp, so the dialog can say how old the measurement is. */
+  measuredAt: string
+}
+
 export type MidiCrossfaderDirection = 'leftToRight' | 'rightToLeft'
 
 /** Which deck a device auto-selects at startup when it has no saved cue selection. */

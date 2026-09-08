@@ -6,6 +6,7 @@ import type { useUiStore } from '@/stores/uiStore'
 import type { useLibraryStore } from '@/stores/libraryStore'
 import type { useNotificationsStore } from '@/stores/notificationsStore'
 import type { useAppStore } from '@/stores/appStore'
+import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
@@ -165,6 +166,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'file.importFromProject') {
       deps.projectImportOpen.value = true
+      return
+    }
+    if (action === 'file.recordAudio') {
+      void useRecordingSessionStore().openDialog()
       return
     }
     if (action === 'file.projectProperties') {

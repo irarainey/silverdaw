@@ -3,6 +3,7 @@ import { isAbsolute, join } from 'node:path'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '../shared/types'
 import type {
   DebugPreferences,
+  LatencyCalibrationDto,
   MidiDevicePreferences,
   MidiDeckSelection,
   RecentProject,
@@ -117,6 +118,84 @@ export interface AudioOutputPrefs {
   deviceName: string | null
 }
 
+// Remembered capture device for the Record Audio dialog (ADR 0030). Deliberately
+// separate from `audioOutput`: input and output are routinely different devices,
+// and the capture device is opened only while the record surface is open.
+export interface AudioInputPrefs {
+  typeName: string | null
+  deviceName: string | null
+  /** Record Audio's input gain in dB, remembered so a level set once survives the
+   *  dialog being closed — a microphone's level is a property of the setup, not
+   *  of one take. */
+  gainDb: number
+}
+
+export const MIN_AUDIO_INPUT_GAIN_DB = -24
+export const MAX_AUDIO_INPUT_GAIN_DB = 24
+
+// Measured recording round trip, per input+output device pair (ADR 0030, Amendment 17).
+//
+// Global rather than per-project: it describes this machine's audio path, and a project that
+// carried it would arrive on someone else's setup carrying a number that is wrong there.
+//
+// Keyed by the device pair because both ends contribute to the round trip. Sample rate and
+// buffer size are stored as fields rather than folded into the key so that changing them warns
+// that the measurement is stale instead of silently discarding it.
+export type LatencyCalibration = LatencyCalibrationDto
+
+/** Anything outside this is not a plausible audio round trip and is dropped. */
+export const MAX_LATENCY_CALIBRATION_MS = 600
+
+/** Stable key for a calibration entry. Both device names take part: the same microphone
+ *  through a different output is a different round trip. */
+export function latencyCalibrationKey(
+  inputDeviceName: string | null | undefined,
+  outputDeviceName: string | null | undefined
+): string {
+  return `${(inputDeviceName ?? '').trim()}\u0000${(outputDeviceName ?? '').trim()}`
+}
+
+export function sanitiseLatencyCalibrations(input: unknown): Record<string, LatencyCalibration> {
+  const out: Record<string, LatencyCalibration> = {}
+  if (!input || typeof input !== 'object') return out
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (key.trim().length === 0 || !value || typeof value !== 'object') continue
+    const candidate = value as Partial<LatencyCalibration>
+    const roundTripMs = candidate.roundTripMs
+    if (
+      typeof roundTripMs !== 'number' ||
+      !Number.isFinite(roundTripMs) ||
+      roundTripMs < 0 ||
+      roundTripMs > MAX_LATENCY_CALIBRATION_MS
+    ) {
+      continue
+    }
+    out[key] = {
+      roundTripMs,
+      manual: candidate.manual === true,
+      sampleRate:
+        typeof candidate.sampleRate === 'number' && Number.isFinite(candidate.sampleRate)
+          ? candidate.sampleRate
+          : 0,
+      measuredAt: typeof candidate.measuredAt === 'string' ? candidate.measuredAt : ''
+    }
+  }
+  return out
+}
+
+export function sanitiseAudioInputPrefs(value: unknown): AudioInputPrefs {
+  const device = sanitiseDeviceSelection(value)
+  const gainDb = (value as Partial<AudioInputPrefs> | undefined)?.gainDb
+  return { ...device, gainDb: clampAudioInputGainDb(gainDb) }
+}
+
+/** Unity for anything that is not a usable number, so a corrupt preference can
+ *  never silence or blow out an input. */
+export function clampAudioInputGainDb(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.min(MAX_AUDIO_INPUT_GAIN_DB, Math.max(MIN_AUDIO_INPUT_GAIN_DB, value))
+}
+
 // Per-device keep-awake is a simple on/off toggle stored per output device (keyed by the
 // device's reported name). Default off: a device is kept awake only when explicitly enabled —
 // and the toggle is remembered even while the device is unplugged, so it re-applies on
@@ -164,6 +243,10 @@ export interface Preferences {
   paths: PathPrefs
   autosave: AutosavePrefs
   audioOutput: AudioOutputPrefs
+  /** Remembered capture device; null/null means "first available". */
+  audioInput: AudioInputPrefs
+  /** Measured recording round trips, keyed by `latencyCalibrationKey`; absent = uncalibrated. */
+  latencyCalibrations: Record<string, LatencyCalibration>
   /** Per-device keep-awake toggles, keyed by device name; absent / false = off. */
   keepAwakeByDevice: Record<string, boolean>
   /** Enabled MIDI inputs, keyed by JUCE's stable device identifier. */
@@ -253,6 +336,8 @@ export function buildDefaultPrefs(): Preferences {
     paths: { defaultProjectDir, defaultClipDir },
     autosave: { enabled: true, intervalSeconds: AUTOSAVE_DEFAULT_SECONDS },
     audioOutput: { typeName: null, deviceName: null },
+    audioInput: { typeName: null, deviceName: null, gainDb: 0 },
+    latencyCalibrations: {},
     keepAwakeByDevice: {},
     enabledMidiInputs: {},
     midiDeckSelections: {},
@@ -430,6 +515,15 @@ export function sanitiseScratchPrefs(partial: unknown, base: ScratchPrefs): Scra
 // Single source of truth for the per-device keep-awake map. Only non-empty device names
 // that are explicitly enabled (value === true) are kept — off is the default, so `false` /
 // absent entries are dropped and a corrupt prefs file can never inject a wrong-typed value.
+/** A stored device selection is a type/device name pair; anything else, including
+ *  a half-written pair, degrades to "no preference" rather than a broken pick. */
+export function sanitiseDeviceSelection(input: unknown): AudioOutputPrefs {
+  const source = (input ?? {}) as Partial<AudioOutputPrefs>
+  const clean = (value: unknown): string | null =>
+    typeof value === 'string' && value.length > 0 ? value : null
+  return { typeName: clean(source.typeName), deviceName: clean(source.deviceName) }
+}
+
 export function sanitiseKeepAwakeByDevice(input: unknown): Record<string, boolean> {
   const out: Record<string, boolean> = {}
   if (!input || typeof input !== 'object') return out

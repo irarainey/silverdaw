@@ -45,6 +45,8 @@ export interface AddLibraryItemInput {
   /** Marks a baked-scratch sample (vinyl tile icon) linked to its notation pattern. */
   scratchOrigin?: boolean
   scratchPatternId?: string
+  /** Marks a sample that came from a recording (ADR 0030). */
+  recordingOrigin?: boolean
 }
 
 export interface LibraryItem {
@@ -115,6 +117,8 @@ export interface LibraryItem {
   scratchOrigin?: boolean
   /** Links a scratch-origin sample to its notation pattern for re-editing in the scratch editor. */
   scratchPatternId?: string
+  /** True when this sample came from a recording (ADR 0030), kept as provenance. */
+  recordingOrigin?: boolean
 }
 
 /** The beat-grid fields the Clip Editor edits as a draft, captured on open so an

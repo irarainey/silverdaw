@@ -72,6 +72,15 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     () => redraw()
   )
 
+  // Mute and solo decide which clips paint from the silenced palette. Neither
+  // action bumps `timelineRevision` (nothing about the arrangement changed), so
+  // without this watch a muted track's clips would keep their full colours until
+  // some unrelated edit forced a rebuild.
+  watch(
+    () => project.tracks.map((t) => `${t.muted ? 1 : 0}${t.soloed ? 1 : 0}`).join(','),
+    () => redraw()
+  )
+
   // Static Track FX values are the automation lane's resting baseline line, so a
   // change to Tone / Filter / sends / Compressor must repaint the open lane.
   watch(

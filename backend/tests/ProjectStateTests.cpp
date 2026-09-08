@@ -1666,6 +1666,66 @@ void testProjectStateNetZeroDirty()
 // clean snapshot would claim "saved" for content that is not on disk. What it must NOT
 // do is look like a phantom edit, so the transition is attributed and the renderer
 // explains it.
+// A recorded take is added and then fully removed again — track, clip and library
+// item. Everything the commit wrote is gone, so the project must be back to clean;
+// a leftover marks a saved project unsaved for no reason the user can see.
+//
+// The removal is the "clean up project files" one (`removeLibraryItemNonDirty`),
+// because that is what deleting a recording actually does: the take's WAV lives in
+// the project's own recordings/ folder, so the delete is irreversible and therefore
+// non-undoable. Suppressing the dirty listeners for it must not also strand the flag
+// up when the item being taken away was the only thing the project was dirty about.
+void testProjectStateRecordingAddAndRemoveReturnsToClean()
+{
+    silverdaw::ProjectState state;
+    state.markClean();
+    require(! state.isDirty(), "baseline should be clean");
+
+    // Exactly what handleRecordCommit writes for a musical take landing on the timeline.
+    require(state.addLibraryItem("rec-1", "C:\\proj\\recordings\\take.wav", "take.wav", 4000.0,
+                                 48000, 2, "C:\\proj\\recordings\\take.wav", {}, "sample",
+                                 "Recording 1"),
+            "the recording's library item should be added");
+    state.setLibraryItemAudioType("rec-1", "music");
+    state.setLibraryItemRecordingOrigin("rec-1");
+    state.setLibraryItemMusicalBeats("rec-1", 8);
+    state.addTrack("rec-track");
+    require(state.addClip("rec-track", "rec-clip", "rec-1", 0.0, 4000.0),
+            "the recording's clip should be added");
+    require(state.isDirty(), "committing a recording must mark the project dirty");
+
+    // Now the user takes it all away again: removing the track takes its clip with it.
+    const auto removedClips = state.removeTrack("rec-track");
+    require(removedClips.contains("rec-clip"), "removing the track should take its clip with it");
+    require(state.isDirty(), "the library item is still there, so the project is still dirty");
+
+    require(state.removeLibraryItemNonDirty("rec-1"), "the library item should be removable");
+    require(! state.isDirty(),
+            "removing a recorded take entirely is a net-zero edit and must return to clean");
+}
+
+// The cleanup removal must still not RAISE the flag, and must leave a genuinely
+// unsaved project alone: only the item it removed is discounted.
+void testProjectStateCleanupRemovalKeepsOtherEditsDirty()
+{
+    silverdaw::ProjectState state;
+    state.addTrack("t1");
+    state.markClean();
+    require(! state.isDirty(), "baseline should be clean");
+
+    require(state.addLibraryItem("s1", "C:\\audio\\stem.wav", "stem.wav", 1000.0, 48000, 2, {}, {},
+                                 "stem", "Vocals"),
+            "the stem should be added");
+    state.addTrack("t2");
+    require(state.isDirty(), "adding a stem and a track should mark dirty");
+
+    require(state.removeLibraryItemNonDirty("s1"), "cleanup removal should succeed");
+    require(state.isDirty(), "the added track is still an unsaved edit, so dirty must stand");
+
+    require(state.removeTrack("t2").isEmpty(), "the empty track should remove with no clips");
+    require(! state.isDirty(), "with both edits undone the project must be clean again");
+}
+
 void testProjectStateAttributesBackgroundAnalysisDirty()
 {
     silverdaw::ProjectState state;
@@ -2500,6 +2560,8 @@ void addProjectStateTests(std::vector<TestCase>& tests)
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});
     tests.push_back({"ProjectState bar settings round-trip", testProjectStateBarSettingsRoundTrip});
     tests.push_back({"ProjectState net-zero edits return to clean", testProjectStateNetZeroDirty});
+    tests.push_back({"ProjectState recording add then full removal returns to clean", testProjectStateRecordingAddAndRemoveReturnsToClean});
+    tests.push_back({"ProjectState cleanup removal keeps other edits dirty", testProjectStateCleanupRemovalKeepsOtherEditsDirty});
     tests.push_back({"ProjectState attributes background-analysis dirty",
                      testProjectStateAttributesBackgroundAnalysisDirty});
     tests.push_back({"ProjectState cleanup library remove is non-dirty and non-undoable", testProjectStateNonDirtyLibraryRemove});

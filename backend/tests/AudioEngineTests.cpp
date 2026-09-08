@@ -49,7 +49,7 @@ namespace
 // BufferingAudioSource → AudioTransportSource). A faint sine keeps it from
 // being pure silence; content is otherwise irrelevant to these tests.
 juce::File writeTestWav(const juce::File& dir, const juce::String& name,
-                        double seconds, double sampleRate = 44100.0)
+                        double seconds, double sampleRate = 44100.0, int numChannels = 2)
 {
     auto file = dir.getChildFile(name);
     juce::WavAudioFormat format;
@@ -57,15 +57,15 @@ juce::File writeTestWav(const juce::File& dir, const juce::String& name,
     require(stream != nullptr, "wav output stream should open");
     const auto writerOptions = juce::AudioFormatWriterOptions{}
                                    .withSampleRate(sampleRate)
-                                   .withNumChannels(2)
+                                   .withNumChannels(numChannels)
                                    .withBitsPerSample(16);
     std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream, writerOptions));
     require(writer != nullptr, "wav writer should create");
     // The writer took ownership of the stream on success.
 
     const int numSamples = juce::jmax(1, static_cast<int>(seconds * sampleRate));
-    juce::AudioBuffer<float> buffer(2, numSamples);
-    for (int ch = 0; ch < 2; ++ch)
+    juce::AudioBuffer<float> buffer(numChannels, numSamples);
+    for (int ch = 0; ch < numChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(ch);
         for (int i = 0; i < numSamples; ++i)
@@ -77,6 +77,71 @@ juce::File writeTestWav(const juce::File& dir, const juce::String& name,
     require(writer->writeFromAudioSampleBuffer(buffer, 0, numSamples), "wav write should succeed");
     writer.reset(); // flush + close
     return file;
+}
+
+// Renders the head of `wav` through the read-ahead stage a track's chain is built around,
+// asking it for `chainChannels` the way `addClip` sizes it, and reports the level that
+// reached each side of a stereo block.
+void renderChainHead(const juce::File& wav, int chainChannels, float& outLeftPeak, float& outRightPeak)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(wav));
+    require(reader != nullptr, "the test wav should decode");
+
+    juce::AudioFormatReaderSource readerSource(reader.release(), true);
+    juce::TimeSliceThread readAhead("mono-chain-test");
+    readAhead.startThread();
+    {
+        juce::BufferingAudioSource buffering(&readerSource, readAhead, false,
+                                             kTransportReadAheadSamples, chainChannels);
+        constexpr int kBlock = 512;
+        buffering.prepareToPlay(kBlock, 44100.0);
+
+        juce::AudioBuffer<float> block(2, kBlock);
+        block.clear();
+        juce::AudioSourceChannelInfo info(&block, 0, kBlock);
+        // The read-ahead fills on the background thread, so wait rather than race it.
+        require(buffering.waitForNextAudioBlockReady(info, 2000),
+                "the read-ahead should fill within the timeout");
+        buffering.getNextAudioBlock(info);
+        buffering.releaseResources();
+
+        outLeftPeak = block.getMagnitude(0, 0, kBlock);
+        outRightPeak = block.getMagnitude(1, 0, kBlock);
+    }
+    readAhead.stopThread(2000);
+}
+
+// A mono file must be heard centred, not hard left. JUCE's reader duplicates a single
+// channel across a two-channel block but fills only the left of a one-channel one, so a
+// chain sized from the file itself leaves a mono clip silent on the right — panning it
+// right would fade it out, and a split recording's two mono halves would both arrive on
+// the left. `kMinClipPlaybackChannels` is what stops that, so this pins both halves of
+// the mechanism: what the chain does at that width, and what it would do at one.
+void testMonoClipPlaysOnBothChannels()
+{
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                         .getChildFile("silverdaw-mono-playback-" + juce::Uuid().toDashedString());
+    require(dir.createDirectory().wasOk(), "temp dir should create");
+    const auto mono = writeTestWav(dir, "mono.wav", 0.5, 44100.0, /*numChannels=*/1);
+
+    float leftPeak = 0.0F;
+    float rightPeak = 0.0F;
+    renderChainHead(mono, kMinClipPlaybackChannels, leftPeak, rightPeak);
+    require(leftPeak > 0.01F, "a mono clip should be audible on the left");
+    require(rightPeak > 0.01F, "a mono clip should be audible on the right");
+    require(std::abs(leftPeak - rightPeak) < 1.0e-6F,
+            "a mono clip should arrive at the same level on both sides");
+
+    float narrowLeft = 0.0F;
+    float narrowRight = 0.0F;
+    renderChainHead(mono, 1, narrowLeft, narrowRight);
+    require(narrowLeft > 0.01F, "the one-channel chain should still fill the left");
+    require(narrowRight <= 1.0e-6F,
+            "the one-channel chain leaves the right silent — the reason for the minimum");
+
+    dir.deleteRecursively();
 }
 
 void testAudioEngineSetPreviewWarpUnderRapidCalls()
@@ -1494,6 +1559,75 @@ void testMetronomeClicksOnBeatBoundaries()
     }
 }
 
+// The click is mixed post-master-gain in MeteringSource, downstream of the per-track plugin
+// delay compensation lines, so it is NOT delayed with the arrangement. The transport's render
+// cursor meanwhile deliberately LEADS the audible output by the alignment (primePluginPipeline
+// pre-rolls the graph and advances the transport by it), so a click rendered against the raw
+// cursor sounds early by exactly the alignment and a performer following it plays early
+// (ADR 0026, ADR 0030). Stepping the click's own position back by the alignment fixes it.
+void testMetronomeClickStepsBackByPluginLatencyCompensation()
+{
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+    constexpr double kBpm = 120.0; // beat period = 24000 samples = 50 blocks
+    // 100 ms of compensation: far more than a click is long, so a shift cannot be mistaken
+    // for the same click landing in an adjacent block.
+    constexpr int kLead = 4800;
+    constexpr float kClickThreshold = 0.1F; // above the 0.05 wake burst, below the 0.25 click
+
+    struct SilentSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            info.clearActiveBufferRegion();
+        }
+    };
+
+    // Plays from transport sample 0 and reports the absolute sample index at which the first
+    // click is heard, with `lead` samples of compensation in effect.
+    auto firstClickIndex = [&](int lead) {
+        silverdaw::OutputKeepAlive keepAlive;
+        SilentSource src;
+        silverdaw::MasterClockSource master(src, keepAlive);
+        silverdaw::Metronome metro;
+        silverdaw::MeteringSource meter(master, keepAlive, master, metro);
+
+        std::atomic<int> compensation{lead};
+        meter.setMetronomeLeadSource(&compensation);
+        metro.setBpm(kBpm);
+        metro.setEnabled(true);
+        meter.prepareToPlay(kBlock, kRate);
+        master.setPositionSamples(0);
+        keepAlive.setPlaying(true);
+
+        juce::AudioBuffer<float> buf(2, kBlock);
+        juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+        // Two beats' worth of blocks: long enough to find the click however far it is shifted.
+        for (int block = 0; block < 100; ++block)
+        {
+            buf.clear();
+            meter.getNextAudioBlock(info);
+            for (int i = 0; i < kBlock; ++i)
+                if (std::abs(buf.getSample(0, i)) > kClickThreshold)
+                    return static_cast<juce::int64>(block) * kBlock + i;
+        }
+        return juce::int64{-1};
+    };
+
+    // Absolute indices depend on the silent wake pre-roll (which does not advance the transport),
+    // so the invariant under test is the DIFFERENCE the alignment makes, not where the click lands.
+    const auto uncompensated = firstClickIndex(0);
+    require(uncompensated >= 0, "the downbeat click must sound at all with no plugin latency");
+
+    const auto compensated = firstClickIndex(kLead);
+    require(compensated >= 0, "the downbeat click must still sound with plugin latency in play");
+    require(compensated - uncompensated == static_cast<juce::int64>(kLead),
+            "the click must sound one alignment LATER, when the arrangement's downbeat is "
+            "actually audible — not when the leading render cursor passes it");
+}
+
 // Regression: a project tempo change used to hand the engine an unset `enabled`,
 // which it reads as "keep whatever this clip already is". A clip the same command
 // had only just auto-warped in project state was therefore *disabled* in the
@@ -1573,6 +1707,31 @@ void testNewProjectDisarmsPreviousProjectTimelineLoop()
     silverdaw::syncEngineProjectSettings(engine, state);
     require(!engine.isTimelineLoopArmed(),
             "a new project must disarm the previous project's timeline loop");
+}
+
+// A recording session holds the loop off rather than disarming it, so a take over a
+// looping selection reaches the end of the range and stops instead of being carried
+// round again (ADR 0030, Amendment 5). Holding it off has to leave the range itself
+// untouched: the project armed it, and the project gets it back on close without the
+// session having to remember and replay it.
+void testSuspendingTheTimelineLoopLeavesItArmed()
+{
+    silverdaw::AudioEngine engine;
+    silverdaw::ProjectState state;
+
+    state.setViewTimelineSelection(
+        silverdaw::ProjectState::TimelineSelectionView{1000.0, 5000.0, /*loop*/ true});
+    silverdaw::syncTimelineLoop(engine, state);
+    require(engine.isTimelineLoopArmed(), "a looping selection should arm the engine loop");
+    require(!engine.isTimelineLoopSuspended(), "a fresh loop should not be suspended");
+
+    engine.setTimelineLoopSuspended(true);
+    require(engine.isTimelineLoopSuspended(), "suspending should take effect");
+    require(engine.isTimelineLoopArmed(), "suspending must not disarm the range");
+
+    engine.setTimelineLoopSuspended(false);
+    require(!engine.isTimelineLoopSuspended(), "releasing the hold should take effect");
+    require(engine.isTimelineLoopArmed(), "the project's range should survive the hold");
 }
 
 // Regression: editing the project tempo auto-warped every unwarped clip that had a
@@ -1734,11 +1893,85 @@ void testRemovingTheLastTrackClearsMarkersAndSelection()
             "removing a track that does not exist must not clear the selection");
 }
 
+/**
+ * The recording head trim is measured against the instant the transport genuinely
+ * started, so the stamp must skip every block that does not advance the playhead —
+ * above all the 250 ms wake pre-roll, which would otherwise be silently absorbed
+ * into the take and push it a quarter of a beat late.
+ */
+void testTransportStartStampSkipsPrerollAndSilence()
+{
+    struct SilentSource : juce::AudioSource
+    {
+        void prepareToPlay(int, double) override {}
+        void releaseResources() override {}
+        void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override
+        {
+            info.clearActiveBufferRegion();
+        }
+    };
+
+    constexpr int kBlock = 480;
+    constexpr double kRate = 48000.0;
+
+    SilentSource source;
+    silverdaw::OutputKeepAlive ka;
+    ka.setKeepAwakeEnabled(true); // arms the wake pre-roll; off by default
+    ka.setContentLoaded(true);
+    silverdaw::MasterClockSource clock(source, ka);
+    clock.prepareToPlay(kBlock, kRate);
+
+    juce::AudioBuffer<float> buf(2, kBlock);
+    juce::AudioSourceChannelInfo info(&buf, 0, kBlock);
+
+    // Stopped: blocks still arrive, but none of them start anything.
+    for (int b = 0; b < 4; ++b) clock.getNextAudioBlock(info);
+    require(clock.getTransportStartTicks() == 0,
+            "a stopped transport must not stamp a start");
+
+    const auto epochBefore = clock.getPlayEpoch();
+    clock.setPlaying(true);
+    require(clock.getPlayEpoch() != epochBefore, "a new play must bump the epoch");
+    require(clock.getTransportStartTicks() == 0,
+            "the stamp must be cleared before the play is published");
+
+    // Through the wake pre-roll the playhead does not move, so nothing may be stamped.
+    const int prerollSamples = static_cast<int>(kRate * (silverdaw::kWakePrerollMs / 1000.0));
+    const int prerollBlocks = prerollSamples / kBlock;
+    for (int b = 0; b < prerollBlocks; ++b)
+    {
+        clock.getNextAudioBlock(info);
+        require(clock.getPositionSamples() == 0, "the wake pre-roll must not advance the playhead");
+        require(clock.getTransportStartTicks() == 0,
+                "the wake pre-roll must not be mistaken for the transport starting");
+    }
+
+    // The pre-roll is spent: this block is the real start.
+    clock.getNextAudioBlock(info);
+    const auto firstStamp = clock.getTransportStartTicks();
+    require(firstStamp > 0, "the first advancing block must stamp the transport start");
+    require(clock.getPositionSamples() > 0, "the transport must be advancing by now");
+
+    // The stamp is the START of the play, not a running clock.
+    for (int b = 0; b < 8; ++b) clock.getNextAudioBlock(info);
+    require(clock.getTransportStartTicks() == firstStamp,
+            "later blocks must not overwrite the transport start stamp");
+
+    // A fresh play clears it and takes a new epoch, so a take can never trim against
+    // the previous play's start.
+    const auto epochRolling = clock.getPlayEpoch();
+    clock.setPlaying(false);
+    clock.setPlaying(true);
+    require(clock.getTransportStartTicks() == 0, "a new play must clear the previous stamp");
+    require(clock.getPlayEpoch() != epochRolling, "a new play must take a new epoch");
+}
+
 } // namespace
 
 void addAudioEngineTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"AudioEngine setPreviewWarp survives rapid concurrent calls", testAudioEngineSetPreviewWarpUnderRapidCalls});
+    tests.push_back({"A mono clip is heard on both channels", testMonoClipPlaysOnBothChannels});
     tests.push_back({"Tempo change warps a previously unwarped clip in the engine", testTempoChangeWarpsPreviouslyUnwarpedClipInEngine});
     tests.push_back({"Tempo change leaves a clip already at the new tempo unwarped", testTempoChangeLeavesAClipAlreadyAtTheNewTempoUnwarped});
     tests.push_back({"Removing the last track clears markers and the timeline selection", testRemovingTheLastTrackClearsMarkersAndSelection});
@@ -1763,7 +1996,11 @@ void addAudioEngineTests(std::vector<TestCase>& tests)
     tests.push_back({"DecodedCache skips transcoding WAV sources", testDecodedCacheSkipsWavSources});
     tests.push_back({"loadPreview sniffs content when the extension is unclaimed", testLoadPreviewFallsBackToContentSniffing});
     tests.push_back({"Metronome clicks land on beat boundaries", testMetronomeClicksOnBeatBoundaries});
+    tests.push_back({"Metronome click steps back by the PDC alignment",
+                     testMetronomeClickStepsBackByPluginLatencyCompensation});
     tests.push_back({"A new project disarms the previous project's timeline loop", testNewProjectDisarmsPreviousProjectTimelineLoop});
+    tests.push_back({"Suspending the timeline loop leaves it armed", testSuspendingTheTimelineLoopLeavesItArmed});
+    tests.push_back({"Transport start stamp skips the wake pre-roll and stopped blocks", testTransportStartStampSkipsPrerollAndSilence});
 }
 
 } // namespace silverdaw::tests

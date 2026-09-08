@@ -12,7 +12,12 @@ struct SourceLibraryItem
 {
     juce::var data;
     juce::String id;
+    /** Library kind — "stem" or "sample". */
     juce::String kind;
+    /** The artifact folder the file lives in: "stems", "samples", "scratches" or
+     *  "recordings". A recording is a sample by kind but keeps its own folder and
+     *  its own group in the importer, so kind alone cannot place or present it. */
+    juce::String category;
     juce::File file;
     juce::File root;
 };

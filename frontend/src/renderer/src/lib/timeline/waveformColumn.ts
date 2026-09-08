@@ -7,6 +7,45 @@
 // multiplier so the rendered height visibly reflects the gain shape. This
 // isolates the (clamped) excursion maths from the Pixi drawing so it can be
 // unit tested without a canvas.
+//
+// Height is a *perceptual* function of amplitude, not a linear one — see
+// `WAVEFORM_GAMMA`. Every waveform in the app draws through here, so the curve
+// is applied once and the timeline, the Clip Editor and the Scratch Editor
+// cannot disagree about how loud a given clip looks.
+
+/**
+ * Exponent applied to a column's amplitude before it is scaled to pixels.
+ *
+ * Drawing amplitude linearly makes clips look like they sound only if every
+ * clip has the same crest factor, and they do not: a limited commercial master
+ * peaks barely above its own average, while a vocal or a live take peaks well
+ * above it. At *equal perceived loudness* the take therefore has far smaller
+ * sample values, and a linear waveform draws it as a thin line next to a track
+ * that fills its lane — which reads as "this recording is quiet" when it is not.
+ *
+ * A square root halves the distance from full scale in decibels, which pulls a
+ * dynamic take up towards the material it is sitting against without flattening
+ * the difference between loud and quiet. It is a fixed curve, so one shared
+ * scale still applies to every clip — a genuinely louder clip is always drawn
+ * bigger, which is what makes lanes comparable by eye. Per-clip normalisation
+ * would break exactly that, so the recording *dialog* auto-fits (where the
+ * question is "is this a good take") and the arrangement does not.
+ *
+ * Silence stays silent: the curve maps 0 to 0, so an empty passage is still
+ * flat rather than having its noise bed drawn up into something that looks
+ * like content.
+ */
+export const WAVEFORM_GAMMA = 0.5
+
+/**
+ * Amplitude in `[0, ∞)` to its drawn fraction of the lane half-height.
+ * Monotonic, fixes 0 and 1, and leaves anything at or above full scale to the
+ * caller's clamp.
+ */
+export function waveformAmplitudeToHeight(amplitude: number): number {
+  if (!(amplitude > 0)) return 0
+  return Math.pow(amplitude, WAVEFORM_GAMMA)
+}
 
 /**
  * Vertical excursion (in pixels, above and below the lane centre) for one
@@ -16,11 +55,11 @@
  *   positive peak in `[0, 1]` (the draw loop seeds both at 0, so they always
  *   straddle zero).
  * - `laneHalf` is the lane's half-height in pixels.
- * - `gain` is the volume-envelope multiplier at the column. `gain === 1`
- *   returns the unscaled excursion, so a clip with no envelope renders
- *   identically to before. Greater-than-unity boosts are clamped to `laneHalf`
- *   so the drawn line can never spill outside the clip block; a non-positive
- *   gain collapses the column to zero excursion.
+ * - `gain` is the volume-envelope multiplier at the column, applied to the
+ *   amplitude *before* the curve, so the drawn shape follows the gain the way
+ *   the audio does. Greater-than-unity boosts are clamped to `laneHalf` so the
+ *   drawn line can never spill outside the clip block; a non-positive gain
+ *   collapses the column to zero excursion.
  */
 /**
  * Upward excursion (pixels above the lane centre) for one waveform column.
@@ -29,7 +68,7 @@
  */
 export function waveformColumnUp(maxPeak: number, laneHalf: number, gain: number): number {
   const g = gain > 0 ? gain : 0
-  return Math.min(laneHalf, Math.max(0, maxPeak) * laneHalf * g)
+  return Math.min(laneHalf, waveformAmplitudeToHeight(Math.max(0, maxPeak) * g) * laneHalf)
 }
 
 /**
@@ -38,7 +77,7 @@ export function waveformColumnUp(maxPeak: number, laneHalf: number, gain: number
  */
 export function waveformColumnDown(minPeak: number, laneHalf: number, gain: number): number {
   const g = gain > 0 ? gain : 0
-  return Math.min(laneHalf, Math.max(0, -minPeak) * laneHalf * g)
+  return Math.min(laneHalf, waveformAmplitudeToHeight(Math.max(0, -minPeak) * g) * laneHalf)
 }
 
 export function waveformColumnExcursion(

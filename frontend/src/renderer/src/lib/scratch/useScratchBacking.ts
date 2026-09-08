@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { send as sendBridge } from '@/lib/bridgeService'
-import { useProjectStore } from '@/stores/projectStore'
+import { useProjectStore, isTrackSilenced } from '@/stores/projectStore'
 import {
   buildBackingClearPayload,
   buildBackingGainPayload,
@@ -45,7 +45,7 @@ export function useScratchBacking(
     project.tracks.map((track) => ({
       id: track.id,
       name: track.name,
-      muted: track.muted || (project.anySoloed && !track.soloed)
+      muted: isTrackSilenced(track, project.anySoloed)
     }))
   )
 

@@ -12,6 +12,8 @@ import type { ClipEditorWarpDraft } from '@/lib/clipEditor/useClipEditorWarpDraf
 const props = defineProps<{
   draft: ClipEditorWarpDraft
   sourceKey: string | undefined
+  /** Recordings are committed with a known tempo, so reanalysing them is harmful advice. */
+  sourceIsRecording?: boolean
 }>()
 
 // Alias the draft's refs into local consts so the template never reaches
@@ -164,7 +166,9 @@ const currentPitchKey = computed(() =>
         v-else
         class="text-[11px] text-zinc-500"
       >
-        No source key has been detected yet. Reanalyse the source file to generate key presets.
+        {{ sourceIsRecording
+          ? 'Recordings have no detected key, so set the shift by ear.'
+          : 'No source key has been detected yet. Reanalyse the source file to generate key presets.' }}
       </p>
     </div>
   </div>

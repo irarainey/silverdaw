@@ -4,7 +4,7 @@
 // the backend owns those files, so it can remove them even when a cross-process
 // (Electron) delete would be blocked by an open handle. Orphaned media-store entries
 // (cover art / tag sidecars the backend never opens) are still cleaned up in the main
-// process. The backend re-validates every path against the stems/samples write roots,
+// process. The backend re-validates every path against its own artifact write roots,
 // so a malformed path here can never delete a user's original imported audio.
 
 import { resolveLibraryItemMediaId } from '@/stores/libraryItemHelpers'
@@ -51,10 +51,11 @@ export function cleanupRemovedItemFiles(
 }
 
 /**
- * Capture the deletable-file info for a library item before it is removed. Only stems
- * and saved samples own a generated WAV in the project folders; a plain imported
- * source's file is the user's own and is never deleted (the media GUID may still be
- * cleaned up if it becomes orphaned).
+ * Capture the deletable-file info for a library item before it is removed. Only items
+ * that own a generated WAV in the project folders — a stem, a split channel, a saved
+ * sample, a recording or a baked scratch — have one to delete; a plain imported source's
+ * file is the user's own and is never deleted (the media GUID may still be cleaned up if
+ * it becomes orphaned).
  */
 export function removedItemFileInfo(
   item: LibraryItem,

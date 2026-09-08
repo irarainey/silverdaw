@@ -10,6 +10,7 @@ import {
   registerFileBrowserRoot,
   registerIssuedPath,
   registerProjectMediaRoots,
+  registerRecordingsWriteRoot,
   registerSamplesWriteRoot,
   registerStemsWriteRoot,
   registerTrustedReadRoot,
@@ -119,6 +120,23 @@ describe('audioPaths allow-list', () => {
     // The root itself is never prunable; a per-source subfolder is.
     expect(isPrunableArtifactSubdir(channelsRoot)).toBe(false)
     expect(isPrunableArtifactSubdir(abs('ProjectFolder', 'channels', 'Song'))).toBe(true)
+  })
+
+  it('treats a registered recordings write root as a read root and prunable-subdir root', () => {
+    const recordingsRoot = abs('ProjectFolder', 'recordings')
+    const takeWav = abs('ProjectFolder', 'recordings', 'Recording 1.wav')
+    const importedTakeWav = abs('ProjectFolder', 'recordings', 'import-abc', 'Recording 1.wav')
+    // Regression for the imported-take waveform failure: a take's WAV must be readable
+    // by the renderer so its peaks can be decoded. A take imported from another project
+    // is never named to main anywhere else, so only the root makes it readable.
+    expect(isAllowedAudioPath(takeWav)).toBe(false)
+    expect(isAllowedAudioPath(importedTakeWav)).toBe(false)
+    registerRecordingsWriteRoot(recordingsRoot)
+    expect(isAllowedAudioPath(takeWav)).toBe(true)
+    expect(isAllowedAudioPath(importedTakeWav)).toBe(true)
+    // The root itself is never prunable; an imported take's per-import subfolder is.
+    expect(isPrunableArtifactSubdir(recordingsRoot)).toBe(false)
+    expect(isPrunableArtifactSubdir(abs('ProjectFolder', 'recordings', 'import-abc'))).toBe(true)
   })
 
   it('marks only strict per-source subfolders of write roots as prunable', () => {

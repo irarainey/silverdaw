@@ -2,7 +2,7 @@
 // Track-header overlay aligned to the PixiJS timeline rows.
 
 import { computed } from 'vue'
-import { useProjectStore } from '@/stores/projectStore'
+import { useProjectStore, isTrackSilenced } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 import { importAudioIntoTrack } from '@/lib/importAudio'
 import {
@@ -238,7 +238,7 @@ function isTrackFxShowing(trackId: string): boolean {
           :key="track.id"
           class="pointer-events-auto absolute flex flex-col gap-1.5 rounded border border-zinc-700 px-2 py-1.5 text-xs"
           :class="{
-            'opacity-50': track.muted || (project.anySoloed && !track.soloed),
+            'opacity-50': isTrackSilenced(track, project.anySoloed),
             'ring-1 ring-inset ring-sky-500/60': track.soloed,
             'opacity-30': reorderingTrackId === track.id,
             'bg-zinc-800/40': project.selectedTrackId === track.id,
@@ -485,7 +485,7 @@ function isTrackFxShowing(trackId: string): boolean {
             <button
               type="button"
               class="flex h-6 w-6 items-center justify-center rounded border text-[11px] font-bold transition-colors disabled:cursor-not-allowed"
-              :class="(track.muted || (project.anySoloed && !track.soloed))
+              :class="isTrackSilenced(track, project.anySoloed)
                 ? 'border-amber-400 bg-amber-500 text-zinc-950 hover:bg-amber-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100'
               "

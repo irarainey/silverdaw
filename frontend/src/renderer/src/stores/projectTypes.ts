@@ -251,6 +251,59 @@ export const TRACK_PALETTE: readonly TrackPaletteEntry[] = [
   { id: 'zinc', cssHex: '#a1a1aa', fill: 0x3f3f46, border: 0xa1a1aa, wave: 0xd4d4d8 }
 ] as const
 
+/**
+ * True when a track produces no sound: either it is muted outright, or some other
+ * track is soloed and this one is not. Both are the same fact to a listener, so
+ * anything that reflects audibility — the track header's dimming, the Scratch
+ * Editor's backing choices, the faded clips on the timeline — must ask the same
+ * question, or the timeline can show a clip as playing while the header says the
+ * track is silent.
+ */
+export function isTrackSilenced(
+  track: Pick<Track, 'muted' | 'soloed'>,
+  anySoloed: boolean
+): boolean {
+  return track.muted || (anySoloed && !track.soloed)
+}
+
+/** Timeline canvas background (zinc-950); silenced clips are mixed toward it. */
+const TIMELINE_BG = { r: 0x09, g: 0x09, b: 0x0b } as const
+/**
+ * How far a silenced clip's colours fall back toward the canvas. Tuned by eye:
+ * enough that a silent track drops behind the ones still playing at a glance,
+ * but short of the point where the clip body stops separating from the canvas
+ * and the arrangement looks like it has a hole in it.
+ */
+const SILENCED_MIX = 0.65
+
+function towardBackground(colour: number, amount: number): number {
+  const r = Math.round(((colour >> 16) & 0xff) * (1 - amount) + TIMELINE_BG.r * amount)
+  const g = Math.round(((colour >> 8) & 0xff) * (1 - amount) + TIMELINE_BG.g * amount)
+  const b = Math.round((colour & 0xff) * (1 - amount) + TIMELINE_BG.b * amount)
+  return (r << 16) | (g << 8) | b
+}
+
+/**
+ * `TRACK_PALETTE` blended toward the timeline background, for clips on a track
+ * that cannot be heard. Sinking the colours rather than lowering the display
+ * object's alpha keeps the clip opaque, so it still occludes the grid behind it
+ * and reads as a solid object that is simply not playing — and it costs nothing
+ * per frame, since the whole table is computed once at module load.
+ *
+ * Only the three painted colours are darkened. The clip name stays white on the
+ * (darkened) header strip and the lock / warp / reverse badges keep their own
+ * colours: a muted clip still has to be readable, and losing the badges would
+ * hide state the user needs while arranging.
+ */
+export const SILENCED_TRACK_PALETTE: readonly TrackPaletteEntry[] = TRACK_PALETTE.map(
+  (entry) => ({
+    ...entry,
+    fill: towardBackground(entry.fill, SILENCED_MIX),
+    border: towardBackground(entry.border, SILENCED_MIX),
+    wave: towardBackground(entry.wave, SILENCED_MIX)
+  })
+)
+
 /** Snapshot of a clip's reproducible state, used by Cut / Copy / Paste. */
 export interface ClipboardEntry {
   sourceTrackId: string

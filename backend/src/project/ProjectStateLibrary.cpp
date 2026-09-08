@@ -178,38 +178,49 @@ bool ProjectState::removeLibraryItemNonDirty(const juce::String& itemId)
     auto library = root.getChildWithName(kLibrary);
     if (!library.isValid()) return false;
 
-    // Suppress the dirty listeners and remove without the undo manager, then mirror the
-    // removal into the clean snapshot so root stays equivalent to it (no pending change).
-    const SuppressDirtyScope suppress(*this);
     bool removed = false;
-    for (int i = library.getNumChildren() - 1; i >= 0; --i)
     {
-        auto item = library.getChild(i);
-        if (item.getProperty(kId).toString() == itemId)
+        // Suppress the dirty listeners and remove without the undo manager, then mirror the
+        // removal into the clean snapshot so root stays equivalent to it (no pending change).
+        const SuppressDirtyScope suppress(*this);
+        for (int i = library.getNumChildren() - 1; i >= 0; --i)
         {
-            library.removeChild(item, nullptr);
-            removed = true;
-            break;
-        }
-    }
-    if (!removed) return false;
-
-    if (cleanSnapshot.isValid())
-    {
-        auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
-        if (snapLibrary.isValid())
-        {
-            for (int i = snapLibrary.getNumChildren() - 1; i >= 0; --i)
+            auto item = library.getChild(i);
+            if (item.getProperty(kId).toString() == itemId)
             {
-                auto snapItem = snapLibrary.getChild(i);
-                if (snapItem.getProperty(kId).toString() == itemId)
+                library.removeChild(item, nullptr);
+                removed = true;
+                break;
+            }
+        }
+        if (!removed) return false;
+
+        if (cleanSnapshot.isValid())
+        {
+            auto snapLibrary = cleanSnapshot.getChildWithName(kLibrary);
+            if (snapLibrary.isValid())
+            {
+                for (int i = snapLibrary.getNumChildren() - 1; i >= 0; --i)
                 {
-                    snapLibrary.removeChild(snapItem, nullptr);
-                    break;
+                    auto snapItem = snapLibrary.getChild(i);
+                    if (snapItem.getProperty(kId).toString() == itemId)
+                    {
+                        snapLibrary.removeChild(snapItem, nullptr);
+                        break;
+                    }
                 }
             }
         }
     }
+
+    // The removal itself must never *raise* the flag — that is the whole point of this
+    // path — but suppression alone also stops it being *lowered*, and an item added since
+    // the last save is exactly what an unsaved project is usually dirty about. Record a
+    // take, put it on a track, then take the track and the item away again and the tree is
+    // back to what was saved, yet the flag stayed up with nothing left to attribute it to.
+    // Recomputing outside the scope re-reads the tree: still dirty if anything else moved,
+    // clean when the removal was the last outstanding difference.
+    recomputeDirty();
     return true;
 }
 
@@ -330,10 +341,12 @@ int ProjectState::repairLibraryItemKinds(juce::ValueTree& library, const juce::F
     if (!library.isValid()) return 0;
 
     // Category folder → the kind an item stored under it must have. Channel splits
-    // reuse the stem kind (badge, cleanup, serialisation); scratch bakes are samples.
+    // reuse the stem kind (badge, cleanup, serialisation); scratch bakes and
+    // recordings are samples.
     struct ArtifactKind { const char* folder; const char* kind; };
     static const ArtifactKind kArtifactKinds[] = {
-        {"stems", "stem"}, {"channels", "stem"}, {"samples", "sample"}, {"scratches", "sample"}};
+        {"stems", "stem"}, {"channels", "stem"}, {"samples", "sample"}, {"scratches", "sample"},
+        {"recordings", "sample"}};
 
     int repaired = 0;
     for (int i = 0; i < library.getNumChildren(); ++i)
@@ -475,6 +488,13 @@ juce::var ProjectState::libraryAsJson() const
         {
             obj->setProperty("scratchSourcePath",
                              item.getProperty(kScratchSourcePath).toString());
+        }
+        // Provenance only (ADR 0030): a recording is an ordinary sample, so this
+        // marks where it came from without introducing a library kind.
+        if (item.hasProperty(kRecordingOrigin)
+            && static_cast<bool>(item.getProperty(kRecordingOrigin)))
+        {
+            obj->setProperty("recordingOrigin", true);
         }
         if (item.hasProperty(kSourceItemId))
         {

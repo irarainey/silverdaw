@@ -5,6 +5,13 @@ import TransportOutputSection from '@/components/TransportOutputSection.vue'
 import TransportPlaybackControls from '@/components/TransportPlaybackControls.vue'
 import TransportTimingDisplay from '@/components/TransportTimingDisplay.vue'
 import { useTransportBarController } from '@/lib/transport/useTransportBarController'
+import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
+
+const recording = useRecordingSessionStore()
+
+function onRecord(): void {
+  void recording.openDialog()
+}
 
 const {
   project,
@@ -76,11 +83,13 @@ const {
       :play-button-title="playButtonTitle"
       :play-disabled="playDisabled"
       :skip-forward-title="skipForwardTitle"
+      :record-dialog-open="recording.dialogOpen"
       @skip-back="onSkipBack"
       @play="onPlay"
       @skip-forward="onSkipForward"
       @toggle-follow="onToggleFollow"
       @toggle-loop-selection="onToggleLoopSelection"
+      @record="onRecord"
     />
 
     <TransportTimingDisplay

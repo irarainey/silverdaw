@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.9.0
+
+### Added
+
+- **Record Audio** captures live input over the arrangement and keeps the take as a library item or a clip on the timeline.
+- The capture device, mono or stereo channels, input gain and live input metering are set in the record dialog.
+- A take is aligned to the timeline automatically, compensating for audio hardware latency and transport start.
+- A take keeps a moment of audio ahead of where recording began, so a note played fractionally early is not clipped.
+- The waveform and beat grid drawn while recording now show a take where it will actually sit on the timeline.
+- Recording runs from the start of the project, from the playhead, or over a selected range, with an optional count-in.
+- The backing heard under a performance is chosen and levelled in the dialog, leaving the project's own mutes, solos and levels untouched.
+- A metronome and a live waveform of the performance are available while recording.
+- **Hear Yourself** monitors the input alongside the backing.
+- Takes are captured as **Music**, which inherits the project tempo and warps with it, or **Simple** for speech and sound effects.
+- An optional cleanup removes low-level background noise from a take.
+- A finished take can be auditioned alone or against the arrangement, renamed, converted from mono to stereo, and re-recorded before it is kept.
+- A stereo take can be split into its two channels as it is kept, so a two-channel mixer can be used as the input device and its two sources land on separate tracks.
+- Recording starts and stops with the **R** key or the space bar anywhere in the Record Audio dialog, and the space bar plays a finished take back while it is being reviewed.
+- The waveforms shown while recording and while reviewing a take now follow the **Waveform display** preference, so a stereo take is drawn as separate left and right channels.
+- **Calibrate timing** measures the audio hardware's true output-to-input round trip and applies it to every take on the same pair of devices.
+- A calibration can be typed in by hand where measuring acoustically is not possible.
+- **File ▸ Import from Project…** offers another project's recordings alongside its stems and samples.
+- The recording input driver is chosen in **Preferences ▸ Audio**.
+
+### Changed
+
+- Pitch-shifted clips now play in tune and without smearing, changing how an existing project that uses pitch shift sounds.
+- The warp mode is now named **Warp & Pitch Mode** and has its own module in the Clip Editor, making clear that one setting shapes both. It can now be chosen on a clip that is pitch shifted without a tempo warp.
+- Waveforms are drawn on a perceptual scale, so a clip looks as loud as it sounds.
+- Audio device wording throughout the app now says whether a device is the audio output or the recording input.
+- The audio driver choices in **Preferences ▸ Audio** now read as short trade-offs rather than paragraphs.
+- Clips on a track silenced by a mute or another track's solo are drawn faded.
+
+### Fixed
+
+- Mono clips played only through the left speaker, so panning one to the right faded it out. Mono audio now plays centred, matching what was already exported.
+- Clips made from a recording or a sample no longer show the link icon used by saved clips.
+- The Pitch panel no longer advises reanalysing a recording to generate key presets.
+- Removing a saved scratch left its audio file behind when **Clean up project files** was on.
+- The metronome ran ahead of the music whenever a track used an effect that adds latency, so anything played to the click landed early.
+- Checkboxes and radio buttons showed the browser's own white focus outline instead of the app's own styling.
+- Playback no longer falls back to the system default output when the audio device list changes.
+- Deleting a stem or sample with **Clean up project files** on left the project marked as having unsaved changes when nothing else had changed.
+
 ## 1.8.0
 
 ### Added

@@ -66,8 +66,8 @@ export function createClipHeaderRenderer(deps: ClipHeaderRendererDeps) {
     if (clipW < 20) return
 
     // Reuse per-clip library/source-BPM resolution from `drawClip`.
-    // Saved clips and sample assets (music or simple) are reusable library
-    // entries a placed clip stays linked to — show the link badge for both.
+    // Only a saved clip shares state across its placements, so only it earns the
+    // link badge; a sample (a recording, a baked scratch) is placed independently.
     const isLinked = libraryItemShowsLinkBadge(libItem)
     const isLocked = clip.locked === true
     const warpIsPending = isWarpPending({

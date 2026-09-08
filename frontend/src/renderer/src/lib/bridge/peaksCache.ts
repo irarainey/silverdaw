@@ -2,20 +2,24 @@
 //
 // Parses the on-disk `.peaks` binary cache (written by the backend) and applies
 // the decoded peaks to the relevant Pinia store. Split out of `bridgeService`
-// so the binary-layout contract and its three consumers (WAVEFORM_READY,
-// SAMPLE_SAVED, CLIP_EDITOR_PEAKS_READY) live in one focused module.
+// so the binary-layout contract and its consumers (WAVEFORM_READY,
+// SAMPLE_SAVED, CLIP_EDITOR_PEAKS_READY, SCRATCH_SOURCE_PEAKS_READY,
+// RECORD_RECORDING_READY) live in one focused module.
 
 import { log } from '@/lib/log'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useScratchSessionStore } from '@/stores/scratchSessionStore'
+import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { refreshLibraryPeaksForPath } from '@/stores/projectSnapshotLibrary'
 import { inheritSourceAnalysis } from '@/lib/library/inheritSourceAnalysis'
+import { buildRigidBeatGrid } from '@/lib/library/rigidBeatGrid'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import { clipHasCompleteWaveformData } from '@/stores/project-waveform-state'
 import type {
+  RecordingReadyPayload,
   SampleSavedPayload,
   ScratchSourcePeaksReadyPayload,
   WaveformReadyPayload
@@ -94,7 +98,10 @@ export function parsePeaksCacheBuffer(
   // the envelope carries the fractional effective rate, so those two are
   // deliberately NOT compared.)
   if (headerPeakCount !== expectedPeakCount) {
-    log.warn('bridge', `${label} peakCount mismatch header=${headerPeakCount} payload=${expectedPeakCount}`)
+    log.warn(
+      'bridge',
+      `${label} peakCount mismatch header=${headerPeakCount} payload=${expectedPeakCount}`
+    )
     return null
   }
   const floatsPerLane = headerPeakCount * 2
@@ -148,7 +155,13 @@ export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise
     if (clip) refreshLibraryPeaksForPath(clip.filePath)
     return
   }
-  useProjectStore().setClipPeaks(clipId, parsed.summary, sampleRate, peaksPerSecond, parsed.channels)
+  useProjectStore().setClipPeaks(
+    clipId,
+    parsed.summary,
+    sampleRate,
+    peaksPerSecond,
+    parsed.channels
+  )
   log.info(
     'bridge',
     `WAVEFORM_READY clipId=${clipId} peaks=${peakCount} lanes=${parsed.laneCount} ppS=${peaksPerSecond}`
@@ -178,6 +191,29 @@ export async function loadScratchSourcePeaksFromCache(
   )
 }
 
+/** Review waveform for a finished recording (ADR 0030). Same cache-file path as
+ *  every other peaks payload; the recording's audio never crosses the bridge. */
+export async function loadRecordingPeaksFromCache(payload: RecordingReadyPayload): Promise<void> {
+  const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
+  const parsed = parsePeaksCacheBuffer(
+    buffer,
+    payload.peakCount,
+    `RECORD_RECORDING_READY recordingId=${payload.recordingId}`
+  )
+  if (!parsed) return
+  useRecordingSessionStore().setReadyPeaks({
+    recordingId: payload.recordingId,
+    peaks: parsed.summary,
+    channels: parsed.channels,
+    peaksPerSecond: payload.peaksPerSecond,
+    sampleRate: payload.sampleRate
+  })
+  log.info(
+    'bridge',
+    `RECORD_RECORDING_READY recordingId=${payload.recordingId} peaks=${payload.peakCount} lanes=${parsed.laneCount}`
+  )
+}
+
 export async function applySampleSaved(payload: SampleSavedPayload): Promise<void> {
   const notifications = useNotificationsStore()
   if (!payload.ok) {
@@ -186,15 +222,27 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     const scratch = useScratchSessionStore()
     const wasScratchBake = scratch.bakePendingItemId === payload.itemId
     scratch.resolveScratchBake(payload.itemId, false, payload.error ?? null)
-    if (!wasScratchBake) {
+    // A recording commit answers here too, and the Record Audio dialog shows its
+    // own message, so it suppresses the generic toast for the same reason.
+    const recording = useRecordingSessionStore()
+    const wasRecordingCommit = recording.commitPendingItemId === payload.itemId
+    recording.resolveCommit(payload.itemId, false, payload.error ?? null)
+    if (!wasScratchBake && !wasRecordingCommit) {
       notifications.pushError(`Sample export failed: ${payload.error ?? 'unknown error'}`)
     }
-    log.warn('bridge', `SAMPLE_SAVED failed source=${payload.clipId ?? payload.libraryItemId ?? '?'} error=${payload.error ?? 'unknown'}`)
+    log.warn(
+      'bridge',
+      `SAMPLE_SAVED failed source=${payload.clipId ?? payload.libraryItemId ?? '?'} error=${payload.error ?? 'unknown'}`
+    )
     return
   }
 
   const buffer = await window.silverdaw.readPeaksCacheFile(payload.cachePath).catch(() => null)
-  const parsed = parsePeaksCacheBuffer(buffer, payload.peakCount, `SAMPLE_SAVED itemId=${payload.itemId}`)
+  const parsed = parsePeaksCacheBuffer(
+    buffer,
+    payload.peakCount,
+    `SAMPLE_SAVED itemId=${payload.itemId}`
+  )
   const peaks = parsed?.summary ?? new Float32Array()
 
   const library = useLibraryStore()
@@ -222,7 +270,8 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       existingItem.derivedFrom = {
         sourceItemId: payload.sourceItemId,
         inMs: payload.sourceInMs ?? existingItem.derivedFrom?.inMs ?? 0,
-        durationMs: payload.sourceDurationMs ?? existingItem.derivedFrom?.durationMs ?? payload.durationMs
+        durationMs:
+          payload.sourceDurationMs ?? existingItem.derivedFrom?.durationMs ?? payload.durationMs
       }
     }
     library.setItemAudioDetails(
@@ -268,6 +317,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       : undefined,
     scratchOrigin: payload.scratchOrigin === true ? true : undefined,
     scratchPatternId: payload.scratchPatternId,
+    recordingOrigin: payload.recordingOrigin === true ? true : undefined,
     fromSnapshot: true
   })
   // The backend measured the saved window against its source's grid; carry the count
@@ -290,6 +340,21 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     if (item) item.audioType = payload.audioType
     if (payload.audioType === 'music' && mediaSource) {
       inheritSourceAnalysis(library, payload.itemId, mediaSource, (payload.sourceInMs ?? 0) / 1000)
+    } else if (payload.audioType === 'music' && typeof payload.bpm === 'number' && payload.bpm > 0) {
+      // A recording has no source item to inherit from: its grid is the project's
+      // own, sent with this message. The matching LIBRARY_ITEM_ANALYSIS was
+      // broadcast before the item existed here, so this is the only chance to
+      // apply it short of a reload (ADR 0030).
+      const anchorSec = payload.beatAnchorSec ?? 0
+      library.setItemAnalysis(
+        payload.itemId,
+        payload.bpm,
+        anchorSec,
+        buildRigidBeatGrid(payload.bpm, anchorSec, payload.durationMs / 1000),
+        false,
+        undefined,
+        false
+      )
     }
     // Resolve the shared cover art + tags from the project media store by the GUID the
     // sample carries over from its source — works for both music and simple samples,
@@ -303,9 +368,15 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   const scratch = useScratchSessionStore()
   const wasScratchBake = scratch.bakePendingItemId === payload.itemId
   scratch.resolveScratchBake(payload.itemId, true, null)
+  // A committed recording closes its own dialog and needs no sample toast.
+  const recording = useRecordingSessionStore()
+  const wasRecordingCommit = recording.commitPendingItemId === payload.itemId
+  recording.resolveCommit(payload.itemId, true, null)
   if (wasScratchBake) {
     // The Scratch Editor surfaces its own save feedback and closes on success;
     // skip the generic sample toast to avoid duplicate notifications.
+  } else if (wasRecordingCommit) {
+    // Same for the Record Audio dialog.
   } else if (payload.batchTotal && payload.batchTotal > 1) {
     if ((payload.batchIndex ?? 0) >= payload.batchTotal - 1) {
       notifications.pushInfo(`Saved ${payload.batchTotal} samples.`)
@@ -331,7 +402,11 @@ export async function loadEditorPeaksFromCache(payload: {
     log.warn('bridge', `CLIP_EDITOR_PEAKS_READY read failed libId=${libraryItemId}: ${String(err)}`)
     return
   }
-  const parsed = parsePeaksCacheBuffer(buffer, peakCount, `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId}`)
+  const parsed = parsePeaksCacheBuffer(
+    buffer,
+    peakCount,
+    `CLIP_EDITOR_PEAKS_READY libId=${libraryItemId}`
+  )
   if (!parsed) return
   useLibraryStore().setEditorHiResPeaks({
     libraryItemId,

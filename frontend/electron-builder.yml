@@ -176,11 +176,15 @@ appx:
   # redistributables all support Windows 10 1809+).
   minVersion: "10.0.17763.0"
   maxVersionTested: "10.0.22621.0"
-  # Only the full-trust capability — the app requests no device/location/media
-  # capabilities. Renderer permission requests are additionally denied at
-  # runtime (see src/main/sessionSecurity.ts).
+  # Full trust plus the microphone device capability: recording captures audio in
+  # the backend Win32 process, and a packaged app with package identity is still
+  # subject to Windows microphone privacy consent (ADR 0030). Without the
+  # declaration the device opens and yields silence, which looks like a broken
+  # feature. Renderer permission requests stay denied at runtime (see
+  # src/main/sessionSecurity.ts) — the renderer never captures audio itself.
   capabilities:
     - runFullTrust
+    - microphone
   # Inject a richer `.silverdaw` fileTypeAssociation (friendly type name,
   # tooltip, and the document icon) into the generated AppxManifest's
   # <Extensions>. Path is relative to the app dir (frontend/). See the file

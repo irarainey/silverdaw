@@ -6,6 +6,7 @@ import type {
   FileBrowserEntry,
   FileBrowserFolderIndex,
   FileBrowserIndexProgress,
+  LatencyCalibrationDto,
   MidiDevicePreferences,
   MidiDeckSelection,
   OpenedAudioFile,
@@ -220,9 +221,31 @@ const api = {
   // ─── Audio output device preference ─────────────────────────────────────
   getAudioOutput: (): Promise<{ typeName: string | null; deviceName: string | null }> =>
     ipcRenderer.invoke(IPC.prefs.getAudioOutput),
-  /** Persist only backend-acknowledged audio device selections. */
+  /** Persist only backend-acknowledged audio output device selections. */
   setAudioOutput: (partial: { typeName: string | null; deviceName: string | null }): void => {
     ipcRenderer.send(IPC.prefs.setAudioOutput, partial)
+  },
+  // ─── Audio input (capture) device preference ────────────────────────────
+  getAudioInput: (): Promise<{
+    typeName: string | null
+    deviceName: string | null
+    gainDb: number
+  }> => ipcRenderer.invoke(IPC.prefs.getAudioInput),
+  /** Remember the capture device, driver or input gain. Any field may be omitted;
+   *  what is left out keeps its stored value. */
+  setAudioInput: (partial: {
+    typeName?: string | null
+    deviceName?: string | null
+    gainDb?: number
+  }): void => {
+    ipcRenderer.send(IPC.prefs.setAudioInput, partial)
+  },
+  // ─── Recording latency calibration, keyed by input+output device pair ───
+  getLatencyCalibrations: (): Promise<Record<string, LatencyCalibrationDto>> =>
+    ipcRenderer.invoke(IPC.prefs.getLatencyCalibrations),
+  /** `null` forgets the entry, so clearing and recalibrating share one path. */
+  setLatencyCalibration: (key: string, value: LatencyCalibrationDto | null): void => {
+    ipcRenderer.send(IPC.prefs.setLatencyCalibration, key, value)
   },
   // ─── Per-device output keep-awake toggles (on / off) ────────────────────
   getKeepAwakeByDevice: (): Promise<Record<string, boolean>> =>

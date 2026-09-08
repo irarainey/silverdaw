@@ -21,11 +21,13 @@ import {
   sanitiseScratchRealismPrefs,
   sanitiseScratchPrefs,
   sanitiseKeepAwakeByDevice,
+  sanitiseAudioInputPrefs,
+  sanitiseLatencyCalibrations,
+  sanitiseDeviceSelection,
   sanitiseEnabledMidiInputs,
   sanitiseMidiDeckSelections,
   sanitiseMidiDevicePreferences,
   sanitiseUiPrefs,
-  type AudioOutputPrefs,
   type AutosavePrefs,
   type DebugPrefs,
   type PathPrefs,
@@ -100,18 +102,9 @@ export class PrefsService {
             (parsed.autosave as Partial<AutosavePrefs> | undefined)?.intervalSeconds
           )
         },
-        audioOutput: {
-          typeName:
-            typeof (parsed.audioOutput as Partial<AudioOutputPrefs> | undefined)?.typeName === 'string' &&
-            (parsed.audioOutput as AudioOutputPrefs).typeName!.length > 0
-              ? (parsed.audioOutput as AudioOutputPrefs).typeName
-              : null,
-          deviceName:
-            typeof (parsed.audioOutput as Partial<AudioOutputPrefs> | undefined)?.deviceName === 'string' &&
-            (parsed.audioOutput as AudioOutputPrefs).deviceName!.length > 0
-              ? (parsed.audioOutput as AudioOutputPrefs).deviceName
-              : null
-        },
+        audioOutput: sanitiseDeviceSelection(parsed.audioOutput),
+        audioInput: sanitiseAudioInputPrefs(parsed.audioInput),
+        latencyCalibrations: sanitiseLatencyCalibrations(parsed.latencyCalibrations),
         keepAwakeByDevice: sanitiseKeepAwakeByDevice(parsed.keepAwakeByDevice),
         enabledMidiInputs: sanitiseEnabledMidiInputs(parsed.enabledMidiInputs),
         midiDeckSelections: sanitiseMidiDeckSelections(parsed.midiDeckSelections),

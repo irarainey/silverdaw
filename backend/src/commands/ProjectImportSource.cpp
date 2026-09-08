@@ -57,15 +57,26 @@ std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& i
     const auto stemsRoot = sourceDirectory.getChildFile("stems");
     const auto samplesRoot = sourceDirectory.getChildFile("samples");
     const auto scratchesRoot = sourceDirectory.getChildFile("scratches");
+    const auto recordingsRoot = sourceDirectory.getChildFile("recordings");
     const juce::File file(filePath);
 
     if (kind == "stem" && isManagedSourceFile(file, stemsRoot))
-        return SourceLibraryItem{data, id, kind, file, stemsRoot};
+        return SourceLibraryItem{data, id, kind, "stems", file, stemsRoot};
     if (kind == "sample" && isManagedSourceFile(file, samplesRoot))
-        return SourceLibraryItem{data, id, kind, file, samplesRoot};
+        return SourceLibraryItem{data, id, kind, "samples", file, samplesRoot};
     if (kind == "sample" && data.getProperty("scratchOrigin", false)
         && isManagedSourceFile(file, scratchesRoot))
-        return SourceLibraryItem{data, id, kind, file, scratchesRoot};
+        return SourceLibraryItem{data, id, kind, "scratches", file, scratchesRoot};
+    // A recording is an ordinary sample living in its own category folder, so
+    // containment alone identifies it (ADR 0030) — and is what the importer trusts,
+    // rather than the persisted flag, so a take whose provenance was lost still
+    // imports back as a recording rather than as an anonymous sample.
+    if (kind == "sample" && isManagedSourceFile(file, recordingsRoot))
+    {
+        if (auto* object = data.getDynamicObject())
+            object->setProperty("recordingOrigin", true);
+        return SourceLibraryItem{data, id, kind, "recordings", file, recordingsRoot};
+    }
     return std::nullopt;
 }
 

@@ -6,6 +6,7 @@
 // auto-flag are deliberately NOT copied — each caller owns those.
 
 import { libraryItemSourceBpm } from '@/stores/libraryItemHelpers'
+import { buildRigidBeatGrid } from '@/lib/library/rigidBeatGrid'
 import { useLibraryStore } from '@/stores/libraryStore'
 
 type LibraryStore = ReturnType<typeof useLibraryStore>
@@ -35,15 +36,8 @@ export function inheritSourceAnalysis(
   // by extrapolating from those two values, so the synthesised beats restore the
   // markers without changing where they land.
   if (beats.length === 0) {
-    const spacingSec = 60 / sourceBpm
     const durationSec = Math.max(0, (library.getItem(targetId)?.durationMs ?? 0) / 1000)
-    // First on-grid beat at or after local time 0, in phase with `anchor`.
-    const firstBeat = anchor + Math.ceil((0 - anchor) / spacingSec) * spacingSec
-    beats = []
-    for (let t = firstBeat; t <= durationSec + 1e-6; t += spacingSec) beats.push(t)
-    // Fall back to the phase beat alone when the window duration is unknown, so
-    // the list is never empty when a tempo is inherited.
-    if (beats.length === 0) beats.push(Math.max(0, firstBeat))
+    beats = buildRigidBeatGrid(sourceBpm, anchor, durationSec)
   }
   library.setItemAnalysis(
     targetId,

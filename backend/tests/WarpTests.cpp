@@ -137,22 +137,54 @@ void testWarpTimelineDurationMapping()
 void testWarpPitchStrategy()
 {
     using Stretcher = RubberBand::RubberBandStretcher;
+    constexpr auto transientsMask = Stretcher::OptionTransientsCrisp
+                                    | Stretcher::OptionTransientsMixed
+                                    | Stretcher::OptionTransientsSmooth;
+
     const auto tempoOnly = silverdaw::WarpProcessor::realtimeOptionsFor(
-        Stretcher::OptionEngineFaster, 1.0);
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsCrisp, 1.0);
     require((tempoOnly & Stretcher::OptionProcessRealTime) != 0,
             "warp playback must use Rubber Band real-time mode");
     require((tempoOnly & Stretcher::OptionPitchHighConsistency) == 0,
             "tempo-only warp should use Rubber Band's lower-cost pitch strategy");
+    require((tempoOnly & Stretcher::OptionPitchHighQuality) == 0,
+            "tempo-only warp does not pitch shift, so it needs no pitch-quality option");
+    require((tempoOnly & transientsMask) == Stretcher::OptionTransientsCrisp,
+            "tempo-only warp must keep crisp transients so time-stretched drums stay sharp");
 
+    // A pitch shift resamples, and crisp phase resets then fire on sustained tones
+    // as well as real transients. Mixed protects musical fundamentals while still
+    // resetting outside that range, so percussive attacks survive.
     const auto pitchShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
-        Stretcher::OptionEngineFaster, 1.25);
-    require((pitchShifted & Stretcher::OptionPitchHighConsistency) != 0,
-            "pitch-shifted warp should preserve dynamic-pitch consistency");
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsCrisp, 1.25);
+    require((pitchShifted & transientsMask) == Stretcher::OptionTransientsMixed,
+            "a pitch-shifted R2 warp must not reset phases on musical fundamentals");
+    require((pitchShifted & Stretcher::OptionPitchHighQuality) != 0,
+            "a pitch shift fixed at construction should use the high-quality pitch method");
+    require((pitchShifted & Stretcher::OptionPitchHighConsistency) == 0,
+            "high consistency is for live pitch changes and is escalated to on demand");
+
+    // A mode that already states its transient handling keeps it.
+    const auto tonalShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFaster | Stretcher::OptionTransientsSmooth
+            | Stretcher::OptionWindowLong,
+        1.25);
+    require((tonalShifted & transientsMask) == Stretcher::OptionTransientsSmooth,
+            "an explicit transient choice must survive the pitch-shift adjustment");
 
     const auto finerAtUnity = silverdaw::WarpProcessor::realtimeOptionsFor(
         Stretcher::OptionEngineFiner, 1.0);
     require((finerAtUnity & Stretcher::OptionPitchHighConsistency) != 0,
             "finer warp must configure immutable dynamic-pitch consistency at construction");
+
+    // R3 refuses setPitchOption after construction, so it cannot use the
+    // escalate-on-live-change route and keeps high consistency throughout.
+    const auto finerShifted = silverdaw::WarpProcessor::realtimeOptionsFor(
+        Stretcher::OptionEngineFiner, 1.25);
+    require((finerShifted & Stretcher::OptionPitchHighConsistency) != 0,
+            "finer warp must keep dynamic-pitch consistency when pitch shifting");
+    require((finerShifted & Stretcher::OptionPitchHighQuality) == 0,
+            "finer warp must not combine two pitch methods");
 }
 
 void testWarpFeedsRubberBandOnDemand()
@@ -380,6 +412,109 @@ void testOffsetSourceTotalLengthFollowsWarpedTimeline()
             "a bypassed warp must leave the reported length unscaled");
 }
 
+void testWarpReportsThroughputDiagnostics()
+{
+    constexpr int kBlockSamples = 512;
+    silverdaw::WarpProcessor warp(
+        1, 48000.0, RubberBand::RubberBandStretcher::OptionEngineFaster);
+    warp.prepareToPlay(kBlockSamples);
+    warp.setTempoRatio(1.0);
+
+    require(warp.getShortfallCount() == 0, "a fresh warp must report no shortfalls");
+    require(warp.getRealtimeFactor() == 0.0,
+            "a warp that has produced nothing must report no throughput");
+
+    std::array<float, kBlockSamples> output{};
+    float* outputPtr = output.data();
+    const auto readSource =
+        [](float* const* dest, juce::int64, int numSamples)
+    { std::fill(dest[0], dest[0] + numSamples, 0.25F); };
+
+    for (int block = 0; block < 32; ++block)
+        warp.process(&outputPtr, kBlockSamples, readSource);
+
+    require(warp.getRealtimeFactor() > 0.0,
+            "a warp that has produced audio must report a real-time factor");
+    // Priming costs the opening blocks, so only steady-state throughput is asserted here.
+    // The shortfall counter is what distinguishes a starved run from a merely slow one.
+    require(warp.getShortfallCount() < 32,
+            "shortfalls must be counted per unfilled block, not per processed block");
+}
+
+// A warp is usually enabled before any pitch is dialled in, and a pitch change deliberately
+// does not rebuild the stretcher. The offline render always builds with the final pitch, so
+// anything the constructor decides from the pitch has to be revisited live or playback and
+// export drift apart. This pins that they agree.
+void testWarpLivePitchChangeMatchesRenderPath()
+{
+    constexpr int kBlockSamples = 512;
+    constexpr double kSampleRate = 48000.0;
+    constexpr double kToneHz = 440.0;
+    const double pitchScale = silverdaw::warpPitchScale(5.0, 0.0);
+    const double expectedHz = kToneHz * pitchScale;
+
+    // Share of the output energy still on the intended shifted tone. A clean shift of a pure
+    // sine keeps nearly all of it there; phase resets at falsely detected onsets scatter it.
+    const auto tonalPurity = [](const std::vector<float>& signal, double hz, double rate)
+    {
+        double re = 0.0;
+        double im = 0.0;
+        double total = 0.0;
+        const double w = 2.0 * juce::MathConstants<double>::pi * hz / rate;
+        for (size_t i = 0; i < signal.size(); ++i)
+        {
+            const double s = static_cast<double>(signal[i]);
+            re += s * std::cos(w * static_cast<double>(i));
+            im += s * std::sin(w * static_cast<double>(i));
+            total += s * s;
+        }
+        if (total <= 0.0) return 0.0;
+        const double binEnergy = 2.0 * (re * re + im * im) / static_cast<double>(signal.size());
+        return juce::jlimit(0.0, 1.0, binEnergy / total);
+    };
+
+    const auto capture = [&](double constructionPitch, bool changeLive)
+    {
+        silverdaw::WarpProcessor warp(1, kSampleRate, silverdaw::parseWarpMode("rhythmic"),
+                                      constructionPitch);
+        warp.prepareToPlay(kBlockSamples);
+        warp.setTempoRatio(1.0);
+        if (changeLive) warp.setPitchScale(pitchScale);
+
+        std::vector<float> block(static_cast<size_t>(kBlockSamples), 0.0f);
+        float* blockPtr = block.data();
+        const auto readSource =
+            [toneHz = kToneHz, rate = kSampleRate](float* const* dest, juce::int64 sourcePos,
+                                                   int numSamples)
+        {
+            for (int i = 0; i < numSamples; ++i)
+                dest[0][i] = 0.5f
+                           * static_cast<float>(std::sin(
+                                 2.0 * juce::MathConstants<double>::pi * toneHz
+                                 * static_cast<double>(sourcePos + i) / rate));
+        };
+
+        std::vector<float> captured;
+        const int blocks = static_cast<int>(kSampleRate) * 4 / kBlockSamples;
+        for (int b = 0; b < blocks; ++b)
+        {
+            warp.process(&blockPtr, kBlockSamples, readSource);
+            if (b >= 8) captured.insert(captured.end(), block.begin(), block.end());
+        }
+        return captured;
+    };
+
+    const double renderPurity = tonalPurity(capture(pitchScale, false), expectedHz, kSampleRate);
+    const double livePurity = tonalPurity(capture(1.0, true), expectedHz, kSampleRate);
+
+    require(renderPurity > 0.9,
+            "a pitch supplied at construction must shift a pure tone cleanly");
+    require(livePurity > 0.9,
+            "a pitch applied after construction must shift a pure tone just as cleanly");
+    require(std::abs(renderPurity - livePurity) < 0.05,
+            "live pitch playback must not diverge in quality from the render path");
+}
+
 } // namespace
 
 void addWarpTests(std::vector<TestCase>& tests)
@@ -389,7 +524,10 @@ void addWarpTests(std::vector<TestCase>& tests)
     tests.push_back({"Warp pitch strategy", testWarpPitchStrategy});
     tests.push_back({"Warp feeds Rubber Band on demand", testWarpFeedsRubberBandOnDemand});
     tests.push_back({"Warp produces at extreme ratios", testWarpProducesAtExtremeRatios});
+    tests.push_back({"Warp reports throughput diagnostics", testWarpReportsThroughputDiagnostics});
+    tests.push_back({"Warp live pitch change matches the render path", testWarpLivePitchChangeMatchesRenderPath});
     tests.push_back({"OffsetSource chunks oversized warp requests", testOffsetSourceChunksOversizedWarpRequests});
+
     tests.push_back({"OffsetSource silences a window overhanging the start of the source", testOffsetSourceSilencesWindowOverhangingSourceStart});
     tests.push_back({"OffsetSource total length follows the warped timeline", testOffsetSourceTotalLengthFollowsWarpedTimeline});
 }

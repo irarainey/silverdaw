@@ -141,7 +141,7 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
           `device switched typeName=${payload.typeName ?? 'default'} deviceName=${payload.deviceName ?? 'default'}`
         )
       } else {
-        const message = payload.error || 'Audio device switch failed'
+        const message = payload.error || 'Audio output device switch failed'
         this.lastError = message
         this.pendingSelection = null
         this.pendingPersistUserPreference = true
@@ -171,7 +171,9 @@ export const useAudioDeviceStore = defineStore('audioDevice', {
         this.pendingSelection = null
         this.pendingPersistUserPreference = true
         this.lastError = 'The audio engine isn\'t connected'
-        useNotificationsStore().pushError('Could not switch audio device: the audio engine isn\'t connected.')
+        useNotificationsStore().pushError(
+          'Could not switch audio output device: the audio engine isn\'t connected.'
+        )
       }
     },
 

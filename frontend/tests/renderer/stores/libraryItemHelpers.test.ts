@@ -47,8 +47,12 @@ describe('libraryItemShowsLinkBadge', () => {
     expect(libraryItemShowsLinkBadge({ kind: 'clip' })).toBe(true)
   })
 
-  it('flags saved sample assets (explicit sample kind) as linked', () => {
-    expect(libraryItemShowsLinkBadge({ kind: 'sample', derivedFrom: sampleSource })).toBe(true)
+  // A sample is reusable but each placement is independent: it can be trimmed
+  // and split on the timeline and its edits do not propagate, so the badge
+  // would promise sharing that does not exist. Recordings commit as samples.
+  it('does not flag a sample, which shares no state between placements', () => {
+    expect(libraryItemShowsLinkBadge({ kind: 'sample', derivedFrom: sampleSource })).toBe(false)
+    expect(libraryItemShowsLinkBadge({ kind: 'sample' })).toBe(false)
   })
 
   it('does not flag a plain or music-classified imported source file', () => {

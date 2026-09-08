@@ -14,7 +14,9 @@ and arrange, trim, re-pitch, and tempo-match them into a finished mix. It is
 designed for bedroom DJs, producers, and mixers — anyone who wants to create
 mixes and mashups easily by combining and reshaping existing audio. It is geared
 towards DJs and producers as a studio creation tool, not a live-performance
-instrument. Supported MIDI DJ decks can also record editable vinyl-style
+instrument. You can also record your own audio — a vocal, an instrument, or a
+line input — over the arrangement as it plays, and use the take like any other
+clip. Supported MIDI DJ decks can also record editable vinyl-style
 scratches directly from audio into a mix, combining deck control with a
 non-destructive studio workflow.
 
@@ -61,13 +63,28 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   all per-tile and non-destructive.
 - **File browser.** The **Files** tab beside the Library browses folders of
   audio on your own drives, showing each track's cover art, title, artist,
-  album, type and length. Listen to a file through your audio device before
-  deciding, then import it with one click. Drag a file straight onto a track to
+  album, type and length. Listen to a file through your audio output device
+  before deciding, then import it with one click. Drag a file straight onto a track to
   import it and place it in one go, or drop it below the last track to get a new
   track for it. Add folders with the button on the
   left — that pick is the only thing that lets Silverdaw read them — and they
   are remembered the next time you open the app. Filter by track name or artist,
   and drive the whole list from the keyboard.
+- **Record audio.** Press record in the transport to capture a vocal, an
+  instrument, or anything else through your microphone or line input while the
+  arrangement plays under you. Record from the start of the project, from the
+  playhead, or over a selected range — with an optional count-in and click, and
+  a live waveform of the take as it goes down. Choose which tracks you hear
+  underneath and how loud they sit, and turn on **Hear Yourself** to monitor
+  your input on headphones alongside them. Keep the take as **Music**, so it
+  picks up the project tempo and warps like any other clip, or **Simple** for
+  speech and sound effects, with an optional clean-up of low-level background
+  noise. Play the result back on its own or against the arrangement, re-record
+  it until it's right, then add it to the library or drop it straight onto the
+  timeline where you played it. A stereo take can be split into its two channels
+  on the way in, so a two-channel mixer works as the input device and its two
+  sources land on separate tracks. Recordings are ordinary library items, so
+  everything else here works on them.
 - **Timeline arranging.** Move, split, duplicate, cut, copy, paste, trim, colour,
   and delete clips across multiple tracks. Drag clips or nudge them with the
   keyboard; clips snap to the beat grid by default, with a modifier for fine,
@@ -145,13 +162,15 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   1/4, 1/8, or 1/16 division to capture and repeat part of the track without
   changing its source audio.
 - **Portable projects.** Saving a project nests it in its own folder and keeps
-  its generated stems and samples beside the project file, so the whole folder
-  can be moved or synced between machines (for example via cloud storage) and
-  still open — as long as the original source files sit at the same location.
-- **Tidy up on remove.** Optionally have Silverdaw delete a stem's or sample's
-  generated file — and the now-empty folder it leaves behind — from disk when you
-  remove it from the library. Off by default (removal just unlinks it from the
-  project); your original imported files are never touched. This can't be undone.
+  its generated stems, samples, and recordings beside the project file, so the
+  whole folder can be moved or synced between machines (for example via cloud
+  storage) and still open — as long as the original source files sit at the same
+  location.
+- **Tidy up on remove.** Optionally have Silverdaw delete a stem's, sample's, or
+  recording's generated file — and the now-empty folder it leaves behind — from
+  disk when you remove it from the library. Off by default (removal just unlinks
+  it from the project); your original imported files are never touched. This
+  can't be undone.
   Turn it on in **Preferences ▸ Project**.
 - **Track, project, and master controls.** Per-track volume faders with a
   bipolar equal-power **Pan** control in each track header, plus mute, solo,
@@ -233,7 +252,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   groove texture, with Off, Medium, and High levels in **Preferences ▸ Effects**.
 - **Single or stereo waveforms.** Choose whether clips show one combined
   waveform or stacked left / right channels (the default), in Preferences —
-  applied across the timeline and the Clip Editor.
+  applied everywhere a waveform is drawn: the timeline, the Clip Editor, the
+  Scratch Editor, and the Record Audio dialog.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
 - **Mixdown export.** Render the whole project to a single stereo file in WAV,

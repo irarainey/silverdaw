@@ -119,7 +119,7 @@ Controls not listed for a profile are not mapped.
 | Hercules DJControl Inpulse 500 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, eight marker pads, high-resolution channel fader and three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Hercules DJControl Starlight; DJControl MIX | Play, Cue/Shift+Cue, Sync, deck selection, jog/touch, four marker pads, channel fader, Bass, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Numark DJ2GO2 Touch | Play, Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, crossfader | Play, Cue, deck selection, marker pads |
-| Numark Mixtrack 3; Mixtrack Pro 3 | Play, Cue, Sync, Shift, deck selection, Browse, jog/touch, four shifted marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
+| Numark Mixtrack 3; Mixtrack Pro 3 | Play, Cue, Sync, Shift, deck selection, Browse, jog/touch, four marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-ERGO; DDJ-WeGO; DDJ-WeGO2; DDJ-WeGO3; DDJ-WeGO4 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, crossfader | None |
 | Pioneer DJ DDJ-RR; DDJ-RX; DDJ-RZ; DDJ-RZX; DDJ-SB; DDJ-SB2; DDJ-SB3; DDJ-SR; DDJ-SX; DDJ-SX2; DDJ-SZ | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-RB; DDJ-SR2 | Same coverage as the common DDJ profile, plus master level | Selected-track meter, Play, Cue, deck selection, marker pads |

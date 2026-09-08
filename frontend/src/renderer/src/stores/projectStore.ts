@@ -77,7 +77,9 @@ export {
   DEFAULT_PROJECT_NAME,
   DEFAULT_TRACK_LENGTH_MS,
   MAX_TRACK_VOLUME,
-  TRACK_PALETTE
+  SILENCED_TRACK_PALETTE,
+  TRACK_PALETTE,
+  isTrackSilenced
 } from './projectTypes'
 
 export const useProjectStore = defineStore('project', {

@@ -7,16 +7,19 @@
 namespace silverdaw
 {
 
-void AudioEngine::play()
+bool AudioEngine::play()
 {
     if (pendingTransportAction != PendingTransportAction::none)
     {
+        // Only cancels a fade that was already under way; no new play begins here, so a
+        // caller that needs a real start (recording) must not treat this as success.
         pendingTransportAction = PendingTransportAction::none;
         transportFadeTimer.stopTimer();
         master.requestOutputFadeIn();
         master.cancelScrub();
-        return;
+        return false;
     }
+
     master.cancelScrub();
     rebuildTimer.stopTimer();
     pendingSeekPrewarm = false;
@@ -30,7 +33,7 @@ void AudioEngine::play()
                                  juce::String(static_cast<int>(tracks.size())) +
                                  " pos=" + juce::String(master.getPositionSamples()) +
                                  ") — gate kept closed to avoid a silent first play");
-        return;
+        return false;
     }
     // Message-thread time spent rebuilding and refilling read-ahead buffers before the gate
     // opens. Near zero when a prior seek settle left them warm; anything above a few ms is
@@ -54,6 +57,30 @@ void AudioEngine::play()
                                        " pos=" + juce::String(master.getPositionSamples()) +
                                        " primeMs=" + juce::String(primeMs, 1) + " wakePreroll=" +
                                        (outputKeepAlive.isKeepAwakeEnabled() ? "on" : "off") + ")");
+    return true;
+}
+
+// Recording start. See the header for why ordinary play() will not do.
+bool AudioEngine::playFromAnchorForRecording(double anchorMs)
+{
+    parkTransportAt(anchorMs);
+    return play();
+}
+
+void AudioEngine::parkTransportAt(double ms)
+{
+    // Drop any fade that was mid-flight and park outright. Waiting the fade out would
+    // make the start asynchronous, and a take cannot begin on a maybe. The gain target
+    // is restored so the next play is not left faded down.
+    pendingTransportAction = PendingTransportAction::none;
+    pendingSeekAfterPauseMs.reset();
+    transportFadeTimer.stopTimer();
+    master.cancelScrub();
+    master.setPlaying(false);
+    master.cancelOutputFade();
+
+    // Now genuinely stopped, so this applies immediately rather than queueing behind a fade.
+    setPositionMsNow(ms, true);
 }
 
 bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
@@ -219,9 +246,16 @@ void AudioEngine::setTimelineLoop(std::optional<LoopRange> range)
     updateTimelineLoopTimer();
 }
 
+void AudioEngine::setTimelineLoopSuspended(bool suspended)
+{
+    if (timelineLoopSuspended == suspended) return;
+    timelineLoopSuspended = suspended;
+    updateTimelineLoopTimer();
+}
+
 void AudioEngine::updateTimelineLoopTimer()
 {
-    if (timelineLoop.has_value() && master.isPlaying())
+    if (timelineLoop.has_value() && ! timelineLoopSuspended && master.isPlaying())
         timelineLoopTimer.startTimer(kTimelineLoopPollMs);
     else
         timelineLoopTimer.stopTimer();
@@ -234,7 +268,7 @@ void AudioEngine::updateTimelineLoopTimer()
 // fade-in ramp, and reverb and delay tails carry across the wrap.
 void AudioEngine::wrapTimelineLoopIfDue()
 {
-    if (! timelineLoop.has_value() || ! master.isPlaying())
+    if (! timelineLoop.has_value() || timelineLoopSuspended || ! master.isPlaying())
     {
         updateTimelineLoopTimer();
         return;
@@ -260,6 +294,48 @@ void AudioEngine::pause()
     transportFadeTimer.startTimer(kTransportFadePollMs);
 }
 
+void AudioEngine::logWarpShortfalls()
+{
+    juce::uint32 total = 0;
+    int warpedClips = 0;
+    double worstFactor = 0.0;
+    double combinedCost = 0.0;
+    for (auto& [id, track] : tracks)
+    {
+        if (track->warp == nullptr) continue;
+        ++warpedClips;
+        total += track->warp->getShortfallCount();
+        if (const double factor = track->warp->getRealtimeFactor(); factor > 0.0)
+        {
+            if (worstFactor <= 0.0 || factor < worstFactor) worstFactor = factor;
+            // Each clip's share of one read-ahead thread. Above 1.0 in total means the
+            // thread cannot serve them all in real time however much slack it is given.
+            combinedCost += 1.0 / factor;
+        }
+    }
+    if (preview.warp != nullptr) total += preview.warp->getShortfallCount();
+
+    if (warpedClips == 0) return;
+
+    // A rebuilt processor starts its count again, so the running total can fall. Re-baseline
+    // rather than reporting a negative delta.
+    const juce::uint32 added = total > reportedWarpShortfalls
+                             ? total - reportedWarpShortfalls
+                             : 0;
+    reportedWarpShortfalls = total;
+
+    // Silent on a healthy run. Half the shared read-ahead thread is the point at which
+    // adding a few more warped clips would exhaust it, so it is worth saying so before
+    // the audio actually breaks up.
+    if (added == 0 && combinedCost < 0.5) return;
+
+    silverdaw::log::warn("engine",
+                         "warp under pressure: clips=" + juce::String(warpedClips)
+                             + " unfilledBlocks=" + juce::String(static_cast<int>(added))
+                             + " slowestRealtimeFactor=" + juce::String(worstFactor, 2)
+                             + " combinedThreadLoad=" + juce::String(combinedCost, 2));
+}
+
 void AudioEngine::stop()
 {
     master.cancelScrub();
@@ -278,6 +354,7 @@ void AudioEngine::stop()
         if (track->transportSource != nullptr)
             track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
     reclaimRetiredPlaybackSnapshots();
+    logWarpShortfalls();
     silverdaw::log::info("engine", "stop");
 }
 
@@ -317,6 +394,7 @@ void AudioEngine::completePendingTransportFade()
                 if (track->transportSource != nullptr)
                     track->transportSource->setPosition(trackSeekSecondsFor(*track, 0));
             reclaimRetiredPlaybackSnapshots();
+            logWarpShortfalls();
             silverdaw::log::info("engine", "stop");
             break;
 

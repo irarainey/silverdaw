@@ -205,6 +205,14 @@ public:
         return latencyCompensationSamples.load(std::memory_order_relaxed);
     }
 
+    /** The same alignment, for the audio thread to read directly (e.g. the metronome, which
+     *  is mixed downstream of the compensation delays and so must offset its own position by
+     *  it). Reading the live atomic rather than a pushed copy means it can never go stale. */
+    const std::atomic<int>& latencyCompensationAtomicRef() const noexcept
+    {
+        return latencyCompensationSamples;
+    }
+
     /** Wire the transport hosted plugins follow (once, at setup). Chains are created
      *  lazily, so this is stored and applied to each one as it appears. */
     void setPluginPlayHead(juce::AudioPlayHead* playHead);

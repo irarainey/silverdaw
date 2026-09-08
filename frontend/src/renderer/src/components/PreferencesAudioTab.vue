@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { describeBackend, type UniqueDevice } from '@/lib/audio/audioOutputPicker'
+import {
+  AUTOMATIC_INPUT_DRIVER,
+  useRecordingInputDriver
+} from '@/lib/preferences/useRecordingInputDriver'
 
 const props = defineProps<{
   uniqueDevices: readonly UniqueDevice[]
@@ -23,6 +27,15 @@ const showAdvancedBackend = defineModel<boolean>('showAdvancedBackend', { requir
 
 function onKeepAwakeChange(deviceName: string, event: Event): void {
   props.setDeviceKeepAwake(deviceName, (event.target as HTMLInputElement).checked)
+}
+
+// Which driver recording inputs are taken from. A machine-wide setup decision, so
+// it belongs here rather than in the Record Audio dialog, where the only choice
+// that matters in the moment is which microphone.
+const inputDriver = useRecordingInputDriver()
+
+function onInputDriverChange(event: Event): void {
+  inputDriver.pick((event.target as HTMLSelectElement).value)
 }
 </script>
 
@@ -65,7 +78,7 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
         Output device
       </h2>
       <p class="mb-3 text-zinc-500">
-        Pick which device Silverdaw plays through. Removable devices fall back to the
+        Pick which output device Silverdaw plays through. Removable devices fall back to the
         next available one when unplugged, and reconnect automatically next launch.
         Tick <strong class="text-zinc-300">Keep awake</strong> for a device that
         sleeps and clips the first beat (typically a USB DAC) — it's off by default
@@ -76,7 +89,7 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
         v-if="!audioDevicesHydrated"
         class="text-zinc-500"
       >
-        Loading device list…
+        Loading output device list…
       </div>
       <div
         v-else
@@ -150,7 +163,7 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
             d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4z"
           />
         </svg>
-        {{ rescanning ? 'Rescanning…' : 'Rescan devices' }}
+        {{ rescanning ? 'Rescanning…' : 'Rescan output devices' }}
       </button>
     </div>
 
@@ -167,15 +180,15 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
           aria-hidden="true"
           class="inline-block w-3 text-center"
         >{{ showAdvancedBackend ? '▾' : '▸' }}</span>
-        Audio driver ({{ audioOutputTypeName }})
+        Audio output driver ({{ audioOutputTypeName }})
       </button>
       <div
         v-if="showAdvancedBackend"
         class="mt-2 space-y-2 rounded border border-zinc-800 bg-zinc-950/40 p-2"
       >
         <p class="text-zinc-500">
-          Windows offers several backends for the same physical device. Stick with
-          the recommended one unless you have a reason to change.
+          Windows offers several drivers for the same physical output device.
+          Stick with the recommended one unless you have a reason to change.
         </p>
         <label
           v-for="backend in backendsForSelectedDevice"
@@ -195,6 +208,35 @@ function onKeepAwakeChange(deviceName: string, event: Event): void {
           </span>
         </label>
       </div>
+    </div>
+
+    <div>
+      <h2 class="mb-2 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+        Recording input driver
+      </h2>
+      <p class="mb-3 text-zinc-500">
+        Which driver <strong class="text-zinc-300">Record Audio</strong> takes microphones and
+        interfaces from. Windows offers the same input through several drivers; leave this on
+        automatic unless yours is missing or sounds wrong. The input itself is chosen in the
+        Record Audio dialog.
+      </p>
+      <select
+        class="app-select w-full"
+        aria-label="Recording input driver"
+        :value="inputDriver.selected.value"
+        @change="onInputDriverChange"
+      >
+        <option :value="AUTOMATIC_INPUT_DRIVER">
+          Automatic — pick the best available
+        </option>
+        <option
+          v-for="driver in inputDriver.driverNames.value"
+          :key="driver"
+          :value="driver"
+        >
+          {{ driver }} — {{ describeBackend(driver) }}
+        </option>
+      </select>
     </div>
 
     <p

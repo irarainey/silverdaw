@@ -18,7 +18,7 @@ decision and add its line here.
 | D-0009 | `IMPORTANT` | Stem separation via ONNX Runtime (RoFormer + htdemucs backup) | `docs/adr/0009-stem-separation-onnx.md` |
 | D-0010 | `IMPORTANT` | Licence: AGPL-3.0-or-later | `docs/adr/0010-licence-agpl.md` |
 | D-0011 | `IMPORTANT` | Product ethos: radical beginner-first simplicity | `docs/adr/0011-product-ethos-simplicity.md` |
-| D-0012 | `CRITICAL` | UI/UX design-system conventions | `docs/adr/0012-ui-ux-design-system.md` |
+| D-0012 | `IMPORTANT` | UI/UX design-system conventions | `docs/adr/0012-ui-ux-design-system.md` |
 | D-0013 | `IMPORTANT` | Frontend stack: Vue 3 + Pinia + PixiJS + Tailwind | `docs/adr/0013-frontend-stack.md` |
 | D-0014 | `IMPORTANT` | Testing strategy (custom backend harness + Vitest + Playwright e2e) | `docs/adr/0014-testing-strategy.md` |
 | D-0015 | `IMPORTANT` | Project file format: versioned JSON | `docs/adr/0015-project-file-format.md` |
@@ -36,3 +36,5 @@ decision and add its line here.
 | D-0027 | `IMPORTANT` | Correcting a mis-detected tempo is a distinct operation from changing the arrangement's tempo: one backend command that corrects the resolved tempo owner, asks explicitly before carrying the project tempo, and never moves a persisted absolute timeline anchor | `docs/adr/0027-tempo-correction-never-moves-anchors.md` |
 | D-0028 | `IMPORTANT` | Tempo detection conditions audio with a zero-phase percussive emphasis before beat tracking, settles a disputed period refinement with an independent second engine consulted only on dispute, and fits the beat grid to onset starts rather than to onset-function peaks | `docs/adr/0028-tempo-detection-conditioning-and-arbiter.md` |
 | D-0029 | `IMPORTANT` | MP3 is decoded by the bundled `lame.exe` as a child process with the JUCE reader kept only as a fallback, preview decodes through the same cache, and `lame.exe` becomes a required build dependency | `docs/adr/0029-lame-as-the-mp3-decoder.md` |
+| D-0030 | `IMPORTANT` | Audio recording captures on a standalone input-only device outside the engine's device manager, is bounded by a time window rather than owned by a track, corrects latency and clock drift offline at finalise, and produces a `sample` library item in `recordings/` — carrying the project's grid as a Music take, or no grid at all as a Simple one | `docs/adr/0030-audio-recording-capture-model.md` |
+| D-0031 | `IMPORTANT` | Pitch shifting derives its Rubber Band transient and pitch options from the shift itself rather than from the warp mode alone: a pitch-shifted R2 clip moves off crisp transients onto mixed and uses the fixed-shift pitch method, escalating to the consistent one only on a live change, and the transients choice is revisited when the pitch changes live so playback matches the render | `docs/adr/0031-pitch-shift-quality.md` |

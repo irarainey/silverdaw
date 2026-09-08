@@ -10,6 +10,14 @@ inline constexpr float kMaxTrackGain = 4.0F;
 // Shared read-ahead size keeps live track and preview buffering aligned.
 inline constexpr int kTransportReadAheadSamples = 8192;
 
+// A clip's source chain is always built with at least this many channels, so a mono file is
+// heard centred rather than hard left. JUCE's reader copies a single channel into both sides
+// when it is asked for a two-channel block, but writes only the left when asked for one — so a
+// chain sized from the file itself leaves a mono clip silent on the right, and panning it right
+// fades it out. The offline mixdown duplicates mono for the same reason (ClipSummingSource), so
+// this is also what keeps what is heard and what is exported the same.
+inline constexpr int kMinClipPlaybackChannels = 2;
+
 inline constexpr int kPrimeProbeSamples = 4096;
 inline constexpr int kPrimeReadyTargetSamples = (kTransportReadAheadSamples * 7) / 8;
 inline constexpr int kPrimePerTrackTimeoutMs = 250;

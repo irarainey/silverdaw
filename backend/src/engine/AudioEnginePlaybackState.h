@@ -78,6 +78,10 @@ protected:
     double previewMetronomeBpm = 0.0;
     double previewMetronomeAnchorSec = 0.0;
     std::atomic<juce::int64> previewGeneration{0};
+
+    // Running total already reported by `logWarpShortfalls`, so each stop reports only
+    // what this run added rather than repeating the session's history.
+    juce::uint32 reportedWarpShortfalls{0};
 };
 
 } // namespace silverdaw

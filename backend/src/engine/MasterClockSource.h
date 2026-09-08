@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioConstants.h"
+#include "ClockRateEstimator.h"
 #include "Leveler.h"
 #include "Log.h"
 #include "OutputKeepAlive.h"
@@ -29,12 +30,18 @@ class MasterClockSource : public juce::AudioSource
             positionSamples.store(rescaled, std::memory_order_relaxed);
         }
         sampleRate.store(newSampleRate, std::memory_order_release);
+        // A device (re)start invalidates the rate baseline: the frame counter restarts and
+        // the wall-clock gap across the stop would otherwise read as an enormous drift.
+        outputRate.reset();
+        deviceFrames = 0;
         prerollSamples =
             newSampleRate > 0.0 ? static_cast<int>(newSampleRate * (silverdaw::kWakePrerollMs / 1000.0)) : 0;
         silverdaw::log::info("master",
                              "prepareToPlay block=" + juce::String(blockSize) + " sr=" + juce::String(newSampleRate));
         child.prepareToPlay(blockSize, newSampleRate);
         mixGlue.prepare(newSampleRate, 2);
+        monitorTrim.reset(newSampleRate, 0.01);
+        monitorTrim.setCurrentAndTargetValue(monitorTrimTarget.load(std::memory_order_acquire));
     }
 
     void releaseResources() override
@@ -51,13 +58,50 @@ class MasterClockSource : public juce::AudioSource
         // Arm the one-time wake pre-roll on a stopped->playing transition only (idempotent restarts
         // must not re-trigger it mid-playback).
         const bool wasPlaying = keepAlive.isPlaying();
-        keepAlive.setPlaying(p);
         if (p && ! wasPlaying)
         {
-            playStartPending.store(true, std::memory_order_release);
+            // Cleared and re-stamped BEFORE the play is published, so the audio thread
+            // cannot see `playing` and fail its stamp against the previous play's value
+            // only for the clear to land immediately after — that would cost a whole
+            // block of accuracy. The epoch closes the remaining hole: a callback from a
+            // previous play still in flight across a fast stop/restart carries the old
+            // epoch and is refused.
+            transportStartTicks.store(0, std::memory_order_relaxed);
+            playEpoch.fetch_add(1, std::memory_order_relaxed);
+            playStartPending.store(true, std::memory_order_relaxed);
             if (outputFadeOutComplete.load(std::memory_order_acquire))
-                transportGainTarget.store(1.0F, std::memory_order_release);
+                transportGainTarget.store(1.0F, std::memory_order_relaxed);
         }
+        // Publishes the play; everything above happens-before the audio thread sees it.
+        keepAlive.setPlaying(p);
+    }
+
+    /** Monotonic counter identifying the current play. A recording captures it at start
+     *  and refuses a start stamp that belongs to any other play. */
+    std::uint32_t getPlayEpoch() const noexcept
+    {
+        return playEpoch.load(std::memory_order_acquire);
+    }
+
+    /**
+     * High-resolution tick stamp of the first block this play actually advanced
+     * the transport on, or 0 if it has not started rolling yet.
+     *
+     * `play()` is not instantaneous: it primes read-ahead buffers and the plugin
+     * pipeline on the message thread and may then sit through a silent wake pre-roll
+     * on the audio thread, none of which moves the playhead. A recording that started
+     * capturing when `play()` was *called* is therefore already running by the time the
+     * arrangement is audible, and the take lands late by that much. Stamping the real
+     * start lets the capture measure the gap instead of assuming it is zero.
+     *
+     * `outEpoch` receives the play the stamp belongs to, so a caller can reject a
+     * stamp from a play other than its own.
+     */
+    juce::int64 getTransportStartTicks(std::uint32_t* outEpoch = nullptr) const noexcept
+    {
+        const auto ticks = transportStartTicks.load(std::memory_order_acquire);
+        if (outEpoch != nullptr) *outEpoch = playEpoch.load(std::memory_order_acquire);
+        return ticks;
     }
 
     void requestOutputFadeOut() noexcept
@@ -112,6 +156,17 @@ class MasterClockSource : public juce::AudioSource
         mixGlue.setParams(amount, snap);
     }
 
+    /** Monitor-only trim on the arrangement, 0..1. A recording session borrows it
+     *  to set how loud the backing sits under the performer; it is never
+     *  persisted, never part of the mix, and never reaches a bounce. It sits here
+     *  rather than on the master gain deliberately: the click and the preview
+     *  voice are mixed downstream of this source, so trimming the backing leaves
+     *  the count-in and the review audition of the take at full level. */
+    void setMonitorTrim(float gain) noexcept
+    {
+        monitorTrimTarget.store(juce::jlimit(0.0F, 1.0F, gain), std::memory_order_release);
+    }
+
     void setPositionSamples(juce::int64 p) noexcept
     {
         positionSamples.store(juce::jmax(static_cast<juce::int64>(0), p), std::memory_order_relaxed);
@@ -125,6 +180,13 @@ class MasterClockSource : public juce::AudioSource
      *  (e.g. per-track automation sampling in BusGraph). Increments after the
      *  child renders, so the child sees the block-start position. */
     const std::atomic<juce::int64>& positionAtomicRef() const noexcept { return positionSamples; }
+
+    /** The output device's measured frame rate. Accumulated continuously — the device
+     *  pulls whether or not anything is playing — so a take can be aligned against the
+     *  rate the arrangement is really advancing at rather than the nominal one. Reset
+     *  only in `prepareToPlay`, which JUCE serialises against the callback, and where a
+     *  device change invalidates the baseline anyway. */
+    const ClockRateEstimator& outputRateEstimator() const noexcept { return outputRate; }
 
     /** The active device rate, for observers that read it on the audio thread. */
     const std::atomic<double>& sampleRateAtomicRef() const noexcept { return sampleRate; }
@@ -169,6 +231,8 @@ class MasterClockSource : public juce::AudioSource
   private:
     void applyTransportFade(juce::AudioBuffer<float>& buffer, int startSample,
                             int numSamples, float target) noexcept;
+    void applyMonitorTrim(juce::AudioBuffer<float>& buffer, int startSample,
+                          int numSamples) noexcept;
 
     // Audio-thread hot path: allocation/lock/IO free. Publishes raw block timing
     // to atomics for a non-RT timer to format and log; the real-time invariant
@@ -195,10 +259,19 @@ class MasterClockSource : public juce::AudioSource
     // Set on a stopped->playing transition (message thread), consumed by the audio thread on the
     // first block of the play to arm the wake pre-roll.
     std::atomic<bool> playStartPending{false};
+    // Wall-clock stamp of the first block this play advanced the transport on; 0 until then.
+    // Written by the audio thread, read by the message thread when a take is finalised.
+    std::atomic<juce::int64> transportStartTicks{0};
+    // Bumped on every stopped->playing transition so a stamp can be tied to one play.
+    std::atomic<std::uint32_t> playEpoch{0};
     // Wake pre-roll state — audio-thread only. prerollSamples is the armed length (set in
     // prepareToPlay for the active rate); wakePrerollRemaining counts down the current pre-roll.
     int prerollSamples{0};
     int wakePrerollRemaining{0};
+    // Output clock measurement. Both are audio-thread-owned between prepareToPlay calls;
+    // `deviceFrames` counts frames the device has consumed, whatever the transport is doing.
+    ClockRateEstimator outputRate;
+    juce::int64 deviceFrames{0};
     std::atomic<std::uint32_t> scrubGeneration{0};
     std::atomic<int> scrubRequestedSamples{0};
     std::atomic<int> scrubDirection{1};
@@ -211,6 +284,9 @@ class MasterClockSource : public juce::AudioSource
     std::atomic<float> transportGainTarget{1.0F};
     std::atomic<bool> outputFadeOutComplete{false};
     float transportGain = 1.0F;
+    // Session-scoped arrangement trim; smoothed so a fader move cannot click.
+    std::atomic<float> monitorTrimTarget{1.0F};
+    juce::LinearSmoothedValue<float> monitorTrim{1.0F};
     bool holdOutputSilence{false};
     // Block timing published by the audio thread, drained by a non-RT timer.
     std::atomic<double> maxElapsedMs{0.0};

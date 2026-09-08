@@ -398,6 +398,33 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         busyFlag.store(false);
 
         const int totalClips = static_cast<int>(clips.size());
+        // Counted before teardown: the offline render pulls the same WarpProcessor the
+        // transport does, but with no deadline, so this is the control for a starvation
+        // report from playback. It should stay at zero.
+        juce::uint32 warpShortfalls = 0;
+        double worstFactor = 0.0;
+        int warpedClips = 0;
+        for (const auto& cp : clips)
+        {
+            if (cp == nullptr || cp->warp == nullptr) continue;
+            ++warpedClips;
+            warpShortfalls += cp->warp->getShortfallCount();
+            if (const double factor = cp->warp->getRealtimeFactor(); factor > 0.0)
+            {
+                if (worstFactor <= 0.0 || factor < worstFactor) worstFactor = factor;
+            }
+        }
+        if (warpedClips > 0 && warpShortfalls > 0)
+        {
+            // The offline pull has no deadline, so this should never fire. If it does, the
+            // shortfall is in the stretcher itself rather than in delivery.
+            silverdaw::log::warn("mixdown",
+                                 "warp starved offline: clips=" + juce::String(warpedClips)
+                                     + " unfilledBlocks="
+                                     + juce::String(static_cast<int>(warpShortfalls))
+                                     + " slowestRealtimeFactor="
+                                     + juce::String(worstFactor, 2));
+        }
         for (auto it = clips.rbegin(); it != clips.rend(); ++it)
         {
             if (auto& cp = *it; cp != nullptr)

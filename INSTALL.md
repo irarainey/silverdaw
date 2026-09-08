@@ -75,6 +75,30 @@ to any folder you can write to, and run `Silverdaw.exe`. Nothing is installed.
 
 ---
 
+## Troubleshooting: recording is silent
+
+Recording needs Windows to let Silverdaw use your microphone or input device.
+
+Installing Silverdaw does **not** ask about the microphone — Windows never
+requests device permissions during an install. Permission is decided the first
+time you actually record, and Silverdaw appears in the microphone list from then
+on.
+
+If a take comes back silent, or the input meter never moves, open
+**Settings ▸ Privacy & security ▸ Microphone** and check all three:
+
+1. *Microphone access* is on.
+2. *Let apps access your microphone* is on.
+3. **Silverdaw** itself is on in the list of apps below.
+
+Then reopen the Record Audio dialog. Windows can block an app here without
+showing a prompt — Silverdaw records in a background audio engine that has no
+window of its own, so there may be nothing on screen to click. A blocked input
+opens normally and simply returns silence, which looks like a broken feature
+rather than a permission problem.
+
+---
+
 ## Troubleshooting: Silverdaw won't start
 
 Silverdaw needs its background audio engine to run; if that fails to start you

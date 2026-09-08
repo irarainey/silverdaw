@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
             id="audio-unavailable-title"
             class="dialog-title"
           >
-            Saved Audio Device Not Available
+            Saved Audio Output Device Not Available
           </h1>
         </div>
 
@@ -112,10 +112,10 @@ onBeforeUnmount(() => {
             devices can be opened.
           </p>
           <p>
-            Playback continues on your default audio device. The
-            project's preferred device is unchanged, so it will be
+            Playback continues on your default audio output device. The
+            project's preferred output device is unchanged, so it will be
             used again if you reopen the project on a machine that
-            has it. To pick a different preferred device, open
+            has it. To pick a different preferred output device, open
             <span class="font-medium text-zinc-100">File ▸ Project
               Properties…</span> and Save your choice.
           </p>

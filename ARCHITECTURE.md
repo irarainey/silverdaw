@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-08-31 · Owner: @irarainey_
+_Last reviewed: 2026-09-08 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -65,6 +65,13 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   relaxes nothing for Silverdaw's own audio code.
 - **JUCE message thread:** owns every mutation of `AudioEngine`, `ProjectState`,
   the `ValueTree`, and the source graph. The bridge `callAsync`s onto it.
+- **Capture callback thread:** audio recording opens its own input-only
+  `juce::AudioIODevice` *outside* the engine's `AudioDeviceManager`, so playback
+  is never reconfigured or restarted to record. Its callback obeys the same
+  real-time rule as the audio thread, hands audio to a threaded writer, and
+  reaches the optional input monitor through a lock-free ring. Latency and clock
+  drift between the two devices are corrected offline at finalise, never in real
+  time. See ADR 0030.
 - **IXWebSocket I/O threads:** parse JSON, gate AUTH, then `callAsync`.
 - **Peaks worker pool:** `juce::ThreadPool` (4) computes/loads peaks off-thread,
   coalesces matching source/resolution jobs, writes the cache, and emits a small
@@ -80,8 +87,9 @@ hosted plugin — it still draws no Silverdaw interface of its own.
 
 - **Control plane on the socket, bulk data on disk.** The bridge carries
   commands, state, metadata, progress, and `*_READY` notifications. Audio files,
-  peak caches, stems, mixdowns, and project files live on disk; the backend
-  writes a stable path and the renderer reads it via main IPC. See ADR 0003.
+  peak caches, stems, recordings, mixdowns, and project files live on disk; the
+  backend writes a stable path and the renderer reads it via main IPC. See
+  ADR 0003.
 - **`ValueTree` is the source of truth.** After AUTH the backend sends one full
   `PROJECT_STATE`; the renderer treats it as canonical (`reset=true` wipes
   optimistic state, connect path merges additively). See ADR 0002.
@@ -121,6 +129,7 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/midi/` | Generic JSON-profile loader, MIDI decoder, and feedback encoder | `docs/developer-guide.md#midi-controller-architecture` |
 | `backend/resources/midi-mappings/` | Source JSON profiles for model aliases and controller bindings | `docs/midi-controllers.md` |
 | `backend/src/scratch/` | Scratch source/backing preparation, session routing, recording, realism, evaluation, and sample bake | ADR 0021 |
+| `backend/src/recording/` | Standalone input capture device, real-time tap, WAV writer, input monitor, latency calibration, offline finalise and cleanup, session controller | ADR 0030 |
 | `backend/src/engine/` | Transport clock, mixer/bus graph, per-track sources | — |
 | `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks), plus tempo and beat-grid detection | ADR 0028 |
 | `backend/src/plugins/` | VST3 catalogue and out-of-process scanning, hosted per-track insert chains, plugin play head, native editor windows | ADR 0025 |
@@ -131,6 +140,7 @@ One line each; open the linked area only when the task touches it.
 | `frontend/src/preload/` | `contextBridge` surface | — |
 | `frontend/src/renderer/src/` | Vue SPA, Pinia stores, PixiJS timeline | — |
 | `frontend/src/renderer/src/lib/scratch/` | Scratch dialog orchestration, backing, controls, replay, notation layout/editing, persistence, and save flow | ADR 0021 |
+| `frontend/src/renderer/src/lib/recording/` | Record Audio session lifecycle, input options, live waveform, take placement | ADR 0030 |
 | `frontend/src/shared/` | `bridge-protocol.ts` facade over `bridge/inbound.ts` (zod schemas) + `outbound.ts` (typed interfaces) — wire SoT | ADR 0004 |
 
 ## Why it is built this way

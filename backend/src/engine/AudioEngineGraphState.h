@@ -11,6 +11,8 @@
 #include "PluginEditorWindow.h"
 #include "PluginPlayHead.h"
 #include "ProjectStateTypes.h"
+#include "recording/CalibrationClickSource.h"
+#include "recording/InputMonitorSource.h"
 #include "TrackAutomationSnapshot.h"
 
 #include <atomic>
@@ -52,6 +54,13 @@ protected:
     MasterClockSource master{busGraph, outputKeepAlive};
     juce::MixerAudioSource topMixer;
     Metronome metronome;
+    // Software monitoring for the record dialog: silent unless a session asks
+    // for it, and summed here so it is heard alongside the arrangement without
+    // passing through it (ADR 0030, Amendment 1).
+    recording::InputMonitorSource inputMonitorSource;
+    // Latency calibration's burst emitter (ADR 0030). Summed alongside the arrangement rather
+    // than through it, so what it measures is the output path a performer actually hears.
+    recording::CalibrationClickSource calibrationClickSource;
     MeteringSource masterMeter{topMixer, outputKeepAlive, master, metronome};
     juce::AudioFormatManager formatManager;
     // Created on first use: constructing it touches the on-disk plugin catalogue, which a

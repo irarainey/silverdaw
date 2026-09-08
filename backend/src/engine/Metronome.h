@@ -21,6 +21,7 @@ class Metronome
     bool isEnabled() const noexcept { return enabled.load(std::memory_order_acquire); }
 
     void setBpm(double b) noexcept { bpm.store(b, std::memory_order_release); }
+    double getBpm() const noexcept { return bpm.load(std::memory_order_acquire); }
 
     // Build the click waveform for the active sample rate. Called from prepareToPlay, which JUCE
     // serialises against the audio callback, so resizing the click buffer here is safe.

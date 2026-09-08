@@ -157,3 +157,42 @@ largest such value across rendered tracks.
 - **Ask plugins to report zero latency, or refuse plugins that report any.**
   Latency is intrinsic to the algorithms that need it; refusing them would
   exclude most of the plugins worth hosting.
+
+## Amendment 1 — the metronome is a source mixed against compensated tracks
+
+This ADR already states the governing rule, under *Consequences and
+interactions*: **any source mixed against compensated tracks must take the same
+`Lmax` delay, or it lands `Lmax` early.** The metronome broke it.
+
+`Metronome::render` is called from `MeteringSource`, post master gain, so the
+project's own master volume can never silence the monitoring tick. That mix
+point is downstream of the per-track compensation delay lines, so the click is
+never delayed with the arrangement — while the position it was rendered against,
+the raw transport counter, is the *leading* one that `primePluginPipeline`
+advanced by `Lmax`. The click therefore led the music by exactly `Lmax`
+whenever a latent plugin was loaded. Output latency does not enter into it: the
+click and the music cross the driver together, so it cancels.
+
+The two other consumers of the raw counter already subtract the lead —
+`PlayheadEmitter` (`getOutputLatencyMs() + getPluginLatencyMs()`) and
+`RecordingSessionController`. The click was the only one that did not, which
+made it wrong in the same way for playback and, once recording existed, for
+anything performed to it (ADR 0030).
+
+**Resolution.** The click is rendered against `posBefore - Lmax`.
+`MeteringSource::setMetronomeLeadSource` is pointed at
+`BusGraph::latencyCompensationAtomicRef()` in the `AudioEngine` constructor, so
+the audio thread reads the live alignment rather than a pushed copy that could
+go stale — the same idiom as `setTimelineSamplesSource`. Left unwired the lead
+is zero, which is exactly right when nothing adds latency, so the existing
+"nothing changes until a latent plugin is loaded" property is preserved.
+
+A negative position simply yields no clicks: with an alignment in play, the
+beats before the start of the timeline are not audible yet. A plugin added
+mid-playback shifts the click by the delta for one block, which is the same
+block in which the delay lines are being re-timed, so the mix is discontinuous
+there anyway and both settle on the next block.
+
+The recording count-in is deliberately **not** offset: it clicks with the
+transport parked, against its own counter, so there is no compensated audio for
+it to be out of step with.

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import ClipEditorWarpPanel from '@/components/ClipEditorWarpPanel.vue'
+import ClipEditorModePanel from '@/components/ClipEditorModePanel.vue'
 import ClipEditorPitchPanel from '@/components/ClipEditorPitchPanel.vue'
 import ClipEditorBeatGridPanel from '@/components/ClipEditorBeatGridPanel.vue'
 import ClipEditorPlaybackControls from '@/components/ClipEditorPlaybackControls.vue'
@@ -256,7 +257,7 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             v-if="editsExistingClip"
             class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950/40"
           >
-            <!-- Effects rack: fixed-cell modular grid. -->
+            <!-- Effects rack: fixed-width modular grid, rows share the rack height. -->
             <div
               class="clip-effects-rack silverdaw-scroll grid min-h-0 min-w-0 flex-1 gap-3 overflow-auto p-3"
               role="group"
@@ -274,13 +275,6 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 />
               </ClipEffectModule>
               <ClipEffectModule
-                title="Beat grid"
-                :cols="1"
-                :rows="2"
-              >
-                <ClipEditorBeatGridPanel :grid="beatGrid" />
-              </ClipEffectModule>
-              <ClipEffectModule
                 title="Pitch"
                 :cols="1"
                 :rows="2"
@@ -288,7 +282,23 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
                 <ClipEditorPitchPanel
                   :draft="warpDraft"
                   :source-key="sourceKey"
+                  :source-is-recording="sourceItem?.recordingOrigin === true"
                 />
+              </ClipEffectModule>
+              <ClipEffectModule
+                title="Warp & Pitch Mode"
+                help-text="One engine handles both the warp and the pitch shift, so this setting cannot differ between them."
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorModePanel :draft="warpDraft" />
+              </ClipEffectModule>
+              <ClipEffectModule
+                title="Beat grid"
+                :cols="1"
+                :rows="2"
+              >
+                <ClipEditorBeatGridPanel :grid="beatGrid" />
               </ClipEffectModule>
               <ClipEffectModule
                 v-if="sliceEditActive"
@@ -367,15 +377,16 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
 </template>
 
 <style scoped>
-/* Fixed-cell modular grid; column-dense packing back-fills gaps. */
+/* Fixed-width modular grid; column-dense packing back-fills gaps. Rows share the
+   rack's own height rather than a fixed cell height, so the modules end exactly
+   where the rack does instead of overflowing it — a module whose content is
+   genuinely taller scrolls inside its own body. */
 .clip-effects-rack {
   --cell-w: 17rem; /* 272px */
-  --cell-h: 11.5rem; /* 184px */
-  grid-template-rows: repeat(2, var(--cell-h));
+  grid-template-rows: repeat(2, minmax(5rem, 1fr));
   grid-auto-columns: var(--cell-w);
   grid-auto-flow: column dense;
   justify-content: start;
-  align-content: start;
 }
 
 .pitch-range-input::-webkit-slider-thumb {
