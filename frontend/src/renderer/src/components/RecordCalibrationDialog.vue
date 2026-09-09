@@ -63,10 +63,25 @@ function onUseMeasurement(): void {
   emit('close')
 }
 
+// Bound by hand rather than with `v-model`: on a `type="number"` input Vue casts the bound
+// value to a number, which would take this ref out of the string domain the field is read in.
+function onManualInput(event: Event): void {
+  manualValue.value = (event.target as HTMLInputElement).value
+  manualError.value = null
+}
+
 function onApplyManual(): void {
-  const parsed = Number(manualValue.value.trim())
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > MAX_CALIBRATION_ROUND_TRIP_MS) {
-    manualError.value = `Enter a delay between 0 and ${MAX_CALIBRATION_ROUND_TRIP_MS} ms.`
+  const text = manualValue.value.trim()
+  const parsed = Number(text)
+  // A round trip is only ever stated to the millisecond, so a fraction is a typo rather than
+  // precision worth keeping.
+  if (
+    text === '' ||
+    !Number.isInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_CALIBRATION_ROUND_TRIP_MS
+  ) {
+    manualError.value = `Enter a whole number of milliseconds between 0 and ${MAX_CALIBRATION_ROUND_TRIP_MS}.`
     return
   }
   manualError.value = null
@@ -219,20 +234,22 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="flex flex-col gap-1.5 border-t border-zinc-800 pt-3">
-            <label
-              class="flex items-center gap-3"
-              for="record-calibration-manual"
-            >
-              <span class="w-24 shrink-0 text-zinc-400">Or enter it</span>
+            <div class="flex items-center gap-3">
+              <label
+                class="w-24 shrink-0 text-zinc-400"
+                for="record-calibration-manual"
+              >Or enter it</label>
               <input
                 id="record-calibration-manual"
-                v-model="manualValue"
+                :value="manualValue"
                 type="number"
                 min="0"
                 :max="MAX_CALIBRATION_ROUND_TRIP_MS"
                 step="1"
                 inputmode="numeric"
-                class="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 outline-none hover:border-zinc-600 focus:border-sky-500"
+                class="w-24 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 outline-none hover:border-zinc-600 focus:border-sky-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                :class="{ 'border-red-500': manualError !== null }"
+                @input="onManualInput"
               >
               <span class="text-zinc-500">ms</span>
               <button
@@ -243,7 +260,7 @@ onBeforeUnmount(() => {
               >
                 Apply
               </button>
-            </label>
+            </div>
             <p
               v-if="manualError"
               class="text-red-300"
