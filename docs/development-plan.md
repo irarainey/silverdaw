@@ -20,7 +20,7 @@ stops that stage before the next dependency changes.
 | 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
 | 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
-| 4 | Electron 42.8.1 to 45.2.2. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Pending |
+| 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Pending |
@@ -98,6 +98,50 @@ See the [Vitest 4 coverage migration](https://v4.vitest.dev/guide/migration#v8-c
 | Branches | 80.30% | 51.76% |
 | Functions | 75.47% | 56.09% |
 | Lines | 63.29% | 58.05% |
+
+Stage 4 development checkpoint on 2026-11-04: Electron resolves to 45.2.1,
+with Chromium 156.0.8078.75 and Node 24.22.1 confirmed in the running
+application. Application versions remain 1.10.0. Only Electron changes in
+the dependency lockfile; native dependencies and build tooling are unchanged.
+Lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys passed. All 272 coverage source paths and aggregate metrics match
+Stage 3 exactly. The cold-launch journey now checks the renderer's actual
+Windows sandbox state through the public process-metrics API; this assertion
+passed both before and after the upgrade. No assertions were weakened and
+no timeouts, fixtures or application source code changed.
+
+The planned 45.2.2 was published at 2026-11-03T21:43:24.912Z and was still
+inside pnpm's release-age gate. Installation initially generated an exception;
+it was removed, and the original lockfile was restored before resolving the
+eligible 45.2.1 instead. No release-age exceptions or other security-policy
+changes remain. Revisit 45.2.2 after it becomes eligible and repeat F as a
+separate patch checkpoint; its Chromium and Node updates are not included here.
+See the [45.2.1](https://releases.electronjs.org/release/v45.2.1) and
+[45.2.2](https://releases.electronjs.org/release/v45.2.2) release notes.
+
+The audit fell from 56 to 44 findings: zero critical, 18 high, 20 moderate
+and six low. All 12 removed advisory IDs belonged to Electron; none were
+added, and no Electron advisory matches remain in this report. Outstanding
+transitive findings still require the later maintenance stages.
+
+The [Electron breaking-change review](https://www.electronjs.org/docs/latest/breaking-changes)
+covered versions 43 through 45, particularly removed sandbox-preload Node
+shims, native IPC event emitters, Windows ANGLE packaging and ASAR descriptor
+restrictions. The built CommonJS preload requires only `electron` and uses
+none of the removed Buffer/timer globals. Existing sandbox, context isolation,
+navigation restrictions, permission denial and CSP are unchanged. Three
+normal application-root launches per version also confirmed preload
+`getAppInfo()` agrees with the main process, no renderer Node globals are
+exposed, and a real WebGL context is available and not lost.
+
+Those observations reused one isolated probe profile, rather than a fresh
+profile for every sample. Median first contentful paint was 248 ms before
+and 196 ms after; median observed launch-to-ready was 2,183 ms before and
+2,134 ms after. These are exploratory observations, not a controlled benchmark
+or a claim of improved performance. Visual/scroll/zoom and real native-dialog
+acceptance remain outstanding; e2e dialogs are stubbed. Installed upgrade,
+ASAR and project-file-association checks remain under P. No distribution
+assets were built, and this checkpoint is not full release acceptance.
 
 ### Regression gates
 

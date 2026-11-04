@@ -67,13 +67,13 @@ design roadmap, see the [Development Plan](development-plan.md).
 
 ## Architecture
 
-Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 42 + Vue 3 UI, linked by a local WebSocket bridge that is guarded by a token unique to each run.
+Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engine and an Electron 45 + Vue 3 UI, linked by a local WebSocket bridge that is guarded by a token unique to each run.
 
 - **Backend** (`backend/`) — A headless C++17 / JUCE 8 binary (`SilverdawBackend`) that owns the
   audio output device, mixer, timeline, project `ValueTree` and `UndoManager`. It exposes its state and
   commands over an [IXWebSocket](https://github.com/machinezone/IXWebSocket) server bound to
   `127.0.0.1` and gated by a per-session AUTH token.
-- **Frontend** (`frontend/`) — An Electron 42 + Vue 3 (Composition API, `<script setup>`) app
+- **Frontend** (`frontend/`) — An Electron 45 + Vue 3 (Composition API, `<script setup>`) app
   built with electron-vite. The renderer talks to the bridge directly; the main process owns the
   OS dialogs, native menu, persisted preferences and backend spawn.
 

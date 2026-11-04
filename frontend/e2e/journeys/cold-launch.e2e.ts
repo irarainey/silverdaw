@@ -41,6 +41,12 @@ test('cold launch reaches the ready startup screen with the engine connected', a
   const resolvedUserData = await electronApp.evaluate(({ app }) => app.getPath('userData'))
   expect(resolvedUserData).toBe(userDataDir)
 
+  const sandboxed = await electronApp.evaluate(({ app, BrowserWindow }) => {
+    const pid = BrowserWindow.getAllWindows()[0]!.webContents.getOSProcessId()
+    return app.getAppMetrics().find((metric) => metric.pid === pid)?.sandboxed
+  })
+  expect(sandboxed).toBe(true)
+
   // The always-on diagnostics log exists, which is what makes a failed run
   // explainable across both processes (the fixture attaches it on failure).
   expect(existsSync(join(diagnosticsDir, 'startup.log'))).toBe(true)

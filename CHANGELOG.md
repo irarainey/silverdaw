@@ -10,6 +10,7 @@
   updated to music-metadata 11.16.1, Zod 4.6.7 and Vue 3.5.44.
 - Frontend build tooling and unit-test coverage now use Vite 7.3.7 and
   Vitest 4.1.12.
+- The desktop runtime has been updated to Electron 45.2.1.
 
 ## 1.9.0
 

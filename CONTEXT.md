@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-09-08 · Owner: @irarainey_
+_Last reviewed: 2026-11-04 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -10,7 +10,7 @@ touches them.
 
 An open-source **Windows desktop DAW** for bedroom DJs, producers, and mixers
 making remixes and mashups. A studio **creation** tool, not a live-performance
-instrument. Two processes: an Electron 42 + Vue 3 UI and a headless JUCE 8 C++
+instrument. Two processes: an Electron 45 + Vue 3 UI and a headless JUCE 8 C++
 audio engine, linked by a per-session-authenticated loopback WebSocket.
 
 ## Current state
