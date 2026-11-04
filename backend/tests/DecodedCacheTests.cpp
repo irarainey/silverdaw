@@ -160,6 +160,28 @@ void testAnUnusableDecodeIsRejected()
     garbage.deleteFile();
 }
 
+void testAnUnsupportedWavSampleWidthIsRejected()
+{
+    const juce::TemporaryFile wav(".wav");
+    juce::MemoryOutputStream bytes;
+    bytes.write("RIFF", 4);
+    bytes.writeInt(38);
+    bytes.write("WAVEfmt ", 8);
+    bytes.writeInt(16);
+    bytes.writeShort(1); // PCM.
+    bytes.writeShort(1); // Mono.
+    bytes.writeInt(44100);
+    bytes.writeInt(44100);
+    bytes.writeShort(1);
+    bytes.writeShort(12); // The reader cannot decode 12-bit PCM.
+    bytes.write("data", 4);
+    bytes.writeInt(2);
+    bytes.writeShort(0);
+    require(wav.getFile().replaceWithData(bytes.getData(), bytes.getDataSize()),
+            "must be able to write the malformed wav fixture");
+    require(!decodedWavIsUsable(wav.getFile()), "an unsupported wav sample width must not validate as usable audio");
+}
+
 } // namespace
 
 void addDecodedCacheTests(std::vector<TestCase>& tests)
@@ -171,6 +193,8 @@ void addDecodedCacheTests(std::vector<TestCase>& tests)
     tests.push_back({"decode validation accepts a wav staged under a .wav.tmp name",
                      testAUsableWavIsAcceptedOnATmpStagingPath});
     tests.push_back({"decode validation rejects a missing or non-audio file", testAnUnusableDecodeIsRejected});
+    tests.push_back(
+        {"decode validation rejects unsupported WAV sample widths", testAnUnsupportedWavSampleWidthIsRejected});
 }
 
 } // namespace silverdaw::tests

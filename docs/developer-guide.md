@@ -5371,7 +5371,7 @@ Silverdaw is Windows-only. Developed in Visual Studio Code.
   Node) — the version is pinned by `frontend/package.json`'s `packageManager` field;
   do not `npm i -g pnpm`.
 
-JUCE 8.0.12 and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
+JUCE 8.0.17-security and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
 install by hand.
 
 Release packaging additionally signs the MSIX with the Windows SDK `signtool.exe`.

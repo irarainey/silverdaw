@@ -42,7 +42,7 @@ PluginEditorWindow::PluginEditorWindow(juce::AudioPluginInstance& plugin,
 {
     // A plugin without its own editor still gets a window, using JUCE's generic parameter
     // list, so every hosted effect stays adjustable (ADR 0025).
-    auto* editor = plugin.hasEditor() ? plugin.createEditorIfNeeded() : nullptr;
+    auto* editor = plugin.hasEditor() ? plugin.createEditorAndMakeActive() : nullptr;
     if (editor == nullptr) editor = new juce::GenericAudioProcessorEditor(plugin);
 
     setUsingNativeTitleBar(true);

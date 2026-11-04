@@ -11,6 +11,7 @@
 - Frontend build tooling and unit-test coverage now use Vite 7.3.7 and
   Vitest 4.1.12.
 - The desktop runtime has been updated to Electron 45.2.1.
+- The audio engine has been updated to JUCE 8.0.17-security.
 
 ## 1.9.0
 

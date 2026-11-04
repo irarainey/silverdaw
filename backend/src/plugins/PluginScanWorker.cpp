@@ -48,7 +48,10 @@ juce::String scanWorkerPrefix()
 class ScanWorker final : public juce::ChildProcessWorker, private juce::AsyncUpdater
 {
   public:
-    ScanWorker() { formatManager.addFormat(new juce::VST3PluginFormat()); }
+    ScanWorker()
+    {
+        formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+    }
 
     ~ScanWorker() override { cancelPendingUpdate(); }
 

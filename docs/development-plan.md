@@ -21,7 +21,7 @@ stops that stage before the next dependency changes.
 | 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
 | 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
-| 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Pending |
+| 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Pending |
 | 8 | Evaluate PixiJS 8.22.0, IXWebSocket 12.1.0 and Rubber Band 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Pending |
@@ -142,6 +142,49 @@ or a claim of improved performance. Visual/scroll/zoom and real native-dialog
 acceptance remain outstanding; e2e dialogs are stubbed. Installed upgrade,
 ASAR and project-file-association checks remain under P. No distribution
 assets were built, and this checkpoint is not full release acceptance.
+
+Stage 5 development checkpoint on 2026-11-04: JUCE is pinned to
+8.0.17-security, not JUCE 9. Both the normal Debug build cache and the
+standard Ninja lint cache were explicitly repinned; changing the CMake default
+alone would have left them on 8.0.12. A separate test-enabled Ninja validation
+tree was configured at `backend\build-release\stage5-juce`, and strict
+clang-tidy 22.1.8 passed all 160 backend source files against the new headers
+with no warnings. The rebuilt Debug backend and its Windows version metadata
+remain 1.10.0.
+
+The [upstream security release](https://github.com/juce-framework/JUCE/releases/tag/8.0.17-security)
+hardens WAV/AIFF channel counts and metadata, JSON/XML/ValueTree parsing,
+ZIP extraction, image decoding and OSC nesting. JSON, XML elements and streamed
+ValueTrees now have a 256-level nesting limit; XML external entities require an
+explicit input source. These upstream protections are retained, not bypassed.
+The release also includes intervening JUCE 8 fixes such as the VST3 scan-context
+leak fix; no measured performance improvement is claimed.
+
+Two plugin call sites required migration: editor creation now uses
+`createEditorAndMakeActive()`, preserving active-editor tracking, and the scan
+worker transfers format ownership with `std::unique_ptr`, matching the existing
+catalogue code. No audio-graph, bridge, project-schema, driver or model changes
+were made.
+
+All 514 native CTest cases passed, including one new malformed-WAV regression
+that first failed on 8.0.12. After the final format-ownership migration, its
+13 plugin/scanner and WAV regression cases passed again. Frontend lint,
+typecheck, all 2,449 unit tests across 195 files and all 35 e2e journeys passed
+against the rebuilt engine. All 272 frontend coverage source paths and aggregate
+metrics match Stage 4 exactly. The frozen released-project journey passed;
+fixture hashes are unchanged. No assertions, timeouts or existing fixtures
+were weakened or regenerated.
+
+The JavaScript audit remains at 44 findings with the same advisory IDs and
+severity counts as Stage 4; it does not scan JUCE. Application versions and all
+other dependency pins are unchanged. No distribution assets were built.
+
+Audio/device/plugin acceptance A remains outstanding, including listening,
+dropout/headroom measurements, real MIDI devices and third-party VST3 editor
+and state restoration. In particular, upstream WASAPI shared mode now
+advertises only the OS-default buffer size; check saved buffer preferences and
+reported latency on target devices. Existing automated playback/export and
+recording tests do not replace that hardware acceptance or packaged gate P.
 
 ### Regression gates
 

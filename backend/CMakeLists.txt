@@ -28,7 +28,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # JUCE is fetched at configure time. The first configure downloads ~250MB
 # into `backend/build/_deps/juce-src/`; subsequent configures are cached.
 # Bump JUCE_GIT_TAG to update the pinned version.
-set(JUCE_GIT_TAG "8.0.12" CACHE STRING "JUCE version to fetch")
+set(JUCE_GIT_TAG "8.0.17-security" CACHE STRING "JUCE version to fetch")
 
 include(FetchContent)
 FetchContent_Declare(JUCE
