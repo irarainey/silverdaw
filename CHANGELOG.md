@@ -17,7 +17,7 @@
 - Frontend state management now uses Pinia 4.1.0.
 - Frontend linting now uses ESLint 10.14.0 and eslint-plugin-vue 10.12.0.
 - The frontend package manager is now pinned to pnpm 12.16.1.
-- The desktop runtime has been updated to Electron 45.2.1.
+- The desktop runtime has been updated to Electron 45.2.2.
 - The audio engine has been updated to JUCE 8.0.17-security.
 - Packaging tooling now uses electron-builder 26.18.0.
 - Compatible transitive dependencies have been updated to patched versions.

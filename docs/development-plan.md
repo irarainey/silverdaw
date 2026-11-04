@@ -20,7 +20,7 @@ stops that stage before the next dependency changes.
 | 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
 | 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
-| 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
+| 4 | Electron 42.8.1 to policy-eligible 45.2.1, then 45.2.2 as a separate patch with explicitly approved early adoption. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04, including 45.2.2; manual/packaged acceptance pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch technical deferral documented, release-risk decision and packaged acceptance pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
@@ -118,6 +118,17 @@ changes remain. Revisit 45.2.2 after it becomes eligible and repeat F as a
 separate patch checkpoint; its Chromium and Node updates are not included here.
 See the [45.2.1](https://releases.electronjs.org/release/v45.2.1) and
 [45.2.2](https://releases.electronjs.org/release/v45.2.2) release notes.
+
+Electron 45.2.2 eligibility rechecked at 2026-11-04T20:17Z: its npm
+publication age was approximately 1,354 minutes, still below pnpm's
+[default 1,440-minute minimum](https://pnpm.io/settings/dependency-resolution#minimumreleaseage).
+The earliest eligible time is **2026-11-04T21:43:24.912Z**, based on the
+package publication time, not the earlier GitHub release timestamp.
+At that check, 45.2.1 was retained without manifest, lockfile or policy changes,
+and no candidate regression result was claimed. The 45.2.2 notes list
+Chromium 156.0.8078.80, Node 24.22.2 and a removeInsertedCSS correction,
+but do not enumerate CVEs. The later follow-up checkpoint below records the
+user-approved early adoption and its separate regression results.
 
 The audit fell from 56 to 44 findings: zero critical, 18 high, 20 moderate
 and six low. All 12 removed advisory IDs belonged to Electron; none were
@@ -570,6 +581,39 @@ changes also require P when authorised. If a fix remains unavailable, the
 release owner must explicitly decide whether to accept this bounded residual
 risk or hold the release. Manifests, lockfile, overrides and runtime code are
 unchanged by this review, so no dependency regression run is claimed.
+
+Electron 45.2.2 follow-up checkpoint on 2026-11-04, after Stage 10: the user
+explicitly approved using this already-released patch before the 24-hour
+cooling-off cutoff, for unreleased Silverdaw 1.10.0. pnpm recorded one
+exact-version acknowledgement, minimumReleaseAgeExclude: electron@45.2.2.
+No other package or Electron version is exempted; build permissions, hoisted
+linking and security overrides are unchanged. Remove this acknowledgement
+after 2026-11-04T21:43:24.912Z and verify a frozen install without it.
+
+The manifest and generated lockfile change only Electron from 45.2.1 to
+45.2.2. The normal pnpm install encountered a Windows staging error while
+preserving Vite's generated nested dependencies. Moving that specific folder
+into a temporary session backup let pnpm restore it normally; no ACL changes,
+user-process termination or package-manager downgrade was needed. The
+Electron launcher downloaded its runtime on first execution. Frozen install
+and the full frontend gate then passed.
+
+Lint, typecheck, all **2,449 unit tests across 195 files** and all **35 e2e
+journeys** passed. Coverage is identical to the final Stage 10 report across
+all **272 source paths**. Three actual-runtime launches confirmed Electron
+45.2.2, Chromium 156.0.8078.80 and Node 24.22.2, matching main/preload app info,
+an actually sandboxed renderer, no exposed require/process/Buffer globals
+and a live WebGL context. Three further eight-track runs passed zoom, repeated
+Clip Editor teardown and WebGL context loss/rebuild without renderer errors.
+
+The real production collector and both builder configuration probes are
+unchanged. The full JavaScript audit still reports one moderate minimatch
+finding; the production-only audit reports zero. Neither is native security
+clearance. Application versions remain 1.10.0; native executable/runtime hashes,
+application source, tests and frozen fixtures are unchanged. Temporary
+recovery/profile directories were removed. Manual acceptance A and packaged
+acceptance P remain outstanding; no distribution assets, commits, tags or
+releases were created.
 
 ### Regression gates
 
