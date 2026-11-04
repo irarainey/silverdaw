@@ -5500,6 +5500,10 @@ root it runs the whole pipeline end-to-end:
 5. Compiles the Electron bundles and packages **three artefacts** from them.
 6. Exports the **public** certificate so users can trust the sideload package.
 
+Close any app instance running from `dist/win-unpacked/` before packaging.
+The script reports its process IDs and stops the build if that output is in
+use; it does not terminate running apps or block an installed copy elsewhere.
+
 Bumping a release version means editing **both** `frontend/package.json` and the
 `project(... VERSION ...)` line in `backend/CMakeLists.txt`; the backend's
 `kBackendVersion` (reported over the bridge and written into saved projects) and

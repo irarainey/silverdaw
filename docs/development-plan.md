@@ -615,6 +615,56 @@ recovery/profile directories were removed. Manual acceptance A and packaged
 acceptance P remain outstanding; no distribution assets, commits, tags or
 releases were created.
 
+Local release-build checkpoint on 2026-11-04: the user explicitly authorised
+rerunning all linting/tests and building every configured distribution for
+local installation testing. The full frontend gate passed again: lint,
+typecheck, **2,449 unit tests across 195 files**, **35 e2e journeys**, and
+identical coverage across **272 source paths**. All **517 native tests**
+passed in both Debug and Release. Strict clang-tidy 22.1.8 covered all
+**160 production sources** without warnings.
+
+The Release cache still held IXWebSocket 11.4.5 and Rubber Band 3.3.0; it was
+explicitly repinned to 12.1.0 and 4.0.0 before configuring and rebuilding.
+Actual fetched revisions were checked alongside JUCE 8.0.17-security and
+RNNoise 0.1.1. The native build used four parallel jobs. A frozen pnpm install
+passed before packaging. The previous 1.9.0 outputs were preserved in a named
+session archive rather than deleted.
+
+The canonical release script produced the signed sideload AppX, portable ZIP,
+unsigned Store AppX, unpacked application and public certificate for 1.10.0.
+Its existing bundling and version guards passed. The script now refuses to
+overwrite packaging output used by running processes instead of terminating
+apps by name; PowerShell parsing and six focused output-path guard cases
+passed. Installed instances elsewhere are not blocked or terminated.
+
+All three archives contain identical application ASARs and the expected nine
+native binaries, MIDI mappings and licence notices. Store native payloads and
+all bundled DLLs match the Release build byte-for-byte; locally signed native
+executable payloads match after excluding only PE signing fields and
+certificate data. The portable and sideload executable signatures match, and
+Windows verified the portable app, backend and LAME signatures. SDK signtool
+verified the sideload AppX without warnings or errors. Both AppX manifests
+have version 1.10.0.0, x64, the correct distinct identities, microphone
+capability and project association. The Store package is intentionally
+unsigned and is not a local installation candidate. Only the existing
+certificate was reused; no trust settings were changed. The final Store pass
+left `dist/win-unpacked` unsigned; the smoke test used the signed portable ZIP.
+
+An actual executable extracted from the portable ZIP passed an isolated-profile
+smoke test using its own bundled backend, not a source-tree fallback. It
+reported Silverdaw 1.10.0 and Electron 45.2.2, loaded the packaged main/CJS
+preload, retained the renderer sandbox and exposed no Node globals. WebGL was
+live. A copy of the frozen 1.4.1 project opened and saved as 1.10.0; WAV and MP3
+mixdowns contained roughly two seconds of audio, and the MP3 reimported onto a
+track. The original fixture was unchanged. The production-only audit reports
+zero findings; the full audit retains the documented moderate minimatch risk.
+
+Manual listening, hardware/performance acceptance and installed/upgrade
+acceptance remain outstanding. The sideload identity differs from the Store
+identity, so a sideload install alone cannot establish Store-upgrade behaviour.
+No application was installed, no certificate was trusted, and no assets were
+published or uploaded; no commits or tags were created.
+
 ### Regression gates
 
 **F - frontend:** from `frontend`, run `pnpm lint`, `pnpm typecheck`,
@@ -655,7 +705,8 @@ distribution assets, verify the installed Windows x64 application and an
 upgrade from a released installation. Check ASAR/main/preload loading,
 backend/runtime/decoder DLLs, project-file associations, preferences, autosave
 and old-project compatibility. A development launch is not a substitute.
-Do not publish, sign, tag or release as part of this plan.
+Building local assets does not authorise publishing, tagging or releasing them,
+installing the app, or changing certificate trust.
 
 ### Security and rollback rules
 
