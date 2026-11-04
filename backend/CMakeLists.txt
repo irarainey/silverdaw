@@ -818,21 +818,30 @@ endif()
 # unable to export MP3 and would silently fall back to that broken reader, so
 # fail the configure step instead of shipping a crippled binary.
 #
-# Drop a Windows lame.exe build into `backend/third_party/lame/lame.exe`.
+# LAME 4 requires its sibling libmpg123-0.dll, even for --version.
 # See third_party/lame/README.md for download links.
 set(SILVERDAW_LAME_EXE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lame/lame.exe"
     CACHE FILEPATH "Path to bundled lame.exe (Windows MP3 encoder/decoder)")
-if(NOT EXISTS "${SILVERDAW_LAME_EXE}")
-    message(FATAL_ERROR
-        "Required lame.exe not found at ${SILVERDAW_LAME_EXE}. "
-        "MP3 import and export both depend on it. "
-        "See backend/third_party/lame/README.md for how to obtain it.")
-endif()
-message(STATUS "MP3 encode/decode: lame.exe found at ${SILVERDAW_LAME_EXE}")
-add_custom_command(TARGET SilverdawBackend POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SILVERDAW_LAME_EXE}" "$<TARGET_FILE_DIR:SilverdawBackend>/lame.exe"
-    COMMENT "Copying lame.exe next to backend executable")
+get_filename_component(_silverdaw_lame_dir "${SILVERDAW_LAME_EXE}" DIRECTORY)
+set(SILVERDAW_LAME_DECODER_DLL "${_silverdaw_lame_dir}/libmpg123-0.dll")
+foreach(_lame_file IN ITEMS "${SILVERDAW_LAME_EXE}" "${SILVERDAW_LAME_DECODER_DLL}")
+    if(NOT EXISTS "${_lame_file}")
+        message(FATAL_ERROR
+            "Required LAME runtime file not found: ${_lame_file}. "
+            "Run scripts/Fetch-Lame.ps1 before configuring. "
+            "See backend/third_party/lame/README.md.")
+    endif()
+endforeach()
+message(STATUS "MP3 encode/decode: LAME bundle found at ${_silverdaw_lame_dir}")
+
+function(copy_lame_runtime_dependencies target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SILVERDAW_LAME_EXE}" "${SILVERDAW_LAME_DECODER_DLL}"
+            "$<TARGET_FILE_DIR:${target}>"
+        COMMENT "Copying LAME and libmpg123 next to ${target}")
+endfunction()
+copy_lame_runtime_dependencies(SilverdawBackend)
 
 if(SILVERDAW_BUILD_TESTS)
     enable_testing()
@@ -880,6 +889,7 @@ tests/MixdownRenderTests.cpp
         tests/DecodedCacheTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
+    copy_lame_runtime_dependencies(SilverdawBackendTests)
     if(SILVERDAW_ENABLE_STEM_SEPARATION)
         copy_onnx_runtime_dependencies(SilverdawBackendTests)
     endif()

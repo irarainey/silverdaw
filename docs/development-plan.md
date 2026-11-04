@@ -23,7 +23,7 @@ stops that stage before the next dependency changes.
 | 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch remediation and packaged acceptance pending |
-| 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Pending |
+| 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
 | 8 | Evaluate PixiJS 8.22.0, IXWebSocket 12.1.0 and Rubber Band 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Pending |
 | 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Deferred |
 | 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Deferred |
@@ -244,6 +244,70 @@ names/versions and declared production dependency ranges verified. These checks
 did not create an ASAR, sign, publish or build distribution assets. Packaged
 acceptance P, including installed upgrades and AppX/ZIP contents, remains
 outstanding; development validation is not full release acceptance.
+
+Stage 7 development checkpoint on 2026-11-04: the standard RareWares LAME
+4.0 x64 bundle replaces 3.100.1, with mpg123 1.33.7 as its decoder.
+The separately patched q4 variant was not selected, and encoding presets
+are unchanged. The [released upstream notes](https://svn.code.sf.net/p/lame/svn/trunk/lame/doc/html/history.html)
+cover intervening encoder bounds fixes and AIFF-parser hardening; the
+unreleased 4.1 hardening and speed changes are not included.
+
+The [fetch helper](../scripts/Fetch-Lame.ps1) now pins the archive hash,
+validates both staged runtime files before installation and refreshes old
+standalone or incomplete installations. Custom downloads require a ZIP and
+an explicit SHA-256; standalone EXE downloads are no longer supported.
+Focused checks passed for refresh/idempotency, forced refresh, bad hashes,
+missing DLLs, wrong versions and explicit archive-entry selection.
+The [bundle README](../backend/third_party/lame/README.md) records the pin
+and developer workflow changes.
+
+The archive's actual DLL name is `libmpg123-0.dll`, not the underscore spelling
+on the download page. CMake requires it beside `lame.exe` and copies both files
+beside the backend and test executable; a real configure with the DLL missing
+failed as intended. PE inspection confirms x64 binaries: LAME imports the
+decoder and KERNEL32; the decoder imports only KERNEL32, msvcrt and SHLWAPI.
+Source, Debug-backend and test-directory runtime hashes match the verified
+bundle. Both packaging configurations validate and include the exact DLL name.
+The unchanged upstream mpg123 `COPYING`, including the LGPL 2.1 text, is now
+tracked and included by the packaging rules; attribution and source links are
+updated. No unused `lame_enc.dll` is installed or packaged.
+
+Decode-cache generation 4 lazily replaces output from the old decoder.
+A new regression first demonstrated stale generation-3 reuse, then passed
+after the bump; it checks replacement and successful old-entry cleanup.
+Another new native regression exercises production MP3 export and the bundled
+decoder at 128/192/320 kbps with no JUCE fallback. All **516 CTest cases**
+passed against the rebuilt Debug engine, and strict clang-tidy 22.1.8 passed
+the changed production source with no warnings.
+
+Ten synthesized old/new decode comparisons covered CBR, VBR, missing Xing
+headers, 44.1/48 kHz and stereo/mono. Sample counts and gapless timing matched;
+PCM samples differed by at most one 16-bit unit. Unicode and shell-metacharacter
+filenames encoded and decoded successfully. The application metadata parser
+preserved title, artist, bitrate and its existing frame-based duration estimate;
+that estimate is not the decoded WAV's exact sample duration.
+
+One compatibility limitation is recorded rather than hidden: music-metadata
+11.16.1's extended-LAME-tag version guard skips ReplayGain for version 4.0.
+The new file still contains the same ReplayGain value, verified with its
+existing tag decoder, and Silverdaw does not consume that field. No vendor
+parser patch or music-metadata major migration was folded into this stage.
+Garbage MP3 input failed explicitly without hanging. A half-truncated MP3
+produced the same partial decode with exit zero in both old and new LAME;
+this stage does not claim to add strict truncated-MP3 rejection.
+
+Frontend lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys passed against the rebuilt engine. All 272 coverage reports match
+Stage 6 exactly. The frozen released-project fixture, assertions and timeouts
+are unchanged. Application versions remain 1.10.0; no project/preferences,
+tempo/beat-marker or model changes were made. JavaScript dependencies and the
+audit remain unchanged at one moderate development-tooling minimatch finding;
+that audit does not scan these native binaries.
+
+Listening acceptance and packaged gate P remain outstanding, including clean
+machine DLL loading, installed upgrades and AppX/ZIP contents. No distribution
+assets were built, and no speed or subjective audio-quality improvement is
+claimed from these development checks.
 
 ### Regression gates
 

@@ -130,15 +130,28 @@ SOFTWARE.
 - **Licence**: GNU Lesser General Public License v2.1 or later (LGPL-2.1+).
 - **Project**: <https://lame.sourceforge.io/>
 - **Source**: <https://sourceforge.net/projects/lame/files/lame/>
-- **Notice**: Silverdaw bundles an unmodified Windows `lame.exe` build
-  (typically sourced from the
-  [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php))
+- **Notice**: Silverdaw bundles the standard Windows x64 LAME 4.0 executable
+  unchanged from the
+  [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php)
   next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
   it as a separate child process for both MP3 encoding on export (via JUCE's
   `LAMEEncoderAudioFormat`) and MP3 decoding on import; there is no static or
   dynamic linking against the LAME library, so the LGPL boundary is the
   process boundary. Per the LGPL, the unmodified upstream source is available
-  from the project links above.
+  from the project links above. The LGPL 2.1 text is included in
+  `licenses/mpg123-COPYING.txt`.
+
+### mpg123 decoder library — © Michael Hipp and others
+
+- **Licence**: GNU Lesser General Public License v2.1 (LGPL-2.1).
+- **Project**: <https://www.mpg123.de/>
+- **Source**: <https://www.mpg123.de/download/mpg123-1.33.7.tar.bz2>
+- **Notice**: The RareWares LAME 4.0 x64 bundle includes libmpg123 1.33.7
+  as `libmpg123-0.dll`. It is redistributed unchanged next to `lame.exe`
+  in `resources/backend/`. LAME dynamically links this decoder; Silverdaw's
+  backend invokes LAME as a child process and does not link libmpg123.
+  The upstream copyright notices and licence text are included verbatim in
+  `licenses/mpg123-COPYING.txt`, from the source archive's `COPYING` file.
 
 ## Frontend (Electron + Vue)
 

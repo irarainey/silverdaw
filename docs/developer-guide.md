@@ -3138,9 +3138,15 @@ mis-parses some MP3s outright: one 192 kbps file was sized as though it were
 and the file could be neither played nor analysed — it simply appeared to have no
 tempo and made no sound. Across a 25-file sample JUCE also stopped short on 18 of
 them, discarding up to a twentieth of a second that was quietly accepted as a
-"short tail". LAME decoded all 25 in full, at the same speed (about 330 ms for a
-five-minute track), and it was already shipped for MP3 export, so it costs no new
-dependency.
+"short tail". In that original migration, LAME 3.100.1 decoded all 25 in full,
+at the same speed (about 330 ms for a five-minute track), and it was already
+shipped for MP3 export.
+
+The current bundle is LAME 4.0 with mpg123 1.33.7. Its sibling
+`libmpg123-0.dll` is required for both import and export. Decode-cache generation
+4 lazily replaces output from the previous decoder without changing saved
+project or preference fields. The earlier speed observation is not a benchmark
+of this new bundle.
 
 Two consequences worth knowing:
 
@@ -3153,8 +3159,8 @@ Two consequences worth knowing:
   still runs, so this can only add coverage. The chosen decoder is recorded in
   the `decodedcache` log line for each file.
 
-`lame.exe` is required at configure time (see *Continuous integration*), because
-a build without it can neither export nor import MP3.
+Both `lame.exe` and `libmpg123-0.dll` are required at configure time
+(see *Continuous integration*).
 
 Decoding is validated by reading the result back with `WavAudioFormat` directly
 rather than through `AudioFormatManager`. The manager picks a reader from the file
@@ -5847,10 +5853,11 @@ reuse a tree configured by a different generator).
 
 Six details are worth knowing before changing it:
 
-- **`lame.exe` is not in the repository**, so both C++ jobs run
-  `scripts/Fetch-Lame.ps1` first. LAME is required, not optional — it both
-  encodes MP3 on export and decodes MP3 on import — so configuring without it
-  now fails outright rather than producing a backend that cannot do either.
+- **The LAME runtime files are not in the repository**, so both C++ jobs run
+  `scripts/Fetch-Lame.ps1` first. It installs the hash-pinned LAME 4.0 bundle,
+  including `libmpg123-0.dll`; CMake requires and copies both files beside the
+  backend and test executable. The native MP3 regressions exercise the real
+  encoder and decoder, not a JUCE fallback.
 - **Two build trees, two generators.** The test job uses the multi-config
   Visual Studio generator; clang-tidy needs `compile_commands.json`, which only
   Ninja emits, so it configures `backend/build-release` separately and through

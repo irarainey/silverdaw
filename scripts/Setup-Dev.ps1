@@ -272,15 +272,13 @@ if (-not $SkipFrontend) {
 
 # 3. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
-    # Bundled MP3 encoder/decoder. lame.exe is gitignored (`*.exe`), so it is
-    # never in a fresh clone. It must be fetched *before* the CMake configure
-    # below, which fails with a fatal error when the binary is absent.
     $lameExe = Join-Path $repoRoot 'backend/third_party/lame/lame.exe'
-    if (-not (Test-Path -LiteralPath $lameExe)) {
-        Write-Section '3. Fetch bundled LAME (lame.exe)'
+    $lameDecoder = Join-Path $repoRoot 'backend/third_party/lame/libmpg123-0.dll'
+    if (-not (Test-Path -LiteralPath $lameExe) -or -not (Test-Path -LiteralPath $lameDecoder)) {
+        Write-Section '3. Fetch bundled LAME and libmpg123'
         & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/Fetch-Lame.ps1')
         if ($LASTEXITCODE -ne 0) {
-            throw "Fetch-Lame.ps1 failed with exit code $LASTEXITCODE. lame.exe is required: MP3 import and export both depend on it, and the CMake configure below will not succeed without it."
+            throw "Fetch-Lame.ps1 failed with exit code $LASTEXITCODE. lame.exe and libmpg123-0.dll are required for MP3 import/export and CMake configuration."
         }
     }
 

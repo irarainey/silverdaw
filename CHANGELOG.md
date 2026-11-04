@@ -14,6 +14,7 @@
 - The audio engine has been updated to JUCE 8.0.17-security.
 - Packaging tooling now uses electron-builder 26.18.0.
 - Compatible transitive dependencies have been updated to patched versions.
+- MP3 import and export now use LAME 4.0 with mpg123 1.33.7.
 
 ## 1.9.0
 

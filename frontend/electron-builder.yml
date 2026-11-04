@@ -78,6 +78,7 @@ extraResources:
       # `process.resourcesPath/backend/lame.exe`. MP3 import and export both
       # depend on it.
       - lame.exe
+      - libmpg123-0.dll
       # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime, which
       # a clean machine may lack and MSIX does not auto-provide. The backend copies
       # these app-local next to SilverdawBackend.exe (see backend/CMakeLists.txt) so
@@ -92,6 +93,8 @@ extraResources:
     to: LICENSE
   - from: ../THIRD_PARTY_LICENSES.md
     to: THIRD_PARTY_LICENSES.md
+  - from: ../backend/third_party/lame/COPYING.mpg123
+    to: licenses/mpg123-COPYING.txt
 
 # Register `.silverdaw` as a first-class file type so double-clicking a
 # project in Explorer launches (or signals an already-running) Silverdaw
