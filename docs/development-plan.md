@@ -22,7 +22,7 @@ stops that stage before the next dependency changes.
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
 | 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
-| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch remediation and packaged acceptance pending |
+| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch technical deferral documented, release-risk decision and packaged acceptance pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
 | 8 | PixiJS 8.19.0 to 8.22.0, IXWebSocket 11.4.5 to 12.1.0 and Rubber Band 3.3.0 to 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Development gates passed 2026-11-04; manual/audio and packaged acceptance pending |
 | 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Evaluated 2026-11-04; both upgrades deferred, existing model/runtime pins retained |
@@ -518,6 +518,58 @@ advisory suppression was added. Native executable/runtime hashes and the
 frozen released-project fixture are unchanged. Manual/audio/device/plugin
 acceptance A and packaged acceptance P remain outstanding. No commits,
 tags, distribution assets or releases were created.
+
+Minimatch security close-out review on 2026-11-04: **no compatible dependency
+fix is currently available**. The official
+[GHSA-g3hv-75wg-m249 / CVE-2026-118764](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+and the current registry audit now agree on the affected range
+`>=7.0.0 <11.0.1`. The previously recorded registry-range discrepancy is
+resolved, not the vulnerability. The remaining finding is moderate severity.
+
+The advisory describes CPU/memory denial of service when an attacker supplies
+a glob pattern to first-phase preprocessing with optimizationLevel >= 2.
+This is a dependency advisory, not a demonstrated exploit in Silverdaw.
+The installed affected paths are:
+
+| minimatch | Current parent paths |
+| --- | --- |
+| 10.2.6 | ESLint directly and through @eslint/config-array; @typescript-eslint/typescript-estree; electron-builder through app-builder-lib. |
+| 9.0.9 | vue-tsc through @vue/language-core; electron-builder through app-builder-lib and @electron/universal. |
+
+Registry metadata was checked for the latest relevant parents. ESLint
+10.14.0, @eslint/config-array 0.23.5 and even the newer typescript-estree
+8.72.1 still require minimatch 10. app-builder-lib 26.18.1 retains both its
+major-10 dependency and @electron/universal 2.0.3's major-9 path; its
+27.0.0-alpha.14 prerelease still requires major 10. Neither builder version
+was installed. The latest published minimatch 9 and 10 releases remain
+9.0.9 and 10.2.6. The first fixed release is 11.0.1, with 11.0.4 now latest,
+but that major is outside these parents' supported ranges. The newer Vue
+checker removes its minimatch dependency, but its Stage 10 compatibility
+failures remain a separate blocker, and it would not fix the other paths.
+
+No direct minimatch imports or optimizationLevel settings were found in
+frontend application source. The current production-only audit reports zero
+findings, and the actual electron-builder production collector excludes
+minimatch. Both builder configurations still pass schema validation.
+These checks support a development/build-tooling exposure boundary; they do
+not prove that all transitive tooling call sites are unreachable with
+malicious input, or validate the contents of an unbuilt distribution.
+
+**Disposition: defer technical remediation; release-risk acceptance remains
+pending.** Do not force a cross-major override, locally fork the matcher just
+to obtain a clean audit, or suppress the advisory. Treat untrusted changes to
+build/lint configuration and glob patterns as code-review inputs, and do not
+run untrusted builds with elevated privileges or release credentials. This
+review does not itself grant a security waiver or change CI permissions.
+
+Recheck for a patched 9/10 backport or parent releases that officially adopt
+a fixed matcher before release and at the next dependency-maintenance pass.
+Any candidate must retain release-age policy and pass F, preserve coverage
+scope, and pass the real production-collector/configuration probes. Packaging
+changes also require P when authorised. If a fix remains unavailable, the
+release owner must explicitly decide whether to accept this bounded residual
+risk or hold the release. Manifests, lockfile, overrides and runtime code are
+unchanged by this review, so no dependency regression run is claimed.
 
 ### Regression gates
 
