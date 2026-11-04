@@ -1,5 +1,108 @@
 # Silverdaw — Technical Design & Implementation Plan
 
+## Dependency maintenance (unreleased)
+
+Plan established on 2026-11-04. This is a staged maintenance programme, not
+permission to release or a claim that the targets below have been validated.
+Version availability and advisories must be checked again when each stage
+starts. The unreleased application version is 1.10.0; this does not authorise
+a release.
+
+### Sequence and checkpoints
+
+Each numbered stage is a separate dependency diff. Substeps run and pass their
+gate independently; do not combine them into a blanket update. A failing gate
+stops that stage before the next dependency changes.
+
+| Stage | Change | Regression gate | Status |
+| --- | --- | --- | --- |
+| 0 | Establish the unchanged lockfile baseline; rebuild the Debug backend and test executable. | Frontend gate F and backend CTest gate B. Record existing audit findings separately from test failures. | Passed 2026-11-04 |
+| 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
+| 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Pending |
+| 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Pending |
+| 4 | Electron 42.8.1 to 45.2.2. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Pending |
+| 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Pending |
+| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Pending |
+| 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Pending |
+| 8 | Evaluate PixiJS 8.22.0, IXWebSocket 12.1.0 and Rubber Band 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Pending |
+| 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Deferred |
+| 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Deferred |
+
+Baseline on 2026-11-04: lint and typecheck passed; all 2,449 frontend unit
+tests across 195 files passed with coverage; all 35 e2e journeys and all 513
+backend CTest cases passed. No assertions, timeouts or fixtures were changed.
+
+Stage 1 checkpoint on 2026-11-04: Playwright, playwright-core and
+@playwright/test resolve to 1.64.1. Lint and typecheck passed again; the same
+2,449 unit tests across 195 files and all 35 e2e journeys passed. Coverage
+scope and aggregate percentages are unchanged. Electron, Vite, Vitest, Vue,
+Zod and the backend remain at their baseline versions. The only other lockfile
+removal is Playwright's now-unused optional fsevents 2.3.2. The audit still
+reports the same 72 findings; the security updates in later stages remain
+outstanding. No distribution assets were built.
+
+### Regression gates
+
+**F - frontend:** from `frontend`, run `pnpm lint`, `pnpm typecheck`,
+`pnpm test:coverage` and `pnpm test:e2e`. Coverage executes the full Vitest
+suite; a second plain unit run is unnecessary. The e2e command builds the
+application bundles, not distribution assets, and runs all journeys against a
+real backend with isolated test profiles. Use the existing audio device; do
+not install or replace drivers automatically. Keep assertions, timeouts and
+the frozen released-project fixture intact. Details:
+[quality gates](developer-guide.md#quality-gates) and
+[e2e harness](../frontend/e2e/README.md).
+
+**B - backend:** from the repository root, use the MSVC developer environment:
+
+```powershell
+pwsh -NoProfile -File scripts\Invoke-DevShell.ps1 `
+  "cmake --build backend\build --target SilverdawBackend SilverdawBackendTests --config Debug --parallel 4 && ctest --test-dir backend\build --build-config Debug --output-on-failure"
+```
+
+For native dependency changes, configure a dedicated test tree with explicit
+new pins and `SILVERDAW_BUILD_TESTS=ON`; changing a CMake default alone does not
+replace a cached value. Run the existing strict clang-tidy gate against the
+new dependency headers using the pinned linter. Do not reuse stale binaries.
+
+**A - audio and performance acceptance:** use identical input files, projects,
+sample rates, block sizes, hardware and settings before and after the change.
+Check playback/export agreement, warped and pitch-shifted clip length and
+tails, loop boundaries, mute/solo skipping, recording alignment, device
+recovery, MIDI and VST3 scan/editor/state restoration. Compare callback
+headroom/dropouts, memory and elapsed import/export/separation time. Audition
+audio changes; automated timing tests alone do not prove sound quality.
+Compare renderer startup/first-paint latency and scroll/zoom responsiveness
+when Electron or PixiJS changes. Hardware-dependent results must be recorded
+as outstanding if the relevant devices are unavailable, never as passed.
+
+**P - packaged acceptance:** only after explicit authorisation to build
+distribution assets, verify the installed Windows x64 application and an
+upgrade from a released installation. Check ASAR/main/preload loading,
+backend/runtime/decoder DLLs, project-file associations, preferences, autosave
+and old-project compatibility. A development launch is not a substitute.
+Do not publish, sign, tag or release as part of this plan.
+
+### Security and rollback rules
+
+The initial audit reports 72 version-range matches: two critical, 26 high,
+34 moderate and ten low. These include development dependencies and do not
+establish exploitability. Electron is a shipped runtime despite being listed
+in devDependencies, so production-only auditing is insufficient.
+
+Capture `pnpm audit --json` and resolved dependency paths at each security
+checkpoint. Prefer parent updates over overrides; do not force incompatible
+minimatch/glob majors across consumers. A stage may leave documented baseline
+findings, but final acceptance requires a disposition for every remaining
+finding, not suppressed audit output.
+
+Keep the previous manifest/lockfile diff and gate results for comparison.
+If a stage fails, isolate its dependency change or revert only that stage's
+owned edits; never overwrite unrelated work. Do not weaken sandboxing, CSP,
+input validation, tests or persisted-state compatibility to pass an upgrade.
+Model re-exports, algorithm changes, driver changes and release-version bumps
+are outside these dependency stages.
+
 ## 1. Product Scope
 
 A Windows desktop DAW with an Electron frontend and a JUCE audio backend, aimed

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Frontend and backend application versions are now 1.10.0.
+- The end-to-end test runner has been updated to Playwright 1.64.1.
+
 ## 1.9.0
 
 ### Added
