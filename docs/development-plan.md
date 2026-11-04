@@ -18,7 +18,7 @@ stops that stage before the next dependency changes.
 | --- | --- | --- | --- |
 | 0 | Establish the unchanged lockfile baseline; rebuild the Debug backend and test executable. | Frontend gate F and backend CTest gate B. Record existing audit findings separately from test failures. | Passed 2026-11-04 |
 | 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
-| 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Pending |
+| 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Pending |
 | 4 | Electron 42.8.1 to 45.2.2. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Pending |
@@ -40,6 +40,27 @@ Zod and the backend remain at their baseline versions. The only other lockfile
 removal is Playwright's now-unused optional fsevents 2.3.2. The audit still
 reports the same 72 findings; the security updates in later stages remain
 outstanding. No distribution assets were built.
+
+Stage 2 checkpoint on 2026-11-04: each substep passed F before the next
+dependency changed. Each run passed lint, typecheck, all 2,449 unit tests
+across 195 files and all 35 e2e journeys. Coverage scope and aggregate
+percentages are unchanged; no assertions, timeouts or fixtures were changed.
+
+| Substep | Resolved version | Remaining audit findings |
+| --- | --- | --- |
+| music-metadata | 11.16.1 | 69; three metadata-parser advisory matches removed. |
+| Zod | 4.6.7 | 68; the collection-validation memory-exhaustion advisory match removed. |
+| Vue runtime and its compiler/server-renderer dependencies | 3.5.44 | 67; the server-renderer attribute-name advisory match removed. |
+
+The final audit still has two critical, 24 high, 31 moderate and ten low
+findings. These remain for later stages; passing tests does not clear them.
+Vue's runtime dependency tree is aligned at 3.5.44, while vue-tsc 2.2.12
+retains its separate 3.5.41 compiler-core/compiler-dom/shared tooling tree.
+Its migration and the remaining vulnerable transitive paths are not part of
+this stage. The lockfile also updates music-metadata's content-type dependency
+and Vue's Babel/PostCSS/source-map dependencies. No application-source changes
+were needed. Application versions remain 1.10.0; Electron, Vite, Vitest and
+native dependencies are unchanged. No distribution assets were built.
 
 ### Regression gates
 

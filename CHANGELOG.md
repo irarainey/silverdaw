@@ -6,6 +6,8 @@
 
 - Frontend and backend application versions are now 1.10.0.
 - The end-to-end test runner has been updated to Playwright 1.64.1.
+- Audio metadata parsing, bridge validation and Vue dependencies have been
+  updated to music-metadata 11.16.1, Zod 4.6.7 and Vue 3.5.44.
 
 ## 1.9.0
 
