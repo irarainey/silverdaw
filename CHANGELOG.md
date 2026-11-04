@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Backend regressions now cover authenticated bridge reconnects and shutdown.
+
 ### Changed
 
 - Frontend and backend application versions are now 1.10.0.
@@ -15,6 +19,9 @@
 - Packaging tooling now uses electron-builder 26.18.0.
 - Compatible transitive dependencies have been updated to patched versions.
 - MP3 import and export now use LAME 4.0 with mpg123 1.33.7.
+- Timeline and Clip Editor rendering now use PixiJS 8.22.0.
+- The backend WebSocket bridge now uses IXWebSocket 12.1.0.
+- Time-stretching and pitch-shifting now use Rubber Band 4.0.0.
 
 ## 1.9.0
 

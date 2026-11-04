@@ -24,7 +24,7 @@ stops that stage before the next dependency changes.
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch remediation and packaged acceptance pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
-| 8 | Evaluate PixiJS 8.22.0, IXWebSocket 12.1.0 and Rubber Band 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Pending |
+| 8 | PixiJS 8.19.0 to 8.22.0, IXWebSocket 11.4.5 to 12.1.0 and Rubber Band 3.3.0 to 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Development gates passed 2026-11-04; manual/audio and packaged acceptance pending |
 | 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Deferred |
 | 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Deferred |
 
@@ -308,6 +308,70 @@ Listening acceptance and packaged gate P remain outstanding, including clean
 machine DLL loading, installed upgrades and AppX/ZIP contents. No distribution
 assets were built, and no speed or subjective audio-quality improvement is
 claimed from these development checks.
+
+Stage 8 development checkpoint on 2026-11-04: PixiJS 8.22.0,
+IXWebSocket 12.1.0 and Rubber Band 4.0.0 passed their independent checkpoints
+in that order. Each substep passed F: lint, typecheck, all 2,449 unit tests
+across 195 files and all 35 e2e journeys. All 272 coverage reports match
+Stage 7 exactly. Both native upgrades passed all **517 CTest cases** and
+strict clang-tidy 22.1.8 on all 160 production sources against the new
+dependency headers. Debug and Ninja lint caches were explicitly repinned;
+their actual warp compile flags retain KissFFT, libsamplerate and static
+linkage. Application versions remain 1.10.0.
+
+PixiJS's [8.20](https://github.com/pixijs/pixijs/releases/tag/v8.20.0),
+[8.21](https://github.com/pixijs/pixijs/releases/tag/v8.21.0) and
+[8.22](https://github.com/pixijs/pixijs/releases/tag/v8.22.0) notes cover
+geometry/resource teardown, multi-renderer text/graphics, WebGL text recovery
+and draw-loop fixes. Only PixiJS changes in the JavaScript lockfile; no
+application-source migration or release-age exception was needed. The
+CSP-safe shader patch and explicit WebGL preference are unchanged.
+
+Three isolated Electron runs per version used copies of the unchanged released
+fixture, populated through the UI with eight tracks, plus 48 zoom gestures,
+three Clip Editor open/close cycles and a forced WebGL context loss per run.
+Both versions recovered on a fresh timeline canvas without renderer errors.
+RAF frame-interval medians stayed at 16.7 ms; per-run sampled scene-rebuild
+medians were 1.9-2.3 ms before and 2.1-2.3 ms after. Pixi/WebGL initialisation
+was 67-76 ms before and 52-63 ms after. Slower project-open observations
+coincided with longer Windows audio-device opens, which were logged separately.
+These small development samples are not a controlled GPU benchmark or proof
+of an application-wide speed improvement.
+
+The [IXWebSocket release](https://github.com/machinezone/IXWebSocket/releases/tag/v12.1.0)
+fixes a reconnect/shutdown race and improves MSVC type compatibility. Its
+HTTP-server path-traversal fix is included, but Silverdaw does not use that
+file handler. Loopback-only binding, per-session AUTH, text control messages
+and disabled TLS/zlib are unchanged. The new permanent bridge regression
+passed on 11.4.5 before the update, then passed 20 repeated runs on 12.1.0.
+It authenticates a real client, restarts the server three times and stops the
+live server and automatically reconnecting client. The full e2e suite also
+passed actual engine-crash recovery and saved-project restoration.
+
+Rubber Band's [4.0 changelog](https://github.com/breakfastquay/rubberband/blob/v4.0.0/CHANGELOG)
+keeps the existing stretcher API binary-compatible and adds a separate
+pitch-only API, which this update does not adopt. The reviewed R2
+stack-overflow fix is confined to offline study. The existing source list,
+warp modes, transient/pitch policy, ratio mapping and latency/padding handling
+are unchanged. CMake now supplies upstream's `RUBBERBAND_STATIC` definition;
+the include-path shim is still needed in 4.0 and was retained without patching
+fetched source.
+
+Development-only production exports compared the same two-second fixture
+before and after Rubber Band across `rhythmic`, `tonal` and `complex`,
+tempo ratios 0.6/1.25, pitch shifts -5/0/+5 semitones and 44.1/48 kHz.
+All **36 stereo 32-bit-float exports** had identical PCM hashes, frame counts,
+RMS and peak levels. This supplements the existing live-pitch, extreme-ratio,
+seek/window and warped-export regressions; it is not listening acceptance
+for arbitrary material or a real-time headroom measurement.
+
+Existing assertions, e2e timeouts and the frozen fixture are unchanged.
+No project/preferences, tempo/beat-marker or model changes were made.
+The JavaScript audit remains at one moderate development-tooling minimatch
+finding; it does not scan the native libraries. Manual visual, listening,
+device/MIDI/plugin and performance acceptance A, plus packaged acceptance P,
+remain outstanding. No distribution assets were built, and no release,
+subjective quality or overall performance acceptance is claimed.
 
 ### Regression gates
 

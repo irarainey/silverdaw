@@ -1,14 +1,13 @@
 // Bridge: AUTH token validation and the payload-helper guards that reject
-// malformed wire values before they reach the engine.
+// malformed wire values before they reach the engine, plus connection lifecycle.
 
-#include "TestRegistry.h"
-
-#include "AudioEngine.h"
 #include "AudioConstants.h"
+#include "AudioEngine.h"
 #include "BridgeAuth.h"
+#include "BridgeServer.h"
 #include "EdgeFadeSnapshot.h"
-#include "LoudnessAnalyzer.h"
 #include "Leveler.h"
+#include "LoudnessAnalyzer.h"
 #include "MidiDeviceCommands.h"
 #include "MixdownEngine.h"
 #include "PayloadHelpers.h"
@@ -16,21 +15,23 @@
 #include "ProjectFile.h"
 #include "ProjectState.h"
 #include "SharedFx.h"
+#include "TestRegistry.h"
 #include "ToneEq.h"
 #include "ValueTreeJson.h"
 #include "WarpProcessor.h"
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXWebSocket.h>
+#include <juce_events/juce_events.h>
 #include <limits>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <juce_events/juce_events.h>
 
 namespace silverdaw::tests
 {
@@ -52,6 +53,75 @@ juce::var makeBridgePayload(std::initializer_list<std::pair<const char*, juce::v
         obj->setProperty(juce::Identifier{f.first}, f.second);
     }
     return juce::var(obj);
+}
+
+void testBridgeReconnectAndShutdown()
+{
+    // Keep the client network system alive across server stop/start on Windows.
+    struct ClientNetSystem
+    {
+        ClientNetSystem()
+        {
+            require(ix::initNetSystem(), "client network system should initialise");
+        }
+        ~ClientNetSystem()
+        {
+            ix::uninitNetSystem();
+        }
+    } clientNetSystem;
+
+    int port = 0;
+    {
+        juce::StreamingSocket reservation;
+        require(reservation.createListener(0, "127.0.0.1"), "should reserve an available loopback port");
+        port = reservation.getBoundPort();
+    }
+
+    silverdaw::BridgeServer server("bridge-lifecycle-test",
+                                   [](silverdaw::BridgeServer&, const juce::String&, const juce::var&) {});
+    require(server.start(port), "bridge should listen on the reserved port");
+
+    std::atomic<int> readyCount{0};
+    ix::WebSocket client;
+    client.setUrl("ws://127.0.0.1:" + std::to_string(port));
+    client.setMinWaitBetweenReconnectionRetries(10);
+    client.setMaxWaitBetweenReconnectionRetries(100);
+    client.setOnMessageCallback(
+        [&](const ix::WebSocketMessagePtr& message)
+        {
+            if (message->type == ix::WebSocketMessageType::Open)
+            {
+                client.send(R"({"type":"AUTH","payload":{"token":"bridge-lifecycle-test"}})");
+            }
+            else if (message->type == ix::WebSocketMessageType::Message)
+            {
+                const auto envelope = juce::JSON::parse(juce::String(message->str));
+                if (envelope.getProperty("type", {}).toString() == "READY")
+                    readyCount.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    const auto waitForReady = [&](int expected)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (readyCount.load(std::memory_order_relaxed) < expected && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return readyCount.load(std::memory_order_relaxed) == expected;
+    };
+
+    client.start();
+    require(waitForReady(1), "connected client should authenticate and receive READY");
+    for (int reconnect = 0; reconnect < 3; ++reconnect)
+    {
+        server.stop();
+        require(server.start(port), "bridge should restart on the same loopback port");
+        require(waitForReady(reconnect + 2), "reconnected client must authenticate again and receive READY");
+    }
+
+    const auto stopStarted = std::chrono::steady_clock::now();
+    server.stop();
+    client.stop();
+    require(std::chrono::steady_clock::now() - stopStarted < std::chrono::seconds(5),
+            "stopping a live server and reconnecting client must not hang");
 }
 
 void testBridgeAuthTokenValidation()
@@ -269,6 +339,7 @@ void testMidiDevicesEnvelopeShape()
 
 void addBridgeTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Bridge reconnect and shutdown", testBridgeReconnectAndShutdown});
     tests.push_back({"Bridge auth token validation", testBridgeAuthTokenValidation});
     tests.push_back({"Bridge payload helpers reject malformed values", testBridgePayloadHelpersRejectMalformed});
     tests.push_back({"Bridge optional readers reject wrong types", testBridgeOptionalReadersRejectWrongType});
