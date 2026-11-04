@@ -22,7 +22,7 @@ stops that stage before the next dependency changes.
 | 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
 | 4 | Electron 42.8.1 to policy-eligible 45.2.1; 45.2.2 awaits the release-age gate. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04; manual/packaged acceptance and 45.2.2 pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
-| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Pending |
+| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch remediation and packaged acceptance pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Pending |
 | 8 | Evaluate PixiJS 8.22.0, IXWebSocket 12.1.0 and Rubber Band 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Pending |
 | 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Deferred |
@@ -185,6 +185,65 @@ and state restoration. In particular, upstream WASAPI shared mode now
 advertises only the OS-default buffer size; check saved buffer preferences and
 reported latency on target devices. Existing automated playback/export and
 recording tests do not replace that hardware acceptance or packaged gate P.
+
+Stage 6 development checkpoint on 2026-11-04: electron-builder was updated
+from 26.15.3 to 26.18.0 and passed F before any further dependency changes.
+A separate compatible transitive refresh then passed F again. Both substeps
+passed lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys. All 272 coverage source paths and their individual metrics match
+Stage 5 exactly. Application versions remain 1.10.0; no application/native
+source, assertions, timeouts or fixtures changed.
+
+The builder review covered Windows pnpm workspace detection, pnpm 11 dependency
+collection, ASAR path containment and AppX XML escaping. Upstream deliberately
+keeps builder-util at 26.16.0 and changes its blockmap hash dependency from
+@noble/hashes 2.3.0 to 1.8.0; its packages were not forced onto matching
+versions. @electron/rebuild is now 4.2.1 and requires Node 22.12 or later;
+the development and CI Node 24 environments satisfy that requirement.
+
+| Transitive family | Resolved patched versions |
+| --- | --- |
+| undici | 6.29.1 and 7.30.1 |
+| brace-expansion | 1.1.21, 2.1.7 and 5.0.12 |
+| fast-uri | 3.1.9 |
+| js-yaml | 4.3.2 |
+| postcss-selector-parser | 6.1.5 for the affected major 6 consumers |
+| source-map-js | 1.2.2 throughout; the remaining 1.2.1 copy was removed |
+
+Existing security floors were raised without forcing incompatible majors;
+js-yaml and fast-uri overrides now explicitly target their existing majors
+4 and 3. Hoisted linking, build-script permissions and release-age policy
+are unchanged, with no release-age exclusions. Frozen installation passed.
+These undici updates affect npm installer/build dependencies, not Electron's
+embedded Node runtime.
+
+The audit fell from 44 to **one moderate finding**, with zero critical, high
+or low findings and no new advisory IDs. The remaining
+[GHSA-g3hv-75wg-m249 / CVE-2026-118764](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+concerns glob-pattern amplification in minimatch. Its current GitHub range is
+`>=7.0.0 <11.0.1`, fixed in 11.0.1. The affected installed paths are:
+
+| minimatch | Parent paths |
+| --- | --- |
+| 10.2.6 | electron-builder → app-builder-lib, including the dmg-builder route; the ESLint plugin/parser trees → @typescript-eslint/typescript-estree |
+| 9.0.9 | electron-builder → app-builder-lib → @electron/universal; vue-tsc → @vue/language-core |
+
+Those parents require major 9 or 10, not the patched major 11. A blanket
+override would also break legacy callable-export consumers such as ASAR.
+Disposition: defer remediation to compatible upstream fixes or separately
+reviewed parent migrations; do not suppress the finding or claim security
+release acceptance. The registry still reports `<11.0.1`, also listing
+3.1.5 and 5.1.9 below GitHub's updated lower bound; that metadata discrepancy
+does not clear the affected 9/10 paths. All reported paths are development
+dependencies, and minimatch is absent from the collected production closure.
+
+Both sideload and Store configurations passed the builder's real loader and
+schema validator without configuration changes. Its pnpm collector returned
+the same 53 production module names after remediation, with installed package
+names/versions and declared production dependency ranges verified. These checks
+did not create an ASAR, sign, publish or build distribution assets. Packaged
+acceptance P, including installed upgrades and AppX/ZIP contents, remains
+outstanding; development validation is not full release acceptance.
 
 ### Regression gates
 

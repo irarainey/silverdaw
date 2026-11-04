@@ -12,6 +12,8 @@
   Vitest 4.1.12.
 - The desktop runtime has been updated to Electron 45.2.1.
 - The audio engine has been updated to JUCE 8.0.17-security.
+- Packaging tooling now uses electron-builder 26.18.0.
+- Compatible transitive dependencies have been updated to patched versions.
 
 ## 1.9.0
 
