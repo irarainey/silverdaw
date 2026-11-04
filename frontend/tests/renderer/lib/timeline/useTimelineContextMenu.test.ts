@@ -1,7 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import { useTimelineContextMenu } from '@/lib/timeline/useTimelineContextMenu'
+import {
+  useTimelineContextMenu,
+  type UseTimelineContextMenuInputs
+} from '@/lib/timeline/useTimelineContextMenu'
 import type { ClipContextMenuItem } from '@/lib/timeline/clipContextMenuTypes'
 import { useClipDialogs } from '@/lib/timeline/useClipDialogs'
 import { useProjectStore, type Clip } from '@/stores/projectStore'
@@ -66,9 +69,9 @@ function setupMenu(opts: {
   item?: LibraryItem
   selectedTrackId?: string | null
   positionMs?: number
-  chooseAudioFile?: ReturnType<typeof vi.fn>
-  startStemSeparation?: ReturnType<typeof vi.fn>
-  startChannelSplit?: ReturnType<typeof vi.fn>
+  chooseAudioFile?: UseTimelineContextMenuInputs['chooseAudioFile']
+  startStemSeparation?: UseTimelineContextMenuInputs['startStemSeparation']
+  startChannelSplit?: UseTimelineContextMenuInputs['startChannelSplit']
 }): ReturnType<typeof useTimelineContextMenu> {
   const project = useProjectStore()
   const library = useLibraryStore()

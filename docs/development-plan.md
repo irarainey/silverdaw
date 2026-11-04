@@ -19,7 +19,7 @@ stops that stage before the next dependency changes.
 | 0 | Establish the unchanged lockfile baseline; rebuild the Debug backend and test executable. | Frontend gate F and backend CTest gate B. Record existing audit findings separately from test failures. | Passed 2026-11-04 |
 | 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
 | 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
-| 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Pending |
+| 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
 | 4 | Electron 42.8.1 to 45.2.2. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Pending |
 | 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Pending |
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Pending |
@@ -61,6 +61,43 @@ this stage. The lockfile also updates music-metadata's content-type dependency
 and Vue's Babel/PostCSS/source-map dependencies. No application-source changes
 were needed. Application versions remain 1.10.0; Electron, Vite, Vitest and
 native dependencies are unchanged. No distribution assets were built.
+
+Stage 3 checkpoint on 2026-11-04: Vite passed F before Vitest changed;
+Vitest and coverage-v8 then passed F together. Each substep passed lint,
+typecheck, all 2,449 unit tests across 195 files and all 35 e2e journeys.
+Vitest 4 required four callback declarations in two test harnesses to use
+their existing production types rather than the widened mock return type.
+No application code, test assertions, timeouts or fixtures were changed.
+
+| Substep | Resolved version | Remaining audit findings |
+| --- | --- | --- |
+| Vite | 7.3.7 | 62; five Vite advisory matches removed. |
+| Vitest and coverage-v8 | 4.1.12 | 56; six more advisory matches removed, including both critical tinypool findings. |
+
+Tinypool is absent from the lockfile. No new advisory IDs appeared; the final
+audit has zero critical, 23 high, 24 moderate and nine low findings.
+electron-vite remains 5.0.0 and TypeScript remains 5.9.3. Application versions
+remain 1.10.0; Electron and native dependencies are unchanged. No distribution
+assets were built.
+
+Vite preserved the exact coverage scope and metrics. For Vitest 4, only the
+removed `coverage.all` option was deleted; explicit includes and excludes
+remain intact. Both providers report the same 272 source paths, including
+all 38 previously uncovered files. The new AST remapper counts 801 actual
+functions in those uncovered files instead of 38 file-level entries,
+and removes line-coverage credit for imports, re-exports and uncalled
+function declarations. Checked LCOV examples include `laneLayout.ts`,
+`inboundValidation.ts` and the bridge facade. This is a measurement change,
+not a smaller test suite or omitted source files; percentages are rebaselined
+below, with no threshold relaxation.
+See the [Vitest 4 coverage migration](https://v4.vitest.dev/guide/migration#v8-code-coverage-major-changes).
+
+| Coverage metric | Vitest 3.2.7 | Vitest 4.1.12 |
+| --- | --- | --- |
+| Statements | 63.29% | 55.67% |
+| Branches | 80.30% | 51.76% |
+| Functions | 75.47% | 56.09% |
+| Lines | 63.29% | 58.05% |
 
 ### Regression gates
 

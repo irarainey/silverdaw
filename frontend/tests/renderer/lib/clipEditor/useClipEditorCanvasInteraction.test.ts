@@ -13,7 +13,7 @@ interface Harness {
   selectionDurationMs: Ref<number>
   scrollMs: Ref<number>
   preview: { seek: ReturnType<typeof vi.fn> }
-  setZoomAnchored: ReturnType<typeof vi.fn>
+  setZoomAnchored: ClipEditorCanvasInteractionDeps['setZoomAnchored']
   state: {
     viewInMs: number
     viewEndMs: number

@@ -8,6 +8,8 @@
 - The end-to-end test runner has been updated to Playwright 1.64.1.
 - Audio metadata parsing, bridge validation and Vue dependencies have been
   updated to music-metadata 11.16.1, Zod 4.6.7 and Vue 3.5.44.
+- Frontend build tooling and unit-test coverage now use Vite 7.3.7 and
+  Vitest 4.1.12.
 
 ## 1.9.0
 
