@@ -12,8 +12,11 @@
 - The end-to-end test runner has been updated to Playwright 1.64.1.
 - Audio metadata parsing, bridge validation and Vue dependencies have been
   updated to music-metadata 11.16.1, Zod 4.6.7 and Vue 3.5.44.
-- Frontend build tooling and unit-test coverage now use Vite 7.3.7 and
-  Vitest 4.1.12.
+- Frontend build tooling and unit-test coverage now use Vite 8.3.5,
+  electron-vite 6.0.0 and Vitest 5.1.0.
+- Frontend state management now uses Pinia 4.1.0.
+- Frontend linting now uses ESLint 10.14.0 and eslint-plugin-vue 10.12.0.
+- The frontend package manager is now pinned to pnpm 12.16.1.
 - The desktop runtime has been updated to Electron 45.2.1.
 - The audio engine has been updated to JUCE 8.0.17-security.
 - Packaging tooling now uses electron-builder 26.18.0.

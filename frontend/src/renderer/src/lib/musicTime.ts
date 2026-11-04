@@ -165,7 +165,7 @@ export function parseTime(text: string): number | null {
   }
   let h = 0
   let m = 0
-  let s = 0
+  let s: number
   if (parts.length === 1) {
     s = Number(parts[0])
   } else if (parts.length === 2) {

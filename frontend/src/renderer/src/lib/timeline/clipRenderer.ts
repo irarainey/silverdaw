@@ -233,7 +233,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     waveXY[p++] = x1
     waveXY[p++] = y1
     waveXY[p++] = x0
-    waveXY[p++] = y1
+    waveXY[p] = y1
     waveVerts += 4
     let q = waveIndices
     waveIdx[q++] = base

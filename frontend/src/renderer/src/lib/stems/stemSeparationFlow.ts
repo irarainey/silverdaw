@@ -375,7 +375,7 @@ export function requiredModelKinds(
 }
 
 async function resolveRequiredSources(stems: readonly StemName[]): Promise<StemModelSource[]> {
-  let useBackup = false
+  let useBackup: boolean
   try {
     useBackup = (await window.silverdaw.getStemPrefs()).useBackupModel
   } catch {

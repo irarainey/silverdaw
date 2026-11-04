@@ -302,7 +302,7 @@ export function buildDefaultPrefs(): Preferences {
   // Projects live in a discoverable Silverdaw folder in the user's home folder,
   // alongside Logs / Diagnostics / Models. The clip/import browse start defaults
   // to the Music library (falling back to the projects folder if unavailable).
-  let musicDir = ''
+  let musicDir: string
   try {
     musicDir = app.getPath('music')
   } catch {

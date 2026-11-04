@@ -249,7 +249,7 @@ function onPointerUp(event: PointerEvent): void {
 
 function onKeydown(event: KeyboardEvent): void {
   if (props.disabled) return
-  let delta = 0
+  let delta: number
   switch (event.key) {
     case 'ArrowRight':
     case 'ArrowUp':

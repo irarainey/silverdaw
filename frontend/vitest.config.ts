@@ -15,7 +15,7 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 
-const here = (p: string): string => resolve(__dirname, p)
+const here = (p: string): string => resolve(import.meta.dirname, p)
 
 export default defineConfig({
   resolve: {
@@ -28,6 +28,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Preserve the pre-v5 policy; tests own their mock-history resets.
+    clearMocks: false,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json-summary'],

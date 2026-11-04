@@ -114,7 +114,7 @@ function flushPointerValue(): void {
 
 function onKeydown(event: KeyboardEvent): void {
   if (props.disabled) return
-  let delta = 0
+  let delta: number
   switch (event.key) {
     case 'ArrowRight':
       delta = event.shiftKey ? KEYBOARD_LARGE_STEP : KEYBOARD_STEP

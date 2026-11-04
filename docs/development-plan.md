@@ -25,8 +25,8 @@ stops that stage before the next dependency changes.
 | 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch remediation and packaged acceptance pending |
 | 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
 | 8 | PixiJS 8.19.0 to 8.22.0, IXWebSocket 11.4.5 to 12.1.0 and Rubber Band 3.3.0 to 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Development gates passed 2026-11-04; manual/audio and packaged acceptance pending |
-| 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Deferred |
-| 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Deferred |
+| 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Evaluated 2026-11-04; both upgrades deferred, existing model/runtime pins retained |
+| 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Development gates passed 2026-11-04 for five migrations; vue-tsc 3 deferred; manual/packaged acceptance pending |
 
 Baseline on 2026-11-04: lint and typecheck passed; all 2,449 frontend unit
 tests across 195 files passed with coverage; all 35 e2e journeys and all 513
@@ -372,6 +372,152 @@ finding; it does not scan the native libraries. Manual visual, listening,
 device/MIDI/plugin and performance acceptance A, plus packaged acceptance P,
 remain outstanding. No distribution assets were built, and no release,
 subjective quality or overall performance acceptance is claimed.
+
+Stage 9 evaluation checkpoint on 2026-11-04: **no dependency versions changed**.
+RNNoise and ONNX Runtime were reviewed independently; neither candidate
+cleared the model/provider and measured-benefit prerequisites for an upgrade.
+This is a recorded deferral, not a passed candidate regression gate.
+
+RNNoise's latest tagged release is
+[0.2](https://github.com/xiph/rnnoise/tree/v0.2). Its
+[README](https://github.com/xiph/rnnoise/blob/v0.2/README) explicitly describes
+the changed model format and separately downloaded model sources. Comparing
+the inference source also shows a convolutional frontend and a different
+recurrent-network layout, rather than the existing model's dense frontend
+and VAD/noise/denoise layout. A hash-pinned model archive could make a 0.2
+build reproducible, but would not preserve the trained model currently
+compiled from 0.1.1's `src/rnn_data.c`. Retain 0.1.1 and the existing
+`rnnoise_create(nullptr)` behaviour. A new-model cleanup migration requires
+separate quality/listening acceptance, not just a FetchContent tag bump.
+
+ONNX Runtime's latest CPU release is
+[1.31.1](https://github.com/microsoft/onnxruntime/releases/tag/v1.31.1).
+However, the default Windows build and both validation caches use
+**Microsoft.ML.OnnxRuntime.DirectML 1.24.4**, not the optional CPU-only 1.26.0
+branch. The [NuGet version index](https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/index.json)
+still ends at stable 1.24.4; its package declares DirectML 1.15.4, matching
+the pinned companion package. The default DLL supplies both GPU execution
+and CPU fallback. Substituting the CPU-only archive would remove GPU support,
+while changing only the optional CPU pin would not update the shipped
+DirectML runtime or its CPU fallback.
+
+The [DirectML guidance](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
+now describes sustained engineering and points to WinML. A newer
+DirectML-capable source build or a WinML/provider migration needs a separate
+proposal against ADR 0009, with reproducible runtime dependencies, supported
+Windows versions, GPU/CPU recovery and packaging checks. Neither migration
+was attempted here. Later ORT releases report model-loader and kernel
+validation hardening; retaining the current runtime is **not security
+clearance** or a claim that those fixes are present in the shipped DLL.
+
+The managed Mel-Band and BS-RoFormer files match every manifest size and
+SHA-256. All four htdemucs backup specialists are absent from that managed
+root; user-located override directories were not searched. No model files
+were changed or downloaded. A candidate comparison must cover the unchanged
+quality and backup weights, with declared numerical tolerances, cold/warm
+load and inference timings, memory, CPU fallback and GPU availability.
+Include the intervening releases' FP16 execution and telemetry/build-default
+changes in the compatibility review, rather than relying on API compilation.
+The existing RoFormer/rhythm probes and `SilverdawStemEval` provide the
+development harnesses; no candidate benchmark or inference-parity result is
+claimed from this evaluation.
+
+All **31 selected existing native regressions** passed on the unchanged
+baseline, including RNNoise determinism/noise reduction, stem cancellation,
+GPU-fallback quarantine/progress/publication and both spectral adapters.
+Backend, runtime DLL and embedded-model hashes were recorded for comparison.
+These checks do not replace candidate B/F/A gates or real GPU validation.
+Application versions remain 1.10.0; no provider options, project/preferences,
+model manifests, security controls or distribution assets were changed.
+
+Stage 10 checkpoint on 2026-11-04: the frontend majors were evaluated in the
+agreed order, independently. Each accepted migration passed F before the next
+dependency changed: lint, typecheck, all **2,449 tests across 195 files** and
+all **35 e2e journeys**. The backend and application versions are unchanged.
+
+| Substep | Result |
+| --- | --- |
+| Pinia 2.3.1 to 4.1.0 | Accepted with its required @vue/devtools-api 8.2.1 peer; existing ID-first stores and Vue 3 APIs remain compatible. |
+| vue-tsc 2.2.12 to 3 | Deferred after both 3.3.14 and 3.1.8 rejected live template refs; 2.2.12 restored and revalidated. |
+| ESLint 9.39.5 to 10.14.0 | Accepted with @eslint/js 10.0.1 and eslint-plugin-vue 10.12.0. |
+| Vite 7.3.7 to 8.3.5 and electron-vite 5.0.0 to 6.0.0 | Accepted together, retaining compatible Vue/Tailwind plugins and production bundle boundaries. |
+| Vitest and coverage-v8 4.1.12 to 5.1.0 | Accepted as a matching pair with unchanged test discovery, isolation and assertions. |
+| pnpm 11.15.0 to 12.16.1 | Accepted through the single packageManager pin; repeated frozen installs and the production collector passed. |
+
+Pinia's ESM-only distribution is compatible with the renderer build. Its new
+production dependencies have MIT licences. No store ownership, persistence
+or project semantics changed.
+
+The checker candidates reported seven TS6133 errors on refs used by string
+template bindings in five components, including refs owned by composables.
+The upstream reports
+[vuejs/language-tools#6147](https://github.com/vuejs/language-tools/issues/6147)
+and [vuejs/language-tools#5981](https://github.com/vuejs/language-tools/issues/5981)
+describe these cases. No live refs were removed, no dummy uses or casts were
+added, and unused-variable checking was not weakened. Revisit with a verified
+checker fix or a separately scoped template-ref ownership migration.
+TypeScript remains 5.9.3.
+
+ESLint's new recommended checks found ten dead assignments in nine files.
+Only redundant initialisers, a loop-local temporary and unused final index
+increments changed; control flow and audio arithmetic are preserved. The
+flat config and explicit browser/Node globals remain intact. Effective-rule
+comparisons retained existing severities; the removed Vue
+component-tags-order rule is replaced by block-order at the same severity.
+No rules were disabled.
+
+The [Vite 8 migration](https://vite.dev/guide/migration) changes the bundler
+and transforms to Rolldown/Oxc. The config now uses rolldownOptions and
+electron-vite's build.externalizeDeps API. All metadata parsers and their
+pure-JS dependencies remain bundled; an emitted-bundle probe found no bare
+third-party runtime imports across the 20 main/preload bundles. The preload
+remains index.cjs, and the actual renderer sandbox assertion passed.
+Three additional real Electron/WebGL runs exercised eight imported tracks,
+zoom, repeated Clip Editor opening/teardown and context loss/rebuild without
+renderer errors. This is development compatibility evidence, not packaged
+acceptance or an overall performance claim.
+
+The [Vitest 5 migration](https://vitest.dev/guide/migration/)
+changes default mock clearing and coverage matching/reporting. Explicit
+clearMocks: false preserves the previous mock-history policy; no test mocks,
+assertions or timeouts changed. The config uses import.meta.dirname instead
+of a loader-provided __dirname. Coverage includes/excludes are unchanged,
+and every checkpoint retains exactly **272 source paths**.
+
+Coverage changes were reviewed rather than accepted as a smaller report.
+ESLint cleanup removes three covered line/statement initialisers; functions
+and branches are unchanged. Vite/Oxc changes line mapping in 13 sources,
+with identical statement, function and branch totals and coverage in every
+file. Vitest's updated AST mapping and Istanbul reporting change counters in
+ten sources; a second run reproduced every metric exactly. These are new
+reporting baselines, not claimed coverage gains. pnpm 12 preserves the final
+report exactly:
+
+| Metric | Covered / total | Percentage |
+| --- | --- | --- |
+| Statements | 10,947 / 19,664 | 55.67% |
+| Branches | 6,476 / 12,521 | 51.72% |
+| Functions | 1,891 / 3,371 | 56.09% |
+| Lines | 9,881 / 17,025 | 58.03% |
+
+pnpm 12 adds a separate generated package-manager document to the YAML
+lockfile. The application dependency-graph document is byte-identical to
+the preceding checkpoint; repeated frozen installs leave the complete
+lockfile unchanged. Existing hoisted linking, build permissions, security
+overrides and release-age policy are retained, with no age exceptions.
+Node 24 remains compatible, and CI/setup already resolve the packageManager
+pin dynamically. The actual electron-builder 26.18.0 production collector
+returned the same dependency set under pnpm 11 and 12; both packaging configs
+passed schema validation without building distribution assets.
+
+Every accepted substep's JavaScript audit still reports one moderate
+development-tooling minimatch finding, GHSA-g3hv-75wg-m249 /
+CVE-2026-118764. The final production-only audit reports zero findings;
+neither result scans native libraries. No incompatible minimatch override or
+advisory suppression was added. Native executable/runtime hashes and the
+frozen released-project fixture are unchanged. Manual/audio/device/plugin
+acceptance A and packaged acceptance P remain outstanding. No commits,
+tags, distribution assets or releases were created.
 
 ### Regression gates
 
