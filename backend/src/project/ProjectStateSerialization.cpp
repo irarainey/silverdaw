@@ -256,7 +256,7 @@ juce::var ProjectState::tracksAsJson() const
             clipObj->setProperty("offsetMs", static_cast<double>(clip.getProperty(kOffsetMs, 0.0)));
             clipObj->setProperty("inMs", static_cast<double>(clip.getProperty(kInMs, 0.0)));
             clipObj->setProperty("durationMs", static_cast<double>(clip.getProperty(kDurationMs, 0.0)));
-            const auto effectiveTiming = getClipEffectiveTiming(clip.getProperty(kId).toString());
+            const auto effectiveTiming = resolveClipEffectiveTiming(clip);
             clipObj->setProperty("effectiveTempoRatio", effectiveTiming.tempoRatio);
             clipObj->setProperty("effectiveDurationMs", effectiveTiming.durationMs);
             clipObj->setProperty("effectiveWarpActive", effectiveTiming.warpActive);

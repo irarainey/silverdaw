@@ -553,6 +553,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/ProjectStateBeatRepeat.cpp
     src/project/ProjectStateTrackPlugins.cpp
     src/project/ProjectStateClips.cpp
+    src/project/ProjectStateClipTiming.cpp
     src/project/ProjectStateLibrary.cpp
     src/project/ProjectStateLibraryAnalysis.cpp
     src/project/ProjectStateMarkers.cpp

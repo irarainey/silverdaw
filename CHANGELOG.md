@@ -13,6 +13,7 @@
 - Improved project-opening performance.
 - Reduced waveform memory use when opening projects with repeated sources.
 - Reduced timeline memory use while scrolling and zooming.
+- Reduced project-state synchronisation time after Save As.
 - Updated application and audio-processing dependencies.
 - Updated build, packaging and testing tools.
 

@@ -712,6 +712,123 @@ The frozen package, B1, D1, M0, M1, C1, R1 and all six fixture fingerprints
 remain unchanged. Recorded experiment processes were closed. No installer,
 distribution archive, installation, commit, tag or release was created.
 
+## Post-Save As snapshot construction (S1)
+
+Native attribution identified snapshot construction, not disk persistence, as
+the dominant Save As handler phase in the 2,048-clip chopped project.
+`tracksAsJson()` already holds each clip node but called the ID-based timing
+getter, which rescanned the arrangement for every clip. S1 reuses that node
+through the same canonical timing resolver. The public ID-based getter retains
+its lookup and timing rules; the cohesive resolver lives in
+`ProjectStateClipTiming.cpp`. No cache, payload, file-format or timing-rule
+change was introduced.
+
+Two fixed, separate traced chopped probes qualified with identical
+path-normalised authoritative snapshots:
+
+| Native diagnostic phase | R2 | S1 |
+| ----------------------- | --: | --: |
+| Entire Save As handler | 172.5 ms | 86.0 ms |
+| Project snapshot construction | 128.5 ms | 36.4 ms |
+| Project snapshot send | 19.9 ms | 21.3 ms |
+| Actual file-save operation | 22.1 ms | 26.1 ms |
+
+These are one traced probe per arm, not ordinary timing samples. Native spans
+are nested and must not be summed with their children. Portable paths,
+temporary-file writing, write-through atomic replacement, dirty/undo semantics
+and save acknowledgements are unchanged. Ordinary Ctrl+S does not broadcast
+this post-Save As snapshot; no faster disk write or ordinary-save claim follows.
+
+The ordinary comparison introduced a passive Playwright WebSocket observer in
+both arms. It measures Save As request observation to the matching successful
+`PROJECT_SAVED` acknowledgement, and separately to subsequent clean
+`PROJECT_STATE` receipt. The latter includes observer/event-delivery latency:
+it is neither isolated native CPU time nor renderer paint. Both arms await
+that snapshot before ending resource sampling, so these new endpoints require
+this fresh comparison rather than the earlier R2 reports.
+
+The fixed schedule completed five alternating pairs per case, round-robin:
+**30/30 qualified per arm**, without tracing, profiling, forced GC or replacement
+trials. All 30 pairs had equal full-snapshot hashes after normalising only the
+per-trial project-directory prefix. Waveforms, saved native contents, backend
+PIDs, lifecycle/renderer checks and the 2,048 MiB / 60-second guards all passed.
+
+| Case | R2 median snapshot receipt | S1 median snapshot receipt | Median paired change | Descriptive 95% paired interval |
+| ---- | -------------------------: | -------------------------: | -------------------: | -----------------------------: |
+| `smoke` | 18.5 ms | 18.4 ms | +7.9% | -34.1% to +80.1% |
+| `large` | 56.8 ms | 35.9 ms | -30.5% | -61.5% to -21.1% |
+| `stress` | 59.9 ms | 54.9 ms | -16.3% | -47.8% to -7.4% |
+| `extreme` | 106.8 ms | 91.2 ms | -22.2% | -48.9% to +39.7% |
+| `chopped` | 200.4 ms | 117.6 ms | -41.9% | -56.6% to -38.3% |
+| `longform` | 17.5 ms | 17.9 ms | +4.4% | +0.8% to +46.2% |
+
+Paired changes use median log(candidate/control), not ratios of separate
+medians. Intervals use 10,000 deterministic bootstrap resamples of five pairs
+and remain descriptive. These new observer endpoints have no A/A noise
+calibration; the earlier shell-opening noise bounds are not their thresholds.
+Chopped's median paired absolute reduction was 91.7 ms. Extreme's interval
+includes slower outcomes. No small-case gain is claimed: longform's median
+paired absolute increase was 0.76 ms, and smoke's was 1.30 ms. Acknowledgement
+timings do not establish a general file-write improvement.
+
+Opening was variable, with some later trials taking several seconds longer
+in both arms; no additional opening gain is claimed. Scroll/zoom RAF p95
+medians changed by approximately +/-0.6%. No rendering-throughput or
+memory-improvement claim is made. Stress's combined sampled-private median
+increased from 755.3 to 813.7 MiB (+7.7%); native sampled-private peaks remained
+136.8-137.3 MiB for R2 and 136.9-137.4 MiB for S1.
+
+A separate fixed four-probe stress diagnostic, ordered R2/S1 then S1/R2,
+investigated that memory observation without replacing ordinary samples.
+After diagnostic GC, renderer heaps were about 19.5 MiB in both arms, with
+identical net observed buffers (402) and textures (151), and no context losses.
+Renderer private memory was 124.3-126.8 MiB versus 124.0 MiB; GPU private memory
+was 317.1-326.2 MiB versus 337.3-340.2 MiB. Profiling perturbs execution, net
+resource counts are not GPU-live bytes, and two probes per arm do not explain
+the higher combined/GPU-private measurements or prove the absence of a leak.
+That secondary memory caution is retained rather than classified as a gain.
+
+S1 changes only the packaged backend executable. All 308 common translation
+unit commands match C1 after source/build/JUCE-root and object-path
+normalisation; the timing translation unit is the sole addition. All 29 native
+runtime/profile files and imported DLLs match control. Renderer, main, preload
+and Electron files are byte-identical to R2. Source verification records only
+CRLF/LF differences in seven unchanged test/tool/licence files; production
+source bytes and frozen build/dependency inputs match.
+
+Debug and Release each passed **523/523** native tests, all **36** built-app E2E
+journeys passed, and the extracted timing source passed formatting. Full strict
+clang-tidy 22.1.8 runs cover 162 candidate and 161 control translation units.
+**The strict lint gate remains nonzero in both arms** on the same pre-existing
+`readability-redundant-member-init` finding at
+`backend\src\project\ProjectPerformanceTrace.h:86`. No new findings, suppression
+or unrelated source fix was introduced.
+
+S1's complete package fingerprint is:
+
+```text
+7afb477cbab84f7cb1ad18156683e62d20f8b8753cdcba3d2c4b64bc954061c7
+```
+
+Source snapshots, native/E2E/lint evidence, attribution, source-comparison
+details and final preservation checks are at repository-root
+`.cache\performance\persistence-20261105T205045`. The initial pre-format stage
+and its results remain at `.cache\performance\persistence-20261105T203717`;
+that package is not used in the comparison. Raw reports, traces, profiles,
+screenshots and exact collectors are retained relative to `frontend`:
+
+```text
+.cache\performance\persistence-traces-2026-11-05T21-07-22-059Z
+.cache\performance\persistence-screen-2026-11-05T21-08-55-583Z
+.cache\performance\persistence-resources-2026-11-05T21-35-28-376Z
+```
+
+All eight earlier package fingerprints and all six fixture fingerprints remain
+unchanged; no recorded experiment processes remained. Five ordinary pairs do
+not establish rare-failure reliability, and the historical no-PONG cause
+remains unproved. No installer, distribution archive, installation, commit,
+tag or release was created.
+
 ## Recorded diverse baseline
 
 On 2026-11-05, all six projects in `corpus-diverse-v2` received exactly five
