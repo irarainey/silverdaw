@@ -25,7 +25,9 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <future>
 #include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXSocket.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <juce_events/juce_events.h>
 #include <limits>
@@ -55,20 +57,57 @@ juce::var makeBridgePayload(std::initializer_list<std::pair<const char*, juce::v
     return juce::var(obj);
 }
 
+struct ClientNetSystem
+{
+    ClientNetSystem()
+    {
+        require(ix::initNetSystem(), "client network system should initialise");
+    }
+    ~ClientNetSystem()
+    {
+        ix::uninitNetSystem();
+    }
+};
+
+void testBridgeSocketReadSurvivesConcurrentWritePoll()
+{
+    const ClientNetSystem clientNetSystem;
+    juce::StreamingSocket listener;
+    require(listener.createListener(0, "127.0.0.1"), "should create a loopback listener");
+    juce::StreamingSocket client;
+    require(client.connect("127.0.0.1", listener.getBoundPort(), 1000), "client should connect");
+    const auto accepted = ::accept(static_cast<ix::socket_t>(listener.getRawSocketHandle()), nullptr, nullptr);
+    require(accepted != INVALID_SOCKET, "listener should accept the client");
+    ix::Socket server(static_cast<int>(accepted));
+    std::string error;
+    require(server.init(error), "server socket should initialise");
+
+    std::promise<void> started;
+    auto ready = started.get_future();
+    auto reader = std::async(std::launch::async,
+                             [&]
+                             {
+                                 started.set_value();
+                                 return server.isReadyToRead(1500);
+                             });
+    ready.wait();
+    // Let the reader register its Windows event before the competing write poll.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto writable = server.isReadyToWrite(100);
+    const auto sent = client.write("x", 1);
+    const auto readable = reader.get();
+    require(writable == ix::PollResultType::ReadyForWrite, "write poll should detect a writable socket");
+    require(sent == 1, "client should send one byte");
+    require(readable == ix::PollResultType::ReadyForRead,
+            "write polling must not disable the pending read notification");
+    char received{};
+    require(server.recv(&received, 1) == 1 && received == 'x', "server should receive the pending byte");
+}
+
 void testBridgeReconnectAndShutdown()
 {
     // Keep the client network system alive across server stop/start on Windows.
-    struct ClientNetSystem
-    {
-        ClientNetSystem()
-        {
-            require(ix::initNetSystem(), "client network system should initialise");
-        }
-        ~ClientNetSystem()
-        {
-            ix::uninitNetSystem();
-        }
-    } clientNetSystem;
+    const ClientNetSystem clientNetSystem;
 
     int port = 0;
     {
@@ -339,6 +378,8 @@ void testMidiDevicesEnvelopeShape()
 
 void addBridgeTests(std::vector<TestCase>& tests)
 {
+    tests.push_back(
+        {"Bridge socket read survives concurrent write poll", testBridgeSocketReadSurvivesConcurrentWritePoll});
     tests.push_back({"Bridge reconnect and shutdown", testBridgeReconnectAndShutdown});
     tests.push_back({"Bridge auth token validation", testBridgeAuthTokenValidation});
     tests.push_back({"Bridge payload helpers reject malformed values", testBridgePayloadHelpersRejectMalformed});

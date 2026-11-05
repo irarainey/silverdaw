@@ -22,6 +22,9 @@
     "test:e2e": "electron-vite build && playwright test",
     "test:e2e:only": "playwright test",
     "test:e2e:report": "playwright show-report",
+    "perf:generate": "node performance/cli.ts generate",
+    "perf:run": "node performance/cli.ts run",
+    "perf:compare": "node performance/cli.ts compare",
     "dist": "electron-vite build && electron-builder --win --x64 --config electron-builder.yml",
     "dist:store": "electron-vite build && electron-builder --win --x64 --config electron-builder.store.cjs",
     "dist:dir": "electron-vite build && electron-builder --win --x64 --dir --config electron-builder.yml"

@@ -12,6 +12,10 @@ rather than a broad grid.
 
 ## Running
 
+Large-session packaged performance projects and opt-in measurements are
+documented in [performance benchmarks](../performance/README.md). They are not
+collected by the normal E2E suite.
+
 ```text
 pnpm test:e2e         # builds out/, then runs the suite
 pnpm test:e2e:only    # skips the build — only when out/ is known current

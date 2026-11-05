@@ -53,6 +53,10 @@ FetchContent_Declare(IXWebSocket
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
 FetchContent_MakeAvailable(IXWebSocket)
+if(WIN32)
+    include(cmake/SilverdawPatchIxWebSocket.cmake)
+    silverdaw_patch_ixwebsocket("${ixwebsocket_SOURCE_DIR}")
+endif()
 
 # ─── libsamplerate ───────────────────────────────────────────────────────
 # BTrack (below) needs a sample-rate converter to resample its onset-

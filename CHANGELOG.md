@@ -5,6 +5,7 @@
 ### Added
 
 - Backend regressions now cover authenticated bridge reconnects and shutdown.
+- Reproducible large-session projects and packaged performance benchmarks.
 
 ### Changed
 
