@@ -37,6 +37,10 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW    TRUE
     GIT_PROGRESS   TRUE)
 FetchContent_MakeAvailable(JUCE)
+if(WIN32)
+    include(cmake/SilverdawPatchJuceBuffering.cmake)
+    silverdaw_patch_juce_buffering("${juce_SOURCE_DIR}")
+endif()
 
 # ─── IXWebSocket ─────────────────────────────────────────────────────────
 # Local-only WebSocket bridge between the JUCE backend and the Electron
@@ -542,6 +546,7 @@ add_library(silverdaw_backend_core STATIC
     src/project/LibraryAnalysis.cpp
     src/project/PeaksCache.cpp
     src/project/ProjectFile.cpp
+    src/project/ProjectPerformanceTrace.cpp
     src/project/ProjectSession.cpp
     src/project/ProjectState.cpp
     src/project/ProjectStateAutomation.cpp
@@ -851,6 +856,8 @@ if(SILVERDAW_BUILD_TESTS)
         tests/ProjectStateFxTests.cpp
         tests/ProjectStateTrackPluginTests.cpp
         tests/PersistenceTests.cpp
+        tests/ProjectPerformanceTraceTests.cpp
+        tests/BufferingPreparationTests.cpp
         tests/BridgeTests.cpp
         tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp

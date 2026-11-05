@@ -8,6 +8,7 @@
 #include "PayloadHelpers.h"
 #include "PluginCommands.h"
 #include "ProjectFile.h"
+#include "ProjectPerformanceTrace.h"
 #include "ProjectState.h"
 
 namespace silverdaw
@@ -71,6 +72,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     // Capture old clip ids before load so failures leave the engine intact.
     const auto previousClipIds = silverdaw::collectClipIds(projectState);
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::LoadFile);
     const auto result = silverdaw::ProjectFile::load(juce::File(filePath), projectState);
     if (!result.ok)
     {
@@ -82,6 +84,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         return;
     }
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::UnloadClips);
     engine.stop();
     // Load succeeded — clear any prior scratch session/backing/replay before
     // replacing the engine's tracks. A failed load above returns early and
@@ -91,6 +94,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         engine.removeClip(id);
     }
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::RebuildEngine);
     silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
     // Legacy projects predate the bpmSeeded flag; if the loaded project already
     // has on-track content its tempo is established, so don't let a later clip
@@ -107,10 +111,15 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
         engine.setPositionMs(persistedPlayhead);
     }
     // Prime read-ahead at the restored playhead to avoid first-play gaps.
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::PrimePlayback);
     engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
     session.currentPath = filePath;
 
-    bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotBuild);
+    const auto snapshot = silverdaw::buildProjectStateEnvelope(session, projectState, true);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotSend);
+    bridge.broadcast("PROJECT_STATE", snapshot);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
     // After the snapshot, so the notice lands on a project the user can already see.
     silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
     silverdaw::log::info("project", "PROJECT_LOAD ok path=" + filePath);
@@ -159,6 +168,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
 
     if (wasUnsaved)
     {
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::MigrateArtifacts);
         // Moves temp Stems/Samples beside the project, rebases paths, and rebuilds
         // the engine (which resets the transport); restore the user's playhead after.
         silverdaw::migrateTempArtifactsIntoProject(filePath, engine, projectState, peakPool, decodedCache);
@@ -190,7 +200,9 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         }
     }
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::CapturePluginState);
     silverdaw::captureTrackPluginStates(engine, projectState);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveFile);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     auto* p = new juce::DynamicObject();
     p->setProperty("filePath", filePath);
@@ -203,6 +215,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     {
         session.currentPath = filePath;
         // markClean emits PROJECT_DIRTY(false).
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::MarkClean);
         projectState.markClean();
     }
     else if (projectState.getName() != previousName)
@@ -210,6 +223,7 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
         // A failed save must not leave the project named after a file it is not in.
         projectState.setName(previousName);
     }
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveAcknowledgement);
     bridge.broadcast("PROJECT_SAVED", juce::var(p));
     silverdaw::log::info("project",
                          juce::String("PROJECT_SAVE ") + (isSaveAs ? "(as) " : "") +
@@ -217,7 +231,11 @@ void handleProjectSave(const juce::var& payload, silverdaw::AudioEngine& engine,
     if (result.wasOk() && isSaveAs)
     {
         // Save As changes filePath/name without a separate rename ack.
-        bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, false));
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotBuild);
+        const auto snapshot = silverdaw::buildProjectStateEnvelope(session, projectState, false);
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotSend);
+        bridge.broadcast("PROJECT_STATE", snapshot);
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
     }
 }
 
@@ -237,6 +255,7 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     {
         p->setProperty("ok", false);
         p->setProperty("error", juce::String("No project path for view-state save"));
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveAcknowledgement);
         bridge.broadcast("PROJECT_VIEW_STATE_SAVED", juce::var(p));
         return;
     }
@@ -255,6 +274,7 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     const bool fxPanelOpen = projectState.getViewFxPanelOpen();
     const auto timelineSelection = projectState.getViewTimelineSelection();
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveViewState);
     const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX,
                                                               projectState.getViewPxPerSecond(), playheadMs,
                                                               selectedTrackId, fxPanelOpen,
@@ -268,7 +288,9 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     {
         p->setProperty("error", result.getErrorMessage());
     }
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveAcknowledgement);
     bridge.broadcast("PROJECT_VIEW_STATE_SAVED", juce::var(p));
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
     silverdaw::log::info("project",
                          juce::String("PROJECT_SAVE_VIEW_STATE ") +
                              (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
@@ -296,7 +318,9 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
     {
         p->setProperty("ok", false);
         p->setProperty("error", juce::String("Missing filePath"));
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveAcknowledgement);
         bridge.broadcast("PROJECT_AUTOSAVED", juce::var(p));
+        ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
         return;
     }
 
@@ -313,14 +337,18 @@ void handleProjectAutosave(const juce::var& payload, silverdaw::AudioEngine& eng
     }
     projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::CapturePluginState);
     silverdaw::captureTrackPluginStates(engine, projectState);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveFile);
     const auto result = silverdaw::ProjectFile::save(juce::File(filePath), projectState);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {
         p->setProperty("error", result.getErrorMessage());
     }
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveAcknowledgement);
     bridge.broadcast("PROJECT_AUTOSAVED", juce::var(p));
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
     silverdaw::log::debug("project",
                          juce::String("PROJECT_AUTOSAVE ") +
                              (result.wasOk() ? "ok" : "fail: " + result.getErrorMessage()) + " path=" + filePath);
@@ -347,6 +375,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
 
     const auto previousClipIds = silverdaw::collectClipIds(projectState);
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::LoadFile);
     const auto result = silverdaw::ProjectFile::load(juce::File(autosavePath), projectState);
     if (!result.ok)
     {
@@ -358,6 +387,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
         return;
     }
 
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::UnloadClips);
     engine.stop();
     // Recovery load succeeded — clear any prior scratch session/backing/replay
     // before replacing the engine's tracks (see PROJECT_LOAD).
@@ -366,6 +396,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     {
         engine.removeClip(id);
     }
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::RebuildEngine);
     silverdaw::rebuildEngineFromProject(engine, projectState, peakPool, decodedCache);
     // Recovered legacy autosaves: treat existing on-track content as an
     // established tempo so a later clip add cannot override it (see PROJECT_LOAD).
@@ -380,12 +411,17 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
         engine.setPositionMs(persistedPlayhead);
     }
     // Prime read-ahead at the restored playhead; see PROJECT_LOAD.
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::PrimePlayback);
     engine.primeTracksForPlayback(silverdaw::kLoadPrimeBudgetMs);
 
     // Never expose the autosave path as the user's working file.
     session.currentPath = originalPath;
 
-    bridge.broadcast("PROJECT_STATE", silverdaw::buildProjectStateEnvelope(session, projectState, true));
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotBuild);
+    const auto snapshot = silverdaw::buildProjectStateEnvelope(session, projectState, true);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::ProjectSnapshotSend);
+    bridge.broadcast("PROJECT_STATE", snapshot);
+    ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::Finalize);
     // After the snapshot, so the notice lands on a project the user can already see.
     silverdaw::notifyUnresolvedTrackPlugins(engine, projectState, bridge);
 

@@ -1,8 +1,9 @@
 // BusGraph audio callback, lock-free hazard protocol, clip mixing, and
 // automation sampling. Message-thread setters live in BusGraph.cpp.
 
-#include "BusGraph.h"
 #include "AudioConstants.h"
+#include "BusGraph.h"
+#include "ProjectPerformanceTrace.h"
 
 namespace silverdaw
 {
@@ -126,6 +127,7 @@ const BusGraph::RenderSnapshot* BusGraph::pinRenderSnapshot() noexcept
 
 std::unique_ptr<BusGraph::RenderSnapshot> BusGraph::buildRenderSnapshot() const
 {
+    const ProjectPerformanceSpan construction(ProjectPerformancePhase::RenderSnapshotBuild);
     auto snapshot = std::make_unique<RenderSnapshot>();
     snapshot->tracks.reserve(runtimes.size());
     for (const auto& [trackId, runtime] : runtimes)
@@ -177,6 +179,7 @@ void BusGraph::publishEmptyRenderSnapshot()
 
 void BusGraph::publishRenderSnapshot(std::unique_ptr<RenderSnapshot> next) noexcept
 {
+    const ProjectPerformanceSpan publication(ProjectPerformancePhase::RenderSnapshotPublish);
     auto previous = std::move(currentRenderSnapshot);
     currentRenderSnapshot = std::move(next);
     publishedRenderSnapshot.store(currentRenderSnapshot.get(), std::memory_order_seq_cst);

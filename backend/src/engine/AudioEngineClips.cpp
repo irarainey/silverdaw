@@ -1,7 +1,8 @@
-#include "AudioEngine.h"
 #include "AudioConstants.h"
+#include "AudioEngine.h"
 #include "AudioEngineWarpFactory.h"
 #include "Log.h"
+#include "ProjectPerformanceTrace.h"
 
 #include <cmath>
 
@@ -77,6 +78,8 @@ bool AudioEngine::addClip(const juce::String& trackId, const juce::String& clipI
                           double initialOffsetMs, double inMs, double clipDurationMs, float initialGain,
                           juce::String* outError)
 {
+    ProjectPerformanceTrace::progress();
+    const ProjectPerformanceSpan construction(ProjectPerformancePhase::ClipConstruction);
     silverdaw::log::info("engine", "addClip trackId=" + trackId + " id=" + clipId +
                                         " offsetMs=" + juce::String(initialOffsetMs) +
                                         " inMs=" + juce::String(inMs) + " durMs=" + juce::String(clipDurationMs) +

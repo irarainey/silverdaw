@@ -6,9 +6,11 @@
 
 - Backend regressions now cover authenticated bridge reconnects and shutdown.
 - Reproducible large-session projects and packaged performance benchmarks.
+- Opt-in phase diagnostics for opening and saving projects.
 
 ### Changed
 
+- Improved project-opening performance.
 - Updated application and audio-processing dependencies.
 - Updated build, packaging and testing tools.
 

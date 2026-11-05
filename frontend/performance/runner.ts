@@ -110,7 +110,8 @@ export async function runBenchmark(options: RunOptions): Promise<Report> {
               ![
                 'ELECTRON_RENDERER_URL',
                 'ELECTRON_RUN_AS_NODE',
-                'SILVERDAW_BACKEND_CONFIG'
+                'SILVERDAW_BACKEND_CONFIG',
+                'SILVERDAW_PERFORMANCE_TRACE_FILE'
               ].includes(entry[0])
           )
         )

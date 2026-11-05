@@ -175,6 +175,357 @@ appropriate instrumentation next; existing audio interval maxima must never
 be presented as callback p99. Functional/audio correctness gates remain
 separate prerequisites for accepting optimisations.
 
+## Native project phase diagnostics
+
+The development backend supports opt-in project-operation traces, separate
+from the packaged timing workload. Build the development backend first, then
+launch the app with an absolute trace path whose parent directory exists:
+
+```powershell
+New-Item -ItemType Directory -Force .cache\performance\phase-traces | Out-Null
+$env:SILVERDAW_PERFORMANCE_TRACE_FILE = Join-Path $PWD '.cache\performance\phase-traces\operations.jsonl'
+pnpm dev
+Remove-Item Env:\SILVERDAW_PERFORMANCE_TRACE_FILE
+```
+
+The setting is read once per backend process; restart after changing it.
+Ordinary `perf:run` explicitly strips this setting so diagnostic file writes
+cannot silently enter a timing comparison.
+
+JSONL records correlate each load, recovery, save, Save As, autosave or
+view-state save with an operation ID and a monotonic message-queue wait.
+Phase checkpoints are flushed before expensive work, retaining the last
+entered phase if the process is terminated. A `return` event means the handler
+returned, not that the operation succeeded; check its normal acknowledgement
+and saved contents independently.
+
+Records include `processId` and UTC-epoch `timestampUnixMs` for correlation
+with watchdog logs and backend generations. Between clip constructions, at
+most one `progress` record per second retains completed span aggregates and
+the active `phaseElapsedMs`. This is not a heartbeat, call-stack sample or
+guarantee of progress during a blocked individual call.
+
+Timings distinguish project loading, engine reconstruction, playback priming,
+snapshot construction/encoding/sending, plugin-state capture, clean-state
+capture, tree/path/JSON conversion, file writing and atomic replacement.
+Per-clip construction/preparation, pending track FX during attachment,
+latency recomputation and graph snapshot build/publication accumulate counts,
+total wall time and maximum duration without per-clip file writes. Nested
+timings are inclusive: do not sum them as disjoint phases. `projectStateBytes`
+counts encoded snapshot bytes, not total wire traffic or delivery completion.
+
+Tracing is disabled by default, records no payloads or paths, and does not
+instrument the audio callback or change watchdog behaviour. Record writes
+are excluded from individual phase timers but included in operation elapsed
+time. Establish its on/off overhead in separate diagnostic runs before
+interpreting small differences. These traces do not add waveform completion,
+renderer CPU/GPU, playback/dropout or callback-percentile measurements to
+workload version 3.
+
+### Initial native attribution screen
+
+Unpackaged Release probes loaded and saved all six fixtures with tracing both
+off and on, checking native saved contents and complete diagnostic records.
+These single on/off pairs validate the hooks, not statistical overhead.
+The traced heavy loads attributed the following wall time:
+
+| Case | Load handler | Source preparation | Graph snapshot build + publication | Save As handler |
+| ---- | -----------: | -----------------: | ---------------------------------: | --------------: |
+| `extreme` | 6.00 s | 5.27 s | 11.53 ms | 94.83 ms |
+| `chopped` | 12.11 s | 10.51 s | 18.98 ms | 170.74 ms |
+
+Source preparation ran once per clip. The current JUCE buffering preparation
+loop sleeps for 5 ms on every newly prepared buffer, consistent with the
+observed serial warmup cost. This makes preparation the first measured native
+opening candidate, not graph publication. Read-ahead readiness and publication
+lifetimes have not been changed.
+
+These probes have no Electron renderer, waveform-request burst or frontend
+watchdog. They do not establish the cause of the earlier packaged failures or
+qualify those cases for timing comparisons. Evidence is retained in
+`.cache\performance\native-phase-probe-2026-11-05T13-45-44-796Z` and
+`.cache\performance\native-phase-probe-2026-11-05T13-45-52-302Z`.
+
+## Identical-build measurement noise
+
+On 2026-11-05, the same frozen package completed 80 serial A/A trials: ten
+pairs for each historically qualified case, four cases round-robin per arm,
+with alternating AB/BA pair order. All 80 trials passed save-content, backend
+PID, lifecycle and actual-waveform qualification. The package and all six
+corpus fingerprints were verified unchanged before and after collection.
+`extreme` and `chopped` were excluded from timing-noise estimation because
+their original baselines failed; their reliability is not requalified here.
+
+| Case | Qualified | Arm A median open | Arm B median open | Median paired change | Descriptive 95% paired interval |
+| ---- | --------: | ----------------: | ----------------: | -------------------: | -----------------------------: |
+| `smoke` | 20/20 | 2.49 s | 3.03 s | +0.17% | -5.15% to +10.29% |
+| `large` | 20/20 | 3.07 s | 3.00 s | +3.06% | -4.04% to +14.47% |
+| `stress` | 20/20 | 5.19 s | 5.49 s | +0.37% | -2.74% to +10.77% |
+| `longform` | 20/20 | 2.45 s | 2.57 s | -0.99% | -7.23% to +3.19% |
+
+Paired changes use the median log(B/A); intervals use 10,000 deterministic
+bootstrap resamples of the ten pairs. These are descriptive estimates
+conditional on this session, not universal regression thresholds or
+rare-failure guarantees. Ratios of separate arm medians can differ sharply
+from paired estimates: the unchanged `smoke` binary appears 21.7% slower by
+that unpaired measure. Small apparent gains therefore need matched,
+interleaved confirmation, not a blanket 5% acceptance threshold.
+
+Raw reports, qualifications, arm aggregates, analysis and hashed collector
+sources are retained under
+`.cache\performance\reference-noise-v3-2026-11-05T13-13-26-514Z`. The existing
+six-case baseline below remains unchanged. This measures noise, not an
+optimisation.
+
+## Bridge-fixed packaged reference (B1)
+
+On 2026-11-05, a separate copy of the frozen package received the archived
+pre-diagnostic, bridge-fixed Release backend. Its only changed packaged file
+is `resources\backend\SilverdawBackend.exe`; every other file hash matches the
+frozen package. The archived engine predates phase tracing. Binary provenance
+is retained, but independently reproduced source-build equivalence is not
+claimed.
+
+Exactly five serial round-robin trials per case used the same version 3
+workload, environment checks and qualification as the original baseline.
+No failed trials were discarded or replaced.
+
+| Case | Frozen baseline qualified | B1 screen qualified |
+| ---- | ------------------------: | ------------------: |
+| `smoke` | 5/5 | 5/5 |
+| `large` | 5/5 | 5/5 |
+| `stress` | 5/5 | 5/5 |
+| `extreme` | 2/5 | 5/5 |
+| `chopped` | 1/5 | 3/5 |
+| `longform` | 5/5 | 5/5 |
+
+All 28 qualified trials saved correct contents and had real waveform data
+on every clip, with an unchanged backend PID and no renderer/lifecycle errors.
+Both failures were `chopped` project opens: the unchanged watchdog requested
+a restart after `no PONG after 3 probes`. No Save As waits failed in this
+screen. This does not establish that the earlier intermittent save failures
+are eliminated.
+
+The screen **failed overall**, so the predefined 30-trial heavy-case
+confirmation was not started. Five clean `extreme` trials are only a screen,
+not strong reliability evidence. `chopped` remains ineligible for timing
+comparison; its successful subset must not support improvement claims.
+Historical baseline counts are context, not an interleaved speed comparison.
+These untraced packaged failures do not yet establish where the native
+message thread stalled.
+
+The B1 package is retained at
+`..\.cache\performance\reference-b1-2026-11-05T15-03-52-332Z` relative to
+`frontend`. Its complete package fingerprint is:
+
+```text
+1d71150814a1681322bf2fd778f7e52cc601bcd66cc53bb5a0b891cd7b98d3e2
+```
+
+Raw reports, screenshots, failed-trial evidence paths, aggregate reports,
+verification results, hashed collector sources and before/after package
+inventories are retained under
+`.cache\performance\bridge-reference-2026-11-05T15-03-52-332Z`, also relative
+to `frontend`. The frozen package and all six fixture fingerprints were
+verified unchanged after collection.
+
+## Packaged phase attribution (D1)
+
+A separate packaged diagnostic copy uses the same frozen frontend and runtime
+files with only its backend replaced by the validated phase-tracing build.
+The watchdog, source readiness and graph publication behaviour are unchanged.
+This is diagnostic evidence, not a new qualified timing baseline.
+
+The initial fixed schedule comprised one tracing-off/on pair each for
+`smoke` and `extreme`, followed by five `chopped` pairs with alternating pair
+order. All 14 trials passed content, PID, lifecycle and waveform checks.
+Since no failure reproduced, a separate fixed follow-up compared five
+alternating `chopped` pairs using the existing B1 untraced and D1 traced:
+
+| Experiment | Backend / tracing | Qualified trials |
+| ---------- | ----------------- | ---------------: |
+| Initial controls | D1 `smoke`, off / on | 1/1 each |
+| Initial controls | D1 `extreme`, off / on | 1/1 each |
+| Initial chopped | D1, off / on | 5/5 each |
+| Follow-up chopped | B1, off | 3/5 |
+| Follow-up chopped | D1, on | 5/5 |
+
+Both follow-up B1 failures again restarted during project open after
+`no PONG after 3 probes`. No trace-capable D1 failure reproduced, so no
+failed B1 operation can yet be assigned a native phase. The follow-up
+confounds binary/build and instrumentation differences; it does not prove
+tracing fixed the problem or establish that D1 is reliably clean.
+
+Across the ten successful traced `chopped` loads, the native handler took
+approximately 12.4-12.7 s, including 10.4-10.5 s in 2,048 serial source
+preparations. Graph snapshot build and publication together took about
+22-26 ms. Preparation is therefore a measured opening hotspot in D1, but
+these successful traces do not prove the cause of the B1 watchdog failures.
+Each retained about twelve bounded progress records; no call-stack sampling,
+watchdog relaxation or buffer-warmup optimisation was introduced.
+
+The D1 package fingerprint is:
+
+```text
+0aa605ce2d7dbabd9f9818ee824d7864db3c52bab1a249360ac907cb17d684f9
+```
+
+Evidence directories, relative to `frontend`, retain the immutable collector
+versions, raw reports, traces, analyses, screenshots and native executable:
+
+```text
+.cache\performance\packaged-phases-2026-11-05T15-28-33-638Z
+.cache\performance\packaged-phases-b1-pairs-2026-11-05T15-37-52-175Z
+```
+
+The original frozen package, B1 package and all six fixture fingerprints
+remain unchanged. Diagnostic environment labels deliberately differ from
+ordinary benchmark labels; do not treat these runs as timing comparisons.
+
+## Matched clean-build diagnostic screen (M0/M1)
+
+Fresh, isolated Ninja Release builds establish an explicitly recorded
+source/build comparison. M0 uses committed backend source from `393c2b2d`;
+M1 starts from that snapshot and overlays only the twelve native diagnostic
+files. Both use the same MSVC compiler, disconnected cached dependency sources
+and configuration. All 305 common translation units have matching compiler
+commands after normalising source/build roots and directory separators; only
+the trace implementation and its tests add translation units.
+
+The runtime precheck caught a different hash for the local untracked LAME
+executable. Both builds were aligned to the existing frozen executable before
+measurement; the original build inputs and validation evidence remain archived.
+The aligned native suites passed 518/518 for M0 and 522/522 for M1. Runtime
+imports match, and all 29 runtime dependency/profile files checked per build
+match the frozen package. Each new package changes only the backend executable.
+Source snapshots and shared cached sources were verified unchanged.
+
+The predeclared 21-trial schedule used three arms: M0 without tracing, M1
+without tracing, and the same M1 binary with tracing enabled. Each arm ran one
+`smoke` and one `extreme` control, followed by five `chopped` trials in rotating
+arm order. No failures were discarded, replaced or retried.
+
+| Case | M0 | M1, tracing off | M1, tracing on |
+| ---- | -: | --------------: | -------------: |
+| `smoke` | 1/1 | 1/1 | 1/1 |
+| `extreme` | 1/1 | 1/1 | 1/1 |
+| `chopped` | 5/5 | 4/5 | 5/5 |
+
+The screen **failed overall**. `chopped-4-diagnostic-off` restarted during
+project open at `2026-11-05T16:17:04.092Z` after
+`no PONG after 3 probes`. The same watchdog symptom is therefore not confined
+to archived B1. This does not establish a shared root cause or prove that
+enabling tracing prevents it. Since tracing was disabled in the failed
+attempt, no failed native operation was captured for phase attribution.
+
+All twenty qualified trials saved correct contents and had real waveform data
+on every clip, with an unchanged backend PID and no renderer/lifecycle errors.
+The five successful traced `chopped` loads took approximately 12.6-12.8 s in
+the native handler, including 10.4-10.5 s preparing 2,048 sources; graph
+snapshot build/publication together took 21-27 ms. This confirms the measured
+opening hotspot, not the failed load's phase or cause.
+
+These are bounded diagnostic screens, not qualified timing baselines or proof
+of rare-failure reliability. The watchdog, source readiness, graph lifetimes
+and version 3 workload remain unchanged; no optimisation was introduced.
+
+| Package | Complete fingerprint |
+| ------- | -------------------- |
+| M0 | `c15d2065c65b0306e7aeb6548d86b000fea611c48b14c8e6f3090498a7c2e072` |
+| M1 | `c963599405f4354422a5a705c70c6f0eadca333613429e656553d4eb9114beab` |
+
+Source archives, input inventories, configuration, compiler-command checks,
+native validation and package identities are retained under the repository-root
+directory `.cache\performance\matched-20261105T155334`. Raw reports, traces,
+screenshots, failure evidence, analysis and the exact collector are retained
+under the following directory relative to `frontend`:
+
+```text
+.cache\performance\matched-phases-2026-11-05T16-07-04-260Z
+```
+
+The frozen package, B1, D1 and all six fixture fingerprints were verified
+unchanged. All recorded native backend PIDs were closed after collection.
+
+## Event-driven source preparation (C1)
+
+The first opening optimisation replaces JUCE's fixed five-millisecond
+preparation sleep with a bounded wait on its existing buffer-ready event.
+The original deep-prefill condition is unchanged: sources still return from
+preparation only after the required prefix is ready. This does not disable
+prefill, parallelise graph mutations or relax the watchdog.
+
+A Windows-only, idempotent CMake patch rejects changed upstream preparation
+code rather than applying blindly. The Release experiment uses a private JUCE
+copy; all original matched dependency inputs remain unchanged. The only JUCE
+source change is that wait. All 307 common translation-unit compiler commands
+match M1 after normalising directory/object-output paths. The 29 runtime/profile
+files and native runtime imports still match the control.
+
+Debug and Release each passed all 523 native tests. A slow-producer regression
+checks the complete cold prefix immediately after preparation, without an
+additional readiness wait, and repeats after a seek/sample-rate reprepare.
+Existing first-block, seek, playback and mixdown regressions remain intact.
+
+The fixed screen used five alternating control/candidate pairs per case in
+serial round-robin order: 60 ordinary version 3 trials, with tracing disabled
+in both arms. M1 is the control; C1 changes only the packaged backend. Failed
+attempts were neither discarded nor replaced.
+
+| Case | M1 qualified | C1 qualified | Median paired shell-open change |
+| ---- | -----------: | -----------: | ------------------------------: |
+| `smoke` | 5/5 | 5/5 | +0.8% |
+| `large` | 4/5 | 5/5 | excluded |
+| `stress` | 5/5 | 5/5 | -61.6% |
+| `extreme` | 5/5 | 5/5 | -72.5% |
+| `chopped` | 5/5 | 4/5 | excluded |
+| `longform` | 5/5 | 5/5 | -4.8% |
+
+For `stress`, median shell-open time fell from 4.62 s to 1.66 s; for
+`extreme`, from 7.64 s to 2.16 s. Their descriptive paired bootstrap intervals
+were -64.6% to -49.3% and -72.8% to -63.5%, respectively. These improvements
+are substantially larger than the previously measured A/A noise. The smaller
+cases do not establish similarly clear gains. Shell-open still means shell
+paint plus two RAFs, not complete waveform/backend readiness or GPU presentation.
+
+The screen **failed overall**, with 29/30 qualified in each arm. The first
+`large` control exceeded the 60-second guard during warmup frames, without a
+native lifecycle failure. The fifth `chopped` candidate exceeded the unchanged
+2,048 MiB private-memory guard during zoom: the peak sample was 2,072.3 MiB,
+including about 333.0 MiB in the backend and 1,739.3 MiB outside it. This
+requires follow-up; it is not evidence that the extra memory is harmless or
+necessarily caused by this change. Neither case supports a timing comparison,
+and C1 is **not fully qualified for the corpus**.
+
+All 58 qualified attempts saved correct contents and had actual waveform data
+on every clip, with stable backend PIDs and no renderer/lifecycle errors.
+No watchdog failure occurred in this screen, but the control also stayed clear:
+this does not prove that the historical watchdog issue is fixed. No rendering,
+memory-budget or persistence optimisation is claimed.
+
+A separate traced `chopped` probe per arm passed qualification. Native load
+time was 12.11 s for M1 and 1.21 s for C1; source preparation accounted for
+10.31 s and 0.244 s, respectively, across 2,048 preparations. These are single
+diagnostic observations explaining the mechanism, not a replacement for the
+excluded ordinary `chopped` comparison.
+
+C1's complete package fingerprint is:
+
+```text
+2db5b7d1b563c3b0c311597c374b8d26f89629e9649bba1a9648194306daf184
+```
+
+Source/input inventories, native gates, compiler checks and package provenance
+are retained under repository-root
+`.cache\performance\opening-20261105T162824`. Raw reports, failure evidence,
+screenshots, analyses and exact collector versions are retained at these paths
+relative to `frontend`:
+
+```text
+.cache\performance\opening-screen-2026-11-05T16-44-16-061Z
+.cache\performance\opening-traces-2026-11-05T17-07-20-019Z
+```
+
 ## Recorded diverse baseline
 
 On 2026-11-05, all six projects in `corpus-diverse-v2` received exactly five
@@ -192,10 +543,11 @@ does **not** contain the worktree's Windows bridge polling fix.
 | `chopped`  |     24 |  2048 |              1/5 |                    - |                     - |                                  - |
 | `longform` |      8 |    32 |              5/5 |               3.55 s |               17.0 ms |                          947.3 MiB |
 
-`extreme` timed out during native Save As file writing in three trials.
+`extreme` timed out waiting for the native Save As file in three trials.
 `chopped` failed during project open with native restarts in three trials and
-timed out during native Save As file writing in one. These failure rates are
-part of the baseline. Successful subsets are preserved, but must not be used
+timed out waiting for the native Save As file in one. These wait labels do not
+prove that the native writer was executing. These failure rates are part of
+the baseline. Successful subsets are preserved, but must not be used
 to claim representative timing improvements. Their aggregate reports remain
 `failed`, so `perf:compare` rejects them. `smoke` remains a harness check, not a
 capacity claim.
