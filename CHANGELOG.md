@@ -11,6 +11,7 @@
 ### Changed
 
 - Improved project-opening performance.
+- Reduced waveform memory use when opening projects with repeated sources.
 - Updated application and audio-processing dependencies.
 - Updated build, packaging and testing tools.
 

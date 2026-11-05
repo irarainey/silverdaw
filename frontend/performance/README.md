@@ -115,11 +115,14 @@ un-normalised path. Those failed reports are preserved, not reclassified as
 accepted samples. They do not prove a load failure or diagnose an application
 defect. Comparisons reject different workload versions.
 
-The current corpus has [recorded five-trial results](#recorded-diverse-baseline)
-for all six generated projects. Four cases qualify as timing baselines;
+The original frozen package has
+[recorded five-trial results](#recorded-diverse-baseline)
+for all six generated projects. Four cases qualify as its timing baselines;
 `extreme` and `chopped` have recorded failure baselines, not reliable timing
 baselines. Do not accept projects on shell/canvas readiness alone or treat
 missing waveforms as an established GPU-rendering defect.
+Later local build screens are recorded separately below; they do not replace
+those original results.
 
 This is **not** a cold-disk measurement: OS caches and home-based model caches
 are uncontrolled. Sixty warm-up frames do not prove all waveforms have loaded.
@@ -525,6 +528,99 @@ relative to `frontend`:
 .cache\performance\opening-screen-2026-11-05T16-44-16-061Z
 .cache\performance\opening-traces-2026-11-05T17-07-20-019Z
 ```
+
+## Shared waveform cache reads (R1)
+
+The rendering-memory phase investigated C1's chopped-project budget failure.
+Two separate, fixed C1 diagnostic probes identified 2,048 independent clip
+buffers retaining 496.5 MiB of waveform/LOD backing storage. This storage
+survived an explicit diagnostic GC. Electron process metrics attributed the
+large backing-store allocation to the renderer, not the native engine.
+GPU private memory also grew during the workload; that is a separate concern,
+not an established graphics-lifetime diagnosis.
+
+R1 shares the pending IPC read for the same peaks-cache path. Each envelope
+still undergoes the existing binary validation and updates its own clip.
+The map entry is removed on success or failure, so this is not a persistent
+file cache and a later read can observe rewritten data. Different paths never
+share a read. No peak values, drawing rules, native code, readiness conditions,
+watchdog settings or memory limits change.
+
+Two fixed R1 diagnostic probes retained 98.7-104.5 MiB in waveform/LOD buffers,
+with 286-294 clip buffers rather than 2,048. Sharing depends on message/I/O
+scheduling: this does not promise one buffer per source. After diagnostic GC,
+renderer private memory was 377.2-383.0 MiB versus C1's 761.1-778.1 MiB.
+These probes use CDP heap/allocation sampling and forced GC only after the
+measured workload. They are attribution evidence, not ordinary timing samples;
+the application does not force GC.
+
+R1 retains every C1 package file except `resources\app.asar`; inside the
+archive only renderer outputs change. Main, preload, backend and runtime
+dependencies are byte-identical. An isolated pristine control rebuild matched
+all 53 renderer files after normalising generated chunk names and dependency
+source-header comments only. The candidate's executable delta is exactly the
+shared-read helper and call site. The stricter byte-comparison mismatch and
+its evidence remain retained, rather than being described as a byte-identical
+rebuild.
+
+All 2,469 frontend unit tests passed, including regressions for shared buffers,
+independent envelope validation, different files, failure recovery and later
+rereads. Final focused tests, typecheck, lint and all 35 built-app E2E journeys
+passed. The unchanged native engine retains C1's 523/523 Debug and Release
+validation; it was not rebuilt for this renderer-only change.
+
+The ordinary screen ran five alternating C1/R1 pairs per case, round-robin:
+60 version 3 trials, no tracing, CDP profiling, forced GC or replacement trials.
+All **30/30 per arm** passed the unchanged 2,048 MiB and 60-second guards,
+complete waveform checks, native save-content checks and backend PID/lifecycle
+checks.
+
+| Case | C1 / R1 qualified | C1 median peak private | R1 median peak private | Median paired memory change | Median paired shell-open change |
+| ---- | ----------------: | ---------------------: | ---------------------: | --------------------------: | ------------------------------: |
+| `smoke` | 5/5 / 5/5 | 615.8 MiB | 615.6 MiB | 0.0% | -0.8% |
+| `large` | 5/5 / 5/5 | 812.6 MiB | 793.0 MiB | -2.6% | -2.2% |
+| `stress` | 5/5 / 5/5 | 999.2 MiB | 964.8 MiB | -3.2% | -1.1% |
+| `extreme` | 5/5 / 5/5 | 1,232.8 MiB | 1,168.0 MiB | -5.3% | -0.1% |
+| `chopped` | 5/5 / 5/5 | 1,904.7 MiB | 1,416.9 MiB | -23.5% | -19.3% |
+| `longform` | 5/5 / 5/5 | 915.6 MiB | 852.0 MiB | -6.5% | -0.8% |
+
+Paired changes are medians of log(candidate/control) ratios, not ratios of
+the two unpaired medians. Chopped's descriptive paired 95% bootstrap intervals
+were -26.8% to -19.0% for memory and -23.3% to -9.3% for shell-open time.
+Its R1 sampled peaks ranged from 1,396.8 to 1,456.5 MiB. The native engine
+remained about 333 MiB in the diagnostic probes; the improvement is renderer
+headroom, not reduced audio buffering. Other opening changes are small or
+noisy. Scroll/zoom RAF p95 changes were approximately +/-0.6%; no faster GPU
+rendering or saving is claimed.
+
+R1 qualifies this fixed corpus screen. Five clean trials per case do not prove
+rare-failure reliability or erase the earlier C1 guard failure. Neither arm
+had a watchdog restart, so the historical no-PONG cause remains unproved.
+Viewport/GPU resource lifetimes and persistence remain later work.
+
+R1's complete package fingerprint is:
+
+```text
+5c9bb8cd900bdb57d98d34c363b2164541f103df79d4bb9451f9bfcd804945ca
+```
+
+Source snapshots, compiled-output proof, validation, diagnostic analysis,
+package inventories and final preservation checks are at repository-root
+`.cache\performance\rendering-20261105T191528`. The reused collector's inherited
+opening-phase explanatory sentence is corrected separately in
+`collector-description-correction.json`; raw summaries and collectors remain
+unchanged. Reports, screenshots, profiles and exact collector versions are
+retained at these paths relative to `frontend`:
+
+```text
+.cache\performance\rendering-memory-2026-11-05T19-09-34-375Z
+.cache\performance\rendering-r1-memory-2026-11-05T19-20-25-202Z
+.cache\performance\rendering-screen-2026-11-05T19-26-27-628Z
+```
+
+The frozen package, B1, D1, M0, M1, C1 and all six fixture fingerprints remain
+unchanged. Recorded experiment processes were closed. No installer,
+distribution archive, installation, commit, tag or release was created.
 
 ## Recorded diverse baseline
 
