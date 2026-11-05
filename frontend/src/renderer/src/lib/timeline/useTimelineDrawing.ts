@@ -3,7 +3,7 @@
 // ruler, track-area, and playhead painting to focused sibling renderers. Hit
 // regions are host-owned.
 
-import { type ComputedRef, type Ref, type ShallowRef } from 'vue'
+import { onScopeDispose, watch, type ComputedRef, type Ref, type ShallowRef } from 'vue'
 import type { Application, Container, Graphics, Mesh, MeshGeometry, Text, Texture } from 'pixi.js'
 import { useProjectStore } from '@/stores/projectStore'
 import { reportFirstTimelinePaint } from '@/lib/timeline/projectOpenPaintProbe'
@@ -19,6 +19,7 @@ import { createTimelineRulerRenderer } from './timelineRulerRenderer'
 import { createTimelineTracksRenderer } from './timelineTracksRenderer'
 import { createTimelinePlayheadRenderer } from './timelinePlayheadRenderer'
 import { exceedsRebuildThreshold } from './timelineWindow'
+import { createTimelineSceneResources } from './timeline-scene-resources'
 
 export interface TimelineDrawingOptions {
   app: ShallowRef<Application | null>
@@ -90,7 +91,11 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     dropPreview
   } = opts
   const { pxPerSecond, headerWidth } = geometry
+  const sceneResources = createTimelineSceneResources()
+  watch(tracksLayer, () => sceneResources.dispose(), { flush: 'sync' })
+  onScopeDispose(() => sceneResources.dispose())
   const clipRenderer = createClipRenderer({
+    sceneResources,
     tracksLayer,
     GraphicsCtor,
     TextCtor,
@@ -204,10 +209,10 @@ export function useTimelineDrawing(opts: TimelineDrawingOptions): TimelineDrawin
     const headers = headersLayer.value
     if (!a || !ruler || !rulerTicks || !tracks || !headers) return
 
-    ruler.removeChildren()
-    rulerTicks.removeChildren()
-    tracks.removeChildren()
-    headers.removeChildren()
+    sceneResources.clearLayer(ruler)
+    sceneResources.clearLayer(rulerTicks)
+    sceneResources.clearLayer(tracks)
+    sceneResources.clearLayer(headers)
     clipHitRegions.length = 0
     // Pooled clip graphics were just detached above; reset the pool so the next
     // frame reuses them instead of allocating fresh Graphics per clip.

@@ -622,6 +622,96 @@ The frozen package, B1, D1, M0, M1, C1 and all six fixture fingerprints remain
 unchanged. Recorded experiment processes were closed. No installer,
 distribution archive, installation, commit, tag or release was created.
 
+## Explicit viewport resource lifetimes (R2)
+
+R1's follow-up viewport probes identified transient ruler, grid, header and
+clip-label nodes being detached on redraw without explicit destruction.
+Pixi's default unused-resource collection can wait a minute. Sampled retained
+allocations included graphics paths; ordinary JavaScript GC did not remove
+the observed WebGL resource accumulation during this bounded workload.
+
+R2 explicitly destroys frame-owned nodes while retaining the existing ordinary
+graphics, beat-marker and waveform-mesh pools across redraws. Scene replacement
+also releases detached pool surplus and each mesh's exclusively owned geometry
+and buffers. Shared textures, including `Texture.WHITE`, and process-global
+Pixi pools are not destroyed. Waveform math, draw order, hit regions, scrolling
+translation, readiness and all native behaviour are unchanged.
+
+Two fixed chopped-project probes per version used the same diagnostic WebGL
+wrappers and workload. Every probe passed waveform, native-save, PID, lifecycle
+and existing budget checks, with no WebGL context losses:
+
+| Diagnostic metric after workload and diagnostic GC | R1 | R2 |
+| ------------------------------------------------- | --: | --: |
+| Renderer V8 heap | 102.8-103.4 MiB | 24.0 MiB |
+| Net observed WebGL textures | 4,317-4,350 | 125 |
+| Net observed WebGL buffers | 1,408-1,416 | 546 |
+| Renderer private memory | 384.1-387.6 MiB | 266.0-266.9 MiB |
+| GPU-process private memory | 565.9-590.5 MiB | 344.7-385.7 MiB |
+
+Net counts mean observed creations minus explicit deletes, **not** actual
+GPU-resident/live objects; automatic browser reclamation is not counted.
+WeakSets avoid retaining measured resources. CDP profiling and wrappers
+perturb execution, and forced GC occurs only after the measured workload.
+These probes are attribution evidence, not ordinary timing samples.
+
+R2 changes only renderer files inside `resources\app.asar`; main, preload,
+native engine and runtime files are byte-identical to R1. A pristine control
+rebuild matched all 53 renderer files after normalising generated chunk names
+and dependency source-header comments only; the raw byte mismatch is retained.
+Only the index module has an executable candidate delta. All 2,472 unit tests,
+typecheck, lint and 36 built-app E2E journeys passed, including a new journey
+that recovers the timeline context while the clip editor stays alive, redraws
+both surfaces and saves the native clip.
+
+The ordinary screen ran five alternating R1/R2 pairs per case, round-robin:
+60 version 3 trials without profiling, forced GC, tracing or replacements.
+Both arms qualified **30/30**, with the unchanged 2,048 MiB and 60-second
+guards, complete waveforms, correct native save contents, unchanged backend
+PIDs and no renderer/lifecycle errors.
+
+| Case | R1 / R2 qualified | R1 median sampled peak private | R2 median sampled peak private | Median paired memory change |
+| ---- | ----------------: | -----------------------------: | -----------------------------: | --------------------------: |
+| `smoke` | 5/5 / 5/5 | 624.8 MiB | 562.6 MiB | -10.0% |
+| `large` | 5/5 / 5/5 | 807.6 MiB | 618.7 MiB | -22.6% |
+| `stress` | 5/5 / 5/5 | 956.2 MiB | 744.1 MiB | -22.2% |
+| `extreme` | 5/5 / 5/5 | 1,151.9 MiB | 983.4 MiB | -15.6% |
+| `chopped` | 5/5 / 5/5 | 1,423.1 MiB | 1,164.0 MiB | -18.1% |
+| `longform` | 5/5 / 5/5 | 843.6 MiB | 604.0 MiB | -28.4% |
+
+These are sampled combined process-private peaks, not GPU-only allocations.
+Paired changes use median log(candidate/control) ratios, not ratios of
+unpaired medians. Chopped's descriptive paired 95% bootstrap interval was
+-21.9% to -15.2%; its R2 peaks ranged from 1,127.3 to 1,222.0 MiB.
+Scroll/zoom RAF p95 changes were approximately +/-0.6%, and paired shell-open
+changes were small or noisy. This qualifies lower viewport-workload memory,
+not faster GPU throughput, project opening or saving.
+
+Five clean trials per case do not establish rare-failure reliability. Neither
+arm restarted, so the historical no-PONG cause remains unproved. Persistence
+is the next separate phase; no persistence implementation changed here.
+
+R2's complete package fingerprint is:
+
+```text
+b7d7872ecff86f3115b752957178e61a34febcefe1065a146bb6c46cd2eccaaf
+```
+
+Source snapshots, validation, build proof, diagnostic analysis and final
+preservation checks are at repository-root
+`.cache\performance\viewport-20261105T200112`. Raw reports, profiles,
+screenshots and exact collectors are retained relative to `frontend`:
+
+```text
+.cache\performance\viewport-resources-2026-11-05T19-52-54-031Z
+.cache\performance\viewport-resources-2026-11-05T20-06-18-930Z
+.cache\performance\viewport-screen-2026-11-05T20-07-52-507Z
+```
+
+The frozen package, B1, D1, M0, M1, C1, R1 and all six fixture fingerprints
+remain unchanged. Recorded experiment processes were closed. No installer,
+distribution archive, installation, commit, tag or release was created.
+
 ## Recorded diverse baseline
 
 On 2026-11-05, all six projects in `corpus-diverse-v2` received exactly five
