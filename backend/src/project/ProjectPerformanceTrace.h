@@ -83,7 +83,7 @@ class ProjectPerformanceSpan
   private:
     ProjectPerformanceTrace* trace = nullptr;
     ProjectPerformancePhase phase;
-    ProjectPerformanceTrace::Timestamp started{};
+    ProjectPerformanceTrace::Timestamp started;
 };
 
 } // namespace silverdaw
