@@ -8,6 +8,20 @@ Version availability and advisories must be checked again when each stage
 starts. The unreleased application version is 1.10.0; this does not authorise
 a release.
 
+**Status reviewed 2026-11-05:** the accepted migrations below are implemented.
+The dated checkpoints preserve the state at each stage, not the current
+dependency tree; current pins live in `frontend/package.json`,
+`frontend/pnpm-lock.yaml` and `backend/CMakeLists.txt`. Local distribution builds
+and an extracted-portable smoke test passed on 2026-11-04, but installed-upgrade,
+hardware/listening and residual-risk acceptance remain outstanding.
+RNNoise/ONNX Runtime and vue-tsc deferrals remain as recorded. The minimatch
+finding is the last recorded audit result, not a fresh advisory scan.
+
+The exact-version `electron@45.2.2` release-age acknowledgement is still present
+in `frontend/pnpm-workspace.yaml`, although its 24-hour cutoff has passed.
+Removing it and verifying a frozen install without it remains a release-hygiene
+follow-up; this documentation review does not change dependency policy.
+
 ### Sequence and checkpoints
 
 Each numbered stage is a separate dependency diff. Substeps run and pass their
@@ -728,6 +742,45 @@ input validation, tests or persisted-state compatibility to pass an upgrade.
 Model re-exports, algorithm changes, driver changes and release-version bumps
 are outside these dependency stages.
 
+## Performance maintenance (unreleased)
+
+Status reviewed 2026-11-05. Four focused changes are implemented and measured
+on preserved packaged builds:
+
+| Stage | Implemented change | Evidence and limits |
+| --- | --- | --- |
+| C1 | Event-driven JUCE source preparation, preserving the deep-prefill barrier. | Large opening gains; the initial corpus screen still had a failure per arm. Later R1/R2/S1 screens are separate evidence, not replacements for those failures. |
+| R1 | Share concurrent reads of one waveform-cache path without a persistent file cache. | Reduced retained waveform backing storage and sampled memory; no universal one-buffer-per-source guarantee. |
+| R2 | Explicit transient scene ownership, retained clip pools and owned geometry disposal. | Reduced sampled private memory across the corpus; no clear FPS gain. |
+| S1 | Serialize effective timing from the existing clip node instead of rescanning by ID. | Reduced dense-project post-Save As snapshot time; not a general disk-write or Ctrl+S speed claim. |
+| Stress follow-up | Fixed five-pair A/A and five-pair A/B memory attribution study. | All 20 trials qualified and ten snapshot pairs matched. The initial +7.7% difference did not reproduce consistently; no exact original allocation cause or absence of all regressions was proved. No runtime change was justified. |
+
+Measurements, confidence limits, original failures, complete workload/capture
+provenance and preservation checks are in
+[performance benchmarks](../frontend/performance/README.md). Stage-local
+percentages must not be added or presented as a final cumulative speedup.
+The inherited native trace lint warning was fixed separately after S1; the
+workspace's full strict lint gate is clean, while frozen benchmark inputs
+remain unchanged.
+
+Remaining work, in separate evidence-led stages:
+
+- Profile scroll/zoom responsiveness and allocation churn; memory reductions
+  alone do not establish smoother rendering.
+- Measure playback/seek latency, audio-callback headroom and actual dropouts
+  with suitable instrumentation and fixed hardware/settings.
+- Capture a native failure if the historical no-PONG restart recurs. Its cause
+  remains unproved; do not relax watchdog or readiness guards to hide it.
+- Compare the final combined build with a preserved reference across the full
+  corpus, retaining failures and validating project/save equivalence.
+- Complete hardware/listening, native-dialog and installed/Store-upgrade
+  acceptance before a release. Local packaging or portable benchmarks do not
+  complete these gates.
+
+Graph batching, shared audio readers and voice pooling remain conditional on
+profiling evidence, not approved speculative rewrites. No release or next
+implementation stage is authorised by this status record.
+
 ## 1. Product Scope
 
 A Windows desktop DAW with an Electron frontend and a JUCE audio backend, aimed
@@ -768,7 +821,7 @@ Silverdaw is split into two processes that communicate over a local WebSocket co
 | Process               | Role                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | **Electron frontend** | All UI rendering, user interaction, drag and drop                      |
-| **JUCE backend**      | Audio engine, DSP, file I/O, project state — runs headless (no window) |
+| **JUCE backend**      | Audio engine, DSP, file I/O, project state; no Silverdaw UI, but owns hosted VST3 editor windows |
 
 The Electron process launches the JUCE backend as a child process on startup and terminates it on close.
 
@@ -789,7 +842,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Layer           | Choice                      | Rationale                                                       |
 | --------------- | --------------------------- | --------------------------------------------------------------- |
 | Language        | C++17                       | Performance, JUCE compatibility                                 |
-| Framework       | JUCE (headless)             | Audio I/O, plugin hosting, project state — UI subsystems unused |
+| Framework       | JUCE                       | Audio I/O, plugin hosting, project state; GUI module only for native plugin editors |
 | Communication   | IXWebSocket loopback server | Low-latency local IPC                                           |
 | Target platform | Windows (x64) only          | Permanent scope — Windows desktop only; no macOS/Linux port, no hosted/web version |
 
@@ -806,7 +859,9 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional, model-aware post-separation vocal cleanup: htdemucs vocals get a cross-stem STFT Wiener de-bleed + RNNoise broadband denoise (BSD-2-Clause) + sub-bass high-pass/expander; the high-SDR RoFormer vocal skips the de-bleed and runs gentler denoise/expander. RNNoise is fetched and statically linked via CMake `FetchContent`. A separate per-run **Remove Reverb & Echo** option (`Dereverberator` STFT late-reverb subtraction + `VocalRestorer` level/presence restoration) is offered in the dialog, independent of the saved cleanup prefs. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV | Web Audio covers many formats JUCE can't decode natively; the decoded WAV is cached for the backend to load. |
 
-> **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
+> **Note:** All Silverdaw interface rendering is handled by Electron. The
+> backend links `juce_gui_basics` only for hosted plugins' native editor windows
+> (ADR 0025); it does not draw the arrangement or application dialogs.
 
 ---
 
@@ -819,7 +874,11 @@ port in `[8765, 8784]`, starts the JUCE backend with `--port`, and exposes the
 chosen port plus a per-session AUTH token to the renderer over IPC. The renderer
 connects directly; the backend gates every connection on the AUTH token.
 
-The bridge is **text-only**: every envelope is a JSON `{ type, payload }` frame. There is no binary frame plane. Bulk data (waveform peaks today; stems / previews later) goes via disk — the backend writes to a known cache location and sends a small "ready" envelope pointing at the path; the renderer reads the file via main's IPC. This sidesteps the I/O-loop starvation issues a single-threaded WS server (IXWebSocket) hits when bulk frames compete with control traffic, and aligns with how the same plan already treats audio files, stems and mixdowns.
+The bridge is **text-only**: every envelope is a JSON `{ type, payload }`
+frame. There is no binary frame plane. Bulk waveform, stem, recording, scratch
+and mixdown data goes via disk — the backend writes a file and sends a small
+notification pointing at its path; the renderer reads permitted files via
+main's IPC. Bulk transfer is already implemented, not a future socket feature.
 
 ### Message Protocol
 
@@ -862,7 +921,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.9.0" } }
+{ "type": "READY", "payload": { "version": "1.10.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -913,10 +972,11 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
-| Stem separation                             | JUCE backend (ONNX Runtime / Demucs), model download in Electron main |
+| Stem separation                             | JUCE backend (ONNX Runtime / RoFormer + htdemucs backup), model download in Electron main |
 | File reading / writing                      | JUCE backend                                    |
 | Project state (source of truth)             | JUCE backend (ValueTree)                        |
-| UI state (zoom, selections, scroll)         | Electron / Pinia                                |
+| Persisted view state (zoom, scroll, selected track, timeline range) | JUCE ValueTree; renderer mirrors it through PROJECT_SET_VIEW / PROJECT_STATE |
+| Transient UI state (hover, in-flight gestures) | Electron / Pinia |
 
 ---
 
@@ -930,7 +990,7 @@ JUCEBackend (headless)
 ├── BridgeServer                — IXWebSocket loopback + AUTH gate; text-only JSON
 │
 ├── AudioEngine
-│   ├── topMixer                — combines `master` and `previewVoice.transport`
+│   ├── topMixer                — project, preview, scratch/backing, input monitor, calibration
 │   │   ├── master              — project transport (mixer → per-track clip sources)
 │   │   └── previewVoice        — independent Clip Editor preview voice
 │   ├── per-track clip sources  — non-destructive source windows
@@ -955,7 +1015,7 @@ JUCEBackend (headless)
 Electron Shell
 │
 ├── Main process
-│   ├── Launches SilverdawBackend as child process (bridge port + token via env)
+│   ├── Launches SilverdawBackend (port via --port, AUTH token via env)
 │   ├── Native file dialogs, app menu, preferences.json persistence,
 │   │   metadata + peaks-cache IPC, autosave directory management,
 │   │   recent-projects MRU
@@ -3826,7 +3886,10 @@ robustness without changing the core editing model.
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
 - **Logging:** the cross-layer `%USERPROFILE%\Silverdaw\Logs\<session>\{main,backend,renderer}.log` infrastructure is opt-in via Preferences ▸ Developer, in dev and packaged builds alike. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Both locations deliberately resolve to the same discoverable user-profile folder in dev and packaged builds: under MSIX a `userData` path is silently redirected into the package's hidden LocalCache container, so it would be shown but never findable. Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
-- **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
+- **Documentation:** the bridge protocol catalogue, ValueTree schema and project
+  file format are documented in `docs/developer-guide.md`. The shared
+  `bridge-protocol.ts` facade re-exports the authoritative contracts; the root
+  `README.md` is the user-facing overview.
 
 ---
 
@@ -3834,12 +3897,12 @@ robustness without changing the core editing model.
 
 | Risk                                        | Mitigation                                                                                                                                        |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WebSocket latency for transport control     | Round-trip on localhost should be <2ms; playhead interpolation in frontend handles any jitter                                                     |
+| WebSocket latency for transport control     | Keep loopback round-trips small; <2 ms is an engineering target, not a measured guarantee under load. The renderer displays authoritative PLAYHEAD_UPDATE positions without local interpolation. |
 | Warp engine multi-track sync                | Master transport clock + per-track latency compensation landed in Phase 1                                                                         |
 | Large bridge payloads stalling the I/O loop | The bridge is text-only. Bulk data uses disk caches plus small `*_READY` envelopes so IXWebSocket I/O threads never stream audio / peak payloads. |
 | PixiJS performance with many clips          | Pool and recycle display objects; only render clips in the visible viewport                                                                       |
-| Demucs model download UX                    | Stem features visibly disabled until model is present; clear download progress UI                                                                 |
-| Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction to post-core hardening      |
+| Stem-model download UX                      | Gate separation on required RoFormer/backup models and show download progress. |
+| Memory pressure with many clips             | Stream audio with BufferingAudioSource; R1/R2 reduce waveform/viewport retention. Continue profiling renderer allocations; preserve the fixed workload and memory guard. |
 | Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
 | VST3 plugin crashes                         | Scanning runs in a child process behind a persistent blacklist; a crash while hosting is recovered by the existing engine supervisor (ADR 0025)                                                    |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
@@ -3860,9 +3923,12 @@ robustness without changing the core editing model.
 - **Mel-Band RoFormer** — optional MIT-licensed vocal model (Kim Vocal 2 / SYHFT) for the "Vocal Quality Pack", downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
-- **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
+- **JUCE is backend only** — all Silverdaw rendering is Electron + PixiJS; the
+  engine owns native hosted-plugin editor windows under ADR 0025.
 - **Cross-layer logging** — every session writes `%USERPROFILE%\Silverdaw\Logs\<stamp>\{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (opt-in via Preferences ▸ Developer). An always-on startup diagnostics log + backend crash report is also written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch regardless of that flag, so a failed startup can still be diagnosed. Dev and packaged builds resolve both to the same discoverable location.
-- **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
+- **Multiple clients on the bridge** — the WebSocket bridge supports multiple
+  authenticated clients. The existing Clip Editor is a renderer dialog, not a
+  second BrowserWindow; no detached editor window is implemented.
 
 ---
 

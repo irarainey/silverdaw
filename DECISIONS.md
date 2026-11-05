@@ -5,6 +5,11 @@ linked ADR under `docs/adr/` holds the reasoning and rejected alternatives and i
 read only when a task touches that decision. Write the ADR at the moment of
 decision and add its line here.
 
+ADRs retain dated decisions and amendments, not current dependency pins or
+benchmark guarantees. Later amendments/ADRs can supersede an earlier
+implementation detail. Use `CONTEXT.md`, the developer guide and manifests for
+current state; use `frontend/performance/README.md` for measured evidence.
+
 | ID | Importance | Decision | Record |
 | --- | --- | --- | --- |
 | D-0001 | `CRITICAL` | Two-process split: Electron UI + headless JUCE engine | `docs/adr/0001-two-process-split.md` |

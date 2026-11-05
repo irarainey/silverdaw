@@ -34,8 +34,9 @@ Priorities: **correctness > maintainability / best practice > security >
 performance > micro-optimisation**. Lead with maintainability — oversized files,
 duplication, and SRP violations are blocking-class findings, each reported with a
 concrete split or single-source-of-truth proposal. If a tool (`clang-tidy`,
-`eslint`, `vue-tsc`, `cmake`, `ctest`) can't run in this session, emulate its
-checks analytically and proceed.
+`eslint`, `vue-tsc`, `cmake`, `ctest`) can't run in this session, continue with
+static review and explicitly report that gate as not run; analytical review is
+not a passing tool result.
 
 ## Review plan (execute end-to-end, both surfaces + the bridge)
 
@@ -46,7 +47,7 @@ checks analytically and proceed.
    layer-boundary violations, magic numbers, over-complex functions.
 3. **Standards & style** — apply the instruction files (C++ RAII/ownership/
    `const`/`[[nodiscard]]`/JUCE conventions; TS/Vue `<script setup lang="ts">`,
-   no `any`, discriminated unions, Pinia by domain, kebab-case files). Remove
+   no `any`, discriminated unions, Pinia by domain, existing file naming). Remove
    dead/commented code, stray `console.*` / `std::cout`, orphan IPC handlers.
 4. **Correctness & robustness** — edge cases, error propagation, exception/RAII
    safety, exhaustive union narrowing, deterministic teardown.

@@ -143,9 +143,10 @@ jobs:
         run: pwsh -NoProfile -File scripts/Fetch-Lame.ps1
 
       # Visual Studio generator, matching .vscode/settings.json and the
-      # developer guide. It is multi-config, which is what the release build
-      # needs, and CMake locates MSVC itself so no developer shell is required
-      # here. Tests default to OFF, hence the explicit switch.
+      # developer guide. CMake locates MSVC itself for this generator, so no
+      # developer shell is required here. This is the multi-config Debug tree;
+      # release packaging uses a separate Ninja tree. Tests default to OFF,
+      # hence the explicit switch.
       #
       # The retry makes a stale dependency cache self-healing. Scoping the key
       # to the image stops the known cross-image case, but a Visual Studio
@@ -171,7 +172,7 @@ jobs:
       - name: Build
         run: cmake --build backend/build --config Debug --parallel
 
-      # Two of the 399 tests drive the transport — one seeks and reads the
+      # Two native tests drive the transport — one seeks and reads the
       # playhead back, the other asserts `play()` reaches `isPlaying()`. Neither
       # names a JUCE device class, so they look device-free, but the position
       # they check is advanced by the audio callback and a runner has no sound

@@ -11,8 +11,8 @@ schemas in `shared/bridge/scratch.ts` (edit those, not the facade). Inbound
 (backend → renderer) payloads are defined as **zod** schemas;
 their TypeScript types are derived via `z.infer<>`, and each `isXxxPayload` guard
 is a one-line `safeParse(value).success` wrapper. Outbound (renderer → backend)
-payloads are plain TS interfaces in the same file (compile-checked at every
-`send<K>()` call site). A new message is added to the schema **first**, then
+payloads are plain TS interfaces in `shared/bridge/outbound.ts` (compile-checked
+at every `send<K>()` call site). A new message is added to the schema **first**, then
 validated on both ends. On the backend, inbound fields are extracted through the
 strict `tryGetString`/`tryGetRequiredString`/`tryGetNumber` helpers rather than
 coercing `juce::var` silently.

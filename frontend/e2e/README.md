@@ -42,7 +42,7 @@ backend tests — no extra configuration.
 The panel's ▶ runs the Playwright runner directly, exactly like
 `test:e2e:only`, so it does **not** build first. Discovery is unaffected — the
 tests always list — but a run against stale bundles stops at the freshness
-guard above. Run the `frontend: build` task (or `pnpm --dir frontend build`)
+guard above. Run the `frontend: build` task (or `pnpm build` from `frontend`)
 after changing `src/`, then re-run.
 
 The e2e tier does not build or check the C++ backend. A backend change needs its
@@ -130,9 +130,12 @@ reused profile, since seeding would overwrite the file under test.
 
 `~/Silverdaw/{Logs,Diagnostics,Models}` is **not** isolated. Electron resolves
 `home` from the Windows shell API rather than the environment, so it cannot be
-redirected from a test. Accepted as a known gap: these directories are
-append-only diagnostics, and the tier is a local pre-release gate rather than a
-shared-CI one.
+redirected from a test. Accepted as a known gap for local runs alongside another
+instance: session logs are separate, but startup diagnostics are overwritten
+and model caches are shared. Do not clear those directories as test cleanup.
+The suite also runs in CI on its own Windows runner, with the backend built by
+the native job and a virtual audio output device; see the developer guide's
+continuous-integration section.
 
 Because that directory is shared, the diagnostics attached to a failure are
 filtered by modification time: a log untouched since the app launched is named

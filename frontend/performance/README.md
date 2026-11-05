@@ -1,5 +1,10 @@
 # Performance benchmarks
 
+The current implementation includes C1, R1, R2 and S1 below. Results are
+chronological, stage-local comparisons, not cumulative gains or release
+acceptance. The [maintenance status](../../docs/development-plan.md#performance-maintenance-unreleased)
+lists completed work and remaining measurements.
+
 Opt-in packaged-build measurements, separate from ordinary correctness tests.
 Requires Windows and Node 24. This uses the existing Playwright Electron driver
 and deterministic WAV generator; it does not build, install or publish an app.
@@ -237,11 +242,12 @@ The traced heavy loads attributed the following wall time:
 | `extreme` | 6.00 s | 5.27 s | 11.53 ms | 94.83 ms |
 | `chopped` | 12.11 s | 10.51 s | 18.98 ms | 170.74 ms |
 
-Source preparation ran once per clip. The current JUCE buffering preparation
-loop sleeps for 5 ms on every newly prepared buffer, consistent with the
+Source preparation ran once per clip. In this pre-C1 baseline, JUCE's buffering
+preparation loop slept for 5 ms on every newly prepared buffer, consistent with the
 observed serial warmup cost. This makes preparation the first measured native
 opening candidate, not graph publication. Read-ahead readiness and publication
-lifetimes have not been changed.
+lifetimes had not been changed at that checkpoint. C1 below subsequently
+replaced the unconditional sleep while retaining the deep-prefill barrier.
 
 These probes have no Electron renderer, waveform-request burst or frontend
 watchdog. They do not establish the cause of the earlier packaged failures or
@@ -799,10 +805,16 @@ source bytes and frozen build/dependency inputs match.
 Debug and Release each passed **523/523** native tests, all **36** built-app E2E
 journeys passed, and the extracted timing source passed formatting. Full strict
 clang-tidy 22.1.8 runs cover 162 candidate and 161 control translation units.
-**The strict lint gate remains nonzero in both arms** on the same pre-existing
+**At the S1 checkpoint, strict lint was nonzero in both frozen arms** on the same pre-existing
 `readability-redundant-member-init` finding at
 `backend\src\project\ProjectPerformanceTrace.h:86`. No new findings, suppression
 or unrelated source fix was introduced.
+
+A subsequent workspace-only lint cleanup removed the redundant initializer
+from `ProjectPerformanceTrace::Timestamp started`. Full strict clang-tidy
+22.1.8 then passed all 162 production translation units, and all four
+`ProjectTrace_` regressions passed against the rebuilt Debug engine. The
+historical S1 lint reports and benchmark packages were not rewritten.
 
 S1's complete package fingerprint is:
 

@@ -189,6 +189,13 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
+The latest released feature milestone documented here is **1.9.0**; current
+development builds are **1.10.0, unreleased**. Dependency maintenance and four
+measured performance changes are implemented, but installed-upgrade,
+hardware/listening and final combined performance acceptance are not complete.
+See the [current maintenance plan](development-plan.md#performance-maintenance-unreleased)
+and [packaged performance evidence](../frontend/performance/README.md).
+
 Silverdaw currently supports the core arrangement workflow:
 
 - Import audio into a project-scoped library by dropping files onto the Library,
@@ -595,8 +602,8 @@ keeps what is heard and what is exported the same. The preview voice was never
 affected: it leaves `AudioTransportSource::setSource` on its two-channel
 default.
 
-The main remaining roadmap areas are region selection on timeline clips, library
-search / tags / list view, and the
+The main remaining roadmap areas are region selection on timeline clips, richer
+library tagging / list view beyond the shipped name/artist/BPM filter, and the
 wider mixer / effects / automation work (a deeper per-clip processor chain
 beyond the per-track Tone EQ + Filter, Compressor, Punch, Saturation, and Bit Crusher,
 the project-wide Reverb and Delay sends, Glue Compressor, Safety Limiter, and Beat Repeat,
@@ -1869,7 +1876,8 @@ the way in, and the original file is never modified (non-destructive editing).
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp, the
 per-clip volume-shape multiplier, the per-clip turntable brake / backspin tail
 varispeed (`OffsetSource`), per-track summing and optional Beat Repeat, the
-per-track Tone EQ + bipolar Filter, the per-track Leveler, Punch, Saturation, and Bit Crusher
+per-track Tone EQ + bipolar Filter, the per-track Leveler, Saturation, Bit Crusher
+and Punch, followed by hosted VST3 inserts,
 ([`ToneEq`](../backend/src/dsp/ToneEq.h) / [`Leveler`](../backend/src/dsp/Leveler.h) /
 [`Punch`](../backend/src/dsp/Punch.h) /
 [`Saturation`](../backend/src/dsp/Saturation.h) /
@@ -1883,9 +1891,8 @@ playback and feeds the device. The
 to whatever the hardware expects. Float gives very large headroom, so
 intermediate sums can briefly exceed 0 dBFS without clipping as long as the
 final master is back in range. (`TrackChain` is the canonical per-track DSP
-seam shared by live playback and mixdown, running Tone → Leveler → Saturation → Bit Crusher → Punch → gain →
-mute/solo; further nodes are planned there — see the
-[Development Plan](development-plan.md).)
+seam shared by live playback and mixdown, running Tone → Leveler → Saturation →
+Bit Crusher → Punch → VST3 inserts → effective track gain, including mute/solo.)
 
 To stop sleep-prone audio output devices (notably generic USB-Audio-Class dongle DACs)
 from soft-muting and swallowing the first instants of playback, the engine keeps such
@@ -2026,6 +2033,13 @@ single summary lane. On the timeline, stereo lanes also reflect the track's
 **pan**: each channel's lane height and opacity scale with its normalised
 equal-power pan gain, so a hard-panned channel collapses to a faint near-flat
 lane while the other stays full — a centred track leaves both lanes full.
+
+Concurrent reads of the same cache path share one pending IPC promise through
+`readSharedPeaksCacheFile` (`lib/bridge/shared-peaks-cache-read.ts`). Its entry
+is removed when the read settles, including a failure, so this is not a
+persistent file cache and a later read can observe rewritten contents.
+`parsePeaksCacheBuffer` exposes typed-array views over that shared backing
+buffer rather than copying the full payload for every clip.
 
 The timeline waveform also reflects a clip's **volume shape**: each rendered
 column's height is scaled by the clip's gain envelope sampled at that point in
@@ -5247,12 +5261,22 @@ parent-level visibility gates. Their component code is requested only when the
 corresponding dialog or progress state becomes active, keeping it out of the
 initial renderer module graph.
 
-The timeline canvas is PixiJS. All world-space content (clip blocks, waveforms, grid lines,
-ruler ticks) is drawn once at absolute world coordinates into a `tracksLayer` / `rulerTicksLayer`,
-which are then translated by `-scrollX` / `-scrollY` on every scroll change. The result: scroll
-and auto-follow during playback are O(1) layer translations — no clip iteration, no Graphics
-allocation. A full repaint (`redraw()`) only fires on content change: track add/remove, clip
-move, peaks arrival, zoom, BPM, project length, header-column resize.
+The timeline canvas is PixiJS. World-space content is built only for the visible
+rows and a horizontal viewport band with overscan, not the whole arrangement.
+Horizontal scrolling and playback auto-follow translate the existing layers
+in O(1) until `horizontalRebuildNeeded()` requests a coalesced rebuild of that
+band. Vertical scrolling rebuilds the visible rows. Content changes, zoom,
+peaks arrival, BPM, project length and header-column resize also request a
+repaint (`useTimelineRepaintWatches.ts`).
+
+`timeline-scene-resources.ts` separates transient layer children from retained
+clip-renderer pools. Rebuilding destroys frame-owned children and graphics
+contexts, while pooled Graphics/Text/Mesh objects survive for reuse.
+Teardown also releases detached pool surplus and each mesh's owned geometry
+and buffers; shared textures, including `Texture.WHITE`, remain shared.
+This reduces resource retention, not a demonstrated FPS improvement. The
+[performance evidence](../frontend/performance/README.md) records the separate
+ordinary workloads and instrumented memory diagnostics.
 
 **Silenced tracks are dimmed at the palette, not the alpha.** A track that cannot be
 heard — `isTrackSilenced(track, anySoloed)` in `projectTypes.ts`, i.e. muted outright
@@ -5373,12 +5397,23 @@ Silverdaw is Windows-only. Developed in Visual Studio Code.
   workload is sufficient (it ships `cl.exe`, `link.exe`, the Windows SDK, `vswhere.exe` and the
   Developer Shell module that `scripts/Invoke-DevShell.ps1` relies on).
 - **CMake** ≥ 3.22 and **Ninja**.
-- **Node.js** ≥ 20 (LTS recommended). **pnpm** is activated via `corepack` (bundled with
-  Node) — the version is pinned by `frontend/package.json`'s `packageManager` field;
-  do not `npm i -g pnpm`.
+- **Node.js 24 LTS**, matching CI. Node 20 no longer satisfies the complete
+  toolchain: Electron's installer needs Node ≥ 22.12, Vitest 5 excludes Node 20,
+  and ESLint 10 needs at least 22.13 on the Node 22 line. Use the supported
+  Node 24 line rather than treating Node's major version alone as sufficient.
+- **Corepack** activates **pnpm**, pinned by `frontend/package.json`'s
+  `packageManager` field. The Node 24 installer includes Corepack; newer Node
+  majors may not. Ensure it is available before setup; do not install a
+  separate global pnpm or change the project's pin.
 
 JUCE 8.0.17-security and IXWebSocket are fetched automatically by CMake `FetchContent`; nothing to
 install by hand.
+
+CMake applies guarded Windows source patches from `backend/cmake/` to JUCE's
+buffer-preparation wait and IXWebSocket's writer polling. Configuration fails
+if the expected upstream code changes; review these patches when upgrading.
+Existing `*_GIT_TAG` cache entries must also be explicitly repinned: changing
+the defaults in `CMakeLists.txt` does not update an existing build tree.
 
 Release packaging additionally signs the MSIX with the Windows SDK `signtool.exe`.
 It ships with the MSVC **C++ build tools** workload above, and
@@ -5392,11 +5427,15 @@ matching Visual Studio Code tasks import the Visual Studio Developer Shell so `c
 ### One-shot setup (recommended)
 
 `scripts/Setup-Dev.ps1` brings a fresh Windows machine to a buildable checkout in a single
-command. It verifies each prerequisite, offers to install anything missing via `winget`,
+command. It checks for prerequisites, offers to install missing tools via `winget`,
 activates `pnpm` via `corepack`, runs `pnpm install` in `frontend/`, and configures the
 backend CMake cache in `backend/build/` with the Visual Studio 17 2022 generator and
 `SILVERDAW_BUILD_TESTS=ON` (CMake creates that directory itself — no
 manual `mkdir` is required).
+
+Install Node 24 first: the helper's older Node presence/version check does not
+enforce all current package-engine requirements. It also fetches the required
+LAME executable and decoder DLL before configuring CMake.
 
 ```powershell
 # Interactive: prompts before each winget install
@@ -5419,17 +5458,21 @@ If you'd rather install the tools yourself, the canonical `winget` IDs are:
 winget install --id Microsoft.VisualStudio.2022.BuildTools `
   --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 
-# CMake, Ninja, Node.js (LTS)
+# CMake and Ninja
 winget install --id Kitware.CMake
 winget install --id Ninja-build.Ninja
-winget install --id OpenJS.NodeJS.LTS
 
-# Cache the pnpm version pinned by frontend/package.json
+# After installing Node 24 LTS, cache the pinned pnpm from inside frontend
 corepack enable
 Push-Location frontend
 corepack install
 Pop-Location
 ```
+
+Install the Windows x64 Node 24 LTS MSI from the
+[Node 24 release channel](https://nodejs.org/download/release/latest-v24.x/).
+Do not assume the unversioned `OpenJS.NodeJS.LTS` winget package still selects
+the same major as CI.
 
 If you already have Visual Studio or Build Tools installed without the C++ workload, run the
 Visual Studio Installer and **Modify** the install to add *C++ build tools* (Build Tools SKU)
@@ -5441,6 +5484,9 @@ After running `scripts/Setup-Dev.ps1` (or installing the prerequisites manually)
 workspace root:
 
 ```powershell
+# 0. Manual setup only: fetch the required MP3 runtime pair before configure
+pwsh -NoProfile -File scripts\Fetch-Lame.ps1
+
 # 1. Configure + build the backend (Debug) — Setup-Dev already ran the configure step
 pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
   "cmake -S backend -B backend/build -G 'Visual Studio 17 2022' -DSILVERDAW_BUILD_TESTS=ON"
@@ -5648,12 +5694,18 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   Run it with:
 
   ```powershell
-  pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "pwsh -NoProfile -File scripts/Invoke-ClangTidy.ps1"
+  # Resolve the separately installed linter before the VS shell changes PATH.
+  # Its version must match CLANG_TIDY_VERSION in .github/workflows/ci.yml.
+  $tidy = (Get-Command clang-tidy -ErrorAction Stop).Source
+  & $tidy --version
+  pwsh -NoProfile -File scripts\Invoke-DevShell.ps1 `
+    "pwsh -NoProfile -File scripts\Invoke-ClangTidy.ps1 -Strict -ClangTidyPath '$tidy'"
   ```
 
-  The outer `Invoke-DevShell.ps1` is what puts the Visual Studio `clang-tidy` on
-  `PATH`. The console gets a per-check summary; the full output goes to
+  Use the workflow-pinned linter (currently the PyPI `clang-tidy==22.1.8`
+  package), not the older LLVM bundled with Visual Studio. The outer
+  `Invoke-DevShell.ps1` supplies MSVC headers/tools but otherwise puts that
+  bundled LLVM ahead on `PATH`. The console gets a per-check summary; full output goes to
   `clang-tidy-report.txt` at the repo root (gitignored), because a run emits
   thousands of lines and would otherwise scroll its own findings out of the
   terminal. Useful switches:
@@ -5679,11 +5731,12 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
     Studio's LLVM ahead of anything installed separately, so this is how CI
     guarantees it runs the pinned version the baseline was set with.
 
-  A run is parallel by default: when LLVM's `run-clang-tidy.exe` sits alongside
-  the chosen `clang-tidy` — it does in both the Visual Studio and PyPI
-  distributions — it fans the 133 sources out across cores. Only that copy is
-  used, never one found on `PATH`, so the driver always matches the linter.
-  Measured on a 16-core machine, a full run goes from about 400 seconds serial
+  A run uses parallel workers when LLVM's `run-clang-tidy.exe` sits alongside
+  the chosen `clang-tidy`. Not every distribution includes that driver; the
+  PyPI linter can therefore use the serial path. Only the matching adjacent
+  driver is used, never one found elsewhere on `PATH`. Source counts follow
+  the current tree rather than a fixed documented total.
+  Historical measurements on a 16-core machine went from about 400 seconds serial
   to 85 parallel; 8 jobs took 104 seconds and 24 and 32 both took 83, so the
   curve flattens at roughly the core count and the default needs no tuning.
 

@@ -2,9 +2,11 @@
 
 Static files referenced at runtime by the Electron main process and at
 packaging time by electron-builder. Kept **outside** the build output
-so they're addressable via `app.getAppPath()` in `pnpm dev` and via
-`process.resourcesPath` in a packaged install, without needing to be
-re-emitted by Vite.
+so the main process can resolve icons through `app.getAppPath()` in both dev
+and packaged runs. `electron-builder.yml` includes `resources/icons/**` in the
+application ASAR; it is not an `extraResources` icon directory under
+`process.resourcesPath`. Renderer image imports/public assets are handled by
+the renderer's Vite configuration.
 
 ## `icons/`
 

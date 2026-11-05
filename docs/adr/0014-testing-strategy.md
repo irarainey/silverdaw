@@ -2,6 +2,13 @@
 
 - **Date:** 2026-05-14 · **Amended:** 2026-07-29 · **Status:** Accepted · **Owner:** @irarainey · **Importance:** `IMPORTANT`
 
+**Harness clarification (2026-11-05):** Vue Test Utils in the original decision
+below is not installed. Current Vitest runs in a `node` environment, with pure
+logic/stores/composables covered there and rendered-component behaviour in
+Playwright. The normal E2E tier starts built `out/` bundles, not a packaged
+distribution; opt-in packaged performance studies are separate. No framework
+or testing-policy change is introduced by this clarification.
+
 ## Decision
 
 - **Backend:** a custom `SilverdawBackendTests` harness wired into **CTest** — no

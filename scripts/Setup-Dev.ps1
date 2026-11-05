@@ -14,12 +14,15 @@
            - MSVC Build Tools for Visual Studio 2022 (C++ workload)
            - CMake (>= 3.22)
            - Ninja
-           - Node.js (>= 20)
-         pnpm is activated via `corepack` (ships with modern Node).
+           - Node.js 24 LTS (install first, matching CI)
+         The older presence/version check does not enforce every current
+         package-engine requirement. pnpm is activated via `corepack`,
+         included with Node 24; it must already be available.
 
       2. Frontend — runs `pnpm install` in `frontend/`.
 
-      3. Backend — configures the Debug CMake cache in `backend/build/`
+      3. Backend — fetches the required LAME executable/decoder DLL when
+         absent, then configures the Debug CMake cache in `backend/build/`
          (via scripts/Invoke-DevShell.ps1 so cl.exe is on PATH). CMake
          creates the build directory itself; no manual mkdir needed.
          Pass -BuildBackend to also compile the Debug binary.
@@ -217,7 +220,7 @@ if (-not $SkipPrereqs) {
     }
 
     # pnpm (via corepack) -------------------------------------------------
-    # corepack ships with Node >= 16.13 and is the supported way to pin pnpm
+    # The Node 24 toolchain includes Corepack, used to activate the pnpm pin.
     # to the version declared in frontend/package.json's `packageManager`.
     if (-not (Test-CommandOnPath 'corepack')) {
         throw "corepack not found. Your Node.js install is too old; please upgrade to Node >= 20."

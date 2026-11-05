@@ -270,9 +270,12 @@ Two points worth keeping:
   showed GPL-3.0-or-later. The per-file header was checked as well as `COPYING`,
   since projects do sometimes differ between the two.
 
-A consequence worth stating: a GPL dependency means Silverdaw could never ship
-as a plugin or through an app store. That is already outside its scope — it is a
-standalone application that *hosts* plugins — but the door is now closed.
+**Documentation correction (2026-11-05):** the earlier blanket claim that a GPL
+dependency precludes every app-store distribution was unsupported and
+contradicted Silverdaw's released Microsoft Store status (ADR 0019).
+Distribution must satisfy the applicable licence and store terms; this licence
+inventory is not a legal clearance or a new distribution decision. Silverdaw
+remains a standalone application that hosts plugins.
 
 ### Rejected alternatives
 

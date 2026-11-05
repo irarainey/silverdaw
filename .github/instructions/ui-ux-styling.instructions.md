@@ -69,12 +69,14 @@ Rules:
   recolouring the `.dialog-card` border.
 - Reserve `red` for genuinely destructive/irreversible choices and real errors.
   A plain Cancel/Close is `.dialog-btn-cancel` (neutral zinc), never red.
-- **One deliberate exception — categorical data-viz.** Two palettes
-  intentionally span the full colour wheel (including otherwise-forbidden
-  families) so that each entry is distinguishable: the musical key badges
+- **One deliberate exception — categorical data-viz.** Category palettes
+  intentionally use otherwise-forbidden colour families so entries remain
+  distinguishable: the musical key badges
   (`lib/keyBadge.ts`) and the user-selectable track colours (`TRACK_PALETTE` in
-  `stores/projectTypes.ts`). This is categorical encoding, not chrome — the "one
-  accent" rule does not apply to either. Do not fold them into `sky`.
+  `stores/projectTypes.ts`), plus the existing library-kind artwork fallbacks
+  (source `sky`, stem `teal`, sample `indigo` in `LibrarySourceGroup.vue`).
+  These encode data, not interactive chrome; do not fold them into `sky` or
+  extend those colours to action buttons.
 
 ## 2. Surfaces & elevation
 

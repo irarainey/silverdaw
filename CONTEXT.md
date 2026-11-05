@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-04 · Owner: @irarainey_
+_Last reviewed: 2026-11-05 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -84,6 +84,13 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
+Development builds are **1.10.0, unreleased**. Dependency migrations and measured
+opening, waveform-memory, viewport-resource and Save As snapshot improvements
+are implemented. The stress-memory follow-up did not consistently reproduce
+the initial increase; it is not proof of no regression. Remaining performance
+and release-acceptance work is tracked in
+`docs/development-plan.md#performance-maintenance-unreleased`, with measurements
+and limitations in `frontend/performance/README.md`.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
@@ -147,7 +154,8 @@ and saved projects must keep working across every update (see ADR 0019).
   ADR 0012 (detailed tokens in `.github/instructions/ui-ux-styling.instructions.md`).
 - `IMPORTANT` — **Audio playback performance is always first-class.** JUCE-level
   optimisation on the audio path is expected, balanced against maintainable code.
-  See ADR 0017 (firm figures in `docs/developer-guide.md#rendering-performance`).
+  See ADR 0017, `docs/developer-guide.md#rendering-performance`, and the measured
+  evidence in `frontend/performance/README.md`.
 - `IMPORTANT` — **Inaudible tracks perform no per-track audio work.** Muted,
   solo-excluded, and fully attenuated tracks skip clip reads, warp, pitch,
   effects, sends, and metering while remaining live-editable. See ADR 0020.

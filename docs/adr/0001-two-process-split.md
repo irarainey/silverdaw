@@ -8,6 +8,13 @@ Silverdaw is two processes: an Electron 42 + Vue 3 UI and a headless JUCE 8 C++
 audio engine (`SilverdawBackend.exe`). Electron main spawns and supervises the
 engine; they communicate over a loopback bridge (ADR 0003).
 
+**Implementation clarification (2026-11-05):** Electron 42 above is the
+historical pin, not the current runtime; current pins live in
+`frontend/package.json` and `backend/CMakeLists.txt`. ADR 0025 later introduced
+transient plugin-scan workers and backend-owned native plugin editor windows.
+Its `juce_gui_basics` exception supersedes the original unused-GUI rationale
+below without changing the two long-lived architectural peers.
+
 ## Why
 
 - Fault isolation — a driver or audio-callback fault takes down the engine

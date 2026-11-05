@@ -16,12 +16,17 @@
   path with intent and comment the *why*; keep cold paths clear and simple. Don't
   trade clarity for micro-optimisation off the audio path, and don't trade
   playback integrity for tidiness on it.
-- Firm figures and the concrete rendering discipline (O(1) scroll layers, peaks
+- Concrete rendering discipline (O(1) horizontal translations within overscan, peaks
   LOD pyramid, pooled PixiJS display objects, 60 Hz playhead envelopes, ~30 Hz
   draft coalescing, sub-2 ms loopback round-trip) live in
   `docs/developer-guide.md#rendering-performance` and
   `docs/development-plan.md` → Key Engineering Risks — read them when the task
   touches performance.
+
+These characteristics and engineering targets are not universal measured
+guarantees. Current packaged measurements and their limitations live in
+`frontend/performance/README.md`; in particular memory reductions alone do not
+prove higher FPS or lower audio latency.
 
 ## Why
 

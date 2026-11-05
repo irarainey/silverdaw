@@ -24,6 +24,9 @@ tightly-scoped visual language:
 
 The detailed tokens, component classes, and patterns are the load-on-demand
 reference in `.github/instructions/ui-ux-styling.instructions.md`.
+Its existing categorical data palettes (keys, track colours and library-kind
+artwork) are not interactive chrome and are the documented exception to the
+small chrome palette.
 
 ## Why
 
