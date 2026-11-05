@@ -829,6 +829,78 @@ not establish rare-failure reliability, and the historical no-PONG cause
 remains unproved. No installer, distribution archive, installation, commit,
 tag or release was created.
 
+## Stress memory follow-up
+
+The S1 screen's +7.7% stress sampled-private difference was investigated
+without changing production code or replacing any earlier sample. Approximate
+phase alignment places the original ten stress peaks during scrolling or
+zooming, before Save As. That does not exclude an effect from S1's earlier
+project-load snapshot, but the post-Save As work itself cannot explain those
+earlier peaks. The old reports did not record Electron process roles.
+
+A separate fixed study ran five identical-binary R2/R2 A/A pairs and five
+R2/S1 A/B pairs: 20 trials, alternating arm and pair-block order. It retained
+the v3 interaction workload, fresh profiles/copied projects, disabled native
+tracing and the unchanged 2,048 MiB / 60-second guards. Electron process roles
+and asynchronous phase-boundary process-memory snapshots were added equally
+to all arms. No CDP heap session or allocation profiler ran during the
+interaction workload.
+
+The original-window sample count was recorded before a separate two-second
+unforced-idle tail and post-workload heap/GC diagnostic. The table excludes
+that tail and GC; the guards still cover them. All 20 trials qualified, with
+complete waveforms, correct native saves, stable backend PIDs and no
+renderer/lifecycle errors. All ten matched pairs had equal path-normalised
+authoritative snapshots.
+
+| Contrast | First-arm median peak private | Second-arm median peak private | Median paired change | Descriptive 95% paired interval |
+| -------- | ----------------------------: | -----------------------------: | -------------------: | -----------------------------: |
+| Identical R2 / R2 | 811.7 MiB | 778.7 MiB | -4.26% | -8.35% to -1.32% |
+| R2 / S1 | 792.4 MiB | 800.4 MiB | -0.52% | -2.68% to +7.56% |
+
+Percentages are paired log-ratio estimates, not ratios of separate medians.
+The identical binary produced paired differences of 10.9-71.0 MiB in
+magnitude, demonstrating that this small study can show an apparent
+directional effect without a code change. Those observations are not a
+universal noise threshold. The R2/S1 increase did not reproduce consistently;
+its paired differences ranged from -20.8 to +56.1 MiB.
+
+Role attribution places the combined peaks during scrolling/zooming in this
+study too. Renderer process peaks varied from 181.3 to 266.3 MiB across R2
+runs and 204.6 to 262.8 MiB across S1 runs. Native peaks across all arms stayed
+at 136.8-137.5 MiB. R2/S1 median individual GPU-process peaks were 372.8 and
+372.4 MiB; separate process maxima occur at different times and must not be
+summed into a combined peak.
+
+Immediately before diagnostic GC, renderer private memory was 187.4-213.5 MiB.
+The separate GC diagnostic reduced it to 112.6-128.3 MiB. V8's reported total
+heap size fell from 78.7-93.7 MiB to 20.7-22.0 MiB, and used heap converged to
+19.326-19.379 MiB across all 20 trials. This supports substantial transient
+allocation/collection variability rather than equivalent retained live data.
+GPU-process private bytes remained variable and are not GPU-live allocations.
+
+The evidence does **not** establish a repeatable S1-specific retained-memory
+regression or identify the exact allocation responsible for the original
+difference. Five pairs per contrast, phase-boundary observer effects and
+post-GC convergence cannot prove absence of a smaller regression or leak.
+The original +7.7% result remains recorded above; it is not retrospectively
+discarded or reclassified as a gain. No speculative cache, forced production
+GC, sampling change or memory-budget relaxation was introduced.
+
+Protocol, original-peak attribution, all comparisons and integrity ledger are
+at repository-root `.cache\performance\stress-memory-20261105T215424`.
+Raw reports, process-role/phase snapshots, post-workload heap diagnostics,
+screenshots and exact collector/helpers are retained relative to `frontend`:
+
+```text
+.cache\performance\stress-memory-screen-2026-11-05T21-55-57-137Z
+```
+
+Both studied packages, all eight earlier reference packages and all six corpus
+fingerprints remain unchanged. No recorded experiment processes remained.
+No application code, installer, distribution archive, commit, tag or release
+was created.
+
 ## Recorded diverse baseline
 
 On 2026-11-05, all six projects in `corpus-diverse-v2` received exactly five
