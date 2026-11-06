@@ -745,7 +745,7 @@ are outside these dependency stages.
 
 ## Performance maintenance (unreleased)
 
-Status reviewed 2026-11-05. Four focused changes are implemented and measured
+Status reviewed 2026-11-06. Four focused changes are implemented and measured
 on preserved packaged builds:
 
 | Stage | Implemented change | Evidence and limits |
@@ -755,6 +755,7 @@ on preserved packaged builds:
 | R2 | Explicit transient scene ownership, retained clip pools and owned geometry disposal. | Reduced sampled private memory across the corpus; no clear FPS gain. |
 | S1 | Serialize effective timing from the existing clip node instead of rescanning by ID. | Reduced dense-project post-Save As snapshot time; not a general disk-write or Ctrl+S speed claim. |
 | Stress follow-up | Fixed five-pair A/A and five-pair A/B memory attribution study. | All 20 trials qualified and ten snapshot pairs matched. The initial +7.7% difference did not reproduce consistently; no exact original allocation cause or absence of all regressions was proved. No runtime change was justified. |
+| Combined reference screen | Fixed five-pair M1/S1 comparison across all six projects, containing all four optimisations together. | Candidate 30/30, reference 29/30; reference no-PONG restart excludes chopped comparisons. Eligible large/stress/extreme opening and memory improved; two extreme candidate scroll tails slowed. No clear combined Save As gain. Full-corpus comparative acceptance remains incomplete. |
 
 Measurements, confidence limits, original failures, complete workload/capture
 provenance and preservation checks are in
@@ -766,14 +767,19 @@ remain unchanged.
 
 Remaining work, in separate evidence-led stages:
 
-- Profile scroll/zoom responsiveness and allocation churn; memory reductions
-  alone do not establish smoother rendering.
+- Profile scroll/zoom responsiveness and allocation churn, including the two
+  slower extreme candidate scroll trials in the
+  [combined screen](../frontend/performance/README.md#combined-reference-screen).
+  Memory reductions alone do not establish smoother rendering.
 - Measure playback/seek latency, audio-callback headroom and actual dropouts
   with suitable instrumentation and fixed hardware/settings.
-- Capture a native failure if the historical no-PONG restart recurs. Its cause
-  remains unproved; do not relax watchdog or readiness guards to hide it.
-- Compare the final combined build with a preserved reference across the full
-  corpus, retaining failures and validating project/save equivalence.
+- Capture a native stack/phase trace for the recurring no-PONG restart. The
+  combined screen reproduced it in the reference with tracing disabled;
+  its cause remains unproved. Do not relax watchdog/readiness guards.
+- Close the chopped reference qualification gap before claiming full-corpus
+  comparative acceptance. Preserve the completed combined screen and its
+  failure; subsequent diagnostic studies are not replacement trials. Any
+  further runtime changes require their own regression comparison.
 - Complete hardware/listening, native-dialog and installed/Store-upgrade
   acceptance before a release. Local packaging or portable benchmarks do not
   complete these gates.

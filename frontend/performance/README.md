@@ -1,8 +1,10 @@
 # Performance benchmarks
 
-The current implementation includes C1, R1, R2 and S1 below. Results are
-chronological, stage-local comparisons, not cumulative gains or release
-acceptance. The [maintenance status](../../docs/development-plan.md#performance-maintenance-unreleased)
+The current implementation includes C1, R1, R2 and S1 below. Their stage-local
+results must not be added together; the
+[combined reference screen](#combined-reference-screen) measures all four
+together against preserved M1. Neither establishes release acceptance.
+The [maintenance status](../../docs/development-plan.md#performance-maintenance-unreleased)
 lists completed work and remaining measurements.
 
 Opt-in packaged-build measurements, separate from ordinary correctness tests.
@@ -912,6 +914,116 @@ Both studied packages, all eight earlier reference packages and all six corpus
 fingerprints remain unchanged. No recorded experiment processes remained.
 No application code, installer, distribution archive, commit, tag or release
 was created.
+
+## Combined reference screen
+
+On 2026-11-06, the preserved M1 package (before C1/R1/R2/S1) was compared with
+the final preserved S1 package containing all four changes. Their fingerprints
+are `c963599405f4354422a5a705c70c6f0eadca333613429e656553d4eb9114beab`
+and `7afb477cbab84f7cb1ad18156683e62d20f8b8753cdcba3d2c4b64bc954061c7`.
+Only `resources\app.asar` and the packaged backend executable differ;
+Electron and the other runtime files are unchanged. This is a total comparison
+against M1, not against released 1.9.0. No package was rebuilt: the later
+workspace lint-only, documentation and pnpm-policy cleanup are not in S1.
+
+The fixed schedule used five alternating pairs per case, serial round-robin:
+60 trials with fresh profiles/project copies, the existing v3 workload and the
+same passive Save As observer/snapshot wait in both arms. Native tracing,
+profiling and forced GC were disabled. The 2,048 MiB and 60-second guards were
+unchanged. Machine/GPU/viewport checks and the Windows power scheme matched;
+OS caches and outside activity on the shared machine remain uncontrolled.
+
+The candidate qualified **30/30**, the reference **29/30**. The screen therefore
+**failed full-corpus qualification**. `chopped-3-control` restarted during
+project open at `2026-11-06T09:04:33.292Z` after
+`no PONG after 3 probes`. Its report, screenshot, UI text and temporary evidence
+remain preserved, without replacement trials. Tracing was disabled, so no
+native failure stack/phase trace was captured. The cause remains unproved,
+and the clean candidate screen does not prove the watchdog issue is fixed.
+All chopped comparative metrics are excluded, not computed from survivors.
+
+All 59 successful trials passed native content, complete-waveform,
+backend-PID and renderer/lifecycle checks. All 29 successful matched pairs had
+equal full authoritative snapshots after normalising only the per-trial
+project-directory prefix. Their complete native saved JSON payloads also
+matched after that path normalisation and excluding the top-level wall-clock
+`savedAt` written by `ProjectFile::save`. Original files, timestamps, schema/app
+versions and all project fields remain archived; no processing field was
+excluded.
+
+| Case | Reference / candidate qualified | Reference median shell-open | Candidate median shell-open | Median paired change | Descriptive 95% paired interval |
+| ---- | ------------------------------: | --------------------------: | --------------------------: | -------------------: | -----------------------------: |
+| `smoke` | 5/5 / 5/5 | 2.98 s | 2.52 s | -17.1% | -48.1% to +1.0% |
+| `large` | 5/5 / 5/5 | 3.52 s | 2.48 s | -30.1% | -35.2% to -20.1% |
+| `stress` | 5/5 / 5/5 | 5.61 s | 3.01 s | -48.2% | -55.3% to -46.1% |
+| `extreme` | 5/5 / 5/5 | 8.90 s | 3.11 s | -63.0% | -67.3% to -55.1% |
+| `chopped` | 4/5 / 5/5 | excluded | excluded | excluded | excluded |
+| `longform` | 5/5 / 5/5 | 2.78 s | 2.50 s | -1.5% | -27.8% to +1.7% |
+
+Large/stress/extreme show opening gains; smoke/longform do not establish a
+clear gain. Paired changes are median log(candidate/reference), not ratios of
+separate medians. Intervals use 10,000 deterministic bootstrap resamples of
+five pairs and remain descriptive. Shell-open ends at shell/canvas plus two
+RAFs; later complete-waveform qualification is not a timed readiness endpoint
+or a guarantee of GPU presentation.
+
+| Case | Reference median sampled peak private | Candidate median sampled peak private | Median paired change | Descriptive 95% paired interval |
+| ---- | ------------------------------------: | ------------------------------------: | -------------------: | -----------------------------: |
+| `smoke` | 608.0 MiB | 564.6 MiB | -7.7% | -12.5% to -5.0% |
+| `large` | 840.1 MiB | 654.2 MiB | -22.4% | -24.1% to -21.8% |
+| `stress` | 1,035.0 MiB | 814.7 MiB | -21.6% | -26.2% to -18.5% |
+| `extreme` | 1,224.2 MiB | 984.0 MiB | -20.0% | -22.9% to -16.7% |
+| `chopped` | excluded | excluded | excluded | excluded |
+| `longform` | 936.3 MiB | 601.7 MiB | -36.1% | -36.7% to -33.9% |
+
+These are one-second combined private-memory samples, not instantaneous
+high-water marks or GPU-live bytes. The earlier A/A study shows that smaller
+memory differences can arise without a code change; its spread is not a
+universal threshold. Sampled-window CPU medians also fell in the paired
+stress/extreme/longform comparisons by 14.8%/16.0%/14.7%, with descriptive
+intervals excluding zero. This does not measure whole-process CPU cost.
+
+Rendering throughput did **not** improve clearly. Median paired scroll/zoom
+RAF p95 changes were about +/-0.6%, but **two extreme candidate trials**
+(pairs 2 and 4) had scroll p95 of 33.3 and 33.2 ms versus 17.0 ms in their
+reference trials. All five extreme reference scroll p95 values were
+16.9-17.0 ms; candidate scroll p99 remained around 33.4 ms, similar to control.
+The paired p95 interval reaches +95.9%. These slower-tail observations are
+retained and require responsiveness/allocation profiling, not a claim that
+lower memory makes rendering smoother or proof of a particular cause.
+
+| Case | Reference median Save As snapshot receipt | Candidate median Save As snapshot receipt | Median paired change | Descriptive 95% paired interval |
+| ---- | ---------------------------------------: | ---------------------------------------: | -------------------: | -----------------------------: |
+| `smoke` | 31.4 ms | 43.3 ms | +24.8% | -26.7% to +93.2% |
+| `large` | 41.3 ms | 51.7 ms | +36.3% | -33.8% to +95.4% |
+| `stress` | 76.6 ms | 71.2 ms | -10.0% | -18.5% to +1.4% |
+| `extreme` | 159.1 ms | 157.6 ms | -3.1% | -37.1% to +4.5% |
+| `longform` | 24.5 ms | 27.5 ms | +17.3% | -18.4% to +26.8% |
+
+Every eligible snapshot interval includes zero; no clear combined Save As
+gain is established. The median paired absolute increases in smoke/large/
+longform were 8.6/15.0/4.9 ms. The dense chopped comparison, where S1's earlier
+stage-local benefit was measured, is unavailable here. Acknowledgement
+intervals also include zero. Observer timings include event delivery and have
+no same-endpoint A/A calibration; they are not isolated native CPU, disk-write,
+Ctrl+S or renderer-paint timings. Earlier S1 results remain separate evidence.
+
+The manifest, analyses, 59 archived native saves and final integrity/cleanup
+ledger are at repository-root `.cache\performance\combined-20261106T085148`.
+Raw reports, screenshots, failure evidence and exact collector/helpers are
+retained relative to `frontend`:
+
+```text
+.cache\performance\combined-screen-2026-11-06T08-52-00-495Z
+```
+
+Both studied packages, all eight earlier reference packages and all six corpus
+fingerprints remained unchanged. No recorded experiment processes remained.
+Windows denied complete cleanup of residual files in all 59 successful
+temporary copies; their exact paths/errors are recorded, and the failed
+trial's directory is deliberately retained. No permissions/security controls
+were changed to force deletion. No application code, distribution build,
+installation, commit, tag or release was created.
 
 ## Recorded diverse baseline
 
