@@ -140,8 +140,9 @@ Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Backend specifics:
 - Add/update tests for model persistence, bridge-relevant state, timing and
   warp-ratio math, cache behaviour, and every bug fix; smoke-test third-party DSP
   where full audio assertions would be brittle.
-- Run `ctest --test-dir backend/build --build-config Debug --output-on-failure`
-  after C++ changes (configure/build via the repo scripts or CMake first).
+- Configure/build first, then run CTest through the MSVC developer wrapper:
+  `scripts/Invoke-DevShell.ps1 "ctest --test-dir backend/build --build-config Debug --output-on-failure"`.
+  The developer environment is required for configure, build and test commands.
 - When packaging-related changes affect Windows runtime deps, inspect the release
   executable with `dumpbin /dependents`.
 

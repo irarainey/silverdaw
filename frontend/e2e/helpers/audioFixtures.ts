@@ -11,7 +11,7 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { makeTrackedTempDir } from './tempDirs'
+import { makeTrackedTempDir } from './tempDirs.ts'
 
 export interface ToneOptions {
   /** File name including the `.wav` extension. */
@@ -26,6 +26,10 @@ export interface ToneOptions {
    * without making a noise on the machine running the suite.
    */
   amplitude?: number
+  /** Optional second harmonic, amplitude modulation and edge fades. */
+  harmonicGain?: number
+  modulationHz?: number
+  fadeMs?: number
 }
 
 const BYTES_PER_SAMPLE = 2
@@ -37,18 +41,30 @@ const FULL_SCALE = 0x7fff
  * still being real audio the engine must decode and summarise.
  */
 export function createToneWav(options: ToneOptions = {}): string {
+  const dir = makeTrackedTempDir('audio')
+  const filePath = join(dir, options.fileName ?? 'tone.wav')
+  writeToneWav(filePath, options)
+  return filePath
+}
+
+/** Writes the same deterministic signal into a caller-owned fixture directory. */
+export function writeToneWav(filePath: string, options: ToneOptions = {}): void {
   const {
-    fileName = 'tone.wav',
     seconds = 2,
     sampleRate = 44_100,
     frequencyHz = 440,
     channels = 2,
-    amplitude = 0.5
+    amplitude = 0.5,
+    harmonicGain = 0,
+    modulationHz = 0,
+    fadeMs = 0
   } = options
 
   const peak = Math.min(Math.max(amplitude, 0), 1)
 
   const frameCount = Math.floor(seconds * sampleRate)
+  const harmonic = Math.min(Math.max(harmonicGain, 0), 1)
+  const fadeFrames = Math.max(0, (fadeMs * sampleRate) / 1000)
   const dataBytes = frameCount * channels * BYTES_PER_SAMPLE
   const buffer = Buffer.alloc(44 + dataBytes)
 
@@ -70,16 +86,22 @@ export function createToneWav(options: ToneOptions = {}): string {
   // The default leaves headroom, so a journey that adds gain cannot clip and
   // turn an assertion about levels into a false negative.
   for (let frame = 0; frame < frameCount; frame++) {
-    const value = Math.round(
-      Math.sin((2 * Math.PI * frequencyHz * frame) / sampleRate) * FULL_SCALE * peak
-    )
+    const phase = (2 * Math.PI * frequencyHz * frame) / sampleRate
+    const carrier =
+      harmonic > 0
+        ? (Math.sin(phase) + harmonic * Math.sin(2 * phase)) / (1 + harmonic)
+        : Math.sin(phase)
+    const modulation =
+      modulationHz > 0
+        ? 0.55 + 0.45 * Math.cos((2 * Math.PI * modulationHz * frame) / sampleRate)
+        : 1
+    const fade =
+      fadeFrames > 0 ? Math.min(1, frame / fadeFrames, (frameCount - 1 - frame) / fadeFrames) : 1
+    const value = Math.round(carrier * modulation * fade * FULL_SCALE * peak)
     for (let channel = 0; channel < channels; channel++) {
       buffer.writeInt16LE(value, 44 + (frame * channels + channel) * BYTES_PER_SAMPLE)
     }
   }
 
-  const dir = makeTrackedTempDir('audio')
-  const filePath = join(dir, fileName)
   writeFileSync(filePath, buffer)
-  return filePath
 }

@@ -3,10 +3,9 @@
 # Produces a Windows MSIX/AppX package (`Silverdaw-<version>.appx`), a portable
 # zip (`Silverdaw-<version>.zip` — extract and run, no install/cert), plus an
 # unpacked app directory under `<repo>/dist/win-unpacked/` for local smoke
-# tests. The JUCE backend exe + the icon set are shipped as `extraResources`
-# so they land in `<install>/resources/` next to the asar archive — see
-# `startBackend()` in `src/main/index.ts` which resolves them from
-# `process.resourcesPath`.
+# tests. The JUCE backend exe and native dependencies ship as `extraResources`
+# under `<install>/resources/backend/`, resolved from `process.resourcesPath`.
+# Icons remain inside the application ASAR and use `app.getAppPath()`.
 #
 # MSIX replaces the previous NSIS installer: the NSIS `System.dll` plugin was
 # crashing intermittently at launch (0xC0000005) when Windows Defender scanned
@@ -30,10 +29,9 @@ directories:
 # entry pulls in production dependencies (music-metadata + its transitive
 # tree); electron-builder automatically filters dev-only packages using
 # package.json `dependencies` vs `devDependencies`, so the asar stays
-# lean. Without an explicit `node_modules` entry the main bundle's
-# `require('music-metadata')` (and friends like `ieee754` underneath it)
-# fail to resolve in the packaged app — `externalizeDepsPlugin()` in
-# electron-vite keeps those imports as runtime requires.
+# lean. The current electron-vite config additionally bundles music-metadata
+# and its pure-JS tree to protect against production-collector omissions.
+# Keep that bundling policy and this production-dependency closure consistent.
 files:
   - out/**
   - resources/icons/**
@@ -78,6 +76,7 @@ extraResources:
       # `process.resourcesPath/backend/lame.exe`. MP3 import and export both
       # depend on it.
       - lame.exe
+      - libmpg123-0.dll
       # onnxruntime.dll (Microsoft-built) dynamically links the VC++ runtime, which
       # a clean machine may lack and MSIX does not auto-provide. The backend copies
       # these app-local next to SilverdawBackend.exe (see backend/CMakeLists.txt) so
@@ -92,6 +91,8 @@ extraResources:
     to: LICENSE
   - from: ../THIRD_PARTY_LICENSES.md
     to: THIRD_PARTY_LICENSES.md
+  - from: ../backend/third_party/lame/COPYING.mpg123
+    to: licenses/mpg123-COPYING.txt
 
 # Register `.silverdaw` as a first-class file type so double-clicking a
 # project in Explorer launches (or signals an already-running) Silverdaw
@@ -171,9 +172,8 @@ appx:
   # Desktop Windows 10 and 11. TargetDeviceFamily is `Windows.Desktop`
   # (electron-builder's manifest template — never `Windows.Universal`, so this
   # is a desktop Win32 app, not a PWA/UWP). MinVersion is the Windows 10 1809
-  # baseline (the common Store minimum); nothing in the app requires Windows 11
-  # (Electron 42/Chromium, JUCE, runFullTrust and the DirectML/onnxruntime
-  # redistributables all support Windows 10 1809+).
+  # manifest baseline. Validate current Electron/JUCE/native payloads on the
+  # supported Windows versions during acceptance; a manifest is not a test.
   minVersion: "10.0.17763.0"
   maxVersionTested: "10.0.22621.0"
   # Full trust plus the microphone device capability: recording captures audio in

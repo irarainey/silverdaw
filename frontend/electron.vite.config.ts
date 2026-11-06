@@ -1,29 +1,18 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
 
 export default defineConfig({
   main: {
-    plugins: [
-      // Bundle `music-metadata` (the main process's only npm-published
-      // runtime dep) into `out/main/index.js` instead of leaving it as
-      // a runtime `require()`. electron-builder's production-dependency
-      // walker has flaky support for pnpm's node_modules topology —
-      // even in `nodeLinker: hoisted` mode it silently drops transitive
-      // deps (we hit it with `ieee754` under `token-types` under
-      // `music-metadata`), producing a packaged app that crashes on
-      // launch with "Cannot find package '<x>'". Inlining the dep + its
-      // entire tree side-steps the walker entirely. Pure-JS deps only;
-      // anything native would need to stay external.
-      externalizeDepsPlugin({ exclude: ['music-metadata'] })
-    ],
     build: {
+      // Bundle metadata and its pure-JS tree; the production collector has
+      // previously omitted transitives even with hoisted pnpm linking.
+      externalizeDeps: { exclude: ['music-metadata'] },
       outDir: 'out/main'
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
       outDir: 'out/preload',
       // Force CommonJS output for the preload bundle. The renderer runs with
@@ -31,7 +20,7 @@ export default defineConfig({
       // accepts CJS preload scripts in sandboxed renderers — an ESM preload
       // is silently rejected, which leaves `window.silverdaw` undefined and
       // every menu-driven IPC call (Import, Toggle DevTools, …) no-ops.
-      rollupOptions: {
+      rolldownOptions: {
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs'
@@ -62,7 +51,7 @@ export default defineConfig({
     plugins: [vue(), tailwindcss()],
     build: {
       outDir: 'out/renderer',
-      rollupOptions: {
+      rolldownOptions: {
         input: {
           index: resolve(__dirname, 'src/renderer/index.html')
         }

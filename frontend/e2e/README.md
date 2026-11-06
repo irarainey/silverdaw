@@ -12,6 +12,10 @@ rather than a broad grid.
 
 ## Running
 
+Large-session packaged performance projects and opt-in measurements are
+documented in [performance benchmarks](../performance/README.md). They are not
+collected by the normal E2E suite.
+
 ```text
 pnpm test:e2e         # builds out/, then runs the suite
 pnpm test:e2e:only    # skips the build — only when out/ is known current
@@ -38,7 +42,7 @@ backend tests — no extra configuration.
 The panel's ▶ runs the Playwright runner directly, exactly like
 `test:e2e:only`, so it does **not** build first. Discovery is unaffected — the
 tests always list — but a run against stale bundles stops at the freshness
-guard above. Run the `frontend: build` task (or `pnpm --dir frontend build`)
+guard above. Run the `frontend: build` task (or `pnpm build` from `frontend`)
 after changing `src/`, then re-run.
 
 The e2e tier does not build or check the C++ backend. A backend change needs its
@@ -66,8 +70,8 @@ gesture. Creating a library sample requires selecting a region in the clip
 editor; a tempo journey needs the playhead off the origin and a range selected,
 and the markers journey needs the playhead off the origin twice — which are a
 press and a drag on the timeline ruler (`helpers/timeline.ts`). All
-are real pointer input a user performs, rather than synthesised drag-and-drop,
-and the assertions either side are DOM state or the saved project file —
+use browser-level pointer input for gestures a user performs, rather than
+synthesised drag-and-drop. The assertions are DOM state or the saved project file —
 nothing is read back from the canvas itself. The ruler helper locates itself
 from the header-resize divider, so a resized header column cannot silently move
 the gesture into the track headers.
@@ -91,6 +95,16 @@ one exception, and only in the markers journey: the bar rebuilds on every
 project-state change and drops whatever was open, so an open issued right after
 a keypress can be discarded before it is read. The open is retried; the item
 state it is opened to read is not.
+
+### Windows title-bar hit regions
+
+Browser-driven clicks bypass Windows non-client hit-testing, so passing menu
+journeys alone cannot prove a physical mouse click reaches a title-bar button.
+`titlebar-menus.e2e.ts` also queries `WM_NCHITTEST` on its own app window using
+`helpers/windowHitTest.ts`, with DPI-aware screen coordinates and bounded waits.
+It checks menus, project-name controls and window buttons remain client areas,
+while the brand and empty spacer remain draggable, restored and maximised.
+It does not move the OS cursor or send input to another application.
 
 ### The playback journey needs an audio device
 
@@ -126,9 +140,12 @@ reused profile, since seeding would overwrite the file under test.
 
 `~/Silverdaw/{Logs,Diagnostics,Models}` is **not** isolated. Electron resolves
 `home` from the Windows shell API rather than the environment, so it cannot be
-redirected from a test. Accepted as a known gap: these directories are
-append-only diagnostics, and the tier is a local pre-release gate rather than a
-shared-CI one.
+redirected from a test. Accepted as a known gap for local runs alongside another
+instance: session logs are separate, but startup diagnostics are overwritten
+and model caches are shared. Do not clear those directories as test cleanup.
+The suite also runs in CI on its own Windows runner, with the backend built by
+the native job and a virtual audio output device; see the developer guide's
+continuous-integration section.
 
 Because that directory is shared, the diagnostics attached to a failure are
 filtered by modification time: a log untouched since the app launched is named

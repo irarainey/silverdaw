@@ -1,5 +1,913 @@
 # Silverdaw — Technical Design & Implementation Plan
 
+## Release acceptance (1.10.0)
+
+**Current release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
+and satisfactory audio and requested that 1.10.0 be marked as the release
+version. Manual application/listening acceptance is therefore recorded as
+confirmed. This documentation decision does not publish or upload assets,
+install an application, change certificate trust, create commits or tags.
+
+The confirmation did not itemise a device/sample-rate/plugin/recording matrix,
+native-dialog or installed/Store-upgrade coverage. Those specific checks are
+not newly claimed as passed. Complete-callback/device-xrun measurements and the
+incomplete comparative benchmarks remain evidence gaps; the documented moderate
+development-tooling minimatch finding still needs a separate explicit
+release-risk disposition. Manual listening does not resolve that security item.
+
+Preparation decision agreed earlier on 2026-11-06: freeze the
+dependency/performance optimisation scope and perform bounded release-candidate
+testing rather than extend an open-ended profiling programme. That scope remains
+frozen; further runtime work requires concrete regressions.
+
+Preparation sequence (retained as the record preceding the release designation):
+
+1. Run the existing automated regression gates and a small read-only diagnostics
+   sanity review. Confirm detailed tracing is opt-in and file/string logging
+   stays off the audio callback. Existing timing collection and off-thread
+   formatting have unquantified overhead; do not claim they are cost-free or
+   start a new instrumentation framework.
+2. Build the signed sideload AppX, portable ZIP, unsigned Store AppX, unpacked
+   application and public certificate through the existing release tooling.
+   Verify versions, payloads, signatures and an isolated extracted-portable
+   smoke test. Building local assets does not publish them.
+3. Perform hardware/listening acceptance with real projects, warped and
+   pitch-shifted audio, plugins, differing sample rates, recording, and repeated
+   play/seek/stop. Manual testing/listening was subsequently confirmed above;
+   complete-callback/device-xrun measurements were not supplied.
+4. Exercise dense-project scrolling and zooming in normal workflows, native
+   dialogs, old projects/preferences, and installed/Store-upgrade behaviour.
+   Investigate disruptive stalls or a consistently worse candidate before
+   release; otherwise retain the measured tails as an explicit limitation.
+
+Reproducible audio faults, crashes, data loss, compatibility failures,
+meaningful regressions and unresolved security release-risk decisions remain
+blocking acceptance issues; the version designation does not waive them.
+The historical chopped-reference failure and incomplete attribution limit
+comparative performance claims; they are not alone proof of a product
+defect or a requirement to repeat every benchmark before testing the candidate.
+Preserve all original failures, guards and evidence. The documented minimatch
+technical deferral still requires an explicit release-risk disposition.
+
+Preparation checkpoint on 2026-11-06: frontend lint/typecheck and coverage passed
+with **2,472 unit tests across 198 files**; all **36 e2e journeys** passed
+against the freshly built Release backend without retries, and **527 native
+Release tests** passed. A fresh production-only audit reports zero findings;
+the full audit retains the one documented moderate development-tooling
+minimatch finding. Its release-risk disposition is still outstanding.
+
+The bounded read-only diagnostics review confirmed that verbose logging
+defaults off and project-phase file tracing is opt-in. Performance log
+formatting/writes run on the message thread, not inside the measured audio
+callback. Existing callback clock/counter data also supports recording and
+liveness, so it must not be stripped wholesale. Timing collection and discarded
+log formatting, locking and redaction still have unquantified cost. No new
+runtime instrumentation, profiling programme or speculative logging cleanup
+was introduced for this candidate.
+
+Local asset checkpoint on 2026-11-06: the current Release backend was configured
+and rebuilt before running the canonical release script with
+`-SkipBackend -SkipFrontendInstall`; no dependency restoration was needed.
+The script now explicitly passes `--publish never` to both packaging commands.
+The bundling/version guards passed, and `dist/` contains the 1.10.0 signed
+sideload AppX, portable ZIP, unsigned Store AppX, public certificate and unpacked
+app. Previous local outputs were preserved rather than deleted.
+
+All three archives have identical application ASARs and the expected native
+payloads, MIDI mappings and licences. Their versions, x64 package identities,
+capabilities and associations were verified; signed native payload code matches
+the Release binaries, and the sideload/package executable signatures passed
+Windows and SDK verification. The Store package is deliberately unsigned and
+not locally installable. Project benchmark/e2e/test/cache directories and the
+checked development tools are absent from the application ASAR.
+
+The actual signed executable extracted from the portable ZIP passed an
+isolated-profile smoke test using its own bundled backend, with Electron
+45.2.2, sandboxed renderer, no renderer Node globals and working WebGL.
+A copy of the frozen released project opened and saved as 1.10.0; WAV/MP3
+mixdowns contained about two seconds of audio and the MP3 reimported.
+The original project fixture was unchanged. This is not hardware/listening,
+native-dialog or installed/Store-upgrade acceptance; the final Store pass
+leaves `dist/win-unpacked` unsigned, so the signed portable ZIP is the preferred
+local smoke-test artefact.
+
+Build, gate, audit, signature, ASAR and portable-smoke evidence is preserved at
+repository-root `.cache\release-testing\20261106T134329`, with prior assets in
+its `previous-dist` subdirectory. Only the existing signing certificate was
+reused. No application was installed, no certificate trust was changed, and
+nothing was published/uploaded, committed or tagged.
+
+Subsequent local acceptance found that Windows treated the menu buttons as
+window-drag regions even though browser-driven menu clicks passed. The title
+overlay geometry and drag-spacer paint ordering were corrected. A new
+Windows-native hit-test journey covers menus, project-name controls, window
+buttons and retained drag areas in restored and maximised windows.
+Lint/typecheck, 35 focused menu unit tests and four related e2e journeys passed.
+All local assets were refreshed, and the extracted signed portable passed the
+same native hit-region checks plus project open/save and WAV/MP3 export/reimport.
+Evidence and the superseded local assets are preserved under
+`.cache\release-testing\20261106-menu-fix`. At that checkpoint, manual acceptance
+was still pending; the later sign-off is recorded above.
+
+## Dependency maintenance (1.10.0)
+
+Plan established on 2026-11-04 and implemented for the current 1.10.0 release.
+The stage statuses below preserve their dated checkpoints; the release record
+above supersedes their then-pending manual acceptance. Deferred upgrades remain
+deferred. Recheck version availability and advisories before any future update;
+this historical plan does not authorise new builds, publication or tags.
+
+**Status reviewed 2026-11-06:** the accepted migrations below are implemented.
+The dated checkpoints preserve the state at each stage, not the current
+dependency tree; current pins live in `frontend/package.json`,
+`frontend/pnpm-lock.yaml` and `backend/CMakeLists.txt`. Local distribution builds
+and an extracted-portable smoke test passed again on 2026-11-06; the earlier
+2026-11-04 checkpoint is retained below. Manual testing/listening is now confirmed;
+the unconfirmed checks and security-risk disposition are recorded above.
+RNNoise/ONNX Runtime and vue-tsc deferrals remain as recorded. The fresh audit
+is recorded in the release-acceptance checkpoint above; earlier dated findings
+remain historical.
+
+Release-age cleanup completed 2026-11-06: removed the expired exact-version
+`electron@45.2.2` acknowledgement from `frontend/pnpm-workspace.yaml`.
+`pnpm install --frozen-lockfile` passed the supply-chain policy check without
+the exception. The lockfile SHA-256 is unchanged and installed Electron remains
+45.2.2; no dependency upgrade or release was performed by that cleanup.
+
+### Sequence and checkpoints
+
+Each numbered stage is a separate dependency diff. Substeps run and pass their
+gate independently; do not combine them into a blanket update. A failing gate
+stops that stage before the next dependency changes.
+
+| Stage | Change | Regression gate | Status |
+| --- | --- | --- | --- |
+| 0 | Establish the unchanged lockfile baseline; rebuild the Debug backend and test executable. | Frontend gate F and backend CTest gate B. Record existing audit findings separately from test failures. | Passed 2026-11-04 |
+| 1 | Playwright 1.62.1 to 1.64.1 only; keep Electron and the backend unchanged. | F; confirm the lockfile changes only the Playwright package family and removes its unused optional dependency. | Passed 2026-11-04 |
+| 2 | Update music-metadata to 11.16.1, then Zod to 4.6.7, then Vue and its matching subpackages to 3.5.44, one substep at a time. | F after each substep; metadata/cover-art parsing, rejected bridge payloads, project/store state and saved-project round trips must remain covered. | Passed 2026-11-04 |
+| 3 | Vite 7.3.6 to 7.3.7, then Vitest and coverage-v8 together to 4.1.12. Keep electron-vite 5 and TypeScript 5.9. | F after each substep; remove the unsupported coverage.all option, retain explicit coverage includes and compare coverage scope rather than accepting a smaller report. | Passed 2026-11-04 |
+| 4 | Electron 42.8.1 to policy-eligible 45.2.1, then 45.2.2 as a separate patch with explicitly approved early adoption. If a demonstrated regression blocks 45, evaluate supported 44.10.2 separately instead of reverting to unsupported 42 for release. | F plus sandbox/preload, GPU/WebGL, native-dialog, file-association and startup/recovery checks; packaged acceptance P remains outstanding until authorised. | Development gates passed 2026-11-04, including 45.2.2; manual/packaged acceptance pending |
+| 5 | JUCE 8.0.12 to 8.0.17-security; explicitly update the cached CMake pin. Do not combine with JUCE 9. | B, native lint and F against the rebuilt engine; audio/device/plugin acceptance A. Reopen the frozen released project fixture unchanged. | Development gates passed 2026-11-04; audio/device/plugin acceptance pending |
+| 6 | Update electron-builder within stable 26, then refresh remaining vulnerable transitives through their parents or narrowly scoped compatible overrides. | F, dependency-path/advisory review and P when authorised. Preserve hoisted linking and build-script permissions. | Development gates passed 2026-11-04; minimatch technical deferral documented, release-risk decision and packaged acceptance pending |
+| 7 | LAME 3.100.1 to a verified 4.0 Windows bundle, carrying its libmpg123 decoder DLL through download, native copy and packaging filters. | B and F; MP3 decode/encode, metadata, duration and truncated-input checks; inspect DLL dependencies and licences, then P when authorised. | Development gates passed 2026-11-04; listening and packaged acceptance pending |
+| 8 | PixiJS 8.19.0 to 8.22.0, IXWebSocket 11.4.5 to 12.1.0 and Rubber Band 3.3.0 to 4.0.0 separately, in that order. | F for PixiJS; B and F for native changes; rendering measurements for PixiJS, reconnect/shutdown checks for IXWebSocket and A for Rubber Band. | Development gates passed 2026-11-04; manual/audio and packaged acceptance pending |
+| 9 | Consider RNNoise 0.2 and CPU-only ONNX Runtime 1.31.1 independently, only with reproducible models and measured benefit. | B, F and A; preserve fixed model weights, numerical parity, CPU fallback and GPU availability. | Evaluated 2026-11-04; both upgrades deferred, existing model/runtime pins retained |
+| 10 | Consider Pinia 4, vue-tsc 3, ESLint 10, Vite 8/electron-vite 6, Vitest 5 and pnpm 12 as separate migrations. | F after each migration and P for build/packaging changes. TypeScript 7 waits for compatible lint/type tooling. | Development gates passed 2026-11-04 for five migrations; vue-tsc 3 deferred; manual/packaged acceptance pending |
+
+Baseline on 2026-11-04: lint and typecheck passed; all 2,449 frontend unit
+tests across 195 files passed with coverage; all 35 e2e journeys and all 513
+backend CTest cases passed. No assertions, timeouts or fixtures were changed.
+
+Stage 1 checkpoint on 2026-11-04: Playwright, playwright-core and
+@playwright/test resolve to 1.64.1. Lint and typecheck passed again; the same
+2,449 unit tests across 195 files and all 35 e2e journeys passed. Coverage
+scope and aggregate percentages are unchanged. Electron, Vite, Vitest, Vue,
+Zod and the backend remain at their baseline versions. The only other lockfile
+removal is Playwright's now-unused optional fsevents 2.3.2. The audit still
+reports the same 72 findings; the security updates in later stages remain
+outstanding. No distribution assets were built.
+
+Stage 2 checkpoint on 2026-11-04: each substep passed F before the next
+dependency changed. Each run passed lint, typecheck, all 2,449 unit tests
+across 195 files and all 35 e2e journeys. Coverage scope and aggregate
+percentages are unchanged; no assertions, timeouts or fixtures were changed.
+
+| Substep | Resolved version | Remaining audit findings |
+| --- | --- | --- |
+| music-metadata | 11.16.1 | 69; three metadata-parser advisory matches removed. |
+| Zod | 4.6.7 | 68; the collection-validation memory-exhaustion advisory match removed. |
+| Vue runtime and its compiler/server-renderer dependencies | 3.5.44 | 67; the server-renderer attribute-name advisory match removed. |
+
+The final audit still has two critical, 24 high, 31 moderate and ten low
+findings. These remain for later stages; passing tests does not clear them.
+Vue's runtime dependency tree is aligned at 3.5.44, while vue-tsc 2.2.12
+retains its separate 3.5.41 compiler-core/compiler-dom/shared tooling tree.
+Its migration and the remaining vulnerable transitive paths are not part of
+this stage. The lockfile also updates music-metadata's content-type dependency
+and Vue's Babel/PostCSS/source-map dependencies. No application-source changes
+were needed. Application versions remain 1.10.0; Electron, Vite, Vitest and
+native dependencies are unchanged. No distribution assets were built.
+
+Stage 3 checkpoint on 2026-11-04: Vite passed F before Vitest changed;
+Vitest and coverage-v8 then passed F together. Each substep passed lint,
+typecheck, all 2,449 unit tests across 195 files and all 35 e2e journeys.
+Vitest 4 required four callback declarations in two test harnesses to use
+their existing production types rather than the widened mock return type.
+No application code, test assertions, timeouts or fixtures were changed.
+
+| Substep | Resolved version | Remaining audit findings |
+| --- | --- | --- |
+| Vite | 7.3.7 | 62; five Vite advisory matches removed. |
+| Vitest and coverage-v8 | 4.1.12 | 56; six more advisory matches removed, including both critical tinypool findings. |
+
+Tinypool is absent from the lockfile. No new advisory IDs appeared; the final
+audit has zero critical, 23 high, 24 moderate and nine low findings.
+electron-vite remains 5.0.0 and TypeScript remains 5.9.3. Application versions
+remain 1.10.0; Electron and native dependencies are unchanged. No distribution
+assets were built.
+
+Vite preserved the exact coverage scope and metrics. For Vitest 4, only the
+removed `coverage.all` option was deleted; explicit includes and excludes
+remain intact. Both providers report the same 272 source paths, including
+all 38 previously uncovered files. The new AST remapper counts 801 actual
+functions in those uncovered files instead of 38 file-level entries,
+and removes line-coverage credit for imports, re-exports and uncalled
+function declarations. Checked LCOV examples include `laneLayout.ts`,
+`inboundValidation.ts` and the bridge facade. This is a measurement change,
+not a smaller test suite or omitted source files; percentages are rebaselined
+below, with no threshold relaxation.
+See the [Vitest 4 coverage migration](https://v4.vitest.dev/guide/migration#v8-code-coverage-major-changes).
+
+| Coverage metric | Vitest 3.2.7 | Vitest 4.1.12 |
+| --- | --- | --- |
+| Statements | 63.29% | 55.67% |
+| Branches | 80.30% | 51.76% |
+| Functions | 75.47% | 56.09% |
+| Lines | 63.29% | 58.05% |
+
+Stage 4 development checkpoint on 2026-11-04: Electron resolves to 45.2.1,
+with Chromium 156.0.8078.75 and Node 24.22.1 confirmed in the running
+application. Application versions remain 1.10.0. Only Electron changes in
+the dependency lockfile; native dependencies and build tooling are unchanged.
+Lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys passed. All 272 coverage source paths and aggregate metrics match
+Stage 3 exactly. The cold-launch journey now checks the renderer's actual
+Windows sandbox state through the public process-metrics API; this assertion
+passed both before and after the upgrade. No assertions were weakened and
+no timeouts, fixtures or application source code changed.
+
+The planned 45.2.2 was published at 2026-11-03T21:43:24.912Z and was still
+inside pnpm's release-age gate. Installation initially generated an exception;
+it was removed, and the original lockfile was restored before resolving the
+eligible 45.2.1 instead. No release-age exceptions or other security-policy
+changes remain. Revisit 45.2.2 after it becomes eligible and repeat F as a
+separate patch checkpoint; its Chromium and Node updates are not included here.
+See the [45.2.1](https://releases.electronjs.org/release/v45.2.1) and
+[45.2.2](https://releases.electronjs.org/release/v45.2.2) release notes.
+
+Electron 45.2.2 eligibility rechecked at 2026-11-04T20:17Z: its npm
+publication age was approximately 1,354 minutes, still below pnpm's
+[default 1,440-minute minimum](https://pnpm.io/settings/dependency-resolution#minimumreleaseage).
+The earliest eligible time is **2026-11-04T21:43:24.912Z**, based on the
+package publication time, not the earlier GitHub release timestamp.
+At that check, 45.2.1 was retained without manifest, lockfile or policy changes,
+and no candidate regression result was claimed. The 45.2.2 notes list
+Chromium 156.0.8078.80, Node 24.22.2 and a removeInsertedCSS correction,
+but do not enumerate CVEs. The later follow-up checkpoint below records the
+user-approved early adoption and its separate regression results.
+
+The audit fell from 56 to 44 findings: zero critical, 18 high, 20 moderate
+and six low. All 12 removed advisory IDs belonged to Electron; none were
+added, and no Electron advisory matches remain in this report. Outstanding
+transitive findings still require the later maintenance stages.
+
+The [Electron breaking-change review](https://www.electronjs.org/docs/latest/breaking-changes)
+covered versions 43 through 45, particularly removed sandbox-preload Node
+shims, native IPC event emitters, Windows ANGLE packaging and ASAR descriptor
+restrictions. The built CommonJS preload requires only `electron` and uses
+none of the removed Buffer/timer globals. Existing sandbox, context isolation,
+navigation restrictions, permission denial and CSP are unchanged. Three
+normal application-root launches per version also confirmed preload
+`getAppInfo()` agrees with the main process, no renderer Node globals are
+exposed, and a real WebGL context is available and not lost.
+
+Those observations reused one isolated probe profile, rather than a fresh
+profile for every sample. Median first contentful paint was 248 ms before
+and 196 ms after; median observed launch-to-ready was 2,183 ms before and
+2,134 ms after. These are exploratory observations, not a controlled benchmark
+or a claim of improved performance. Visual/scroll/zoom and real native-dialog
+acceptance remain outstanding; e2e dialogs are stubbed. Installed upgrade,
+ASAR and project-file-association checks remain under P. No distribution
+assets were built, and this checkpoint is not full release acceptance.
+
+Stage 5 development checkpoint on 2026-11-04: JUCE is pinned to
+8.0.17-security, not JUCE 9. Both the normal Debug build cache and the
+standard Ninja lint cache were explicitly repinned; changing the CMake default
+alone would have left them on 8.0.12. A separate test-enabled Ninja validation
+tree was configured at `backend\build-release\stage5-juce`, and strict
+clang-tidy 22.1.8 passed all 160 backend source files against the new headers
+with no warnings. The rebuilt Debug backend and its Windows version metadata
+remain 1.10.0.
+
+The [upstream security release](https://github.com/juce-framework/JUCE/releases/tag/8.0.17-security)
+hardens WAV/AIFF channel counts and metadata, JSON/XML/ValueTree parsing,
+ZIP extraction, image decoding and OSC nesting. JSON, XML elements and streamed
+ValueTrees now have a 256-level nesting limit; XML external entities require an
+explicit input source. These upstream protections are retained, not bypassed.
+The release also includes intervening JUCE 8 fixes such as the VST3 scan-context
+leak fix; no measured performance improvement is claimed.
+
+Two plugin call sites required migration: editor creation now uses
+`createEditorAndMakeActive()`, preserving active-editor tracking, and the scan
+worker transfers format ownership with `std::unique_ptr`, matching the existing
+catalogue code. No audio-graph, bridge, project-schema, driver or model changes
+were made.
+
+All 514 native CTest cases passed, including one new malformed-WAV regression
+that first failed on 8.0.12. After the final format-ownership migration, its
+13 plugin/scanner and WAV regression cases passed again. Frontend lint,
+typecheck, all 2,449 unit tests across 195 files and all 35 e2e journeys passed
+against the rebuilt engine. All 272 frontend coverage source paths and aggregate
+metrics match Stage 4 exactly. The frozen released-project journey passed;
+fixture hashes are unchanged. No assertions, timeouts or existing fixtures
+were weakened or regenerated.
+
+The JavaScript audit remains at 44 findings with the same advisory IDs and
+severity counts as Stage 4; it does not scan JUCE. Application versions and all
+other dependency pins are unchanged. No distribution assets were built.
+
+Audio/device/plugin acceptance A remains outstanding, including listening,
+dropout/headroom measurements, real MIDI devices and third-party VST3 editor
+and state restoration. In particular, upstream WASAPI shared mode now
+advertises only the OS-default buffer size; check saved buffer preferences and
+reported latency on target devices. Existing automated playback/export and
+recording tests do not replace that hardware acceptance or packaged gate P.
+
+Stage 6 development checkpoint on 2026-11-04: electron-builder was updated
+from 26.15.3 to 26.18.0 and passed F before any further dependency changes.
+A separate compatible transitive refresh then passed F again. Both substeps
+passed lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys. All 272 coverage source paths and their individual metrics match
+Stage 5 exactly. Application versions remain 1.10.0; no application/native
+source, assertions, timeouts or fixtures changed.
+
+The builder review covered Windows pnpm workspace detection, pnpm 11 dependency
+collection, ASAR path containment and AppX XML escaping. Upstream deliberately
+keeps builder-util at 26.16.0 and changes its blockmap hash dependency from
+@noble/hashes 2.3.0 to 1.8.0; its packages were not forced onto matching
+versions. @electron/rebuild is now 4.2.1 and requires Node 22.12 or later;
+the development and CI Node 24 environments satisfy that requirement.
+
+| Transitive family | Resolved patched versions |
+| --- | --- |
+| undici | 6.29.1 and 7.30.1 |
+| brace-expansion | 1.1.21, 2.1.7 and 5.0.12 |
+| fast-uri | 3.1.9 |
+| js-yaml | 4.3.2 |
+| postcss-selector-parser | 6.1.5 for the affected major 6 consumers |
+| source-map-js | 1.2.2 throughout; the remaining 1.2.1 copy was removed |
+
+Existing security floors were raised without forcing incompatible majors;
+js-yaml and fast-uri overrides now explicitly target their existing majors
+4 and 3. Hoisted linking, build-script permissions and release-age policy
+are unchanged, with no release-age exclusions. Frozen installation passed.
+These undici updates affect npm installer/build dependencies, not Electron's
+embedded Node runtime.
+
+The audit fell from 44 to **one moderate finding**, with zero critical, high
+or low findings and no new advisory IDs. The remaining
+[GHSA-g3hv-75wg-m249 / CVE-2026-118764](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+concerns glob-pattern amplification in minimatch. Its current GitHub range is
+`>=7.0.0 <11.0.1`, fixed in 11.0.1. The affected installed paths are:
+
+| minimatch | Parent paths |
+| --- | --- |
+| 10.2.6 | electron-builder → app-builder-lib, including the dmg-builder route; the ESLint plugin/parser trees → @typescript-eslint/typescript-estree |
+| 9.0.9 | electron-builder → app-builder-lib → @electron/universal; vue-tsc → @vue/language-core |
+
+Those parents require major 9 or 10, not the patched major 11. A blanket
+override would also break legacy callable-export consumers such as ASAR.
+Disposition: defer remediation to compatible upstream fixes or separately
+reviewed parent migrations; do not suppress the finding or claim security
+release acceptance. The registry still reports `<11.0.1`, also listing
+3.1.5 and 5.1.9 below GitHub's updated lower bound; that metadata discrepancy
+does not clear the affected 9/10 paths. All reported paths are development
+dependencies, and minimatch is absent from the collected production closure.
+
+Both sideload and Store configurations passed the builder's real loader and
+schema validator without configuration changes. Its pnpm collector returned
+the same 53 production module names after remediation, with installed package
+names/versions and declared production dependency ranges verified. These checks
+did not create an ASAR, sign, publish or build distribution assets. Packaged
+acceptance P, including installed upgrades and AppX/ZIP contents, remains
+outstanding; development validation is not full release acceptance.
+
+Stage 7 development checkpoint on 2026-11-04: the standard RareWares LAME
+4.0 x64 bundle replaces 3.100.1, with mpg123 1.33.7 as its decoder.
+The separately patched q4 variant was not selected, and encoding presets
+are unchanged. The [released upstream notes](https://svn.code.sf.net/p/lame/svn/trunk/lame/doc/html/history.html)
+cover intervening encoder bounds fixes and AIFF-parser hardening; the
+unreleased 4.1 hardening and speed changes are not included.
+
+The [fetch helper](../scripts/Fetch-Lame.ps1) now pins the archive hash,
+validates both staged runtime files before installation and refreshes old
+standalone or incomplete installations. Custom downloads require a ZIP and
+an explicit SHA-256; standalone EXE downloads are no longer supported.
+Focused checks passed for refresh/idempotency, forced refresh, bad hashes,
+missing DLLs, wrong versions and explicit archive-entry selection.
+The [bundle README](../backend/third_party/lame/README.md) records the pin
+and developer workflow changes.
+
+The archive's actual DLL name is `libmpg123-0.dll`, not the underscore spelling
+on the download page. CMake requires it beside `lame.exe` and copies both files
+beside the backend and test executable; a real configure with the DLL missing
+failed as intended. PE inspection confirms x64 binaries: LAME imports the
+decoder and KERNEL32; the decoder imports only KERNEL32, msvcrt and SHLWAPI.
+Source, Debug-backend and test-directory runtime hashes match the verified
+bundle. Both packaging configurations validate and include the exact DLL name.
+The unchanged upstream mpg123 `COPYING`, including the LGPL 2.1 text, is now
+tracked and included by the packaging rules; attribution and source links are
+updated. No unused `lame_enc.dll` is installed or packaged.
+
+Decode-cache generation 4 lazily replaces output from the old decoder.
+A new regression first demonstrated stale generation-3 reuse, then passed
+after the bump; it checks replacement and successful old-entry cleanup.
+Another new native regression exercises production MP3 export and the bundled
+decoder at 128/192/320 kbps with no JUCE fallback. All **516 CTest cases**
+passed against the rebuilt Debug engine, and strict clang-tidy 22.1.8 passed
+the changed production source with no warnings.
+
+Ten synthesized old/new decode comparisons covered CBR, VBR, missing Xing
+headers, 44.1/48 kHz and stereo/mono. Sample counts and gapless timing matched;
+PCM samples differed by at most one 16-bit unit. Unicode and shell-metacharacter
+filenames encoded and decoded successfully. The application metadata parser
+preserved title, artist, bitrate and its existing frame-based duration estimate;
+that estimate is not the decoded WAV's exact sample duration.
+
+One compatibility limitation is recorded rather than hidden: music-metadata
+11.16.1's extended-LAME-tag version guard skips ReplayGain for version 4.0.
+The new file still contains the same ReplayGain value, verified with its
+existing tag decoder, and Silverdaw does not consume that field. No vendor
+parser patch or music-metadata major migration was folded into this stage.
+Garbage MP3 input failed explicitly without hanging. A half-truncated MP3
+produced the same partial decode with exit zero in both old and new LAME;
+this stage does not claim to add strict truncated-MP3 rejection.
+
+Frontend lint, typecheck, all 2,449 unit tests across 195 files and all 35 e2e
+journeys passed against the rebuilt engine. All 272 coverage reports match
+Stage 6 exactly. The frozen released-project fixture, assertions and timeouts
+are unchanged. Application versions remain 1.10.0; no project/preferences,
+tempo/beat-marker or model changes were made. JavaScript dependencies and the
+audit remain unchanged at one moderate development-tooling minimatch finding;
+that audit does not scan these native binaries.
+
+Listening acceptance and packaged gate P remain outstanding, including clean
+machine DLL loading, installed upgrades and AppX/ZIP contents. No distribution
+assets were built, and no speed or subjective audio-quality improvement is
+claimed from these development checks.
+
+Stage 8 development checkpoint on 2026-11-04: PixiJS 8.22.0,
+IXWebSocket 12.1.0 and Rubber Band 4.0.0 passed their independent checkpoints
+in that order. Each substep passed F: lint, typecheck, all 2,449 unit tests
+across 195 files and all 35 e2e journeys. All 272 coverage reports match
+Stage 7 exactly. Both native upgrades passed all **517 CTest cases** and
+strict clang-tidy 22.1.8 on all 160 production sources against the new
+dependency headers. Debug and Ninja lint caches were explicitly repinned;
+their actual warp compile flags retain KissFFT, libsamplerate and static
+linkage. Application versions remain 1.10.0.
+
+PixiJS's [8.20](https://github.com/pixijs/pixijs/releases/tag/v8.20.0),
+[8.21](https://github.com/pixijs/pixijs/releases/tag/v8.21.0) and
+[8.22](https://github.com/pixijs/pixijs/releases/tag/v8.22.0) notes cover
+geometry/resource teardown, multi-renderer text/graphics, WebGL text recovery
+and draw-loop fixes. Only PixiJS changes in the JavaScript lockfile; no
+application-source migration or release-age exception was needed. The
+CSP-safe shader patch and explicit WebGL preference are unchanged.
+
+Three isolated Electron runs per version used copies of the unchanged released
+fixture, populated through the UI with eight tracks, plus 48 zoom gestures,
+three Clip Editor open/close cycles and a forced WebGL context loss per run.
+Both versions recovered on a fresh timeline canvas without renderer errors.
+RAF frame-interval medians stayed at 16.7 ms; per-run sampled scene-rebuild
+medians were 1.9-2.3 ms before and 2.1-2.3 ms after. Pixi/WebGL initialisation
+was 67-76 ms before and 52-63 ms after. Slower project-open observations
+coincided with longer Windows audio-device opens, which were logged separately.
+These small development samples are not a controlled GPU benchmark or proof
+of an application-wide speed improvement.
+
+The [IXWebSocket release](https://github.com/machinezone/IXWebSocket/releases/tag/v12.1.0)
+fixes a reconnect/shutdown race and improves MSVC type compatibility. Its
+HTTP-server path-traversal fix is included, but Silverdaw does not use that
+file handler. Loopback-only binding, per-session AUTH, text control messages
+and disabled TLS/zlib are unchanged. The new permanent bridge regression
+passed on 11.4.5 before the update, then passed 20 repeated runs on 12.1.0.
+It authenticates a real client, restarts the server three times and stops the
+live server and automatically reconnecting client. The full e2e suite also
+passed actual engine-crash recovery and saved-project restoration.
+
+Rubber Band's [4.0 changelog](https://github.com/breakfastquay/rubberband/blob/v4.0.0/CHANGELOG)
+keeps the existing stretcher API binary-compatible and adds a separate
+pitch-only API, which this update does not adopt. The reviewed R2
+stack-overflow fix is confined to offline study. The existing source list,
+warp modes, transient/pitch policy, ratio mapping and latency/padding handling
+are unchanged. CMake now supplies upstream's `RUBBERBAND_STATIC` definition;
+the include-path shim is still needed in 4.0 and was retained without patching
+fetched source.
+
+Development-only production exports compared the same two-second fixture
+before and after Rubber Band across `rhythmic`, `tonal` and `complex`,
+tempo ratios 0.6/1.25, pitch shifts -5/0/+5 semitones and 44.1/48 kHz.
+All **36 stereo 32-bit-float exports** had identical PCM hashes, frame counts,
+RMS and peak levels. This supplements the existing live-pitch, extreme-ratio,
+seek/window and warped-export regressions; it is not listening acceptance
+for arbitrary material or a real-time headroom measurement.
+
+Existing assertions, e2e timeouts and the frozen fixture are unchanged.
+No project/preferences, tempo/beat-marker or model changes were made.
+The JavaScript audit remains at one moderate development-tooling minimatch
+finding; it does not scan the native libraries. Manual visual, listening,
+device/MIDI/plugin and performance acceptance A, plus packaged acceptance P,
+remain outstanding. No distribution assets were built, and no release,
+subjective quality or overall performance acceptance is claimed.
+
+Stage 9 evaluation checkpoint on 2026-11-04: **no dependency versions changed**.
+RNNoise and ONNX Runtime were reviewed independently; neither candidate
+cleared the model/provider and measured-benefit prerequisites for an upgrade.
+This is a recorded deferral, not a passed candidate regression gate.
+
+RNNoise's latest tagged release is
+[0.2](https://github.com/xiph/rnnoise/tree/v0.2). Its
+[README](https://github.com/xiph/rnnoise/blob/v0.2/README) explicitly describes
+the changed model format and separately downloaded model sources. Comparing
+the inference source also shows a convolutional frontend and a different
+recurrent-network layout, rather than the existing model's dense frontend
+and VAD/noise/denoise layout. A hash-pinned model archive could make a 0.2
+build reproducible, but would not preserve the trained model currently
+compiled from 0.1.1's `src/rnn_data.c`. Retain 0.1.1 and the existing
+`rnnoise_create(nullptr)` behaviour. A new-model cleanup migration requires
+separate quality/listening acceptance, not just a FetchContent tag bump.
+
+ONNX Runtime's latest CPU release is
+[1.31.1](https://github.com/microsoft/onnxruntime/releases/tag/v1.31.1).
+However, the default Windows build and both validation caches use
+**Microsoft.ML.OnnxRuntime.DirectML 1.24.4**, not the optional CPU-only 1.26.0
+branch. The [NuGet version index](https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/index.json)
+still ends at stable 1.24.4; its package declares DirectML 1.15.4, matching
+the pinned companion package. The default DLL supplies both GPU execution
+and CPU fallback. Substituting the CPU-only archive would remove GPU support,
+while changing only the optional CPU pin would not update the shipped
+DirectML runtime or its CPU fallback.
+
+The [DirectML guidance](https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html)
+now describes sustained engineering and points to WinML. A newer
+DirectML-capable source build or a WinML/provider migration needs a separate
+proposal against ADR 0009, with reproducible runtime dependencies, supported
+Windows versions, GPU/CPU recovery and packaging checks. Neither migration
+was attempted here. Later ORT releases report model-loader and kernel
+validation hardening; retaining the current runtime is **not security
+clearance** or a claim that those fixes are present in the shipped DLL.
+
+The managed Mel-Band and BS-RoFormer files match every manifest size and
+SHA-256. All four htdemucs backup specialists are absent from that managed
+root; user-located override directories were not searched. No model files
+were changed or downloaded. A candidate comparison must cover the unchanged
+quality and backup weights, with declared numerical tolerances, cold/warm
+load and inference timings, memory, CPU fallback and GPU availability.
+Include the intervening releases' FP16 execution and telemetry/build-default
+changes in the compatibility review, rather than relying on API compilation.
+The existing RoFormer/rhythm probes and `SilverdawStemEval` provide the
+development harnesses; no candidate benchmark or inference-parity result is
+claimed from this evaluation.
+
+All **31 selected existing native regressions** passed on the unchanged
+baseline, including RNNoise determinism/noise reduction, stem cancellation,
+GPU-fallback quarantine/progress/publication and both spectral adapters.
+Backend, runtime DLL and embedded-model hashes were recorded for comparison.
+These checks do not replace candidate B/F/A gates or real GPU validation.
+Application versions remain 1.10.0; no provider options, project/preferences,
+model manifests, security controls or distribution assets were changed.
+
+Stage 10 checkpoint on 2026-11-04: the frontend majors were evaluated in the
+agreed order, independently. Each accepted migration passed F before the next
+dependency changed: lint, typecheck, all **2,449 tests across 195 files** and
+all **35 e2e journeys**. The backend and application versions are unchanged.
+
+| Substep | Result |
+| --- | --- |
+| Pinia 2.3.1 to 4.1.0 | Accepted with its required @vue/devtools-api 8.2.1 peer; existing ID-first stores and Vue 3 APIs remain compatible. |
+| vue-tsc 2.2.12 to 3 | Deferred after both 3.3.14 and 3.1.8 rejected live template refs; 2.2.12 restored and revalidated. |
+| ESLint 9.39.5 to 10.14.0 | Accepted with @eslint/js 10.0.1 and eslint-plugin-vue 10.12.0. |
+| Vite 7.3.7 to 8.3.5 and electron-vite 5.0.0 to 6.0.0 | Accepted together, retaining compatible Vue/Tailwind plugins and production bundle boundaries. |
+| Vitest and coverage-v8 4.1.12 to 5.1.0 | Accepted as a matching pair with unchanged test discovery, isolation and assertions. |
+| pnpm 11.15.0 to 12.16.1 | Accepted through the single packageManager pin; repeated frozen installs and the production collector passed. |
+
+Pinia's ESM-only distribution is compatible with the renderer build. Its new
+production dependencies have MIT licences. No store ownership, persistence
+or project semantics changed.
+
+The checker candidates reported seven TS6133 errors on refs used by string
+template bindings in five components, including refs owned by composables.
+The upstream reports
+[vuejs/language-tools#6147](https://github.com/vuejs/language-tools/issues/6147)
+and [vuejs/language-tools#5981](https://github.com/vuejs/language-tools/issues/5981)
+describe these cases. No live refs were removed, no dummy uses or casts were
+added, and unused-variable checking was not weakened. Revisit with a verified
+checker fix or a separately scoped template-ref ownership migration.
+TypeScript remains 5.9.3.
+
+ESLint's new recommended checks found ten dead assignments in nine files.
+Only redundant initialisers, a loop-local temporary and unused final index
+increments changed; control flow and audio arithmetic are preserved. The
+flat config and explicit browser/Node globals remain intact. Effective-rule
+comparisons retained existing severities; the removed Vue
+component-tags-order rule is replaced by block-order at the same severity.
+No rules were disabled.
+
+The [Vite 8 migration](https://vite.dev/guide/migration) changes the bundler
+and transforms to Rolldown/Oxc. The config now uses rolldownOptions and
+electron-vite's build.externalizeDeps API. All metadata parsers and their
+pure-JS dependencies remain bundled; an emitted-bundle probe found no bare
+third-party runtime imports across the 20 main/preload bundles. The preload
+remains index.cjs, and the actual renderer sandbox assertion passed.
+Three additional real Electron/WebGL runs exercised eight imported tracks,
+zoom, repeated Clip Editor opening/teardown and context loss/rebuild without
+renderer errors. This is development compatibility evidence, not packaged
+acceptance or an overall performance claim.
+
+The [Vitest 5 migration](https://vitest.dev/guide/migration/)
+changes default mock clearing and coverage matching/reporting. Explicit
+clearMocks: false preserves the previous mock-history policy; no test mocks,
+assertions or timeouts changed. The config uses import.meta.dirname instead
+of a loader-provided __dirname. Coverage includes/excludes are unchanged,
+and every checkpoint retains exactly **272 source paths**.
+
+Coverage changes were reviewed rather than accepted as a smaller report.
+ESLint cleanup removes three covered line/statement initialisers; functions
+and branches are unchanged. Vite/Oxc changes line mapping in 13 sources,
+with identical statement, function and branch totals and coverage in every
+file. Vitest's updated AST mapping and Istanbul reporting change counters in
+ten sources; a second run reproduced every metric exactly. These are new
+reporting baselines, not claimed coverage gains. pnpm 12 preserves the final
+report exactly:
+
+| Metric | Covered / total | Percentage |
+| --- | --- | --- |
+| Statements | 10,947 / 19,664 | 55.67% |
+| Branches | 6,476 / 12,521 | 51.72% |
+| Functions | 1,891 / 3,371 | 56.09% |
+| Lines | 9,881 / 17,025 | 58.03% |
+
+pnpm 12 adds a separate generated package-manager document to the YAML
+lockfile. The application dependency-graph document is byte-identical to
+the preceding checkpoint; repeated frozen installs leave the complete
+lockfile unchanged. Existing hoisted linking, build permissions, security
+overrides and release-age policy are retained, with no age exceptions.
+Node 24 remains compatible, and CI/setup already resolve the packageManager
+pin dynamically. The actual electron-builder 26.18.0 production collector
+returned the same dependency set under pnpm 11 and 12; both packaging configs
+passed schema validation without building distribution assets.
+
+Every accepted substep's JavaScript audit still reports one moderate
+development-tooling minimatch finding, GHSA-g3hv-75wg-m249 /
+CVE-2026-118764. The final production-only audit reports zero findings;
+neither result scans native libraries. No incompatible minimatch override or
+advisory suppression was added. Native executable/runtime hashes and the
+frozen released-project fixture are unchanged. Manual/audio/device/plugin
+acceptance A and packaged acceptance P remain outstanding. No commits,
+tags, distribution assets or releases were created.
+
+Minimatch security close-out review on 2026-11-04: **no compatible dependency
+fix is currently available**. The official
+[GHSA-g3hv-75wg-m249 / CVE-2026-118764](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+and the current registry audit now agree on the affected range
+`>=7.0.0 <11.0.1`. The previously recorded registry-range discrepancy is
+resolved, not the vulnerability. The remaining finding is moderate severity.
+
+The advisory describes CPU/memory denial of service when an attacker supplies
+a glob pattern to first-phase preprocessing with optimizationLevel >= 2.
+This is a dependency advisory, not a demonstrated exploit in Silverdaw.
+The installed affected paths are:
+
+| minimatch | Current parent paths |
+| --- | --- |
+| 10.2.6 | ESLint directly and through @eslint/config-array; @typescript-eslint/typescript-estree; electron-builder through app-builder-lib. |
+| 9.0.9 | vue-tsc through @vue/language-core; electron-builder through app-builder-lib and @electron/universal. |
+
+Registry metadata was checked for the latest relevant parents. ESLint
+10.14.0, @eslint/config-array 0.23.5 and even the newer typescript-estree
+8.72.1 still require minimatch 10. app-builder-lib 26.18.1 retains both its
+major-10 dependency and @electron/universal 2.0.3's major-9 path; its
+27.0.0-alpha.14 prerelease still requires major 10. Neither builder version
+was installed. The latest published minimatch 9 and 10 releases remain
+9.0.9 and 10.2.6. The first fixed release is 11.0.1, with 11.0.4 now latest,
+but that major is outside these parents' supported ranges. The newer Vue
+checker removes its minimatch dependency, but its Stage 10 compatibility
+failures remain a separate blocker, and it would not fix the other paths.
+
+No direct minimatch imports or optimizationLevel settings were found in
+frontend application source. The current production-only audit reports zero
+findings, and the actual electron-builder production collector excludes
+minimatch. Both builder configurations still pass schema validation.
+These checks support a development/build-tooling exposure boundary; they do
+not prove that all transitive tooling call sites are unreachable with
+malicious input, or validate the contents of an unbuilt distribution.
+
+**Disposition: defer technical remediation; release-risk acceptance remains
+pending.** Do not force a cross-major override, locally fork the matcher just
+to obtain a clean audit, or suppress the advisory. Treat untrusted changes to
+build/lint configuration and glob patterns as code-review inputs, and do not
+run untrusted builds with elevated privileges or release credentials. This
+review does not itself grant a security waiver or change CI permissions.
+
+Recheck for a patched 9/10 backport or parent releases that officially adopt
+a fixed matcher before release and at the next dependency-maintenance pass.
+Any candidate must retain release-age policy and pass F, preserve coverage
+scope, and pass the real production-collector/configuration probes. Packaging
+changes also require P when authorised. If a fix remains unavailable, the
+release owner must explicitly decide whether to accept this bounded residual
+risk or hold the release. Manifests, lockfile, overrides and runtime code are
+unchanged by this review, so no dependency regression run is claimed.
+
+Electron 45.2.2 follow-up checkpoint on 2026-11-04, after Stage 10: the user
+explicitly approved using this already-released patch before the 24-hour
+cooling-off cutoff, for then-unreleased Silverdaw 1.10.0. pnpm recorded one
+exact-version acknowledgement, minimumReleaseAgeExclude: electron@45.2.2.
+No other package or Electron version is exempted; build permissions, hoisted
+linking and security overrides are unchanged. Remove this acknowledgement
+after 2026-11-04T21:43:24.912Z and verify a frozen install without it.
+
+The manifest and generated lockfile change only Electron from 45.2.1 to
+45.2.2. The normal pnpm install encountered a Windows staging error while
+preserving Vite's generated nested dependencies. Moving that specific folder
+into a temporary session backup let pnpm restore it normally; no ACL changes,
+user-process termination or package-manager downgrade was needed. The
+Electron launcher downloaded its runtime on first execution. Frozen install
+and the full frontend gate then passed.
+
+Lint, typecheck, all **2,449 unit tests across 195 files** and all **35 e2e
+journeys** passed. Coverage is identical to the final Stage 10 report across
+all **272 source paths**. Three actual-runtime launches confirmed Electron
+45.2.2, Chromium 156.0.8078.80 and Node 24.22.2, matching main/preload app info,
+an actually sandboxed renderer, no exposed require/process/Buffer globals
+and a live WebGL context. Three further eight-track runs passed zoom, repeated
+Clip Editor teardown and WebGL context loss/rebuild without renderer errors.
+
+The real production collector and both builder configuration probes are
+unchanged. The full JavaScript audit still reports one moderate minimatch
+finding; the production-only audit reports zero. Neither is native security
+clearance. Application versions remain 1.10.0; native executable/runtime hashes,
+application source, tests and frozen fixtures are unchanged. Temporary
+recovery/profile directories were removed. Manual acceptance A and packaged
+acceptance P remain outstanding; no distribution assets, commits, tags or
+releases were created.
+
+Local release-build checkpoint on 2026-11-04: the user explicitly authorised
+rerunning all linting/tests and building every configured distribution for
+local installation testing. The full frontend gate passed again: lint,
+typecheck, **2,449 unit tests across 195 files**, **35 e2e journeys**, and
+identical coverage across **272 source paths**. All **517 native tests**
+passed in both Debug and Release. Strict clang-tidy 22.1.8 covered all
+**160 production sources** without warnings.
+
+The Release cache still held IXWebSocket 11.4.5 and Rubber Band 3.3.0; it was
+explicitly repinned to 12.1.0 and 4.0.0 before configuring and rebuilding.
+Actual fetched revisions were checked alongside JUCE 8.0.17-security and
+RNNoise 0.1.1. The native build used four parallel jobs. A frozen pnpm install
+passed before packaging. The previous 1.9.0 outputs were preserved in a named
+session archive rather than deleted.
+
+The canonical release script produced the signed sideload AppX, portable ZIP,
+unsigned Store AppX, unpacked application and public certificate for 1.10.0.
+Its existing bundling and version guards passed. The script now refuses to
+overwrite packaging output used by running processes instead of terminating
+apps by name; PowerShell parsing and six focused output-path guard cases
+passed. Installed instances elsewhere are not blocked or terminated.
+
+All three archives contain identical application ASARs and the expected nine
+native binaries, MIDI mappings and licence notices. Store native payloads and
+all bundled DLLs match the Release build byte-for-byte; locally signed native
+executable payloads match after excluding only PE signing fields and
+certificate data. The portable and sideload executable signatures match, and
+Windows verified the portable app, backend and LAME signatures. SDK signtool
+verified the sideload AppX without warnings or errors. Both AppX manifests
+have version 1.10.0.0, x64, the correct distinct identities, microphone
+capability and project association. The Store package is intentionally
+unsigned and is not a local installation candidate. Only the existing
+certificate was reused; no trust settings were changed. The final Store pass
+left `dist/win-unpacked` unsigned; the smoke test used the signed portable ZIP.
+
+An actual executable extracted from the portable ZIP passed an isolated-profile
+smoke test using its own bundled backend, not a source-tree fallback. It
+reported Silverdaw 1.10.0 and Electron 45.2.2, loaded the packaged main/CJS
+preload, retained the renderer sandbox and exposed no Node globals. WebGL was
+live. A copy of the frozen 1.4.1 project opened and saved as 1.10.0; WAV and MP3
+mixdowns contained roughly two seconds of audio, and the MP3 reimported onto a
+track. The original fixture was unchanged. The production-only audit reports
+zero findings; the full audit retains the documented moderate minimatch risk.
+
+Manual listening, hardware/performance acceptance and installed/upgrade
+acceptance remain outstanding. The sideload identity differs from the Store
+identity, so a sideload install alone cannot establish Store-upgrade behaviour.
+No application was installed, no certificate was trusted, and no assets were
+published or uploaded; no commits or tags were created.
+
+### Regression gates
+
+**F - frontend:** from `frontend`, run `pnpm lint`, `pnpm typecheck`,
+`pnpm test:coverage` and `pnpm test:e2e`. Coverage executes the full Vitest
+suite; a second plain unit run is unnecessary. The e2e command builds the
+application bundles, not distribution assets, and runs all journeys against a
+real backend with isolated test profiles. Use the existing audio device; do
+not install or replace drivers automatically. Keep assertions, timeouts and
+the frozen released-project fixture intact. Details:
+[quality gates](developer-guide.md#quality-gates) and
+[e2e harness](../frontend/e2e/README.md).
+
+**B - backend:** from the repository root, use the MSVC developer environment:
+
+```powershell
+pwsh -NoProfile -File scripts\Invoke-DevShell.ps1 `
+  "cmake --build backend\build --target SilverdawBackend SilverdawBackendTests --config Debug --parallel 4 && ctest --test-dir backend\build --build-config Debug --output-on-failure"
+```
+
+For native dependency changes, configure a dedicated test tree with explicit
+new pins and `SILVERDAW_BUILD_TESTS=ON`; changing a CMake default alone does not
+replace a cached value. Run the existing strict clang-tidy gate against the
+new dependency headers using the pinned linter. Do not reuse stale binaries.
+
+**A - audio and performance acceptance:** use identical input files, projects,
+sample rates, block sizes, hardware and settings before and after the change.
+Check playback/export agreement, warped and pitch-shifted clip length and
+tails, loop boundaries, mute/solo skipping, recording alignment, device
+recovery, MIDI and VST3 scan/editor/state restoration. Compare callback
+headroom/dropouts, memory and elapsed import/export/separation time. Audition
+audio changes; automated timing tests alone do not prove sound quality.
+Compare renderer startup/first-paint latency and scroll/zoom responsiveness
+when Electron or PixiJS changes. Hardware-dependent results must be recorded
+as outstanding if the relevant devices are unavailable, never as passed.
+
+**P - packaged acceptance:** only after explicit authorisation to build
+distribution assets, verify the installed Windows x64 application and an
+upgrade from a released installation. Check ASAR/main/preload loading,
+backend/runtime/decoder DLLs, project-file associations, preferences, autosave
+and old-project compatibility. A development launch is not a substitute.
+Building local assets does not authorise publishing, tagging or releasing them,
+installing the app, or changing certificate trust.
+
+### Security and rollback rules
+
+The initial audit reports 72 version-range matches: two critical, 26 high,
+34 moderate and ten low. These include development dependencies and do not
+establish exploitability. Electron is a shipped runtime despite being listed
+in devDependencies, so production-only auditing is insufficient.
+
+Capture `pnpm audit --json` and resolved dependency paths at each security
+checkpoint. Prefer parent updates over overrides; do not force incompatible
+minimatch/glob majors across consumers. A stage may leave documented baseline
+findings, but final acceptance requires a disposition for every remaining
+finding, not suppressed audit output.
+
+Keep the previous manifest/lockfile diff and gate results for comparison.
+If a stage fails, isolate its dependency change or revert only that stage's
+owned edits; never overwrite unrelated work. Do not weaken sandboxing, CSP,
+input validation, tests or persisted-state compatibility to pass an upgrade.
+Model re-exports, algorithm changes, driver changes and release-version bumps
+are outside these dependency stages.
+
+## Performance maintenance (1.10.0)
+
+Status reviewed 2026-11-06. Four focused changes are implemented and measured
+on preserved packaged builds; five subsequent backend changes were measured
+on source-built native runtimes:
+
+| Stage | Implemented change | Evidence and limits |
+| --- | --- | --- |
+| C1 | Event-driven JUCE source preparation, preserving the deep-prefill barrier. | Large opening gains; the initial corpus screen still had a failure per arm. Later R1/R2/S1 screens are separate evidence, not replacements for those failures. |
+| R1 | Share concurrent reads of one waveform-cache path without a persistent file cache. | Reduced retained waveform backing storage and sampled memory; no universal one-buffer-per-source guarantee. |
+| R2 | Explicit transient scene ownership, retained clip pools and owned geometry disposal. | Reduced sampled private memory across the corpus; no clear FPS gain. |
+| S1 | Serialize effective timing from the existing clip node instead of rescanning by ID. | Reduced dense-project post-Save As snapshot time; not a general disk-write or Ctrl+S speed claim. |
+| Stress follow-up | Fixed five-pair A/A and five-pair A/B memory attribution study. | All 20 trials qualified and ten snapshot pairs matched. The initial +7.7% difference did not reproduce consistently; no exact original allocation cause or absence of all regressions was proved. No runtime change was justified. |
+| Combined reference screen | Fixed five-pair M1/S1 comparison across all six projects, containing all four optimisations together. | Candidate 30/30, reference 29/30; reference no-PONG restart excludes chopped comparisons. Eligible large/stress/extreme opening and memory improved; two extreme candidate scroll tails slowed. No clear combined Save As gain. Full-corpus comparative acceptance remains incomplete. |
+| Renderer follow-up | Ten ordinary R1/R2 extreme pairs followed by three separate profiled pairs. | Ordinary 20/20 passed; candidate-only scroll tails remain. Paired p95 +0.58%, descriptive interval -0.19% to +41.39%; only 3/6 profiles completed and CPU timestamp anomalies limit attribution. No new runtime fix justified. |
+| Watchdog follow-up | Ten native-traced M1/S1 chopped pairs with passive heartbeat/guard observations. | Reference 4/10, final 10/10. All six failed reference traces remain in synchronous rebuilding, with incomplete serial preparation dominating completed-span time. No C1-only or universal-reliability claim; guards remain unchanged. |
+| Silent native follow-up | Three fixed S1 playback/seek attempts per case, reusing existing scope timing without a renderer. | Functional 18/18, but chopped exceeds the 10 ms nominal scope budget in 13/15 steady drain windows, peaking at 15.972 ms. Extreme reaches 9.337 ms. Not complete-callback, xrun, acoustic or real-time acceptance; no speculative audio-path rewrite. |
+| Native budget fixes | Settled transport-fade/EQ fast paths, bulk dry compensation history, ordered priming compaction and parity-preserving JUCE unity resampling. | Separate source-built three-pair comparison qualified 36/36. Dense-case median worst scopes fell 25–36%; chopped 9.105 → 6.584 ms, candidate peak 7.848 ms. Neither paired arm exceeded 10 ms; this does not prove historical overruns eliminated or complete-callback acceptance. Debug/Release native gates and scalar differential/patch checks passed. |
+
+Measurements, confidence limits, original failures, complete workload/capture
+provenance and preservation checks are in
+[performance benchmarks](../frontend/performance/README.md). Stage-local
+percentages must not be added or presented as a final cumulative speedup.
+The inherited native trace lint warning was fixed separately after S1. The
+native-budget fixes also passed the affected strict lint gate; frozen packaged
+benchmark inputs remain unchanged. Five backend changes were measured separately
+from the four packaged stages, not added to their speedup percentages.
+
+The [release decision](#release-acceptance-1100) supersedes
+the earlier investigation-first sequence. No further speculative optimisation
+or broad profiling is scheduled following the manual testing/listening sign-off.
+
+- Retain the original combined-screen and candidate-only scroll tails in the
+  [follow-up](../frontend/performance/README.md#remaining-work-investigation-2026-11-06).
+  Partial profiles and median parity do not prove smoother rendering. Reopen
+  targeted CPU/GPU/allocation attribution only for a disruptive or reproducibly
+  worse acceptance result.
+- Retain the maintainer's manual testing/listening confirmation separately from
+  complete-callback/device-xrun evidence and unconfirmed device/native-dialog/
+  installed-upgrade coverage. Silent partial scopes and bridge-observed
+  play/seek response do not establish absence of dropouts.
+  Neither arm overran in the final paired native screen; historical overruns
+  remain retained findings, not proved universally eliminated.
+- Preserve the failed no-PONG traces and chopped reference exclusion. The
+  historical expiry overlaps synchronous rebuilding and serial preparation;
+  final bounded passes are not universal reliability proof. Do not relax
+  watchdog/readiness guards, replace failed trials or claim full-corpus
+  comparative acceptance from the incomplete reference.
+
+Graph batching, shared readers, voice pooling and a broader diagnostics
+overhead study are deferred unless concrete acceptance evidence justifies them.
+The 1.10.0 release designation does not authorise further builds, publication,
+installation, certificate-trust changes, commits or tags.
+
 ## 1. Product Scope
 
 A Windows desktop DAW with an Electron frontend and a JUCE audio backend, aimed
@@ -40,7 +948,7 @@ Silverdaw is split into two processes that communicate over a local WebSocket co
 | Process               | Role                                                                   |
 | --------------------- | ---------------------------------------------------------------------- |
 | **Electron frontend** | All UI rendering, user interaction, drag and drop                      |
-| **JUCE backend**      | Audio engine, DSP, file I/O, project state — runs headless (no window) |
+| **JUCE backend**      | Audio engine, DSP, file I/O, project state; no Silverdaw UI, but owns hosted VST3 editor windows |
 
 The Electron process launches the JUCE backend as a child process on startup and terminates it on close.
 
@@ -61,7 +969,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Layer           | Choice                      | Rationale                                                       |
 | --------------- | --------------------------- | --------------------------------------------------------------- |
 | Language        | C++17                       | Performance, JUCE compatibility                                 |
-| Framework       | JUCE (headless)             | Audio I/O, plugin hosting, project state — UI subsystems unused |
+| Framework       | JUCE                       | Audio I/O, plugin hosting, project state; GUI module only for native plugin editors |
 | Communication   | IXWebSocket loopback server | Low-latency local IPC                                           |
 | Target platform | Windows (x64) only          | Permanent scope — Windows desktop only; no macOS/Linux port, no hosted/web version |
 
@@ -78,7 +986,9 @@ The Electron process launches the JUCE backend as a child process on startup and
 | Vocal-stem cleanup           | RNNoise (xiph, v0.1.1) + de-bleed     | Optional, model-aware post-separation vocal cleanup: htdemucs vocals get a cross-stem STFT Wiener de-bleed + RNNoise broadband denoise (BSD-2-Clause) + sub-bass high-pass/expander; the high-SDR RoFormer vocal skips the de-bleed and runs gentler denoise/expander. RNNoise is fetched and statically linked via CMake `FetchContent`. A separate per-run **Remove Reverb & Echo** option (`Dereverberator` STFT late-reverb subtraction + `VocalRestorer` level/presence restoration) is offered in the dialog, independent of the saved cleanup prefs. |
 | Decoding unsupported formats | Renderer Web Audio + temp WAV | Web Audio covers many formats JUCE can't decode natively; the decoded WAV is cached for the backend to load. |
 
-> **Note:** JUCE UI subsystems (`Component`, `AudioThumbnail`, `OpenGLContext`) are not used. All rendering is handled by the Electron frontend.
+> **Note:** All Silverdaw interface rendering is handled by Electron. The
+> backend links `juce_gui_basics` only for hosted plugins' native editor windows
+> (ADR 0025); it does not draw the arrangement or application dialogs.
 
 ---
 
@@ -91,7 +1001,11 @@ port in `[8765, 8784]`, starts the JUCE backend with `--port`, and exposes the
 chosen port plus a per-session AUTH token to the renderer over IPC. The renderer
 connects directly; the backend gates every connection on the AUTH token.
 
-The bridge is **text-only**: every envelope is a JSON `{ type, payload }` frame. There is no binary frame plane. Bulk data (waveform peaks today; stems / previews later) goes via disk — the backend writes to a known cache location and sends a small "ready" envelope pointing at the path; the renderer reads the file via main's IPC. This sidesteps the I/O-loop starvation issues a single-threaded WS server (IXWebSocket) hits when bulk frames compete with control traffic, and aligns with how the same plan already treats audio files, stems and mixdowns.
+The bridge is **text-only**: every envelope is a JSON `{ type, payload }`
+frame. There is no binary frame plane. Bulk waveform, stem, recording, scratch
+and mixdown data goes via disk — the backend writes a file and sends a small
+notification pointing at its path; the renderer reads permitted files via
+main's IPC. Bulk transfer is already implemented, not a future socket feature.
 
 ### Message Protocol
 
@@ -134,7 +1048,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.9.0" } }
+{ "type": "READY", "payload": { "version": "1.10.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -185,10 +1099,11 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
 | BPM / beat detection                        | JUCE backend (BTrack)                           |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
-| Stem separation                             | JUCE backend (ONNX Runtime / Demucs), model download in Electron main |
+| Stem separation                             | JUCE backend (ONNX Runtime / RoFormer + htdemucs backup), model download in Electron main |
 | File reading / writing                      | JUCE backend                                    |
 | Project state (source of truth)             | JUCE backend (ValueTree)                        |
-| UI state (zoom, selections, scroll)         | Electron / Pinia                                |
+| Persisted view state (zoom, scroll, selected track, timeline range) | JUCE ValueTree; renderer mirrors it through PROJECT_SET_VIEW / PROJECT_STATE |
+| Transient UI state (hover, in-flight gestures) | Electron / Pinia |
 
 ---
 
@@ -202,7 +1117,7 @@ JUCEBackend (headless)
 ├── BridgeServer                — IXWebSocket loopback + AUTH gate; text-only JSON
 │
 ├── AudioEngine
-│   ├── topMixer                — combines `master` and `previewVoice.transport`
+│   ├── topMixer                — project, preview, scratch/backing, input monitor, calibration
 │   │   ├── master              — project transport (mixer → per-track clip sources)
 │   │   └── previewVoice        — independent Clip Editor preview voice
 │   ├── per-track clip sources  — non-destructive source windows
@@ -227,7 +1142,7 @@ JUCEBackend (headless)
 Electron Shell
 │
 ├── Main process
-│   ├── Launches SilverdawBackend as child process (bridge port + token via env)
+│   ├── Launches SilverdawBackend (port via --port, AUTH token via env)
 │   ├── Native file dialogs, app menu, preferences.json persistence,
 │   │   metadata + peaks-cache IPC, autosave directory management,
 │   │   recent-projects MRU
@@ -2297,7 +3212,7 @@ earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
 its markers, but a beat anchor adjusted by hand in a project saved before this
 sits 12 ms off and wants correcting once.
 
-### 1.9.0 - Record Audio *(current release)*
+### 1.9.0 - Record Audio *(released)*
 
 **Goal:** let a user record live input over the running arrangement without
 Silverdaw becoming a track-recording DAW. A recording belongs to a window in
@@ -2378,6 +3293,15 @@ sideload of the signed package: the install registers
 `Silverdaw_<hash>` with the value `Prompt`, and capture then works on real
 hardware. There is deliberately no install-time permission dialog — Windows
 resolves a device capability at first use, not during installation.
+
+### 1.10.0 - Dependency & Performance Maintenance *(current release)*
+
+Dependency/toolchain updates, project-opening and waveform/viewport-memory
+improvements, Save As snapshot improvements and focused backend processing
+optimisations are complete. Automated and packaged checks are recorded in the
+[release record](#release-acceptance-1100); the maintainer confirmed manual
+testing and satisfactory audio on 2026-11-06. The dependency and performance
+sections retain the detailed evidence, deferrals and measurement limitations.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3098,7 +4022,10 @@ robustness without changing the core editing model.
   added across Phases 5–6. Clip-lock currently lives in the frontend store /
   context-menu tests rather than a dedicated backend persistence case.
 - **Logging:** the cross-layer `%USERPROFILE%\Silverdaw\Logs\<session>\{main,backend,renderer}.log` infrastructure is opt-in via Preferences ▸ Developer, in dev and packaged builds alike. Separately, an **always-on** startup diagnostics log (and a backend crash report) is written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch, independent of that flag, so a failure to start is diagnosable from the logs alone (see Developer Guide → Startup diagnostics). Both locations deliberately resolve to the same discoverable user-profile folder in dev and packaged builds: under MSIX a `userData` path is silently redirected into the package's hidden LocalCache container, so it would be shown but never findable. Renderer code routes through `frontend/src/renderer/src/lib/log.ts` (enforced by an ESLint `no-console` rule scoped to `src/renderer/**`); the backend routes through `silverdaw::log` rather than raw `std::cerr` / `std::cout`.
-- **Documentation:** the bridge protocol catalogue, ValueTree schema, and project file format live in `README.md` and the shared `bridge-protocol.ts` (the schema source of truth), updated as each phase adds envelopes.
+- **Documentation:** the bridge protocol catalogue, ValueTree schema and project
+  file format are documented in `docs/developer-guide.md`. The shared
+  `bridge-protocol.ts` facade re-exports the authoritative contracts; the root
+  `README.md` is the user-facing overview.
 
 ---
 
@@ -3106,13 +4033,13 @@ robustness without changing the core editing model.
 
 | Risk                                        | Mitigation                                                                                                                                        |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WebSocket latency for transport control     | Round-trip on localhost should be <2ms; playhead interpolation in frontend handles any jitter                                                     |
+| WebSocket latency for transport control     | Keep loopback round-trips small; <2 ms is an engineering target, not a measured guarantee under load. The renderer displays authoritative PLAYHEAD_UPDATE positions without local interpolation. |
 | Warp engine multi-track sync                | Master transport clock + per-track latency compensation landed in Phase 1                                                                         |
 | Large bridge payloads stalling the I/O loop | The bridge is text-only. Bulk data uses disk caches plus small `*_READY` envelopes so IXWebSocket I/O threads never stream audio / peak payloads. |
 | PixiJS performance with many clips          | Pool and recycle display objects; only render clips in the visible viewport                                                                       |
-| Demucs model download UX                    | Stem features visibly disabled until model is present; clear download progress UI                                                                 |
-| Memory pressure with many clips             | Stream audio from disk on the backend (`BufferingAudioSource`); defer renderer decode-memory reduction to post-core hardening      |
-| Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
+| Stem-model download UX                      | Gate separation on required RoFormer/backup models and show download progress. |
+| Memory pressure with many clips             | Stream audio with BufferingAudioSource; R1/R2 reduce waveform/viewport retention. Exercise dense projects during acceptance; reopen allocation profiling only for concrete failures and preserve existing evidence/guards. |
+| Rubber Band real-time latency               | Real-time mode uses preallocated buffers and explicit seek/reset handling. Check real warped material during hardware/listening acceptance; profile only a reproducible failure. |
 | VST3 plugin crashes                         | Scanning runs in a child process behind a persistent blacklist; a crash while hosting is recovered by the existing engine supervisor (ADR 0025)                                                    |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
 | Audio output device stops delivering audio   | Implemented: `DeviceCallbackGuard` logs device start/stop/error, and a message-thread watchdog restarts a device whose callback count has stopped advancing (bounded attempts), so a stalled stream can no longer show playback with a frozen playhead and silence (see Developer Guide → Audio devices, Robustness) |
@@ -3132,9 +4059,12 @@ robustness without changing the core editing model.
 - **Mel-Band RoFormer** — optional MIT-licensed vocal model (Kim Vocal 2 / SYHFT) for the "Vocal Quality Pack", downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
-- **JUCE is backend only** — no JUCE UI components used; all rendering is Electron + PixiJS
+- **JUCE is backend only** — all Silverdaw rendering is Electron + PixiJS; the
+  engine owns native hosted-plugin editor windows under ADR 0025.
 - **Cross-layer logging** — every session writes `%USERPROFILE%\Silverdaw\Logs\<stamp>\{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (opt-in via Preferences ▸ Developer). An always-on startup diagnostics log + backend crash report is also written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch regardless of that flag, so a failed startup can still be diagnosed. Dev and packaged builds resolve both to the same discoverable location.
-- **Multiple clients on the bridge** — the WebSocket bridge supports multiple authenticated clients. A future Fine-Clip Editor window can use that capability as a second BrowserWindow talking to the same backend.
+- **Multiple clients on the bridge** — the WebSocket bridge supports multiple
+  authenticated clients. The existing Clip Editor is a renderer dialog, not a
+  second BrowserWindow; no detached editor window is implemented.
 
 ---
 

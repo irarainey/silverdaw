@@ -53,7 +53,8 @@ std::mutex& decodeLockFor(const juce::String& cachePath)
 //     same speed. LAME additionally strips the ~529-sample MP3 encoder delay that JUCE
 //     leaves in, so decodes from this generation start ~12 ms earlier than before and
 //     beat grids derived from them are re-derived against the corrected audio.
-constexpr int kDecodedCacheGeneration = 3;
+//  4: LAME 4 replaces mpglib with libmpg123; discard output from the old decoder.
+constexpr int kDecodedCacheGeneration = 4;
 
 // The identity half of the key, shared by the current and superseded generations.
 juce::String decodedCacheKeyFor(const juce::File& sourceFile)

@@ -393,49 +393,6 @@ int ProjectState::retimeClipsForTempoChange(double previousBpm, double newBpm,
     return count;
 }
 
-ProjectState::EffectiveClipTiming ProjectState::getClipEffectiveTiming(const juce::String& clipId) const
-{
-    EffectiveClipTiming out;
-    const auto clip = findClip(clipId);
-    if (!clip.isValid()) return out;
-
-    out.durationMs = static_cast<double>(clip.getProperty(kDurationMs, 0.0));
-    if (!static_cast<bool>(clip.getProperty(kWarpEnabled, false)))
-    {
-        return out;
-    }
-
-    double ratio = 1.0;
-    if (clip.hasProperty(kTempoRatio))
-    {
-        ratio = static_cast<double>(clip.getProperty(kTempoRatio, 1.0));
-    }
-    else
-    {
-        const auto libraryItemId = clip.getProperty(kLibraryItemId, {}).toString();
-        const double sourceBpm = getLibraryItemBpm(libraryItemId);
-        const double projectBpm = getBpm();
-        if (sourceBpm > 0.0 && projectBpm > 0.0)
-        {
-            ratio = projectBpm / sourceBpm;
-        }
-    }
-
-    out.tempoRatio = ratio > 0.0 ? ratio : 1.0;
-    // Whether a warp is doing anything is a question about this clip, not about the
-    // ratio: a flat epsilon is duration-blind, so a stem warped from 94.0446 to 94.05
-    // BPM read as inactive while the engine was already stretching it, and the timeline
-    // then drew it at native length, hid the WARP badge, and spaced its beat markers to
-    // the wrong grid. Judge it on the drift the ratio produces across the clip instead.
-    // Mirrored by the renderer's `isWarpActive` (ADR 0024).
-    out.warpActive = warpChangesTiming(out.durationMs, out.tempoRatio);
-    if (out.warpActive)
-    {
-        out.durationMs = out.durationMs / out.tempoRatio;
-    }
-    return out;
-}
-
 std::optional<ProjectState::ClipPreparationInfo>
 ProjectState::getClipPreparationInfo(const juce::String& clipId) const
 {

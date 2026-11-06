@@ -12,7 +12,7 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Vue 3.x with Composition API as default
 - TypeScript for type safety
 - Single File Components (`.vue`) with `<script setup>` syntax
-- Modern build tooling (Vite recommended)
+- Existing electron-vite / Vite build; Windows desktop only
 - Pinia for application state management
 - Official Vue style guide and best practices
 - **Package manager: pnpm only.** Always use `pnpm` for installing dependencies and running scripts (`pnpm install`, `pnpm run <script>`, `pnpm dlx`). Never use `npm` (or `yarn`) in this repo — the lockfile is `pnpm-lock.yaml` and mixing managers corrupts it.
@@ -24,7 +24,7 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Favor the Composition API (`setup` functions and composables) over the Options API
 - Organize components and composables by feature or domain for scalability
 - Separate UI-focused components (presentational) from logic-focused components (containers)
-- Extract reusable logic into composable functions in a `composables/` directory
+- Keep composables in the existing domain folders under `renderer/src/lib/`
 - Structure store modules (Pinia) by domain, with clearly defined actions, state, and getters
 
 ### TypeScript Integration
@@ -33,7 +33,7 @@ Instructions for building high-quality VueJS 3 applications with the Composition
 - Use `defineComponent` or `<script setup lang="ts">` with `defineProps` and `defineEmits`
 - Leverage `PropType<T>` for typed props and default values
 - Use interfaces or type aliases for complex prop and state shapes
-- Define types for event handlers, refs, and `useRoute`/`useRouter` hooks
+- Define types for event handlers, refs, shared bridge payloads and preload IPC
 - Implement generic components and composables where applicable
 
 ### Component Design
@@ -49,7 +49,8 @@ maintainability gate. Vue specifics:
 - Each domain (timeline, clip editor, library, transport, …) in its own
   component / composable / store; keep presentation ↔ store ↔ preload ↔ main
   boundaries clean and cross-domain coupling explicit.
-- Use `<script setup>`; PascalCase component names, kebab-case file names.
+- Use `<script setup>` and PascalCase `.vue` component filenames; match
+  neighbouring TypeScript helper/composable filenames.
 - Validate props with TypeScript; use runtime checks only when necessary.
 - Favour slots and scoped slots for flexible composition.
 
@@ -60,7 +61,9 @@ maintainability gate. Vue specifics:
 - Use `computed` for derived state
 - Keep state normalized for complex structures
 - Use actions in Pinia stores for asynchronous logic
-- Leverage store plugins for persistence or debugging
+- Mirror persisted project state from the backend ValueTree. Preferences go
+  through the existing main/preload IPC; do not add Pinia persistence plugins
+  that create a second source of truth.
 
 ### Composition API Patterns
 
@@ -68,7 +71,8 @@ maintainability gate. Vue specifics:
 - Use `watch` and `watchEffect` with precise dependency lists
 - Cleanup side effects in `onUnmounted` or `watch` cleanup callbacks
 - Use `provide`/`inject` sparingly for deep dependency injection
-- Use `useAsyncData` or third-party data utilities (Vue Query)
+- Reuse existing async composables and bridge/IPC services; Nuxt and Vue Query
+  are not part of this application.
 
 ### Styling
 
@@ -76,7 +80,7 @@ maintainability gate. Vue specifics:
 - Consider utility-first frameworks (Tailwind CSS) for rapid styling
 - Follow BEM or functional CSS conventions for class naming
 - Leverage CSS custom properties for theming and design tokens
-- Implement mobile-first, responsive design with CSS Grid and Flexbox
+- Adapt CSS Grid/Flexbox layouts to resizable Windows desktop panels
 - Ensure styles are accessible (contrast, focus states)
 
 ### Performance Optimization
@@ -90,11 +94,12 @@ maintainability gate. Vue specifics:
 
 ### Data Fetching
 
-- Use composables like `useFetch` (Nuxt) or libraries like Vue Query
+- Use the existing bridge/IPC and model-download flows, not a new web data layer
 - Handle loading, error, and success states explicitly
 - Cancel stale requests on component unmount or param change
 - Implement optimistic updates with rollbacks on failure
-- Cache responses and use background revalidation
+- Preserve existing cache ownership and invalidation; do not add persistent
+  caching where only in-flight work is shared.
 
 ### Error Handling
 
@@ -102,24 +107,23 @@ maintainability gate. Vue specifics:
 - Wrap risky logic in `try/catch`; provide user-friendly messages
 - Use `errorCaptured` hook in components for local boundaries
 - Display fallback UI or error alerts gracefully
-- Log errors to external services (Sentry, LogRocket)
+- Use the existing local logging and notification helpers; do not introduce
+  external telemetry or upload diagnostic data.
 
 ### Forms and Validation
 
-- Use libraries like VeeValidate or @vueuse/form for declarative validation
+- Reuse existing field validators and shared schemas; no additional form
+  framework is installed.
 - Build forms with controlled `v-model` bindings
 - Validate on blur or input with debouncing for performance
-- Handle file uploads and complex multi-step forms in composables
+- Handle native file-picking and transactional forms through existing composables
 - Ensure accessible labeling, error announcements, and focus management
 
-### Routing
+### Navigation
 
-- Use Vue Router 4 with `createRouter` and `createWebHistory`
-- Implement nested routes and route-level code splitting
-- Protect routes with navigation guards (`beforeEnter`, `beforeEach`)
-- Use `useRoute` and `useRouter` in `setup` for programmatic navigation
-- Manage query params and dynamic segments properly
-- Implement breadcrumb data via route meta fields
+- Silverdaw is a desktop SPA without Vue Router or browser-history routes.
+- Reuse `App.vue`, the existing domain stores and dialog/panel state for
+  navigation. Do not introduce a router or hosted/web assumptions.
 
 ### Testing
 
@@ -136,8 +140,10 @@ Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
 - Avoid using `v-html`; sanitize any HTML inputs rigorously
 - Use CSP headers to mitigate XSS and injection attacks
 - Validate and escape data in templates and directives
-- Use HTTPS for all API requests
-- Store sensitive tokens in HTTP-only cookies, not `localStorage`
+- Use HTTPS for external model downloads. The local bridge intentionally uses
+  authenticated loopback `ws://` with a dynamic port.
+- Keep the per-session AUTH token in the existing main/preload handoff; do not
+  persist it in localStorage or introduce a web cookie/session layer.
 
 ### Accessibility
 
@@ -150,11 +156,11 @@ Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
 ## Implementation Process
 
 1. Plan component and composable architecture
-2. Initialize Vite project with Vue 3 and TypeScript
+2. Locate the existing domain components, composables and shared helpers
 3. Define Pinia stores and composables
 4. Create core UI components and layout
-5. Integrate routing and navigation
-6. Implement data fetching and state logic
+5. Integrate with existing panel/dialog navigation
+6. Wire bridge/IPC state logic without duplicating authoritative state
 7. Build forms with validation and error states
 8. Add global error handling and fallback UIs
 9. Add unit and E2E tests
@@ -165,7 +171,7 @@ Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
 ## Additional Guidelines
 
 - Follow Vue’s official style guide (vuejs.org/style-guide)
-- Use ESLint (with `plugin:vue/vue3-recommended`) and Prettier for code consistency
+- Use the existing ESLint flat configuration and Prettier settings
 - Write meaningful commit messages and maintain clean git history
 - Keep dependencies up to date and audit for vulnerabilities
 - Keep comments short and minimal — one line wherever possible. Default to no
@@ -180,5 +186,5 @@ Follow **ADR 0014** (`docs/adr/0014-testing-strategy.md`). Vue specifics:
 - Compound components using provide/inject
 - Custom directives for cross-cutting concerns
 - Teleport for modals and overlays
-- Plugin system for global utilities (i18n, analytics)
+- Existing app-level providers and shared helpers, without adding global services
 - Composable factories for parameterized logic

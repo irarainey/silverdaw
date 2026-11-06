@@ -26,7 +26,9 @@ you touched.
 - **No YAML front matter** in project documentation. Front matter appears only
   in `.github/` tooling files: `description` + `applyTo` for
   `*.instructions.md`, `mode` + `description` for `*.prompt.md`, `name` +
-  `description` for agents.
+  `description` for agents. The published Hugging Face model card at
+  `backend/tools/roformer_export/model-card.md` retains its required model
+  metadata; it is not a general documentation template.
 - Wrap prose at roughly 80 columns. Tables, links, and code may overflow —
   never reflow them to hit a column count.
 - Fenced code blocks carry a language identifier; `text` for diagrams and

@@ -30,7 +30,7 @@ it is the card published alongside the model on Hugging Face.
 | --- | --- |
 | `export_4stem.py` | Trace the checkpoint to a host-STFT fp32 ONNX and save `reference_t<T>.npz` for parity. |
 | `python/wrapper.py` | The host-STFT `nn.Module` wrapper (STFT/iSTFT removed; complex multiply unrolled for ONNX). Shared by the exporter. |
-| `python/fp16_weights.py` | Fold Conv/MatMul/Gemm weight initializers to fp16 + `Cast(fp16→fp32)`, halving file size with no CPU precision loss. Produces the shipped `*_fp16.onnx`. |
+| `python/fp16_weights.py` | Store Conv/MatMul/Gemm weights as fp16 + `Cast(fp16→fp32)`, reducing file size while keeping fp32 computation. Weight quantisation is checked by the parity step below. Produces the shipped `*_fp16.onnx`. |
 | `python/validate_onnx.py` | Assert ONNX-Runtime (CPU) output matches the PyTorch reference (max abs diff < 1e-3). |
 | `full_track_4stem.py` | End-to-end full-track separation + sum-null check; writes per-stem WAVs for auditioning. |
 | `python/compare_stems.py` | Generic QA: correlation / RMS-diff / SI-SDR between two stem renders. |
@@ -53,24 +53,28 @@ it is the card published alongside the model on Hugging Face.
 
 ## Pipeline
 
-```bash
+Run from the repository root after preparing the prerequisites above:
+
+```powershell
+Set-Location backend\tools\roformer_export
+
 # 1. Trace -> artifacts/bs_roformer_4stem_t801_fp32.onnx + reference_t801.npz
 #    (the optional arg is chunk length in samples; default 485100 = 11 s.
 #     Silverdaw ships the 8 s / 352800-sample window: T = 801.)
 python export_4stem.py 352800
 
 # 2. Fold weights to fp16 -> the shipped, self-contained graph
-python python/fp16_weights.py \
-  --in-path  artifacts/bs_roformer_4stem_t801_fp32.onnx \
-  --out-path artifacts/bs_roformer_4stem_rhythm_fp16.onnx
+python python\fp16_weights.py `
+  --in-path  artifacts\bs_roformer_4stem_t801_fp32.onnx `
+  --out-path artifacts\bs_roformer_4stem_rhythm_fp16.onnx
 
-# 3. Verify the export is faithful (CPU EP, fp32-clean)
-python python/validate_onnx.py \
-  --onnx artifacts/bs_roformer_4stem_rhythm_fp16.onnx \
-  --reference artifacts/reference_t801.npz
+# 3. Verify bounded parity with the fp32 reference (CPU EP)
+python python\validate_onnx.py `
+  --onnx artifacts\bs_roformer_4stem_rhythm_fp16.onnx `
+  --reference artifacts\reference_t801.npz
 
 # 4. (Optional) audition a full track + sum-null sanity check
-python full_track_4stem.py artifacts/bs_roformer_4stem_rhythm_fp16.onnx 352800
+python full_track_4stem.py artifacts\bs_roformer_4stem_rhythm_fp16.onnx 352800
 ```
 
 The fp16 file from step 2 is what gets uploaded to Hugging Face (with

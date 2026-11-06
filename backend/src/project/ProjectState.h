@@ -864,6 +864,7 @@ class ProjectState : public juce::ValueTree::Listener
   private:
     juce::ValueTree findTrack(const juce::String& trackId) const;
     juce::ValueTree findClip(const juce::String& clipId) const;
+    EffectiveClipTiming resolveClipEffectiveTiming(const juce::ValueTree& clip) const;
 
     static juce::var buildTransitionsJson(const juce::ValueTree& track);
 

@@ -198,6 +198,35 @@ void testToneEqNeutralBypassAndReactivation()
             "reactivating Tone EQ after bypass must not expose stale filter history");
 }
 
+void testToneEqSettledControlsAcceptNearEqualTarget()
+{
+    silverdaw::ToneEq moving;
+    silverdaw::ToneEq reference;
+    moving.setParams(6.0F, 0.0F, 0.0F, 0.0F, true);
+    reference.setParams(6.00005F, 0.0F, 0.0F, 0.0F, true);
+    moving.prepare(44100.0, 2);
+    reference.prepare(44100.0, 2);
+    moving.setBassTarget(6.00005F, false);
+    juce::AudioBuffer<float> actual(2, 256);
+    juce::AudioBuffer<float> expected(2, 256);
+    for (int block = 0; block < 3; ++block)
+    {
+        for (int channel = 0; channel < 2; ++channel)
+            for (int sample = 0; sample < 256; ++sample)
+            {
+                const float value = static_cast<float>((sample % 17) - 8) / 17.0F;
+                actual.setSample(channel, sample, value);
+                expected.setSample(channel, sample, value);
+            }
+        moving.process(actual, 0, 256);
+        reference.process(expected, 0, 256);
+        for (int channel = 0; channel < 2; ++channel)
+            for (int sample = 0; sample < 256; ++sample)
+                require(actual.getSample(channel, sample) == expected.getSample(channel, sample),
+                        "settled controls must still snap near-equal targets and process filter history");
+    }
+}
+
 void testLevelerPassthroughAndCompression()
 {
     constexpr double sr = 44100.0;
@@ -1712,6 +1741,7 @@ void addFxDspTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ToneEq low-cut is a high-pass and shelves have +/-15 dB range", testToneEqLowCutDirectionAndShelfRange});
     tests.push_back({"ToneEq neutral bypass is bit-identical and reactivates cleanly", testToneEqNeutralBypassAndReactivation});
+    tests.push_back({"ToneEq settled controls accept a near-equal target", testToneEqSettledControlsAcceptNearEqualTarget});
     tests.push_back({"Leveler is bit-exact at Amount 0 and compresses a hot signal at Amount 1", testLevelerPassthroughAndCompression});
     tests.push_back({"Punch is bit-exact at Amount 0 and stereo-links transient shaping", testPunchBypassAndStereoLinkedTransientShaping});
     tests.push_back({"Glue Compressor has exact bypass and stereo-linked compression", testMixGlueHasExactBypassAndStereoLinkedCompression});

@@ -1,6 +1,8 @@
 #include "BridgeServer.h"
+
 #include "BridgeAuth.h"
 #include "Log.h"
+#include "ProjectPerformanceTrace.h"
 #include "Version.h"
 
 #include <ixwebsocket/IXConnectionState.h>
@@ -176,9 +178,11 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
         else
         {
             // Constructor-injected handler is immutable, so async capture by `this` is safe.
+            const auto queued = ProjectPerformanceTrace::queuedAt(type);
             juce::MessageManager::callAsync(
-                [this, type, payload]
+                [this, type, payload, queued]
                 {
+                    ProjectPerformanceTrace trace(type, queued);
                     if (messageHandler)
                     {
                         messageHandler(*this, type, payload);
@@ -264,7 +268,13 @@ void BridgeServer::broadcast(const juce::String& type, const juce::var& payload)
         envelope->setProperty("payload", payload);
     }
 
-    const auto serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
+    std::string serialised;
+    {
+        const ProjectPerformanceSpan encoding(ProjectPerformancePhase::EnvelopeSerialization);
+        serialised = juce::JSON::toString(juce::var(envelope), true).toStdString();
+    }
+    if (type == "PROJECT_STATE")
+        ProjectPerformanceTrace::recordProjectStateBytes(serialised.size());
 
     // Skip high-rate transport/meter chatter so diagnostics remain readable.
     if (type != "PLAYHEAD_UPDATE" && type != "PREVIEW_POSITION" && type != "MASTER_LEVEL")

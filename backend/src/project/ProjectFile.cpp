@@ -1,5 +1,6 @@
 #include "ProjectFile.h"
 
+#include "ProjectPerformanceTrace.h"
 #include "ValueTreeJson.h"
 #include "Version.h"
 
@@ -132,14 +133,28 @@ juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var&
         return juce::Result::fail("Cannot create temp file " + tempFile.getFullPathName());
     }
 
-    const auto jsonString = juce::JSON::toString(rootVar);
-    if (!tempFile.replaceWithText(jsonString))
+    juce::String jsonString;
+    {
+        const ProjectPerformanceSpan formatting(ProjectPerformancePhase::JsonFormatting);
+        jsonString = juce::JSON::toString(rootVar);
+    }
+    bool written = false;
+    {
+        const ProjectPerformanceSpan writing(ProjectPerformancePhase::FileWrite);
+        written = tempFile.replaceWithText(jsonString);
+    }
+    if (!written)
     {
         tempFile.deleteFile();
         return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
     }
 
-    if (!replaceFileAtomically(tempFile, file))
+    bool replaced = false;
+    {
+        const ProjectPerformanceSpan replacing(ProjectPerformancePhase::AtomicReplace);
+        replaced = replaceFileAtomically(tempFile, file);
+    }
+    if (!replaced)
     {
         tempFile.deleteFile();
         return juce::Result::fail("Failed to replace project file " + file.getFullPathName());
@@ -163,7 +178,11 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     rootObj->setProperty(kAppVersionKey, kAppVersionValue);
     rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
 
-    const auto projectVar = ValueTreeJson::toVar(projectTree);
+    juce::var projectVar;
+    {
+        const ProjectPerformanceSpan serialization(ProjectPerformancePhase::TreeSerialization);
+        projectVar = ValueTreeJson::toVar(projectTree);
+    }
     if (projectVar.isVoid())
     {
         return juce::Result::fail("Failed to serialise project tree to JSON");
@@ -171,7 +190,10 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     // Store project-internal artifact paths relative to the project folder so the
     // whole folder is portable; sources and machine-local caches stay absolute.
     juce::var portableVar = projectVar;
-    rewritePortablePaths(portableVar, file.getParentDirectory(), /*forSave=*/true);
+    {
+        const ProjectPerformanceSpan paths(ProjectPerformancePhase::PortablePaths);
+        rewritePortablePaths(portableVar, file.getParentDirectory(), /*forSave=*/true);
+    }
     rootObj->setProperty(kProjectKey, portableVar);
 
     return writeProjectJsonAtomically(file, juce::var(rootObj));

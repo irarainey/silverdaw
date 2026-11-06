@@ -70,7 +70,7 @@ export function registerAutosaveHandlers(): void {
     }>
   > => {
     const root = getAutosaveRoot()
-    let entries: string[] = []
+    let entries: string[]
     try {
       entries = await readdir(root)
     } catch {
@@ -99,7 +99,7 @@ export function registerAutosaveHandlers(): void {
       }
       if (!manifest) continue
       if (manifest.pending) continue
-      let autosaveStat: Awaited<ReturnType<typeof stat>> | null = null
+      let autosaveStat: Awaited<ReturnType<typeof stat>>
       try {
         autosaveStat = await stat(autosavePath)
       } catch {

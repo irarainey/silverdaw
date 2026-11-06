@@ -26,6 +26,7 @@ build/
 backend/build/
 backend/build-release/
 *.exe
+backend/third_party/lame/libmpg123-0.dll
 *.pdb
 *.ilk
 *.lib

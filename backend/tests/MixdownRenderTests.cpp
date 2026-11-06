@@ -4,18 +4,17 @@
 // dedup, normalize pass-2 extraction) can be proven behaviour-neutral. Dither
 // is forced OFF so the 16-bit output is fully deterministic run-to-run.
 
-#include "TestRegistry.h"
-
 #include "BridgeServer.h"
+#include "DecodedCache.h"
 #include "Log.h"
 #include "MixdownEngine.h"
 #include "MixdownRender.h"
 #include "ProjectState.h"
+#include "TestRegistry.h"
 
 #include <atomic>
 #include <cmath>
 #include <iostream>
-
 #include <juce_audio_formats/juce_audio_formats.h>
 
 namespace silverdaw::tests
@@ -103,11 +102,8 @@ RenderFingerprint fingerprint(const juce::File& file)
 // Build a single-track, single-clip project pointing at a real WAV and render
 // it through runMixdownJob (synchronous; clientless BridgeServer => broadcasts
 // are no-ops). Returns the decoded fingerprint of the produced file.
-RenderFingerprint renderOnce(const juce::File& sourceWav,
-                             const juce::File& outFile,
-                             MixdownOptions::Format format,
-                             int bitDepth,
-                             MixdownOptions::LoudnessMode loudness)
+RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outFile, MixdownOptions::Format format,
+                             int bitDepth, MixdownOptions::LoudnessMode loudness, int bitrateKbps = 192)
 {
     ProjectState state;
     require(state.addTrack("t1"), "addTrack should succeed");
@@ -125,6 +121,7 @@ RenderFingerprint renderOnce(const juce::File& sourceWav,
     options.outputSampleRate = 44100;
     options.format = format;
     options.bitDepth = bitDepth;
+    options.bitrateKbps = bitrateKbps;
     options.dither = false; // determinism
     options.tailSeconds = 0.0;
     options.loudnessMode = loudness;
@@ -145,12 +142,68 @@ RenderFingerprint renderOnce(const juce::File& sourceWav,
         throw std::runtime_error(std::string("render produced no output file; dir has: ")
                                  + present.toStdString());
     }
-    auto fp = fingerprint(outFile);
+    RenderFingerprint fp;
+    if (format == MixdownOptions::Format::Mp3)
+    {
+        DecodedCache cache;
+        juce::AudioFormatManager noFallbackFormats;
+        const auto decoded = cache.ensureDecoded(outFile, noFallbackFormats);
+        require(decoded.existsAsFile(), "the bundled LAME decoder must decode the MP3 without a JUCE fallback");
+        fp = fingerprint(decoded);
+        require(decoded.deleteFile(), "the test's decoded cache entry should be removed");
+    }
+    else
+    {
+        fp = fingerprint(outFile);
+    }
     std::cout << "    [fingerprint] " << outFile.getFileName().toStdString()
               << " frames=" << fp.frames << " ch=" << fp.channels
               << " sr=" << fp.sampleRate << " peak=" << fp.peak
               << " sumAbs=" << fp.sumAbs << '\n';
     return fp;
+}
+
+void testMp3ExportRoundTripsThroughBundledDecoder()
+{
+    const auto dir = makeTempDir("mixdown-mp3");
+    const auto src = writeSineWav(dir, "source.wav", 1.0, 44100.0, 440.0, 0.5F);
+    for (const int bitrate : {128, 192, 320})
+    {
+        const auto out = dir.getChildFile("out-" + juce::String(bitrate) + ".mp3");
+        const auto fp =
+            renderOnce(src, out, MixdownOptions::Format::Mp3, 16, MixdownOptions::LoudnessMode::Off, bitrate);
+        require(fp.channels == 2, "MP3 round-trip preserves stereo");
+        requireNear(fp.sampleRate, 44100.0, 1.0, "MP3 round-trip preserves sample rate");
+        require(fp.frames == 45056, "MP3 round-trip preserves the rendered length after gapless trimming");
+        require(fp.peak > 0.4 && fp.peak < 0.55, "MP3 output retains the input signal level");
+    }
+    dir.deleteRecursively();
+}
+
+void testMp3DecoderReplacesSupersededCache()
+{
+    const auto dir = makeTempDir("mp3-cache-migration");
+    const auto src = writeSineWav(dir, "source.wav", 1.0, 44100.0, 440.0, 0.5F);
+    const auto mp3 = dir.getChildFile("out.mp3");
+    renderOnce(src, mp3, MixdownOptions::Format::Mp3, 16, MixdownOptions::LoudnessMode::Off);
+
+    DecodedCache cache;
+    const auto oldKey = mp3.getFullPathName() + "|" + juce::String(mp3.getLastModificationTime().toMilliseconds()) +
+                        "|" + juce::String(mp3.getSize()) + "|g3";
+    const auto oldName = juce::String::toHexString(static_cast<juce::int64>(oldKey.hashCode64())) + ".wav";
+    const auto oldCache = cache.getCacheFilePath(mp3).getSiblingFile(oldName);
+    require(src.copyFileTo(oldCache), "the previous decoder's cache entry should be staged");
+
+    juce::AudioFormatManager noFallbackFormats;
+    const auto decoded = cache.ensureDecoded(mp3, noFallbackFormats);
+    require(decoded.existsAsFile(), "the replacement decoder should populate the cache");
+    const auto fp = fingerprint(decoded);
+    const bool migrated = decoded != oldCache && !oldCache.existsAsFile();
+    decoded.deleteFile();
+    oldCache.deleteFile();
+    dir.deleteRecursively();
+    require(migrated, "the previous decoder's cache must be replaced, not reused");
+    require(fp.frames == 45056, "the replacement cache must contain the complete MP3 decode");
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -243,6 +296,9 @@ void testNormalizePass2ProducesLouderOutput()
 
 void addMixdownRenderTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"MP3 export round-trips through the bundled decoder at each bitrate",
+                     testMp3ExportRoundTripsThroughBundledDecoder});
+    tests.push_back({"MP3 decoder replaces a superseded cache entry", testMp3DecoderReplacesSupersededCache});
     tests.push_back({"Mixdown WAV-16 render is deterministic and matches the input sine",
                      testWav16RenderIsDeterministicAndCorrect});
     tests.push_back({"Mixdown FLAC-16 render decodes back to the expected program",

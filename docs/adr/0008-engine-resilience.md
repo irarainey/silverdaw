@@ -24,7 +24,7 @@ Four cooperating mechanisms:
   a caught fault surfaces as a **non-fatal** `ENGINE_ERROR` and keeps the engine
   alive. A possibly-imperfect edit beats a dead engine.
 
-Always-on startup diagnostics (`startup.log`, `backend.log`, `backend-crash.log`
+Always-on startup diagnostics (`startup.log`, `backend.log`, `backend-crash-<timestamp>.log`
 via `SetUnhandledExceptionFilter` with a phase breadcrumb) make a
 failure-to-start diagnosable without a debugger.
 

@@ -155,12 +155,11 @@ function goertzelMagnitude(
 ): number {
   const omega = (2 * Math.PI * frequency) / sampleRate
   const coeff = 2 * Math.cos(omega)
-  let s0 = 0
   let s1 = 0
   let s2 = 0
   for (let i = 0; i < length; i++) {
     const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (length - 1))
-    s0 = samples[start + i]! * window + coeff * s1 - s2
+    const s0 = samples[start + i]! * window + coeff * s1 - s2
     s2 = s1
     s1 = s0
   }

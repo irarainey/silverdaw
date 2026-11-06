@@ -73,13 +73,17 @@ void ToneEq::process(juce::AudioBuffer<float>& buffer, int startSample,
     const float trebleTarget = targetTrebleDb.load(std::memory_order_relaxed);
     const float lowCutTarget  = targetLowCutHz.load(std::memory_order_relaxed);
     const float highCutTarget = targetHighCutHz.load(std::memory_order_relaxed);
-    const float alpha = dsp::blockAlpha(numSamples, sr, kSmoothTauSeconds);
     bool moved = false;
-    moved |= smoothToward(curBassDb,   bassTarget,   alpha);
-    moved |= smoothToward(curMidDb,    midTarget,    alpha);
-    moved |= smoothToward(curTrebleDb, trebleTarget, alpha);
-    moved |= smoothToward(curLowCutHz,  lowCutTarget,  alpha);
-    moved |= smoothToward(curHighCutHz, highCutTarget, alpha);
+    if (curBassDb != bassTarget || curMidDb != midTarget || curTrebleDb != trebleTarget
+        || curLowCutHz != lowCutTarget || curHighCutHz != highCutTarget)
+    {
+        const float alpha = dsp::blockAlpha(numSamples, sr, kSmoothTauSeconds);
+        moved |= smoothToward(curBassDb,   bassTarget,   alpha);
+        moved |= smoothToward(curMidDb,    midTarget,    alpha);
+        moved |= smoothToward(curTrebleDb, trebleTarget, alpha);
+        moved |= smoothToward(curLowCutHz,  lowCutTarget,  alpha);
+        moved |= smoothToward(curHighCutHz, highCutTarget, alpha);
+    }
     if (moved) recomputeCoeffs();
 
     const bool currentNeutral = isNeutralState(curBassDb, curMidDb, curTrebleDb,

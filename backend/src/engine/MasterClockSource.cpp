@@ -141,6 +141,9 @@ void MasterClockSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
 void MasterClockSource::applyTransportFade(juce::AudioBuffer<float>& buffer, int startSample,
                                            int numSamples, float target) noexcept
 {
+    if (target == 1.0F && transportGain == 1.0F)
+        return;
+
     const int channels = buffer.getNumChannels();
     for (int i = 0; i < numSamples; ++i)
     {

@@ -246,6 +246,17 @@ function Get-SdkSignToolPath {
     return $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 
+function Assert-PackagingOutputIdle([string]$OutputDir) {
+    $prefix = [System.IO.Path]::GetFullPath($OutputDir).TrimEnd('\') + '\'
+    $running = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and
+        $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($running.Count -gt 0) {
+        throw "Packaging output is in use by process IDs $($running.ProcessId -join ', '). Close those app instances before rebuilding: $OutputDir"
+    }
+}
+
 # 1. Backend ---------------------------------------------------------------
 if (-not $SkipBackend) {
     Write-Section 'Backend: configure (Release)'
@@ -305,21 +316,9 @@ try {
     Write-Host "Using SDK signtool: $sdkSignTool"
 
     # 4. Bundles + MSIX package (electron-vite + electron-builder) --------
-    # Kill any running instances of the packaged Silverdaw + backend so
-    # electron-builder can wipe the previous `dist/win-unpacked/` tree.
-    # Electron's multi-process model means a single closed UI window can
-    # leave half a dozen helper processes hanging on to file handles
-    # inside that directory; trying to overwrite produces "cannot delete"
-    # mid-build. Cheap to do unconditionally.
-    Write-Section 'Frontend: stop any running packaged Silverdaw'
-    $stale = Get-Process Silverdaw, SilverdawBackend -ErrorAction SilentlyContinue
-    if ($stale) {
-        $stale | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        Write-Host ("Stopped {0} process(es)" -f $stale.Count)
-    } else {
-        Write-Host 'No running Silverdaw processes.'
-    }
+    Write-Section 'Frontend: verify packaging output is not in use'
+    Assert-PackagingOutputIdle (Join-Path $repoRoot 'dist\win-unpacked')
+    Write-Host 'No processes are running from the packaging output.'
 
     Write-Section 'Frontend: build bundles + signed MSIX package'
     # Wipe the previous `dist/` outputs so each release is a clean build —
@@ -334,7 +333,7 @@ try {
         Write-Host "Cleared $distDir (preserved .gitkeep)"
     }
 
-    pnpm dist
+    pnpm dist --publish never
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist failed (exit $LASTEXITCODE)" }
 
     # Second pass: the Microsoft Store package. Same bundles, but a different
@@ -346,7 +345,7 @@ try {
     # than overwriting them. Upload dist/Silverdaw-<version>-store.appx manually
     # to Partner Center.
     Write-Section 'Frontend: build Microsoft Store package (unsigned, Store identity)'
-    pnpm dist:store
+    pnpm dist:store --publish never
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist:store failed (exit $LASTEXITCODE)" }
 }
 finally {

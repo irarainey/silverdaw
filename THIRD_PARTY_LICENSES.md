@@ -116,7 +116,8 @@ SOFTWARE.
 - **Project**: <https://jmvalin.ca/demo/rnnoise/>
 - **Source**: <https://github.com/xiph/rnnoise>
 - **Notice**: Used by the backend for optional post-separation **vocal-stem
-  denoise** (the RNN noise-suppression network; see `backend/src/dsp/`). The
+  denoise** and recorded-take cleanup (the RNN noise-suppression network; see
+  `backend/src/dsp/` and `backend/src/recording/`). The
   pinned `v0.1.1` release is obtained via CMake `FetchContent`, and its bundled
   trained model (`src/rnn_data.c`) ships under the same BSD-2-Clause licence. To
   build under MSVC, five C99 variable-length-array declarations in `pitch.c` /
@@ -130,15 +131,39 @@ SOFTWARE.
 - **Licence**: GNU Lesser General Public License v2.1 or later (LGPL-2.1+).
 - **Project**: <https://lame.sourceforge.io/>
 - **Source**: <https://sourceforge.net/projects/lame/files/lame/>
-- **Notice**: Silverdaw bundles an unmodified Windows `lame.exe` build
-  (typically sourced from the
-  [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php))
+- **Notice**: Silverdaw bundles the standard Windows x64 LAME 4.0 executable
+  unchanged from the
+  [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php)
   next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
   it as a separate child process for both MP3 encoding on export (via JUCE's
   `LAMEEncoderAudioFormat`) and MP3 decoding on import; there is no static or
   dynamic linking against the LAME library, so the LGPL boundary is the
   process boundary. Per the LGPL, the unmodified upstream source is available
-  from the project links above.
+  from the project links above. The LGPL 2.1 text is included in
+  `licenses/mpg123-COPYING.txt`.
+
+### mpg123 decoder library — © Michael Hipp and others
+
+- **Licence**: GNU Lesser General Public License v2.1 (LGPL-2.1).
+- **Project**: <https://www.mpg123.de/>
+- **Source**: <https://www.mpg123.de/download/mpg123-1.33.7.tar.bz2>
+- **Notice**: The RareWares LAME 4.0 x64 bundle includes libmpg123 1.33.7
+  as `libmpg123-0.dll`. It is redistributed unchanged next to `lame.exe`
+  in `resources/backend/`. LAME dynamically links this decoder; Silverdaw's
+  backend invokes LAME as a child process and does not link libmpg123.
+  The upstream copyright notices and licence text are included verbatim in
+  `licenses/mpg123-COPYING.txt`, from the source archive's `COPYING` file.
+
+### ONNX Runtime (+ DirectML) — © Microsoft
+
+- **Licence**: MIT.
+- **Use**: runs the stem-separation models on CPU or a supported DirectX 12 GPU.
+- **Project**: <https://github.com/microsoft/onnxruntime>
+- **Notice**: The default Windows build fetches the runtime through CMake and
+  bundles `onnxruntime.dll` beside the backend. The DirectML build also bundles
+  `DirectML.dll`; app-local Microsoft VC++ runtime DLLs are packaged with them.
+  These runtimes are not downloaded on first use. Model weights are downloaded
+  separately as described below.
 
 ## Frontend (Electron + Vue)
 
@@ -149,10 +174,16 @@ SOFTWARE.
   `LICENSES.chromium.html`.
 - **Project**: <https://www.electronjs.org>
 
-### Vue 3, Pinia, Vue Router
+### Vue 3, Pinia, @vue/devtools-api
 
 - **Licence**: MIT — © Yuxi (Evan) You and Vue contributors.
 - **Project**: <https://vuejs.org>
+
+### Zod
+
+- **Licence**: MIT — © Colin McDonnell.
+- **Project**: <https://zod.dev>
+- **Use**: runtime validation of bridge payloads and shared contracts.
 
 ### PixiJS
 
@@ -162,24 +193,20 @@ SOFTWARE.
 ### Tailwind CSS, Vite, electron-vite, vue-tsc, ESLint, TypeScript
 
 - **Licence**: MIT or Apache-2.0 (per package).
-- The full set of npm dependency licences is enumerated by
-  `pnpm licenses list` and is included in production release packages.
+- Inspect the resolved npm dependency licences with `pnpm licenses list` from
+  `frontend`. Packages retain their own upstream licence notices;
+  `electron-builder.yml` also copies this document into the application.
+  The build does not generate a separate aggregate npm licence report.
 
 ### music-metadata
 
 - **Licence**: MIT — © Borewit and contributors.
 - **Project**: <https://github.com/Borewit/music-metadata>
 
-## Downloaded models & runtimes (fetched on first use, not bundled)
+## Downloaded models (fetched on demand, not bundled)
 
 These are downloaded on demand into the user's app-data folder and integrity-
 checked against pinned SHA-256 hashes; they are not shipped in the release package.
-
-### ONNX Runtime (+ DirectML) — © Microsoft
-
-- **Licence**: MIT.
-- **Use**: runs the stem-separation models on CPU or any DirectX 12 GPU.
-- **Project**: <https://github.com/microsoft/onnxruntime>
 
 ### htdemucs fine-tuned — 4-stem separation model (backup)
 
@@ -187,8 +214,8 @@ checked against pinned SHA-256 hashes; they are not shipped in the release packa
   StemSplitio, also MIT.
 - **Use**: the backup 4-stem (vocals/drums/bass/other) separation model — used
   per stem when that stem's RoFormer quality pack is not installed, or for every
-  stem when the user enables "Always use the backup model". Also the zero-config
-  path fetched on first use when no quality packs are present.
+  stem when the user enables "Always use the backup model". The normal first-use
+  flow offers the RoFormer quality packs; the backup is fetched when needed.
 - **Source**: <https://huggingface.co/StemSplitio/htdemucs-ft-onnx>
   (re-hosted byte-identically by Silverdaw at
   <https://huggingface.co/silverdaw/htdemucs-ft-onnx> so every model ships from

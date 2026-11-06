@@ -132,9 +132,9 @@ Logs** — it bundles the current session's logs into a zip (saved in your
 to **support@silverdaw.com** for you to attach the zip and send. You can also email
 that address directly, or from the About dialog (**Help ▸ About Silverdaw**).
 
-Diagnostic logs are written with privacy in mind: your Windows user name is stripped
-out of any file paths they contain, and your computer name is never recorded — so a
-log you share carries nothing that identifies you.
+Diagnostic logging redacts Windows user-profile path prefixes, but that is not
+complete anonymisation: project names, filenames and other diagnostic details
+may still be identifying. Review a log bundle before sharing it.
 
 [releases]: https://github.com/irarainey/silverdaw/releases
 [store]: https://apps.microsoft.com/detail/9N8T25L0462F

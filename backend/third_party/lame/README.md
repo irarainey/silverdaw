@@ -9,17 +9,20 @@ child process for both directions of MP3:
   files badly enough that they cannot be played or analysed at all. See
   *Decoding compressed sources* in `docs/developer-guide.md`.
 
-`lame.exe` is **required**. A build without it could neither export nor import
-MP3, so CMake fails at configure time rather than producing a crippled binary.
-The binary ships inside the installer, so end users need no extra install steps.
+The standard RareWares **LAME 4.0 x64** bundle is used, not its separately
+patched q4 variant. It includes **mpg123 1.33.7** as `libmpg123-0.dll`; the
+executable requires that exact DLL filename beside it, even for `--version`.
+Both runtime files are required at configure time and ship inside the installer.
+End users need no extra install steps.
 
-## The binary is not committed to the repo
+## The runtime files are not committed to the repo
 
-`lame.exe` is excluded by the `*.exe` rule in `.gitignore`, so a fresh checkout
-does not have it — it is fetched into the build, not tracked in git:
+The executable and DLL are excluded by `.gitignore`, so a fresh checkout
+must fetch both:
 
 ```text
 backend/third_party/lame/lame.exe   ← fetched, not tracked in git
+backend/third_party/lame/libmpg123-0.dll
 ```
 
 Fetch it before building:
@@ -28,23 +31,30 @@ Fetch it before building:
 pwsh scripts\Fetch-Lame.ps1
 ```
 
-The script downloads the RareWares LAME bundle, verifies it, extracts
-`lame.exe` into this folder, and runs `lame --version` as a sanity check.
-`Setup-Dev.ps1` invokes it automatically when the binary is absent, and CI runs
-it before both C++ jobs.
+The script pins the standard archive to SHA-256
+`722f4311e2795d5c852076a579b3183beeb76e9010d9cab1e7f9d2e86d9d0808`,
+computed from the RareWares HTTPS download. This is an integrity pin, not a
+publisher signature. It checks the hash, requires a sibling decoder DLL and
+runs the staged `lame --version` before replacing either installed file.
+`Setup-Dev.ps1` invokes it when either file is absent; CI runs it before both
+C++ jobs. Old standalone installations and incomplete pairs are refreshed.
+A complete LAME 4.0 installation is retained unless `-Force` is supplied.
+
+Custom `-Url` downloads must now be ZIP bundles with an explicit `-Sha256`;
+standalone EXE downloads are no longer supported. A bundle with multiple
+executables requires `-ZipEntry` to select one; its DLL must be in the same
+directory. The version check requires LAME 4.0.
 
 ## Build & install flow
 
-1. CMake configure prints `MP3 encode/decode: lame.exe found at …` and
-   registers a POST_BUILD step on `SilverdawBackend` that copies `lame.exe`
-   next to the built backend exe (`SilverdawBackend_artefacts/<Config>/`). If
-   the binary is missing, configure stops with a fatal error pointing at this
-   README.
+1. CMake configure requires both files. `SILVERDAW_LAME_EXE` may point to a
+   different bundle, but `libmpg123-0.dll` must be its sibling. A shared
+   POST_BUILD helper copies both files beside `SilverdawBackend` and
+   `SilverdawBackendTests`, so MP3 regressions exercise the real decoder.
 2. `scripts/Build-Release.ps1` produces the Release backend; the same
    POST_BUILD copy fires for the Release artefacts folder.
-3. `frontend/electron-builder.yml` whitelists `lame.exe` in the backend
-   `extraResources` filter, so the packaged app ships it at
-   `resources/backend/lame.exe`.
+3. `frontend/electron-builder.yml` whitelists both runtime files in the backend
+   `extraResources` filter. Their destination is `resources/backend/`.
 4. At runtime `findLameExecutable()` (`backend/src/core/LamePath.h`) resolves it
    as a sibling of `SilverdawBackend.exe` — works identically for dev builds,
    packaged `win-unpacked`, and installed apps. Both the encoder and the
@@ -61,9 +71,10 @@ it before both C++ jobs.
 
 ## Licensing
 
-LAME is distributed under the **LGPL-2.1-or-later**. Shipping the
-unmodified executable alongside Silverdaw is permitted; we invoke it as
-a separate child process (no static or dynamic linking), which keeps the
-LGPL boundary cleanly outside Silverdaw's own binary. The attribution
-notice lives in [`THIRD_PARTY_LICENSES.md`](../../../THIRD_PARTY_LICENSES.md)
-and ships inside the installer.
+LAME is **LGPL-2.1-or-later**; libmpg123 is **LGPL-2.1**. Silverdaw invokes
+LAME as a separate child process and links neither library; LAME itself
+dynamically links libmpg123. The attribution and source links live in
+[`THIRD_PARTY_LICENSES.md`](../../../THIRD_PARTY_LICENSES.md).
+The unchanged [`COPYING.mpg123`](COPYING.mpg123) from mpg123 1.33.7 includes
+the LGPL 2.1 text and upstream notices. Packaging copies it to
+`resources/licenses/mpg123-COPYING.txt` alongside the existing attribution.

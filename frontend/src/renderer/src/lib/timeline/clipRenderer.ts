@@ -29,11 +29,13 @@ import { createClipHeaderRenderer } from './clipHeaderRenderer'
 import { createClipDecorationsRenderer } from './clipDecorationsRenderer'
 import type { ClipHitRegion } from './useDragHandlers'
 import type { GridGeometry } from './useGridGeometry'
+import type { TimelineSceneResources } from './timeline-scene-resources'
 
 /** Minimum px height per stacked stereo lane. */
 const MIN_STEREO_LANE_HEIGHT = 18
 
 export interface ClipRendererContext {
+  sceneResources: TimelineSceneResources
   tracksLayer: ShallowRef<Container | null>
   GraphicsCtor: ShallowRef<typeof Graphics | null>
   TextCtor: ShallowRef<typeof Text | null>
@@ -73,12 +75,8 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   // `new Graphics()` leak) and never repurposed (no batcher corruption).
   const markerGraphicsPool: PooledGraphics[] = []
   let markerCursor = 0
-  // Identity of the tracks layer the pool was built against. A GPU reset (TDR)
-  // loses the WebGL context, so `usePixiApp` tears the Pixi app down and rebuilds
-  // it with brand-new layers; the previous frame's pooled Graphics were children
-  // of the destroyed app and are destroyed with it. Reusing those dead instances
-  // paints nothing (missing waveforms) and churns garbage frames (flicker). Track
-  // the layer so we can drop the stale pool when the app is rebuilt.
+  // Scene ownership disposes both attached and detached pool members on rebuild.
+  // A new layer must never reuse those destroyed instances.
   let pooledLayer: Container | null = null
 
   // Per-frame draw counters for performance instrumentation. `columnsEmitted` is
@@ -97,9 +95,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
   function beginFrame(): void {
     const layer = tracksLayer.value
     if (layer !== pooledLayer) {
-      // App was rebuilt: forget the destroyed Graphics (no destroy() — the old
-      // app already disposed them) so this frame allocates fresh instances. The
-      // waveform Mesh pool is tied to the same layer, so drop it in lock-step.
+      // The scene owner already disposed these pools when the layer changed.
       graphicsPool.length = 0
       meshPool.length = 0
       markerGraphicsPool.length = 0
@@ -142,7 +138,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       poolCursor++
       return existing
     }
-    const created = new G()
+    const created = ctx.sceneResources.retain(new G())
     graphicsPool[poolCursor] = created
     poolCursor++
     return created
@@ -158,7 +154,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       markerCursor++
       return existing
     }
-    const created = new G()
+    const created = ctx.sceneResources.retain(new G())
     markerGraphicsPool[markerCursor] = created
     markerCursor++
     return created
@@ -233,7 +229,7 @@ export function createClipRenderer(ctx: ClipRendererContext) {
     waveXY[p++] = x1
     waveXY[p++] = y1
     waveXY[p++] = x0
-    waveXY[p++] = y1
+    waveXY[p] = y1
     waveVerts += 4
     let q = waveIndices
     waveIdx[q++] = base
@@ -284,7 +280,10 @@ export function createClipRenderer(ctx: ClipRendererContext) {
       // robustly.
       const geometry = new MG({ positions, indices })
       geometry.batchMode = 'no-batch'
-      const mesh = new M({ geometry, texture: tex })
+      const mesh = ctx.sceneResources.retain(
+        new M({ geometry, texture: tex }),
+        () => geometry.destroy(true)
+      )
       mesh.tint = tint
       mesh.alpha = alpha
       meshPool[meshCursor] = mesh

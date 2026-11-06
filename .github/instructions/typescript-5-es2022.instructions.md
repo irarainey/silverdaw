@@ -17,14 +17,16 @@ applyTo: "**/*.ts"
 ## General Guardrails
 
 - Target TypeScript 5.x / ES2022 and prefer native features over polyfills.
-- Use pure ES modules; never emit `require`, `module.exports`, or CommonJS helpers.
+- Write TypeScript as ES modules. Preserve the configured build output formats:
+  the sandboxed Electron preload must remain CommonJS (`index.cjs`).
 - Rely on the project's build, lint, and test scripts unless asked otherwise.
 - Note design trade-offs when intent is not obvious.
 
 ## Project Organization
 
 - Follow the repository's folder and responsibility layout for new code.
-- Use kebab-case filenames (e.g., `user-session.ts`, `data-service.ts`) unless told otherwise.
+- Match neighbouring filenames: TypeScript helpers commonly use camelCase,
+  composables `useXxx.ts`, and Vue components PascalCase.
 - Keep tests, types, and helpers near their implementation when it aids discovery.
 - Reuse or extend shared utilities before adding new ones.
 
@@ -68,7 +70,7 @@ authoring check, split mechanics, and the ~800-line hard trigger. TS specifics:
 
 - Use `async/await`; wrap awaits in try/catch with structured errors.
 - Guard edge cases early to avoid deep nesting.
-- Send errors through the project's logging/telemetry utilities.
+- Send errors through the project's existing local logging utilities.
 - Surface user-facing errors via the repository's notification pattern.
 - Debounce configuration-driven updates and dispose resources deterministically.
 

@@ -3,6 +3,8 @@
 
 #include "BusGraph.h"
 
+#include "ProjectPerformanceTrace.h"
+
 namespace silverdaw
 {
 
@@ -74,6 +76,7 @@ void BusGraph::attachClip(const juce::String& trackId,
     {
         if (prepareSource && preparedMax > 0)
         {
+            const ProjectPerformanceSpan preparation(ProjectPerformancePhase::SourcePreparation);
             clipTransport->prepareToPlay(preparedMax, preparedRate);
             sourcePrepared = true;
         }
@@ -88,8 +91,14 @@ void BusGraph::attachClip(const juce::String& trackId,
         if (createdRuntime && beatRepeatIt != pendingBeatRepeats.end())
             rt->publishedBeatRepeat = beatRepeatIt->second;
 
-        applyPendingTrackFx(*rt);
-        updateLatencyCompensation();
+        {
+            const ProjectPerformanceSpan fx(ProjectPerformancePhase::TrackFx);
+            applyPendingTrackFx(*rt);
+        }
+        {
+            const ProjectPerformanceSpan latency(ProjectPerformancePhase::LatencyRecompute);
+            updateLatencyCompensation();
+        }
 
         publishRenderSnapshot();
     }

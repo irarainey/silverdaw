@@ -772,6 +772,28 @@ void testMasterClockTransportFadeOutAndIn()
                 "transport fade-in must restore the programme level");
     requireNear(output.getSample(0, 255), 0.5, 1.0e-6,
                 "transport fade-in must restore normal rendering after the ramp");
+
+    for (int block = 0; block < 3; ++block)
+    {
+        master.getNextAudioBlock(info);
+        for (int channel = 0; channel < output.getNumChannels(); ++channel)
+            for (int sample = 0; sample < kBlock; ++sample)
+                require(output.getSample(channel, sample) == 0.5F,
+                        "settled transport gain must leave the programme unchanged");
+    }
+
+    master.requestOutputFadeOut();
+    master.getNextAudioBlock(info);
+    require(output.getSample(0, 0) < 0.5F && output.getSample(0, 0) > 0.49F,
+            "a settled unity block must not suppress a later fade-out");
+    require(master.isOutputFadeOutComplete(), "the later fade must still publish completion");
+    master.cancelOutputFade();
+    master.getNextAudioBlock(info);
+    require(!master.isOutputFadeOutComplete(), "cancelling the fade must clear completion");
+    require(output.getSample(0, 0) > 0.0F && output.getSample(0, 0) < 0.01F,
+            "cancelling a completed fade must ramp back in rather than bypass the fade");
+    requireNear(output.getSample(0, kBlock - 1), 0.5, 1.0e-6,
+                "the cancelled fade must settle back to the original programme");
 }
 
 // Regression cover for the reported "transport says playing, playhead never moves"

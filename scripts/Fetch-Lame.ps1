@@ -1,50 +1,47 @@
 <#
 .SYNOPSIS
-    Download (and verify) the bundled lame.exe used by Silverdaw's MP3
-    export feature.
+    Download and verify the LAME encoder/decoder and its required decoder DLL.
 
 .DESCRIPTION
     Silverdaw ships an unmodified Windows build of the LAME MP3 encoder
-    next to SilverdawBackend.exe. JUCE's `LAMEEncoderAudioFormat` spawns
-    it as a child process at export time. The binary lives at:
+    next to SilverdawBackend.exe for MP3 import and export. LAME 4 also
+    requires libmpg123-0.dll alongside it. Both files live at:
 
         backend/third_party/lame/lame.exe
+        backend/third_party/lame/libmpg123-0.dll
 
-    and is deliberately *not* committed, so the repository stays free of
-    vendored binaries. Only the README beside it is tracked, which means a
+    and are deliberately *not* committed, so the repository stays free of
+    vendored binaries. Documentation and licensing notices are tracked; a
     fresh checkout — a CI runner's included — must run this script before a
-    build that needs MP3 export. `Setup-Dev.ps1` calls it on demand.
+    build that needs MP3 support. `Setup-Dev.ps1` calls it on demand.
 
     The default upstream is the RareWares LAME bundle — the standard
     Windows distribution recommended by the LAME project. Because that
     URL changes when LAME ships a new build, you can override it with
-    `-Url`. The script supports either a direct `.exe` download or a
-    `.zip` archive that contains `lame.exe` somewhere inside it.
+    `-Url` and `-Sha256`. A ZIP containing both runtime files is required;
+    standalone executable downloads are no longer sufficient.
 
-    If `-Sha256` is supplied the downloaded payload is verified against
-    that hash before extraction. After installation the script runs
-    `lame.exe --version` as a sanity check.
+    The default archive has a pinned SHA-256. Custom URLs require an explicit
+    hash. The staged executable is checked before either runtime file is
+    installed.
 
-    Re-running is safe: if `lame.exe` is already present the script
-    no-ops unless `-Force` is given.
+    A complete LAME 4.0 installation is retained unless `-Force` is given.
+    Old or incomplete installations are refreshed automatically.
 
 .PARAMETER Url
-    Direct URL to either a `lame.exe` binary or a `.zip` archive
-    containing one. Default: the current RareWares LAME 3.100 x64
-    bundle.
+    ZIP archive containing lame.exe and a sibling libmpg123-0.dll.
+    Default: the standard RareWares LAME 4.0 x64 bundle, not its q4 variant.
 
 .PARAMETER Sha256
-    Optional SHA-256 hash of the downloaded file (the .exe or .zip,
-    matching `-Url`). When supplied the script aborts on mismatch.
+    SHA-256 of the archive. Required for custom URLs; pinned for the default.
 
 .PARAMETER Force
-    Overwrite an existing `lame.exe`. Without this switch the script
-    keeps whatever is already on disk and exits early.
+    Refresh both files even when a complete LAME 4.0 installation is present.
 
 .PARAMETER ZipEntry
     When `-Url` points to a `.zip`, the path inside the archive to
-    extract (default: searches for any `lame.exe` and uses the first
-    match). Useful for archives that contain multiple builds.
+    extract. Without this option exactly one lame.exe must exist in the
+    archive. Its decoder DLL must be in the same directory.
 
 .EXAMPLE
     # Standard one-shot fetch.
@@ -53,18 +50,20 @@
 .EXAMPLE
     # Refresh with a specific URL + hash pin.
     pwsh scripts\Fetch-Lame.ps1 `
-        -Url 'https://www.rarewares.org/files/mp3/lame3.100.1-x64.zip' `
-        -Sha256 'abcd…' -Force
+        -Url 'https://www.rarewares.org/files/mp3/lame-4.0-x64.zip' `
+        -Sha256 '722f4311e2795d5c852076a579b3183beeb76e9010d9cab1e7f9d2e86d9d0808' -Force
 
 .NOTES
-    LAME is LGPL-2.1-or-later. We invoke it as a child process; there is
-    no static or dynamic linking. See `THIRD_PARTY_LICENSES.md` and
+    LAME is LGPL-2.1-or-later; libmpg123 is LGPL-2.1. Only LAME links
+    the decoder DLL; Silverdaw invokes LAME as a child process.
+    See `THIRD_PARTY_LICENSES.md` and
     `backend/third_party/lame/README.md` for the full attribution and
     legal notes.
 #>
 [CmdletBinding()]
 param(
-    [string]$Url = 'https://www.rarewares.org/files/mp3/lame3.100.1-x64.zip',
+    [string]$Url = 'https://www.rarewares.org/files/mp3/lame-4.0-x64.zip',
+    [ValidatePattern('^[0-9a-fA-F]{64}$')]
     [string]$Sha256,
     [switch]$Force,
     [string]$ZipEntry
@@ -78,25 +77,53 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot  = Split-Path -Parent $ScriptDir
 $LameDir   = Join-Path $RepoRoot 'backend\third_party\lame'
 $LameExe   = Join-Path $LameDir  'lame.exe'
+$DecoderDll = Join-Path $LameDir 'libmpg123-0.dll'
+$DefaultUrl = 'https://www.rarewares.org/files/mp3/lame-4.0-x64.zip'
+$ExpectedVersionPattern = '^LAME\b.*\bversion 4\.0(?:\s|$)'
+
+if ($Url -notmatch '\.zip(\?|$)') {
+    throw 'LAME 4 requires a ZIP bundle containing lame.exe and libmpg123-0.dll.'
+}
+if (-not $Sha256) {
+    if ($Url -ne $DefaultUrl) {
+        throw 'A custom -Url requires -Sha256.'
+    }
+    $Sha256 = '722f4311e2795d5c852076a579b3183beeb76e9010d9cab1e7f9d2e86d9d0808'
+}
+
+function Get-LameVersion([string]$Executable) {
+    $global:LASTEXITCODE = 0
+    $output = @(& $Executable --version 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $output.Count -eq 0) {
+        throw "lame.exe version check failed (exit $LASTEXITCODE): $output"
+    }
+    $version = [string]$output[0]
+    if ($version -notmatch '^LAME\b.*\bversion \d') {
+        throw "Unrecognised LAME version output: $version"
+    }
+    return $version
+}
 
 if (-not (Test-Path -LiteralPath $LameDir)) {
     throw "Expected drop folder not found: $LameDir"
 }
 
-if ((Test-Path -LiteralPath $LameExe) -and -not $Force) {
-    Write-Host "lame.exe already present at $LameExe — use -Force to overwrite." -ForegroundColor Yellow
-    & $LameExe --version 2>&1 | Select-Object -First 1
-    return
+if ((Test-Path -LiteralPath $LameExe -PathType Leaf) -and
+    (Test-Path -LiteralPath $DecoderDll -PathType Leaf) -and -not $Force) {
+    $version = Get-LameVersion $LameExe
+    if ($version -match $ExpectedVersionPattern) {
+        Write-Host "LAME bundle already present at $LameDir - use -Force to refresh." -ForegroundColor Yellow
+        Write-Host $version -ForegroundColor Cyan
+        return
+    }
+    Write-Host "Refreshing old LAME installation: $version" -ForegroundColor Yellow
 }
 
-# Stage downloads in TEMP so a failed fetch never half-overwrites the
-# tracked binary in the repo.
+# Validate both staged files before replacing the installed runtime.
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("silverdaw-lame-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
-    $isZip = $Url -match '\.zip(\?|$)'
-    $dlName = if ($isZip) { 'lame-bundle.zip' } else { 'lame.exe' }
-    $dlPath = Join-Path $tempRoot $dlName
+    $dlPath = Join-Path $tempRoot 'lame-bundle.zip'
 
     Write-Host "Downloading $Url" -ForegroundColor Cyan
     # Invoke-WebRequest honours $ProgressPreference; silence the verbose
@@ -109,52 +136,42 @@ try {
         $ProgressPreference = $prev
     }
 
-    if ($Sha256) {
-        $actual = (Get-FileHash -LiteralPath $dlPath -Algorithm SHA256).Hash
-        if ($actual -ine $Sha256) {
-            throw "SHA-256 mismatch.`n  expected: $Sha256`n  actual:   $actual"
-        }
-        Write-Host "SHA-256 verified." -ForegroundColor Green
-    } else {
-        Write-Host "No -Sha256 supplied; skipping hash verification." -ForegroundColor Yellow
+    $actual = (Get-FileHash -LiteralPath $dlPath -Algorithm SHA256).Hash
+    if ($actual -ine $Sha256) {
+        throw "SHA-256 mismatch.`n  expected: $Sha256`n  actual:   $actual"
     }
+    Write-Host "SHA-256 verified." -ForegroundColor Green
 
-    $sourceExe = $null
-    if ($isZip) {
-        $extractDir = Join-Path $tempRoot 'extracted'
-        Expand-Archive -LiteralPath $dlPath -DestinationPath $extractDir -Force
-
-        if ($ZipEntry) {
-            $candidate = Join-Path $extractDir $ZipEntry
-            if (-not (Test-Path -LiteralPath $candidate)) {
-                throw "Specified -ZipEntry '$ZipEntry' not found in archive."
-            }
-            $sourceExe = $candidate
-        } else {
-            $match = Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'lame.exe' -File | Select-Object -First 1
-            if (-not $match) {
-                throw "Archive did not contain a lame.exe. Use -ZipEntry to point at a specific path."
-            }
-            $sourceExe = $match.FullName
+    $extractDir = Join-Path $tempRoot 'extracted'
+    Expand-Archive -LiteralPath $dlPath -DestinationPath $extractDir -Force
+    if ($ZipEntry) {
+        $sourceExe = [System.IO.Path]::GetFullPath((Join-Path $extractDir $ZipEntry))
+        if (-not $sourceExe.StartsWith("$extractDir\", [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $sourceExe -PathType Leaf) -or
+            [System.IO.Path]::GetFileName($sourceExe) -ine 'lame.exe') {
+            throw "Specified -ZipEntry '$ZipEntry' must name a lame.exe inside the archive."
         }
     } else {
-        $sourceExe = $dlPath
+        $executables = @(Get-ChildItem -LiteralPath $extractDir -Recurse -Filter 'lame.exe' -File)
+        if ($executables.Count -ne 1) {
+            throw "Archive must contain exactly one lame.exe; use -ZipEntry to select a build."
+        }
+        $sourceExe = $executables[0].FullName
     }
 
+    $sourceDll = Join-Path (Split-Path -Parent $sourceExe) 'libmpg123-0.dll'
+    if (-not (Test-Path -LiteralPath $sourceDll -PathType Leaf)) {
+        throw 'Archive is missing libmpg123-0.dll next to the selected lame.exe.'
+    }
+    $version = Get-LameVersion $sourceExe
+    if ($version -notmatch $ExpectedVersionPattern) {
+        throw "Expected LAME 4.0; got: $version"
+    }
+    Copy-Item -LiteralPath $sourceDll -Destination $DecoderDll -Force
     Copy-Item -LiteralPath $sourceExe -Destination $LameExe -Force
-    Write-Host "Installed $LameExe" -ForegroundColor Green
-
-    # Sanity-check the binary actually runs (catches accidental 0-byte
-    # downloads, wrong-architecture binaries, etc.). Reset $LASTEXITCODE
-    # first because Set-StrictMode trips on accessing it when no native
-    # command has run in this session yet.
-    $global:LASTEXITCODE = 0
-    $version = & $LameExe --version 2>&1 | Select-Object -First 1
-    if ($LASTEXITCODE -ne 0) {
-        throw "lame.exe ran but exited with code $LASTEXITCODE. Output: $version"
-    }
+    Write-Host "Installed LAME and libmpg123 at $LameDir" -ForegroundColor Green
     Write-Host $version -ForegroundColor Cyan
 }
 finally {
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tempRoot -Recurse -Force
 }

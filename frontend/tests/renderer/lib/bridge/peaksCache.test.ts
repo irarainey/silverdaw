@@ -154,4 +154,110 @@ describe('loadPeaksFromCache', () => {
     expect(readPeaksCacheFile).toHaveBeenCalledOnce()
     expect(useLibraryStore().channelPeaksByItemId['source-1']?.channels).toHaveLength(2)
   })
+
+  it('shares one IPC buffer between concurrent clips of the same source', async () => {
+    const first = seedClip()
+    const project = useProjectStore()
+    project.clips['clip-2'] = { ...first, id: 'clip-2' }
+    const buffer = makePeaksCache([Array.from(summary), Array.from(left), Array.from(right)])
+    readPeaksCacheFile.mockResolvedValue(buffer)
+    const payload = {
+      cachePath: 'C:\\cache\\source.peaks',
+      peakCount: 2,
+      laneCount: 3,
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    }
+
+    await Promise.all([
+      loadPeaksFromCache({ ...payload, clipId: 'clip-1' }),
+      loadPeaksFromCache({ ...payload, clipId: 'clip-2' })
+    ])
+
+    expect(readPeaksCacheFile).toHaveBeenCalledOnce()
+    expect(first.peaks.buffer).toBe(buffer)
+    expect(project.clips['clip-2'].peaks.buffer).toBe(buffer)
+    expect(useLibraryStore().channelPeaksByItemId['source-1']?.channels[0]?.buffer).toBe(buffer)
+  })
+
+  it('validates each envelope independently when its IPC buffer is shared', async () => {
+    const first = seedClip()
+    first.peaks = new Float32Array()
+    const project = useProjectStore()
+    project.clips['clip-2'] = { ...first, id: 'clip-2' }
+    const buffer = makePeaksCache([Array.from(summary), Array.from(left), Array.from(right)])
+    readPeaksCacheFile.mockResolvedValue(buffer)
+    const payload = {
+      cachePath: 'C:\\cache\\source.peaks',
+      laneCount: 3,
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    }
+
+    await Promise.all([
+      loadPeaksFromCache({ ...payload, clipId: 'clip-1', peakCount: 3 }),
+      loadPeaksFromCache({ ...payload, clipId: 'clip-2', peakCount: 2 })
+    ])
+
+    expect(readPeaksCacheFile).toHaveBeenCalledOnce()
+    expect(first.peaks).toHaveLength(0)
+    expect(project.clips['clip-2'].peaks.buffer).toBe(buffer)
+  })
+
+  it('rereads a file after failure and does not retain a settled buffer', async () => {
+    const first = seedClip()
+    first.peaks = new Float32Array()
+    const payload = {
+      clipId: first.id,
+      cachePath: 'C:\\cache\\source.peaks',
+      peakCount: 2,
+      laneCount: 3,
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    }
+    readPeaksCacheFile.mockRejectedValueOnce(new Error('Read failed'))
+    await loadPeaksFromCache(payload)
+    expect(first.peaks).toHaveLength(0)
+
+    const buffer = makePeaksCache([Array.from(summary), Array.from(left), Array.from(right)])
+    readPeaksCacheFile.mockResolvedValueOnce(buffer)
+    await loadPeaksFromCache(payload)
+    expect(first.peaks.buffer).toBe(buffer)
+
+    first.peaks = new Float32Array()
+    const replacement = makePeaksCache([[-0.75, 0.75, -0.125, 0.125]])
+    readPeaksCacheFile.mockResolvedValueOnce(replacement)
+    await loadPeaksFromCache({ ...payload, laneCount: 1 })
+
+    expect(readPeaksCacheFile).toHaveBeenCalledTimes(3)
+    expect(first.peaks.buffer).toBe(replacement)
+    expect(Array.from(first.peaks)).toEqual([-0.75, 0.75, -0.125, 0.125])
+    expect(useLibraryStore().channelPeaksByItemId['source-1']).toBeUndefined()
+  })
+
+  it('does not share buffers for different cache files', async () => {
+    const first = seedClip()
+    const project = useProjectStore()
+    project.clips['clip-2'] = { ...first, id: 'clip-2' }
+    const buffers = [
+      makePeaksCache([Array.from(summary), Array.from(left), Array.from(right)]),
+      makePeaksCache([Array.from(summary), Array.from(left), Array.from(right)])
+    ]
+    readPeaksCacheFile.mockResolvedValueOnce(buffers[0]).mockResolvedValueOnce(buffers[1])
+    const payload = {
+      peakCount: 2,
+      laneCount: 3,
+      peaksPerSecond: 500,
+      sampleRate: 48_000
+    }
+
+    await Promise.all([
+      loadPeaksFromCache({ ...payload, clipId: 'clip-1', cachePath: 'C:\\cache\\source.peaks' }),
+      loadPeaksFromCache({ ...payload, clipId: 'clip-2', cachePath: 'C:\\cache\\other.peaks' })
+    ])
+
+    expect(readPeaksCacheFile).toHaveBeenCalledTimes(2)
+    expect(first.peaks.buffer).toBe(buffers[0])
+    expect(project.clips['clip-2'].peaks.buffer).toBe(buffers[1])
+  })
 })

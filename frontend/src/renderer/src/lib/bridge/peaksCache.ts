@@ -18,6 +18,7 @@ import { buildRigidBeatGrid } from '@/lib/library/rigidBeatGrid'
 import { getProjectMedia } from '@/lib/library/projectMedia'
 import { resolveLibraryItemMediaId } from '@/stores/libraryStore'
 import { clipHasCompleteWaveformData } from '@/stores/project-waveform-state'
+import { readSharedPeaksCacheFile } from './shared-peaks-cache-read'
 import type {
   RecordingReadyPayload,
   SampleSavedPayload,
@@ -142,7 +143,7 @@ export async function loadPeaksFromCache(payload: WaveformReadyPayload): Promise
   }
   let buffer: ArrayBuffer | null
   try {
-    buffer = await window.silverdaw.readPeaksCacheFile(cachePath)
+    buffer = await readSharedPeaksCacheFile(cachePath)
   } catch (err) {
     log.warn('bridge', `WAVEFORM_READY read failed clipId=${clipId}: ${String(err)}`)
     const clip = useProjectStore().clips[clipId]

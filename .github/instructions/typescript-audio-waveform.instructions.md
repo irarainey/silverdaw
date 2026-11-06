@@ -119,11 +119,10 @@ and what the timeline visually promises.
   project ratios, variable tempo flags, trimmed clips, and saved clips.
 - Validate UI-affecting math by checking the exact output shape where
   possible, not only that functions return truthy values.
-- Run the existing frontend checks after changes (this repo uses **pnpm** —
-  never `npm`):
-  - `pnpm run typecheck`
-  - `pnpm run test -- --run`
-  - `pnpm run lint`
+- Run the existing checks from `frontend` (this repo uses **pnpm**, never `npm`):
+  - `pnpm typecheck`
+  - `pnpm test` (already runs Vitest in run mode)
+  - `pnpm lint`
 
 ## File Size and Single Responsibility
 

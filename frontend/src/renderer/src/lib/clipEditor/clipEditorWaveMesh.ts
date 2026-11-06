@@ -87,7 +87,7 @@ export function createWaveMeshBuilder(ctors: WaveMeshCtors): WaveMeshBuilder {
     xy[p++] = x1
     xy[p++] = y1
     xy[p++] = x0
-    xy[p++] = y1
+    xy[p] = y1
     verts += 4
     let q = indices
     idx[q++] = base

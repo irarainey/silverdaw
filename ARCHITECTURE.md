@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-09-08 · Owner: @irarainey_
+_Last reviewed: 2026-11-05 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -90,6 +90,13 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   peak caches, stems, recordings, mixdowns, and project files live on disk; the
   backend writes a stable path and the renderer reads it via main IPC. See
   ADR 0003.
+- **Waveform reads share only in-flight work.** Matching renderer requests for
+  one peaks path share a pending IPC read, not a persistent file cache.
+  Timeline scene ownership separates retained clip pools from transient
+  frame resources; owned geometry/buffers are disposed without destroying
+  shared textures. Details and measurements:
+  `docs/developer-guide.md#rendering-performance` and
+  `frontend/performance/README.md`.
 - **`ValueTree` is the source of truth.** After AUTH the backend sends one full
   `PROJECT_STATE`; the renderer treats it as canonical (`reset=true` wipes
   optimistic state, connect path merges additively). See ADR 0002.

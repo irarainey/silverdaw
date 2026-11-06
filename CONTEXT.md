@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-09-08 · Owner: @irarainey_
+_Last reviewed: 2026-11-06 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -10,7 +10,7 @@ touches them.
 
 An open-source **Windows desktop DAW** for bedroom DJs, producers, and mixers
 making remixes and mashups. A studio **creation** tool, not a live-performance
-instrument. Two processes: an Electron 42 + Vue 3 UI and a headless JUCE 8 C++
+instrument. Two processes: an Electron 45 + Vue 3 UI and a headless JUCE 8 C++
 audio engine, linked by a per-session-authenticated loopback WebSocket.
 
 ## Current state
@@ -75,7 +75,7 @@ than to onset-function peaks, which had been leaving markers a few milliseconds
 late on bass-heavy material (ADR 0028). Underneath both, MP3 is now decoded by
 the bundled LAME rather than JUCE's own reader, which mis-parsed some files
 badly enough that they could not be played or analysed at all.
-The current release is **1.9.0**: **Record Audio**, which captures live input
+Release **1.9.0** added **Record Audio**, which captures live input
 against the running arrangement and commits the take as an ordinary library item
 or clip — never onto a track as it records, so the clip-first, non-destructive
 model is untouched. A take is kept as **Music**, carrying the project tempo as a
@@ -84,6 +84,18 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
+The current release is **1.10.0**. Dependency migrations and measured
+opening, waveform-memory, viewport-resource, Save As snapshot and focused backend
+processing improvements are implemented. The stress-memory follow-up did not
+consistently reproduce the initial increase; it is not proof of no regression.
+The maintainer confirmed manual testing and satisfactory audio on 2026-11-06
+and designated 1.10.0 as the release version. Optimisation scope remains frozen;
+further work requires concrete regressions, not speculative profiling.
+Local release assets were rebuilt and verified on 2026-11-06. The
+[release record](docs/development-plan.md#release-acceptance-1100)
+distinguishes that sign-off from unconfirmed checks and security-risk
+disposition; measurements and retained limitations are in
+`frontend/performance/README.md`.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,
@@ -147,7 +159,8 @@ and saved projects must keep working across every update (see ADR 0019).
   ADR 0012 (detailed tokens in `.github/instructions/ui-ux-styling.instructions.md`).
 - `IMPORTANT` — **Audio playback performance is always first-class.** JUCE-level
   optimisation on the audio path is expected, balanced against maintainable code.
-  See ADR 0017 (firm figures in `docs/developer-guide.md#rendering-performance`).
+  See ADR 0017, `docs/developer-guide.md#rendering-performance`, and the measured
+  evidence in `frontend/performance/README.md`.
 - `IMPORTANT` — **Inaudible tracks perform no per-track audio work.** Muted,
   solo-excluded, and fully attenuated tracks skip clip reads, warp, pitch,
   effects, sends, and metering while remaining live-editable. See ADR 0020.

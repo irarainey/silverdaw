@@ -3,7 +3,7 @@
 Silverdaw is an open-source Windows DAW for bedroom DJs, producers, and mixers
 making remixes and mashups — a studio creation tool, not a live-performance
 instrument. Two processes: a headless JUCE 8 C++ audio engine (`backend/`) and
-an Electron 42 + Vue 3 UI (`frontend/`), linked by a text-only loopback
+an Electron 45 + Vue 3 UI (`frontend/`), linked by a text-only loopback
 WebSocket bridge.
 
 ## Context — read this first
