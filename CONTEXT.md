@@ -75,7 +75,7 @@ than to onset-function peaks, which had been leaving markers a few milliseconds
 late on bass-heavy material (ADR 0028). Underneath both, MP3 is now decoded by
 the bundled LAME rather than JUCE's own reader, which mis-parsed some files
 badly enough that they could not be played or analysed at all.
-The current release is **1.9.0**: **Record Audio**, which captures live input
+Release **1.9.0** added **Record Audio**, which captures live input
 against the running arrangement and commits the take as an ordinary library item
 or clip — never onto a track as it records, so the clip-first, non-destructive
 model is untouched. A take is kept as **Music**, carrying the project tempo as a
@@ -84,13 +84,18 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-Development builds are **1.10.0, unreleased**. Dependency migrations and measured
+The current release is **1.10.0**. Dependency migrations and measured
 opening, waveform-memory, viewport-resource, Save As snapshot and focused backend
 processing improvements are implemented. The stress-memory follow-up did not
 consistently reproduce the initial increase; it is not proof of no regression.
-Remaining performance and release-acceptance work is tracked in
-`docs/development-plan.md#performance-maintenance-unreleased`, with measurements
-and limitations in `frontend/performance/README.md`.
+The maintainer confirmed manual testing and satisfactory audio on 2026-11-06
+and designated 1.10.0 as the release version. Optimisation scope remains frozen;
+further work requires concrete regressions, not speculative profiling.
+Local release assets were rebuilt and verified on 2026-11-06. The
+[release record](docs/development-plan.md#release-acceptance-1100)
+distinguishes that sign-off from unconfirmed checks and security-risk
+disposition; measurements and retained limitations are in
+`frontend/performance/README.md`.
 Per-release detail lives in `CHANGELOG.md`.
 Silverdaw is **publicly released** — installable from the
 **Microsoft Store** (auto-updating), so existing installs, saved preferences,

@@ -148,10 +148,13 @@ const {
       </div>
     </nav>
 
-    <!-- Centred project name. Double-click the label or click the
-         pencil to rename. -->
+    <!-- Paint the drag spacer before the interactive project-name region. -->
+    <div class="flex-1" />
+
+    <!-- Shrink-wrap the centred name so its native hit region cannot cover menus. -->
     <div
-      class="pointer-events-none absolute inset-x-0 top-0 flex h-9 items-center justify-center"
+      class="pointer-events-none absolute left-1/2 top-0 flex h-9 -translate-x-1/2 items-center"
+      style="-webkit-app-region: no-drag"
     >
       <div
         class="pointer-events-auto flex items-center"
@@ -208,9 +211,8 @@ const {
       </div>
     </div>
 
-    <!-- Drag spacer + renderer-owned window controls. Native window-controls-overlay
+    <!-- Renderer-owned window controls. Native window-controls-overlay
          is disabled so the app can keep these controls available consistently. -->
-    <div class="flex-1" />
     <AppTitleBarWindowControls
       @minimize="minimizeWindow"
       @toggle-maximize="toggleMaximizeWindow"

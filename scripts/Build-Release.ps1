@@ -333,7 +333,7 @@ try {
         Write-Host "Cleared $distDir (preserved .gitkeep)"
     }
 
-    pnpm dist
+    pnpm dist --publish never
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist failed (exit $LASTEXITCODE)" }
 
     # Second pass: the Microsoft Store package. Same bundles, but a different
@@ -345,7 +345,7 @@ try {
     # than overwriting them. Upload dist/Silverdaw-<version>-store.appx manually
     # to Partner Center.
     Write-Section 'Frontend: build Microsoft Store package (unsigned, Store identity)'
-    pnpm dist:store
+    pnpm dist:store --publish never
     if ($LASTEXITCODE -ne 0) { throw "pnpm dist:store failed (exit $LASTEXITCODE)" }
 }
 finally {

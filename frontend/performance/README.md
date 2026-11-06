@@ -6,8 +6,19 @@ results must not be added together; the
 together against preserved M1. Neither establishes release acceptance.
 The separate [native audio-budget follow-up](#native-audio-budget-follow-up)
 evaluates subsequent backend processing changes, not a new packaged comparison.
-The [maintenance status](../../docs/development-plan.md#performance-maintenance-unreleased)
+The [maintenance status](../../docs/development-plan.md#performance-maintenance-1100)
 lists completed work and remaining measurements.
+
+**Release disposition (2026-11-06):** 1.10.0 is the current release version.
+The maintainer confirmed manual testing and satisfactory audio; optimisation
+scope remains frozen, not the start of another profiling programme. See the
+[release record](../../docs/development-plan.md#release-acceptance-1100).
+All measurements, failures and limitations below remain evidence, not a queue
+of mandatory follow-up investigations. Reopen targeted profiling for concrete
+regressions; incomplete comparisons still restrict performance claims.
+The 1.10.0 local assets were rebuilt and their portable smoke test passed on
+2026-11-06. The manual sign-off is not another benchmark result or proof that
+the retained performance limitations have disappeared.
 
 Opt-in packaged-build measurements, separate from ordinary correctness tests.
 Requires Windows and Node 24. This uses the existing Playwright Electron driver
@@ -991,8 +1002,10 @@ RAF p95 changes were about +/-0.6%, but **two extreme candidate trials**
 reference trials. All five extreme reference scroll p95 values were
 16.9-17.0 ms; candidate scroll p99 remained around 33.4 ms, similar to control.
 The paired p95 interval reaches +95.9%. These slower-tail observations are
-retained and require responsiveness/allocation profiling, not a claim that
-lower memory makes rendering smoother or proof of a particular cause.
+retained for dense-project acceptance, not a claim that lower memory makes
+rendering smoother or proof of a particular cause. Under the release-acceptance
+decision, further profiling is conditional on disruptive or reproducibly worse
+normal-workflow behaviour.
 
 | Case | Reference median Save As snapshot receipt | Candidate median Save As snapshot receipt | Median paired change | Descriptive 95% paired interval |
 | ---- | ---------------------------------------: | ---------------------------------------: | -------------------: | -----------------------------: |
@@ -1066,8 +1079,8 @@ CPU time. CPU profiles contain unattributed native samples, negative timestamp
 deltas and mean sampling intervals below the requested 1,000 microseconds.
 They do not identify a reliable JavaScript allocation hotspot or explain the
 candidate-only ordinary tails. No pooling, repaint or overscan rewrite was made.
-Controlled renderer/GPU attribution remains engineering work, not only manual
-acceptance.
+If a concrete regression warrants it, controlled renderer/GPU attribution would
+be engineering work, not only manual acceptance.
 
 The earlier startup-only interrupted capture is retained separately. A collector
 profile-flag name collision was corrected before this fresh schedule; bounded

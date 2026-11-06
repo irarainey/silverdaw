@@ -189,12 +189,16 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The latest released feature milestone documented here is **1.9.0**; current
-development builds are **1.10.0, unreleased**. Dependency maintenance and four
-measured performance changes are implemented, but installed-upgrade,
-hardware/listening and final combined performance acceptance are not complete.
-See the [current maintenance plan](development-plan.md#performance-maintenance-unreleased)
-and [packaged performance evidence](../frontend/performance/README.md).
+The current release is **1.10.0**. Dependency maintenance, four packaged
+performance changes and the native processing follow-up are implemented.
+Local assets were rebuilt and verified on 2026-11-06; the maintainer subsequently
+confirmed manual testing and satisfactory audio and designated this release.
+Optimisation scope remains frozen, with further work limited to concrete
+regressions. Incomplete benchmark comparisons still limit performance claims;
+the release designation does not confirm unreported device/upgrade checks or
+resolve the documented development-tooling security-risk disposition. See the
+[release record](development-plan.md#release-acceptance-1100)
+and [performance evidence](../frontend/performance/README.md).
 
 Silverdaw currently supports the core arrangement workflow:
 
@@ -5533,6 +5537,13 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
+The current release version is **1.10.0**, designated after the maintainer's
+manual testing and listening confirmation. The
+[release record](development-plan.md#release-acceptance-1100) records the verified
+local assets, sign-off and retained limitations. Neither the version designation
+nor a local build authorises publishing, installation, certificate-trust changes,
+commits or tags.
+
 `scripts/Build-Release.ps1` is the canonical release path. From the repository
 root it runs the whole pipeline end-to-end:
 
@@ -5547,7 +5558,8 @@ root it runs the whole pipeline end-to-end:
    `Cert:\CurrentUser\My` (created on first run; the private key stays in the
    store and is **never** exported to the repo) and locates the Windows SDK
    `signtool.exe` (electron-builder's bundled signtool cannot sign AppX).
-5. Compiles the Electron bundles and packages **three artefacts** from them.
+5. Compiles the Electron bundles and packages **three artefacts** from them,
+   with automatic publishing explicitly disabled.
 6. Exports the **public** certificate so users can trust the sideload package.
 
 Close any app instance running from `dist/win-unpacked/` before packaging.

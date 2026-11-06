@@ -1,27 +1,138 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-## Dependency maintenance (unreleased)
+## Release acceptance (1.10.0)
 
-Plan established on 2026-11-04. This is a staged maintenance programme, not
-permission to release or a claim that the targets below have been validated.
-Version availability and advisories must be checked again when each stage
-starts. The unreleased application version is 1.10.0; this does not authorise
-a release.
+**Current release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
+and satisfactory audio and requested that 1.10.0 be marked as the release
+version. Manual application/listening acceptance is therefore recorded as
+confirmed. This documentation decision does not publish or upload assets,
+install an application, change certificate trust, create commits or tags.
 
-**Status reviewed 2026-11-05:** the accepted migrations below are implemented.
+The confirmation did not itemise a device/sample-rate/plugin/recording matrix,
+native-dialog or installed/Store-upgrade coverage. Those specific checks are
+not newly claimed as passed. Complete-callback/device-xrun measurements and the
+incomplete comparative benchmarks remain evidence gaps; the documented moderate
+development-tooling minimatch finding still needs a separate explicit
+release-risk disposition. Manual listening does not resolve that security item.
+
+Preparation decision agreed earlier on 2026-11-06: freeze the
+dependency/performance optimisation scope and perform bounded release-candidate
+testing rather than extend an open-ended profiling programme. That scope remains
+frozen; further runtime work requires concrete regressions.
+
+Preparation sequence (retained as the record preceding the release designation):
+
+1. Run the existing automated regression gates and a small read-only diagnostics
+   sanity review. Confirm detailed tracing is opt-in and file/string logging
+   stays off the audio callback. Existing timing collection and off-thread
+   formatting have unquantified overhead; do not claim they are cost-free or
+   start a new instrumentation framework.
+2. Build the signed sideload AppX, portable ZIP, unsigned Store AppX, unpacked
+   application and public certificate through the existing release tooling.
+   Verify versions, payloads, signatures and an isolated extracted-portable
+   smoke test. Building local assets does not publish them.
+3. Perform hardware/listening acceptance with real projects, warped and
+   pitch-shifted audio, plugins, differing sample rates, recording, and repeated
+   play/seek/stop. Manual testing/listening was subsequently confirmed above;
+   complete-callback/device-xrun measurements were not supplied.
+4. Exercise dense-project scrolling and zooming in normal workflows, native
+   dialogs, old projects/preferences, and installed/Store-upgrade behaviour.
+   Investigate disruptive stalls or a consistently worse candidate before
+   release; otherwise retain the measured tails as an explicit limitation.
+
+Reproducible audio faults, crashes, data loss, compatibility failures,
+meaningful regressions and unresolved security release-risk decisions remain
+blocking acceptance issues; the version designation does not waive them.
+The historical chopped-reference failure and incomplete attribution limit
+comparative performance claims; they are not alone proof of a product
+defect or a requirement to repeat every benchmark before testing the candidate.
+Preserve all original failures, guards and evidence. The documented minimatch
+technical deferral still requires an explicit release-risk disposition.
+
+Preparation checkpoint on 2026-11-06: frontend lint/typecheck and coverage passed
+with **2,472 unit tests across 198 files**; all **36 e2e journeys** passed
+against the freshly built Release backend without retries, and **527 native
+Release tests** passed. A fresh production-only audit reports zero findings;
+the full audit retains the one documented moderate development-tooling
+minimatch finding. Its release-risk disposition is still outstanding.
+
+The bounded read-only diagnostics review confirmed that verbose logging
+defaults off and project-phase file tracing is opt-in. Performance log
+formatting/writes run on the message thread, not inside the measured audio
+callback. Existing callback clock/counter data also supports recording and
+liveness, so it must not be stripped wholesale. Timing collection and discarded
+log formatting, locking and redaction still have unquantified cost. No new
+runtime instrumentation, profiling programme or speculative logging cleanup
+was introduced for this candidate.
+
+Local asset checkpoint on 2026-11-06: the current Release backend was configured
+and rebuilt before running the canonical release script with
+`-SkipBackend -SkipFrontendInstall`; no dependency restoration was needed.
+The script now explicitly passes `--publish never` to both packaging commands.
+The bundling/version guards passed, and `dist/` contains the 1.10.0 signed
+sideload AppX, portable ZIP, unsigned Store AppX, public certificate and unpacked
+app. Previous local outputs were preserved rather than deleted.
+
+All three archives have identical application ASARs and the expected native
+payloads, MIDI mappings and licences. Their versions, x64 package identities,
+capabilities and associations were verified; signed native payload code matches
+the Release binaries, and the sideload/package executable signatures passed
+Windows and SDK verification. The Store package is deliberately unsigned and
+not locally installable. Project benchmark/e2e/test/cache directories and the
+checked development tools are absent from the application ASAR.
+
+The actual signed executable extracted from the portable ZIP passed an
+isolated-profile smoke test using its own bundled backend, with Electron
+45.2.2, sandboxed renderer, no renderer Node globals and working WebGL.
+A copy of the frozen released project opened and saved as 1.10.0; WAV/MP3
+mixdowns contained about two seconds of audio and the MP3 reimported.
+The original project fixture was unchanged. This is not hardware/listening,
+native-dialog or installed/Store-upgrade acceptance; the final Store pass
+leaves `dist/win-unpacked` unsigned, so the signed portable ZIP is the preferred
+local smoke-test artefact.
+
+Build, gate, audit, signature, ASAR and portable-smoke evidence is preserved at
+repository-root `.cache\release-testing\20261106T134329`, with prior assets in
+its `previous-dist` subdirectory. Only the existing signing certificate was
+reused. No application was installed, no certificate trust was changed, and
+nothing was published/uploaded, committed or tagged.
+
+Subsequent local acceptance found that Windows treated the menu buttons as
+window-drag regions even though browser-driven menu clicks passed. The title
+overlay geometry and drag-spacer paint ordering were corrected. A new
+Windows-native hit-test journey covers menus, project-name controls, window
+buttons and retained drag areas in restored and maximised windows.
+Lint/typecheck, 35 focused menu unit tests and four related e2e journeys passed.
+All local assets were refreshed, and the extracted signed portable passed the
+same native hit-region checks plus project open/save and WAV/MP3 export/reimport.
+Evidence and the superseded local assets are preserved under
+`.cache\release-testing\20261106-menu-fix`. At that checkpoint, manual acceptance
+was still pending; the later sign-off is recorded above.
+
+## Dependency maintenance (1.10.0)
+
+Plan established on 2026-11-04 and implemented for the current 1.10.0 release.
+The stage statuses below preserve their dated checkpoints; the release record
+above supersedes their then-pending manual acceptance. Deferred upgrades remain
+deferred. Recheck version availability and advisories before any future update;
+this historical plan does not authorise new builds, publication or tags.
+
+**Status reviewed 2026-11-06:** the accepted migrations below are implemented.
 The dated checkpoints preserve the state at each stage, not the current
 dependency tree; current pins live in `frontend/package.json`,
 `frontend/pnpm-lock.yaml` and `backend/CMakeLists.txt`. Local distribution builds
-and an extracted-portable smoke test passed on 2026-11-04, but installed-upgrade,
-hardware/listening and residual-risk acceptance remain outstanding.
-RNNoise/ONNX Runtime and vue-tsc deferrals remain as recorded. The minimatch
-finding is the last recorded audit result, not a fresh advisory scan.
+and an extracted-portable smoke test passed again on 2026-11-06; the earlier
+2026-11-04 checkpoint is retained below. Manual testing/listening is now confirmed;
+the unconfirmed checks and security-risk disposition are recorded above.
+RNNoise/ONNX Runtime and vue-tsc deferrals remain as recorded. The fresh audit
+is recorded in the release-acceptance checkpoint above; earlier dated findings
+remain historical.
 
 Release-age cleanup completed 2026-11-06: removed the expired exact-version
 `electron@45.2.2` acknowledgement from `frontend/pnpm-workspace.yaml`.
 `pnpm install --frozen-lockfile` passed the supply-chain policy check without
 the exception. The lockfile SHA-256 is unchanged and installed Electron remains
-45.2.2; no dependency upgrade or release was performed.
+45.2.2; no dependency upgrade or release was performed by that cleanup.
 
 ### Sequence and checkpoints
 
@@ -599,7 +710,7 @@ unchanged by this review, so no dependency regression run is claimed.
 
 Electron 45.2.2 follow-up checkpoint on 2026-11-04, after Stage 10: the user
 explicitly approved using this already-released patch before the 24-hour
-cooling-off cutoff, for unreleased Silverdaw 1.10.0. pnpm recorded one
+cooling-off cutoff, for then-unreleased Silverdaw 1.10.0. pnpm recorded one
 exact-version acknowledgement, minimumReleaseAgeExclude: electron@45.2.2.
 No other package or Electron version is exempted; build permissions, hoisted
 linking and security overrides are unchanged. Remove this acknowledgement
@@ -743,7 +854,7 @@ input validation, tests or persisted-state compatibility to pass an upgrade.
 Model re-exports, algorithm changes, driver changes and release-version bumps
 are outside these dependency stages.
 
-## Performance maintenance (unreleased)
+## Performance maintenance (1.10.0)
 
 Status reviewed 2026-11-06. Four focused changes are implemented and measured
 on preserved packaged builds; five subsequent backend changes were measured
@@ -771,36 +882,31 @@ native-budget fixes also passed the affected strict lint gate; frozen packaged
 benchmark inputs remain unchanged. Five backend changes were measured separately
 from the four packaged stages, not added to their speedup percentages.
 
-Remaining work, in separate evidence-led stages:
+The [release decision](#release-acceptance-1100) supersedes
+the earlier investigation-first sequence. No further speculative optimisation
+or broad profiling is scheduled following the manual testing/listening sign-off.
 
-- Complete controlled renderer/GPU/allocation attribution for the original
-  combined-screen tails and candidate-only tails in the
+- Retain the original combined-screen and candidate-only scroll tails in the
   [follow-up](../frontend/performance/README.md#remaining-work-investigation-2026-11-06).
-  Partial profiles and median parity do not establish smoother rendering or
-  exclude a regression. This remains engineering work, not just manual testing.
-- Complete callback, device-xrun and acoustic/listening measurements on fixed
-  suitable hardware, including real warped material and third-party plugins.
-  Coarse native attribution identified dominant clip processing, and focused
-  fixes reduced measured scope cost without changing automation or advancing
-  fewer clips. Neither arm overran in the final paired screen, so historical
-  budget exceedances remain retained findings, not proved universally fixed.
-  Silent partial-scope timing and bridge-observed play/seek response do not
-  complete these gates or establish absence of dropouts.
-- Retain the failed native phase evidence: historical no-PONG expiry overlaps
-  in-progress synchronous rebuilding and serial preparation. The final build
-  passed ten bounded trials, not every possible load. No new current-build fix
-  is justified; do not relax watchdog/readiness guards or claim a sampled stack.
-- Close the chopped reference qualification gap before claiming full-corpus
-  comparative acceptance. Preserve the completed combined screen and its
-  failure; subsequent diagnostic studies are not replacement trials. Any
-  further runtime changes require their own regression comparison.
-- Complete hardware/listening, native-dialog and installed/Store-upgrade
-  acceptance before a release. Local packaging or portable benchmarks do not
-  complete these gates.
+  Partial profiles and median parity do not prove smoother rendering. Reopen
+  targeted CPU/GPU/allocation attribution only for a disruptive or reproducibly
+  worse acceptance result.
+- Retain the maintainer's manual testing/listening confirmation separately from
+  complete-callback/device-xrun evidence and unconfirmed device/native-dialog/
+  installed-upgrade coverage. Silent partial scopes and bridge-observed
+  play/seek response do not establish absence of dropouts.
+  Neither arm overran in the final paired native screen; historical overruns
+  remain retained findings, not proved universally eliminated.
+- Preserve the failed no-PONG traces and chopped reference exclusion. The
+  historical expiry overlaps synchronous rebuilding and serial preparation;
+  final bounded passes are not universal reliability proof. Do not relax
+  watchdog/readiness guards, replace failed trials or claim full-corpus
+  comparative acceptance from the incomplete reference.
 
-Graph batching, shared audio readers and voice pooling remain conditional on
-profiling evidence, not approved speculative rewrites. No release or next
-implementation stage is authorised by this status record.
+Graph batching, shared readers, voice pooling and a broader diagnostics
+overhead study are deferred unless concrete acceptance evidence justifies them.
+The 1.10.0 release designation does not authorise further builds, publication,
+installation, certificate-trust changes, commits or tags.
 
 ## 1. Product Scope
 
@@ -3106,7 +3212,7 @@ earlier. The decoded-cache generation bump re-decodes every MP3 and recalculates
 its markers, but a beat anchor adjusted by hand in a project saved before this
 sits 12 ms off and wants correcting once.
 
-### 1.9.0 - Record Audio *(current release)*
+### 1.9.0 - Record Audio *(released)*
 
 **Goal:** let a user record live input over the running arrangement without
 Silverdaw becoming a track-recording DAW. A recording belongs to a window in
@@ -3187,6 +3293,15 @@ sideload of the signed package: the install registers
 `Silverdaw_<hash>` with the value `Prompt`, and capture then works on real
 hardware. There is deliberately no install-time permission dialog — Windows
 resolves a device capability at first use, not during installation.
+
+### 1.10.0 - Dependency & Performance Maintenance *(current release)*
+
+Dependency/toolchain updates, project-opening and waveform/viewport-memory
+improvements, Save As snapshot improvements and focused backend processing
+optimisations are complete. Automated and packaged checks are recorded in the
+[release record](#release-acceptance-1100); the maintainer confirmed manual
+testing and satisfactory audio on 2026-11-06. The dependency and performance
+sections retain the detailed evidence, deferrals and measurement limitations.
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3923,8 +4038,8 @@ robustness without changing the core editing model.
 | Large bridge payloads stalling the I/O loop | The bridge is text-only. Bulk data uses disk caches plus small `*_READY` envelopes so IXWebSocket I/O threads never stream audio / peak payloads. |
 | PixiJS performance with many clips          | Pool and recycle display objects; only render clips in the visible viewport                                                                       |
 | Stem-model download UX                      | Gate separation on required RoFormer/backup models and show download progress. |
-| Memory pressure with many clips             | Stream audio with BufferingAudioSource; R1/R2 reduce waveform/viewport retention. Continue profiling renderer allocations; preserve the fixed workload and memory guard. |
-| Rubber Band real-time latency               | Real-time mode is implemented with preallocated buffers and explicit seek/reset handling; continue profiling under larger sessions                 |
+| Memory pressure with many clips             | Stream audio with BufferingAudioSource; R1/R2 reduce waveform/viewport retention. Exercise dense projects during acceptance; reopen allocation profiling only for concrete failures and preserve existing evidence/guards. |
+| Rubber Band real-time latency               | Real-time mode uses preallocated buffers and explicit seek/reset handling. Check real warped material during hardware/listening acceptance; profile only a reproducible failure. |
 | VST3 plugin crashes                         | Scanning runs in a child process behind a persistent blacklist; a crash while hosting is recovered by the existing engine supervisor (ADR 0025)                                                    |
 | Backend crash recovery                      | Implemented: a main-process supervisor auto-respawns the backend on the same port / token, a renderer PING/PONG watchdog catches hangs, and the open project is reloaded into the fresh engine (see Developer Guide → Engine resilience and recovery)                |
 | Audio output device stops delivering audio   | Implemented: `DeviceCallbackGuard` logs device start/stop/error, and a message-thread watchdog restarts a device whose callback count has stopped advancing (bounded attempts), so a stalled stream can no longer show playback with a frozen playhead and silence (see Developer Guide → Audio devices, Robustness) |
