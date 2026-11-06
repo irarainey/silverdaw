@@ -17,10 +17,11 @@ hardware/listening and residual-risk acceptance remain outstanding.
 RNNoise/ONNX Runtime and vue-tsc deferrals remain as recorded. The minimatch
 finding is the last recorded audit result, not a fresh advisory scan.
 
-The exact-version `electron@45.2.2` release-age acknowledgement is still present
-in `frontend/pnpm-workspace.yaml`, although its 24-hour cutoff has passed.
-Removing it and verifying a frozen install without it remains a release-hygiene
-follow-up; this documentation review does not change dependency policy.
+Release-age cleanup completed 2026-11-06: removed the expired exact-version
+`electron@45.2.2` acknowledgement from `frontend/pnpm-workspace.yaml`.
+`pnpm install --frozen-lockfile` passed the supply-chain policy check without
+the exception. The lockfile SHA-256 is unchanged and installed Electron remains
+45.2.2; no dependency upgrade or release was performed.
 
 ### Sequence and checkpoints
 
