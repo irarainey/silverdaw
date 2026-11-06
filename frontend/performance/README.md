@@ -1025,6 +1025,186 @@ trial's directory is deliberately retained. No permissions/security controls
 were changed to force deletion. No application code, distribution build,
 installation, commit, tag or release was created.
 
+## Remaining-work investigation (2026-11-06)
+
+These are separate fixed diagnostic studies, not replacements for the combined
+screen or its failed reference trials. Important measurement and disposition
+decisions were rubber-ducked. No production change or distribution rebuild was
+justified; the watchdog, readiness barriers and original deadlines are unchanged.
+
+### Extreme scroll attribution
+
+Ten alternating ordinary `R1`/`R2` extreme pairs isolated the renderer resource
+ownership change. All **20/20** ordinary trials passed content, waveform,
+lifecycle and PID checks. Archived raw RAF intervals reproduce every reported
+frame summary.
+
+| RAF p95 | Control median | Candidate median | Median paired change | Descriptive 95% paired interval |
+| --- | ---: | ---: | ---: | ---: |
+| Idle | 17.10 ms | 17.15 ms | +0.00% | 0.00% to +1.19% |
+| Scroll | 17.10 ms | 17.30 ms | +0.58% | -0.19% to +41.39% |
+| Zoom | 16.95 ms | 17.10 ms | +0.59% | -0.85% to +1.78% |
+
+The ten-pair intervals use 10,000 deterministic resamples of paired log ratios,
+not population confidence or rare-failure guarantees. Scroll p95 reached
+33-50 ms in **2/10 control** and **4/10 candidate** trials. Pairs 1 and 2 slowed
+in both arms; candidate-only pairs 6 and 10 reached 50.0/33.2 ms against
+16.9/16.9 ms controls. The shared machine and OS cache were uncontrolled.
+The candidate-only tails and the original combined-screen concern are retained:
+neither a regression nor its absence is established by median parity.
+
+Three separately, equally profiled pairs followed the ordinary schedule.
+Only **3/6** captures completed: one complete pair and one additional control.
+The other three exceeded the existing ten-second Chrome trace-completion
+deadline after the workload; their failed attempts and CPU files remain.
+Completed traces showed inclusive renderer-main task maxima of 35.1/38.8 ms
+in the pair and 37.0 ms in the extra control, with 49/48/49 tasks exceeding
+16.667 ms. Nested frame/task durations include waiting and cannot be added as
+CPU time. CPU profiles contain unattributed native samples, negative timestamp
+deltas and mean sampling intervals below the requested 1,000 microseconds.
+They do not identify a reliable JavaScript allocation hotspot or explain the
+candidate-only ordinary tails. No pooling, repaint or overscan rewrite was made.
+Controlled renderer/GPU attribution remains engineering work, not only manual
+acceptance.
+
+The earlier startup-only interrupted capture is retained separately. A collector
+profile-flag name collision was corrected before this fresh schedule; bounded
+native and GUI startup preflights passed. The unusually extended earlier
+interruption is unexplained, not rendering evidence. The profile cleanup helper
+was subsequently corrected to retain the original failure and release its CDP
+session once; focused success/failure checks passed without extending deadlines
+or rerunning failed profiles.
+
+The manifest is at repository-root
+`.cache\performance\scroll-investigation-20261106T103908\packages.json`.
+Raw reports, `analysis-v2.json`, CPU-integrity notes and the native-save ledger
+are relative to `frontend`:
+
+```text
+.cache\performance\scroll-investigation-2026-11-06T10-39-25-980Z
+```
+
+All **23** successful native saves were archived; **11** complete successful
+snapshot/native-file pairs matched under the combined screen's declared
+normalization. Cleanup of successful temporary copies was interrupted after
+exceeding 120 seconds; remaining contents/completion are unknown, while raw
+reports and archived saves are retained. Failed directories were not selected
+for deletion. No permissions were changed or further deletion forced.
+
+### Native watchdog attribution
+
+Ten alternating native-traced `M1`/`S1` chopped pairs used the unchanged workload
+and guards without a renderer profiler. The reference passed **4/10**; final
+`S1` passed **10/10**. All six reference failures were project-opening restarts
+after three unanswered PING probes.
+
+The failed original engine's flushed records still show `rebuildEngine`, with
+no `PROJECT_LOAD` return before termination. Last progress records were at
+11.026-12.037 seconds; 1,820-2,031 of 2,048 source-preparation calls had completed,
+totalling 9.408-10.416 seconds. This is completed-span evidence, not an in-flight
+stack or a prediction that loading would finish shortly.
+
+All recorded pre-failure PING guard reads showed ready, recovery `ok`, stopped
+and not importing. Unanswered wire probes overlapped the in-progress synchronous
+message-thread rebuild. This directly locates occupancy in failed trials rather
+than inferring it from successful loads, but wire observation and asynchronous
+guard reads are not native PING-receipt timestamps or renderer attribution.
+
+The current candidate completed all ten loads in 1.322-1.426 seconds; its 2,048
+completed preparation calls totalled 0.251-0.279 seconds per load. These are
+candidate absolute observations, not a survivor-based speed comparison. They
+are consistent with C1 removing unconditional preparation sleeps; `S1` also
+contains R1/R2/S1, so this study does not isolate C1-only causation or establish
+universal reliability. The existing preparation change addresses the recorded
+cost; no new current-build fix was justified.
+
+PING still runs on the message thread to prove command responsiveness.
+Extending the watchdog or moving PONG to the I/O thread would hide this class
+of occupancy rather than fix it. A sufficiently long synchronous load could
+still exceed the window; that residual risk is not eliminated by ten passes.
+Historical chopped comparisons remain excluded, not repaired by this study.
+
+The manifest is at repository-root
+`.cache\performance\watchdog-investigation-20261106T103908\packages.json`.
+Raw phase/wire evidence, analysis, **14** archived native saves and **4** matching
+successful snapshot/native-file pairs are relative to `frontend`:
+
+```text
+.cache\performance\watchdog-investigation-2026-11-06T10-55-11-803Z
+```
+
+Failed directories and successful temporary copies are retained; further profile
+cleanup was deliberately not attempted after the earlier stall.
+
+### Silent native playback and scope timing
+
+Three fixed attempts per case ran the preserved final `S1` native engine without
+a renderer. All **18/18** passed the functional transport, device, content and
+owned-process checks. Each attempt used unchanged fresh fixture copies, verified
+zero master gain and disabled metronome, and allowed the callback gain ramp to
+settle before playback. Keep-awake was disabled. There was no microphone capture,
+audible programme, device selection, driver installation or preference change.
+
+The existing atomic `MasterClockSource` timing was drained by `PlayheadEmitter`
+on its message-thread timer: no new callback instrumentation was added. Across
+all attempts, Windows Audio stayed at **48 kHz / 480 frames**, a nominal
+**10 ms** block budget and **10 ms reported output latency**. Ninety one-second
+drains were wholly inside six-second steady-playing windows, fifteen per case.
+Startup, load and play/seek transition drains were excluded.
+
+**This is not real-time acceptance.** Chopped scope maxima were
+**14.533 / 15.296 / 15.972 ms** across the three attempts. Thirteen of its fifteen
+steady drain windows exceeded the nominal 10 ms budget. Extreme reached
+9.337 ms, leaving little measured scope margin before downstream work. These
+are elapsed-time maxima, including possible preemption, not isolated CPU time.
+
+| Case | Largest measured scope | Nominal budget used | Observed PLAY median | Observed rolling-SEEK median |
+| --- | ---: | ---: | ---: | ---: |
+| `smoke` | 0.740 ms | 7.4% | 27.2 ms | 17.4 ms |
+| `large` | 2.340 ms | 23.4% | 27.5 ms | 23.2 ms |
+| `stress` | 5.574 ms | 55.7% | 33.8 ms | 56.4 ms |
+| `extreme` | 9.337 ms | 93.4% | 47.8 ms | 137.0 ms |
+| `chopped` | 15.972 ms | 159.7% | 80.5 ms | 419.7 ms |
+| `longform` | 1.068 ms | 10.7% | 20.8 ms | 17.4 ms |
+
+PLAY medians combine initial starts and deep stopped-seek restarts, six
+observations per case. Rolling-SEEK has three observations per case. Stopped
+seek medians were 16.4-18.2 ms. These endpoints are command send to a qualifying
+**latency-compensated bridge playhead update**, including timer and event
+delivery, not first-callback or acoustic latency.
+
+The timed scope excludes downstream top-mixer, master metering, output limiter,
+AudioSourcePlayer and device work. Zero master gain preserves upstream processing
+but changes downstream metering/limiter load. No warnings/errors were recorded
+and callback counts continued advancing; neither fact establishes absence of
+dropouts. Complete-callback timing, device xruns and acoustic latency were not
+measured. These synthetic arrangements have no active clip warps or third-party
+plugins and do not replace real-project or hardware/listening acceptance.
+
+Source inspection identified a hypothesis, not a sampled hotspot:
+`BusGraphRender.cpp` subdivides every track when any track has automation, using
+the 256-frame quantum in `BusGraph.h`. Each sub-block pulls every attached clip
+source. A 480-frame callback can therefore make up to **4,096 source pulls**
+for the 2,048-clip chopped arrangement. Per-clip transports sit downstream of
+buffering and window-silence handling; merely skipping future clips would stop
+their transport advancement. Increasing the quantum changes automation
+granularity. A once-per-block clip-summing proposal would need native attribution
+and gain-ramp, seek/tail, live-edit, beat-repeat, plugin and automation-parity
+evidence before any real-time change. Rubber-duck review supported recording the
+finding rather than guessing at such a rewrite.
+
+`analysis-v2.json` explicitly separates functional qualification from
+`exceedance-observed-unresolved`; the original analysis remains preserved.
+Raw logs, timing windows, transport events, unchanged fixture copies and hashes
+are at repository-root:
+
+```text
+.cache\performance\native-audio-20261106T110401
+```
+
+No new production fix was justified. The chopped scope-budget exceedance and
+near-budget extreme case remain engineering findings, not merely manual tests.
+
 ## Recorded diverse baseline
 
 On 2026-11-05, all six projects in `corpus-diverse-v2` received exactly five

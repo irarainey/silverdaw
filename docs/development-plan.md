@@ -756,6 +756,9 @@ on preserved packaged builds:
 | S1 | Serialize effective timing from the existing clip node instead of rescanning by ID. | Reduced dense-project post-Save As snapshot time; not a general disk-write or Ctrl+S speed claim. |
 | Stress follow-up | Fixed five-pair A/A and five-pair A/B memory attribution study. | All 20 trials qualified and ten snapshot pairs matched. The initial +7.7% difference did not reproduce consistently; no exact original allocation cause or absence of all regressions was proved. No runtime change was justified. |
 | Combined reference screen | Fixed five-pair M1/S1 comparison across all six projects, containing all four optimisations together. | Candidate 30/30, reference 29/30; reference no-PONG restart excludes chopped comparisons. Eligible large/stress/extreme opening and memory improved; two extreme candidate scroll tails slowed. No clear combined Save As gain. Full-corpus comparative acceptance remains incomplete. |
+| Renderer follow-up | Ten ordinary R1/R2 extreme pairs followed by three separate profiled pairs. | Ordinary 20/20 passed; candidate-only scroll tails remain. Paired p95 +0.58%, descriptive interval -0.19% to +41.39%; only 3/6 profiles completed and CPU timestamp anomalies limit attribution. No new runtime fix justified. |
+| Watchdog follow-up | Ten native-traced M1/S1 chopped pairs with passive heartbeat/guard observations. | Reference 4/10, final 10/10. All six failed reference traces remain in synchronous rebuilding, with incomplete serial preparation dominating completed-span time. No C1-only or universal-reliability claim; guards remain unchanged. |
+| Silent native follow-up | Three fixed S1 playback/seek attempts per case, reusing existing scope timing without a renderer. | Functional 18/18, but chopped exceeds the 10 ms nominal scope budget in 13/15 steady drain windows, peaking at 15.972 ms. Extreme reaches 9.337 ms. Not complete-callback, xrun, acoustic or real-time acceptance; no speculative audio-path rewrite. |
 
 Measurements, confidence limits, original failures, complete workload/capture
 provenance and preservation checks are in
@@ -767,15 +770,25 @@ remain unchanged.
 
 Remaining work, in separate evidence-led stages:
 
-- Profile scroll/zoom responsiveness and allocation churn, including the two
-  slower extreme candidate scroll trials in the
-  [combined screen](../frontend/performance/README.md#combined-reference-screen).
-  Memory reductions alone do not establish smoother rendering.
-- Measure playback/seek latency, audio-callback headroom and actual dropouts
-  with suitable instrumentation and fixed hardware/settings.
-- Capture a native stack/phase trace for the recurring no-PONG restart. The
-  combined screen reproduced it in the reference with tracing disabled;
-  its cause remains unproved. Do not relax watchdog/readiness guards.
+- Complete controlled renderer/GPU/allocation attribution for the original
+  combined-screen tails and candidate-only tails in the
+  [follow-up](../frontend/performance/README.md#remaining-work-investigation-2026-11-06).
+  Partial profiles and median parity do not establish smoother rendering or
+  exclude a regression. This remains engineering work, not just manual testing.
+- Profile the reproducible chopped scope-budget exceedance and near-budget
+  extreme case before changing the real-time graph. Automation sub-blocks
+  repeatedly pulling all attached clips are a source-derived hypothesis,
+  not a sampled hotspot. Preserve transport advancement, gain ramps and
+  live/offline automation parity; do not increase the control quantum or
+  skip inactive clip pulls as a shortcut.
+- Complete callback, device-xrun and acoustic/listening measurements on fixed
+  suitable hardware, including real warped material and third-party plugins.
+  Existing silent scope timing and bridge-observed play/seek response do not
+  complete these gates or establish absence of dropouts.
+- Retain the failed native phase evidence: historical no-PONG expiry overlaps
+  in-progress synchronous rebuilding and serial preparation. The final build
+  passed ten bounded trials, not every possible load. No new current-build fix
+  is justified; do not relax watchdog/readiness guards or claim a sampled stack.
 - Close the chopped reference qualification gap before claiming full-corpus
   comparative acceptance. Preserve the completed combined screen and its
   failure; subsequent diagnostic studies are not replacement trials. Any
