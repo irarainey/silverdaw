@@ -150,6 +150,56 @@ void testRequestResetDropsTheTailOnTheNextBlock()
                 "A reset must keep the delay, only the history is cleared");
 }
 
+void testDryMultiwrapRetainsHistoryForDelayChange()
+{
+    constexpr int block = 4;
+    constexpr int delay = 5;
+    constexpr int offset = 3;
+    constexpr int drySamples = 47;
+    LatencyDelayLine line;
+    line.prepare(2, 8, block);
+
+    const auto valueAt = [](int sample, int channel) {
+        const float value = static_cast<float>(100 + sample);
+        return channel == 0 ? value : 17.0F - value;
+    };
+    const auto render = [&](int first, int count, bool fading, bool delayed) {
+        juce::AudioBuffer<float> buffer(2, count + offset + 2);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            juce::FloatVectorOperations::fill(buffer.getWritePointer(ch), -999.0F,
+                                              buffer.getNumSamples());
+            for (int i = 0; i < count; ++i)
+                buffer.setSample(ch, offset + i, valueAt(first + i, ch));
+        }
+        line.process(buffer, offset, count);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                float expected = -999.0F;
+                if (i >= offset && i < offset + count)
+                {
+                    const int sample = first + i - offset;
+                    expected = valueAt(sample, ch);
+                    if (fading)
+                        expected += (valueAt(sample - delay, ch) - expected)
+                                    * (static_cast<float>(i - offset + 1) / block);
+                    else if (delayed)
+                        expected = valueAt(sample - delay, ch);
+                }
+                require(buffer.getSample(ch, i) == expected,
+                        "dry multiwrap must retain both channels, offsets and later delay history");
+            }
+        }
+    };
+
+    render(0, drySamples, false, false);
+    line.setDelaySamples(delay);
+    render(drySamples, block, true, false);
+    render(drySamples + block, 7, false, true);
+}
+
 void testBusGraphHasNoAlignmentWithoutPlugins()
 {
     BusGraph graph;
@@ -173,6 +223,7 @@ void addPluginLatencyTests(std::vector<TestCase>& tests)
     tests.push_back({"LatencyDelayLine clamps an oversized delay to the prepared maximum", testDelayIsClampedToPreparedMaximum});
     tests.push_back({"LatencyDelayLine crossfades a delay change and then settles exactly", testDelayChangeCrossfadesThenSettles});
     tests.push_back({"LatencyDelayLine requestReset drops the tail on the next block", testRequestResetDropsTheTailOnTheNextBlock});
+    tests.push_back({"LatencyDelayLine dry multiwrap retains history for a later delay", testDryMultiwrapRetainsHistoryForDelayChange});
     tests.push_back({"BusGraph reports no plugin alignment without inserts", testBusGraphHasNoAlignmentWithoutPlugins});
 }
 

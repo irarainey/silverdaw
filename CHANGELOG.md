@@ -7,6 +7,7 @@
 - Backend regressions now cover authenticated bridge reconnects and shutdown.
 - Reproducible large-session projects and packaged performance benchmarks.
 - Opt-in phase diagnostics for opening and saving projects.
+- Native resampling regressions compare output and state with pinned JUCE.
 
 ### Changed
 
@@ -14,6 +15,7 @@
 - Reduced waveform memory use when opening projects with repeated sources.
 - Reduced timeline memory use while scrolling and zooming.
 - Reduced project-state synchronisation time after Save As.
+- Reduced backend playback processing overhead.
 - Updated application and audio-processing dependencies.
 - Updated build, packaging and testing tools.
 

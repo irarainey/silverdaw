@@ -62,6 +62,22 @@ public:
         // History is kept even while dry so a later delay has a tail to fade into.
         const bool dry = (fadeRemaining == 0 && activeDelay == 0);
         const int chans = juce::jmin(channels, buffer.getNumChannels());
+        if (dry && chans > 0)
+        {
+            int copied = 0;
+            while (copied < numSamples)
+            {
+                const int count = juce::jmin(numSamples - copied, capacity - writePos);
+                for (int ch = 0; ch < chans; ++ch)
+                    juce::FloatVectorOperations::copy(
+                        history.getWritePointer(ch, writePos),
+                        buffer.getReadPointer(ch, startSample + copied), count);
+                copied += count;
+                writePos += count;
+                if (writePos == capacity) writePos = 0;
+            }
+            return;
+        }
         const float fadeScale = 1.0F / static_cast<float>(fadeLength);
 
         int lastWritePos = writePos;

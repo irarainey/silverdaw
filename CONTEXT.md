@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-05 · Owner: @irarainey_
+_Last reviewed: 2026-11-06 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -85,10 +85,10 @@ Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
 Development builds are **1.10.0, unreleased**. Dependency migrations and measured
-opening, waveform-memory, viewport-resource and Save As snapshot improvements
-are implemented. The stress-memory follow-up did not consistently reproduce
-the initial increase; it is not proof of no regression. Remaining performance
-and release-acceptance work is tracked in
+opening, waveform-memory, viewport-resource, Save As snapshot and focused backend
+processing improvements are implemented. The stress-memory follow-up did not
+consistently reproduce the initial increase; it is not proof of no regression.
+Remaining performance and release-acceptance work is tracked in
 `docs/development-plan.md#performance-maintenance-unreleased`, with measurements
 and limitations in `frontend/performance/README.md`.
 Per-release detail lives in `CHANGELOG.md`.

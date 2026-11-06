@@ -150,25 +150,23 @@ bool AudioEngine::primeTracksForPlayback(int totalBudgetMs)
             break;
         }
 
-        for (auto it = notReady.begin(); it != notReady.end();)
+        bool budgetExpired = false;
+        auto pendingEnd = notReady.begin();
+        for (Track* track : notReady)
         {
-            Track* track = *it;
-            const double passRemaining = deadline - juce::Time::getMillisecondCounterHiRes();
-            if (passRemaining <= 0.0)
+            if (!budgetExpired)
             {
-                break;
+                if (juce::Time::getMillisecondCounterHiRes() >= deadline)
+                    budgetExpired = true;
+                else if (waitForTrackPrefetch(*track, deadline, scratch))
+                {
+                    track->prefetchDirty = false;
+                    continue;
+                }
             }
-
-            if (waitForTrackPrefetch(*track, deadline, scratch))
-            {
-                track->prefetchDirty = false;
-                it = notReady.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
+            *pendingEnd++ = track;
         }
+        notReady.erase(pendingEnd, notReady.end());
     }
 
     for (Track* track : notReady)

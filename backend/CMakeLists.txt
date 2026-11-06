@@ -40,6 +40,8 @@ FetchContent_MakeAvailable(JUCE)
 if(WIN32)
     include(cmake/SilverdawPatchJuceBuffering.cmake)
     silverdaw_patch_juce_buffering("${juce_SOURCE_DIR}")
+    include(cmake/SilverdawPatchJuceResampling.cmake)
+    silverdaw_patch_juce_resampling("${juce_SOURCE_DIR}")
 endif()
 
 # ─── IXWebSocket ─────────────────────────────────────────────────────────
@@ -859,6 +861,7 @@ if(SILVERDAW_BUILD_TESTS)
         tests/PersistenceTests.cpp
         tests/ProjectPerformanceTraceTests.cpp
         tests/BufferingPreparationTests.cpp
+        tests/ResamplingTests.cpp
         tests/BridgeTests.cpp
         tests/MidiControllerMappingTests.cpp
         tests/WarpTests.cpp

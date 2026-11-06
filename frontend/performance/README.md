@@ -4,6 +4,8 @@ The current implementation includes C1, R1, R2 and S1 below. Their stage-local
 results must not be added together; the
 [combined reference screen](#combined-reference-screen) measures all four
 together against preserved M1. Neither establishes release acceptance.
+The separate [native audio-budget follow-up](#native-audio-budget-follow-up)
+evaluates subsequent backend processing changes, not a new packaged comparison.
 The [maintenance status](../../docs/development-plan.md#performance-maintenance-unreleased)
 lists completed work and remaining measurements.
 
@@ -1202,8 +1204,118 @@ are at repository-root:
 .cache\performance\native-audio-20261106T110401
 ```
 
-No new production fix was justified. The chopped scope-budget exceedance and
-near-budget extreme case remain engineering findings, not merely manual tests.
+This screen alone did not justify a production rewrite. The subsequent
+[native audio-budget follow-up](#native-audio-budget-follow-up) attributes the
+clip-processing cost and evaluates focused fixes without replacing these
+original measurements.
+
+## Native audio-budget follow-up
+
+An unchanged source-built Release control first qualified **9/9** silent
+attempts: three each for smoke, extreme and chopped. Chopped reached
+**10.115 ms**, with one of fifteen steady windows over budget; extreme reached
+6.373 ms. The earlier frozen S1 result of 15.972 ms remains valid evidence.
+The fresh baseline difference has no controlled causal explanation on this
+shared machine and must not be credited to these fixes.
+
+A separate temporary diagnostic build qualified **6/6** extreme/chopped
+attempts. Its coarse clip-pull/clear/mix scope dominated chopped work:
+per-attempt maxima were **8.619 / 8.344 / 10.225 ms**, against
+0.219 / 0.231 / 0.262 ms for other track work and
+0.003 / 0.005 / 0.004 ms for shared effects. Those are independent maxima,
+potentially from different callbacks: **do not sum them**. Diagnostics add
+timing overhead and are not ordinary benchmark results. They confirmed
+4,096 chopped source pulls per callback, versus 2,048 for extreme.
+All temporary callback instrumentation was removed before the final runtime.
+
+Five bounded changes address the measured path and existing bookkeeping:
+
+- `MasterClockSource::applyTransportFade` skips only an already-settled exact
+  unity fade; starts, stops and interrupted fades retain their existing ramps.
+- `LatencyDelayLine::process` copies settled dry history in wrap-bounded vector
+  spans, retaining the audio needed when compensation is activated later.
+- `ToneEq::process` skips smoothing calculations only when every current
+  parameter exactly equals its target; filters and reactivation remain intact.
+- `AudioEngine::primeTracksForPlayback` compacts pending tracks once, preserving
+  evaluation order, readiness checks and the original deadline.
+- `SilverdawPatchJuceResampling.cmake` vectorises JUCE's interpolation only at
+  exact unity ratio and zero fractional phase. Clip transports, lookahead,
+  buffer/filter state and non-unity resampling remain unchanged.
+
+The resampler still computes `a + 0 * (b - a)` rather than a plain copy, retaining
+signed-zero and non-finite propagation. Full normalised upstream source/header
+hashes fail closed on changed JUCE or a stale patch. CMake generates the complete
+unpatched scalar reference for output/read-state differential tests, including
+wraps, offsets, channel-count differences, rate transitions, flush/reprepare
+and FTZ/DAZ modes. Patch checks cover LF/CRLF idempotence and rejection of
+changed source, changed header and stale patched text.
+The automation quantum, clip advancement, buffering/readiness barriers,
+watchdog and device configuration are unchanged. Rubber-duck reviews found
+no blocking issues.
+
+Per-change extreme/chopped screens each qualified **2/2**, but are single
+attempts, not isolated or statistically persuasive speedup estimates.
+Preserved runtime hashes and source snapshots distinguish these cumulative
+screens from the final candidate.
+
+The final comparison ran **three fixed adjacent pairs per case**, in
+control/candidate, candidate/control, control/candidate round order. All
+**36/36** attempts qualified, eighteen per arm. No failed attempt was replaced.
+Windows Audio remained at 48 kHz / 480 frames; verified silence, unchanged
+fixture copies, original guards and owned-process cleanup were retained.
+Builds, lint and diagnostics did not overlap measurement.
+
+| Case | Median per-attempt worst scope, control → candidate | Largest candidate scope |
+| --- | ---: | ---: |
+| `smoke` | 0.675 → 0.393 ms | 0.413 ms |
+| `large` | 1.956 → 1.246 ms | 1.323 ms |
+| `stress` | 4.753 → 3.556 ms | 4.007 ms |
+| `extreme` | 5.730 → 4.222 ms | 4.283 ms |
+| `chopped` | 9.105 → 6.584 ms | 7.848 ms |
+| `longform` | 0.968 → 0.636 ms | 0.782 ms |
+
+These are medians of three attempt maxima, not callback medians or isolated CPU
+times. Descriptive dense-case reductions are 36.3% large, 25.2% stress,
+26.3% extreme and 27.7% chopped. All three extreme and chopped pairs improved;
+one stress pair increased 0.465 ms and one longform pair increased 0.027 ms.
+Three pairs do not establish statistical significance or universal gains.
+The individual fast paths' contributions cannot be separated from this
+cumulative comparison.
+
+Neither paired arm exceeded 10 ms in its **90 wholly steady drain windows**,
+fifteen per case. The candidate's largest scope was 7.848 ms, leaving 2.152 ms
+of the nominal budget **before excluded downstream work**. The paired control
+also stayed below budget, so this does not prove that the retained historical
+overruns have been eliminated. It establishes reduced measured processing cost,
+not full-callback, device-xrun or listening acceptance. The unity-rate corpus
+does not establish gains for mismatched source/device rates, real warped audio
+or third-party plugins.
+
+Bridge-observed responsiveness did not show a clear general gain. Chopped PLAY
+medians were 59.4 → 63.6 ms, and rolling-SEEK 254.3 → 253.9 ms; extreme
+rolling-SEEK was 98.5 → 98.3 ms. Timer/event delivery and compensation remain in
+these endpoints; they are not acoustic latency measurements.
+
+Full Debug and Release native suites each passed 527 cases, the affected
+56-translation-unit strict clang-tidy gate was clean, and seven CMake patch
+checks passed. Final strengthened finite fractional-phase/reprepare
+differential cases passed in both configurations. The first patch-check
+harness omitted CRLF normalisation when comparing generated reference output;
+its failure is retained separately from the corrected `patch-checks-v2` checks.
+Final source validation preserves the strengthened test snapshot separately
+from the capture-time snapshot; production sources and runtime bytes did not
+change during the paired measurement.
+Final preservation checked 2,278 hashes across 43 capture directories and all
+61 current-request native attempts; no owned measurement process remained.
+
+Engineering artefacts are at repository-root:
+
+```text
+.cache\performance\backend-hotpaths-20261106
+.cache\performance\backend-hotpaths-20261106\paired\comparison.json
+.cache\performance\native-hotpaths-baseline-20261106T113500
+.cache\performance\native-hotpaths-attribution-20261106T114015
+```
 
 ## Recorded diverse baseline
 

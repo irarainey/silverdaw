@@ -746,7 +746,8 @@ are outside these dependency stages.
 ## Performance maintenance (unreleased)
 
 Status reviewed 2026-11-06. Four focused changes are implemented and measured
-on preserved packaged builds:
+on preserved packaged builds; five subsequent backend changes were measured
+on source-built native runtimes:
 
 | Stage | Implemented change | Evidence and limits |
 | --- | --- | --- |
@@ -759,14 +760,16 @@ on preserved packaged builds:
 | Renderer follow-up | Ten ordinary R1/R2 extreme pairs followed by three separate profiled pairs. | Ordinary 20/20 passed; candidate-only scroll tails remain. Paired p95 +0.58%, descriptive interval -0.19% to +41.39%; only 3/6 profiles completed and CPU timestamp anomalies limit attribution. No new runtime fix justified. |
 | Watchdog follow-up | Ten native-traced M1/S1 chopped pairs with passive heartbeat/guard observations. | Reference 4/10, final 10/10. All six failed reference traces remain in synchronous rebuilding, with incomplete serial preparation dominating completed-span time. No C1-only or universal-reliability claim; guards remain unchanged. |
 | Silent native follow-up | Three fixed S1 playback/seek attempts per case, reusing existing scope timing without a renderer. | Functional 18/18, but chopped exceeds the 10 ms nominal scope budget in 13/15 steady drain windows, peaking at 15.972 ms. Extreme reaches 9.337 ms. Not complete-callback, xrun, acoustic or real-time acceptance; no speculative audio-path rewrite. |
+| Native budget fixes | Settled transport-fade/EQ fast paths, bulk dry compensation history, ordered priming compaction and parity-preserving JUCE unity resampling. | Separate source-built three-pair comparison qualified 36/36. Dense-case median worst scopes fell 25–36%; chopped 9.105 → 6.584 ms, candidate peak 7.848 ms. Neither paired arm exceeded 10 ms; this does not prove historical overruns eliminated or complete-callback acceptance. Debug/Release native gates and scalar differential/patch checks passed. |
 
 Measurements, confidence limits, original failures, complete workload/capture
 provenance and preservation checks are in
 [performance benchmarks](../frontend/performance/README.md). Stage-local
 percentages must not be added or presented as a final cumulative speedup.
-The inherited native trace lint warning was fixed separately after S1; the
-workspace's full strict lint gate is clean, while frozen benchmark inputs
-remain unchanged.
+The inherited native trace lint warning was fixed separately after S1. The
+native-budget fixes also passed the affected strict lint gate; frozen packaged
+benchmark inputs remain unchanged. Five backend changes were measured separately
+from the four packaged stages, not added to their speedup percentages.
 
 Remaining work, in separate evidence-led stages:
 
@@ -775,15 +778,13 @@ Remaining work, in separate evidence-led stages:
   [follow-up](../frontend/performance/README.md#remaining-work-investigation-2026-11-06).
   Partial profiles and median parity do not establish smoother rendering or
   exclude a regression. This remains engineering work, not just manual testing.
-- Profile the reproducible chopped scope-budget exceedance and near-budget
-  extreme case before changing the real-time graph. Automation sub-blocks
-  repeatedly pulling all attached clips are a source-derived hypothesis,
-  not a sampled hotspot. Preserve transport advancement, gain ramps and
-  live/offline automation parity; do not increase the control quantum or
-  skip inactive clip pulls as a shortcut.
 - Complete callback, device-xrun and acoustic/listening measurements on fixed
   suitable hardware, including real warped material and third-party plugins.
-  Existing silent scope timing and bridge-observed play/seek response do not
+  Coarse native attribution identified dominant clip processing, and focused
+  fixes reduced measured scope cost without changing automation or advancing
+  fewer clips. Neither arm overran in the final paired screen, so historical
+  budget exceedances remain retained findings, not proved universally fixed.
+  Silent partial-scope timing and bridge-observed play/seek response do not
   complete these gates or establish absence of dropouts.
 - Retain the failed native phase evidence: historical no-PONG expiry overlaps
   in-progress synchronous rebuilding and serial preparation. The final build

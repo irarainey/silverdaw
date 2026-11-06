@@ -5410,8 +5410,12 @@ JUCE 8.0.17-security and IXWebSocket are fetched automatically by CMake `FetchCo
 install by hand.
 
 CMake applies guarded Windows source patches from `backend/cmake/` to JUCE's
-buffer-preparation wait and IXWebSocket's writer polling. Configuration fails
-if the expected upstream code changes; review these patches when upgrading.
+buffer-preparation wait, exact-unity resampling and IXWebSocket's writer polling.
+Configuration fails if the expected upstream code changes; review these patches
+when upgrading. The resampling patch validates full normalised source/header
+hashes and generates an unpatched scalar reference for
+`backend/tests/ResamplingTests.cpp`; retain those differential checks when
+reviewing a JUCE update.
 Existing `*_GIT_TAG` cache entries must also be explicitly repinned: changing
 the defaults in `CMakeLists.txt` does not update an existing build tree.
 

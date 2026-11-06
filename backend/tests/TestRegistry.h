@@ -17,6 +17,7 @@ void addProjectStateTrackPluginTests(std::vector<TestCase>& tests);
 void addPersistenceTests(std::vector<TestCase>& tests);
 void addProjectPerformanceTraceTests(std::vector<TestCase>& tests);
 void addBufferingPreparationTests(std::vector<TestCase>& tests);
+void addResamplingTests(std::vector<TestCase>& tests);
 void addBridgeTests(std::vector<TestCase>& tests);
 void addMidiControllerMappingTests(std::vector<TestCase>& tests);
 void addWarpTests(std::vector<TestCase>& tests);

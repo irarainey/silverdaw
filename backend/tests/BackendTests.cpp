@@ -35,6 +35,7 @@ constexpr DomainRegistrar kRegistrars[] = {
     {"Persistence", addPersistenceTests},
     {"ProjectPerformanceTrace", addProjectPerformanceTraceTests},
     {"BufferingPreparation", addBufferingPreparationTests},
+    {"Resampling", addResamplingTests},
     {"Bridge", addBridgeTests},
     {"MidiControllerMapping", addMidiControllerMappingTests},
     {"Warp", addWarpTests},
