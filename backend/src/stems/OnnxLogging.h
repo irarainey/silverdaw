@@ -38,6 +38,7 @@ inline void ORT_API_CALL ortLogToSilverdaw(void* /*param*/, OrtLoggingLevel seve
         silverdaw::log::warn("onnx", line);
         break;
     case ORT_LOGGING_LEVEL_ERROR:
+    case ORT_LOGGING_LEVEL_WARNING:
         silverdaw::log::info("onnx", line);
         break;
     default:
@@ -46,12 +47,10 @@ inline void ORT_API_CALL ortLogToSilverdaw(void* /*param*/, OrtLoggingLevel seve
     }
 }
 
-// An Ort::Env whose logging is forwarded to silverdaw::log (see ortLogToSilverdaw) rather than
-// stderr. The level stays at ERROR so only genuine ORT errors are captured; recoverable ones are
-// downgraded inside the callback.
+// Include warnings so partial CPU placement is visible in diagnostic logs.
 inline Ort::Env makeOrtEnv(const char* logId)
 {
-    return {ORT_LOGGING_LEVEL_ERROR, logId, &ortLogToSilverdaw, nullptr};
+    return {ORT_LOGGING_LEVEL_WARNING, logId, &ortLogToSilverdaw, nullptr};
 }
 
 } // namespace silverdaw

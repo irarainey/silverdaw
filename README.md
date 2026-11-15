@@ -6,7 +6,7 @@
   An open-source Digital Audio Workstation (DAW) for remixing, mashups, and sample-driven music making.
 </div>
 
-Current release: **1.10.0** — see the [changelog](CHANGELOG.md).
+Current version: **1.10.1** — see the [changelog](CHANGELOG.md).
 
 ## What is Silverdaw?
 

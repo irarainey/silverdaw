@@ -54,7 +54,56 @@ describe('detectGpuFromInfo', () => {
   })
 
   it('keeps a real adapter available even alongside a software adapter', () => {
-    const info = { gpuDevice: [{ active: false, vendorId: 0x1414 }, { active: true, vendorId: 0x8086 }] }
+    const info = {
+      gpuDevice: [
+        { active: false, vendorId: 0x1414 },
+        { active: true, vendorId: 0x8086 }
+      ]
+    }
     expect(detectGpuFromInfo(info)).toEqual({ available: true, name: null })
+  })
+
+  it('names both adapters from the captured hybrid-laptop basic probe', () => {
+    expect(
+      detectGpuFromInfo({
+        gpuDevice: [
+          { active: false, vendorId: 0x8086, deviceString: 'Intel(R) Graphics' },
+          {
+            active: false,
+            vendorId: 0x10de,
+            deviceString: 'NVIDIA GeForce RTX 5070 Ti Laptop GPU'
+          },
+          { active: false, vendorId: 0x1414, deviceString: 'Microsoft Basic Render Driver' },
+          { active: false, vendorId: 0x8086 }
+        ]
+      })
+    ).toEqual({
+      available: true,
+      name: 'Intel(R) Graphics, NVIDIA GeForce RTX 5070 Ti Laptop GPU'
+    })
+  })
+
+  it('ignores malformed entries and duplicate or software names', () => {
+    expect(
+      detectGpuFromInfo({
+        gpuDevice: [
+          null,
+          7,
+          {},
+          { deviceString: ' GPU ' },
+          { deviceString: 'GPU' },
+          { deviceString: 'Microsoft Basic Render Driver' }
+        ]
+      })
+    ).toEqual({ available: true, name: 'GPU' })
+  })
+
+  it('does not confuse Chromium software rendering with DirectML hardware availability', () => {
+    expect(
+      detectGpuFromInfo({
+        auxAttributes: { glRenderer: 'Google SwiftShader' },
+        gpuDevice: [{ vendorId: 0x10de, deviceString: 'NVIDIA GPU' }]
+      })
+    ).toEqual({ available: true, name: 'NVIDIA GPU' })
   })
 })

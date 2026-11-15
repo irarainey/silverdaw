@@ -1,8 +1,11 @@
 # Silverdaw — Technical Design & Implementation Plan
 
+Current source version: **1.10.1**, covering GPU adapter selection and naming,
+and diagnostic-log reliability.
+
 ## Release acceptance (1.10.0)
 
-**Current release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
+**Release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
 and satisfactory audio and requested that 1.10.0 be marked as the release
 version. Manual application/listening acceptance is therefore recorded as
 confirmed. This documentation decision does not publish or upload assets,
@@ -1048,7 +1051,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.10.0" } }
+{ "type": "READY", "payload": { "version": "1.10.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -3294,7 +3297,7 @@ sideload of the signed package: the install registers
 hardware. There is deliberately no install-time permission dialog — Windows
 resolves a device capability at first use, not during installation.
 
-### 1.10.0 - Dependency & Performance Maintenance *(current release)*
+### 1.10.0 - Dependency & Performance Maintenance
 
 Dependency/toolchain updates, project-opening and waveform/viewport-memory
 improvements, Save As snapshot improvements and focused backend processing

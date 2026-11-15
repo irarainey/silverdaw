@@ -14,6 +14,7 @@ interface GpuDevice {
   readonly active?: boolean
   readonly vendorId?: number
   readonly deviceId?: number
+  readonly deviceString?: string
 }
 
 interface RawGpuInfo {
@@ -66,21 +67,24 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   const glRenderer = readString(raw.auxAttributes, 'glRenderer')
   const glVendor = readString(raw.auxAttributes, 'glVendor')
 
-  // Positive software-renderer signal (SwiftShader, Basic Render Driver, …) —
-  // there is no real GPU to accelerate on, so keep the option disabled.
-  if (glRenderer && isSoftwareRenderer(glRenderer)) return { available: false, name: null }
-  if (glVendor && isSoftwareRenderer(glVendor)) return { available: false, name: null }
-
   // Software-adapter-only device list (e.g. only the Microsoft Basic Render
   // Driver) is the other positive "no GPU" signal. A device with an unknown /
   // absent vendorId is treated as inconclusive, not software.
-  const devices = Array.isArray(raw.gpuDevice) ? raw.gpuDevice : []
+  const devices = Array.isArray(raw.gpuDevice)
+    ? raw.gpuDevice.filter((d): d is GpuDevice => d !== null && typeof d === 'object')
+    : []
   const anyKnownSoftware = devices.some(
     (d) => typeof d.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(d.vendorId)
   )
   const anyRealHardware = devices.some(
     (d) => typeof d.vendorId === 'number' && !SOFTWARE_VENDOR_IDS.has(d.vendorId)
   )
+  // Chromium's renderer can be software-backed while DirectML still has hardware.
+  if (
+    !anyRealHardware &&
+    ((glRenderer && isSoftwareRenderer(glRenderer)) || (glVendor && isSoftwareRenderer(glVendor)))
+  )
+    return { available: false, name: null }
   if (devices.length > 0 && anyKnownSoftware && !anyRealHardware) {
     return { available: false, name: null }
   }
@@ -88,6 +92,13 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   // A real hardware GPU is present, or detection is inconclusive (an iGPU
   // reported inactive / without a vendorId, or no device list at all). DirectML
   // can use it; enable the option and surface a friendly name when we have one.
-  const name = glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null
+  const names = devices
+    .filter((d) => d.vendorId === undefined || !SOFTWARE_VENDOR_IDS.has(d.vendorId))
+    .map((d) => (typeof d.deviceString === 'string' ? d.deviceString.trim() : ''))
+    .filter((name) => name.length > 0 && !isSoftwareRenderer(name))
+  // These are detected adapters, not a claim about the backend's selected device.
+  const name =
+    [...new Set(names)].join(', ') ||
+    (glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null)
   return { available: true, name }
 }

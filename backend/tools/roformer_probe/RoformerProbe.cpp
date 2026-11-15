@@ -6,6 +6,7 @@
 // Usage: SilverdawRoformerProbe <core.onnx> <inputWav> <outputVocalWav>
 //   The .onnx.data must sit beside <core.onnx>; onnxruntime.dll beside the exe.
 
+#include "../../src/core/Log.h"
 #include "../../src/stems/MelRoformerVocals.h"
 
 #include <cmath>
@@ -20,6 +21,8 @@
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto logDir = juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {});
+    if (logDir.isNotEmpty()) silverdaw::log::initialise(logDir);
     if (argc < 4)
     {
         std::cerr << "usage: SilverdawRoformerProbe <core.onnx> <inputWav> <outputVocalWav>\n";

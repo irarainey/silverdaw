@@ -362,20 +362,17 @@ onMounted(refreshQuality)
           <span class="block font-medium text-zinc-200">Use GPU acceleration for stem separation</span>
           <span class="mt-0.5 block text-zinc-500">
             <template v-if="gpu.available">
-              Detected GPU:
+              Detected graphics:
               <span class="text-zinc-400">{{ gpu.name ?? 'compatible adapter' }}</span>.
               Off by default. Separation runs on the CPU unless you enable this.
               The same model is used either way, so there is no separate GPU model
               to download.
+              A high-performance adapter is preferred; the selected adapter is
+              recorded in the diagnostic logs.
               <span class="mt-1 block text-amber-400/90">
-                Experimental, and not always faster. On integrated GPUs — which
-                share system memory — the CPU is often as fast or faster, and a
-                larger model can run out of GPU memory and fall back to the CPU
-                part-way through (slower than running on the CPU from the start).
-                GPU acceleration helps most on a dedicated graphics card with its
-                own memory. On some GPUs or drivers it can also briefly reset the
-                display; if separation fails or the screen misbehaves, turn this
-                off and use the CPU.
+                Experimental. Best on dedicated graphics cards; integrated GPUs
+                may be slower. If separation fails or the display resets, turn
+                this off and use the CPU.
               </span>
             </template>
             <template v-else>

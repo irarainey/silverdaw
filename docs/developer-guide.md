@@ -189,7 +189,8 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The current release is **1.10.0**. Dependency maintenance, four packaged
+The current version is **1.10.1**, covering GPU adapter selection and naming,
+and diagnostic-log reliability. For **1.10.0**, dependency maintenance, four packaged
 performance changes and the native processing follow-up are implemented.
 Local assets were rebuilt and verified on 2026-11-06; the maintainer subsequently
 confirmed manual testing and satisfactory audio and designated this release.
@@ -2992,15 +2993,28 @@ session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
 defaults off. The Preferences ▸ Stems toggle is enabled unless a GPU probe
 positively reports software-only rendering (`detectGpuFromInfo`): DirectML runs
 on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports as
-inactive or without a vendorId must still be offered. The path is hardened
-against recoverable GPU faults — both a timeout/TDR device reset **and** running
+inactive or without a vendorId must still be offered. Provider configuration
+is shared in `stems/StemOnnxProvider.cpp`. DirectML requests a high-performance
+hardware GPU rather than adapter index zero, and
+logs the actual selected adapter's description, vendor/device IDs and dedicated
+memory. Preferences lists the adapters detected by Electron's safe `basic`
+probe; this is not a claim about the device selected by the backend.
+Graph fusion remains disabled: it breaks dynamic htdemucs compilation, and local
+real-model checks found changed vocal output with fused RoFormer sessions.
+ONNX warnings are retained in diagnostics so partial CPU placement is no longer
+hidden.
+
+The path is hardened against recoverable GPU faults — both a timeout/TDR device
+reset **and** running
 out of (often shared, integrated-GPU) memory transparently retry the whole job on
 the CPU so the user still gets their stems. After either failure, the backend
 quarantines DirectML for the lifetime of that process. Later jobs route directly
 to the CPU instead of retrying a GPU already known to fail; restarting the
 backend clears the quarantine. Model, decode, cancellation, and unrelated ONNX
-errors do not quarantine the GPU. On memory-constrained integrated GPUs the
-fixed-shape RoFormer models may simply not fit, in which case the run falls back
+inference errors do not quarantine the GPU. Failure to initialise the GPU
+provider also selects and retains the CPU fallback. On memory-constrained
+integrated GPUs the fixed-shape RoFormer models may simply not fit, in which
+case the run falls back
 to the CPU; GPU acceleration is therefore treated as a best-effort,
 dedicated-GPU-oriented option rather than a guaranteed speed-up.
 
@@ -4740,6 +4754,13 @@ Persisted fields:
   **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
   the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
   to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
+  The snapshot drains queued renderer/main writes and keeps `session` and
+  `diagnostics` subfolders so identically named logs cannot overwrite each other.
+  ZIP creation uses the Windows .NET ZIP API through a PowerShell command with
+  a 60-second timeout and captured errors. If compression fails, copied logs
+  remain in a revealed temporary folder; the notification gives its path and
+  manual compression instructions. Opening the email draft is bounded to
+  10 seconds, and Explorer/mail failures leave the prepared files intact.
 - **Show Developer Tools** — enables DevTools shortcuts independently of file
   logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
@@ -5537,10 +5558,10 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The current release version is **1.10.0**, designated after the maintainer's
-manual testing and listening confirmation. The
+The current application version is **1.10.1**. The **1.10.0**
 [release record](development-plan.md#release-acceptance-1100) records the verified
-local assets, sign-off and retained limitations. Neither the version designation
+local assets, manual testing and listening sign-off, and retained limitations.
+Neither the version designation
 nor a local build authorises publishing, installation, certificate-trust changes,
 commits or tags.
 

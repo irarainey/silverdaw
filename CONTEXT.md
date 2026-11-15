@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-06 · Owner: @irarainey_
+_Last reviewed: 2026-11-15 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -84,9 +84,10 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The current release is **1.10.0**. Dependency migrations and measured
+The current version is **1.10.1**, a GPU and diagnostic-log reliability patch.
+Release **1.10.0** completed dependency migrations and measured
 opening, waveform-memory, viewport-resource, Save As snapshot and focused backend
-processing improvements are implemented. The stress-memory follow-up did not
+processing improvements. The stress-memory follow-up did not
 consistently reproduce the initial increase; it is not proof of no regression.
 The maintainer confirmed manual testing and satisfactory audio on 2026-11-06
 and designated 1.10.0 as the release version. Optimisation scope remains frozen;

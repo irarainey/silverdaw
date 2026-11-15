@@ -3,6 +3,7 @@
 import type {
   AudioMetadata as SharedAudioMetadata,
   DebugPreferences as SharedDebugPreferences,
+  DiagnosticLogsResult,
   FileBrowserEntry as SharedFileBrowserEntry,
   FileBrowserFileTags as SharedFileBrowserFileTags,
   FileBrowserFolderIndex as SharedFileBrowserFolderIndex,
@@ -89,7 +90,7 @@ declare global {
         node: string
       }>
       openExternal(url: string): void
-      sendDiagnostics(): Promise<boolean>
+      sendDiagnostics(): Promise<DiagnosticLogsResult>
       setLastProjectPath(path: string, name: string): void
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>

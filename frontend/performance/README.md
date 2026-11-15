@@ -9,7 +9,7 @@ evaluates subsequent backend processing changes, not a new packaged comparison.
 The [maintenance status](../../docs/development-plan.md#performance-maintenance-1100)
 lists completed work and remaining measurements.
 
-**Release disposition (2026-11-06):** 1.10.0 is the current release version.
+**Release disposition (2026-11-06):** 1.10.0 was designated the release version.
 The maintainer confirmed manual testing and satisfactory audio; optimisation
 scope remains frozen, not the start of another profiling programme. See the
 [release record](../../docs/development-plan.md#release-acceptance-1100).

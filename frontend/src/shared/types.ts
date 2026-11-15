@@ -2,6 +2,10 @@
 
 import type { StemQuality, VocalEnhanceStrength, DrumEnhanceStrength, BassEnhanceStrength, OtherEnhanceStrength } from './bridge/outbound'
 
+export type DiagnosticLogsResult =
+  | { ok: true; path: string; zipped: boolean; warning?: string }
+  | { ok: false; error: string }
+
 export interface OpenedAudioFile {
   filePath: string
   fileName: string

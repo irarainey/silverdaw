@@ -19,15 +19,8 @@
 #include <windows.h>
 #endif
 
-#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
-// The DirectML execution provider factory ships only with a DirectML-enabled
-// ONNX Runtime build. It is compiled in solely when the backend is built
-// against such a runtime; the CPU runtime lacks this header.
-#include <dml_provider_factory.h>
-#endif
-
 #include "Log.h"
-#include "InferenceThreads.h"
+#include "StemOnnxProvider.h"
 #include "OnnxLogging.h"
 #include "StemRunCancellation.h"
 #include "StemShifts.h"
@@ -296,10 +289,16 @@ class OnnxStemSeparator : public StemSeparator
     {
         StemSeparationRequest effectiveRequest = request;
         effectiveRequest.useGpu = gpuFallback.shouldUseGpu(request.useGpu);
-        const bool usingQuarantinedFallback = request.useGpu && ! effectiveRequest.useGpu;
+        bool usingQuarantinedFallback = request.useGpu && ! effectiveRequest.useGpu;
         if (usingQuarantinedFallback)
             silverdaw::log::info("stems", "DirectML is quarantined for this process; using CPU.");
         applyExecutionProvider(effectiveRequest.useGpu);
+        if (effectiveRequest.useGpu && !epUsesGpu)
+        {
+            gpuFallback.quarantine();
+            effectiveRequest.useGpu = false;
+            usingQuarantinedFallback = true;
+        }
 
 #ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
         // On a recoverable DirectML fault mid-inference — a GPU reset (Windows TDR)
@@ -1041,52 +1040,7 @@ class OnnxStemSeparator : public StemSeparator
         if (epConfigured && epUsesGpu == useGpu) return;
 
         sessionCache.clear();
-        sessionOptions = Ort::SessionOptions{};
-        // Inference runs on a small pool of physical performance cores (see
-        // InferenceThreads.h), which by design leaves the E-cores / hyperthread
-        // siblings free for this backend's websocket-send and message threads —
-        // so progress keeps flowing and cancellation stays responsive WITHOUT
-        // hobbling throughput. Spinning is therefore left at its default (enabled):
-        // the many-op transformer graph pays per-op thread wake latency with
-        // spinning off, and the reserved-core starvation that once justified
-        // disabling it no longer exists. Cancellation now also terminates the
-        // in-flight run directly (StemRunCancellation.h) rather than relying on a
-        // spare polling core.
-        const int intraOpThreads = stems::inferenceIntraOpThreads();
-        sessionOptions.SetIntraOpNumThreads(intraOpThreads);
-        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-
-        if (useGpu)
-        {
-#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
-            // DirectML requires sequential execution and disabled memory pattern
-            // optimisation; the EP itself is vendor-generic (any DirectX 12 GPU).
-            sessionOptions.DisableMemPattern();
-            sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
-            // htdemucs uses dynamic tensor shapes, which DirectML's whole-graph
-            // fusion cannot compile (it throws E_INVALIDARG / "parameter is
-            // incorrect" in DmlGraphFusionHelper at session init). Disabling
-            // graph fusion makes the DML EP execute node-by-node instead — still
-            // GPU-accelerated, just without the fused-graph optimisation.
-            sessionOptions.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
-            silverdaw::log::info("stems", "ONNX execution provider: DirectML (GPU)");
-#else
-            // The bundled runtime is CPU-only: honour the request as best we can
-            // (run on the CPU) and say so once rather than failing the job.
-            silverdaw::log::info(
-                "stems",
-                "GPU separation requested but this build ships the CPU ONNX Runtime; running on CPU.");
-#endif
-        }
-        else
-        {
-            silverdaw::log::info(
-                "stems",
-                "ONNX execution provider: CPU (" + juce::String(intraOpThreads) + " intra-op threads)");
-        }
-
-        epUsesGpu = useGpu;
+        epUsesGpu = configureStemOnnxProvider(sessionOptions, useGpu);
         epConfigured = true;
     }
 
@@ -1108,7 +1062,7 @@ class OnnxStemSeparator : public StemSeparator
         silverdaw::log::info(
             "stem-perf",
             "session model=" + juce::File(modelPath).getFileNameWithoutExtension() +
-                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " configuredProvider=" + (epUsesGpu ? juce::String("directml") : juce::String("cpu")) +
                 " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
                 " durationMs=" + juce::String(performanceMsSince(started), 1));
         return *it->second;

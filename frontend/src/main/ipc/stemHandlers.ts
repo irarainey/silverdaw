@@ -124,8 +124,7 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
       // that process on some drivers in packaged (installed) builds — a native
       // crash a JS try/catch cannot contain, taking the whole app down when the
       // Stems tab opens. 'basic' returns the vendorId our detector needs to answer
-      // "is there a real GPU?" without touching the GL path. The trade-off is we
-      // lose the friendly adapter name (the UI falls back to "compatible adapter").
+      // "is there a real GPU?" and read deviceString without touching the GL path.
       const info = await app.getGPUInfo('basic')
       const status = detectGpuFromInfo(info)
       const devices = (info as { gpuDevice?: unknown }).gpuDevice
@@ -135,7 +134,8 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
         `GPU probe: available=${status.available} name=${status.name ?? '-'} devices=${JSON.stringify(devices ?? [])}`
       )
       return status
-    } catch {
+    } catch (err) {
+      logMain('WARN ', 'stems', 'GPU probe failed', err)
       return { available: false, name: null }
     }
   })

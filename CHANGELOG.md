@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.1
+
+### Fixed
+
+- Fixed stem separation not using the dedicated graphics card on multi-GPU systems.
+- Preferences shows graphics adapter names from the safe GPU probe.
+- Diagnostic bundles preserve both session and startup logs.
+- Diagnostic preparation reports failures without leaving the interface waiting indefinitely.
+
 ## 1.10.0
 
 ### Added
