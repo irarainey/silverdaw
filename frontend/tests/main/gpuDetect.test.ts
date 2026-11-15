@@ -106,4 +106,33 @@ describe('detectGpuFromInfo', () => {
       })
     ).toEqual({ available: true, name: 'NVIDIA GPU' })
   })
+
+  it('treats vendor zero as unknown rather than software', () => {
+    expect(detectGpuFromInfo({ gpuDevice: [{ vendorId: 0 }] })).toEqual({
+      available: true,
+      name: null
+    })
+    expect(
+      detectGpuFromInfo({
+        gpuDevice: [{ vendorId: 0 }, { vendorId: 0x1414 }]
+      })
+    ).toEqual({ available: true, name: null })
+  })
+
+  it.each([0, undefined])('recognises a named adapter with unknown vendor %s', (vendorId) => {
+    expect(
+      detectGpuFromInfo({
+        auxAttributes: { glRenderer: 'Google SwiftShader' },
+        gpuDevice: [{ vendorId, deviceString: 'Intel(R) Graphics' }]
+      })
+    ).toEqual({ available: true, name: 'Intel(R) Graphics' })
+  })
+
+  it('still rejects named software devices with an unknown vendor', () => {
+    expect(
+      detectGpuFromInfo({
+        gpuDevice: [{ vendorId: 0, deviceString: 'Microsoft Basic Render Driver' }]
+      })
+    ).toEqual({ available: false, name: null })
+  })
 })

@@ -8,6 +8,10 @@
 - Preferences shows graphics adapter names from the safe GPU probe.
 - Diagnostic bundles preserve both session and startup logs.
 - Diagnostic preparation reports failures without leaving the interface waiting indefinitely.
+- GPU availability no longer rejects adapters with unknown vendor IDs.
+- Model download progress survives switching Preferences tabs.
+- Backup-model help text matches actual model selection.
+- Failed and cancelled stem separations release their job bookkeeping.
 
 ## 1.10.0
 

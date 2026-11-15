@@ -33,9 +33,8 @@ const SOFTWARE_RENDERER_MARKERS = [
   'basic render driver'
 ]
 
-// Adapters Windows exposes for software rendering. 0x1414 is the Microsoft
-// Basic Render Driver; vendor 0 is an unknown/placeholder device.
-const SOFTWARE_VENDOR_IDS: ReadonlySet<number> = new Set([0x1414, 0])
+// Vendor 0 is unknown, not evidence of software rendering.
+const SOFTWARE_VENDOR_IDS: ReadonlySet<number> = new Set([0x1414])
 
 function readString(record: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = record?.[key]
@@ -45,6 +44,17 @@ function readString(record: Record<string, unknown> | undefined, key: string): s
 function isSoftwareRenderer(text: string): boolean {
   const lower = text.toLowerCase()
   return SOFTWARE_RENDERER_MARKERS.some((marker) => lower.includes(marker))
+}
+
+function deviceName(device: GpuDevice): string {
+  return typeof device.deviceString === 'string' ? device.deviceString.trim() : ''
+}
+
+function isSoftwareDevice(device: GpuDevice): boolean {
+  return (
+    (typeof device.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(device.vendorId)) ||
+    isSoftwareRenderer(deviceName(device))
+  )
 }
 
 /**
@@ -73,11 +83,10 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   const devices = Array.isArray(raw.gpuDevice)
     ? raw.gpuDevice.filter((d): d is GpuDevice => d !== null && typeof d === 'object')
     : []
-  const anyKnownSoftware = devices.some(
-    (d) => typeof d.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(d.vendorId)
-  )
   const anyRealHardware = devices.some(
-    (d) => typeof d.vendorId === 'number' && !SOFTWARE_VENDOR_IDS.has(d.vendorId)
+    (d) =>
+      !isSoftwareDevice(d) &&
+      ((typeof d.vendorId === 'number' && d.vendorId > 0) || deviceName(d).length > 0)
   )
   // Chromium's renderer can be software-backed while DirectML still has hardware.
   if (
@@ -85,7 +94,7 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
     ((glRenderer && isSoftwareRenderer(glRenderer)) || (glVendor && isSoftwareRenderer(glVendor)))
   )
     return { available: false, name: null }
-  if (devices.length > 0 && anyKnownSoftware && !anyRealHardware) {
+  if (devices.length > 0 && devices.every(isSoftwareDevice)) {
     return { available: false, name: null }
   }
 
@@ -93,9 +102,9 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   // reported inactive / without a vendorId, or no device list at all). DirectML
   // can use it; enable the option and surface a friendly name when we have one.
   const names = devices
-    .filter((d) => d.vendorId === undefined || !SOFTWARE_VENDOR_IDS.has(d.vendorId))
-    .map((d) => (typeof d.deviceString === 'string' ? d.deviceString.trim() : ''))
-    .filter((name) => name.length > 0 && !isSoftwareRenderer(name))
+    .filter((d) => !isSoftwareDevice(d))
+    .map(deviceName)
+    .filter((name) => name.length > 0)
   // These are detected adapters, not a claim about the backend's selected device.
   const name =
     [...new Set(names)].join(', ') ||

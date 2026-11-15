@@ -2980,11 +2980,15 @@ matched to four decimals). htdemucs is the backup when the pack is absent.
 In **Preferences ▸ Stems** the two packs share one combined **Download models**
 action (~1 GB), and the vocal, drums/bass, and htdemucs backup models each appear
 as a compact **Locate…** row (identical style) to point at an existing on-disk
-copy — the backup row carries a note that it is only a fallback. The backup has
+copy. Download state and progress survive switching Preferences tabs or reopening
+the dialog. The backup has
 no manual download button (it is fetched on demand when a run needs it); an
 **Always use the backup model** toggle sits below the locator group. Each
 pack/model persists its located directory override (`vocalPackDir` /
 `rhythmPackDir` / `stemModelDir`).
+Backup routing is decided before inference from the available packs, the forced
+backup preference and the stem selection. A runtime pack failure does not switch
+models; recoverable GPU faults retry the same models on CPU.
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
