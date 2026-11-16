@@ -1,5 +1,10 @@
 # Performance benchmarks
 
+The designated release version is **1.10.1**. Its
+[release record](../../docs/development-plan.md#release-acceptance-1101) records
+the 2026-11-16 automated checks and verified local assets. Historical benchmark
+versions and performance claims below are unchanged.
+
 The current implementation includes C1, R1, R2 and S1 below. Their stage-local
 results must not be added together; the
 [combined reference screen](#combined-reference-screen) measures all four
@@ -9,7 +14,8 @@ evaluates subsequent backend processing changes, not a new packaged comparison.
 The [maintenance status](../../docs/development-plan.md#performance-maintenance-1100)
 lists completed work and remaining measurements.
 
-**Release disposition (2026-11-06):** 1.10.0 is the current release version.
+**Historical release disposition (2026-11-06):** 1.10.0 was designated the
+release version at that checkpoint.
 The maintainer confirmed manual testing and satisfactory audio; optimisation
 scope remains frozen, not the start of another profiling programme. See the
 [release record](../../docs/development-plan.md#release-acceptance-1100).

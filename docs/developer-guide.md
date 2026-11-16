@@ -189,16 +189,21 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The current release is **1.10.0**. Dependency maintenance, four packaged
-performance changes and the native processing follow-up are implemented.
-Local assets were rebuilt and verified on 2026-11-06; the maintainer subsequently
-confirmed manual testing and satisfactory audio and designated this release.
-Optimisation scope remains frozen, with further work limited to concrete
-regressions. Incomplete benchmark comparisons still limit performance claims;
-the release designation does not confirm unreported device/upgrade checks or
-resolve the documented development-tooling security-risk disposition. See the
-[release record](development-plan.md#release-acceptance-1100)
-and [performance evidence](../frontend/performance/README.md).
+The designated release version is **1.10.1**, covering GPU adapter selection and
+naming, stem-separation reliability and CPU usage, and diagnostic-log
+reliability. All automated quality gates passed, and local release assets were
+rebuilt and verified on 2026-11-16. See the
+[release record](development-plan.md#release-acceptance-1101) for the checks and
+retained limitations.
+
+For **1.10.0**, dependency maintenance, four packaged performance changes and the
+native processing follow-up are implemented. Its historical release record
+retains the 2026-11-06 manual testing/listening sign-off separately. Optimisation
+scope remains frozen, with further work limited to concrete regressions.
+Incomplete benchmark comparisons still limit performance claims; the release
+designation does not confirm unreported device/upgrade checks or resolve the
+documented development-tooling security-risk disposition. See the
+[performance evidence](../frontend/performance/README.md).
 
 Silverdaw currently supports the core arrangement workflow:
 
@@ -2979,11 +2984,15 @@ matched to four decimals). htdemucs is the backup when the pack is absent.
 In **Preferences ▸ Stems** the two packs share one combined **Download models**
 action (~1 GB), and the vocal, drums/bass, and htdemucs backup models each appear
 as a compact **Locate…** row (identical style) to point at an existing on-disk
-copy — the backup row carries a note that it is only a fallback. The backup has
+copy. Download state and progress survive switching Preferences tabs or reopening
+the dialog. The backup has
 no manual download button (it is fetched on demand when a run needs it); an
 **Always use the backup model** toggle sits below the locator group. Each
 pack/model persists its located directory override (`vocalPackDir` /
 `rhythmPackDir` / `stemModelDir`).
+Backup routing is decided before inference from the available packs, the forced
+backup preference and the stem selection. A runtime pack failure does not switch
+models; recoverable GPU faults retry the same models on CPU.
 
 GPU acceleration uses the **DirectML** execution provider. The bundled ONNX
 Runtime is a DirectML build (one DLL serves CPU and GPU, with `DirectML.dll`
@@ -2992,15 +3001,29 @@ session options. Using the GPU is **opt-in** — the `stems.useGpu` preference
 defaults off. The Preferences ▸ Stems toggle is enabled unless a GPU probe
 positively reports software-only rendering (`detectGpuFromInfo`): DirectML runs
 on any Direct3D-12 adapter, so an integrated GPU that Chromium's probe reports as
-inactive or without a vendorId must still be offered. The path is hardened
-against recoverable GPU faults — both a timeout/TDR device reset **and** running
+inactive or without a vendorId must still be offered. Provider configuration
+is shared in `stems/StemOnnxProvider.cpp`. DirectML requests a high-performance
+hardware GPU rather than adapter index zero, and
+logs the actual selected adapter's description, vendor/device IDs and dedicated
+memory. Preferences lists the adapters detected by Electron's safe `basic`
+probe; this is not a claim about the device selected by the backend.
+Graph fusion remains disabled: it breaks dynamic htdemucs compilation, and local
+real-model checks found large output differences between fused and unfused vocal
+and rhythm sessions.
+ONNX warnings are retained in diagnostics so partial CPU placement is no longer
+hidden.
+
+The path is hardened against recoverable GPU faults — both a timeout/TDR device
+reset **and** running
 out of (often shared, integrated-GPU) memory transparently retry the whole job on
 the CPU so the user still gets their stems. After either failure, the backend
 quarantines DirectML for the lifetime of that process. Later jobs route directly
 to the CPU instead of retrying a GPU already known to fail; restarting the
 backend clears the quarantine. Model, decode, cancellation, and unrelated ONNX
-errors do not quarantine the GPU. On memory-constrained integrated GPUs the
-fixed-shape RoFormer models may simply not fit, in which case the run falls back
+inference errors do not quarantine the GPU. Failure to initialise the GPU
+provider also selects and retains the CPU fallback. On memory-constrained
+integrated GPUs the fixed-shape RoFormer models may simply not fit, in which
+case the run falls back
 to the CPU; GPU acceleration is therefore treated as a best-effort,
 dedicated-GPU-oriented option rather than a guaranteed speed-up.
 
@@ -3022,8 +3045,18 @@ thread per physical core: the fix drops the hyperthread siblings on HT CPUs
 (P **and** E) on non-hyperthreaded hybrid CPUs, where the E-cores add real
 throughput with no sibling contention. Reserving the two logical processors of
 the `logical − 2` bound leaves headroom for the backend's websocket-send and
-message threads, so the progress bar keeps flowing. On the GPU path the compute
-runs on the adapter instead.
+message threads, so the progress bar keeps flowing. GPU sessions keep this pool
+for operators that DirectML cannot execute, but disable idle thread spinning so
+workers sleep rather than consume CPU while waiting for work. This applies to
+all stem models through the shared provider configuration; CPU-only sessions
+and CPU fallback retain their existing settings.
+
+GPU acceleration does not move the entire pipeline to the adapter: spectral
+analysis, reconstruction and cleanup still run on the CPU, and unsupported ONNX
+operators can require CPU execution and intermediate transfers. The current
+vocal model uses RMSNormalization operators that the bundled DirectML provider
+assigns to the CPU, so GPU utilisation alone does not measure separation
+throughput.
 
 When the vocal and rhythm quality packs are both active, vocal cleanup runs on
 one reserved processor while rhythm inference uses the model worker pool. The
@@ -4740,6 +4773,13 @@ Persisted fields:
   **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
   the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
   to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
+  The snapshot drains queued renderer/main writes and keeps `session` and
+  `diagnostics` subfolders so identically named logs cannot overwrite each other.
+  ZIP creation uses the Windows .NET ZIP API through a PowerShell command with
+  a 60-second timeout and captured errors. If compression fails, copied logs
+  remain in a revealed temporary folder; the notification gives its path and
+  manual compression instructions. Opening the email draft is bounded to
+  10 seconds, and Explorer/mail failures leave the prepared files intact.
 - **Show Developer Tools** — enables DevTools shortcuts independently of file
   logging.
 - **Stem-separation settings** — `stems.useGpu` (GPU acceleration, default off),
@@ -5537,12 +5577,12 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The current release version is **1.10.0**, designated after the maintainer's
-manual testing and listening confirmation. The
-[release record](development-plan.md#release-acceptance-1100) records the verified
-local assets, sign-off and retained limitations. Neither the version designation
-nor a local build authorises publishing, installation, certificate-trust changes,
-commits or tags.
+The current release version is **1.10.1**. The
+[release record](development-plan.md#release-acceptance-1101) records its passed
+automated gates, verified local assets and retained limitations. The historical
+1.10.0 record preserves its separate manual testing/listening sign-off. Neither
+the release designation nor a local build authorises publishing, installation,
+certificate-trust changes, commits or tags.
 
 `scripts/Build-Release.ps1` is the canonical release path. From the repository
 root it runs the whole pipeline end-to-end:

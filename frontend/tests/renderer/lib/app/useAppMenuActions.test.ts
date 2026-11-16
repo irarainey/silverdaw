@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { useAppMenuActions, type AppMenuActionsDeps } from '@/lib/app/useAppMenuActions'
+import type { DiagnosticLogsResult } from '@shared/types'
 
 const sendBridge = vi.fn()
 vi.mock('@/lib/bridgeService', () => ({
   send: (...args: unknown[]) => sendBridge(...args)
 }))
 vi.mock('@/lib/log', () => ({
+  flushLogBatch: vi.fn(async () => {}),
   log: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 vi.mock('@/stores/projectStore', () => ({
@@ -27,7 +29,7 @@ const clearRecentProjects = vi.fn()
 const chooseProjectOpen = vi.fn()
 const chooseProjectSaveAs = vi.fn()
 const prepareProjectOpen = vi.fn()
-const sendDiagnostics = vi.fn(() => Promise.resolve(true))
+const sendDiagnostics = vi.fn<() => Promise<DiagnosticLogsResult>>()
 
 function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}): {
   deps: AppMenuActionsDeps
@@ -132,7 +134,8 @@ beforeEach(() => {
   chooseProjectSaveAs.mockReset()
   prepareProjectOpen.mockReset()
   clearRecentProjects.mockClear()
-  sendDiagnostics.mockClear()
+  sendDiagnostics.mockReset()
+  sendDiagnostics.mockResolvedValue({ ok: true, path: 'C:\\logs\\diagnostics.zip', zipped: true })
   ;(globalThis as unknown as { window: unknown }).window = {
     silverdaw: {
       menuAction,
@@ -165,20 +168,55 @@ describe('useAppMenuActions — handleMenuAction', () => {
     const h = makeDeps({ bridgeReady: false })
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('help.sendDiagnostics')
-    expect(sendDiagnostics).toHaveBeenCalledTimes(1)
     expect(h.refs.diagnosticsBusy.value).toBe(true)
+    await vi.waitFor(() => expect(sendDiagnostics).toHaveBeenCalledTimes(1))
     // Let the resolved promise's finally() clear the spinner.
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(h.refs.diagnosticsBusy.value).toBe(false))
     expect(h.refs.diagnosticsBusy.value).toBe(false)
+    expect(h.stores.notifications.pushInfo).toHaveBeenCalledWith(
+      expect.stringContaining('Attach the ZIP')
+    )
   })
 
-  it('ignores a second diagnostics request while one is already running', () => {
+  it('ignores a second diagnostics request while one is already running', async () => {
     const h = makeDeps({ bridgeReady: true })
     const { handleMenuAction } = useAppMenuActions(h.deps)
     handleMenuAction('help.sendDiagnostics')
     handleMenuAction('help.sendDiagnostics')
-    expect(sendDiagnostics).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(sendDiagnostics).toHaveBeenCalledTimes(1))
+  })
+
+  it('surfaces diagnostics failures and clears the spinner', async () => {
+    sendDiagnostics.mockResolvedValue({ ok: false, error: 'No logs could be copied.' })
+    const h = makeDeps()
+    useAppMenuActions(h.deps).handleMenuAction('help.sendDiagnostics')
+    await vi.waitFor(() => expect(h.refs.diagnosticsBusy.value).toBe(false))
+    expect(h.stores.notifications.pushError).toHaveBeenCalledWith('No logs could be copied.')
+  })
+
+  it('shows the retained folder and recovery instructions after ZIP failure', async () => {
+    sendDiagnostics.mockResolvedValue({
+      ok: true,
+      path: 'C:\\logs\\diagnostics-folder',
+      zipped: false,
+      warning: 'Compress the prepared folder before attaching it.'
+    })
+    const h = makeDeps()
+    useAppMenuActions(h.deps).handleMenuAction('help.sendDiagnostics')
+    await vi.waitFor(() => expect(h.refs.diagnosticsBusy.value).toBe(false))
+    expect(h.stores.notifications.pushInfo).toHaveBeenCalledWith(
+      'Diagnostic folder ready: C:\\logs\\diagnostics-folder. Compress the prepared folder before attaching it.'
+    )
+  })
+
+  it('surfaces rejected diagnostic IPC calls and clears the spinner', async () => {
+    sendDiagnostics.mockRejectedValue(new Error('IPC failed'))
+    const h = makeDeps()
+    useAppMenuActions(h.deps).handleMenuAction('help.sendDiagnostics')
+    await vi.waitFor(() => expect(h.refs.diagnosticsBusy.value).toBe(false))
+    expect(h.stores.notifications.pushError).toHaveBeenCalledWith(
+      expect.stringContaining('Diagnostic preparation failed')
+    )
   })
 
   it('routes file.exit through the unsaved-changes guard when the bridge is ready', () => {

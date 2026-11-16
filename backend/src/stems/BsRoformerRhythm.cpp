@@ -8,17 +8,13 @@
 
 #include <onnxruntime_cxx_api.h>
 
-#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
-#include <dml_provider_factory.h>
-#endif
-
 #include "BsRoformerSpectral.h"
-#include "InferenceThreads.h"
 #include "Log.h"
 #include "OnnxLogging.h"
 #include "RoformerPerformance.h"
 #include "StemRunCancellation.h"
 #include "StemSeparator.h"
+#include "StemOnnxProvider.h"
 
 namespace silverdaw
 {
@@ -46,29 +42,7 @@ struct BsRoformerRhythm::Impl
         if (epConfigured && epUsesGpu == useGpu && session != nullptr) return;
         session.reset();
         sessionPath = {};
-        sessionOptions = Ort::SessionOptions{};
-        const int intraOpThreads = stems::inferenceIntraOpThreads();
-        sessionOptions.SetIntraOpNumThreads(intraOpThreads);
-        sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        if (useGpu)
-        {
-#ifdef SILVERDAW_ONNXRUNTIME_DIRECTML
-            sessionOptions.DisableMemPattern();
-            sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
-            sessionOptions.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sessionOptions, 0));
-            silverdaw::log::info("stems", "Rhythm RoFormer execution provider: DirectML (GPU)");
-#else
-            silverdaw::log::info(
-                "stems", "Rhythm RoFormer GPU requested but this build ships the CPU ONNX Runtime; CPU.");
-#endif
-        }
-        else
-        {
-            silverdaw::log::info("stems", "Rhythm RoFormer execution provider: CPU ("
-                                              + juce::String(intraOpThreads) + " intra-op threads)");
-        }
-        epUsesGpu = useGpu;
+        epUsesGpu = configureStemOnnxProvider(sessionOptions, useGpu);
         epConfigured = true;
     }
 
@@ -88,7 +62,7 @@ struct BsRoformerRhythm::Impl
         silverdaw::log::info(
             "stem-perf",
             "session model=" + modelFile.getFileNameWithoutExtension() +
-                " provider=" + (epUsesGpu ? juce::String("gpu") : juce::String("cpu")) +
+                " configuredProvider=" + (epUsesGpu ? juce::String("directml") : juce::String("cpu")) +
                 " cache=" + (cacheHit ? juce::String("hit") : juce::String("miss")) +
                 " durationMs=" + juce::String(duration, 1));
         return *session;

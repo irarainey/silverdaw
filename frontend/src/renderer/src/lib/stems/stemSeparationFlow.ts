@@ -23,17 +23,13 @@ import {
   type DownloadRunHandle,
   type DownloadSource
 } from '@/lib/stems/stemModelDownloadRunner'
+import { MODEL_SOURCES, type StemModelKind, type StemModelSource } from '@/lib/stems/stemModelSources'
 import { useProjectStore } from '@/stores/projectStore'
 import { useLibraryStore, libraryItemDisplayName } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { StemName, StemQuality, DereverbStrength } from '@shared/bridge-protocol'
-import type {
-  StemModelState,
-  StemModelDownloadProgress,
-  EnsureStemModelResult,
-  StemPrefsDto
-} from '@shared/types'
+import type { StemModelState, StemPrefsDto } from '@shared/types'
 
 /** Canonical four-stem order; the selection dialog and dispatch use it. */
 const ALL_STEMS: readonly StemName[] = ['vocals', 'drums', 'bass', 'other']
@@ -317,43 +313,7 @@ export function useStemModelFlow(): Readonly<Ref<StemModelFlowState | null>> {
 
 // ─── Model sources ──────────────────────────────────────────────────────────
 
-/** The downloadable stem models. The two RoFormer packs are the default engine
- *  (fetched together); htdemucs is the backup. */
-export type StemModelKind = 'vocalPack' | 'rhythmPack' | 'htdemucs'
-
-/** Uniform adapter over each model's IPC surface so the download flow can treat
- *  packs and the backup identically. */
-interface StemModelSource {
-  readonly kind: StemModelKind
-  getState(): Promise<StemModelState>
-  ensure(): Promise<EnsureStemModelResult>
-  onProgress(handler: (progress: StemModelDownloadProgress) => void): () => void
-  cancel(): void
-}
-
-const MODEL_SOURCES: Readonly<Record<StemModelKind, StemModelSource>> = {
-  vocalPack: {
-    kind: 'vocalPack',
-    getState: () => window.silverdaw.getVocalPackState(),
-    ensure: () => window.silverdaw.ensureVocalPack(),
-    onProgress: (handler) => window.silverdaw.onVocalPackDownloadProgress(handler),
-    cancel: () => window.silverdaw.cancelVocalPackDownload()
-  },
-  rhythmPack: {
-    kind: 'rhythmPack',
-    getState: () => window.silverdaw.getRhythmPackState(),
-    ensure: () => window.silverdaw.ensureRhythmPack(),
-    onProgress: (handler) => window.silverdaw.onRhythmPackDownloadProgress(handler),
-    cancel: () => window.silverdaw.cancelRhythmPackDownload()
-  },
-  htdemucs: {
-    kind: 'htdemucs',
-    getState: () => window.silverdaw.getStemModelState(),
-    ensure: () => window.silverdaw.ensureStemModel(),
-    onProgress: (handler) => window.silverdaw.onStemModelDownloadProgress(handler),
-    cancel: () => window.silverdaw.cancelStemModelDownload()
-  }
-}
+export type { StemModelKind } from '@/lib/stems/stemModelSources'
 
 /**
  * The models needed for a separation. By default both RoFormer quality packs

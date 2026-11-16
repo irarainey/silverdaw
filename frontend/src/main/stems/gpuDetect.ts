@@ -14,6 +14,7 @@ interface GpuDevice {
   readonly active?: boolean
   readonly vendorId?: number
   readonly deviceId?: number
+  readonly deviceString?: string
 }
 
 interface RawGpuInfo {
@@ -32,9 +33,8 @@ const SOFTWARE_RENDERER_MARKERS = [
   'basic render driver'
 ]
 
-// Adapters Windows exposes for software rendering. 0x1414 is the Microsoft
-// Basic Render Driver; vendor 0 is an unknown/placeholder device.
-const SOFTWARE_VENDOR_IDS: ReadonlySet<number> = new Set([0x1414, 0])
+// Vendor 0 is unknown, not evidence of software rendering.
+const SOFTWARE_VENDOR_IDS: ReadonlySet<number> = new Set([0x1414])
 
 function readString(record: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = record?.[key]
@@ -44,6 +44,17 @@ function readString(record: Record<string, unknown> | undefined, key: string): s
 function isSoftwareRenderer(text: string): boolean {
   const lower = text.toLowerCase()
   return SOFTWARE_RENDERER_MARKERS.some((marker) => lower.includes(marker))
+}
+
+function deviceName(device: GpuDevice): string {
+  return typeof device.deviceString === 'string' ? device.deviceString.trim() : ''
+}
+
+function isSoftwareDevice(device: GpuDevice): boolean {
+  return (
+    (typeof device.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(device.vendorId)) ||
+    isSoftwareRenderer(deviceName(device))
+  )
 }
 
 /**
@@ -66,28 +77,37 @@ export function detectGpuFromInfo(info: unknown): StemGpuStatus {
   const glRenderer = readString(raw.auxAttributes, 'glRenderer')
   const glVendor = readString(raw.auxAttributes, 'glVendor')
 
-  // Positive software-renderer signal (SwiftShader, Basic Render Driver, …) —
-  // there is no real GPU to accelerate on, so keep the option disabled.
-  if (glRenderer && isSoftwareRenderer(glRenderer)) return { available: false, name: null }
-  if (glVendor && isSoftwareRenderer(glVendor)) return { available: false, name: null }
-
   // Software-adapter-only device list (e.g. only the Microsoft Basic Render
   // Driver) is the other positive "no GPU" signal. A device with an unknown /
   // absent vendorId is treated as inconclusive, not software.
-  const devices = Array.isArray(raw.gpuDevice) ? raw.gpuDevice : []
-  const anyKnownSoftware = devices.some(
-    (d) => typeof d.vendorId === 'number' && SOFTWARE_VENDOR_IDS.has(d.vendorId)
-  )
+  const devices = Array.isArray(raw.gpuDevice)
+    ? raw.gpuDevice.filter((d): d is GpuDevice => d !== null && typeof d === 'object')
+    : []
   const anyRealHardware = devices.some(
-    (d) => typeof d.vendorId === 'number' && !SOFTWARE_VENDOR_IDS.has(d.vendorId)
+    (d) =>
+      !isSoftwareDevice(d) &&
+      ((typeof d.vendorId === 'number' && d.vendorId > 0) || deviceName(d).length > 0)
   )
-  if (devices.length > 0 && anyKnownSoftware && !anyRealHardware) {
+  // Chromium's renderer can be software-backed while DirectML still has hardware.
+  if (
+    !anyRealHardware &&
+    ((glRenderer && isSoftwareRenderer(glRenderer)) || (glVendor && isSoftwareRenderer(glVendor)))
+  )
+    return { available: false, name: null }
+  if (devices.length > 0 && devices.every(isSoftwareDevice)) {
     return { available: false, name: null }
   }
 
   // A real hardware GPU is present, or detection is inconclusive (an iGPU
   // reported inactive / without a vendorId, or no device list at all). DirectML
   // can use it; enable the option and surface a friendly name when we have one.
-  const name = glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null
+  const names = devices
+    .filter((d) => !isSoftwareDevice(d))
+    .map(deviceName)
+    .filter((name) => name.length > 0)
+  // These are detected adapters, not a claim about the backend's selected device.
+  const name =
+    [...new Set(names)].join(', ') ||
+    (glRenderer && !isSoftwareRenderer(glRenderer) ? glRenderer : null)
   return { available: true, name }
 }

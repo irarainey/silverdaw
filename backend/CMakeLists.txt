@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.10.0
+    VERSION 1.10.1
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -644,11 +644,13 @@ if(SILVERDAW_ENABLE_STEM_SEPARATION)
     target_compile_definitions(silverdaw_backend_core PUBLIC SILVERDAW_STEM_SEPARATION=1)
     if(SILVERDAW_ONNXRUNTIME_DIRECTML)
         target_compile_definitions(silverdaw_backend_core PUBLIC SILVERDAW_ONNXRUNTIME_DIRECTML=1)
+        target_link_libraries(silverdaw_backend_core PUBLIC dxgi)
     endif()
     # The real ONNX inference is only compiled when stem separation is enabled;
     # the factory falls back to a stub otherwise.
     target_sources(silverdaw_backend_core PRIVATE
         src/stems/InferenceThreads.cpp
+        src/stems/StemOnnxProvider.cpp
         src/stems/OnnxStemSeparator.cpp
         src/stems/MelRoformerVocals.cpp
         src/stems/BsRoformerRhythm.cpp

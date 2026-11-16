@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type {
   AudioMetadata,
   DebugPreferences,
+  DiagnosticLogsResult,
   FileBrowserEntry,
   FileBrowserFolderIndex,
   FileBrowserIndexProgress,
@@ -135,7 +136,7 @@ const api = {
     ipcRenderer.send(IPC.app.openExternal, url)
   },
   /** Zip the current run's logs, reveal them, and open a support email draft. */
-  sendDiagnostics: (): Promise<boolean> => ipcRenderer.invoke(IPC.app.sendDiagnostics),
+  sendDiagnostics: (): Promise<DiagnosticLogsResult> => ipcRenderer.invoke(IPC.app.sendDiagnostics),
   // ─── Project file lifecycle ──────────────────────────────────────────────
   setLastProjectPath: (path: string, name: string): void => {
     ipcRenderer.send(IPC.project.setLastPath, { path, name })

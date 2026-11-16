@@ -6,6 +6,7 @@
 // Usage: SilverdawRhythmProbe <core.onnx> <inputWav> <outDrumsWav> <outBassWav>
 //   SILVERDAW_STEM_USE_GPU=1 selects the DirectML provider.
 
+#include "../../src/core/Log.h"
 #include "../../src/stems/BsRoformerRhythm.h"
 
 #include <cstdio>
@@ -41,6 +42,8 @@ void writeWav(const juce::File& outFile, const juce::AudioBuffer<float>& buf, do
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+    const auto logDir = juce::SystemStats::getEnvironmentVariable("SILVERDAW_LOG_DIR", {});
+    if (logDir.isNotEmpty()) silverdaw::log::initialise(logDir);
     if (argc < 5)
     {
         std::cerr << "usage: SilverdawRhythmProbe <core.onnx> <inputWav> <outDrumsWav> "

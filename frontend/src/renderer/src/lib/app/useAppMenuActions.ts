@@ -9,7 +9,7 @@ import type { useAppStore } from '@/stores/appStore'
 import { useRecordingSessionStore } from '@/stores/recordingSessionStore'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { send as sendBridge } from '@/lib/bridgeService'
-import { log } from '@/lib/log'
+import { flushLogBatch, log } from '@/lib/log'
 import { openAndImportAudioFilesIntoLibrary } from '@/lib/importAudio'
 import { isZoomPresetAction, parseZoomPresetAction } from '@/lib/timeline/zoomPresets'
 
@@ -73,9 +73,23 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     if (action === 'help.sendDiagnostics') {
       if (deps.diagnosticsBusy.value) return
       deps.diagnosticsBusy.value = true
-      void window.silverdaw
-        .sendDiagnostics()
-        .catch((err) => log.warn('menu', `send diagnostics failed: ${String(err)}`))
+      void flushLogBatch()
+        .then(() => window.silverdaw.sendDiagnostics())
+        .then((result) => {
+          if (!result.ok) {
+            notifications.pushError(result.error)
+            return
+          }
+          notifications.pushInfo(
+            `Diagnostic ${result.zipped ? 'ZIP' : 'folder'} ready: ${result.path}. ${
+              result.warning ?? 'Attach the ZIP to the support email before sending.'
+            }`
+          )
+        })
+        .catch((err) => {
+          log.warn('menu', `send diagnostics failed: ${String(err)}`)
+          notifications.pushError('Diagnostic preparation failed. Open the log folder in Preferences > Developer.')
+        })
         .finally(() => {
           deps.diagnosticsBusy.value = false
         })

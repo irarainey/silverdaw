@@ -1,8 +1,42 @@
 # Silverdaw — Technical Design & Implementation Plan
 
+Release version: **1.10.1**, covering GPU adapter selection and naming,
+stem-separation reliability and CPU usage, and diagnostic-log reliability.
+
+## Release acceptance (1.10.1)
+
+**Release: 1.10.1.** On 2026-11-16 the maintainer designated 1.10.1 as the
+release version. The patch changes are recorded in the
+[changelog](../CHANGELOG.md#1101).
+
+Before rebuilding the local release assets on 2026-11-16, frontend lint and
+type-checking and strict backend clang-tidy 22.1.8 passed, with zero warnings
+across all 163 backend translation units. All **3,065 tests** passed without failures
+or skips: **527 native Debug tests**, **2,501 frontend tests across 203 files**,
+and **37 end-to-end journeys** against the freshly built Debug backend.
+
+Only after those gates passed, `scripts\Build-Release.ps1 -SkipFrontendInstall`
+rebuilt the Release backend, frontend and all local distribution assets:
+`dist\Silverdaw-1.10.1.appx` (signed sideload),
+`dist\Silverdaw-1.10.1.zip` (portable),
+`dist\Silverdaw-1.10.1-store.appx` (intentionally unsigned Store package), and
+`dist\Silverdaw-PublicCert.cer` (public certificate only).
+
+Package versions, identities, runtime DLL hashes, current application bundles,
+MIDI mappings, licences and intended signatures were verified. The sideload and
+portable executable payloads match; the unsigned Store backend matches the
+Release build. Nothing was installed or published, certificate trust was not
+changed, and no commits or tags were created.
+
+These automated and package checks do not establish new manual/listening,
+full GPU/device or installed/Store-upgrade acceptance for 1.10.1. The
+[historical 1.10.0 record](#release-acceptance-1100) retains its separate manual
+sign-off and limitations; this designation does not resolve its documented
+security-risk disposition.
+
 ## Release acceptance (1.10.0)
 
-**Current release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
+**Release: 1.10.0.** On 2026-11-06 the maintainer confirmed manual testing
 and satisfactory audio and requested that 1.10.0 be marked as the release
 version. Manual application/listening acceptance is therefore recorded as
 confirmed. This documentation decision does not publish or upload assets,
@@ -69,9 +103,9 @@ Local asset checkpoint on 2026-11-06: the current Release backend was configured
 and rebuilt before running the canonical release script with
 `-SkipBackend -SkipFrontendInstall`; no dependency restoration was needed.
 The script now explicitly passes `--publish never` to both packaging commands.
-The bundling/version guards passed, and `dist/` contains the 1.10.0 signed
-sideload AppX, portable ZIP, unsigned Store AppX, public certificate and unpacked
-app. Previous local outputs were preserved rather than deleted.
+The bundling/version guards passed, and at that checkpoint `dist/` contained the
+1.10.0 signed sideload AppX, portable ZIP, unsigned Store AppX, public certificate
+and unpacked app. Previous local outputs were preserved rather than deleted.
 
 All three archives have identical application ASARs and the expected native
 payloads, MIDI mappings and licences. Their versions, x64 package identities,
@@ -111,11 +145,12 @@ was still pending; the later sign-off is recorded above.
 
 ## Dependency maintenance (1.10.0)
 
-Plan established on 2026-11-04 and implemented for the current 1.10.0 release.
-The stage statuses below preserve their dated checkpoints; the release record
-above supersedes their then-pending manual acceptance. Deferred upgrades remain
-deferred. Recheck version availability and advisories before any future update;
-this historical plan does not authorise new builds, publication or tags.
+Plan established on 2026-11-04 and implemented for the then-current 1.10.0
+release. The stage statuses below preserve their dated checkpoints; the 1.10.0
+release record above supersedes their then-pending manual acceptance. Deferred
+upgrades remain deferred. Recheck version availability and advisories before any
+future update; this historical plan does not authorise new builds, publication
+or tags.
 
 **Status reviewed 2026-11-06:** the accepted migrations below are implemented.
 The dated checkpoints preserve the state at each stage, not the current
@@ -1048,7 +1083,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.10.0" } }
+{ "type": "READY", "payload": { "version": "1.10.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -3294,7 +3329,7 @@ sideload of the signed package: the install registers
 hardware. There is deliberately no install-time permission dialog — Windows
 resolves a device capability at first use, not during installation.
 
-### 1.10.0 - Dependency & Performance Maintenance *(current release)*
+### 1.10.0 - Dependency & Performance Maintenance
 
 Dependency/toolchain updates, project-opening and waveform/viewport-memory
 improvements, Save As snapshot improvements and focused backend processing
@@ -3302,6 +3337,12 @@ optimisations are complete. Automated and packaged checks are recorded in the
 [release record](#release-acceptance-1100); the maintainer confirmed manual
 testing and satisfactory audio on 2026-11-06. The dependency and performance
 sections retain the detailed evidence, deferrals and measurement limitations.
+
+### 1.10.1 - GPU, Stem Separation & Diagnostics Reliability
+
+The designated release version as of 2026-11-16. Changes are listed in the
+[changelog](../CHANGELOG.md#1101); automated checks and verified local assets are
+recorded in the [release record](#release-acceptance-1101).
 
 ### Phase 1 — Backend Foundation & Bridge
 

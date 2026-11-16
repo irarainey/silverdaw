@@ -11,7 +11,7 @@ import {
   markStemSeparationFinalizing,
   snapshotStemSeparationState
 } from '@/lib/stemSeparationState'
-import { createTracksFromStems, createTrackFromStem } from '@/lib/stems/createStemTracks'
+import { createTracksFromStems, createTrackFromStem, forgetStemJob } from '@/lib/stems/createStemTracks'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
@@ -67,6 +67,7 @@ export const stemBridgeHandlers: BridgeInboundHandlers<
   },
 
   STEM_FAILED: (payload) => {
+    forgetStemJob(payload.jobId)
     const tracked = snapshotStemSeparationState()
     if (tracked && tracked.jobId !== payload.jobId) return
     clearStemSeparationState()

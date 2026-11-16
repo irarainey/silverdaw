@@ -28,14 +28,15 @@ export function setLogEnabled(value: boolean): void {
   }
 }
 
-function flush(): void {
+export async function flushLogBatch(): Promise<void> {
+  if (flushTimer) clearTimeout(flushTimer)
   flushTimer = null
   if (queue.length === 0) return
   const batch = queue.splice(0, queue.length)
   // Drop too-early log calls before preload exposes the IPC API.
   const api = (globalThis as { silverdaw?: { logBatch?: (entries: LogEntry[]) => Promise<void> } }).silverdaw
   if (!api?.logBatch) return
-  void api.logBatch(batch).catch((err) => {
+  await api.logBatch(batch).catch((err) => {
     // Keep teardown-time IPC failures from crashing the renderer.
     console.warn('[log] failed to flush batch', err)
   })
@@ -44,7 +45,7 @@ function flush(): void {
 function enqueue(level: LogLevel, tag: string, message: string): void {
   if (!enabled) return
   queue.push({ level, tag, message, timestamp: Date.now() })
-  if (!flushTimer) flushTimer = setTimeout(flush, 50)
+  if (!flushTimer) flushTimer = setTimeout(() => { void flushLogBatch() }, 50)
 }
 
 /** Cross-layer logger for events worth correlating with main/backend logs. */
@@ -57,5 +58,5 @@ export const log = {
 
 // Best-effort final flush; IPC is async and can't be awaited here.
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => flush())
+  window.addEventListener('beforeunload', () => { void flushLogBatch() })
 }

@@ -107,6 +107,16 @@ export function closeLogs(): void {
   rendererStream = null
 }
 
+/** Drain queued writes before taking a diagnostics snapshot. */
+export async function flushLogs(): Promise<void> {
+  await Promise.all([mainStream, rendererStream, diagStream].map((stream) => {
+    if (!stream || stream.destroyed) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      stream.write('', (error) => error ? reject(error) : resolve())
+    })
+  }))
+}
+
 /** Absolute path to the current session's log directory, or empty string before init. */
 export function getSessionDir(): string {
   return sessionDir

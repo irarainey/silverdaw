@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useStemModelManager } from '@/lib/stems/useStemModelManager'
+import { useStemQualityModels } from '@/lib/stems/useStemQualityModels'
 import StemCleanupSection from '@/components/StemCleanupSection.vue'
 import type { StemEnhanceStrength } from '@shared/bridge-protocol'
 
@@ -39,93 +40,18 @@ const STRENGTH_OPTIONS: ReadonlyArray<StrengthOption> = [
 
 const { gpu, modelInfo, busy, error, installed, refresh, locate } = useStemModelManager()
 
-// Combined "quality models" download state. Both RoFormer packs (vocals +
-// drums/bass) are the primary engine and are needed together for full
-// pack-quality separation, so they are presented and downloaded as one unit.
-const vocalInstalled = ref(false)
-const rhythmInstalled = ref(false)
-const qualityBusy = ref(false)
-const qualityPercent = ref(0)
-const qualityError = ref<string | null>(null)
-const qualityInstalled = computed(() => vocalInstalled.value && rhythmInstalled.value)
-const qualityPartlyInstalled = computed(
-  () => (vocalInstalled.value || rhythmInstalled.value) && !qualityInstalled.value
-)
-
-async function refreshQuality(): Promise<void> {
-  try {
-    const [v, r] = await Promise.all([
-      window.silverdaw.getVocalPackState(),
-      window.silverdaw.getRhythmPackState()
-    ])
-    vocalInstalled.value = v.installed
-    rhythmInstalled.value = r.installed
-  } catch {
-    vocalInstalled.value = false
-    rhythmInstalled.value = false
-  }
-}
-
-// Download whichever packs are missing, reporting a single combined percentage
-// weighted by each pack's total bytes (already-present packs count as done).
-async function downloadQualityModels(): Promise<void> {
-  if (qualityBusy.value) return
-  qualityBusy.value = true
-  qualityError.value = null
-  qualityPercent.value = 0
-  try {
-    const [vState, rState] = await Promise.all([
-      window.silverdaw.getVocalPackState(),
-      window.silverdaw.getRhythmPackState()
-    ])
-    const vTotal = vState.totalBytes || 0
-    const rTotal = rState.totalBytes || 0
-    const grand = Math.max(1, vTotal + rTotal)
-    let base = (vState.installed ? vTotal : 0) + (rState.installed ? rTotal : 0)
-    const setPct = (received: number): void => {
-      qualityPercent.value = Math.min(100, Math.round(((base + received) / grand) * 100))
-    }
-    setPct(0)
-
-    if (!vState.installed) {
-      const stop = window.silverdaw.onVocalPackDownloadProgress((p) => setPct(p.receivedBytes))
-      try {
-        const res = await window.silverdaw.ensureVocalPack()
-        if (!res.ok) {
-          qualityError.value = res.error ?? 'Download failed.'
-          return
-        }
-      } finally {
-        stop()
-      }
-      base += vTotal
-    }
-
-    if (!rState.installed) {
-      const stop = window.silverdaw.onRhythmPackDownloadProgress((p) => setPct(p.receivedBytes))
-      try {
-        const res = await window.silverdaw.ensureRhythmPack()
-        if (!res.ok) {
-          qualityError.value = res.error ?? 'Download failed.'
-          return
-        }
-      } finally {
-        stop()
-      }
-      base += rTotal
-    }
-  } catch (e) {
-    qualityError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    qualityBusy.value = false
-    await refreshQuality()
-  }
-}
-
-function cancelQualityDownload(): void {
-  window.silverdaw.cancelVocalPackDownload()
-  window.silverdaw.cancelRhythmPackDownload()
-}
+const {
+  vocalInstalled,
+  rhythmInstalled,
+  qualityBusy,
+  qualityPercent,
+  qualityError,
+  qualityInstalled,
+  qualityPartlyInstalled,
+  refreshQuality,
+  downloadQualityModels,
+  cancelQualityDownload
+} = useStemQualityModels()
 
 // Point Silverdaw at an existing / manually-placed copy of a pack instead of
 // downloading it. The chosen folder is validated against the pack manifest
@@ -273,9 +199,9 @@ onMounted(refreshQuality)
           </button>
         </div>
         <p class="text-[11px] text-zinc-500">
-          The backup is a lower-quality model used automatically only if a
-          RoFormer model above can't run on your hardware. You don't normally
-          need it — it's fetched on first use if required.
+          This lower-quality model is downloaded when needed for Other without
+          all four stems, or when enabled below. Failed separations do not switch
+          models automatically.
         </p>
         <p
           v-if="error"
@@ -362,20 +288,17 @@ onMounted(refreshQuality)
           <span class="block font-medium text-zinc-200">Use GPU acceleration for stem separation</span>
           <span class="mt-0.5 block text-zinc-500">
             <template v-if="gpu.available">
-              Detected GPU:
+              Detected graphics:
               <span class="text-zinc-400">{{ gpu.name ?? 'compatible adapter' }}</span>.
               Off by default. Separation runs on the CPU unless you enable this.
               The same model is used either way, so there is no separate GPU model
               to download.
+              A high-performance adapter is preferred; the selected adapter is
+              recorded in the diagnostic logs.
               <span class="mt-1 block text-amber-400/90">
-                Experimental, and not always faster. On integrated GPUs — which
-                share system memory — the CPU is often as fast or faster, and a
-                larger model can run out of GPU memory and fall back to the CPU
-                part-way through (slower than running on the CPU from the start).
-                GPU acceleration helps most on a dedicated graphics card with its
-                own memory. On some GPUs or drivers it can also briefly reset the
-                display; if separation fails or the screen misbehaves, turn this
-                off and use the CPU.
+                Experimental. Best on dedicated graphics cards; integrated GPUs
+                may be slower. If separation fails or the display resets, turn
+                this off and use the CPU.
               </span>
             </template>
             <template v-else>

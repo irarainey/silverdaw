@@ -1,5 +1,21 @@
 # Changelog
 
+Release version: **1.10.1**.
+
+## 1.10.1
+
+### Fixed
+
+- Fixed stem separation not using the dedicated graphics card on multi-GPU systems.
+- Reduced excessive CPU usage during GPU-accelerated stem separation.
+- Preferences shows graphics adapter names from the safe GPU probe.
+- Diagnostic bundles preserve both session and startup logs.
+- Diagnostic preparation reports failures without leaving the interface waiting indefinitely.
+- GPU availability no longer rejects adapters with unknown vendor IDs.
+- Model download progress survives switching Preferences tabs.
+- Backup-model help text matches actual model selection.
+- Failed and cancelled stem separations release their job bookkeeping.
+
 ## 1.10.0
 
 ### Added
