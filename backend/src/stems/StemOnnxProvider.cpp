@@ -64,6 +64,7 @@ bool configureStemOnnxProvider(Ort::SessionOptions& options, bool useGpu)
         {
             options.DisableMemPattern();
             options.SetExecutionMode(ORT_SEQUENTIAL);
+            options.AddConfigEntry("session.intra_op.allow_spinning", "0");
             // Fusion breaks dynamic htdemucs compilation and RoFormer numerical parity.
             options.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
             const OrtDmlApi* api = nullptr;
@@ -73,8 +74,8 @@ bool configureStemOnnxProvider(Ort::SessionOptions& options, bool useGpu)
                 throw Ort::Exception("DirectML provider API is unavailable", ORT_FAIL);
             OrtDmlDeviceOptions deviceOptions{OrtDmlPerformancePreference::HighPerformance, OrtDmlDeviceFilter::Gpu};
             Ort::ThrowOnError(api->SessionOptionsAppendExecutionProvider_DML2(options, &deviceOptions));
-            log::info("stems",
-                      "ONNX execution provider configured: DirectML; preference=high-performance graphFusion=off");
+            log::info("stems", "ONNX execution provider configured: DirectML; preference=high-performance "
+                               "graphFusion=off cpuSpinning=off");
             logSelectedAdapter(*api, options);
             return true;
         }

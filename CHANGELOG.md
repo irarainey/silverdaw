@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed stem separation not using the dedicated graphics card on multi-GPU systems.
+- Reduced excessive CPU usage during GPU-accelerated stem separation.
 - Preferences shows graphics adapter names from the safe GPU probe.
 - Diagnostic bundles preserve both session and startup logs.
 - Diagnostic preparation reports failures without leaving the interface waiting indefinitely.

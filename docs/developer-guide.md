@@ -3004,7 +3004,8 @@ logs the actual selected adapter's description, vendor/device IDs and dedicated
 memory. Preferences lists the adapters detected by Electron's safe `basic`
 probe; this is not a claim about the device selected by the backend.
 Graph fusion remains disabled: it breaks dynamic htdemucs compilation, and local
-real-model checks found changed vocal output with fused RoFormer sessions.
+real-model checks found large output differences between fused and unfused vocal
+and rhythm sessions.
 ONNX warnings are retained in diagnostics so partial CPU placement is no longer
 hidden.
 
@@ -3040,8 +3041,18 @@ thread per physical core: the fix drops the hyperthread siblings on HT CPUs
 (P **and** E) on non-hyperthreaded hybrid CPUs, where the E-cores add real
 throughput with no sibling contention. Reserving the two logical processors of
 the `logical − 2` bound leaves headroom for the backend's websocket-send and
-message threads, so the progress bar keeps flowing. On the GPU path the compute
-runs on the adapter instead.
+message threads, so the progress bar keeps flowing. GPU sessions keep this pool
+for operators that DirectML cannot execute, but disable idle thread spinning so
+workers sleep rather than consume CPU while waiting for work. This applies to
+all stem models through the shared provider configuration; CPU-only sessions
+and CPU fallback retain their existing settings.
+
+GPU acceleration does not move the entire pipeline to the adapter: spectral
+analysis, reconstruction and cleanup still run on the CPU, and unsupported ONNX
+operators can require CPU execution and intermediate transfers. The current
+vocal model uses RMSNormalization operators that the bundled DirectML provider
+assigns to the CPU, so GPU utilisation alone does not measure separation
+throughput.
 
 When the vocal and rhythm quality packs are both active, vocal cleanup runs on
 one reserved processor while rhythm inference uses the model worker pool. The
