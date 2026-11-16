@@ -189,17 +189,21 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The current version is **1.10.1**, covering GPU adapter selection and naming,
-and diagnostic-log reliability. For **1.10.0**, dependency maintenance, four packaged
-performance changes and the native processing follow-up are implemented.
-Local assets were rebuilt and verified on 2026-11-06; the maintainer subsequently
-confirmed manual testing and satisfactory audio and designated this release.
-Optimisation scope remains frozen, with further work limited to concrete
-regressions. Incomplete benchmark comparisons still limit performance claims;
-the release designation does not confirm unreported device/upgrade checks or
-resolve the documented development-tooling security-risk disposition. See the
-[release record](development-plan.md#release-acceptance-1100)
-and [performance evidence](../frontend/performance/README.md).
+The designated release version is **1.10.1**, covering GPU adapter selection and
+naming, stem-separation reliability and CPU usage, and diagnostic-log
+reliability. All automated quality gates passed, and local release assets were
+rebuilt and verified on 2026-11-16. See the
+[release record](development-plan.md#release-acceptance-1101) for the checks and
+retained limitations.
+
+For **1.10.0**, dependency maintenance, four packaged performance changes and the
+native processing follow-up are implemented. Its historical release record
+retains the 2026-11-06 manual testing/listening sign-off separately. Optimisation
+scope remains frozen, with further work limited to concrete regressions.
+Incomplete benchmark comparisons still limit performance claims; the release
+designation does not confirm unreported device/upgrade checks or resolve the
+documented development-tooling security-risk disposition. See the
+[performance evidence](../frontend/performance/README.md).
 
 Silverdaw currently supports the core arrangement workflow:
 
@@ -5573,12 +5577,12 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The current application version is **1.10.1**. The **1.10.0**
-[release record](development-plan.md#release-acceptance-1100) records the verified
-local assets, manual testing and listening sign-off, and retained limitations.
-Neither the version designation
-nor a local build authorises publishing, installation, certificate-trust changes,
-commits or tags.
+The current release version is **1.10.1**. The
+[release record](development-plan.md#release-acceptance-1101) records its passed
+automated gates, verified local assets and retained limitations. The historical
+1.10.0 record preserves its separate manual testing/listening sign-off. Neither
+the release designation nor a local build authorises publishing, installation,
+certificate-trust changes, commits or tags.
 
 `scripts/Build-Release.ps1` is the canonical release path. From the repository
 root it runs the whole pipeline end-to-end:
