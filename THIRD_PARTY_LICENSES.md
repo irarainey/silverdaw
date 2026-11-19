@@ -135,8 +135,8 @@ SOFTWARE.
   unchanged from the
   [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php)
   next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
-  it as a separate child process for both MP3 encoding on export (via JUCE's
-  `LAMEEncoderAudioFormat`) and MP3 decoding on import; there is no static or
+  it as a separate child process for MP3 encoding on export and MP3 decoding
+  on import; there is no static or
   dynamic linking against the LAME library, so the LGPL boundary is the
   process boundary. Per the LGPL, the unmodified upstream source is available
   from the project links above. The LGPL 2.1 text is included in

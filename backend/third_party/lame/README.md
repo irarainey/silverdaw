@@ -3,7 +3,8 @@
 Silverdaw uses the [LAME](https://lame.sourceforge.io/) command-line tool as a
 child process for both directions of MP3:
 
-- **Export** — JUCE's `LAMEEncoderAudioFormat` spawns it to encode MP3.
+- **Export** — the renderer checks LAME's exit status and encoded output before
+  publishing an MP3 mixdown or track batch.
 - **Import** — `DecodedCache` spawns it (`lame --decode`) to decode every MP3
   into the decoded-WAV cache, because JUCE's own MP3 reader mis-parses some
   files badly enough that they cannot be played or analysed at all. See

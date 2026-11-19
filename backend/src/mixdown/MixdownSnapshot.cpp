@@ -126,7 +126,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
             if (!clipTree.hasType(kClip)) continue;
             MixdownSnapshot::ClipSnapshot clip;
             clip.id = clipTree.getProperty(kId).toString();
-            if (individual) clip.reversed = project.isClipReversed(clip.id);
+            clip.reversed = project.isClipReversed(clip.id);
             const auto libraryItemId = clipTree.getProperty(kLibraryItemId).toString();
             clip.libraryItemId = libraryItemId;
             // NOTE: dispatcher overwrites this with live's resolved playback path for parity.

@@ -144,9 +144,8 @@ public:
             scratch_.resize(static_cast<size_t>(outputCap) * 2);
 
             SRC_DATA d{};
-            d.data_in = (remainingInput > 0)
-                            ? interleaved + static_cast<std::ptrdiff_t>(consumed) * 2
-                            : nullptr;
+            // libsamplerate needs a non-null input even when draining the final filter tail.
+            d.data_in = interleaved + static_cast<std::ptrdiff_t>(consumed) * kOutputChannels;
             d.input_frames = remainingInput;
             d.data_out = scratch_.data();
             d.output_frames = outputCap;

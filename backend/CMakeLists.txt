@@ -538,6 +538,7 @@ add_library(silverdaw_backend_core STATIC
     src/mixdown/MixdownBroadcast.cpp
     src/mixdown/MixdownEngine.cpp
     src/mixdown/MixdownExport.cpp
+    src/mixdown/Mp3Export.cpp
     src/mixdown/MixdownGraph.cpp
     src/mixdown/MixdownNormalize.cpp
     src/mixdown/MixdownRender.cpp
@@ -821,9 +822,8 @@ endif()
 
 # ─── LAME MP3 encoder/decoder (required, bundled) ────────────────────────
 # LAME is spawned as a child process for two jobs: MP3 *encoding* on export
-# (via JUCE's LAMEEncoderAudioFormat) and MP3 *decoding* on import (see
-# DecodedCache). It is required, not optional — MP3 is the most common source
-# format, and JUCE's own MP3 reader mis-parses some files badly enough that
+# and MP3 *decoding* on import (see DecodedCache). It is required, not optional:
+# MP3 is the most common source format, and JUCE's reader mis-parses some files badly enough that
 # they cannot be played or analysed at all. A build without lame.exe would be
 # unable to export MP3 and would silently fall back to that broken reader, so
 # fail the configure step instead of shipping a crippled binary.

@@ -29,7 +29,6 @@ struct Pass2Result
 Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               const juce::File& tmpFile,
                               const MixdownOptions& options,
-                              const juce::File& lameApp,
                               int chosenBitDepth,
                               bool wantFloatWav,
                               double appliedGainDb,

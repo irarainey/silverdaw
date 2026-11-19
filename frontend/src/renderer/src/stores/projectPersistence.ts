@@ -114,13 +114,20 @@ export function saveViewStateAndWait(target: PersistenceTarget): Promise<SaveRes
     pendingViewStateSaveResolver({ ok: false, error: 'Superseded by a newer view-state save' })
   }
   const promise = new Promise<SaveResult>((resolve) => {
-    pendingViewStateSaveResolver = resolve
+    const timeout = setTimeout(() => {
+      notifyViewStateSaveAck(false, 'Timed out waiting for the audio engine to save project preferences')
+    }, PENDING_SAVE_TIMEOUT_MS)
+    pendingViewStateSaveResolver = result => {
+      clearTimeout(timeout)
+      resolve(result)
+    }
   })
-  sendBridge('PROJECT_SAVE_VIEW_STATE', {
+  const sent = sendBridge('PROJECT_SAVE_VIEW_STATE', {
     filePath: target.currentFilePath,
     viewScrollX: target.viewScrollX ?? 0,
     viewPxPerSecond: target.viewPxPerSecond ?? undefined
   })
+  if (!sent) notifyViewStateSaveAck(false, 'The audio engine isn\'t connected')
   return promise
 }
 

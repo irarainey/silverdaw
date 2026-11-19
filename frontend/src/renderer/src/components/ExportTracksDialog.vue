@@ -101,6 +101,12 @@ async function submit(): Promise<void> {
         notifications.pushError(`Track export could not start: ${saved.error ?? 'Project was not saved.'}`)
         return
       }
+    } else {
+      // Flush preferences now without saving any arrangement edits the user may later discard.
+      const saved = await project.saveViewStateAndWait()
+      if (!saved.ok) {
+        notifications.pushError(`Could not remember track export settings: ${saved.error ?? 'Project file could not be updated.'}`)
+      }
     }
     if (!send('TRACK_EXPORT_START', parsed.data)) {
       notifications.pushError('Track export could not start: the audio engine is not connected.')

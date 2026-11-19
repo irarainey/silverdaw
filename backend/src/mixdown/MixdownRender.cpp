@@ -7,6 +7,7 @@
 #include "BridgeServer.h"
 #include "Log.h"
 #include "LoudnessAnalyzer.h"
+#include "LamePath.h"
 #include "MixdownBroadcast.h"
 #include "MixdownDither.h"
 #include "MixdownEngine.h"
@@ -14,6 +15,7 @@
 #include "MixdownGraph.h"
 #include "MixdownNormalize.h"
 #include "MixdownRenderPass1.h"
+#include "Mp3Export.h"
 #include "ProjectState.h"
 #include "WarpProcessor.h"
 
@@ -33,7 +35,6 @@ namespace silverdaw
 
 using mixdown_export::atomicReplace;
 using mixdown_export::createOutputWriter;
-using mixdown_export::findLameExecutable;
 using mixdown_export::writeAiffTextChunks;
 using mixdown_export::writeFlacVorbisComment;
 
@@ -132,12 +133,16 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         tmpFile.deleteFile();
         const auto f32TmpFile = parentDir.getChildFile(targetFile.getFileName() + ".f32.tmp");
         f32TmpFile.deleteFile();
+        juce::ScopeGuard cleanupFloatStage{[&] { if (normalizing) f32TmpFile.deleteFile(); }};
+        std::optional<juce::TemporaryFile> mp3Pcm;
+        if (mp3) mp3Pcm.emplace(targetFile.withFileExtension(".wav"));
+        const auto& renderedFile = mp3 ? mp3Pcm->getFile() : tmpFile;
 
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
 
         // JUCE 8 lacks some tag hooks, so FLAC/AIFF metadata is post-processed after encode.
-        const juce::File& pass1File = normalizing ? f32TmpFile : tmpFile;
+        const juce::File& pass1File = normalizing ? f32TmpFile : renderedFile;
         std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(pass1File);
         if (! static_cast<juce::FileOutputStream*>(outStream.get())->openedOk())
         {
@@ -168,8 +173,7 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         else
         {
             writer = mixdown_export::createOutputWriter(
-                options.format, writerOptions, lameApp, options.metadata,
-                options.bitrateKbps, outStream);
+                options.format, writerOptions, options.metadata, outStream);
         }
 
         if (writer == nullptr)
@@ -264,7 +268,7 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         progress(92.0, "finalize");
 
         // Closing the writer finalizes container headers before the atomic replace.
-        progress(normalizing ? 45.0 : 95.0, "encode");
+        if (!mp3) progress(normalizing ? 45.0 : 95.0, "encode");
         writer.reset();
         const auto writerEndMs = juce::Time::getMillisecondCounter();
 
@@ -315,7 +319,7 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         if (normalizing)
         {
             auto p2 = mixdown_normalize::runNormalizePass2(
-                f32TmpFile, tmpFile, options, lameApp, chosenBitDepth, wantFloatWav,
+                f32TmpFile, renderedFile, options, chosenBitDepth, wantFloatWav,
                 appliedGainDb, *analyzer, rngL, rngR, progress, cancelFlag);
             if (! p2.ok)
             {
@@ -326,8 +330,17 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
             pass2PostGainPeakAmp = p2.postGainPeakAmp;
             finalLoudness = p2.finalLoudness;
         }
-        else
+        if (mp3)
         {
+            progress(analyzing && !normalizing ? 96.0 : 95.0, "encode");
+            const auto encoded = mixdown_export::encodeMp3(lameApp, renderedFile, tmpFile, options,
+                                                            outputFramesWritten, cancelFlag);
+            if (encoded.failed())
+            {
+                tmpFile.deleteFile();
+                return failWith(cancelFlag.load() ? MixdownFailureCode::Cancelled : MixdownFailureCode::Encode,
+                                encoded.getErrorMessage());
+            }
         }
 
         if (cancelFlag.load())
@@ -402,7 +415,7 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         {
             if (auto& cp = *it; cp != nullptr)
             {
-                if (cp->transport) cp->transport->stop();
+                // There is no live callback to acknowledge stop(); detach the offline source directly.
                 if (cp->transport) cp->transport->setSource(nullptr);
                 if (cp->offsetSource) cp->offsetSource->setWarpProcessor(nullptr);
                 cp.reset();

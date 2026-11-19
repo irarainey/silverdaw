@@ -360,13 +360,16 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
         // Push only frames at/after the start offset; earlier audio advances state then drops.
         const int64_t blockStart = projectFramesRendered;
+        projectFramesRendered += blockFrames;
+        const bool lastBlock = projectFramesRendered >= totalProjectFrames
+            || (!options.fixedOutputFrames && projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated());
         const int64_t keepOffset64 = juce::jmax<int64_t>(0, startFrames - blockStart);
         if (keepOffset64 < blockFrames)
         {
             const int keepOffset = static_cast<int>(keepOffset64);
             const int keepFrames = blockFrames - keepOffset;
             if (!finalResampler.push(mixInterleaved.data() + static_cast<size_t>(keepOffset) * 2,
-                                     keepFrames, /*endOfInput*/ false, writeStereo))
+                                     keepFrames, lastBlock, writeStereo))
             {
                 if (writerError.isNotEmpty())
                     return fail(MixdownFailureCode::Io, writerError);
@@ -376,12 +379,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
             }
         }
 
-        projectFramesRendered += blockFrames;
-
-        if (!options.fixedOutputFrames && projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated())
-        {
-            break;
-        }
+        if (lastBlock) break;
 
         const auto now = juce::Time::getMillisecondCounter();
         if (now - lastProgressMs >= kProgressMinIntervalMs)
@@ -395,16 +393,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                                           : (analyzing ? "analyze" : "render"));
             lastProgressMs = now;
         }
-    }
-
-    // libsamplerate may leave input unconsumed; preserve leftovers to avoid render drift.
-    if (!finalResampler.push(mixInterleaved.data(), 0, /*endOfInput*/ true, writeStereo))
-    {
-        if (writerError.isNotEmpty())
-            return fail(MixdownFailureCode::Io, writerError);
-        return fail(MixdownFailureCode::Invalid,
-                    juce::String("Final resample flush failed: ") +
-                        (finalResampler.error() ? finalResampler.error() : "unknown"));
     }
 
     const double effectiveRenderLengthMs =
