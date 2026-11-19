@@ -50,6 +50,12 @@ Compressor, master gain, and Safety Limiter order as live playback. Automation
 changes targets within that same path rather than creating a separate render
 route.
 
+**Later extensions.** ADRs 0025 and 0026 place hosted VST3 inserts after Punch,
+before track level, and compensate plugin latency before the send taps. The
+1.11.0 track export reuses the offline graph for a different output: one file
+per selected track, with optional track effects and no master processing. The
+full playback-chain parity above applies to the stereo mixdown.
+
 ## Why
 
 - One shared path makes playback, export, and automation predictable.

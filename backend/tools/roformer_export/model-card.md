@@ -19,10 +19,12 @@ tags:
 # Silverdaw Rhythm Quality Pack — 4-stem BS-RoFormer (ONNX)
 
 A host-STFT ONNX export of a 4-stem **BS-RoFormer** music source-separation model
-(bass / drums / other / vocals), used by [Silverdaw](https://github.com/irarainey/silverdaw)
+(drums / bass / other / vocals), used by [Silverdaw](https://github.com/irarainey/silverdaw)
 as its optional higher-quality **drums + bass** model. Silverdaw runs the model
-once and keeps the **drums** and **bass** outputs (vocals come from a dedicated
-vocal model; `other` is reconstructed as the residual).
+once for **drums** and **bass** rather than running it separately for each.
+It does not use this graph's vocals or `other` output. When all four stems
+are requested, `other` is the mixture minus vocals, drums and bass; a partial
+selection that includes `other` uses the htdemucs `other` model.
 
 The `torch.stft` / `torch.istft` are stripped out of the graph: the ONNX core
 consumes a precomputed STFT and returns the masked per-stem spectrogram, and the
@@ -34,7 +36,7 @@ DirectX 12 GPUs via ONNX Runtime's DirectML execution provider.
 
 | File | Size | Notes |
 | --- | --- | --- |
-| `bs_roformer_4stem_rhythm_fp16.onnx` | ~257 MB | fp16 weights, single self-contained graph (no external `.onnx.data`). |
+| `bs_roformer_4stem_rhythm_fp16.onnx` | 269,457,840 bytes (257 MiB) | fp16 weights, single self-contained graph (no external `.onnx.data`). |
 
 ## I/O contract
 

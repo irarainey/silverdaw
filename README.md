@@ -256,9 +256,19 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   Scratch Editor, and the Record Audio dialog.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
-- **Mixdown export.** Render the whole project to a single stereo file in WAV,
-  FLAC, AIFF, or MP3, with optional loudness normalisation and a choice of which
-  bar to start the render from.
+- **Export a mixdown.** **File ▸ Export Mixdown…** (`Ctrl`+`M`) renders the mix
+  to one stereo file, with optional loudness normalisation.
+- **Export individual tracks.** **File ▸ Export Tracks…** (`Ctrl`+`Shift`+`M`)
+  writes one stereo file per selected timeline track, named after the track.
+  The files share a start and length so they line up when imported together.
+  Choose whether to include track effects; mute, solo and master processing
+  are ignored. Each batch goes into a timestamped folder under the project's
+  `export` folder by default. The project remembers your folder and track
+  selection. For a one-off export, use the export icon on a track header.
+- **Export a range.** Drag across the timeline ruler, then tick **Export
+  selected range only** in either export dialog. It starts unchecked and is
+  unavailable without a selection. The files start at the beginning of the
+  selection and stop at its end, without an extra tail.
 - **Autosave and crash recovery.** Work is snapshotted in the background and
   offered back to you after an unexpected exit.
 - **Stay in flow.** Drop files onto the Library, or import them from
@@ -266,7 +276,8 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   `Ctrl`+`J`, jump to zoom presets with `Ctrl`+`1`–`8`, and navigate with Home /
   End. Choose any audio output device and hot-swap it without leaving the
   timeline, relink moved source files in one step, and undo or redo any edit.
-  **Help ▸ Keyboard Shortcuts** opens the full shortcut reference.
+  See the [keyboard and mouse reference](docs/developer-guide.md#keyboard--mouse-reference)
+  for the shortcuts in this version.
 - **Supported MIDI deck control.** Use a recognised deck controller for
   transport, timeline and marker navigation, clip browsing, selected-track
   mixer controls, platter holding and scratching, plus supported lights and
@@ -276,13 +287,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
 ## Supported audio
 
 - **Import:** WAV, AIFF, FLAC, MP3, AAC / M4A / MP4, and Windows Media audio.
-- **Export:** WAV, FLAC, AIFF, and MP3.
-- **Processing & quality:** Audio is processed internally in **32-bit floating
-  point** from end to end, so your imported files — whatever their original bit
-  depth — are never quantised while you edit or play, and the source files are
-  never altered. Conversion to a final bit depth happens only on export, which
-  **defaults to 16-bit** and also offers 24-bit and 32-bit float depending on
-  the chosen format (WAV: 16 / 24 / 32-float; FLAC and AIFF: 16 / 24).
+- **Export:** Both dialogs offer WAV (16-bit, 24-bit or 32-bit float), FLAC
+  and AIFF (16- or 24-bit), and MP3 (128, 192 or 320 kbps). Mixdown defaults
+  to 16-bit WAV; Export Tracks defaults to 24-bit WAV.
+- **Processing:** The mixer processes audio in 32-bit floating point. Editing
+  and exporting never alter the source files.
 
 ## Stem separation models
 

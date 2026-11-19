@@ -1,9 +1,9 @@
 # Performance benchmarks
 
-The designated release version is **1.10.1**. Its
-[release record](../../docs/development-plan.md#release-acceptance-1101) records
-the 2026-11-16 automated checks and verified local assets. Historical benchmark
-versions and performance claims below are unchanged.
+[**1.11.0**](../../docs/development-plan.md#release-acceptance-1110) is the
+latest designated release. The benchmarks below are historical, not 1.11.0
+acceptance evidence. The [1.10.1 release record](../../docs/development-plan.md#release-acceptance-1101)
+documents the automated checks and local assets verified on 2026-11-16.
 
 The current implementation includes C1, R1, R2 and S1 below. Their stage-local
 results must not be added together; the
@@ -103,7 +103,7 @@ hash-covered inputs and leaves the master corpus unchanged.
 
 ## Run a packaged build
 
-Keep the current portable ZIP unchanged as the baseline. Extract it into a new
+Keep the chosen baseline portable ZIP unchanged. Extract it into a new
 directory without rebuilding; do not use the unsigned Store-pass
 `dist\win-unpacked` byproduct by accident. For example, from the repository root:
 
@@ -199,10 +199,10 @@ relative regression thresholds.
 
 This first phase does **not** measure play/seek latency, actual audio dropouts,
 callback p99, waveform completion, edit/undo latency, export parity, internal
-snapshot/graph timings or complete bridge queues. Add those workloads and
-appropriate instrumentation next; existing audio interval maxima must never
-be presented as callback p99. Functional/audio correctness gates remain
-separate prerequisites for accepting optimisations.
+snapshot/graph timings or complete bridge queues. Those claims would require
+separate instrumentation; audio interval maxima are not callback p99.
+Functional and audio correctness checks remain separate prerequisites for
+accepting optimisations.
 
 ## Native project phase diagnostics
 

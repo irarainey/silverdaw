@@ -18,8 +18,9 @@ Four cooperating mechanisms:
 - **Recovery coordinator (renderer)** — reloads the open project into the fresh,
   empty engine; generation-tagged so stale continuations can't corrupt a fresh
   attempt; per-phase deadlines end in a terminal `unavailable` (Try again/Quit).
-  Completion is confirmed only by the reload's own `reset=true` snapshot. It
-  prefers the matching autosave bucket (ADR 0018) over the last saved file.
+  When a reload is needed, only its own `reset=true` snapshot confirms it.
+  Recovery prefers the matching autosave bucket (ADR 0018) over the last saved
+  file. An untitled project with no recoverable autosave has nothing to reload.
 - **In-handler guardrail (backend)** — each envelope dispatched inside try/catch;
   a caught fault surfaces as a **non-fatal** `ENGINE_ERROR` and keeps the engine
   alive. A possibly-imperfect edit beats a dead engine.

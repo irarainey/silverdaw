@@ -39,7 +39,7 @@ Microsoft signs and distributes the package, so there are no security prompts, a
 
 ## 2. Portable download (zip)
 
-Download `Silverdaw-<version>.zip` from the [latest release][releases], extract it
+Download `Silverdaw-<version>.zip` from the [latest published GitHub release][releases], extract it
 to any folder you can write to, and run `Silverdaw.exe`. Nothing is installed.
 
 **Pros**
@@ -79,17 +79,11 @@ to any folder you can write to, and run `Silverdaw.exe`. Nothing is installed.
 
 Recording needs Windows to let Silverdaw use your microphone or input device.
 
-Installing Silverdaw does **not** ask about the microphone — Windows never
-requests device permissions during an install. Permission is decided the first
-time you actually record, and Silverdaw appears in the microphone list from then
-on.
-
-If a take comes back silent, or the input meter never moves, open
-**Settings ▸ Privacy & security ▸ Microphone** and check all three:
-
-1. *Microphone access* is on.
-2. *Let apps access your microphone* is on.
-3. **Silverdaw** itself is on in the list of apps below.
+If a take comes back silent or the input meter never moves, open **Settings ▸
+Privacy & security ▸ Microphone** (on Windows 10, **Privacy ▸ Microphone**).
+Enable microphone access for the device and for apps. If Windows lists
+**Silverdaw** with its own switch, enable it. For the portable build, enable
+microphone access for **desktop apps**; it need not have an individual switch.
 
 Then reopen the Record Audio dialog. Windows can block an app here without
 showing a prompt — Silverdaw records in a background audio engine that has no
@@ -117,8 +111,8 @@ It contains:
 
 - `startup.log` — a short record of the last launch (app version, backend spawn).
 - `backend.log` — the engine's own startup log for the last launch.
-- `backend-crash-<timestamp>.log` — written **only** if the engine crashed on
-  startup, with the failure details. It's timestamped, so a crash report isn't
+- `backend-crash-<timestamp>.log` — failure details if the engine's crash
+  handler caught a hard fault. It's timestamped, so a crash report isn't
   overwritten by the next launch.
 
 `startup.log` and `backend.log` are overwritten on each launch (they don't grow
@@ -126,15 +120,16 @@ over time). If you
 report a startup problem, attaching them helps pin down the cause.
 
 If Silverdaw does start but you hit a problem, turn on **Preferences ▸ Developer ▸
-Write diagnostic logs**, reproduce the issue, then use **Help ▸ Send Diagnostic
-Logs** — it bundles the current session's logs into a zip (saved in your
-`Silverdaw\Logs` folder), reveals it in File Explorer, and opens a pre-filled email
-to **support@silverdaw.com** for you to attach the zip and send. You can also email
-that address directly, or from the About dialog (**Help ▸ About Silverdaw**).
+Write diagnostic logs**, **restart Silverdaw**, and reproduce the issue. Choose
+**Help ▸ Send Diagnostic Logs…** to bundle the session logs and startup
+diagnostics. Silverdaw shows the local zip in File Explorer and opens an email
+draft; nothing is sent automatically. If zip creation fails, it keeps the
+prepared folder for you to compress. Review the files, then attach the zip to
+the draft or send it to **support@silverdaw.com**.
 
 Diagnostic logging redacts Windows user-profile path prefixes, but that is not
 complete anonymisation: project names, filenames and other diagnostic details
 may still be identifying. Review a log bundle before sharing it.
 
-[releases]: https://github.com/irarainey/silverdaw/releases
+[releases]: https://github.com/irarainey/silverdaw/releases/latest
 [store]: https://apps.microsoft.com/detail/9N8T25L0462F

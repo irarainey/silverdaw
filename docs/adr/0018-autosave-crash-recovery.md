@@ -9,7 +9,9 @@ OS-level mechanism:
 
 - While a project is dirty it is silently snapshotted every N seconds (default
   30 s, configurable in Preferences ▸ Project ▸ Autosave, clamped 5–600 s) into
-  `%APPDATA%/Silverdaw/autosave/<projectId>/`, plus a final flush on `before-quit`.
+  the Electron `userData` directory under `autosave/<projectId>/`. The renderer
+  requests an immediate first snapshot when the timer starts; `before-quit`
+  flushes application preferences, not another project snapshot.
 - On launch, `RecoveryDialog` offers to restore any project whose autosave is
   newer than its backing file (or whose backing file is missing/untitled).
   Restoring loads the autosave and marks the project **dirty**, so the user must

@@ -6,10 +6,11 @@
 
 The WebSocket bridge is **text-only**: every frame is a JSON `{ type, payload }`
 envelope carrying the control plane (commands, state, metadata, progress). There
-is no binary frame plane. Bulk data — audio files, waveform peaks, stems,
-mixdowns, project files — is written to a stable disk location by the backend,
-which then sends a small `*_READY` envelope pointing at the path; the renderer
-reads the file via Electron main IPC.
+is no binary frame plane. Audio files, waveform peaks, stems, exports, and
+project files stay on disk. A small envelope identifies the result: for
+example, `WAVEFORM_READY` points to peaks the renderer reads via main IPC,
+whereas `MIXDOWN_DONE` and `TRACK_EXPORT_READY` report a file and a folder
+respectively without the renderer having to read any audio back.
 
 ## Why
 

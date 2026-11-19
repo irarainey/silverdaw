@@ -75,7 +75,8 @@ Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engi
   `127.0.0.1` and gated by a per-session AUTH token.
 - **Frontend** (`frontend/`) — An Electron 45 + Vue 3 (Composition API, `<script setup>`) app
   built with electron-vite. The renderer talks to the bridge directly; the main process owns the
-  OS dialogs, native menu, persisted preferences and backend spawn.
+  OS dialogs, routing for the renderer's menu actions, persisted preferences
+  and backend spawn.
 
 ```text
 +---------------------------+        ws://127.0.0.1:<port>      +-----------------------------+
@@ -83,11 +84,11 @@ Silverdaw is a digital audio workstation built with a headless JUCE 8 audio engi
 |  + Electron main (IPC)    |       text JSON envelopes         |  AudioEngine + ProjectState |
 +---------------------------+                                   +-----------------------------+
             ^                                                                    |
-            |   bulk data (peaks, stems) on disk                                 |
-            +--------------------- %APPDATA%/Silverdaw/peaks/ <------------------+
+            |         caches and project/output files on disk                    |
+            +--------------------------------------------------------------------+
 ```
 
-Main picks a free port in `[8765, 8784]` at startup so leftover Silverdaw processes can't lock
+By default main picks a free port in `[8765, 8784]` at startup so leftover Silverdaw processes can't lock
 new instances out, then hands the value to both the backend (via `--port`) and the renderer
 (via a `bridge:getPort` IPC). A supervisor in the main process then keeps the engine alive for
 the rest of the session: if the backend exits unexpectedly it is respawned on the **same** port
@@ -100,9 +101,10 @@ Threading invariants:
   `std::atomic` (master clock, OffsetSource). A hosted plugin's own `processBlock` is the one
   exception, accepted as a bounded risk by ADR 0025; it relaxes nothing for our own code.
 - **JUCE message thread**: owns every mutation of `AudioEngine`, `ProjectState`, the project
-  `ValueTree`, and the audio source graph. The bridge marshals every incoming envelope onto this
-  thread via `juce::MessageManager::callAsync`.
-- **IXWebSocket I/O threads**: parse JSON, gate AUTH, then callAsync to the message thread.
+  `ValueTree`, and the audio source graph. The bridge marshals engine commands
+  onto this thread via `juce::MessageManager::callAsync`.
+- **IXWebSocket I/O threads**: parse JSON, gate AUTH and send `READY`. The
+  message-thread callback sends the initial `PROJECT_STATE` after device setup.
 - **Peaks worker pool**: `juce::ThreadPool` of 4 workers computes / loads waveform peaks off the
   message thread. Requests for the same source and resolution share one job, which writes the
   disk cache and emits a small `WAVEFORM_READY` envelope for every waiting clip.
@@ -128,8 +130,8 @@ backend/                 JUCE audio engine + WebSocket bridge (C++17, CMake)
                          and BPM analysis.
     stems/               ONNX stem-separation orchestration (RoFormer + htdemucs
                          backup, GPU→CPU fallback); invokes the enhancers in dsp/
-    mixdown/             Offline render + export / normalise / dither on the
-                         same canonical chain as playback
+    plugins/             VST3 catalogue, scanner, hosted inserts and editor windows
+    mixdown/             Offline stereo mixdown and aligned per-track export
     project/             juce::ValueTree state + UndoManager, .silverdaw save /
                          load, ValueTree↔JSON converter, peaks cache, library
                          analysis and sample export
@@ -167,8 +169,9 @@ frontend/                Electron + Vue 3 app (TypeScript, electron-vite, pnpm)
     shared/              Bridge wire-protocol facade (bridge-protocol.ts re-exports)
                          → bridge/inbound.ts (zod inbound schemas + guards)
                          → bridge/outbound.ts (outbound typed payload contracts)
-                         inbound.ts also re-exports MIDI-specific schemas from
-                         bridge/midi-inbound.ts
+                         → bridge/trackExport.ts and bridge/exportFormat.ts
+                         inbound.ts also re-exports the MIDI, Scratch and
+                         recording domain schemas
                          Plus ipc-channels.ts and types.ts (also TS-tested)
   tests/                 Vitest specs mirroring src/ (renderer, main, shared)
   e2e/                   Playwright journeys driving the built app against a
@@ -189,12 +192,12 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The project version is **1.11.0**, adding aligned per-track audio export.
-Version **1.10.1** covered GPU adapter selection and naming, stem separation
-and diagnostic logs. Its automated quality gates passed, and local assets were
-rebuilt and verified on 2026-11-16. See the
-[release record](development-plan.md#release-acceptance-1101) for the checks and
-retained limitations.
+The latest project release is **1.11.0**. It adds aligned per-track audio export
+and lets either export dialog render just the selected timeline range. The
+[1.11.0 release record](development-plan.md#release-acceptance-1110) describes
+the local rebuild; it did not run tests or establish publication or manual
+sign-off. The [1.10.1 checks](development-plan.md#release-acceptance-1101)
+apply to that earlier version.
 
 For **1.10.0**, dependency maintenance, four packaged performance changes and the
 native processing follow-up are implemented. Its historical release record
@@ -408,8 +411,8 @@ Silverdaw currently supports the core arrangement workflow:
   submenu is the no-editor quick path. Slice-to-timeline reuses the client-side
   split (right→left, one **Slice clip** undo step, warp-aware) and inherits split's
   locked/linked guards; slice markers are transient Clip-Editor draft state and are
-  never persisted. Slice points are derived purely from the source `bpm` +
-  `beatAnchorSec`, so no backend round-trip is needed to place a grid.
+  never persisted. Grid slicing uses the clip's resolved source tempo and beat
+  phase, so it follows the displayed grid without a backend round trip.
 - **Mixdown export** (File ▸ Export Mixdown…) renders the whole project to a
   single stereo file. Formats: WAV (16 / 24 / 32-float), FLAC (16 / 24), AIFF
   (16 / 24), MP3 (128 / 192 / 320 kbps, bundled LAME). Optional TPDF dither for
@@ -418,8 +421,8 @@ Silverdaw currently supports the core arrangement workflow:
   loudness analysis with optional two-pass normalisation to a target LUFS with
   true-peak ceiling. A **Start from bar** field renders only from a chosen bar
   onward (the displayed bar number, defaulting to `1`); earlier bars are skipped
-  from the output. Dialog choices (format, sample rate, bit depth, bitrate /
-  quality, dither, tail, loudness mode + target, tags, output path) are
+  from the output. Dialog choices (format, sample rate, bit depth or MP3 bitrate,
+  dither, length, tail, loudness mode and target, tags, output path) are
   persisted at the *project* level via `PROJECT_SET_EXPORT_SETTINGS`, while the
   start bar persists separately as `PROJECT.mixdownStartBar`
   (`PROJECT_SET_MIXDOWN_START_BAR`), so a reopened project remembers how it was
@@ -431,15 +434,16 @@ Silverdaw currently supports the core arrangement workflow:
   graph builds the same `OffsetSource` snapshots), so what you hear is what you
   export.
 - **File ▸ Export Tracks…** (`Ctrl+Shift+M`) writes one stereo file per selected
-  timeline track in WAV (default), FLAC, AIFF or MP3 format. Use a lossless
-  format for sample-accurate interchange. All tracks are selected by default.
+  timeline track in WAV (default: 24-bit), FLAC, AIFF or MP3 format. Use a
+  lossless format for sample-accurate interchange. All tracks are selected by default.
   Click anywhere on a track's row in the dropdown to toggle it. The export
   icon at the right of a track header opens the same dialog with only that
   track checked, without replacing the File menu's selection. Each batch gets
   a new timestamped folder such as `2026-11-19_14-30-05` under the project's `export`
   folder, or under a folder you choose. The project remembers the destination
-  and track selection separately from the mixdown settings. Neither export
-  command marks the project as edited.
+  and track selection, format and encoding settings separately from the mixdown
+  settings. An untitled project must first be saved for track export. Export
+  preferences themselves do not mark the arrangement as edited.
   By default every file starts at 0:00 and has the same length: the end of the last clip
   on the arrangement plus the chosen tail. Muting and soloing are ignored;
   empty tracks are silent. Clip edits, track volume, pan and their automation
@@ -612,8 +616,8 @@ Silverdaw currently supports the core arrangement workflow:
   instead of re-decoding the audio, so undoing a large edit in a project with
   many unplaced library items doesn't stall scrolling.
 
-Playback is always served from the decoded WAV cache; original compressed sources
-(MP3, M4A, …) are only used to generate that cache. This keeps the read-ahead
+Readable WAVs play directly. For compressed imports the engine prefers a
+decoded WAV or the library item's transcoded playback path. This keeps the read-ahead
 buffer's latency-hiding contract intact at clip boundaries so back-to-back loops
 play seamlessly. MP3 is decoded by the bundled LAME rather than by JUCE's own MP3
 reader — see *Decoding compressed sources*.
@@ -673,8 +677,9 @@ not an existing file, and still resolves the decoded-WAV cache for it.
   clips, library, markers, file path and project name). The renderer treats it as the canonical
   truth; on a load (`reset=true`) it wipes optimistic local state first, on the connect path it
   merges additively. After a mid-session backend respawn the reconnect lands on a fresh, **empty**
-  engine — a reconnected socket is not yet a recovered session, so the renderer re-loads the
-  user's project and waits for its `reset=true` snapshot before treating the session as restored
+  engine — a reconnected socket is not yet a recovered session. If a saved
+  project or recoverable autosave exists, the renderer reloads it and waits for
+  its `reset=true` snapshot before treating the session as restored
   (see [Engine resilience and recovery](#engine-resilience-and-recovery)).
 
 Track automation curves use `TRACK_SET_AUTOMATION { trackId, paramId, points }`.
@@ -709,21 +714,16 @@ peakCount, peaksPerSecond, sampleRate }`. Its peaks use the same cache-file
 format and IPC path as `WAVEFORM_READY`, but remain scoped to that Scratch
 Editor session so the rendered library sample keeps its own waveform.
 
-The full envelope catalogue lives in
-[`frontend/src/shared/bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts),
-which is a **re-export facade** — it `export *`s from
-[`frontend/src/shared/bridge/inbound.ts`](../frontend/src/shared/bridge/inbound.ts)
-(the canonical owner of all inbound `zod` schemas and `isXxxPayload` guards) and
-[`frontend/src/shared/bridge/outbound.ts`](../frontend/src/shared/bridge/outbound.ts)
-(the canonical owner of all outbound typed payload interfaces and the
-`BridgeOutboundMap` index).
-Inbound (backend → renderer) payloads are defined as `zod` schemas; the
-TypeScript types are derived via `z.infer<typeof XPayloadSchema>` so the schema
-is the single source of truth — there is no separate hand-written interface to
-drift away from the runtime guard. Each `isXxxPayload` guard is a one-line
-wrapper around `schema.safeParse(value).success`. Outbound (renderer → backend)
-payloads stay as plain TypeScript interfaces because every `send<K>()` call site
-is type-checked at compile time. The renderer dispatches inbound messages in
+The full envelope catalogue is exposed by
+[`bridge-protocol.ts`](../frontend/src/shared/bridge-protocol.ts).
+[`inbound.ts`](../frontend/src/shared/bridge/inbound.ts) indexes backend →
+renderer messages validated by zod.
+[`outbound.ts`](../frontend/src/shared/bridge/outbound.ts) indexes renderer →
+backend payloads for the typed `send<K>()` helper. Most are interfaces; some
+are inferred from domain schemas. The facade also exports the shared
+[encoding choices](../frontend/src/shared/bridge/exportFormat.ts) and
+[track-export schemas](../frontend/src/shared/bridge/trackExport.ts).
+The renderer dispatches inbound messages in
 [`frontend/src/renderer/src/lib/bridgeService.ts`](../frontend/src/renderer/src/lib/bridgeService.ts);
 the backend dispatches in [`backend/src/bridge/BridgeDispatch.cpp`](../backend/src/bridge/BridgeDispatch.cpp)
 (`dispatchBridgeMessage`). Inbound string / number payload fields on the
@@ -732,6 +732,20 @@ backend are extracted through the strict
 (`tryGetString` / `tryGetRequiredString` / `tryGetNumber`) which reject
 malformed values up front instead of silently coercing them via
 `juce::var::toString()`.
+
+The two export modes share one render slot and cancellation path:
+
+| Renderer → backend | Backend → renderer |
+| --- | --- |
+| `MIXDOWN_START` specifies the output file, encoding, length and optional loudness settings. | `MIXDOWN_DONE { filePath, durationMs, warning?, loudness? }` identifies the finished file. |
+| `TRACK_EXPORT_START` specifies selected track IDs mapped to display names (`trackLabels`), encoding, tail, `includeEffects` and optional `outputFolder`. | `TRACK_EXPORT_READY { folder, trackCount }` identifies the completed batch, not each file. |
+| `MIXDOWN_CANCEL` cancels either render. | Both send `MIXDOWN_PROGRESS { percent, stage, track? }` and use `MIXDOWN_FAILED { code, error }` for failure or cancellation (`code: "cancelled"`). |
+
+Both start messages accept `selectionOnly: true`. The engine reads the current
+range from project view state, rounds its start and exclusive end to output
+frames, and rejects an absent or empty frame range. The renderer sends neither
+timestamps nor audio. Rendering the lead-in before discarding it preserves
+audio already in progress at the first exported frame.
 
 Beat Repeat uses `TRACK_BEAT_REPEAT_ADD { trackId, startBeat, lengthBeats,
 division }` and `TRACK_BEAT_REPEAT_DELETE { trackId, regionId }`. The backend
@@ -749,13 +763,14 @@ Glue Compressor similarly return canonical `PROJECT_*_APPLIED` state.
 
 VST3 inserts (ADR 0025) use `PLUGIN_LIST_REQUEST` (no payload) and `PLUGIN_SCAN
 { clearBlacklist? }`, answered by `PLUGIN_LIST { plugins, blacklisted, scanning }`
-and, while a scan runs, a stream of `PLUGIN_SCAN_PROGRESS { currentFile, scanned,
+and, while a scan runs, a stream of `PLUGIN_SCAN_PROGRESS { currentFile?, scanned,
 total, finished? }`. Because a scan runs on its own thread, its callbacks hop back
 to the message thread before touching the bridge. Chain edits are
 `TRACK_ADD_PLUGIN { trackId, identifier }`, `TRACK_REMOVE_PLUGIN`,
 `TRACK_REORDER_PLUGIN { …, index }`, `TRACK_SET_PLUGIN_BYPASS { …, bypassed }` and
-`TRACK_OPEN_PLUGIN_EDITOR`, all keyed by the backend-minted `slotId`; each mutates
-the project tree *and* the live chain. Add, remove and reorder then republish
+`TRACK_OPEN_PLUGIN_EDITOR`. Add takes a catalogue identifier and mints a
+`slotId`; the other commands address that slot. Opening the native editor does
+not add or reorder an insert. Add, remove and reorder republish
 `PROJECT_STATE`, where a track's inserts appear in chain order in its optional
 `plugins` array — only a whole snapshot is self-consistent when the backend has
 minted a `slotId` or clamped chain order. Bypass instead acks narrowly with
@@ -793,9 +808,8 @@ equivalent play head over the offline position for export parity. Plugin
 latency is **compensated** (ADR 0026): `BusGraph` delays every track to the
 largest chain latency in the project, so nothing shifts against its siblings,
 and the residual constant is folded into the reported playhead and trimmed
-from the mixdown. The fixed 4/4 is not a limit — 4/4 is the app's assumption
-throughout, stated once as `BEATS_PER_BAR` in `shared/snapGrid.ts`, so the play
-head states it rather than guessing it.
+from the mixdown. The play head reports 4/4, matching the timeline's
+`BEATS_PER_BAR` in `shared/snapGrid.ts`.
 
 A few envelopes exist purely for liveness and fault reporting rather than
 project edits: `PING` (renderer → backend) and `PONG` (backend → renderer) form
@@ -826,9 +840,9 @@ The MIDI control path uses eight domain envelopes:
 - `MIDI_SCRATCH_SETTINGS_SET` applies per-device scratch-audio and crossfader
   preferences.
 
-The Scratch Editor adds its own domain of envelopes (full schemas in
-[`frontend/src/shared/bridge/scratch.ts`](../frontend/src/shared/bridge/scratch.ts);
-every payload carries `protocolVersion: 1`). Renderer → backend:
+The Scratch Editor's session and pattern messages carry `protocolVersion: 1`;
+`SCRATCH_SOURCE_PEAKS_READY` is unversioned. Full schemas are in
+[`scratch.ts`](../frontend/src/shared/bridge/scratch.ts). Renderer → backend:
 
 - `SCRATCH_SESSION_OPEN { clipId? | libraryItemId? }` opens a session for exactly
   one target (a timeline clip or a library item).
@@ -875,9 +889,10 @@ Backend → renderer:
 Bulk scratch and backing audio never crosses the socket — prepared sources are
 written through the disk/cache boundary exactly like clip audio and peaks.
 
-Recording adds a smaller domain (full schemas in
-[`frontend/src/shared/bridge/recording.ts`](../frontend/src/shared/bridge/recording.ts);
-every payload carries `protocolVersion: 1`). Renderer → backend:
+Recording uses `protocolVersion: 1` for session, take and calibration messages;
+device enumeration and live level reports do not require it. Full domain
+schemas are in [`recording.ts`](../frontend/src/shared/bridge/recording.ts).
+Renderer → backend:
 
 - `RECORD_INPUTS_REQUEST { refresh? }` asks for the capture devices; the backend
   caches the scan (enumerating every driver is slow enough to be felt when the
@@ -950,7 +965,7 @@ Backend → renderer:
   `droppedSamples` and any `errorCode` / `error`. `latencyMs` is the round trip
   the take will be trimmed by, sent so the live waveform can be drawn where the
   finished file will sit rather than where the input arrived.
-- `RECORD_INPUT_LEVEL { peakL, peakR }` meters the input at ~30 Hz, always, and
+- `RECORD_INPUT_LEVEL { sessionId, peakL, peakR }` meters the session's input at ~30 Hz and
   is excluded from bridge logging.
 - `RECORD_CALIBRATE_STATE { status, clicksDetected, clicksTotal, roundTripMs,
   error? }` reports a calibration run: `idle`, `measuring`, `measured` or
@@ -1257,8 +1272,8 @@ recovering the session.
 [`engineRecovery.ts`](../frontend/src/renderer/src/lib/engineRecovery.ts) bridges
 that gap. At the instant of loss it captures what the user had open (project id,
 file path, dirty flag), then re-loads it into the fresh engine — preferring the
-matching autosave bucket, falling back to the last saved file, and doing nothing
-for an untitled, never-saved project (the empty engine already matches it). It
+matching recoverable autosave bucket, falling back to the last saved file, and
+skipping the reload only for an untitled project with no recoverable autosave. It
 exposes a small state machine — `engineRecovery ∈ { ok, recovering, restoring,
 unavailable }` — that
 [`EngineRecoveryOverlay.vue`](../frontend/src/renderer/src/components/EngineRecoveryOverlay.vue)
@@ -1267,8 +1282,8 @@ monotonic generation so a stale async continuation from a superseded attempt
 can't corrupt a fresh one, and per-phase deadlines (`RECONNECT_TIMEOUT_MS` 15 s,
 `RESTORE_TIMEOUT_MS` 20 s) turn a stuck recovery into a terminal `unavailable`
 state that offers **Try again** / **Quit** rather than spinning forever.
-Completion is confirmed only by the re-load's own `reset=true` `PROJECT_STATE`
-snapshot — never by process status alone — after which a friendly toast notes
+When a reload is needed, completion is confirmed by its own `reset=true`
+`PROJECT_STATE` snapshot — never by process status alone — after which a toast notes
 that the last few seconds of changes may need redoing.
 
 ### In-handler guardrail (backend)
@@ -1288,14 +1303,11 @@ possibly-imperfect edit is preferred over a dead engine.
 The backend is not optional — without its audio engine the app is unusable — so
 a backend that **can't start** is a hard failure, surfaced to the user as
 "could not connect to the audio engine" (the renderer's cold-start connect
-timeout, `BRIDGE_CONNECTION_TIMEOUT_MS`, 60 s). Because a hard fault during
-startup (e.g. an access violation deep in a WASAPI/COM audio driver while
-enumerating devices) happens *before* the bridge is listening — and MSVC's
-default `/EHsc` means the top-level `try` / `catch` in `main()` cannot catch a
-structured (SEH) exception — such a failure would otherwise leave no trace,
-especially on a machine we can't attach to (a clean install, a Store
-certification VM). Two always-on mechanisms guarantee a diagnosable artifact,
-**independent of the Preferences ▸ Developer diagnostic-logging toggle**:
+timeout, `BRIDGE_CONNECTION_TIMEOUT_MS`, 60 s). The bridge starts listening
+before the engine opens its audio device. A startup crash on either side of
+that boundary can prevent the initial project snapshot from arriving; a
+Windows structured exception in a driver need not reach `main()`'s C++ catch.
+Startup and crash diagnostics are available **without enabling verbose logs**.
 
 The verbose application-log directory is configured separately in
 **Preferences ▸ Developer**. When diagnostic logging is enabled, its default is
@@ -1318,67 +1330,65 @@ folder alongside the always-on diagnostics below.
 - **Backend crash reporter + startup log.**
   [`CrashHandler.cpp`](../backend/src/core/CrashHandler.cpp) installs a
   `SetUnhandledExceptionFilter` as the very first thing in `runBackend`, writing
-  `backend-crash.log` (fixed name, overwritten) with the exception code, fault
+  `backend-crash-<timestamp>.log` on a fault, with the exception code, fault
   address, faulting **module**, the access type/address, and a **phase**
-  breadcrumb (`startup` → `audio-device-init` → `bridge-start` → `running`, set
+  breadcrumb (including `bridge-start`, `audio-graph-init` and `audio-device-init`, set
   via `crash::setPhase`) so a report names exactly what the backend was doing.
-  Alongside it, `Log` is always initialised to the diagnostics dir at **INFO**
-  level (truncated each launch) so the startup sequence is recorded even with
-  verbose logging off. This diagnostics sink is **startup-scoped**:
+  With verbose logging off, `backend.log` in Diagnostics is truncated for each
+  engine launch and records **INFO** and above. This sink is **startup-scoped**:
   `log::markStartupComplete()` closes it the instant the message loop is reached,
   so it holds only the startup trace — ending in `startup complete` on success,
   or cut off at the failing phase — and never accumulates runtime chatter (that
-  is the verbose sink's job). A later runtime crash is still captured by the
-  crash reporter.
-
-The net result: on any failed launch, the diagnostics directory holds a small,
-current-launch-only picture — `startup.log` (did it spawn / what exit code),
-`backend.log` (how far startup got), and `backend-crash.log` (the faulting
-module, if it crashed) — enough to pinpoint a failure-to-start without a debugger
-and without the user enabling anything.
+  is the verbose sink's job). With verbose logging on, use the session's
+  `backend.log` for both startup and runtime. In either mode, match the crash
+  report timestamp to the launch being investigated.
 
 ## Project state model
 
-`ProjectState` (C++) wraps a `juce::ValueTree`:
+`ProjectState` (C++) wraps a `juce::ValueTree`. Its main persisted nodes and
+properties are:
 
 ```text
 PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
-        viewSelectedTrack?, viewFxPanelOpen?, viewFxTab?,
+        viewSelectedTrack?, viewFxPanelOpen?, viewFxTab?, viewSnapGrid?,
+        viewTimelineSelectionStartMs?, viewTimelineSelectionEndMs?, viewTimelineSelectionLoop?,
         audioOutputTypeName?, audioOutputDeviceName?, targetSampleRate?,
         masterVolume?, exportSettingsJson?, barCounterStart?, mixdownStartBar?,
         metronomeEnabled?, clipEditorMetronomeEnabled?,
         safetyLimiterEnabled?, mixGlueAmount?,
         reverbSize?, reverbDecay?, reverbTone?, reverbMix?,
-        delayNoteValue?, delayFeedback?, delayTone?, delayMix?,
-        scratchPatterns?]
+        delayNoteValue?, delayFeedback?, delayTone?, delayMix?]
   TRACK[id, name, gain, heightPx?, muted?, soloed?,
         colorIndex?, toneBassDb?, toneMidDb?, toneTrebleDb?, toneFilter?,
         sendReverb?, sendDelay?, pan?, levelerAmount?, punchAmount?, saturationDrive?, saturationMix?,
         bitCrusherRate?, bitCrusherBits?, bitCrusherBoost?, bitCrusherMix?,
-        automation?, automationLaneView?, transitions?]
+        automation?, automationLaneView?]
+    PLUGIN[id, identifier, format, name, manufacturer, bypassed, state?]*
+    TRANSITION[id, leftClipId, rightClipId, kind]*
     BEAT_REPEAT[id, startBeat, lengthBeats, division]*
     CLIP[id, libraryItemId, offsetMs, inMs, durationMs, colorIndex?, clipName?,
          locked?, reversed?, brake?, backspin?, beatOffsetMs?,
          warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?, pendingAutoWarp?,
-         envelopePoints?,
-         effectiveDurationMs?, effectiveTempoRatio?, effectiveWarpActive?,
-         scratchPatternId?]
+         envelopePoints?, scratchPatternId?]
   LIBRARY
-     ITEM[id, kind, filePath, fileName?, displayName?, durationMs,
-          sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?,
+     ITEM[id, kind, filePath, name?, displayName?, durationMs,
+          sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?, musicalBeats?,
           playbackFilePath?, variableTempo?, lowConfidence?, audioType?, collapsed?,
-          mediaId?, coverArtHidden?, coverArtOverride?, unresolved?,
+          mediaId?, coverArtHidden?, coverArtOverride?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
-          scratchOrigin?, scratchPatternId?, scratchSourcePath?,
+          recordingOrigin?, scratchPatternId?, scratchSourcePath?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
   MARKERS
     MARKER[id, positionMs]
+  SCRATCH_PATTERNS
+    SCRATCH_PATTERN[id, scratchPatternData]
 ```
 
 `CLIP` references the audio it plays via `libraryItemId`; the underlying source file path
 lives only on the library item. `offsetMs` is the timeline start, `inMs` is where in the
-source file playback begins, and `durationMs` is how long the clip plays for from
-that point. `inMs` is normally ≥ 0 but is **deliberately unclamped**: a beat-grid slide
+source file playback begins, and `durationMs` is the source-window length,
+not the warped timeline length. `inMs` is normally ≥ 0 but is **deliberately
+unclamped**: a beat-grid slide
 can pull the window off the front of the file, and a window that overhangs either end
 renders as silence rather than the edit being refused or the audio being shunted (see
 [Beat markers and source-beat snap](#beat-markers-and-source-beat-snap)). Split,
@@ -1392,7 +1402,7 @@ display name for the clip (double-click the clip's title strip to rename).
 
 `effectiveDurationMs`, `effectiveTempoRatio` and `effectiveWarpActive` are
 **backend-authoritative** effective timing fields. They are computed by
-`ProjectState::computeClipEffectiveTiming` from the source BPM, current warp
+`ProjectState::resolveClipEffectiveTiming` from the source BPM, current warp
 state and project BPM, and emitted on every clip in `PROJECT_STATE` plus the
 `CLIP_WARP_APPLIED` payload. The frontend uses them as the single source of
 truth for the rendered/audible timeline footprint of a warped clip — drawing,
@@ -1406,9 +1416,11 @@ from a timeline clip. Clip items share `filePath` with their parent source item
 and carry `sourceItemId` / `sourceClipId` / `sourceInMs` / `sourceDurationMs`
 describing the trim window into the source. `displayName` is the user-facing name
 shown on library tiles. `collapsed` is a per-source UI flag that hides the saved
-clip sub-list under a parent source. `ITEM.key`, `ITEM.bpm`, `ITEM.beats`,
-`ITEM.beatAnchorSec` and `ITEM.variableTempo` hold the BTrack analysis output (see
-[Audio analysis](#audio-analysis) below). `ITEM.lowConfidence` is the backend's
+clip sub-list under a parent source. `ITEM.key` holds the musical key;
+tempo and beat-grid analysis populate `ITEM.bpm`, `ITEM.beats`,
+`ITEM.beatAnchorSec` and `ITEM.variableTempo` (see [Audio analysis](#audio-analysis)).
+Use the shared tempo-resolution rules in ADR 0024, not the raw `bpm` property,
+when drawing or warping a clip. `ITEM.lowConfidence` is the backend's
 auto-classification hint from that same analysis; `ITEM.audioType` is the user's
 explicit `'simple'` / `'music'` override (absent = auto). `ITEM.playbackFilePath` is
 the on-disk path of the decoded-WAV cache the audio engine reads from. The durable
@@ -1558,7 +1570,7 @@ from save (and from the `PROJECT_STATE` broadcast) while at its default-off valu
 
 Track names are persisted as track properties and round-trip through `PROJECT_STATE`.
 Per-track row height (`heightPx`, in CSS pixels, clamped backend-side to 80..400,
-and re-clamped to the stricter renderer range of 120..400 by `trackHeightPx()` in
+and re-clamped to the stricter renderer range of 120..400 by `trackHeightOf()` in
 `lib/timeline/trackLayout.ts` so a legacy project cannot crop the header controls) is
 likewise persisted on the `TRACK` node and is undoable in the same project undo
 history. Track order is the child order of `TRACK` nodes under `PROJECT` and is
@@ -1772,10 +1784,9 @@ undo/redo `softReplace: true` rebuild stop playback and clear MIDI platter holds
 because both stop the engine backend-side — the undo full-rebuild path calls
 `engine.stop()` before it broadcasts — and adopting that at once beats waiting for
 `PlayheadEmitter` to re-assert it. An ordinary edit snapshot leaves the transport
-alone. The plugin commands re-broadcast the whole project to change one field, so
-treating every snapshot as a stop made bypassing a plugin mid-playback flip the
-transport to stopped and rewind the ruler to the persisted playhead, then catch up
-seconds later. The persisted playhead is likewise adopted only on a replacement or on
+alone. Adding, removing and reordering plugin slots send a snapshot without
+stopping playback; changing bypass sends a narrow acknowledgement. The
+persisted playhead is likewise adopted only on a replacement or on
 the first snapshot of a connection, which is what restores the position after a
 renderer reload. `resetPlaybackForProjectChange` clears `playIntentAt` instead of
 stamping it, since the stop is the backend's, not a local intent, and a stamped intent
@@ -1843,16 +1854,17 @@ rejected alternatives.
 
 ## Audio formats
 
-The JUCE backend decodes formats supported by its `AudioFormatManager`: WAV, AIFF, FLAC,
-MP3, and the Windows Media family (WMA / WMV / ASF / WM) via the Windows Media Format
-SDK that ships with JUCE.
+The audio file picker accepts WAV, AIFF (`.aif`/`.aiff`), FLAC, MP3 and M4A.
+WAV, AIFF and FLAC are readable by JUCE; for MP3, the backend prefers the
+bundled LAME decoder (see [Decoding compressed sources](#decoding-compressed-sources)).
+JUCE's Windows Media reader is not an MP4 reader.
 
-Other formats (notably **AAC / M4A / MP4**, which JUCE doesn't decode out of the box on
-Windows) currently round-trip through the renderer's Web Audio decoder:
+**M4A** therefore goes through the renderer's Web Audio decoder:
 `AudioContext.decodeAudioData` decodes the file, the resulting PCM is shipped to main via
 `audio:writeTempWav` which writes a 32-bit float WAV into `%TEMP%/silverdaw-transcode-cache/`
-(keyed by a hash of source path + sample rate + channel count + length). The cached WAV path
-is what goes on the wire as `CLIP_ADD.filePath`.
+(keyed by a hash of source path + sample rate + channel count + length).
+`LIBRARY_ADD.filePath` retains the source path and `playbackFilePath` identifies
+the WAV. `CLIP_ADD` references the library item by ID, never by file path.
 
 An entry already present at the expected size is reused rather than rewritten,
 so a repeat play does not push tens or hundreds of megabytes back to disk; it is
@@ -1871,7 +1883,7 @@ Note that this is not a matter of the backend picking the wrong format by
 extension. JUCE's Windows codec is the Windows Media Format SDK
 (`IWMSyncReader`), which reads the ASF family only; it cannot decode an MP4
 container whatever the file is called, and content sniffing does not help. Any
-format outside the list above **must** be transcoded before the backend sees it.
+supported import that the backend cannot decode must be transcoded for playback.
 
 The transcode decision lives in
 [`audioPlaybackPath.ts`](../frontend/src/renderer/src/lib/audioPlaybackPath.ts), which owns
@@ -1889,7 +1901,7 @@ for callers holding a raw on-disk path. Two callers need it:
 The relevant code is in
 [`audioDecode.ts`](../frontend/src/renderer/src/lib/audioDecode.ts),
 [`importAudio.ts`](../frontend/src/renderer/src/lib/importAudio.ts) and the `audio:writeTempWav`
-handler in [`main/index.ts`](../frontend/src/main/index.ts).
+handler in [`audioHandlers.ts`](../frontend/src/main/ipc/audioHandlers.ts).
 
 Imports also preflight every file's **true** header sample rate via the
 `AUDIO_FILE_PROBE` envelope before adding it to the library — see
@@ -1899,11 +1911,10 @@ rate and so cannot report the source file's actual rate.
 
 ### Internal signal format and bit depth
 
-Silverdaw processes audio internally in **32-bit floating point**, end to end.
-On import the JUCE `AudioFormatManager` (and the renderer's Web Audio fallback
-for AAC / M4A) decodes every source file into 32-bit float regardless of its
-on-disk bit depth — a 16-bit WAV, a 24-bit FLAC, or an MP3 all become float on
-the way in, and the original file is never modified (non-destructive editing).
+Silverdaw's audio graph processes **32-bit floating-point** samples. This is
+the DSP format, not a promise about intermediate files: `DecodedCache` writes
+16-bit PCM WAVs, whereas the renderer's M4A transcode writes float WAVs.
+Neither overwrites the original.
 
 Every processing stage runs on `juce::AudioBuffer<float>`: per-clip warp, the
 per-clip volume-shape multiplier, the per-clip turntable brake / backspin tail
@@ -2013,14 +2024,12 @@ the transport (the gate is closed, so only the message thread touches it) to mak
 master play-start declick fade, but it was removed because it softened the attack
 transients of drum hits played from the timeline.)
 
-Quantisation to a fixed bit depth happens in exactly one place — the **mixdown
-export writer** in [`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). (The
-renderer's throwaway transcode / preview WAV is itself 32-bit float, so it does
-not quantise either.) Export bit depth defaults to **16-bit**
-(`MixdownOptions::bitDepth{16}`) and offers, per format: WAV 16 / 24 / 32-float,
-FLAC 16 / 24, AIFF 16 / 24 (MP3 is encoder-defined). TPDF dither is applied by
-default for 16-bit targets; 24-bit and 32-float skip it, since their noise
-floor is far below audibility. See the mixdown export notes under
+Mixdown and track exports share the output writer in
+[`MixdownExport`](../backend/src/mixdown/MixdownExport.cpp). The mixdown dialog
+defaults to **16-bit WAV** and track export to **24-bit WAV**. Both offer WAV
+16 / 24 / 32-float, FLAC or AIFF 16 / 24, and MP3 by bitrate rather than bit
+depth. Mixdown offers optional TPDF dither for 16-bit output (on by default);
+track export applies it to 16-bit nonempty tracks. See the export notes under
 [Current status and roadmap](#current-status-and-roadmap) for the full dialog
 and loudness-normalisation options.
 
@@ -2108,8 +2117,9 @@ The cache survives backend restarts.
 
 ## Audio analysis
 
-Every imported audio file is automatically analysed for musical key, tempo and
-beat positions. The key and BPM are shown on the library tile. A stable-tempo
+Imported source audio is analysed for musical key, tempo and beat positions.
+Generated stems can inherit their source's grid and metadata; simple one-shots
+have no beat grid. Where available, key and BPM appear on the library tile. A stable-tempo
 file shows a badge such as `124.37 BPM`; a variable-tempo file shows an amber
 `~ 124.37 BPM` badge. Beat analysis drives faint vertical beat markers on the
 clip waveform and — on the first import into a project — seeds the project
@@ -3056,19 +3066,12 @@ not build it. Fixed-shape ONNX tensor wrappers are also reused across chunks,
 and the rhythm spectral engine keeps its iSTFT working buffers for the next
 stem and chunk instead of reallocating them.
 
-Inference runs on **one thread per physical core**, bounded by the historical
-`logical − 2` default (`inferenceIntraOpThreads()` in `stems/InferenceThreads.cpp`
-counts physical cores via `GetLogicalProcessorInformationEx` + `EfficiencyClass`
-and returns `min(physicalCores, logical − 2)`, falling back to `logical − 2`
-when detection is unavailable). The transformer models synchronise at every op
-boundary, so oversubscribing a hyperthreaded CPU — running two threads per core
-that fight over the same execution units — is markedly **slower** than one
-thread per physical core: the fix drops the hyperthread siblings on HT CPUs
-(e.g. 20 logical / 14 physical → 14 threads) while keeping every physical core
-(P **and** E) on non-hyperthreaded hybrid CPUs, where the E-cores add real
-throughput with no sibling contention. Reserving the two logical processors of
-the `logical − 2` bound leaves headroom for the backend's websocket-send and
-message threads, so the progress bar keeps flowing. GPU sessions keep this pool
+`inferenceIntraOpThreads()` (`stems/InferenceThreads.cpp`) counts physical
+cores via `GetLogicalProcessorInformationEx` and caps the worker count at
+`logical − 2`, with a minimum of one. If it cannot count physical cores it
+uses the capped logical count. This avoids assigning a worker to every
+hyperthread sibling and leaves headroom for the bridge and message threads.
+GPU sessions keep this pool
 for operators that DirectML cannot execute, but disable idle thread spinning so
 workers sleep rather than consume CPU while waiting for work. This applies to
 all stem models through the shared provider configuration; CPU-only sessions
@@ -3202,9 +3205,9 @@ run only on the existing stem worker or renderer orchestration paths.
 
 ## Decoding compressed sources
 
-`DecodedCache` turns any non-WAV source into a 16-bit PCM WAV in a central cache,
-and everything downstream — playback, preview, waveform peaks, tempo and beat
-detection, stems — reads that WAV rather than the original file.
+`DecodedCache` converts supported non-WAV sources to 16-bit PCM WAVs for reuse
+by playback and analysis. Readable WAVs are used directly; M4A uses the
+[renderer transcode path](#audio-formats).
 
 **MP3 is decoded by the bundled `lame.exe`, not by JUCE's MP3 reader.** JUCE
 mis-parses some MP3s outright: one 192 kbps file was sized as though it were
@@ -4611,10 +4614,10 @@ monitoring.
 
 User preferences are persisted as JSON at `%APPDATA%/Silverdaw/preferences.json`
 and edited via the in-app **Edit → Preferences…** dialog. The dialog is
-**transactional**: every field is held in a local working copy until you click
-**Save**; **Cancel** (and `Esc`) discard pending edits without touching the
-engine or the file. The settings are organised into eight tabs on a left-hand
-sidebar:
+**transactional**: **Save** persists edits and **Cancel** (or `Esc`) discards
+them. Some controls preview changes live; cancelling restores the previous
+MIDI input selection, for example. The settings are organised into eight tabs
+on a left-hand sidebar:
 
 - **General** — appearance: the **waveform display** mode (single vs. left/right
   channels), library tile imagery, and toast notifications.
@@ -4782,17 +4785,13 @@ Persisted fields:
   logger (all levels, whole session). When on, the next launch writes a
   per-session timestamped folder containing `{main,backend,renderer}.log` with
   aligned millisecond timestamps. The **Log folder** field lets the user choose
-  the parent folder; by default this is a discoverable `Silverdaw\Logs` folder in
-  the user's home folder (packaged installs — a `userData`/`%APPDATA%` path is
-  redirected into a hidden MSIX container; dev builds use the repo `debug`
-  folder), and blank entries are normalised back to that default. This is
+  the parent folder; development and packaged builds both default to
+  `%USERPROFILE%\Silverdaw\Logs`. Blank entries use that default. This is
   separate from the always-on **startup diagnostics**
-  (packaged: `%USERPROFILE%\Silverdaw\Diagnostics`, see *Engine resilience and
-  recovery ▸ Startup diagnostics*), which are written on every launch regardless
-  of this toggle but only cover startup. All of these logs are privacy-scrubbed at
-  the point of writing: the Windows user-profile segment of any logged file path is
-  replaced with `<user>` and the computer name is never logged, so a shared log
-  carries nothing that identifies the user. When diagnostic logging is on, Help ▸
+  (see [Startup diagnostics](#startup-diagnostics-always-on)), which do not
+  require this toggle. Log writers redact Windows user-profile paths; review
+  a diagnostic bundle before sharing, since project and file names can still
+  be identifying. When diagnostic logging is on, Help ▸
   **Send Diagnostic Logs** zips the current run's logs into the Logs folder, reveals
   the zip in the file manager, and opens a pre-filled email to `support@silverdaw.com`
   to attach it (a `mailto:` draft can't auto-attach, so the reveal + attach is manual).
@@ -4814,9 +4813,8 @@ Persisted fields:
   copies of each separation model: `paths.stemModelDir` (htdemucs backup),
   `paths.vocalPackDir` and `paths.rhythmPackDir` (the RoFormer packs). Empty =
   use the app-managed download location: a discoverable `Silverdaw\Models`
-  folder in the user's home folder for packaged installs (one subfolder per
-  model id; a userData/%APPDATA% path would be redirected into a hidden MSIX
-  container), `<userData>/models` for dev builds. Existing downloads are
+  folder in the user's home folder for both development and packaged builds
+  (one subfolder per model id). Existing downloads are
   best-effort migrated from the legacy `<userData>/models` location on first run
   after the default moved.
 
@@ -4988,9 +4986,9 @@ on the renderer side.
 The timeline accepts the following inputs. Modifiers behave **live** during drags — pressing
 or releasing the modifier between frames switches mode without restarting the drag.
 
-The full, version-matched shortcut reference is published online and opened from **Help ▸
-Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` before
-`/guide/shortcuts`, so a release must have the matching versioned page live.
+**Help ▸ Keyboard Shortcuts** requests the online guide for the app's
+`major.minor` version, not its patch number. The tables here can be used
+locally if the corresponding hosted page is unavailable.
 
 ### Application commands
 
@@ -5492,9 +5490,9 @@ It ships with the MSVC **C++ build tools** workload above, and
 `scripts/Build-Release.ps1` locates it automatically — see
 [Packaging for Windows](#packaging-for-windows).
 
-The PowerShell helpers under `scripts/` (`Invoke-DevShell.ps1`, `Invoke-ClangTidy.ps1`) and the
-matching Visual Studio Code tasks import the Visual Studio Developer Shell so `cl.exe` /
-`link.exe` are on `PATH`.
+Run local native configure, build, CTest and clang-tidy commands through
+`scripts\Invoke-DevShell.ps1`. It enters the x64 MSVC developer environment;
+`Invoke-ClangTidy.ps1` does not do that itself.
 
 ### One-shot setup (recommended)
 
@@ -5601,15 +5599,15 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The project version is **1.11.0**. The
-[1.10.1 release record](development-plan.md#release-acceptance-1101) records that version's passed
-automated gates, verified local assets and retained limitations. The historical
-1.10.0 record preserves its separate manual testing/listening sign-off. Neither
-the release designation nor a local build authorises publishing, installation,
-certificate-trust changes, commits or tags.
+The [1.11.0 release record](development-plan.md#release-acceptance-1110)
+documents the latest project release and its local rebuild. Building packages
+does not run the quality gates, publish a GitHub release or submit to the
+Microsoft Store. Previous releases' test and manual sign-offs are not evidence
+for this build.
 
-`scripts/Build-Release.ps1` is the canonical release path. From the repository
-root it runs the whole pipeline end-to-end:
+`scripts/Build-Release.ps1` is the canonical local packaging path. It expects
+the [prerequisites](#prerequisites), including the LAME runtime pair fetched
+during setup. From the repository root it:
 
 1. Configures + builds the JUCE backend (`SilverdawBackend.exe`) in **Release**.
 2. Runs a **bundling guard** that fails early if any runtime binary the backend
@@ -5640,8 +5638,7 @@ guard is what stops those two drifting apart unnoticed.
 pwsh -NoProfile -File scripts/Build-Release.ps1
 ```
 
-Everything lands in the repo-root `dist/` directory (gitignored except for a
-`.gitkeep` marker):
+Everything lands in the repo-root `dist/` directory (gitignored):
 
 | Output | What it is |
 | ------ | ---------- |
@@ -5696,12 +5693,11 @@ packaged `Identity/Name`, `Publisher`, and `PublisherDisplayName`).
 Because it is a full-trust (`runFullTrust`) packaged desktop app it runs outside
 the AppContainer, so the loopback bridge, backend child-process spawn, and access
 to user-chosen files behave as in an unpackaged build. The `WindowsApps` install
-dir is read-only, so all writable state — preferences, projects, autosave,
-peaks/decoded caches, downloaded models and diagnostic logs — lives under the
-per-user `userData`/`temp` locations, the backend is spawned with a writable
-working directory, and user-chosen save/export destinations are pre-flighted for
-writability (a read-only choice raises a clear warning rather than a cryptic
-failure).
+dir is read-only. Preferences and autosaves use Electron's `userData`; caches
+use app-data or temporary directories. Default projects, models, diagnostic
+logs and crash reports use discoverable directories under
+`%USERPROFILE%\Silverdaw`. The backend is spawned with a writable working
+directory, and users can choose their own project and export destinations.
 
 ### Package artwork
 
@@ -5745,14 +5741,15 @@ frontend dependencies with the skip flags:
 pwsh -NoProfile -File scripts/Build-Release.ps1 -SkipBackend -SkipFrontendInstall
 ```
 
-The lower-level frontend packaging commands assume the backend, bundles, cert,
-and `SIGNTOOL_PATH` are already in place, so prefer `Build-Release.ps1`:
+The lower-level frontend packaging commands build the frontend bundles, not
+the Release backend. For signed output they also need the certificate and
+`SIGNTOOL_PATH` supplied by `Build-Release.ps1`. From the repository root:
 
 ```powershell
 cd frontend
-pnpm dist        # signed sideload .appx + portable .zip
-pnpm dist:store  # unsigned Microsoft Store .appx
-pnpm dist:dir    # win-unpacked only, no packaging
+pnpm dist --publish never        # signed sideload .appx + portable .zip
+pnpm dist:store --publish never  # unsigned Microsoft Store .appx
+pnpm dist:dir --publish never    # win-unpacked only
 ```
 
 ## Quality gates
@@ -5762,8 +5759,8 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 
 - **C++**: `clang-tidy` via `scripts/Invoke-ClangTidy.ps1` (`backend: lint` task), using
   `backend/.clang-tidy` (enables `modernize-*`, `bugprone-*`, `performance-*`,
-  `readability-*`, less a documented exclusion list). **The backend is at zero
-  clang-tidy warnings — keep it there.** A clean baseline is the whole point:
+  `readability-*`, less a documented exclusion list). **The gate requires zero
+  clang-tidy warnings.** A clean baseline is the whole point:
   it means any warning a change introduces is visible immediately instead of
   being lost in a list of hundreds that everyone has learned to scroll past.
   Fix what a run reports, or — if the check is genuinely wrong for this
@@ -5863,15 +5860,15 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   warnings — a header that Clang rejects but MSVC accepts can mask findings
   across most of the codebase.
 
-  clang-tidy needs a `compile_commands.json`, which only a **single-config**
-  generator writes — the Visual Studio tree in `backend/build` has none — so
+  clang-tidy needs a `compile_commands.json`. The project's Ninja generator
+  emits one; the Visual Studio tree in `backend/build` does not, so
   the script searches the known build trees and uses the first that has one.
   Pass `-BuildDir` to pin a specific tree. If no tree has a compile database,
   configure a Ninja one:
 
   ```powershell
   pwsh -NoProfile -File scripts/Invoke-DevShell.ps1 `
-    "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo"
+    "cmake -S backend -B backend/build-release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   ```
 
   Format with `clang-format`
@@ -5893,8 +5890,9 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   case, and fails discovery with a named error if not. Adding or removing a test
   needs no bookkeeping beyond registering it in its domain's `add*Tests`.
 
-  Backend coverage is available with `-DSILVERDAW_ENABLE_COVERAGE=ON`, which
-  adds a `SilverdawBackendCoverage` target that runs the backend unit tests and
+  With tests enabled and the matching coverage tool installed,
+  `-DSILVERDAW_ENABLE_COVERAGE=ON` adds a `SilverdawBackendCoverage` target
+  that runs the backend unit tests and
   writes reports under `backend/build-coverage/` (a dedicated, non-hidden
   folder). Clang / GNU
   builds use source-based instrumentation (llvm-cov / gcovr); **MSVC** builds
@@ -5920,8 +5918,10 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
   `@shared` and `@main` path aliases. `pnpm test:coverage` runs the same
   suite with V8 coverage and writes text, HTML, lcov and JSON-summary reports
   under `frontend/coverage/`.
-- **End-to-end**: `pnpm test:e2e` builds the app (`electron-vite build`) and runs
-  the Playwright journeys under `frontend/e2e/` against a real spawned backend,
+- **End-to-end**: `pnpm test:e2e` rebuilds the frontend (`electron-vite build`),
+  not the native engine. Build `SilverdawBackend` first; the default executable
+  is `backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe`.
+  Playwright runs the journeys under `frontend/e2e/` against that spawned backend,
   so a run covers the spawn → port → AUTH → handshake chain, the native dialog
   stubs and the saved project format. The tier is deliberately small and wide and
   asserts mostly on the DOM, the filesystem and saved project files; its rules and

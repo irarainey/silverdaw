@@ -1,14 +1,12 @@
 # End-to-end tests
 
-Playwright drives a real, built Silverdaw — a real Electron main process, a real
-renderer, and a real JUCE backend spawned over the loopback bridge. This is the
-only tier that can prove the two processes still agree with each other, so it
-complements the Vitest suites rather than overlapping them. ADR 0014 anticipates
-this tier.
+Playwright launches the built, unpackaged Electron app. Its main process
+spawns the JUCE backend and the renderer connects over the loopback bridge.
+This tests cross-process behaviour that neither Vitest nor CTest can cover
+alone; see [ADR 0014](../../docs/adr/0014-testing-strategy.md).
 
-Keep it small. Every journey costs seconds of wall clock and a share of the
-maintenance budget, so the suite is deliberately a handful of wide journeys
-rather than a broad grid.
+Prefer a wide journey over a grid of UI cases. Playwright runs one worker
+because each launch starts its own engine and opens an audio device.
 
 ## Running
 
@@ -16,11 +14,15 @@ Large-session packaged performance projects and opt-in measurements are
 documented in [performance benchmarks](../performance/README.md). They are not
 collected by the normal E2E suite.
 
-```text
+Run from `frontend`:
+
+```powershell
 pnpm test:e2e         # builds out/, then runs the suite
 pnpm test:e2e:only    # skips the build — only when out/ is known current
-pnpm test:e2e:report
+pnpm test:e2e:report  # opens an existing Playwright HTML report
 ```
+
+CI enables the HTML reporter; the default local reporter is list-only.
 
 `test:e2e` builds first on purpose. A stale `out/` passes happily while testing
 code you have already changed, which has now happened more than once; the few
@@ -45,8 +47,10 @@ tests always list — but a run against stale bundles stops at the freshness
 guard above. Run the `frontend: build` task (or `pnpm build` from `frontend`)
 after changing `src/`, then re-run.
 
-The e2e tier does not build or check the C++ backend. A backend change needs its
-own rebuild before these specs can see it.
+The e2e tier does not build or freshness-check the C++ backend. The unpackaged
+app expects `backend/build/SilverdawBackend_artefacts/<config>/SilverdawBackend.exe`;
+`SILVERDAW_BACKEND_CONFIG` defaults to `Debug`. Rebuild that configuration
+after a native change.
 
 ## What the specs assert
 
@@ -65,16 +69,17 @@ Dragging from the library is native HTML5 drag-and-drop with custom MIME data,
 which a test can only fake by synthesising the events a browser would otherwise
 generate — that asserts the implementation, so specs take the button instead.
 
-Three journeys do drive the mouse over a canvas, where no button reaches the
-gesture. Creating a library sample requires selecting a region in the clip
-editor; a tempo journey needs the playhead off the origin and a range selected,
-and the markers journey needs the playhead off the origin twice — which are a
-press and a drag on the timeline ruler (`helpers/timeline.ts`). All
-use browser-level pointer input for gestures a user performs, rather than
-synthesised drag-and-drop. The assertions are DOM state or the saved project file —
-nothing is read back from the canvas itself. The ruler helper locates itself
-from the header-resize divider, so a resized header column cannot silently move
-the gesture into the track headers.
+Use browser-level pointer input for gestures that live on a canvas. For
+example, `helpers/timeline.ts` seeks or selects a range on the ruler and
+double-clicks a clip to open its editor. It locates these targets from the
+header-resize divider so a resized column cannot move a gesture into the
+headers. The sample-import journey also drags out a region in the clip editor.
+
+The range-export journey in `export-mixdown.e2e.ts` compares both the mixdown
+and each exported track's WAV length with the selected range saved in the
+project. `renderer-recovery.e2e.ts` deliberately loses the timeline's WebGL
+context, checks that the replacement canvas and the open editor have live
+contexts, then verifies the saved clip. Neither check reads canvas pixels.
 
 Markers are the sharpest case of a canvas-only feature: they are placed with a
 bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`
@@ -93,8 +98,9 @@ clicks **once**. Retrying a click turns a dropped action into a passing test and
 hides exactly the defect the journey exists to find. Opening the menu bar is the
 one exception, and only in the markers journey: the bar rebuilds on every
 project-state change and drops whatever was open, so an open issued right after
-a keypress can be discarded before it is read. The open is retried; the item
-state it is opened to read is not.
+a keypress can be discarded before it is read. The journey retries opening
+the menu and reading **Clear All Markers** until its enabled state settles;
+it does not repeat the marker edit.
 
 ### Windows title-bar hit regions
 
@@ -108,7 +114,7 @@ It does not move the OS cursor or send input to another application.
 
 ### The playback journey needs an audio device
 
-`playback.e2e.ts` is the one spec that depends on hardware. The playhead is
+`playback.e2e.ts` requires a working output endpoint. The playhead is
 advanced by `MasterClockSource` from inside the audio device callback, so a
 position that moves is the only end-to-end proof that a device opened and its
 callback is firing — nothing offline can stand in for it, and its absence is
@@ -122,7 +128,9 @@ developer guide's continuous-integration section.
 Its fixture is digital silence — `createToneWav({ amplitude: 0 })`. The
 callback fires regardless of what the samples contain, so silence proves the
 same thing without the suite making an audible noise on whatever machine runs
-it.
+it. `record-audio.e2e.ts` exercises input discovery and closing the session,
+but accepts either an available input or the no-input state. It does not
+record a take or validate microphone capture.
 
 ## Isolation
 
@@ -170,10 +178,9 @@ decode and write paths. Create them with `makeTrackedTempDir()` from
 `helpers/tempDirs.ts` rather than `mkdtemp` directly, and an auto fixture deletes
 them once the test passes.
 
-Artefacts from a **failing** test are deliberately left on disk, the same bargain
-as `trace: 'retain-on-failure'`: the project file that broke a round-trip is
-usually the most direct evidence available, and the run that produced it is the
-run you want to inspect.
+Tracked project and audio artefacts from a **failing** test are deliberately
+left on disk, like `trace: 'retain-on-failure'`. The launch fixture still
+closes the app and attempts to remove its profile after attaching diagnostics.
 
 ## Fixtures
 
