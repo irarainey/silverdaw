@@ -11,12 +11,12 @@
 // waiting; it does not prove a single sample was written, and a zero-length or
 // header-only file is exactly the regression worth catching.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
-import { stubOpenDialog } from '../helpers/dialogs'
+import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { libraryItem } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
 import { startNewProject } from '../helpers/startup'
@@ -116,4 +116,31 @@ test('exporting a mixdown writes a playable audio file', async ({ silverdaw }) =
   // what was rendered rather than a restatement of the default project duration.
   expect(wav.seconds).toBeGreaterThan(SOURCE_SECONDS * 0.75)
   expect(wav.seconds).toBeLessThan(SOURCE_SECONDS * 1.5)
+})
+
+test('Export Tracks saves an unsaved project and publishes equally long WAVs in its export folder', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  const projects = makeTrackedTempDir('track-export')
+  const name = 'Aligned Tracks'
+  const batch = join(projects, name, 'export', 'Tracks 001')
+  const source = createToneWav({ fileName: AUDIO_FILE, seconds: SOURCE_SECONDS })
+  await startNewProject(page)
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubOpenDialog(electronApp, [source])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubSaveDialog(electronApp, join(projects, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Export Tracks')
+  const dialog = page.getByRole('dialog', { name: 'Export Tracks' })
+  await expect(dialog.getByLabel('Bit depth')).toHaveValue('24')
+  await expect(dialog.getByLabel('Include track effects')).toBeChecked()
+  await dialog.getByRole('button', { name: 'Save and Export' }).click()
+  await expect.poll(() => existsSync(batch), { timeout: 60_000 }).toBe(true)
+  const files = readdirSync(batch)
+  expect(files.sort()).toEqual(['Track 2.wav', AUDIO_FILE])
+  const first = readWav(join(batch, AUDIO_FILE))
+  expect(first.seconds).toBeGreaterThan(1)
+  expect(readWav(join(batch, 'Track 2.wav'))).toEqual(first)
+  await expect(page.getByRole('alertdialog')).toBeHidden()
 })

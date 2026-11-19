@@ -28,6 +28,7 @@ import {
   isMixdownDonePayload,
   isMixdownFailedPayload,
   isMixdownProgressPayload,
+  TrackExportReadySchema,
   isStemProgressPayload,
   isStemPartialPayload,
   isStemReadyPayload,
@@ -204,6 +205,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isAudioFileProbedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MIXDOWN_PROGRESS':
       return isMixdownProgressPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'TRACK_EXPORT_READY': {
+      const parsed = TrackExportReadySchema.safeParse(payload)
+      return parsed.success ? { type, payload: parsed.data } : payloadMismatch(type, payload)
+    }
     case 'MIXDOWN_DONE':
       return isMixdownDonePayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'MIXDOWN_FAILED':

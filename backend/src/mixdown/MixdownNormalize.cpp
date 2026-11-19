@@ -1,6 +1,5 @@
 #include "MixdownNormalize.h"
 
-#include "MixdownBroadcast.h"
 #include "MixdownExport.h"
 #include "MixdownGraph.h"
 
@@ -13,7 +12,6 @@
 namespace silverdaw::mixdown_normalize
 {
 
-using mixdown_bridge::broadcastProgress;
 using mixdown_dither::kLsb16f;
 using mixdown_dither::nextUniform;
 using mixdown_graph::kBlockFrames;
@@ -43,7 +41,7 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               LoudnessAnalyzer& analyzer,
                               mixdown_dither::Xorshift32& rngL,
                               mixdown_dither::Xorshift32& rngR,
-                              BridgeServer& bridge,
+                              const RenderProgress& progress,
                               std::atomic<bool>& cancelFlag)
 {
     // Write caches to a sibling temp file so partial entries are never visible.
@@ -162,17 +160,17 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
             const double pct = 46.0 + (static_cast<double>(p2Pos)
                                        / static_cast<double>(juce::jmax<juce::int64>(1, totalP2Frames)))
                                        * 44.0;
-            broadcastProgress(bridge, pct, "normalize-pass2");
+            progress(pct, "normalize-pass2");
             p2LastProgressMs = now;
         }
     }
-    broadcastProgress(bridge, 90.0, "normalize-pass2");
+    progress(90.0, "normalize-pass2");
     p2Writer.reset();
     result.outputFramesWritten = p2OutputFramesWritten;
     result.finalLoudness = analyzer.computeForLinearGainDb(appliedGainDb);
 
     f32TmpFile.deleteFile();
-    broadcastProgress(bridge, 92.0, "finalize");
+    progress(92.0, "finalize");
     return result;
 }
 

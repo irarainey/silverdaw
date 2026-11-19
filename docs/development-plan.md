@@ -1,7 +1,7 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Release version: **1.10.1**, covering GPU adapter selection and naming,
-stem-separation reliability and CPU usage, and diagnostic-log reliability.
+Project version: **1.11.0**, adding per-track WAV export. See the
+[developer guide](developer-guide.md) for export behaviour.
 
 ## Release acceptance (1.10.1)
 

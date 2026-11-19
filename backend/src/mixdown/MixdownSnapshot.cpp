@@ -16,7 +16,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
                                           double brakeCurve,
                                           double backspinSeconds,
                                           double backspinSpeed,
-                                          double backspinCurve)
+                                          double backspinCurve, SnapshotScope scope)
 {
     MixdownSnapshot snapshot;
     const int explicitRate = project.getTargetSampleRate();
@@ -62,7 +62,10 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
         if (!trackTree.hasType(kTrack)) continue;
         MixdownSnapshot::TrackSnapshot track;
         track.id = trackTree.getProperty(kId).toString();
-        const float rawEffectiveGain = project.getEffectiveTrackGain(track.id);
+        const bool individual = scope == SnapshotScope::IndividualTracks;
+        track.name = trackTree.getProperty("name").toString();
+        const float rawEffectiveGain = individual ? project.getTrackGain(track.id)
+                                                 : project.getEffectiveTrackGain(track.id);
         track.gain = juce::jlimit(kMinTrackGain, kMaxTrackGain, rawEffectiveGain);
 
         // Snapshot live per-track parameters so offline render stays in parity with playback.
@@ -115,7 +118,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
                 " effectiveGainRaw=" + juce::String(rawEffectiveGain, 4) +
                 " effectiveGainClamped=" + juce::String(track.gain, 4) +
                 (track.gain <= 0.0F ? " (silent — skipped)" : ""));
-        if (track.gain <= 0.0F) continue;
+        if (!individual && track.gain <= 0.0F) continue;
 
         for (int c = 0; c < trackTree.getNumChildren(); ++c)
         {
@@ -123,6 +126,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
             if (!clipTree.hasType(kClip)) continue;
             MixdownSnapshot::ClipSnapshot clip;
             clip.id = clipTree.getProperty(kId).toString();
+            if (individual) clip.reversed = project.isClipReversed(clip.id);
             const auto libraryItemId = clipTree.getProperty(kLibraryItemId).toString();
             clip.libraryItemId = libraryItemId;
             // NOTE: dispatcher overwrites this with live's resolved playback path for parity.
@@ -177,7 +181,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
                 }
             }
 
-            if (clip.filePath.isNotEmpty() && clip.durationMs > 0.0)
+            if ((individual || clip.filePath.isNotEmpty()) && clip.durationMs > 0.0)
             {
                 silverdaw::log::info(
                     "mixdown",
@@ -194,7 +198,7 @@ MixdownSnapshot snapshotProjectForMixdown(const ProjectState& project,
                 track.clips.push_back(std::move(clip));
             }
         }
-        if (!track.clips.empty()) snapshot.tracks.push_back(std::move(track));
+        if (individual || !track.clips.empty()) snapshot.tracks.push_back(std::move(track));
     }
     return snapshot;
 }

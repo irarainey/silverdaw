@@ -11,7 +11,7 @@
 namespace silverdaw::mixdown_bridge
 {
 
-void broadcastProgress(BridgeServer& bridge, double percent, const char* stage);
+void broadcastProgress(BridgeServer& bridge, double percent, const char* stage, const juce::var& track = {});
 
 void broadcastDone(BridgeServer& bridge,
                    const juce::File& outputFile,

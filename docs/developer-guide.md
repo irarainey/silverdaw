@@ -189,9 +189,9 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The designated release version is **1.10.1**, covering GPU adapter selection and
-naming, stem-separation reliability and CPU usage, and diagnostic-log
-reliability. All automated quality gates passed, and local release assets were
+The project version is **1.11.0**, adding aligned per-track WAV export.
+Version **1.10.1** covered GPU adapter selection and naming, stem separation
+and diagnostic logs. Its automated quality gates passed, and local assets were
 rebuilt and verified on 2026-11-16. See the
 [release record](development-plan.md#release-acceptance-1101) for the checks and
 retained limitations.
@@ -430,6 +430,14 @@ Silverdaw currently supports the core arrangement workflow:
   brake / backspin tails all bake into the mixdown identically (the offline
   graph builds the same `OffsetSource` snapshots), so what you hear is what you
   export.
+- **File ▸ Export Tracks…** writes one stereo WAV per timeline track into a
+  new `export\Tracks 001` (then `Tracks 002`, etc.) beside the saved project.
+  Every file starts at 0:00 and has the same length: the end of the last clip
+  on the arrangement plus the chosen tail. Muting and soloing are ignored;
+  empty tracks are silent. Clip edits, track volume, pan and their automation
+  remain in the audio. **Include track effects** also prints inserts and that
+  track's reverb and delay returns. Master processing and loudness
+  normalisation are not applied. The folder is published only on success.
 - **Clip lock** (Ctrl+L or **Edit ▸ Lock / Unlock**) freezes a single
   timeline clip against accidental move / trim / split. Locked clips show a
   padlock badge in their title strip, refuse drag-move and edge-trim gestures
@@ -5577,8 +5585,8 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The current release version is **1.10.1**. The
-[release record](development-plan.md#release-acceptance-1101) records its passed
+The project version is **1.11.0**. The
+[1.10.1 release record](development-plan.md#release-acceptance-1101) records that version's passed
 automated gates, verified local assets and retained limitations. The historical
 1.10.0 record preserves its separate manual testing/listening sign-off. Neither
 the release designation nor a local build authorises publishing, installation,

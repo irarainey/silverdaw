@@ -4,3 +4,4 @@
 
 export * from './bridge/outbound'
 export * from './bridge/inbound'
+export * from './bridge/trackExport'

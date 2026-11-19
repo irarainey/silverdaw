@@ -20,4 +20,8 @@ void handleMixdownStart(const juce::var& payload, AudioEngine& engine, ProjectSt
 
 void handleMixdownCancel(std::atomic<bool>& mixdownBusy, std::atomic<bool>& mixdownCancel);
 
+void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, ProjectState& project,
+                            BridgeServer& bridge, juce::ThreadPool& pool, const DecodedCache& cache,
+                            const juce::String& projectPath, std::atomic<bool>& busy, std::atomic<bool>& cancel);
+
 } // namespace silverdaw

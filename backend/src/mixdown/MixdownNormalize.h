@@ -36,7 +36,7 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               LoudnessAnalyzer& analyzer,
                               mixdown_dither::Xorshift32& rngL,
                               mixdown_dither::Xorshift32& rngR,
-                              BridgeServer& bridge,
+                              const RenderProgress& progress,
                               std::atomic<bool>& cancelFlag);
 
 } // namespace silverdaw::mixdown_normalize

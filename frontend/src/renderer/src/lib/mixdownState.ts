@@ -10,6 +10,8 @@ import type { MixdownFailedPayload, MixdownProgressPayload } from '@shared/bridg
 export type MixdownStage = MixdownProgressPayload['stage']
 
 export interface MixdownActiveState {
+  tracks?: boolean
+  track?: MixdownProgressPayload['track']
   /** 0..100 progress as broadcast by the backend. */
   percent: number
   /** Latest stage label so the dialog can surface the current phase. */
@@ -37,6 +39,10 @@ export function beginMixdown(outputPath: string, format: 'wav' | 'mp3' | 'flac' 
   state.value = { percent: 0, stage: 'prepare', outputPath, format }
 }
 
+export function beginTrackExport(folder: string): void {
+  state.value = { percent: 0, stage: 'prepare', outputPath: folder, format: 'wav', tracks: true }
+}
+
 /**
  * Apply a `MIXDOWN_PROGRESS` envelope. No-op if no render is tracked
  * (e.g. a stale envelope arrives after cancel — drop it).
@@ -46,7 +52,8 @@ export function applyMixdownProgress(payload: MixdownProgressPayload): void {
   state.value = {
     ...state.value,
     percent: Math.max(state.value.percent, payload.percent),
-    stage: payload.stage
+    stage: payload.stage,
+    track: payload.track
   }
 }
 

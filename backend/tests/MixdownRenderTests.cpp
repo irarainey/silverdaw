@@ -11,6 +11,7 @@
 #include "MixdownRender.h"
 #include "ProjectState.h"
 #include "TestRegistry.h"
+#include "TrackExport.h"
 
 #include <atomic>
 #include <cmath>
@@ -292,10 +293,107 @@ void testNormalizePass2ProducesLouderOutput()
     dir.deleteRecursively();
 }
 
+void testIndividualTrackExport()
+{
+    const auto dir = makeTempDir("track-export");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = writeSineWav(dir, "source.wav", 1.0, 44100, 440.0, 0.5F);
+    ProjectState state;
+    for (const auto* id : {"late", "warped", "empty"})
+        require(state.addTrack(id), "add fixture track");
+    state.setTrackName("late", "Lead");
+    state.setTrackName("warped", "lead");
+    state.setTrackName("empty", "CON.txt");
+    state.setTrackMuted("late", true);
+    state.setTrackSoloed("warped", true);
+    state.setTrackGain("late", 0.5F);
+    state.setMasterVolume(0.0F);
+    require(state.addLibraryItem("lib", src.getFullPathName(), "source", 1000, 44100, 2), "add source");
+    require(state.addClip("late", "a", "lib", 250, 125, 100), "add delayed slice");
+    require(state.addClip("warped", "b", "lib", 0, 500), "add final clip");
+    state.setClipWarp("b", true, juce::String("tonal"), 0.5, false, 2, {}, {});
+    state.setProjectDelay("1/8", 0.3F, 0.5F, 1.0F);
+    auto snapshot = snapshotProjectForMixdown(state, 0, 1, 0, 1, 1, SnapshotScope::IndividualTracks);
+    require(snapshot.tracks.size() == 3, "include muted and empty tracks");
+    snapshot.tracks.front().automation = {
+        {"delaySend", {{0, 1.0F}, {1000, 1.0F}}}, {"pan", {{0, -1.0F}, {1000, -1.0F}}}};
+    MixdownOptions options;
+    options.bitDepth = 24;
+    options.outputSampleRate = 48000;
+    options.tailSeconds = 0.25;
+    std::atomic<bool> cancel{false};
+    const auto exportDir = dir.getChildFile("export");
+    const TrackExportProgress tick = [](double, const char*, int, int, const juce::String&) {};
+    const auto dry = renderTrackBatch(snapshot, exportDir, options, false, tick, cancel);
+    const auto wet = renderTrackBatch(snapshot, exportDir, options, true, tick, cancel);
+    require(!dry.failure && !wet.failure, "wet and dry exports should succeed");
+    require(dry.folder.getFileName() == "Tracks 001" && wet.folder.getFileName() == "Tracks 002",
+            "successive batches never replace one another");
+    for (const auto& batch : {dry.folder, wet.folder})
+    {
+        for (const auto* name : {"Lead.wav", "lead (2).wav", "_CON.txt.wav"})
+        {
+            const auto fp = fingerprint(batch.getChildFile(name));
+            require(fp.frames == 60000 && fp.channels == 2 && fp.sampleRate == 48000,
+                    "every WAV spans the stretched final clip and shared tail at the chosen rate");
+            if (juce::String(name).startsWith("_")) require(fp.peak == 0, "empty track is silence");
+            else require(fp.peak > 0.1, "mute, solo and master volume do not silence track renders");
+        }
+    }
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    const auto readLead = [&](const juce::File& folder) {
+        std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(folder.getChildFile("Lead.wav")));
+        juce::AudioBuffer<float> audio(2, 60000);
+        require(reader && reader->bitsPerSample == 24 && reader->read(&audio, 0, 60000, 0, true, true),
+                "read exported 24-bit track");
+        return audio;
+    };
+    const auto dryAudio = readLead(dry.folder);
+    require(dryAudio.getMagnitude(0, 0, 11950) < 1.0e-5F &&
+            dryAudio.getMagnitude(0, 12000, 1000) > 0.15F, "late slice keeps its initial silence");
+    require(dryAudio.getMagnitude(1, 12000, 5000) < 1.0e-4F, "pan automation survives dry export");
+    require(dryAudio.getMagnitude(0, 20000, 30000) < 1.0e-5F &&
+            readLead(wet.folder).getMagnitude(0, 20000, 30000) > 0.01F,
+            "automated delay return is printed only when track effects are included");
+    require(state.getTrackMuted("late") && state.getTrackSoloed("warped"), "export leaves audition state alone");
+
+    auto solo = snapshot;
+    solo.tracks.resize(1);
+    solo.masterGain = 1.0F;
+    solo.mixGlueAmount = 0.0F;
+    solo.safetyLimiterEnabled = false;
+    options.outputFile = dir.getChildFile("Lead.wav");
+    options.lengthMs = 1000;
+    const auto reference = renderOfflineFile(solo, options, [](double, const char*) {}, cancel);
+    require(!reference.failure, "render the isolated pre-master reference");
+    const auto referenceAudio = readLead(dir);
+    auto difference = readLead(wet.folder);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        difference.addFrom(ch, 0, referenceAudio, ch, 0, 40000, -1.0F);
+        require(difference.getMagnitude(ch, 0, 40000) < 1.0e-5F,
+                "isolated track and solo reference match including the automated return");
+    }
+
+    const auto cancelled = renderTrackBatch(snapshot, exportDir, options, true,
+        [&](double, const char*, int index, int, const juce::String&) { if (index == 2) cancel.store(true); },
+        cancel);
+    require(cancelled.failure == MixdownFailureCode::Cancelled, "can cancel after writing the first track");
+    cancel.store(false);
+    snapshot.tracks[1].clips.front().filePath = dir.getChildFile("missing.wav").getFullPathName();
+    const auto failed = renderTrackBatch(std::move(snapshot), exportDir, options, true, tick, cancel);
+    require(failed.failure == MixdownFailureCode::Decode, "broken source fails the batch");
+    require(exportDir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 2,
+            "no partial folders or WAVs survive failure or cancellation");
+}
+
 } // namespace
 
 void addMixdownRenderTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Individual track export renders aligned wet and dry WAV batches", testIndividualTrackExport});
     tests.push_back({"MP3 export round-trips through the bundled decoder at each bitrate",
                      testMp3ExportRoundTripsThroughBundledDecoder});
     tests.push_back({"MP3 decoder replaces a superseded cache entry", testMp3DecoderReplacesSupersededCache});

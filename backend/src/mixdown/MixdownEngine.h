@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,9 @@
 
 namespace silverdaw
 {
+
+using RenderProgress = std::function<void(double, const char*)>;
+enum class SnapshotScope { AudibleMix, IndividualTracks };
 
 class BridgeServer;
 class ProjectState;
@@ -49,6 +53,7 @@ struct MixdownSnapshot
         // Scratch pattern applied to this clip (empty = none).
         juce::String scratchPatternId;
         bool warpEnabled{false};
+        bool reversed{false};
         juce::String warpMode; // "rhythmic" / "tonal" / "complex"
         double tempoRatio{1.0};
         double semitones{0.0};
@@ -60,6 +65,7 @@ struct MixdownSnapshot
     struct TrackSnapshot
     {
         juce::String id;
+        juce::String name;
         float gain{1.0F};
         // Snapshot live per-track parameters so offline render stays in parity with playback.
         float toneBassDb{0.0F};
@@ -143,6 +149,8 @@ struct MixdownOptions
     double ceilingDbtp{-1.0};
     int bitrateKbps{192};
     double lengthMs{0.0};
+    // Track batches share an exact output length instead of ending on FX decay.
+    std::optional<int64_t> fixedOutputFrames;
     // Project-time offset to begin rendering from; earlier audio is rendered then
     // discarded so clip positions and FX tails stay correct. 0 = project origin.
     double startMs{0.0};
@@ -166,7 +174,8 @@ MixdownSnapshot snapshotProjectForMixdown(
     double brakeCurve = BrakeSnapshot::kDefaultCurvePower,
     double backspinSeconds = BackspinSnapshot::kDefaultSpinSeconds,
     double backspinSpeed = BackspinSnapshot::kDefaultSpinSpeed,
-    double backspinCurve = BackspinSnapshot::kDefaultCurvePower);
+    double backspinCurve = BackspinSnapshot::kDefaultCurvePower,
+    SnapshotScope scope = SnapshotScope::AudibleMix);
 
 double computeLastClipEndMs(const MixdownSnapshot& snapshot);
 

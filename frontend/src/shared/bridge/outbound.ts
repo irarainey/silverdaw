@@ -16,6 +16,7 @@ import type {
   TransitionRecipe
 } from './inbound'
 import type { SnapGrid } from '../snapGrid'
+import type { TrackExportStartPayload } from './trackExport'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -703,6 +704,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_SEED_TEMPO_PREF: ProjectSetSeedTempoPrefPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
+  TRACK_EXPORT_START: TrackExportStartPayload
   MIXDOWN_CANCEL: undefined
   STEM_SEPARATE: StemSeparatePayload
   STEM_SEPARATE_CANCEL: StemSeparateCancelPayload
@@ -1400,6 +1402,7 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SET_SEED_TEMPO_PREF: 'payload',
   AUDIO_FILE_PROBE: 'payload',
   MIXDOWN_START: 'payload',
+  TRACK_EXPORT_START: 'payload',
   MIXDOWN_CANCEL: 'none',
   STEM_SEPARATE: 'payload',
   STEM_SEPARATE_CANCEL: 'payload',

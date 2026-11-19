@@ -4,7 +4,6 @@
 #include "BeatRepeatSnapshot.h"
 #include "Log.h"
 #include "Leveler.h"
-#include "MixdownBroadcast.h"
 #include "PluginPlayHead.h"
 #include "SafetyLimiter.h"
 #include "SharedFx.h"  // delayNoteToMs
@@ -23,7 +22,6 @@
 namespace silverdaw::mixdown_render_pass1
 {
 
-using mixdown_bridge::broadcastProgress;
 using mixdown_dither::kLsb16f;
 using mixdown_dither::nextUniform;
 using mixdown_graph::buildOfflineClip;
@@ -56,7 +54,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                      bool analyzing,
                      mixdown_dither::Xorshift32& rngL,
                      mixdown_dither::Xorshift32& rngR,
-                     BridgeServer& bridge,
+                     const RenderProgress& progress,
                      std::atomic<bool>& cancelFlag)
 {
     std::vector<std::unique_ptr<OfflineClip>> clips;
@@ -206,6 +204,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
     const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
     totalProjectFrames += alignmentFrames;
+    if (options.fixedOutputFrames)
+        totalProjectFrames = alignmentFrames + static_cast<int64_t>(std::ceil(
+            static_cast<double>(*options.fixedOutputFrames) * snapshot.projectSampleRate / options.outputSampleRate));
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
     // Render from frame 0 so clip positions and FX tails advance correctly, but only
     // push frames at/after the start offset into the output (earlier audio discarded).
@@ -247,6 +248,8 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
     const auto writeStereo = [&](const float* interleaved, int frames) -> bool
     {
+        if (options.fixedOutputFrames)
+            frames = static_cast<int>(std::min<int64_t>(frames, *options.fixedOutputFrames - outputFramesWritten));
         if (frames <= 0) return true;
         if (frames > maxWriteFrames)
         {
@@ -304,6 +307,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         for (auto& cp : clips)
         {
             if (cp->retired) continue;
+            // Removing the final source destroys the track's plugin chain. Keep it
+            // processing silence through the batch tail and latency-compensation flush.
+            if (options.fixedOutputFrames && cp == clips.back()) continue;
             if (projectFramesRendered >= cp->timelineEndFrames + cp->tailFrames)
             {
                 completedClips.push_back({cp->id, cp->summingSource.get()});
@@ -372,7 +378,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
         projectFramesRendered += blockFrames;
 
-        if (projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated())
+        if (!options.fixedOutputFrames && projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated())
         {
             break;
         }
@@ -384,7 +390,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
             const double pct = (static_cast<double>(projectFramesRendered)
                                 / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
                                * renderShare;
-            broadcastProgress(bridge, pct,
+            progress(pct,
                               normalizing ? "normalize-pass1"
                                           : (analyzing ? "analyze" : "render"));
             lastProgressMs = now;

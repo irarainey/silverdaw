@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-16 · Owner: @irarainey_
+_Last reviewed: 2026-11-19 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -84,7 +84,8 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The designated release version is **1.10.1**, a GPU/stem-separation and
+The project version is **1.11.0**, adding aligned per-track WAV export
+(see `docs/developer-guide.md`). **1.10.1** was a GPU/stem-separation and
 diagnostic-log reliability patch. All automated quality gates passed, and local
 release assets were rebuilt and verified on 2026-11-16. The
 [release record](docs/development-plan.md#release-acceptance-1101) distinguishes

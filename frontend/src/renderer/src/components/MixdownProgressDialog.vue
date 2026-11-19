@@ -24,6 +24,8 @@ const STAGE_LABELS: Record<MixdownStage, string> = {
 const visible = computed(() => state.value !== null)
 const percent = computed(() => Math.round(state.value?.percent ?? 0))
 const stageLabel = computed(() => {
+  const track = state.value?.track
+  if (track) return `Track ${track.index} of ${track.count} · ${track.name}`
   const s = state.value?.stage
   return s ? STAGE_LABELS[s] : ''
 })
@@ -56,7 +58,7 @@ function onCancel(): void {
             id="mixdown-progress-title"
             class="dialog-title"
           >
-            Exporting Mixdown
+            {{ state?.tracks ? 'Exporting Tracks' : 'Exporting Mixdown' }}
           </h1>
         </div>
 

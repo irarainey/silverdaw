@@ -57,6 +57,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
       wc.send(IPC.menu.action, action)
       break
     case 'file.exportMixdown':
+    case 'file.exportTracks':
       wc.send(IPC.menu.action, action)
       break
     case 'file.exit':

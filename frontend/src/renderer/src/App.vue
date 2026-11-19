@@ -54,6 +54,7 @@ import {
   AudioDeviceUnavailableDialog,
   ChannelSplitDialog,
   ExportMixdownDialog,
+  ExportTracksDialog,
   ImportProgressDialog,
   MidiMonitorDialog,
   MixdownProgressDialog,
@@ -89,6 +90,7 @@ const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const projectImportOpen = ref(false)
 const exportMixdownOpen = ref(false)
+const exportTracksOpen = ref(false)
 const diagnosticsBusy = ref(false)
 const midiMonitorOpen = ref(false)
 const sampleRatePromptState = useSampleRateMismatchPromptState()
@@ -192,6 +194,7 @@ function isInteractionBlocked(): boolean {
     projectPropertiesOpen.value ||
     projectImportOpen.value ||
     exportMixdownOpen.value ||
+    exportTracksOpen.value ||
     diagnosticsBusy.value ||
     midiMonitorOpen.value ||
     library.imports.length > 0 ||
@@ -539,6 +542,7 @@ const { handleMenuAction } = useAppMenuActions({
   projectPropertiesOpen,
   projectImportOpen,
   exportMixdownOpen,
+  exportTracksOpen,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isInteractionBlocked,
@@ -638,6 +642,10 @@ const { handleMenuAction } = useAppMenuActions({
       v-if="exportMixdownOpen"
       :open="exportMixdownOpen"
       @close="exportMixdownOpen = false"
+    />
+    <ExportTracksDialog
+      v-if="exportTracksOpen"
+      @close="exportTracksOpen = false"
     />
 
     <MixdownProgressDialog v-if="mixdownState !== null" />

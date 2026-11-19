@@ -7,6 +7,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { beginMixdown, clearMixdownState } from '@/lib/mixdownState'
+import { exportSampleRate } from './exportSampleRate'
 import { formatTime, parseTime, msPerSubBeat, DEFAULT_SUBS_PER_BEAT, DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { log } from '@/lib/log'
@@ -200,10 +201,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
 
   /** Project sample rate with user default fallback. */
   const effectiveProjectRate = computed<44100 | 48000>(() => {
-    const projectRate = project.targetSampleRate
-    if (projectRate === 44100 || projectRate === 48000) return projectRate
-    const fallback = ui.defaultProjectSampleRate
-    return fallback === 48000 ? 48000 : 44100
+    return exportSampleRate(project.targetSampleRate, ui.defaultProjectSampleRate)
   })
 
   /** Latest clip end in timeline ms, accounting for warp. */

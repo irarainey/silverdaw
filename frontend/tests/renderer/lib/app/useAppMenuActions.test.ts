@@ -47,6 +47,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     projectPropertiesOpen: ReturnType<typeof ref<boolean>>
     projectImportOpen: ReturnType<typeof ref<boolean>>
     exportMixdownOpen: ReturnType<typeof ref<boolean>>
+    exportTracksOpen: ReturnType<typeof ref<boolean>>
     diagnosticsBusy: ReturnType<typeof ref<boolean>>
   }
   guard: ReturnType<typeof vi.fn>
@@ -101,6 +102,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     projectPropertiesOpen: ref(false),
     projectImportOpen: ref(false),
     exportMixdownOpen: ref(false),
+    exportTracksOpen: ref(false),
     diagnosticsBusy: ref(false)
   }
   const guard = vi.fn((proceed: () => void) => proceed())
@@ -118,6 +120,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     projectPropertiesOpen: refs.projectPropertiesOpen,
     projectImportOpen: refs.projectImportOpen,
     exportMixdownOpen: refs.exportMixdownOpen,
+    exportTracksOpen: refs.exportTracksOpen,
     diagnosticsBusy: refs.diagnosticsBusy,
     guardAgainstUnsavedChanges: guard,
     isModalOpen: () => overrides.modalOpen === true,

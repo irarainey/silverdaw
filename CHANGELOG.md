@@ -1,6 +1,10 @@
 # Changelog
 
-Release version: **1.10.1**.
+## 1.11.0
+
+### Added
+
+- Export Tracks writes aligned stereo WAVs for every timeline track with optional track effects.
 
 ## 1.10.1
 

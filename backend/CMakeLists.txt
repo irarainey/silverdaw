@@ -5,7 +5,7 @@ if(POLICY CMP0091)
 endif()
 
 project(SilverdawBackend
-    VERSION 1.10.1
+    VERSION 1.11.0
     DESCRIPTION "Silverdaw headless audio backend"
     LANGUAGES C CXX)
 
@@ -541,6 +541,7 @@ add_library(silverdaw_backend_core STATIC
     src/mixdown/MixdownGraph.cpp
     src/mixdown/MixdownNormalize.cpp
     src/mixdown/MixdownRender.cpp
+    src/mixdown/TrackExport.cpp
     src/mixdown/MixdownRenderPass1.cpp
     src/mixdown/MixdownSnapshot.cpp
     # project

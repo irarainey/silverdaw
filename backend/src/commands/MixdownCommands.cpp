@@ -8,6 +8,10 @@
 #include "EnginePlaybackPath.h"
 #include "Log.h"
 #include "MixdownEngine.h"
+#include "MixdownBroadcast.h"
+#include "PluginChain.h"
+#include "ProjectSession.h"
+#include "TrackExport.h"
 #include "PayloadHelpers.h"
 #include "ProjectState.h"
 
@@ -16,6 +20,103 @@ namespace silverdaw
 
 using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::tryGetRequiredString;
+
+static MixdownSnapshot prepareRenderSnapshot(AudioEngine& engine, ProjectState& project,
+                                            const DecodedCache& cache, SnapshotScope scope,
+                                            bool capturePlugins = false)
+{
+    auto snapshot = snapshotProjectForMixdown(project, engine.getBrakeDefaultSeconds(),
+        engine.getBrakeDefaultCurve(), engine.getBackspinDefaultSeconds(),
+        engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve(), scope);
+    for (auto& track : snapshot.tracks)
+    {
+        if (capturePlugins)
+            for (auto& slot : track.plugins)
+            {
+                const auto chunk = engine.getTrackPluginState(track.id, slot.slotId);
+                if (!chunk.isEmpty()) slot.state = plugins::encodeStateChunk(chunk);
+            }
+        for (auto& clip : track.clips)
+        {
+            const auto raw = project.getLibraryItemFilePath(clip.libraryItemId);
+            const auto resolved = resolveEnginePlaybackPath(raw, project, cache);
+            if (resolved.isNotEmpty()) clip.filePath = resolved;
+            log::debug("mixdown", "snapshot clip=" + clip.id + " source=" + raw + " playback=" + clip.filePath);
+        }
+    }
+    const auto deviceRate = engine.getAudioDevicesSnapshot().currentSampleRate;
+    if (deviceRate > 0.0) snapshot.projectSampleRate = static_cast<int>(deviceRate);
+    return snapshot;
+}
+
+void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, ProjectState& project,
+                            BridgeServer& bridge, juce::ThreadPool& pool, const DecodedCache& cache,
+                            const juce::String& projectPath, std::atomic<bool>& busy, std::atomic<bool>& cancel)
+{
+    const auto reject = [&](const juce::String& message) {
+        mixdown_bridge::broadcastFailed(bridge, MixdownFailureCode::Invalid, message);
+    };
+    if (busy.load())
+    {
+        reject("An export is already in progress.");
+        return;
+    }
+    if (projectPath.isEmpty())
+    {
+        reject("Save the project before exporting tracks.");
+        return;
+    }
+    const auto rate = bridge::tryGetNumber(payload, "sampleRate");
+    const auto depth = bridge::tryGetNumber(payload, "bitDepth");
+    const auto tail = bridge::tryGetNumber(payload, "tailSeconds");
+    const auto effects = payload.getProperty("includeEffects", {});
+    const auto labels = payload.getProperty("trackLabels", {});
+    if ((!rate || (*rate != 44100 && *rate != 48000)) ||
+        (!depth || (*depth != 16 && *depth != 24 && *depth != 32)) ||
+        (!tail || !std::isfinite(*tail) || *tail < 0 || *tail > 60) || !effects.isBool() || !labels.isObject())
+    {
+        reject("Invalid WAV settings for track export.");
+        return;
+    }
+
+    engine.pause();
+    const bool wet = static_cast<bool>(effects);
+    auto snapshot = prepareRenderSnapshot(engine, project, cache, SnapshotScope::IndividualTracks, wet);
+    for (auto& track : snapshot.tracks)
+    {
+        const auto label = labels.getProperty(juce::Identifier(track.id), {});
+        if (label.isString() && label.toString().isNotEmpty()) track.name = label.toString();
+    }
+    const auto folder = projectArtifactsBaseDir(projectPath, "export");
+    MixdownOptions options;
+    options.outputSampleRate = static_cast<int>(*rate);
+    options.bitDepth = static_cast<int>(*depth);
+    options.tailSeconds = *tail;
+    busy.store(true);
+    cancel.store(false);
+    pool.addJob([snapshot = std::move(snapshot), options, wet, folder, &bridge, &busy, &cancel]() mutable {
+        juce::ErasedScopeGuard releaseSlot{[&busy] { busy.store(false); }};
+        const auto count = static_cast<int>(snapshot.tracks.size());
+        const auto result = renderTrackBatch(std::move(snapshot), folder, options, wet,
+            [&](double pct, const char* stage, int index, int total, const juce::String& name) {
+                auto* track = new juce::DynamicObject();
+                track->setProperty("index", index);
+                track->setProperty("count", total);
+                track->setProperty("name", name);
+                mixdown_bridge::broadcastProgress(bridge, pct, stage, juce::var(track));
+            }, cancel);
+        releaseSlot.reset();
+        if (result.failure)
+            mixdown_bridge::broadcastFailed(bridge, *result.failure, result.message);
+        else
+        {
+            auto* ready = new juce::DynamicObject();
+            ready->setProperty("folder", result.folder.getFullPathName());
+            ready->setProperty("trackCount", count);
+            bridge.broadcast("TRACK_EXPORT_READY", juce::var(ready));
+        }
+    });
+}
 
 void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine,
                         silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
@@ -65,34 +166,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     }
 
     // Snapshot on the message thread before worker dispatch.
-    auto snapshot = silverdaw::snapshotProjectForMixdown(
-        projectState, engine.getBrakeDefaultSeconds(), engine.getBrakeDefaultCurve(),
-        engine.getBackspinDefaultSeconds(), engine.getBackspinDefaultSpeed(),
-        engine.getBackspinDefaultCurve());
-    // Use the live resolver so mixdown matches decoded-cache playback and warp timing.
-    for (auto& trackSnap : snapshot.tracks)
-    {
-        for (auto& clipSnap : trackSnap.clips)
-        {
-            const auto rawSourcePath =
-                projectState.getLibraryItemFilePath(clipSnap.libraryItemId);
-            const auto resolvedPath =
-                silverdaw::resolveEnginePlaybackPath(rawSourcePath, projectState, decodedCache);
-            const auto previousPath = clipSnap.filePath;
-            if (resolvedPath.isNotEmpty()) clipSnap.filePath = resolvedPath;
-            silverdaw::log::info(
-                "mixdown",
-                "snapshot path resolve clip=" + clipSnap.id +
-                    " libraryItemId=" + clipSnap.libraryItemId +
-                    " rawSource=" + rawSourcePath +
-                    " storedPlayback=" + previousPath +
-                    " resolved=" + clipSnap.filePath +
-                    " changed=" +
-                        (previousPath != clipSnap.filePath
-                             ? juce::String("true")
-                             : juce::String("false")));
-        }
-    }
+    auto snapshot = prepareRenderSnapshot(engine, projectState, decodedCache, SnapshotScope::AudibleMix);
     if (snapshot.tracks.empty())
     {
         auto* obj = new juce::DynamicObject();
@@ -100,23 +174,6 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         obj->setProperty("error", juce::String("Project has no clips to mix down."));
         bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
         return;
-    }
-
-    // Match live device rate before final high-quality resampling to avoid tonal drift.
-    {
-        const auto deviceSnap = engine.getAudioDevicesSnapshot();
-        const int previousRate = snapshot.projectSampleRate;
-        if (deviceSnap.currentSampleRate > 0.0)
-        {
-            snapshot.projectSampleRate =
-                static_cast<int>(deviceSnap.currentSampleRate);
-        }
-        silverdaw::log::info(
-            "mixdown",
-            "projectSampleRate aligned previous=" + juce::String(previousRate) +
-                " deviceRate=" + juce::String(deviceSnap.currentSampleRate, 1) +
-                " effective=" + juce::String(snapshot.projectSampleRate) +
-                " outputRate=" + juce::String(outputSampleRate));
     }
 
     silverdaw::MixdownOptions options;

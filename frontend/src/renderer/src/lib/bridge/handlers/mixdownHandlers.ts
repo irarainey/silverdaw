@@ -6,10 +6,15 @@ import { log } from '@/lib/log'
 import type { BridgeInboundHandlers } from '@/lib/bridge/handlerTypes'
 
 export const mixdownBridgeHandlers: BridgeInboundHandlers<
-  'MIXDOWN_PROGRESS' | 'MIXDOWN_DONE' | 'MIXDOWN_FAILED'
+  'MIXDOWN_PROGRESS' | 'MIXDOWN_DONE' | 'MIXDOWN_FAILED' | 'TRACK_EXPORT_READY'
 > = {
   MIXDOWN_PROGRESS: (payload) => {
     applyMixdownProgress(payload)
+  },
+
+  TRACK_EXPORT_READY: ({ folder, trackCount }) => {
+    clearMixdownState()
+    useNotificationsStore().pushInfo(`Exported ${trackCount} ${trackCount === 1 ? 'track' : 'tracks'} to ${folder}`)
   },
 
   MIXDOWN_DONE: (payload) => {
@@ -32,10 +37,10 @@ export const mixdownBridgeHandlers: BridgeInboundHandlers<
     const tracked = snapshotMixdownState()
     clearMixdownState()
     if (payload.code === 'cancelled') {
-      useNotificationsStore().pushInfo('Mixdown cancelled')
+      useNotificationsStore().pushInfo(tracked?.tracks ? 'Track export cancelled' : 'Mixdown cancelled')
       log.info('mixdown', `cancelled (tracked path=${tracked?.outputPath ?? 'unknown'})`)
     } else {
-      useNotificationsStore().pushError(`Mixdown failed: ${payload.error}`)
+      useNotificationsStore().pushError(`${tracked?.tracks ? 'Track export' : 'Mixdown'} failed: ${payload.error}`)
       log.error('mixdown', `failed code=${payload.code} error=${payload.error}`)
     }
   }
