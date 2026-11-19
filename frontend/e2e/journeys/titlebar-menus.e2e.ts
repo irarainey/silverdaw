@@ -3,6 +3,38 @@ import { startNewProject } from '../helpers/startup'
 import { closeMenu, menuItem, openMenu } from '../helpers/menu'
 import { windowHitTest } from '../helpers/windowHitTest'
 
+test('clicking outside the menu dismisses it without consuming the click', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  await startNewProject(page)
+  const titlebar = page.locator('header.titlebar')
+  const about = menuItem(page, 'About Silverdaw')
+
+  await openMenu(page, 'Help')
+  await titlebar.getByRole('button', { name: 'Rename project' }).click()
+  await expect(about).toBeHidden()
+  await expect(titlebar.getByRole('textbox')).toBeFocused()
+  await page.keyboard.press('Escape')
+
+  await openMenu(page, 'Help')
+  const spacer = await titlebar.locator(':scope > .flex-1').boundingBox()
+  if (!spacer) throw new Error('Title-bar drag spacer has no visible bounds')
+  const point = { x: spacer.x + spacer.width * 0.9, y: spacer.y + spacer.height / 2 }
+  // DOM clicks bypass Windows routing. The caption must actually receive this press,
+  // then become a native drag region again once the menu has closed.
+  await expect.poll(() => windowHitTest(electronApp, [point])).toEqual([1])
+  await page.mouse.click(point.x, point.y)
+  await expect(about).toBeHidden()
+  await expect.poll(() => windowHitTest(electronApp, [point])).toEqual([2])
+
+  await openMenu(page, 'Help')
+  await page.getByRole('button', { name: 'Add Track', exact: true }).click()
+  await expect(about).toBeHidden()
+  await openMenu(page, 'Help')
+  await page.getByTitle('Mute', { exact: true }).click()
+  await expect(about).toBeHidden()
+  await expect(page.getByTitle('Unmute', { exact: true })).toBeVisible()
+})
+
 test('Windows routes title-bar controls to the app and preserves window dragging', async ({
   silverdaw
 }) => {

@@ -12,7 +12,7 @@ defineProps<Readonly<{
 </script>
 
 <template>
-  <section class="mb-5">
+  <section>
     <label
       :for="inputId"
       class="mb-1 block text-[11px] uppercase tracking-wide text-zinc-500"

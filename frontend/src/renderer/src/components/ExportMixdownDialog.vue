@@ -108,6 +108,7 @@ watch(
         <div class="dialog-body silverdaw-scroll">
           <ExportOutputLocation
             v-model:output-path="draftOutputPath"
+            class="mb-5"
             :on-browse-click="onBrowseClick"
           />
           <ExportFormatSettings

@@ -78,11 +78,16 @@ void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, Proje
     const auto effects = payload.getProperty("includeEffects", {});
     const auto labels = payload.getProperty("trackLabels", {});
     const auto* selection = labels.getDynamicObject();
+    if (!tail || !std::isfinite(*tail) || *tail != std::trunc(*tail) || *tail < 0 || *tail > 60)
+    {
+        reject("Enter a whole number of tail seconds between 0 and 60.");
+        return;
+    }
     if ((!rate || (*rate != 44100 && *rate != 48000)) ||
         !format || (*format == MixdownOptions::Format::Mp3
             ? !bitrate || (*bitrate != 128 && *bitrate != 192 && *bitrate != 320)
             : !depth || !mixdown_export::supportsBitDepth(*format, *depth)) ||
-        (!tail || !std::isfinite(*tail) || *tail < 0 || *tail > 60) || !effects.isBool() || selection == nullptr)
+        !effects.isBool() || selection == nullptr)
     {
         reject("Invalid file format, encoding settings or track selection.");
         return;

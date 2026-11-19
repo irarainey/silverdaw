@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import AppTitleBarWindowControls from '@/components/AppTitleBarWindowControls.vue'
 import { useAppTitleBarController } from '@/lib/app/useAppTitleBarController'
 
-const root = ref<HTMLElement | null>(null)
+const menuBar = ref<HTMLElement | null>(null)
 const renameInput = ref<HTMLInputElement | null>(null)
 
 const {
@@ -27,14 +27,14 @@ const {
   startRename,
   commitRename,
   cancelRename
-} = useAppTitleBarController(root, renameInput)
+} = useAppTitleBarController(menuBar, renameInput)
 </script>
 
 <template>
+  <!-- Native drag regions swallow pointer events; let an open menu receive its outside press. -->
   <header
-    ref="root"
     class="titlebar relative flex h-9 w-full select-none items-stretch bg-zinc-900 text-xs text-zinc-300"
-    style="-webkit-app-region: drag"
+    :style="`-webkit-app-region: ${openIndex === null ? 'drag' : 'no-drag'}`"
   >
     <!-- Brand. Sourced from `frontend/resources/icons/` so the same icon
          set powers the title bar, the OS taskbar, and (later) the
@@ -55,6 +55,7 @@ const {
 
     <!-- Menus -->
     <nav
+      ref="menuBar"
       class="flex items-stretch"
       style="-webkit-app-region: no-drag"
     >

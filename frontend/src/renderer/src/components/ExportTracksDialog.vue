@@ -25,6 +25,7 @@ const bitrate = ref(preferences.bitrateKbps ?? 192)
 const availableBitDepths = useExportBitDepths(format, bitDepth)
 const includeEffects = ref(true)
 const tailSeconds = ref(0)
+const tailInput = ref<HTMLInputElement | null>(null)
 const submitting = ref(false)
 const card = ref<HTMLElement | null>(null)
 const hasClips = computed(() => project.tracks.some(track => track.clipIds.length > 0))
@@ -50,6 +51,16 @@ const settings = computed(() => TrackExportStartSchema.safeParse({
   outputFolder: customFolder.value,
   trackLabels: Object.fromEntries(selectedTracks.value.map(track => [track.id, track.name]))
 }))
+const invalidTail = computed(() => !settings.value.success && settings.value.error.issues.some(issue => issue.path[0] === 'tailSeconds'))
+
+function stepTail(delta: number): void {
+  const input = tailInput.value
+  if (!input) return
+  if (delta > 0) input.stepUp()
+  else input.stepDown()
+  tailSeconds.value = input.valueAsNumber
+}
+
 async function browse(): Promise<void> {
   try {
     const picked = await window.silverdaw.chooseDirectory({
@@ -154,12 +165,15 @@ async function submit(): Promise<void> {
               <div class="flex items-center rounded border border-zinc-700 bg-zinc-950 pr-1 focus-within:border-sky-500">
                 <input
                   id="track-export-tail"
+                  ref="tailInput"
                   v-model.number="tailSeconds"
                   type="number"
                   min="0"
                   max="60"
-                  step="any"
-                  class="no-spinner min-w-0 flex-1 bg-transparent px-2 py-1 text-right font-mono text-xs tabular-nums outline-none"
+                  step="1"
+                  :aria-invalid="invalidTail"
+                  :aria-describedby="invalidTail ? 'track-export-tail-error' : undefined"
+                  class="no-spinner h-6 min-w-0 flex-1 bg-transparent px-2 py-0 text-right font-mono text-xs leading-6 tabular-nums outline-none"
                 >
                 <div class="flex flex-col">
                   <button
@@ -169,9 +183,9 @@ async function submit(): Promise<void> {
                     tabindex="-1"
                     data-borderless-button="true"
                     :aria-label="delta > 0 ? 'Increase tail' : 'Decrease tail'"
-                    class="h-3 w-4 text-zinc-500 hover:text-zinc-100"
+                    class="flex h-3 w-4 items-center justify-center text-zinc-500 hover:text-zinc-100"
                     @mousedown.prevent
-                    @click="tailSeconds = Math.max(0, Math.min(60, Number(tailSeconds) + delta))"
+                    @click="stepTail(delta)"
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -187,6 +201,13 @@ async function submit(): Promise<void> {
               </div>
             </div>
           </ExportFormatSettings>
+          <p
+            v-if="invalidTail"
+            id="track-export-tail-error"
+            class="text-xs text-red-400"
+          >
+            Enter a whole number of tail seconds between 0 and 60.
+          </p>
           <label class="flex items-center gap-2">
             <input
               v-model="includeEffects"
@@ -206,9 +227,6 @@ async function submit(): Promise<void> {
             class="text-xs text-red-400"
           >
             Choose a folder or enter its full path.
-          </p>
-          <p class="text-xs text-zinc-400">
-            Each export creates a timestamped folder.
           </p>
         </div>
         <div class="dialog-footer">

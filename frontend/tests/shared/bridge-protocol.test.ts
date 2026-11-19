@@ -178,6 +178,12 @@ describe('isReadyPayload', () => {
 
 describe('track export encoding settings', () => {
   const base = { sampleRate: 44100, includeEffects: true, tailSeconds: 0, trackLabels: { t1: 'Lead' } }
+  it('only accepts whole tail seconds from 0 through 60', () => {
+    const accepts = (tailSeconds: number) => TrackExportStartSchema.safeParse({ ...base, bitDepth: 24, tailSeconds }).success
+    for (const seconds of [0, 1, 60]) expect(accepts(seconds)).toBe(true)
+    for (const seconds of [-1, 0.5, 61]) expect(accepts(seconds)).toBe(false)
+  })
+
   it('accepts existing WAV requests and rejects incompatible encoding parameters', () => {
     expect(TrackExportStartSchema.parse({ ...base, bitDepth: 32 }).format).toBe('wav')
     for (const settings of [{ format: 'flac', bitDepth: 32 }, { format: 'mp3', bitDepth: 24 },

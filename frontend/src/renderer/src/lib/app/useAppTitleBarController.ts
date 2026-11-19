@@ -8,7 +8,7 @@ import { DEFAULT_PROJECT_NAME, useProjectStore } from '@/stores/projectStore'
 import { useAppStore } from '@/stores/appStore'
 
 export function useAppTitleBarController(
-  root: Ref<HTMLElement | null>,
+  menuBar: Ref<HTMLElement | null>,
   renameInput: Ref<HTMLInputElement | null>
 ) {
   const project = useProjectStore()
@@ -69,6 +69,11 @@ export function useAppTitleBarController(
     return `${base}\nClick the pencil (or double-click the name) to rename`
   })
 
+  function closeMenu(): void {
+    openIndex.value = null
+    openSubmenuKey.value = null
+  }
+
   function toggle(i: number): void {
     openIndex.value = openIndex.value === i ? null : i
     // Closing or switching the top-level menu must collapse any open
@@ -102,8 +107,7 @@ export function useAppTitleBarController(
     // here.
     if (item.submenu && item.submenu.length > 0) return
     if (isItemDisabled(item) || !item.action) return
-    openIndex.value = null
-    openSubmenuKey.value = null
+    closeMenu()
     // Recent Projects entries don't need to involve main — the renderer
     // already owns the MRU mirror (appStore.recentProjects) and the
     // open-project flow (App.vue handleMenuAction). Forward them as
@@ -145,29 +149,24 @@ export function useAppTitleBarController(
     renaming.value = false
   }
 
-  function onDocumentClick(e: MouseEvent): void {
-    if (!root.value) return
-    if (!root.value.contains(e.target as Node)) {
-      openIndex.value = null
-      openSubmenuKey.value = null
-    }
+  function onPointerDown(e: PointerEvent): void {
+    if (openIndex.value !== null && !menuBar.value?.contains(e.target as Node)) closeMenu()
   }
 
   function onKey(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-      openIndex.value = null
-      openSubmenuKey.value = null
-    }
+    if (e.key === 'Escape') closeMenu()
   }
 
   onMounted(() => {
-    document.addEventListener('mousedown', onDocumentClick)
+    document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('blur', closeMenu)
   })
 
   onBeforeUnmount(() => {
-    document.removeEventListener('mousedown', onDocumentClick)
+    document.removeEventListener('pointerdown', onPointerDown, true)
     document.removeEventListener('keydown', onKey)
+    window.removeEventListener('blur', closeMenu)
   })
 
   return {

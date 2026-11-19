@@ -9,7 +9,7 @@ export const TrackExportStartSchema = z.object({
   format: ExportFormatSchema.default('wav'),
   bitDepth: ExportBitDepthSchema.optional(),
   bitrateKbps: ExportBitrateSchema.optional(),
-  tailSeconds: z.number().min(0).max(60),
+  tailSeconds: z.number().int().min(0).max(60),
   includeEffects: z.boolean(),
   outputFolder: TrackExportFolderSchema.optional(),
   // Only selected IDs are sent, with their displayed (possibly automatic) timeline names.
