@@ -45,13 +45,14 @@ const {
   effectiveProjectRate,
   lastClipEndMs,
   formIsValid,
+  submitting,
   reseedOnOpen,
   onBrowseClick,
   onSave
 } = useExportMixdownForm({ requestClose: () => emit('close') })
 
 function onClose(): void {
-  emit('close')
+  if (!submitting.value) emit('close')
 }
 
 watch(
@@ -164,6 +165,7 @@ watch(
           <button
             type="button"
             class="dialog-btn-cancel"
+            :disabled="submitting"
             @click="onClose"
           >
             Cancel

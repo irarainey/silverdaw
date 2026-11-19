@@ -127,6 +127,15 @@ public:
     const char* error() const { return lastError_; }
     bool active() const { return state_ != nullptr; }
 
+    double lastInputFrameForOutput(int64_t outputFrame) const noexcept
+    {
+        if (!active()) return static_cast<double>(outputFrame);
+        // Bound SRC_SINC_MEDIUM_QUALITY's right wing (22436/491 samples at the lower rate).
+        constexpr double sincHalfWidth = 46.0;
+        const double ratio = static_cast<double>(srcRate_) / dstRate_;
+        return std::floor(static_cast<double>(outputFrame) * ratio + sincHalfWidth * std::max(1.0, ratio));
+    }
+
     template <typename WriteFn>
     bool push(const float* interleaved, int inputFrames, bool endOfInput, WriteFn&& write)
     {

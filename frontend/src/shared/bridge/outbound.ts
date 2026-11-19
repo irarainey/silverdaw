@@ -795,6 +795,8 @@ export interface ProjectSaveAsPayload {
 
 export interface ProjectSaveViewStatePayload {
   filePath: string
+  /** Persist just the export choices without advancing the backing project's recovery timestamp. */
+  exportPreferencesOnly?: boolean
   viewScrollX: number
   /** Latest horizontal zoom (px/sec); omit to leave the saved value untouched. */
   viewPxPerSecond?: number

@@ -8,7 +8,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { beginMixdown, clearMixdownState } from '@/lib/mixdownState'
 import { exportSampleRate } from './exportSampleRate'
-import { mergeExportSettings, readProjectExportSettings } from './projectExportSettings'
+import { flushExportPreferences, mergeExportSettings, readProjectExportSettings } from './projectExportSettings'
 import { formatTime, parseTime, msPerSubBeat, DEFAULT_SUBS_PER_BEAT, DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { log } from '@/lib/log'
@@ -443,7 +443,6 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
         sendBridge('TRANSPORT_PAUSE')
         transport.setPlaybackState(false)
       }
-      beginMixdown(outputPath, draftFormat.value)
       const payload: import('@shared/bridge-protocol').MixdownStartPayload = {
         outputPath,
         sampleRate: draftSampleRate.value,
@@ -467,6 +466,8 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       // Persist the chosen start bar as a first-class project property (independent of the
       // ruler's bar-counter offset) so it round-trips and prefills next time.
       if (!rangeOnly) project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
+      if (project.currentFilePath) await flushExportPreferences()
+      beginMixdown(outputPath, payload.format)
       if (!sendBridge('MIXDOWN_START', payload)) {
         // Progress state was opened by `beginMixdown` above. Without this the
         // export dialog closes over a progress dialog stuck at 0% that only a

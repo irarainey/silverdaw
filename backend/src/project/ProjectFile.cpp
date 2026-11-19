@@ -4,6 +4,8 @@
 #include "ValueTreeJson.h"
 #include "Version.h"
 
+#include <optional>
+
 #if JUCE_WINDOWS
 #include <windows.h>
 #endif
@@ -114,7 +116,8 @@ void rewritePortablePaths(juce::var& node, const juce::File& projectDir, bool fo
     }
 }
 
-juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var& rootVar)
+juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var& rootVar,
+                                        std::optional<juce::Time> modificationTime = std::nullopt)
 {
     const auto& target = file.getFullPathName();
     if (target.isEmpty())
@@ -147,6 +150,13 @@ juce::Result writeProjectJsonAtomically(const juce::File& file, const juce::var&
     {
         tempFile.deleteFile();
         return juce::Result::fail("Failed to write project JSON to " + tempFile.getFullPathName());
+    }
+
+    // Stamp the staged file: recovery must never see a newer timestamp, even briefly.
+    if (modificationTime && !tempFile.setLastModificationTime(*modificationTime))
+    {
+        tempFile.deleteFile();
+        return juce::Result::fail("Could not preserve project modification time: " + target);
     }
 
     bool replaced = false;
@@ -199,7 +209,7 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     return writeProjectJsonAtomically(file, juce::var(rootObj));
 }
 
-juce::Result saveViewState(const juce::File& file, const ProjectState& project)
+juce::Result saveViewState(const juce::File& file, const ProjectState& project, ViewStateScope scope)
 {
     if (!file.existsAsFile())
     {
@@ -225,6 +235,18 @@ juce::Result saveViewState(const juce::File& file, const ProjectState& project)
     {
         return juce::Result::fail("Project file has no \"project\" object");
     }
+
+    if (const auto settings = project.getExportSettingsJson(); settings.isNotEmpty())
+        projectObj->setProperty("exportSettingsJson", settings);
+    else
+        projectObj->removeProperty("exportSettingsJson");
+    if (const auto bar = project.getMixdownStartBar(); bar != 1)
+        projectObj->setProperty("mixdownStartBar", bar);
+    else
+        projectObj->removeProperty("mixdownStartBar");
+
+    if (scope == ViewStateScope::ExportPreferencesOnly)
+        return writeProjectJsonAtomically(file, rootVar, file.getLastModificationTime());
 
     rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
     projectObj->setProperty("viewScrollX", juce::jmax(0.0, project.getViewScrollX()));
@@ -266,14 +288,6 @@ juce::Result saveViewState(const juce::File& file, const ProjectState& project)
         projectObj->setProperty("clipEditorMetronomeEnabled", true);
     else if (projectObj->hasProperty("clipEditorMetronomeEnabled"))
         projectObj->removeProperty("clipEditorMetronomeEnabled");
-    if (const auto settings = project.getExportSettingsJson(); settings.isNotEmpty())
-        projectObj->setProperty("exportSettingsJson", settings);
-    else
-        projectObj->removeProperty("exportSettingsJson");
-    if (const auto bar = project.getMixdownStartBar(); bar != 1)
-        projectObj->setProperty("mixdownStartBar", bar);
-    else
-        projectObj->removeProperty("mixdownStartBar");
     rootObj->setProperty(kProjectKey, projectVar);
 
     return writeProjectJsonAtomically(file, rootVar);

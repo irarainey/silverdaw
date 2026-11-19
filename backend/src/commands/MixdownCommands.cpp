@@ -52,7 +52,7 @@ static juce::Result applyExportSelection(const juce::var& payload, const Project
 }
 
 static void resolveRenderSources(MixdownSnapshot& snapshot, AudioEngine& engine, ProjectState& project,
-                                 const DecodedCache& cache, bool capturePlugins = false)
+                                 const DecodedCache& cache, bool capturePlugins)
 {
     for (auto& track : snapshot.tracks)
     {
@@ -72,6 +72,13 @@ static void resolveRenderSources(MixdownSnapshot& snapshot, AudioEngine& engine,
     }
     const auto deviceRate = engine.getAudioDevicesSnapshot().currentSampleRate;
     if (deviceRate > 0.0) snapshot.projectSampleRate = static_cast<int>(deviceRate);
+}
+
+MixdownSnapshot snapshotAudibleMixForExport(AudioEngine& engine, ProjectState& project, const DecodedCache& cache)
+{
+    auto snapshot = snapshotArrangement(engine, project, SnapshotScope::AudibleMix);
+    resolveRenderSources(snapshot, engine, project, cache, /*capturePlugins=*/true);
+    return snapshot;
 }
 
 void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, ProjectState& project,
@@ -239,8 +246,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     }
 
     // Snapshot on the message thread before worker dispatch.
-    auto snapshot = snapshotArrangement(engine, projectState, SnapshotScope::AudibleMix);
-    resolveRenderSources(snapshot, engine, projectState, decodedCache);
+    auto snapshot = snapshotAudibleMixForExport(engine, projectState, decodedCache);
     if (snapshot.tracks.empty())
     {
         auto* obj = new juce::DynamicObject();

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { ExportFormatSchema, ExportBitrateSchema, ExportBitDepthSchema, TrackExportFolderSchema } from '@shared/bridge-protocol'
 import { log } from '@/lib/log'
+import { useProjectStore } from '@/stores/projectStore'
+import { useNotificationsStore } from '@/stores/notificationsStore'
 
 /** Mixdown's original flat keys and the track export preferences share one project property. */
 export function readProjectExportSettings(blob: string | null): Record<string, unknown> {
@@ -36,4 +38,11 @@ export function readTrackExportPreferences(blob: string | null): z.infer<typeof 
 
 export function mergeExportSettings(blob: string | null, settings: object): string {
   return JSON.stringify({ ...readProjectExportSettings(blob), ...settings })
+}
+
+export async function flushExportPreferences(): Promise<void> {
+  const saved = await useProjectStore().saveViewStateAndWait({ exportPreferencesOnly: true })
+  if (!saved.ok) {
+    useNotificationsStore().pushError(`Could not remember export settings: ${saved.error ?? 'Project file could not be updated.'}`)
+  }
 }

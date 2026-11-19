@@ -260,17 +260,22 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
         return;
     }
 
-    const double scrollX = juce::jmax(0.0, tryGetNumber(payload, "viewScrollX").value_or(projectState.getViewScrollX()));
-    const double playheadMs = juce::jmax(0.0, engine.getPositionMs());
-    projectState.setViewScrollX(scrollX);
-    projectState.setPlayheadMs(playheadMs);
+    const auto savePreferences = [&]() -> juce::Result {
+        const auto exportOnly = payload.getProperty("exportPreferencesOnly", false);
+        if (!exportOnly.isBool()) return juce::Result::fail("Invalid export preferences option");
+        const juce::File file(filePath);
+        if (static_cast<bool>(exportOnly))
+            return ProjectFile::saveViewState(file, projectState, ProjectFile::ViewStateScope::ExportPreferencesOnly);
 
-    // Renderer sends the live zoom; fall back to in-memory state for older clients.
-    const double pxPerSecond = tryGetNumber(payload, "viewPxPerSecond").value_or(projectState.getViewPxPerSecond());
-    projectState.setViewPxPerSecond(pxPerSecond);
+        const auto scroll = tryGetNumber(payload, "viewScrollX").value_or(projectState.getViewScrollX());
+        projectState.setViewScrollX(juce::jmax(0.0, scroll));
+        projectState.setPlayheadMs(juce::jmax(0.0, engine.getPositionMs()));
+        projectState.setViewPxPerSecond(tryGetNumber(payload, "viewPxPerSecond").value_or(projectState.getViewPxPerSecond()));
+        return ProjectFile::saveViewState(file, projectState);
+    };
 
     ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveViewState);
-    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), projectState);
+    const auto result = savePreferences();
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {

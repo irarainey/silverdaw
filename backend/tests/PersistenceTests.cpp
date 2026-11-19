@@ -200,6 +200,20 @@ void testProjectFileSaveLoadAndViewState()
     loaded.setExportSettingsJson(exportSettings);
     loaded.setMixdownStartBar(4);
     loaded.addTrack("unsaved");
+    require(file.setLastModificationTime(juce::Time::getCurrentTime() - juce::RelativeTime::hours(1)),
+            "fixture should have a distinct content save time");
+    const auto originalTime = file.getLastModificationTime();
+    require(silverdaw::ProjectFile::saveViewState(file, loaded,
+                silverdaw::ProjectFile::ViewStateScope::ExportPreferencesOnly).wasOk(),
+            "export preferences should persist on a dirty project");
+    require(file.getLastModificationTime() == originalTime,
+            "an export must not make the saved arrangement appear newer than its autosave");
+    silverdaw::ProjectState preferencesOnly;
+    require(silverdaw::ProjectFile::load(file, preferencesOnly).ok, "export preferences file should reopen");
+    require(preferencesOnly.getExportSettingsJson() == exportSettings && preferencesOnly.getMixdownStartBar() == 4,
+            "export preferences should survive discarding unrelated edits");
+    require(!preferencesOnly.hasTrack("unsaved") && preferencesOnly.getViewFxTab() == "plugins",
+            "export must not save unsaved tracks or unrelated view state");
     const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, loaded);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;

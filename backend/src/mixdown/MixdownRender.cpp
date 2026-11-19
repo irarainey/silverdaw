@@ -91,7 +91,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
                          "See backend/third_party/lame/README.md.");
             }
             options.bitDepth = 16;
-            options.dither = true;
         }
         // Loudness normalization uses a measured pass before final gain, limiting, dither, and
         // encode.
@@ -121,7 +120,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
 
         progress(0.0, "prepare");
 
-        // Write caches to a sibling temp file so partial entries are never visible.
         const auto targetFile = options.outputFile;
         const auto parentDir = targetFile.getParentDirectory();
         if (!parentDir.exists() && !parentDir.createDirectory())
@@ -129,20 +127,24 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
             return failWith(MixdownFailureCode::Io,
                      "Cannot create output folder: " + parentDir.getFullPathName());
         }
-        const auto tmpFile = parentDir.getChildFile(targetFile.getFileName() + ".tmp");
-        tmpFile.deleteFile();
-        const auto f32TmpFile = parentDir.getChildFile(targetFile.getFileName() + ".f32.tmp");
-        f32TmpFile.deleteFile();
-        juce::ScopeGuard cleanupFloatStage{[&] { if (normalizing) f32TmpFile.deleteFile(); }};
+        // Only the publishable file needs to be on the destination volume.
+        const juce::TemporaryFile stagedOutput(targetFile);
+        const auto& tmpFile = stagedOutput.getFile();
+        std::optional<juce::TemporaryFile> floatPcm;
+        if (normalizing)
+        {
+            if (mp3) floatPcm.emplace(juce::String{".wav"});
+            else floatPcm.emplace(targetFile.withFileExtension(".wav"));
+        }
         std::optional<juce::TemporaryFile> mp3Pcm;
-        if (mp3) mp3Pcm.emplace(targetFile.withFileExtension(".wav"));
+        if (mp3) mp3Pcm.emplace(juce::String{".wav"});
         const auto& renderedFile = mp3 ? mp3Pcm->getFile() : tmpFile;
 
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
 
         // JUCE 8 lacks some tag hooks, so FLAC/AIFF metadata is post-processed after encode.
-        const juce::File& pass1File = normalizing ? f32TmpFile : renderedFile;
+        const juce::File& pass1File = normalizing ? floatPcm->getFile() : renderedFile;
         std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(pass1File);
         if (! static_cast<juce::FileOutputStream*>(outStream.get())->openedOk())
         {
@@ -178,8 +180,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
 
         if (writer == nullptr)
         {
-            outStream.reset();
-            pass1File.deleteFile();
             const auto fmtName = normalizing
                                      ? juce::String("WAV-f32 (pass1)")
                                      : (options.format == MixdownOptions::Format::Flac
@@ -195,8 +195,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         }
         if (pass1WantsFloat && ! writer->isFloatingPoint())
         {
-            writer.reset();
-            pass1File.deleteFile();
             return failWith(MixdownFailureCode::Io,
                      "WAV writer opened in PCM mode when 32-float was requested.");
         }
@@ -225,8 +223,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
             normalizing, analyzing, rngL, rngR, progress, cancelFlag);
         if (! p1.ok)
         {
-            writer.reset();
-            pass1File.deleteFile();
             return failWith(p1.code, p1.message);
         }
         // Member order preserves JUCE source lifetimes during teardown.
@@ -242,8 +238,9 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
                                       : (analyzing ? "analyze" : "render"));
 
         const auto finalizeStartMs = juce::Time::getMillisecondCounter();
+        const auto window = options.exactOutputWindow();
         const int64_t totalOutputFrames =
-            options.outputFrameRange ? options.outputFrameRange->getLength() : static_cast<int64_t>(
+            window ? window->getLength() : static_cast<int64_t>(
                 std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
         {
@@ -256,8 +253,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
                 const int chunk = static_cast<int>(juce::jmin<int64_t>(remaining, kBlockFrames));
                 if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, chunk))
                 {
-                    writer.reset();
-                    pass1File.deleteFile();
                     return failWith(MixdownFailureCode::Io, "Failed while writing final silence.");
                 }
                 remaining -= chunk;
@@ -319,7 +314,7 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
         if (normalizing)
         {
             auto p2 = mixdown_normalize::runNormalizePass2(
-                f32TmpFile, renderedFile, options, chosenBitDepth, wantFloatWav,
+                pass1File, renderedFile, options, chosenBitDepth, wantFloatWav,
                 appliedGainDb, *analyzer, rngL, rngR, progress, cancelFlag);
             if (! p2.ok)
             {
@@ -337,7 +332,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
                                                             outputFramesWritten, cancelFlag);
             if (encoded.failed())
             {
-                tmpFile.deleteFile();
                 return failWith(cancelFlag.load() ? MixdownFailureCode::Cancelled : MixdownFailureCode::Encode,
                                 encoded.getErrorMessage());
             }
@@ -345,7 +339,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
 
         if (cancelFlag.load())
         {
-            tmpFile.deleteFile();
             return failWith(MixdownFailureCode::Cancelled, "Cancelled.");
         }
 
@@ -363,7 +356,6 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
 
         if (!atomicReplace(tmpFile, targetFile))
         {
-            tmpFile.deleteFile();
             return failWith(MixdownFailureCode::Io,
                      "Could not finalise output file (rename failed). Path may be open in another app.");
         }

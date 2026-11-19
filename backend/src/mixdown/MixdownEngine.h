@@ -149,8 +149,10 @@ struct MixdownOptions
     double ceilingDbtp{-1.0};
     int bitrateKbps{192};
     double lengthMs{0.0};
-    // Half-open output sample window, after latency compensation and resampling.
+    // Selected half-open output window, after latency compensation and resampling.
     std::optional<juce::Range<int64_t>> outputFrameRange;
+    bool alignTrackLength{false};
+    std::optional<juce::Range<int64_t>> exactOutputWindow() const;
     // Project-time offset to begin rendering from; earlier audio is rendered then
     // discarded so clip positions and FX tails stay correct. 0 = project origin.
     double startMs{0.0};

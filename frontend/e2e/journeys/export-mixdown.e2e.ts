@@ -11,11 +11,11 @@
 // waiting; it does not prove a single sample was written, and a zero-length or
 // header-only file is exactly the regression worth catching.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseFile } from 'music-metadata'
 
-import { expect, test } from '../fixtures/silverdaw'
+import { closeSilverdaw, expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { libraryItem } from '../helpers/library'
@@ -310,4 +310,62 @@ test('Export Tracks remembers a selective export and preserves full arrangement 
   await expect(format).toHaveValue('mp3')
   await dialog.getByRole('button', { name: 'Tracks: 1 of 2 selected' }).click()
   await expect(secondTrack).toBeChecked()
+})
+
+test('exports remember preferences without hiding unsaved work from crash recovery', async ({ launchApp }) => {
+  const first = await launchApp({ preferences: { autosave: { enabled: true, intervalSeconds: 600 } } })
+  const { page, electronApp } = first
+  const root = makeTrackedTempDir('export-recovery')
+  const name = 'Recovery'
+  const projectFile = join(root, name, `${name}.silverdaw`)
+  const mixFile = join(root, 'remember.flac')
+  const addTrack = page.getByRole('button', { name: 'Add Track' })
+  const dialog = page.getByRole('dialog')
+
+  await startNewProject(page)
+  await addTrack.click()
+  await stubOpenDialog(electronApp, [createToneWav({ fileName: AUDIO_FILE, seconds: SOURCE_SECONDS })])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await expect(page.getByText('Processing audio', { exact: true })).toBeHidden({ timeout: 30_000 })
+  await stubSaveDialog(electronApp, join(root, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Save As')
+  await expect.poll(() => existsSync(projectFile)).toBe(true)
+  await expect(page.getByLabel('Unsaved changes')).toBeHidden()
+  // Recovery ignores sub-second differences between an original and its autosave.
+  const earlier = new Date((Math.floor(Date.now() / 1000) - 60) * 1000)
+  utimesSync(projectFile, earlier, earlier)
+  const savedTime = statSync(projectFile).mtimeMs
+  await addTrack.click()
+  await expect(page.getByLabel('Unsaved changes')).toBeVisible()
+
+  await invokeMenuItem(page, 'File', 'Export Tracks')
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await publishedBatch(join(root, name, 'export'))
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+  expect(statSync(projectFile).mtimeMs).toBeCloseTo(savedTime, 0)
+
+  await invokeMenuItem(page, 'File', 'Export Mixdown')
+  await dialog.getByLabel('Format', { exact: true }).selectOption('flac')
+  await dialog.getByRole('textbox').first().fill(mixFile)
+  await dialog.getByRole('radio', { name: 'Trim to end of last clip' }).check()
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect.poll(() => existsSync(mixFile), { timeout: 30_000 }).toBe(true)
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+  expect(statSync(projectFile).mtimeMs).toBeCloseTo(savedTime, 0)
+
+  await closeSilverdaw(first, { keepProfile: true })
+  const next = await launchApp({ userDataDir: first.userDataDir })
+  const recovery = next.page.getByRole('dialog').filter({ hasText: 'Recover Unsaved Work' })
+  await expect(recovery.getByText(name, { exact: true })).toBeVisible({ timeout: 60_000 })
+  await recovery.getByRole('button', { name: 'Restore' }).click()
+  await expect(next.page.getByLabel('Unsaved changes')).toBeVisible()
+  await stubOpenDialog(next.electronApp, [projectFile])
+  await invokeMenuItem(next.page, 'File', 'Open Project')
+  await next.page.getByRole('button', { name: "Don't Save" }).click()
+  await expect(next.page.getByLabel('Unsaved changes')).toBeHidden()
+  await invokeMenuItem(next.page, 'File', 'Export Mixdown')
+  const reopened = next.page.getByRole('dialog', { name: 'Export Mixdown' })
+  await expect(reopened.getByLabel('Format', { exact: true })).toHaveValue('flac')
+  await expect(reopened.getByRole('textbox').first()).toHaveValue(mixFile)
 })

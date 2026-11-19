@@ -5,6 +5,11 @@
 
 #include "TestRegistry.h"
 
+#include "AudioEngine.h"
+#include "DecodedCache.h"
+#include "MixdownCommands.h"
+#include "MixdownEngine.h"
+#include "PluginChain.h"
 #include "PluginCommands.h"
 #include "ProjectState.h"
 #include "ProjectStateTypes.h"
@@ -95,6 +100,30 @@ void testTrackPluginReorderIgnoresOtherChildren()
 
     require(state.getBeatRepeatRegions("t-mixed").size() == 1,
             "the beat-repeat region must be untouched");
+}
+
+void testMixdownCapturesEnginePluginState()
+{
+    ProjectState project;
+    const juce::TemporaryFile source(".wav");
+    require(project.addTrack("track") &&
+            project.addLibraryItem("audio", source.getFile().getFullPathName(), "input.wav", 1000, 44100, 2) &&
+            project.addClip("track", "clip", "audio", 0, 1000), "fixture needs an audible track");
+    auto slot = makeSlot("insert", "test:offline-insert", "Insert");
+    const auto savedState = plugins::encodeStateChunk(juce::MemoryBlock("old", 3));
+    slot.state = savedState;
+    require(project.addTrackPlugin("track", slot), "fixture needs a saved insert");
+    project.markClean();
+
+    // A placeholder slot retains real state bytes without requiring an installed VST3.
+    AudioEngine engine;
+    slot.state = plugins::encodeStateChunk(juce::MemoryBlock("new", 3));
+    engine.setTrackPluginsFromState("track", {slot});
+    const auto mix = snapshotAudibleMixForExport(engine, project, DecodedCache{});
+    require(mix.tracks.size() == 1 && mix.tracks.front().plugins.size() == 1 &&
+            mix.tracks.front().plugins.front().state == slot.state, "mixdown should use the engine's current insert state");
+    require(!project.isDirty() && project.getTrackPlugins("track").front().state == savedState,
+            "capturing a mixdown must not write live plugin state into the project");
 }
 
 void testTrackPluginJsonExposesUnresolvedWithoutPersistingIt()
@@ -189,6 +218,7 @@ void testUnresolvedPluginNoticeIsSilentWhenEverythingResolves()
 void addProjectStateTrackPluginTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ProjectState track plugin slots round-trip", testTrackPluginCrudRoundTrip});
+    tests.push_back({"Mixdown captures live plugin state without editing the project", testMixdownCapturesEnginePluginState});
     tests.push_back({"ProjectState track plugin reorder skips non-plugin children",
                      testTrackPluginReorderIgnoresOtherChildren});
     tests.push_back({"ProjectState track plugins expose unresolved without persisting it",

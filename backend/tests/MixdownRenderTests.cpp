@@ -102,6 +102,16 @@ RenderFingerprint fingerprint(const juce::File& file)
     return fp;
 }
 
+RenderFingerprint decodedMp3Fingerprint(const juce::File& file)
+{
+    DecodedCache cache;
+    juce::AudioFormatManager noFallbackFormats;
+    const auto decoded = cache.ensureDecoded(file, noFallbackFormats);
+    require(decoded.existsAsFile(), "the bundled LAME decoder must decode the MP3 without a JUCE fallback");
+    juce::ScopeGuard cleanup{[&] { decoded.deleteFile(); }};
+    return fingerprint(decoded);
+}
+
 // Build a single-track, single-clip project pointing at a real WAV and render
 // it through runMixdownJob (synchronous; clientless BridgeServer => broadcasts
 // are no-ops). Returns the decoded fingerprint of the produced file.
@@ -147,20 +157,7 @@ RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outF
         throw std::runtime_error(std::string("render produced no output file; dir has: ")
                                  + present.toStdString());
     }
-    RenderFingerprint fp;
-    if (format == MixdownOptions::Format::Mp3)
-    {
-        DecodedCache cache;
-        juce::AudioFormatManager noFallbackFormats;
-        const auto decoded = cache.ensureDecoded(outFile, noFallbackFormats);
-        require(decoded.existsAsFile(), "the bundled LAME decoder must decode the MP3 without a JUCE fallback");
-        fp = fingerprint(decoded);
-        require(decoded.deleteFile(), "the test's decoded cache entry should be removed");
-    }
-    else
-    {
-        fp = fingerprint(outFile);
-    }
+    const auto fp = format == MixdownOptions::Format::Mp3 ? decodedMp3Fingerprint(outFile) : fingerprint(outFile);
     std::cout << "    [fingerprint] " << outFile.getFileName().toStdString()
               << " frames=" << fp.frames << " ch=" << fp.channels
               << " sr=" << fp.sampleRate << " peak=" << fp.peak
@@ -215,8 +212,16 @@ void testMp3FailureDoesNotPublish()
     for (const auto mode : {MixdownOptions::LoudnessMode::Off, MixdownOptions::LoudnessMode::Normalize})
     {
         options.loudnessMode = mode;
-        const auto result = renderOfflineFile(snapshot, options, [](double, const char*) {}, cancel);
-        require(result.failure == MixdownFailureCode::Encode && result.message.contains("exit"),
+        bool checkedEncodeStage = false;
+        const auto result = renderOfflineFile(snapshot, options, [&](double, const char* stage) {
+            if (juce::String(stage) == "encode")
+            {
+                checkedEncodeStage = true;
+                require(dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1,
+                        "uncompressed PCM must never be staged beside the destination");
+            }
+        }, cancel);
+        require(checkedEncodeStage && result.failure == MixdownFailureCode::Encode && result.message.contains("exit"),
                 "report LAME's nonzero exit status");
         require(options.outputFile.loadFileAsString() == "previous mix" &&
                 dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1,
@@ -238,6 +243,34 @@ void testMp3FailureDoesNotPublish()
                                                         4411, cancel);
     require(partial.getSize() > 0 && shortEncode.failed() && shortEncode.getErrorMessage().contains("incomplete"),
             "a zero exit status and playable file are insufficient if even one rendered sample is missing");
+}
+
+void testSilentMp3Tracks()
+{
+    const auto dir = makeTempDir("track-export-silent-mp3");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto source = writeSineWav(dir, "source.wav", 0.5, 44100, 440.0, 0.5F);
+    ProjectState state;
+    require(state.addTrack("empty") && state.addTrack("down") &&
+            state.addLibraryItem("lib", source.getFullPathName(), "source", 500, 44100, 2) &&
+            state.addClip("down", "clip", "lib", 0, 500), "stage empty and fully attenuated tracks");
+    state.setTrackName("empty", "Empty");
+    state.setTrackName("down", "Down");
+    state.setTrackGain("down", 0.0F);
+    MixdownOptions options;
+    options.format = MixdownOptions::Format::Mp3;
+    options.bitrateKbps = 320;
+    options.lengthMs = 500;
+    std::atomic<bool> cancel{false};
+    const auto batch = renderTrackBatch(snapshotProjectForMixdown(state, 0, 1, 0, 1, 1, SnapshotScope::IndividualTracks),
+        dir, options, true, [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "export the silent MP3 tracks");
+    for (const auto* name : {"Empty.mp3", "Down.mp3"})
+    {
+        const auto fp = decodedMp3Fingerprint(batch.folder.getChildFile(name));
+        require(fp.frames == 22050 && fp.channels == 2 && fp.peak == 0,
+                "each decoded MP3 must contain a half-second of exact stereo silence");
+    }
 }
 
 void testMp3DecoderReplacesSupersededCache()
@@ -567,6 +600,74 @@ void testIndividualTrackExport()
             "no partial folders or WAVs survive failure or cancellation");
 }
 
+void testSelectedRangeSourceBoundary()
+{
+    const auto dir = makeTempDir("range-sources");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto source = dir.getChildFile("impulse.wav");
+    juce::AudioBuffer<float> impulse(2, 4410);
+    impulse.clear();
+    impulse.setSample(0, 1, 0.9F);
+    writeStereoWav(source, 44100, impulse);
+    ProjectState state;
+    state.setTargetSampleRate(44100);
+    state.setMasterVolume(1.0F);
+    state.setSafetyLimiterEnabled(false);
+    require(state.addTrack("t") && state.addLibraryItem("lib", source.getFullPathName(), "source", 100, 44100, 2)
+            && state.addClip("t", "edge", "lib", 200, 100), "place an impulse just after the selected interval");
+    state.setTrackName("t", "Edge");
+    auto snapshot = snapshotProjectForMixdown(state);
+    MixdownOptions options;
+    options.outputFile = dir.getChildFile("full.wav");
+    options.bitDepth = 32;
+    options.outputSampleRate = 48000;
+    options.lengthMs = 300;
+    std::atomic<bool> cancel{false};
+    const auto tick = [](double, const char*) {};
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure, "render the full impulse");
+
+    constexpr int frames = 64;
+    constexpr int end = 9600; // 200 ms at 48 kHz
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(options.outputFile));
+    juce::AudioBuffer<float> reference(2, frames);
+    require(reader && reader->read(&reference, 0, frames, end - frames, true, true)
+            && reference.getMagnitude(0, frames) > 1.0e-5F, "sinc pre-ringing reaches into the range");
+
+    auto missing = snapshot.tracks.front().clips.front();
+    missing.id = "unavailable";
+    missing.offsetMs = 205; // Same render block, outside the sinc kernel.
+    missing.filePath = dir.getChildFile("missing.wav").getFullPathName();
+    snapshot.tracks.front().clips.push_back(missing);
+    options.outputFile = dir.getChildFile("range.wav");
+    options.outputFrameRange.emplace(end - frames, end);
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure, "an unrelated missing source does not block mixdown");
+    const auto batch = renderTrackBatch(snapshot, dir, options, true,
+        [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "an unrelated missing source does not block track export");
+    for (const auto& file : {options.outputFile, batch.folder.getChildFile("Edge.wav")})
+    {
+        reader.reset(fm.createReaderFor(file));
+        juce::AudioBuffer<float> actual(2, frames);
+        require(reader && reader->lengthInSamples == frames && reader->read(&actual, 0, frames, 0, true, true),
+                "read the complete selected interval");
+        actual.addFrom(0, 0, reference, 0, 0, frames, -1.0F);
+        require(actual.getMagnitude(0, frames) < 1.0e-7F, "post-selection samples needed by the filter are retained");
+    }
+
+    snapshot.tracks.front().clips.front().filePath = missing.filePath;
+    require(renderOfflineFile(snapshot, options, tick, cancel).failure == MixdownFailureCode::Decode,
+            "a missing source inside the resampler lookahead is still required");
+    options.outputSampleRate = 44100;
+    options.outputFrameRange.emplace(0, 8820);
+    auto& unresolved = snapshot.tracks.front().plugins.emplace_back();
+    unresolved.slotId = "missing-insert";
+    unresolved.identifier = "uninstalled-plugin";
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure && fingerprint(options.outputFile).peak == 0,
+            "an unresolved insert adds no lookahead: a source at the native-rate exclusive end is not required");
+}
+
 } // namespace
 
 void addMixdownRenderTests(std::vector<TestCase>& tests)
@@ -575,10 +676,12 @@ void addMixdownRenderTests(std::vector<TestCase>& tests)
     tests.push_back({"Reversed mixdown and track export preserve the last resampled transient", testReversedTrackEndsWithResampledTransient});
     tests.push_back({"Mixdown tears down short slices without per-clip playback waits", testSlicedRenderTeardown});
     tests.push_back({"Timeline range export matches the full resampled mix including prior effects", testTimelineRangeMatchesFullRender});
+    tests.push_back({"Timeline range export opens only sources within its filter horizon", testSelectedRangeSourceBoundary});
     tests.push_back({"MP3 export round-trips through the bundled decoder at each bitrate",
                      testMp3ExportRoundTripsThroughBundledDecoder});
     tests.push_back({"MP3 encoder failure preserves the mixdown and publishes no track batch",
                      testMp3FailureDoesNotPublish});
+    tests.push_back({"MP3 track export preserves digital silence on empty and fully attenuated tracks", testSilentMp3Tracks});
     tests.push_back({"MP3 decoder replaces a superseded cache entry", testMp3DecoderReplacesSupersededCache});
     tests.push_back({"Mixdown WAV-16 render is deterministic and matches the input sine",
                      testWav16RenderIsDeterministicAndCorrect});

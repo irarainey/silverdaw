@@ -1427,8 +1427,10 @@ property is suppressed from save when at unity to keep older projects bit-clean.
 `PROJECT.exportSettingsJson` is a single opaque JSON blob (capped at 64 KB)
 holding the last-used export dialog choices for this project; it is
 written via `PROJECT_SET_EXPORT_SETTINGS`, parsed with field-level whitelist /
-clamp / schema-version guards on load, and saved with view state on a clean
-close. Export preferences neither generate undo entries nor mark the project dirty.
+clamp / schema-version guards on load. Both export dialogs flush their choices
+to a saved project before rendering, without saving arrangement edits, creating
+an undo entry, or marking the project dirty. This preference-only write keeps
+the file's modification time so it cannot hide an autosave from crash recovery.
 `PROJECT.barCounterStart` is the number shown for the **first** bar on the
 timeline ruler (default `1`); the ruler labels each bar as
 `barIndex + barCounterStart`, so the default shows `1, 2, 3, …` and setting it to

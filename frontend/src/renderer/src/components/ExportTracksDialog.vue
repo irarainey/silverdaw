@@ -4,7 +4,7 @@ import { TrackExportStartSchema, type ExportFormat, type ExportBitDepth } from '
 import { send } from '@/lib/bridgeService'
 import { exportSampleRate } from '@/lib/export/exportSampleRate'
 import { useExportBitDepths } from '@/lib/export/useExportBitDepths'
-import { mergeExportSettings, readTrackExportPreferences } from '@/lib/export/projectExportSettings'
+import { flushExportPreferences, mergeExportSettings, readTrackExportPreferences } from '@/lib/export/projectExportSettings'
 import ExportOutputLocation from './ExportOutputLocation.vue'
 import ExportFormatSettings from './ExportFormatSettings.vue'
 import ExportTrackPicker from './ExportTrackPicker.vue'
@@ -105,11 +105,7 @@ async function submit(): Promise<void> {
         return
       }
     } else {
-      // Flush preferences now without saving any arrangement edits the user may later discard.
-      const saved = await project.saveViewStateAndWait()
-      if (!saved.ok) {
-        notifications.pushError(`Could not remember track export settings: ${saved.error ?? 'Project file could not be updated.'}`)
-      }
+      await flushExportPreferences()
     }
     if (!send('TRACK_EXPORT_START', parsed.data)) {
       notifications.pushError('Track export could not start: the audio engine is not connected.')

@@ -43,6 +43,27 @@ Pass1Result fail(MixdownFailureCode code, const juce::String& message)
     r.message = message;
     return r;
 }
+
+double lastTrackInputFrame(const MixdownSnapshot::TrackSnapshot& track, BusGraph& graph, double lastMixFrame)
+{
+    auto* chain = graph.getTrackPlugins(track.id);
+    if (chain == nullptr) return lastMixFrame;
+    // The graph delays other tracks separately; only this chain's latency extends its source horizon.
+    const auto frame = lastMixFrame + std::min(graph.getLatencyCompensationSamples(), chain->getLatencySamples());
+    const auto active = std::any_of(track.plugins.begin(), track.plugins.end(), [&](const auto& descriptor) {
+        const auto* slot = chain->findSlot(descriptor.slotId);
+        return !descriptor.bypassed && slot != nullptr && !slot->isUnresolved();
+    });
+    // A hosted processor can inspect its entire final input block.
+    return active ? (std::floor(frame / kBlockFrames) + 1.0) * kBlockFrames - 1.0 : frame;
+}
+
+bool startsAfterInputFrame(const MixdownSnapshot::ClipSnapshot& clip, double lastFrame, int projectRate)
+{
+    const double rate = clip.sourceSampleRate > 0 ? clip.sourceSampleRate : projectRate;
+    // OffsetSource floors the source-time offset; JUCE interpolates to the next source sample.
+    return std::floor(clip.offsetMs * rate / 1000.0) > std::ceil(lastFrame * rate / projectRate);
+}
 } // anonymous namespace
 
 Pass1Result runPass1(const MixdownSnapshot& snapshot,
@@ -59,25 +80,6 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 {
     std::vector<std::unique_ptr<OfflineClip>> clips;
     clips.reserve(snapshot.tracks.size() * 8);
-    for (const auto& track : snapshot.tracks)
-    {
-        for (const auto& clip : track.clips)
-        {
-            if (cancelFlag.load())
-                return fail(MixdownFailureCode::Cancelled, "Cancelled.");
-            juce::String err;
-            auto built = buildOfflineClip(clip, track.id, track.gain,
-                                          snapshot.projectSampleRate,
-                                          formatManager, err);
-            if (built == nullptr)
-                return fail(MixdownFailureCode::Decode,
-                            "Could not open source for clip " + clip.id +
-                                (err.isNotEmpty() ? juce::String(": ") + err : juce::String("")));
-            // The final source owns the track's plugin chain while it processes tails.
-            built->keepTrackAlive = options.outputFrameRange.has_value() && &clip == &track.clips.back();
-            clips.push_back(std::move(built));
-        }
-    }
 
     // Snapshot live per-track parameters so offline render stays in parity with playback.
     // Declaration order is deliberate: everything the graph's plugin chains point at — the
@@ -89,17 +91,13 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     const std::atomic<double> offlineRate{static_cast<double>(snapshot.projectSampleRate)};
     const std::atomic<bool> offlinePlaying{true};
     silverdaw::plugins::PluginPlayHead offlinePlayHead;
+    juce::MixerAudioSource silentSource;
     silverdaw::BusGraph busGraph;
 
     offlinePlayHead.setTransportSources(&mixdownPos, &offlineRate, &offlinePlaying);
     offlinePlayHead.setBpm(snapshot.bpm);
     busGraph.setPluginPlayHead(&offlinePlayHead);
     busGraph.prepareToPlay(kBlockFrames, static_cast<double>(snapshot.projectSampleRate));
-    for (auto& cp : clips)
-    {
-        busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
-    }
-
     for (const auto& trackSnap : snapshot.tracks)
     {
         busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
@@ -184,6 +182,33 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         return fail(MixdownFailureCode::Invalid,
                     juce::String("Cannot init output resampler: ") + finalResampler.error());
 
+    const auto window = options.exactOutputWindow();
+    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
+    for (const auto& track : snapshot.tracks)
+    {
+        const auto firstClip = clips.size();
+        const auto lastInputFrame = options.outputFrameRange
+            ? std::optional{lastTrackInputFrame(track, busGraph, finalResampler.lastInputFrameForOutput(window->getEnd() - 1))}
+            : std::nullopt;
+        for (const auto& clip : track.clips)
+        {
+            if (cancelFlag.load())
+                return fail(MixdownFailureCode::Cancelled, "Cancelled.");
+            if (lastInputFrame && startsAfterInputFrame(clip, *lastInputFrame, snapshot.projectSampleRate)) continue;
+            juce::String err;
+            auto built = buildOfflineClip(clip, track.id, track.gain, snapshot.projectSampleRate, formatManager, err);
+            if (built == nullptr)
+                return fail(MixdownFailureCode::Decode, "Could not open source for clip " + clip.id + ": " + err);
+            clips.push_back(std::move(built));
+            const auto& cp = clips.back();
+            busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
+        }
+        // Keep the track's inserts running on silence, even if its only clip is in the future.
+        if (clips.size() > firstClip) clips.back()->keepTrackAlive = window.has_value();
+        else if (!track.clips.empty())
+            busGraph.attachClip(track.id, track.clips.front().id, &silentSource);
+    }
+
     const double projectFramesPerMs = snapshot.projectSampleRate / 1000.0;
     int64_t totalProjectFrames =
         static_cast<int64_t>(std::round(options.lengthMs * projectFramesPerMs));
@@ -204,9 +229,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
     // Every track leaves the graph aligned by this much, so shift the whole render window to
     // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
-    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
     totalProjectFrames += alignmentFrames;
-    const auto& window = options.outputFrameRange;
     if (window)
         totalProjectFrames = alignmentFrames + static_cast<int64_t>(std::ceil(
             static_cast<double>(window->getEnd()) * snapshot.projectSampleRate / options.outputSampleRate));

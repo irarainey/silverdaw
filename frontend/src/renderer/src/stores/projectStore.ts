@@ -685,8 +685,8 @@ export const useProjectStore = defineStore('project', {
       persistence.notifySaveAck(ok, error)
     },
 
-    saveViewStateAndWait(): Promise<{ ok: boolean; error?: string }> {
-      return persistence.saveViewStateAndWait(this)
+    saveViewStateAndWait(options?: persistence.ViewStateSaveOptions): Promise<{ ok: boolean; error?: string }> {
+      return persistence.saveViewStateAndWait(this, options)
     },
 
     notifyViewStateSaveAck(ok: boolean, error?: string): void {

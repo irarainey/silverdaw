@@ -4,7 +4,6 @@
 #include "MixdownExport.h"
 #include "MixdownRender.h"
 
-#include <cmath>
 #include <windows.h>
 
 namespace silverdaw
@@ -52,10 +51,7 @@ TrackExportResult renderTrackBatch(MixdownSnapshot snapshot, const juce::File& e
 {
     if (options.lengthMs <= 0.0)
         return {MixdownFailureCode::Invalid, "Nothing to export. Add a clip to the timeline first.", {}};
-    if (!options.outputFrameRange)
-        options.outputFrameRange.emplace(0, static_cast<int64_t>(std::ceil(
-            options.lengthMs * options.outputSampleRate / 1000.0)) +
-            std::llround(options.tailSeconds * options.outputSampleRate));
+    options.alignTrackLength = true;
     const auto created = exportDir.createDirectory();
     if (created.failed()) return {MixdownFailureCode::Io, created.getErrorMessage(), {}};
 
