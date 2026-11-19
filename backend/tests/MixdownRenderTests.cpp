@@ -420,6 +420,56 @@ void testSlicedRenderTeardown()
             "teardown must not wait for a playback callback per slice");
 }
 
+void testTimelineRangeMatchesFullRender()
+{
+    const auto dir = makeTempDir("export-range");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = writeSineWav(dir, "tone.wav", 1, 44100, 237, 0.4F);
+    ProjectState state;
+    state.setTargetSampleRate(44100);
+    state.setMasterVolume(1.0F);
+    state.setSafetyLimiterEnabled(false);
+    require(state.addTrack("t") && state.addLibraryItem("lib", src.getFullPathName(), "tone", 1000, 44100, 2)
+            && state.addClip("t", "clip", "lib", 0, 200), "stage a clip ending before the range");
+    state.setTrackName("t", "Echo");
+    state.setProjectDelay("1/8", 0.3F, 0.5F, 1.0F);
+    state.setTrackSends("t", 0.0F, 1.0F);
+    MixdownOptions options;
+    options.outputFile = dir.getChildFile("full.wav");
+    options.outputSampleRate = 48000;
+    options.bitDepth = 24;
+    options.lengthMs = 1000;
+    const auto snapshot = snapshotProjectForMixdown(state);
+    std::atomic<bool> cancel{false};
+    const auto progress = [](double, const char*) {};
+    require(!renderOfflineFile(snapshot, options, progress, cancel).failure, "render full mix reference");
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    const juce::Range<int64_t> window{14413, 20571};
+    const auto count = static_cast<int>(window.getLength());
+    juce::AudioBuffer<float> reference(2, count);
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(options.outputFile));
+    require(reader && reader->read(&reference, 0, count, window.getStart(), true, true)
+            && reference.getMagnitude(0, count) > 0.02F, "reference contains the pre-range clip's delay return");
+
+    options.outputFile = dir.getChildFile("range.wav");
+    options.outputFrameRange = window;
+    require(!renderOfflineFile(snapshot, options, progress, cancel).failure, "render selected mix range");
+    const auto batch = renderTrackBatch(snapshot, dir.getChildFile("tracks"), options, true,
+        [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "render selected track range");
+    for (const auto& file : {options.outputFile, batch.folder.getChildFile("Echo.wav")})
+    {
+        reader.reset(fm.createReaderFor(file));
+        juce::AudioBuffer<float> actual(2, count);
+        require(reader && reader->lengthInSamples == count && reader->read(&actual, 0, count, 0, true, true),
+                "non-block-aligned range has the exact output frame count");
+        for (int ch = 0; ch < 2; ++ch)
+            actual.addFrom(ch, 0, reference, ch, 0, count, -1.0F);
+        require(actual.getMagnitude(0, count) < 1.0e-5F, "both exports match the same slice of the full render");
+    }
+}
+
 void testIndividualTrackExport()
 {
     const auto dir = makeTempDir("track-export");
@@ -524,6 +574,7 @@ void addMixdownRenderTests(std::vector<TestCase>& tests)
     tests.push_back({"Individual track export renders aligned wet and dry WAV batches", testIndividualTrackExport});
     tests.push_back({"Reversed mixdown and track export preserve the last resampled transient", testReversedTrackEndsWithResampledTransient});
     tests.push_back({"Mixdown tears down short slices without per-clip playback waits", testSlicedRenderTeardown});
+    tests.push_back({"Timeline range export matches the full resampled mix including prior effects", testTimelineRangeMatchesFullRender});
     tests.push_back({"MP3 export round-trips through the bundled decoder at each bitrate",
                      testMp3ExportRoundTripsThroughBundledDecoder});
     tests.push_back({"MP3 encoder failure preserves the mixdown and publishes no track batch",

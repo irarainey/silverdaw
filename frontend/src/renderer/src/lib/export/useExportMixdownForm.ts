@@ -54,6 +54,7 @@ export interface ExportMixdownFormDeps {
 }
 
 export interface ExportMixdownForm {
+  selectionOnly: Ref<boolean>
   draftOutputPath: Ref<string>
   draftFormat: Ref<ExportFormat>
   draftSampleRate: Ref<44100 | 48000>
@@ -172,6 +173,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   const draftComment = ref('')
 
   const submitting = ref(false)
+  const selectionOnly = ref(false)
 
   // ── Derived ────────────────────────────────────────────────────────────
 
@@ -243,8 +245,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   const formIsValid = computed<boolean>(
     () =>
       pathValid.value &&
-      durationValid.value &&
-      tailValid.value &&
+      (selectionOnly.value ? ui.timelineSelection !== null : durationValid.value && tailValid.value) &&
       loudnessValid.value &&
       !submitting.value
   )
@@ -332,6 +333,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
 
   async function reseedOnOpen(): Promise<void> {
     submitting.value = false
+    selectionOnly.value = false
     // Base defaults also fill fields omitted by persisted settings.
     draftFormat.value = 'wav'
     draftSampleRate.value = effectiveProjectRate.value
@@ -402,8 +404,9 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
         outputPath = `${outputPath.replace(/\.[^.\\/]+$/, '')}${expectedExt}`
       }
 
+      const rangeOnly = selectionOnly.value
       const lengthMs = duration.value
-      if (lengthMs <= 0) {
+      if (!rangeOnly && lengthMs <= 0) {
         notifications.pushError('Mixdown duration must be greater than zero.')
         return
       }
@@ -445,12 +448,11 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
         outputPath,
         sampleRate: draftSampleRate.value,
         format: draftFormat.value,
-        tailSeconds: tailSeconds.value,
         lengthMode: draftLengthMode.value,
-        lengthMs
+        ...(rangeOnly ? { selectionOnly: true } : { lengthMs, tailSeconds: tailSeconds.value })
       }
       const startMs = mixdownStartMs.value
-      if (startMs > 0) payload.startMs = startMs
+      if (!rangeOnly && startMs > 0) payload.startMs = startMs
       if (draftFormat.value === 'mp3') {
         payload.bitrateKbps = draftBitrate.value
       } else {
@@ -464,7 +466,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       project.setExportSettingsJson(mergeExportSettings(project.exportSettingsJson, snapshotExportSettings()))
       // Persist the chosen start bar as a first-class project property (independent of the
       // ruler's bar-counter offset) so it round-trips and prefills next time.
-      project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
+      if (!rangeOnly) project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
       if (!sendBridge('MIXDOWN_START', payload)) {
         // Progress state was opened by `beginMixdown` above. Without this the
         // export dialog closes over a progress dialog stuck at 0% that only a
@@ -480,6 +482,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   }
 
   return {
+    selectionOnly,
     draftOutputPath,
     draftFormat,
     draftSampleRate,

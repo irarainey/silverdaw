@@ -149,8 +149,8 @@ struct MixdownOptions
     double ceilingDbtp{-1.0};
     int bitrateKbps{192};
     double lengthMs{0.0};
-    // Track batches share an exact output length instead of ending on FX decay.
-    std::optional<int64_t> fixedOutputFrames;
+    // Half-open output sample window, after latency compensation and resampling.
+    std::optional<juce::Range<int64_t>> outputFrameRange;
     // Project-time offset to begin rendering from; earlier audio is rendered then
     // discarded so clip positions and FX tails stay correct. 0 = project origin.
     double startMs{0.0};

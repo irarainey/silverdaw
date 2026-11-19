@@ -440,12 +440,17 @@ Silverdaw currently supports the core arrangement workflow:
   folder, or under a folder you choose. The project remembers the destination
   and track selection separately from the mixdown settings. Neither export
   command marks the project as edited.
-  Every file starts at 0:00 and has the same length: the end of the last clip
+  By default every file starts at 0:00 and has the same length: the end of the last clip
   on the arrangement plus the chosen tail. Muting and soloing are ignored;
   empty tracks are silent. Clip edits, track volume, pan and their automation
   remain in the audio. **Include track effects** also prints inserts and that
   track's reverb and delay returns. Master processing and loudness
   normalisation are not applied. The folder is published only on success.
+- **Export selected range only** is available in both export dialogs after you
+  drag a range on the timeline ruler. It starts unchecked on every open and
+  does not require loop playback. When checked, each file starts at the range
+  start and stops at the range end, overriding start bar, length and tail.
+  Audio already playing at the start, including effect returns, is retained.
 - **Clip lock** (Ctrl+L or **Edit ▸ Lock / Unlock**) freezes a single
   timeline clip against accidental move / trim / split. Locked clips show a
   padlock badge in their title strip, refuse drag-move and edge-trim gestures

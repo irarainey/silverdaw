@@ -20,8 +20,10 @@ import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { libraryItem } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
+import { readProjectDocument } from '../helpers/projectDocument'
 import { startNewProject } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
+import { dragRulerRange } from '../helpers/timeline'
 
 const AUDIO_FILE = 'e2e-mixdown-source.wav'
 const SOURCE_SECONDS = 2
@@ -126,6 +128,67 @@ async function publishedBatch(parent: string): Promise<string> {
   await expect.poll(batches, { timeout: 60_000 }).toHaveLength(1)
   return join(parent, batches()[0])
 }
+
+test('both export dialogs opt in to exactly the selected ruler range', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  const root = makeTrackedTempDir('range-export')
+  const name = 'Range export'
+  const dialog = page.getByRole('dialog')
+  const checkbox = dialog.getByRole('checkbox', { name: 'Export selected range only' })
+  await startNewProject(page)
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubOpenDialog(electronApp, [createToneWav({ fileName: AUDIO_FILE, seconds: 4 })])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  for (const command of ['Export Mixdown', 'Export Tracks']) {
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeDisabled()
+    await expect(checkbox).not.toBeChecked()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+  }
+  await dragRulerRange(page, 40, 220)
+  await expect(page.getByTitle('Loop Selection (off) (L)')).toBeEnabled()
+  await stubSaveDialog(electronApp, join(root, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Save As')
+  const projectFile = join(root, name, `${name}.silverdaw`)
+  await expect.poll(() => readProjectDocument(projectFile)?.viewTimelineSelectionStartMs).toBeGreaterThan(0)
+  const project = readProjectDocument(projectFile)!
+  const startMs = Number(project.viewTimelineSelectionStartMs)
+  const endMs = Number(project.viewTimelineSelectionEndMs)
+  const sampleRate = 48000
+  const frames = Math.round(endMs * sampleRate / 1000) - Math.round(startMs * sampleRate / 1000)
+  expect(frames).toBeGreaterThan(0)
+  for (const command of ['Export Mixdown', 'Export Tracks']) {
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeEnabled()
+    await expect(checkbox).not.toBeChecked()
+    await checkbox.check()
+    await dialog.getByLabel('Sample rate').selectOption(String(sampleRate))
+    const mixFile = join(root, 'mix.wav')
+    if (command === 'Export Mixdown') {
+      await expect(dialog.getByRole('radio', { name: 'Trim to end of last clip' })).toBeDisabled()
+      await dialog.getByRole('textbox').first().fill(mixFile)
+    } else {
+      await expect(dialog.getByLabel('Tail (seconds)', { exact: true })).toBeDisabled()
+    }
+    await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+    if (command === 'Export Mixdown') {
+      await expect.poll(() => existsSync(mixFile), { timeout: 60_000 }).toBe(true)
+      expect(Math.round(readWav(mixFile).seconds * sampleRate)).toBe(frames)
+    } else {
+      const batch = await publishedBatch(join(root, name, 'export'))
+      const tracks = readdirSync(batch)
+      expect(tracks).toHaveLength(2)
+      for (const track of tracks) expect(Math.round(readWav(join(batch, track)).seconds * sampleRate)).toBe(frames)
+    }
+    await expect(page.getByRole('alertdialog')).toBeHidden()
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeEnabled()
+    await expect(checkbox).not.toBeChecked()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+  }
+})
 
 test('Export Tracks remembers a selective export and preserves full arrangement length', async ({ silverdaw }) => {
   const { page, electronApp } = silverdaw

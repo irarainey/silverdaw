@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import ExportFormatSettings from './ExportFormatSettings.vue'
 import ExportLengthTailOptions from './ExportLengthTailOptions.vue'
+import ExportSelectionCheckbox from './ExportSelectionCheckbox.vue'
 import ExportLoudnessOptions from './ExportLoudnessOptions.vue'
 import ExportMetadataTags from './ExportMetadataTags.vue'
 import ExportOutputLocation from './ExportOutputLocation.vue'
@@ -13,6 +14,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const dialogEl = ref<HTMLDivElement | null>(null)
 
 const {
+  selectionOnly,
   draftOutputPath,
   draftFormat,
   draftSampleRate,
@@ -130,15 +132,24 @@ watch(
             :custom-target-valid="customTargetValid"
             :custom-ceiling-valid="customCeilingValid"
           />
-          <ExportLengthTailOptions
-            v-model:length-mode="draftLengthMode"
-            v-model:duration-text="draftDurationText"
-            v-model:tail-seconds-text="draftTailSecondsText"
-            v-model:mixdown-start-bar="draftMixdownStartBar"
-            :last-clip-end-ms="lastClipEndMs"
-            :tail-valid="tailValid"
-            :mixdown-start-ms="mixdownStartMs"
+          <ExportSelectionCheckbox
+            v-model="selectionOnly"
+            class="mb-3"
           />
+          <fieldset
+            :disabled="selectionOnly"
+            class="disabled:opacity-50"
+          >
+            <ExportLengthTailOptions
+              v-model:length-mode="draftLengthMode"
+              v-model:duration-text="draftDurationText"
+              v-model:tail-seconds-text="draftTailSecondsText"
+              v-model:mixdown-start-bar="draftMixdownStartBar"
+              :last-clip-end-ms="lastClipEndMs"
+              :tail-valid="tailValid"
+              :mixdown-start-ms="mixdownStartMs"
+            />
+          </fieldset>
           <ExportMetadataTags
             v-model:title="draftTitle"
             v-model:artist="draftArtist"

@@ -178,6 +178,10 @@ describe('isReadyPayload', () => {
 
 describe('track export encoding settings', () => {
   const base = { sampleRate: 44100, includeEffects: true, tailSeconds: 0, trackLabels: { t1: 'Lead' } }
+  it('passes through the range opt-in only as a boolean', () => {
+    expect(TrackExportStartSchema.parse({ ...base, bitDepth: 24, selectionOnly: true }).selectionOnly).toBe(true)
+    expect(TrackExportStartSchema.safeParse({ ...base, bitDepth: 24, selectionOnly: 'true' }).success).toBe(false)
+  })
   it('only accepts whole tail seconds from 0 through 60', () => {
     const accepts = (tailSeconds: number) => TrackExportStartSchema.safeParse({ ...base, bitDepth: 24, tailSeconds }).success
     for (const seconds of [0, 1, 60]) expect(accepts(seconds)).toBe(true)

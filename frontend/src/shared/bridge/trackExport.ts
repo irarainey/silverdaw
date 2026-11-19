@@ -11,6 +11,7 @@ export const TrackExportStartSchema = z.object({
   bitrateKbps: ExportBitrateSchema.optional(),
   tailSeconds: z.number().int().min(0).max(60),
   includeEffects: z.boolean(),
+  selectionOnly: z.boolean().optional(),
   outputFolder: TrackExportFolderSchema.optional(),
   // Only selected IDs are sent, with their displayed (possibly automatic) timeline names.
   trackLabels: z.record(z.string().min(1), z.string()).refine(labels => Object.keys(labels).length > 0)

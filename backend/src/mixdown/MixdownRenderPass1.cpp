@@ -73,6 +73,8 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                 return fail(MixdownFailureCode::Decode,
                             "Could not open source for clip " + clip.id +
                                 (err.isNotEmpty() ? juce::String(": ") + err : juce::String("")));
+            // The final source owns the track's plugin chain while it processes tails.
+            built->keepTrackAlive = options.outputFrameRange.has_value() && &clip == &track.clips.back();
             clips.push_back(std::move(built));
         }
     }
@@ -204,9 +206,10 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
     const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
     totalProjectFrames += alignmentFrames;
-    if (options.fixedOutputFrames)
+    const auto& window = options.outputFrameRange;
+    if (window)
         totalProjectFrames = alignmentFrames + static_cast<int64_t>(std::ceil(
-            static_cast<double>(*options.fixedOutputFrames) * snapshot.projectSampleRate / options.outputSampleRate));
+            static_cast<double>(window->getEnd()) * snapshot.projectSampleRate / options.outputSampleRate));
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
     // Render from frame 0 so clip positions and FX tails advance correctly, but only
     // push frames at/after the start offset into the output (earlier audio discarded).
@@ -215,6 +218,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)) + alignmentFrames);
     int64_t projectFramesRendered = 0;
     int64_t outputFramesWritten = 0;
+    int64_t skipOutputFrames = window ? window->getStart() : 0;
     double peakAmplitude = 0.0;
     double preClampPeakAmplitude = 0.0;
     int64_t clippedSampleCount = 0;
@@ -248,8 +252,13 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
     const auto writeStereo = [&](const float* interleaved, int frames) -> bool
     {
-        if (options.fixedOutputFrames)
-            frames = static_cast<int>(std::min<int64_t>(frames, *options.fixedOutputFrames - outputFramesWritten));
+        if (window)
+        {
+            const auto skip = static_cast<int>(std::min<int64_t>(skipOutputFrames, frames));
+            skipOutputFrames -= skip;
+            interleaved += static_cast<std::ptrdiff_t>(skip) * kOutputChannels;
+            frames = static_cast<int>(std::min<int64_t>(frames - skip, window->getLength() - outputFramesWritten));
+        }
         if (frames <= 0) return true;
         if (frames > maxWriteFrames)
         {
@@ -288,7 +297,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         return true;
     };
 
-    while (projectFramesRendered < totalProjectFrames)
+    // For an exact output window, advance the full chain (including the resampler's
+    // lookahead) until it has actually delivered the final requested sample.
+    while (window ? outputFramesWritten < window->getLength() : projectFramesRendered < totalProjectFrames)
     {
         // ScopedNoDenormals protects realtime DSP from denormal CPU spikes.
         const juce::ScopedNoDenormals scopedNoDenormals;
@@ -296,7 +307,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         {
             return fail(MixdownFailureCode::Cancelled, "Cancelled.");
         }
-        const int blockFrames = static_cast<int>(
+        const int blockFrames = window ? kBlockFrames : static_cast<int>(
             std::min<int64_t>(kBlockFrames, totalProjectFrames - projectFramesRendered));
 
         mixBus.clear(0, blockFrames);
@@ -306,10 +317,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         completedClips.clear();
         for (auto& cp : clips)
         {
-            if (cp->retired) continue;
-            // Removing the final source destroys the track's plugin chain. Keep it
-            // processing silence through the batch tail and latency-compensation flush.
-            if (options.fixedOutputFrames && cp == clips.back()) continue;
+            if (cp->retired || cp->keepTrackAlive) continue;
             if (projectFramesRendered >= cp->timelineEndFrames + cp->tailFrames)
             {
                 completedClips.push_back({cp->id, cp->summingSource.get()});
@@ -361,8 +369,8 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         // Push only frames at/after the start offset; earlier audio advances state then drops.
         const int64_t blockStart = projectFramesRendered;
         projectFramesRendered += blockFrames;
-        const bool lastBlock = projectFramesRendered >= totalProjectFrames
-            || (!options.fixedOutputFrames && projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated());
+        const bool lastBlock = !window && (projectFramesRendered >= totalProjectFrames
+            || (projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated()));
         const int64_t keepOffset64 = juce::jmax<int64_t>(0, startFrames - blockStart);
         if (keepOffset64 < blockFrames)
         {
@@ -385,7 +393,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         if (now - lastProgressMs >= kProgressMinIntervalMs)
         {
             const double renderShare = normalizing ? 45.0 : 90.0;
-            const double pct = (static_cast<double>(projectFramesRendered)
+            const double pct = (static_cast<double>(std::min(projectFramesRendered, totalProjectFrames))
                                 / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
                                * renderShare;
             progress(pct,

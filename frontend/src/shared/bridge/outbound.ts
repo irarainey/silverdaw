@@ -960,6 +960,8 @@ export interface AudioFileProbePayload {
  * honours `lengthMs` exactly (truncating or padding with silence).
  */
 export interface MixdownStartPayload {
+  /** Use the project's current timeline selection instead of start, length and tail settings. */
+  selectionOnly?: boolean
   outputPath: string
   sampleRate: 44100 | 48000
   format: ExportFormat

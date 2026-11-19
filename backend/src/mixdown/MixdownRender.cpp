@@ -243,8 +243,8 @@ OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOpti
 
         const auto finalizeStartMs = juce::Time::getMillisecondCounter();
         const int64_t totalOutputFrames =
-            options.fixedOutputFrames.value_or(static_cast<int64_t>(
-                std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0)));
+            options.outputFrameRange ? options.outputFrameRange->getLength() : static_cast<int64_t>(
+                std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
         {
             const int64_t pad = totalOutputFrames - outputFramesWritten;

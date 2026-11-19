@@ -85,6 +85,7 @@ struct OfflineClip
     juce::int64 timelineEndFrames{0};
     juce::int64 tailFrames{0};
     bool retired{false};
+    bool keepTrackAlive{false};
 
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<WarpProcessor> warp;

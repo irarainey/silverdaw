@@ -8,6 +8,7 @@ import { mergeExportSettings, readTrackExportPreferences } from '@/lib/export/pr
 import ExportOutputLocation from './ExportOutputLocation.vue'
 import ExportFormatSettings from './ExportFormatSettings.vue'
 import ExportTrackPicker from './ExportTrackPicker.vue'
+import ExportSelectionCheckbox from './ExportSelectionCheckbox.vue'
 import { beginTrackExport } from '@/lib/mixdownState'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -24,6 +25,7 @@ const bitDepth = ref<ExportBitDepth>(preferences.bitDepth ?? 24)
 const bitrate = ref(preferences.bitrateKbps ?? 192)
 const availableBitDepths = useExportBitDepths(format, bitDepth)
 const includeEffects = ref(true)
+const selectionOnly = ref(false)
 const tailSeconds = ref(0)
 const tailInput = ref<HTMLInputElement | null>(null)
 const submitting = ref(false)
@@ -47,7 +49,8 @@ const customFolder = computed(() => destination.value === defaultFolder.value ? 
 const settings = computed(() => TrackExportStartSchema.safeParse({
   format: format.value, sampleRate: sampleRate.value,
   ...(format.value === 'mp3' ? { bitrateKbps: bitrate.value } : { bitDepth: bitDepth.value }),
-  includeEffects: includeEffects.value, tailSeconds: tailSeconds.value,
+  includeEffects: includeEffects.value, tailSeconds: selectionOnly.value ? 0 : tailSeconds.value,
+  ...(selectionOnly.value && { selectionOnly: true }),
   outputFolder: customFolder.value,
   trackLabels: Object.fromEntries(selectedTracks.value.map(track => [track.id, track.name]))
 }))
@@ -151,7 +154,7 @@ async function submit(): Promise<void> {
           >
             Nothing to export. Add a clip to the timeline first.
           </p>
-          <p>Export one stereo file per selected track, from 0:00 to the end of the arrangement. Mute, solo and master effects are ignored.</p>
+          <p>Export one aligned stereo file per selected track. Mute, solo and master effects are ignored.</p>
           <ExportTrackPicker
             v-model="selectedIds"
             :tracks="project.tracks"
@@ -163,7 +166,10 @@ async function submit(): Promise<void> {
             v-model:bitrate="bitrate"
             :available-bit-depths="availableBitDepths"
           >
-            <div>
+            <fieldset
+              :disabled="selectionOnly"
+              class="disabled:opacity-50"
+            >
               <label
                 for="track-export-tail"
                 class="mb-1 block whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500"
@@ -205,7 +211,7 @@ async function submit(): Promise<void> {
                   </button>
                 </div>
               </div>
-            </div>
+            </fieldset>
           </ExportFormatSettings>
           <p
             v-if="invalidTail"
@@ -214,6 +220,7 @@ async function submit(): Promise<void> {
           >
             Enter a whole number of tail seconds between 0 and 60.
           </p>
+          <ExportSelectionCheckbox v-model="selectionOnly" />
           <label class="flex items-center gap-2">
             <input
               v-model="includeEffects"

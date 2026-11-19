@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "AudioEngine.h"
 #include "BridgeServer.h"
@@ -28,6 +29,26 @@ static MixdownSnapshot snapshotArrangement(AudioEngine& engine, ProjectState& pr
     return snapshotProjectForMixdown(project, engine.getBrakeDefaultSeconds(),
         engine.getBrakeDefaultCurve(), engine.getBackspinDefaultSeconds(),
         engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve(), scope);
+}
+
+static juce::Result applyExportSelection(const juce::var& payload, const ProjectState& project, MixdownOptions& options)
+{
+    const auto requested = payload.getProperty("selectionOnly", false);
+    if (!requested.isBool()) return juce::Result::fail("Invalid timeline selection option.");
+    if (!static_cast<bool>(requested)) return juce::Result::ok();
+    const auto selection = project.getViewTimelineSelection();
+    if (!selection) return juce::Result::fail("Select a range on the timeline before exporting.");
+    const auto toFrame = [&](double ms) { return ms * options.outputSampleRate / 1000.0; };
+    const auto end = toFrame(selection->endMs);
+    if (end >= static_cast<double>(std::numeric_limits<int64_t>::max()) || options.outputSampleRate <= 0)
+        return juce::Result::fail("Invalid export range or sample rate.");
+    const juce::Range<int64_t> frames{std::llround(toFrame(selection->startMs)), std::llround(end)};
+    if (frames.isEmpty()) return juce::Result::fail("The selected range is shorter than one output sample.");
+    options.outputFrameRange = frames;
+    options.lengthMs = selection->endMs - selection->startMs;
+    options.startMs = 0;
+    options.tailSeconds = 0;
+    return juce::Result::ok();
 }
 
 static void resolveRenderSources(MixdownSnapshot& snapshot, AudioEngine& engine, ProjectState& project,
@@ -139,6 +160,11 @@ void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, Proje
     else
         options.bitDepth = static_cast<int>(*depth);
     options.tailSeconds = *tail;
+    if (const auto range = applyExportSelection(payload, project, options); range.failed())
+    {
+        reject(range.getErrorMessage());
+        return;
+    }
     busy.store(true);
     cancel.store(false);
     pool.addJob([snapshot = std::move(snapshot), options, wet, folder, &bridge, &busy, &cancel]() mutable {
@@ -319,6 +345,11 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     }
     // Clamp non-negative; the renderer further clamps to the project length.
     options.startMs = startMsHint > 0.0 ? startMsHint : 0.0;
+    if (const auto range = applyExportSelection(payload, projectState, options); range.failed())
+    {
+        rejectInvalid(range.getErrorMessage());
+        return;
+    }
     const auto md = payload.getProperty("metadata", juce::var());
     if (md.isObject())
     {

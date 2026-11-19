@@ -5,6 +5,7 @@
 ### Added
 
 - Export Tracks writes aligned WAV, FLAC, AIFF or MP3 files for all or selected tracks into a timestamped folder.
+- Export Mixdown and Export Tracks can render just the selected timeline range.
 
 ## 1.10.1
 
