@@ -47,14 +47,16 @@ function onEscape(event: KeyboardEvent): void {
     >
       Tracks: {{ all ? `All ${tracks.length} selected` : `${selected.length} of ${tracks.length} selected` }}
     </button>
+    <!-- Keep focus inside the picker while a label click is forwarded to its checkbox. -->
     <div
       v-if="open"
       :id="listId"
       role="group"
       aria-label="Tracks to export"
-      class="silverdaw-scroll absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded border border-zinc-700 bg-zinc-900 p-1 shadow-lg"
+      tabindex="-1"
+      class="silverdaw-scroll absolute z-10 mt-1 max-h-40 w-full select-none overflow-y-auto rounded border border-zinc-700 bg-zinc-900 p-1 shadow-lg outline-none"
     >
-      <label class="flex items-center gap-2 border-b border-zinc-800 px-2 py-1">
+      <label class="flex cursor-pointer items-center gap-2 border-b border-zinc-800 px-2 py-1 hover:bg-zinc-800">
         <input
           type="checkbox"
           class="accent-sky-500"

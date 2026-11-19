@@ -7,7 +7,7 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getName: () => 'silve
 import { latencyCalibrationKey, sanitiseKeepAwakeByDevice, sanitiseLatencyCalibrations, sanitiseStemModelDir, sanitiseStemPrefs, sanitiseUiPrefs, MAX_LATENCY_CALIBRATION_MS, type StemPrefs, type UiPrefs } from '@main/preferences'
 
 const base: UiPrefs = {
-  trackHeaderWidth: 175,
+  trackHeaderWidth: 240,
   libraryPanelHeight: 180,
   followPlayback: true,
   showLibraryTileImages: true,
@@ -32,7 +32,7 @@ describe('sanitiseUiPrefs', () => {
   it('keeps base values for missing fields (partial merge)', () => {
     const result = sanitiseUiPrefs({ followPlayback: false }, base)
     expect(result.followPlayback).toBe(false)
-    expect(result.trackHeaderWidth).toBe(175)
+    expect(result.trackHeaderWidth).toBe(base.trackHeaderWidth)
     expect(result.defaultProjectSampleRate).toBe(44100)
   })
 
@@ -65,9 +65,10 @@ describe('sanitiseUiPrefs', () => {
     ).toEqual(['D:\\Samples'])
   })
 
-  it('clamps trackHeaderWidth into range and rounds', () => {    expect(sanitiseUiPrefs({ trackHeaderWidth: 10 }, base).trackHeaderWidth).toBe(180)
+  it('widens legacy track headers to fit the controls and rounds valid widths', () => {
+    expect(sanitiseUiPrefs({ trackHeaderWidth: 193 }, base).trackHeaderWidth).toBe(212)
     expect(sanitiseUiPrefs({ trackHeaderWidth: 9999 }, base).trackHeaderWidth).toBe(480)
-    expect(sanitiseUiPrefs({ trackHeaderWidth: 200.7 }, base).trackHeaderWidth).toBe(201)
+    expect(sanitiseUiPrefs({ trackHeaderWidth: 230.7 }, base).trackHeaderWidth).toBe(231)
   })
 
   it('clamps libraryPanelHeight into range', () => {
@@ -76,7 +77,7 @@ describe('sanitiseUiPrefs', () => {
   })
 
   it('falls back to base for non-numeric / non-finite numeric fields', () => {
-    expect(sanitiseUiPrefs({ trackHeaderWidth: 'big' }, base).trackHeaderWidth).toBe(175)
+    expect(sanitiseUiPrefs({ trackHeaderWidth: 'big' }, base).trackHeaderWidth).toBe(base.trackHeaderWidth)
     expect(sanitiseUiPrefs({ libraryPanelHeight: Number.NaN }, base).libraryPanelHeight).toBe(180)
   })
 

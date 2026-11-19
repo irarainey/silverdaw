@@ -433,8 +433,10 @@ Silverdaw currently supports the core arrangement workflow:
 - **File ▸ Export Tracks…** (`Ctrl+Shift+M`) writes one stereo file per selected
   timeline track in WAV (default), FLAC, AIFF or MP3 format. Use a lossless
   format for sample-accurate interchange. All tracks are selected by default.
-  Each batch gets a new
-  timestamped folder such as `2026-11-19_14-30-05` under the project's `export`
+  Click anywhere on a track's row in the dropdown to toggle it. The export
+  icon at the right of a track header opens the same dialog with only that
+  track checked, without replacing the File menu's selection. Each batch gets
+  a new timestamped folder such as `2026-11-19_14-30-05` under the project's `export`
   folder, or under a folder you choose. The project remembers the destination
   and track selection separately from the mixdown settings. Neither export
   command marks the project as edited.
@@ -4678,7 +4680,7 @@ names, mapped behavior, controller feedback, and troubleshooting.
 Persisted fields:
 
 - Window bounds + maximised state.
-- Panel sizes (track-header column width, clamped to 180–480 px so the header's
+- Panel sizes (track-header column width, clamped to 212–480 px so the header's
   own button row never squashes; library panel height).
 - **Bottom panel minimised state** — `ui.libraryPanelCollapsed`. When on, the
   bottom tabbed panel is collapsed to its tab strip; expanding it (or clicking a

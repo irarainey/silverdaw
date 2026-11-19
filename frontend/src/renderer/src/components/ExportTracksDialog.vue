@@ -13,6 +13,7 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUiStore } from '@/stores/uiStore'
 
+const props = defineProps<{ initialTrackId?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const project = useProjectStore()
 const notifications = useNotificationsStore()
@@ -27,7 +28,7 @@ const tailSeconds = ref(0)
 const submitting = ref(false)
 const card = ref<HTMLElement | null>(null)
 const hasClips = computed(() => project.tracks.some(track => track.clipIds.length > 0))
-const selection = ref(preferences.trackIds)
+const selection = ref(props.initialTrackId ? [props.initialTrackId] : preferences.trackIds)
 const selectedTracks = computed(() => {
   const ids = selection.value && new Set(selection.value)
   return ids ? project.tracks.filter(track => ids.has(track.id)) : project.tracks
@@ -78,7 +79,9 @@ async function submit(): Promise<void> {
         bitDepth: parsed.data.bitDepth,
         bitrateKbps: parsed.data.bitrateKbps,
         outputFolder: parsed.data.outputFolder,
-        trackIds: selection.value === null ? null : Object.keys(parsed.data.trackLabels)
+        // A header export is a one-off; keep the File menu's batch selection.
+        trackIds: props.initialTrackId ? preferences.trackIds
+          : selection.value === null ? null : Object.keys(parsed.data.trackLabels)
       }
     }))
     if (!project.currentFilePath) {

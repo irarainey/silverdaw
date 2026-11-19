@@ -96,6 +96,30 @@ function readSavedMix(projectFile: string): { masterVolume: number; tracks: Save
   }
 }
 
+test('narrowing the track header keeps every action button full size and reachable', async ({ silverdaw }) => {
+  const { page } = silverdaw
+  await startNewProject(page)
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  const divider = page.getByTitle('Drag to resize track header column')
+  const box = await divider.boundingBox()
+  if (!box) throw new Error('Track header divider is missing')
+  const y = box.y + 12
+  await page.mouse.move(box.x + box.width / 2, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 100, y)
+  await expect.poll(async () => (await divider.boundingBox())?.x).toBeGreaterThan(box.x)
+  await page.mouse.move(1, y)
+  await page.mouse.up()
+
+  const exportButton = page.getByTitle('Export this track…')
+  const buttons = exportButton.locator('..').getByRole('button')
+  await expect(buttons).toHaveCount(7)
+  for (const button of await buttons.all()) {
+    await expect(button).toHaveCSS('width', '24px')
+    await button.click({ trial: true })
+  }
+})
+
 test('track names, levels, pan and mute/solo survive a restart', async ({ launchApp }) => {
   const projectsDir = makeTrackedTempDir('projects')
   const chosenPath = join(projectsDir, `${PROJECT_NAME}.silverdaw`)

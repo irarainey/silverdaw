@@ -32,7 +32,7 @@ export interface AppMenuActionsDeps {
   projectPropertiesOpen: Ref<boolean>
   projectImportOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
-  exportTracksOpen: Ref<boolean>
+  openExportTracks: () => void
   /** True while the diagnostics bundle is being built — drives the wait spinner. */
   diagnosticsBusy: Ref<boolean>
   guardAgainstUnsavedChanges: (proceed: () => void | Promise<void>) => void
@@ -196,7 +196,7 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
       return
     }
     if (action === 'file.exportTracks') {
-      deps.exportTracksOpen.value = true
+      deps.openExportTracks()
       return
     }
     // Recent-project actions encode the appStore MRU index.

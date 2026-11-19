@@ -90,7 +90,10 @@ const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
 const projectImportOpen = ref(false)
 const exportMixdownOpen = ref(false)
-const exportTracksOpen = ref(false)
+const trackExportRequest = ref<{ initialTrackId?: string } | null>(null)
+function openExportTracks(initialTrackId?: string): void {
+  trackExportRequest.value = { initialTrackId }
+}
 const diagnosticsBusy = ref(false)
 const midiMonitorOpen = ref(false)
 const sampleRatePromptState = useSampleRateMismatchPromptState()
@@ -194,7 +197,7 @@ function isInteractionBlocked(): boolean {
     projectPropertiesOpen.value ||
     projectImportOpen.value ||
     exportMixdownOpen.value ||
-    exportTracksOpen.value ||
+    trackExportRequest.value !== null ||
     diagnosticsBusy.value ||
     midiMonitorOpen.value ||
     library.imports.length > 0 ||
@@ -542,7 +545,7 @@ const { handleMenuAction } = useAppMenuActions({
   projectPropertiesOpen,
   projectImportOpen,
   exportMixdownOpen,
-  exportTracksOpen,
+  openExportTracks,
   diagnosticsBusy,
   guardAgainstUnsavedChanges,
   isModalOpen: isInteractionBlocked,
@@ -559,7 +562,10 @@ const { handleMenuAction } = useAppMenuActions({
     <TransportBar />
 
     <main class="min-h-0 flex-1 overflow-hidden">
-      <TimelineView v-if="timelinePrewarmed || !startupScreenVisible" />
+      <TimelineView
+        v-if="timelinePrewarmed || !startupScreenVisible"
+        @export-track="openExportTracks"
+      />
     </main>
 
     <LibraryPanel
@@ -644,8 +650,9 @@ const { handleMenuAction } = useAppMenuActions({
       @close="exportMixdownOpen = false"
     />
     <ExportTracksDialog
-      v-if="exportTracksOpen"
-      @close="exportTracksOpen = false"
+      v-if="trackExportRequest"
+      :initial-track-id="trackExportRequest.initialTrackId"
+      @close="trackExportRequest = null"
     />
 
     <MixdownProgressDialog v-if="mixdownState !== null" />
