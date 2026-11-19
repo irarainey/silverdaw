@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { TrackExportStartSchema } from '@shared/bridge-protocol'
+import { TrackExportStartSchema, type ExportFormat, type ExportBitDepth } from '@shared/bridge-protocol'
 import { send } from '@/lib/bridgeService'
 import { exportSampleRate } from '@/lib/export/exportSampleRate'
+import { useExportBitDepths } from '@/lib/export/useExportBitDepths'
+import { mergeExportSettings, readTrackExportPreferences } from '@/lib/export/projectExportSettings'
+import ExportOutputLocation from './ExportOutputLocation.vue'
+import ExportFormatSettings from './ExportFormatSettings.vue'
+import ExportTrackPicker from './ExportTrackPicker.vue'
 import { beginTrackExport } from '@/lib/mixdownState'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -12,21 +17,49 @@ const emit = defineEmits<{ close: [] }>()
 const project = useProjectStore()
 const notifications = useNotificationsStore()
 const sampleRate = ref(exportSampleRate(project.targetSampleRate, useUiStore().defaultProjectSampleRate))
-const bitDepth = ref(24)
+const preferences = readTrackExportPreferences(project.exportSettingsJson)
+const format = ref<ExportFormat>(preferences.format ?? 'wav')
+const bitDepth = ref<ExportBitDepth>(preferences.bitDepth ?? 24)
+const bitrate = ref(preferences.bitrateKbps ?? 192)
+const availableBitDepths = useExportBitDepths(format, bitDepth)
 const includeEffects = ref(true)
 const tailSeconds = ref(0)
 const submitting = ref(false)
 const card = ref<HTMLElement | null>(null)
 const hasClips = computed(() => project.tracks.some(track => track.clipIds.length > 0))
-const settings = computed(() => TrackExportStartSchema.safeParse({
-  sampleRate: sampleRate.value, bitDepth: bitDepth.value,
-  includeEffects: includeEffects.value, tailSeconds: tailSeconds.value,
-  trackLabels: Object.fromEntries(project.tracks.map(track => [track.id, track.name]))
-}))
+const selection = ref(preferences.trackIds)
+const selectedTracks = computed(() => {
+  const ids = selection.value && new Set(selection.value)
+  return ids ? project.tracks.filter(track => ids.has(track.id)) : project.tracks
+})
+const selectedIds = computed({
+  get: () => selectedTracks.value.map(track => track.id),
+  set: (ids: string[]) => { selection.value = ids.length === project.tracks.length ? null : ids }
+})
 function exportFolder(path: string): string {
   return path.replace(/[^\\/]+$/, 'export')
 }
-const destination = computed(() => project.currentFilePath && exportFolder(project.currentFilePath))
+const defaultFolder = computed(() => project.currentFilePath ? exportFolder(project.currentFilePath) : '')
+const destination = ref(preferences.outputFolder ?? defaultFolder.value)
+const customFolder = computed(() => destination.value === defaultFolder.value ? undefined : destination.value || undefined)
+const settings = computed(() => TrackExportStartSchema.safeParse({
+  format: format.value, sampleRate: sampleRate.value,
+  ...(format.value === 'mp3' ? { bitrateKbps: bitrate.value } : { bitDepth: bitDepth.value }),
+  includeEffects: includeEffects.value, tailSeconds: tailSeconds.value,
+  outputFolder: customFolder.value,
+  trackLabels: Object.fromEntries(selectedTracks.value.map(track => [track.id, track.name]))
+}))
+async function browse(): Promise<void> {
+  try {
+    const picked = await window.silverdaw.chooseDirectory({
+      title: 'Choose Track Export Folder',
+      defaultPath: destination.value || defaultFolder.value || undefined
+    })
+    if (picked) destination.value = picked
+  } catch (error) {
+    notifications.pushError(`Could not choose an export folder: ${String(error)}`)
+  }
+}
 onMounted(() => card.value?.focus())
 
 async function submit(): Promise<void> {
@@ -38,6 +71,17 @@ async function submit(): Promise<void> {
     if (!path) {
       path = await window.silverdaw.chooseProjectSaveAs(project.projectName || 'Untitled')
       if (!path) return
+    }
+    project.setExportSettingsJson(mergeExportSettings(project.exportSettingsJson, {
+      trackExport: {
+        format: parsed.data.format,
+        bitDepth: parsed.data.bitDepth,
+        bitrateKbps: parsed.data.bitrateKbps,
+        outputFolder: parsed.data.outputFolder,
+        trackIds: selection.value === null ? null : Object.keys(parsed.data.trackLabels)
+      }
+    }))
+    if (!project.currentFilePath) {
       const saved = await project.saveAndWait(path, true)
       if (!saved.ok) {
         notifications.pushError(`Track export could not start: ${saved.error ?? 'Project was not saved.'}`)
@@ -48,7 +92,7 @@ async function submit(): Promise<void> {
       notifications.pushError('Track export could not start: the audio engine is not connected.')
       return
     }
-    beginTrackExport(exportFolder(path))
+    beginTrackExport(parsed.data.outputFolder ?? exportFolder(path), parsed.data.format)
     emit('close')
   } catch (error) {
     notifications.pushError(`Track export could not start: ${String(error)}`)
@@ -69,7 +113,7 @@ async function submit(): Promise<void> {
     >
       <div
         ref="card"
-        class="dialog-card w-[min(460px,90vw)] outline-none"
+        class="dialog-card w-[min(640px,92vw)] outline-none"
         tabindex="-1"
       >
         <div class="dialog-header">
@@ -87,38 +131,59 @@ async function submit(): Promise<void> {
           >
             Nothing to export. Add a clip to the timeline first.
           </p>
-          <p>Export every track as a stereo WAV from 0:00 to the same end time. Mute, solo and master effects are ignored.</p>
-          <div class="flex gap-3">
-            <label>Sample rate
-              <select
-                v-model.number="sampleRate"
-                class="app-select w-full"
-              >
-                <option :value="44100">44.1 kHz</option>
-                <option :value="48000">48 kHz</option>
-              </select>
-            </label>
-            <label>Bit depth
-              <select
-                v-model.number="bitDepth"
-                class="app-select w-full"
-              >
-                <option :value="16">16-bit</option>
-                <option :value="24">24-bit</option>
-                <option :value="32">32-bit float</option>
-              </select>
-            </label>
-            <label>Tail (seconds)
-              <input
-                v-model.number="tailSeconds"
-                type="number"
-                min="0"
-                max="60"
-                step="any"
-                class="no-spinner block w-20 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-right font-mono text-xs tabular-nums outline-none focus:border-sky-500"
-              >
-            </label>
-          </div>
+          <p>Export one stereo file per selected track, from 0:00 to the end of the arrangement. Mute, solo and master effects are ignored.</p>
+          <ExportTrackPicker
+            v-model="selectedIds"
+            :tracks="project.tracks"
+          />
+          <ExportFormatSettings
+            v-model:format="format"
+            v-model:sample-rate="sampleRate"
+            v-model:bit-depth="bitDepth"
+            v-model:bitrate="bitrate"
+            :available-bit-depths="availableBitDepths"
+          >
+            <div>
+              <label
+                for="track-export-tail"
+                class="mb-1 block whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500"
+              >Tail (seconds)</label>
+              <div class="flex items-center rounded border border-zinc-700 bg-zinc-950 pr-1 focus-within:border-sky-500">
+                <input
+                  id="track-export-tail"
+                  v-model.number="tailSeconds"
+                  type="number"
+                  min="0"
+                  max="60"
+                  step="any"
+                  class="no-spinner min-w-0 flex-1 bg-transparent px-2 py-1 text-right font-mono text-xs tabular-nums outline-none"
+                >
+                <div class="flex flex-col">
+                  <button
+                    v-for="delta in [1, -1]"
+                    :key="delta"
+                    type="button"
+                    tabindex="-1"
+                    data-borderless-button="true"
+                    :aria-label="delta > 0 ? 'Increase tail' : 'Decrease tail'"
+                    class="h-3 w-4 text-zinc-500 hover:text-zinc-100"
+                    @mousedown.prevent
+                    @click="tailSeconds = Math.max(0, Math.min(60, Number(tailSeconds) + delta))"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      class="h-3 w-4"
+                      :class="{ 'rotate-180': delta < 0 }"
+                      aria-hidden="true"
+                    >
+                      <path d="M5 15l7-7 7 7z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </ExportFormatSettings>
           <label class="flex items-center gap-2">
             <input
               v-model="includeEffects"
@@ -127,9 +192,20 @@ async function submit(): Promise<void> {
             >
             Include track effects
           </label>
-          <p class="break-words text-xs text-zinc-400">
-            {{ destination ? `Destination: ${destination}` : 'Save your project first to export to its export folder.' }}
-            Each export creates a new numbered folder.
+          <ExportOutputLocation
+            v-model:output-path="destination"
+            label="Output folder"
+            :placeholder="defaultFolder || 'Project export folder (after saving)'"
+            :on-browse-click="browse"
+          />
+          <p
+            v-if="!settings.success && settings.error.issues.some(issue => issue.path[0] === 'outputFolder')"
+            class="text-xs text-red-400"
+          >
+            Choose a folder or enter its full path.
+          </p>
+          <p class="text-xs text-zinc-400">
+            Each export creates a timestamped folder.
           </p>
         </div>
         <div class="dialog-footer">
@@ -154,3 +230,14 @@ async function submit(): Promise<void> {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.no-spinner {
+  appearance: textfield;
+}
+.no-spinner::-webkit-inner-spin-button,
+.no-spinner::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+</style>

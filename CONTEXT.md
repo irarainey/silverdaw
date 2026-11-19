@@ -84,7 +84,7 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The project version is **1.11.0**, adding aligned per-track WAV export
+The project version is **1.11.0**, adding aligned per-track audio export
 (see `docs/developer-guide.md`). **1.10.1** was a GPU/stem-separation and
 diagnostic-log reliability patch. All automated quality gates passed, and local
 release assets were rebuilt and verified on 2026-11-16. The

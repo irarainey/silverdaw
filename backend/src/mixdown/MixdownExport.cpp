@@ -11,6 +11,33 @@
 
 namespace silverdaw::mixdown_export
 {
+using Format = MixdownOptions::Format;
+
+const char* formatExtension(Format format)
+{
+    switch (format)
+    {
+        case Format::Wav:  return "wav";
+        case Format::Flac: return "flac";
+        case Format::Aiff: return "aiff";
+        case Format::Mp3:  return "mp3";
+    }
+    jassertfalse;
+    return "";
+}
+
+std::optional<Format> parseFormat(const juce::String& name)
+{
+    for (const auto format : {Format::Wav, Format::Flac, Format::Aiff, Format::Mp3})
+        if (name == formatExtension(format)) return format;
+    return std::nullopt;
+}
+
+bool supportsBitDepth(Format format, double depth)
+{
+    return depth == 16 || (format != Format::Mp3 && depth == 24)
+                       || (format == Format::Wav && depth == 32);
+}
 
 juce::File findLameExecutable()
 {

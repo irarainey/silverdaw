@@ -247,15 +247,7 @@ juce::String ProjectState::getExportSettingsJson() const
 
 void ProjectState::setExportSettingsJson(const juce::String& json)
 {
-    // Export prefs skip undo but still mark dirty through the listener.
-    if (json.isEmpty())
-    {
-        root.removeProperty(kExportSettingsJson, nullptr);
-    }
-    else
-    {
-        root.setProperty(kExportSettingsJson, json, nullptr);
-    }
+    setNonDirtyRootProperty(kExportSettingsJson, json.isEmpty() ? juce::var{} : juce::var(json));
 }
 
 float ProjectState::getMasterVolume() const
@@ -337,15 +329,7 @@ int ProjectState::getMixdownStartBar() const
 
 void ProjectState::setMixdownStartBar(int mixdownStartBar)
 {
-    // Default one is suppressed so legacy projects round-trip without an extra property.
-    if (mixdownStartBar == 1)
-    {
-        root.removeProperty(kMixdownStartBar, &undoManager);
-    }
-    else
-    {
-        root.setProperty(kMixdownStartBar, mixdownStartBar, &undoManager);
-    }
+    setNonDirtyRootProperty(kMixdownStartBar, mixdownStartBar == 1 ? juce::var{} : juce::var(mixdownStartBar));
 }
 
 bool ProjectState::getMetronomeEnabled() const

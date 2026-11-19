@@ -321,13 +321,14 @@ void testIndividualTrackExport()
     options.bitDepth = 24;
     options.outputSampleRate = 48000;
     options.tailSeconds = 0.25;
+    options.lengthMs = computeLastClipEndMs(snapshot);
     std::atomic<bool> cancel{false};
     const auto exportDir = dir.getChildFile("export");
     const TrackExportProgress tick = [](double, const char*, int, int, const juce::String&) {};
     const auto dry = renderTrackBatch(snapshot, exportDir, options, false, tick, cancel);
     const auto wet = renderTrackBatch(snapshot, exportDir, options, true, tick, cancel);
     require(!dry.failure && !wet.failure, "wet and dry exports should succeed");
-    require(dry.folder.getFileName() == "Tracks 001" && wet.folder.getFileName() == "Tracks 002",
+    require(dry.folder != wet.folder && dry.folder.getFileName().matchesWildcard("????-??-??_??-??-??*", false),
             "successive batches never replace one another");
     for (const auto& batch : {dry.folder, wet.folder})
     {

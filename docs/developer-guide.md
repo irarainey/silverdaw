@@ -189,7 +189,7 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The project version is **1.11.0**, adding aligned per-track WAV export.
+The project version is **1.11.0**, adding aligned per-track audio export.
 Version **1.10.1** covered GPU adapter selection and naming, stem separation
 and diagnostic logs. Its automated quality gates passed, and local assets were
 rebuilt and verified on 2026-11-16. See the
@@ -430,8 +430,14 @@ Silverdaw currently supports the core arrangement workflow:
   brake / backspin tails all bake into the mixdown identically (the offline
   graph builds the same `OffsetSource` snapshots), so what you hear is what you
   export.
-- **File ▸ Export Tracks…** writes one stereo WAV per timeline track into a
-  new `export\Tracks 001` (then `Tracks 002`, etc.) beside the saved project.
+- **File ▸ Export Tracks…** (`Ctrl+Shift+M`) writes one stereo file per selected
+  timeline track in WAV (default), FLAC, AIFF or MP3 format. Use a lossless
+  format for sample-accurate interchange. All tracks are selected by default.
+  Each batch gets a new
+  timestamped folder such as `2026-11-19_14-30-05` under the project's `export`
+  folder, or under a folder you choose. The project remembers the destination
+  and track selection separately from the mixdown settings. Neither export
+  command marks the project as edited.
   Every file starts at 0:00 and has the same length: the end of the last clip
   on the arrangement plus the chosen tail. Muting and soloing are ignored;
   empty tracks are silent. Clip edits, track volume, pan and their automation
@@ -1412,10 +1418,10 @@ the Project Properties dialog (see [Project properties](#project-properties)).
 it in dB via the shared `lib/audio/db.ts` taper); absent means unity and the
 property is suppressed from save when at unity to keep older projects bit-clean.
 `PROJECT.exportSettingsJson` is a single opaque JSON blob (capped at 64 KB)
-holding the last-used mixdown export dialog choices for this project; it is
+holding the last-used export dialog choices for this project; it is
 written via `PROJECT_SET_EXPORT_SETTINGS`, parsed with field-level whitelist /
-clamp / schema-version guards on load, and does not generate undo entries
-(only a dirty-mark) so re-exporting doesn't clutter the undo history.
+clamp / schema-version guards on load, and saved with view state on a clean
+close. Export preferences neither generate undo entries nor mark the project dirty.
 `PROJECT.barCounterStart` is the number shown for the **first** bar on the
 timeline ruler (default `1`); the ruler labels each bar as
 `barIndex + barCounterStart`, so the default shows `1, 2, 3, …` and setting it to
@@ -4985,6 +4991,7 @@ Keyboard Shortcuts**. Its path includes the running app's `app.getVersion()` bef
 | `Ctrl + S` / `Ctrl + Shift + S` | Save the current project or open Save As. |
 | `Ctrl + I` / `Ctrl + T` | Import audio into the library or add a track. |
 | `Ctrl + M` / `Ctrl + E` | Open Export Mixdown or exit the application. |
+| `Ctrl + Shift + M` | Open Export Tracks. |
 | `Ctrl + J` | Toggle the Library / FX panel. |
 | `F11` | Toggle full screen. |
 | `Ctrl + 1`–`Ctrl + 8` | Set timeline zoom to 100%–800%. |

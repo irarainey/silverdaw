@@ -574,7 +574,7 @@ class ProjectState : public juce::ValueTree::Listener
     // Renderer-owned export settings are round-tripped verbatim.
     juce::String getExportSettingsJson() const;
 
-    // Export choices mark dirty but stay out of the editing undo stack.
+    // Export choices persist without affecting dirty state or undo.
     void setExportSettingsJson(const juce::String& json);
 
     // Shared by live playback and export so rendered output matches monitoring.
@@ -596,8 +596,7 @@ class ProjectState : public juce::ValueTree::Listener
     int getBarCounterStart() const;
     void setBarCounterStart(int barCounterStart);
 
-    // Displayed bar marker a mixdown begins from. 0 (default) starts at the project
-    // origin. Independent of the bar-counter offset. Marks dirty.
+    // Displayed bar a mixdown begins from (default 1). An export preference, not an edit.
     int getMixdownStartBar() const;
     void setMixdownStartBar(int mixdownStartBar);
 

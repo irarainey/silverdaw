@@ -4,7 +4,7 @@
 
 ### Added
 
-- Export Tracks writes aligned stereo WAVs for every timeline track with optional track effects.
+- Export Tracks writes aligned WAV, FLAC, AIFF or MP3 files for all or selected tracks into a timestamped folder.
 
 ## 1.10.1
 

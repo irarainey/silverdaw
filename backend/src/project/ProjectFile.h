@@ -20,13 +20,8 @@ struct LoadResult
 // Saves an atomic wrapper around the ValueTree JSON so root-level metadata can evolve independently.
 juce::Result save(const juce::File& file, const ProjectState& project);
 
-// Persists view state (and the silent monitoring metronome toggles) without saving unrelated
-// project edits or flipping dirty.
-juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
-                           double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
-                           bool metronomeEnabled, bool clipEditorMetronomeEnabled,
-                           std::optional<ProjectState::TimelineSelectionView> timelineSelection = std::nullopt,
-                           const juce::String& snapGrid = {}, const juce::String& fxTab = {});
+// Flush view, monitoring and export preferences without saving content edits or flipping dirty.
+juce::Result saveViewState(const juce::File& file, const ProjectState& project);
 
 // Removes the given library items from an ALREADY-SAVED project file in place, leaving
 // every other saved field (and the user's other unsaved in-memory edits) untouched. Used

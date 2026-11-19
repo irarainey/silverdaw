@@ -199,11 +199,7 @@ juce::Result save(const juce::File& file, const ProjectState& project)
     return writeProjectJsonAtomically(file, juce::var(rootObj));
 }
 
-juce::Result saveViewState(const juce::File& file, double viewScrollX, double viewPxPerSecond,
-                           double playheadMs, const juce::String& selectedTrackId, bool fxPanelOpen,
-                           bool metronomeEnabled, bool clipEditorMetronomeEnabled,
-                           std::optional<ProjectState::TimelineSelectionView> timelineSelection,
-                           const juce::String& snapGrid, const juce::String& fxTab)
+juce::Result saveViewState(const juce::File& file, const ProjectState& project)
 {
     if (!file.existsAsFile())
     {
@@ -231,23 +227,23 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     }
 
     rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
-    projectObj->setProperty("viewScrollX", juce::jmax(0.0, viewScrollX));
-    projectObj->setProperty("viewPxPerSecond", juce::jmax(1.0, viewPxPerSecond));
-    projectObj->setProperty("playheadMs", juce::jmax(0.0, playheadMs));
-    projectObj->setProperty("viewSelectedTrack", selectedTrackId);
-    projectObj->setProperty("viewFxPanelOpen", fxPanelOpen);
+    projectObj->setProperty("viewScrollX", juce::jmax(0.0, project.getViewScrollX()));
+    projectObj->setProperty("viewPxPerSecond", juce::jmax(1.0, project.getViewPxPerSecond()));
+    projectObj->setProperty("playheadMs", juce::jmax(0.0, project.getPlayheadMs()));
+    projectObj->setProperty("viewSelectedTrack", project.getViewSelectedTrack());
+    projectObj->setProperty("viewFxPanelOpen", project.getViewFxPanelOpen());
     // An empty grid means "never set"; leave the key out so a load falls back
     // to the renderer's default rather than persisting a meaningless value.
-    if (snapGrid.isNotEmpty())
+    if (const auto snapGrid = project.getViewSnapGrid(); snapGrid.isNotEmpty())
     {
         projectObj->setProperty("viewSnapGrid", snapGrid);
     }
     // Same reasoning as the grid above.
-    if (fxTab.isNotEmpty())
+    if (const auto fxTab = project.getViewFxTab(); fxTab.isNotEmpty())
     {
         projectObj->setProperty("viewFxTab", fxTab);
     }
-    if (timelineSelection.has_value())
+    if (const auto timelineSelection = project.getViewTimelineSelection())
     {
         projectObj->setProperty("viewTimelineSelectionStartMs", timelineSelection->startMs);
         projectObj->setProperty("viewTimelineSelectionEndMs", timelineSelection->endMs);
@@ -262,14 +258,22 @@ juce::Result saveViewState(const juce::File& file, double viewScrollX, double vi
     // Persist the monitoring metronome toggle alongside view state (it's silent — never dirty —
     // so this targeted write is what keeps it consistent across open/close). Default-off omits the
     // field to match the project round-trip convention.
-    if (metronomeEnabled)
+    if (project.getMetronomeEnabled())
         projectObj->setProperty("metronomeEnabled", true);
     else if (projectObj->hasProperty("metronomeEnabled"))
         projectObj->removeProperty("metronomeEnabled");
-    if (clipEditorMetronomeEnabled)
+    if (project.getClipEditorMetronomeEnabled())
         projectObj->setProperty("clipEditorMetronomeEnabled", true);
     else if (projectObj->hasProperty("clipEditorMetronomeEnabled"))
         projectObj->removeProperty("clipEditorMetronomeEnabled");
+    if (const auto settings = project.getExportSettingsJson(); settings.isNotEmpty())
+        projectObj->setProperty("exportSettingsJson", settings);
+    else
+        projectObj->removeProperty("exportSettingsJson");
+    if (const auto bar = project.getMixdownStartBar(); bar != 1)
+        projectObj->setProperty("mixdownStartBar", bar);
+    else
+        projectObj->removeProperty("mixdownStartBar");
     rootObj->setProperty(kProjectKey, projectVar);
 
     return writeProjectJsonAtomically(file, rootVar);

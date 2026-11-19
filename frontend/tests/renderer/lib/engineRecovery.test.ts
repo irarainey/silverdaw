@@ -73,7 +73,7 @@ describe('engineRecovery state machine', () => {
 
   it('dismisses track export progress if the engine dies before sending a result', () => {
     markReady()
-    beginTrackExport('project\\export')
+    beginTrackExport('project\\export', 'wav')
     onConnectionLost()
     expect(snapshotMixdownState()).toBeNull()
   })

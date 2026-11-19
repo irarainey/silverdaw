@@ -1,6 +1,7 @@
 #include "TrackExport.h"
 
 #include "Log.h"
+#include "MixdownExport.h"
 #include "MixdownRender.h"
 
 #include <cmath>
@@ -49,7 +50,6 @@ TrackExportResult renderTrackBatch(MixdownSnapshot snapshot, const juce::File& e
                                    MixdownOptions options, bool includeEffects,
                                    const TrackExportProgress& progress, std::atomic<bool>& cancel)
 {
-    options.lengthMs = computeLastClipEndMs(snapshot);
     if (options.lengthMs <= 0.0)
         return {MixdownFailureCode::Invalid, "Nothing to export. Add a clip to the timeline first.", {}};
     options.fixedOutputFrames = static_cast<int64_t>(std::ceil(
@@ -72,15 +72,16 @@ TrackExportResult renderTrackBatch(MixdownSnapshot snapshot, const juce::File& e
     snapshot.mixGlueAmount = 0.0F;
     snapshot.safetyLimiterEnabled = false;
     const auto count = static_cast<int>(tracks.size());
+    const juce::String extension = "." + juce::String(mixdown_export::formatExtension(options.format));
     for (int i = 0; i < count; ++i)
     {
         if (cancel.load()) return {MixdownFailureCode::Cancelled, "Cancelled.", {}};
         auto& track = tracks[static_cast<size_t>(i)];
         const auto stem = trackFileStem(track.name, i + 1);
         const auto name = track.name.isEmpty() ? stem : track.name;
-        options.outputFile = staging.getChildFile(stem + ".wav");
+        options.outputFile = staging.getChildFile(stem + extension);
         for (int suffix = 2; options.outputFile.exists(); ++suffix)
-            options.outputFile = staging.getChildFile(stem + " (" + juce::String(suffix) + ").wav");
+            options.outputFile = staging.getChildFile(stem + " (" + juce::String(suffix) + ")" + extension);
 
         if (track.gain <= 0.0F) track.clips.clear();
         const bool silent = track.clips.empty();
@@ -93,10 +94,11 @@ TrackExportResult renderTrackBatch(MixdownSnapshot snapshot, const juce::File& e
         snapshot.tracks.clear();
     }
 
+    const auto timestamp = juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M-%S");
     for (int number = 1; ; ++number)
     {
         if (cancel.load()) return {MixdownFailureCode::Cancelled, "Cancelled.", {}};
-        const auto target = exportDir.getChildFile("Tracks " + juce::String(number).paddedLeft('0', 3));
+        const auto target = exportDir.getChildFile(number == 1 ? timestamp : timestamp + "-" + juce::String(number));
         if (target.exists()) continue;
         // Same-volume rename, without replacement even if another instance wins the race.
         if (MoveFileW(staging.getFullPathName().toWideCharPointer(), target.getFullPathName().toWideCharPointer()))

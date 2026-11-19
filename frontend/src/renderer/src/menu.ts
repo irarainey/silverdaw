@@ -93,7 +93,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
           accelerator: 'Ctrl+M',
           disabled: opts.hasAnyClip !== true
         },
-        { label: 'Export Tracks\u2026', action: 'file.exportTracks' },
+        { label: 'Export Tracks\u2026', action: 'file.exportTracks', accelerator: 'Ctrl+Shift+M' },
         SEP,
         { label: 'Exit', action: 'file.exit', accelerator: 'Ctrl+E' }
       ]

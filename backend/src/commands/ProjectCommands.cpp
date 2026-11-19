@@ -269,20 +269,8 @@ void handleProjectSaveViewState(const juce::var& payload, silverdaw::AudioEngine
     const double pxPerSecond = tryGetNumber(payload, "viewPxPerSecond").value_or(projectState.getViewPxPerSecond());
     projectState.setViewPxPerSecond(pxPerSecond);
 
-    // PROJECT_SET_VIEW already keeps selection and panel state current.
-    const juce::String selectedTrackId = projectState.getViewSelectedTrack();
-    const bool fxPanelOpen = projectState.getViewFxPanelOpen();
-    const auto timelineSelection = projectState.getViewTimelineSelection();
-
     ProjectPerformanceTrace::checkpoint(ProjectPerformancePhase::SaveViewState);
-    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), scrollX,
-                                                              projectState.getViewPxPerSecond(), playheadMs,
-                                                              selectedTrackId, fxPanelOpen,
-                                                              projectState.getMetronomeEnabled(),
-                                                              projectState.getClipEditorMetronomeEnabled(),
-                                                              timelineSelection,
-                                                              projectState.getViewSnapGrid(),
-                                                              projectState.getViewFxTab());
+    const auto result = silverdaw::ProjectFile::saveViewState(juce::File(filePath), projectState);
     p->setProperty("ok", result.wasOk());
     if (!result.wasOk())
     {

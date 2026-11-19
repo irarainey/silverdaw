@@ -17,6 +17,7 @@ import type {
 } from './inbound'
 import type { SnapGrid } from '../snapGrid'
 import type { TrackExportStartPayload } from './trackExport'
+import type { ExportFormat } from './exportFormat'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -961,7 +962,7 @@ export interface AudioFileProbePayload {
 export interface MixdownStartPayload {
   outputPath: string
   sampleRate: 44100 | 48000
-  format: 'wav' | 'mp3' | 'flac' | 'aiff'
+  format: ExportFormat
   /** Output bit-depth (default 16). wav: 16/24/32f; flac/aiff: 16/24; mp3: ignored. */
   bitDepth?: 16 | 24 | 32
   /** TPDF dither before integer quantisation; only affects 16-bit output. Default true. */

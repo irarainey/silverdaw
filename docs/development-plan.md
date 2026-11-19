@@ -1,6 +1,6 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Project version: **1.11.0**, adding per-track WAV export. See the
+Project version: **1.11.0**, adding per-track audio export. See the
 [developer guide](developer-guide.md) for export behaviour.
 
 ## Release acceptance (1.10.1)
@@ -2390,8 +2390,8 @@ state; user preferences such as panel sizes remain in `preferences.json`.
     Export Mixdown dialog choices (format, sample rate, bit depth,
     bitrate / quality, dither, tail, loudness mode + target, tags,
     output path). Parsed with field-level whitelist / clamp /
-    schema-version guards. Edits don't enter the undo history (only
-    mark dirty) so re-exports don't pollute it.
+    schema-version guards. Export preferences do not mark the project dirty
+    or enter the undo history.
   - **Transport / view state** — playhead position, horizontal zoom and
     horizontal scroll, plus optional timeline-range boundaries and Loop
     Selection state. View-state-only saves do not mark the project dirty.
@@ -3752,8 +3752,8 @@ playable at every point):
   Dialog choices (including output path) are
   persisted at the *project* level via a single
   `PROJECT.exportSettingsJson` blob (capped 64 KB, whitelist +
-  clamp + schema-version guard on parse, no undo entries — only a
-  dirty-mark). Once step 1 lands, mixdown pumps the same
+  clamp + schema-version guard on parse, no undo entries or dirty mark).
+  Once step 1 lands, mixdown pumps the same
   canonical chain the live engine uses
   (`OffsetSource → AudioTransportSource → per-clip volume shape →
   TrackRuntime → TrackChain (Tone → Leveler → Saturation → Bit Crusher → Punch → gain → mute/solo) →

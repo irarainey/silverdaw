@@ -17,6 +17,9 @@ class OutputStream;
 namespace silverdaw::mixdown_export
 {
 
+const char* formatExtension(MixdownOptions::Format format);
+std::optional<MixdownOptions::Format> parseFormat(const juce::String& name);
+bool supportsBitDepth(MixdownOptions::Format format, double depth);
 
 // Re-exported from core/LamePath.h so existing callers keep one spelling; the
 // encoder and the MP3 decoder must resolve the same bundled binary.

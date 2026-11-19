@@ -8,11 +8,13 @@ import { useNotificationsStore } from '@/stores/notificationsStore'
 import { send as sendBridge } from '@/lib/bridgeService'
 import { beginMixdown, clearMixdownState } from '@/lib/mixdownState'
 import { exportSampleRate } from './exportSampleRate'
+import { mergeExportSettings, readProjectExportSettings } from './projectExportSettings'
 import { formatTime, parseTime, msPerSubBeat, DEFAULT_SUBS_PER_BEAT, DEFAULT_BEATS_PER_BAR } from '@/lib/musicTime'
 import { effectiveClipDurationMs } from '@/stores/projectStore'
 import { log } from '@/lib/log'
 
-export type ExportFormat = 'wav' | 'mp3' | 'flac' | 'aiff'
+import { ExportFormatSchema, type ExportFormat } from '@shared/bridge-protocol'
+import { useExportBitDepths } from './useExportBitDepths'
 
 /** Loudness mode: no-op, analyze-only, fixed normalization preset, or custom target. */
 export type LoudnessPreset =
@@ -174,12 +176,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
   // ── Derived ────────────────────────────────────────────────────────────
 
   /** Bit-depth choices valid for the selected format. */
-  const availableBitDepths = computed<readonly (16 | 24 | 32)[]>(() => {
-    if (draftFormat.value === 'flac') return [16, 24] as const
-    if (draftFormat.value === 'aiff') return [16, 24] as const
-    if (draftFormat.value === 'wav') return [16, 24, 32] as const
-    return [] as const
-  })
+  const availableBitDepths = useExportBitDepths(draftFormat, draftBitDepth)
 
   /** TPDF dither only meaningfully affects 16-bit integer outputs. */
   const ditherApplies = computed<boolean>(
@@ -252,36 +249,17 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       !submitting.value
   )
 
-  const expectedFileExtension = computed<ExportFormat>(() =>
-    draftFormat.value === 'mp3'
-      ? 'mp3'
-      : draftFormat.value === 'flac'
-        ? 'flac'
-        : draftFormat.value === 'aiff'
-          ? 'aiff'
-          : 'wav'
-  )
+  const expectedFileExtension = computed(() => draftFormat.value)
 
   // ── Persisted export settings (project level) ─────────────────────────
   // Whitelist the project JSON blob so malformed or newer settings cannot break the dialog.
   // Parse failure leaves the backend blob untouched for future versions.
   function applyPersistedExportSettings(blob: string | null): boolean {
-    if (!blob) return false
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(blob)
-    } catch {
-      log.warn('mixdown', 'exportSettingsJson parse failed; using defaults')
-      return false
-    }
-    if (typeof parsed !== 'object' || parsed === null) return false
-    const obj = parsed as Record<string, unknown>
+    const obj = readProjectExportSettings(blob)
     if (obj.version !== EXPORT_SETTINGS_VERSION) return false
 
-    const validFormats: ExportFormat[] = ['wav', 'mp3', 'flac', 'aiff']
-    if (typeof obj.format === 'string' && (validFormats as string[]).includes(obj.format)) {
-      draftFormat.value = obj.format as ExportFormat
-    }
+    const format = ExportFormatSchema.safeParse(obj.format)
+    if (format.success) draftFormat.value = format.data
     if (obj.sampleRate === 44100 || obj.sampleRate === 48000) {
       draftSampleRate.value = obj.sampleRate
     }
@@ -399,16 +377,6 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
     draftOutputPath.value = `${replaced}.${expectedFileExtension.value}`
   })
 
-  // Snap unsupported bit-depths to the highest valid value for the format.
-  watch(draftFormat, () => {
-    const allowed = availableBitDepths.value
-    if (allowed.length === 0) return
-    if (!allowed.includes(draftBitDepth.value)) {
-      const last = allowed[allowed.length - 1]
-      if (last !== undefined) draftBitDepth.value = last
-    }
-  })
-
   // ── Actions ────────────────────────────────────────────────────────────
 
   async function onBrowseClick(): Promise<void> {
@@ -493,7 +461,7 @@ export function useExportMixdownForm(deps: ExportMixdownFormDeps): ExportMixdown
       const loudness = buildLoudnessPayload()
       if (loudness) payload.loudness = loudness
       // Persist just before rendering so aborts still keep the user's export preferences.
-      project.setExportSettingsJson(JSON.stringify(snapshotExportSettings()))
+      project.setExportSettingsJson(mergeExportSettings(project.exportSettingsJson, snapshotExportSettings()))
       // Persist the chosen start bar as a first-class project property (independent of the
       // ruler's bar-counter offset) so it round-trips and prefills next time.
       project.setMixdownStartBar(Math.round(draftMixdownStartBar.value))
