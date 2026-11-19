@@ -16,6 +16,8 @@ import type {
   TransitionRecipe
 } from './inbound'
 import type { SnapGrid } from '../snapGrid'
+import type { TrackExportStartPayload } from './trackExport'
+import type { ExportFormat } from './exportFormat'
 import type {
   ScratchSessionClosePayload,
   ScratchSessionControlPayload,
@@ -703,6 +705,7 @@ export interface BridgeOutboundMap {
   PROJECT_SET_SEED_TEMPO_PREF: ProjectSetSeedTempoPrefPayload
   AUDIO_FILE_PROBE: AudioFileProbePayload
   MIXDOWN_START: MixdownStartPayload
+  TRACK_EXPORT_START: TrackExportStartPayload
   MIXDOWN_CANCEL: undefined
   STEM_SEPARATE: StemSeparatePayload
   STEM_SEPARATE_CANCEL: StemSeparateCancelPayload
@@ -792,6 +795,8 @@ export interface ProjectSaveAsPayload {
 
 export interface ProjectSaveViewStatePayload {
   filePath: string
+  /** Persist just the export choices without advancing the backing project's recovery timestamp. */
+  exportPreferencesOnly?: boolean
   viewScrollX: number
   /** Latest horizontal zoom (px/sec); omit to leave the saved value untouched. */
   viewPxPerSecond?: number
@@ -957,9 +962,11 @@ export interface AudioFileProbePayload {
  * honours `lengthMs` exactly (truncating or padding with silence).
  */
 export interface MixdownStartPayload {
+  /** Use the project's current timeline selection instead of start, length and tail settings. */
+  selectionOnly?: boolean
   outputPath: string
   sampleRate: 44100 | 48000
-  format: 'wav' | 'mp3' | 'flac' | 'aiff'
+  format: ExportFormat
   /** Output bit-depth (default 16). wav: 16/24/32f; flac/aiff: 16/24; mp3: ignored. */
   bitDepth?: 16 | 24 | 32
   /** TPDF dither before integer quantisation; only affects 16-bit output. Default true. */
@@ -1400,6 +1407,7 @@ export const bridgeOutboundPayloadKinds: {
   PROJECT_SET_SEED_TEMPO_PREF: 'payload',
   AUDIO_FILE_PROBE: 'payload',
   MIXDOWN_START: 'payload',
+  TRACK_EXPORT_START: 'payload',
   MIXDOWN_CANCEL: 'none',
   STEM_SEPARATE: 'payload',
   STEM_SEPARATE_CANCEL: 'payload',

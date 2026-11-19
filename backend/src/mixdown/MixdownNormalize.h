@@ -29,14 +29,13 @@ struct Pass2Result
 Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               const juce::File& tmpFile,
                               const MixdownOptions& options,
-                              const juce::File& lameApp,
                               int chosenBitDepth,
                               bool wantFloatWav,
                               double appliedGainDb,
                               LoudnessAnalyzer& analyzer,
                               mixdown_dither::Xorshift32& rngL,
                               mixdown_dither::Xorshift32& rngR,
-                              BridgeServer& bridge,
+                              const RenderProgress& progress,
                               std::atomic<bool>& cancelFlag);
 
 } // namespace silverdaw::mixdown_normalize

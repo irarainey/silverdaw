@@ -5,11 +5,13 @@
 // `null` means no render in progress.
 
 import { ref, readonly, type Ref } from 'vue'
-import type { MixdownFailedPayload, MixdownProgressPayload } from '@shared/bridge-protocol'
+import type { ExportFormat, MixdownFailedPayload, MixdownProgressPayload } from '@shared/bridge-protocol'
 
 export type MixdownStage = MixdownProgressPayload['stage']
 
 export interface MixdownActiveState {
+  tracks?: boolean
+  track?: MixdownProgressPayload['track']
   /** 0..100 progress as broadcast by the backend. */
   percent: number
   /** Latest stage label so the dialog can surface the current phase. */
@@ -19,7 +21,7 @@ export interface MixdownActiveState {
   outputPath: string
   /** Format the user requested. Used to build the success toast
    *  message ("Exported MIXDOWN.WAV"). */
-  format: 'wav' | 'mp3' | 'flac' | 'aiff'
+  format: ExportFormat
 }
 
 const state: Ref<MixdownActiveState | null> = ref(null)
@@ -33,8 +35,12 @@ export function useMixdownState(): Readonly<Ref<MixdownActiveState | null>> {
  * after it dispatches `MIXDOWN_START`. The dialog stays open just
  * long enough to swap to the progress dialog.
  */
-export function beginMixdown(outputPath: string, format: 'wav' | 'mp3' | 'flac' | 'aiff'): void {
+export function beginMixdown(outputPath: string, format: ExportFormat): void {
   state.value = { percent: 0, stage: 'prepare', outputPath, format }
+}
+
+export function beginTrackExport(folder: string, format: ExportFormat): void {
+  state.value = { percent: 0, stage: 'prepare', outputPath: folder, format, tracks: true }
 }
 
 /**
@@ -46,7 +52,8 @@ export function applyMixdownProgress(payload: MixdownProgressPayload): void {
   state.value = {
     ...state.value,
     percent: Math.max(state.value.percent, payload.percent),
-    stage: payload.stage
+    stage: payload.stage,
+    track: payload.track
   }
 }
 

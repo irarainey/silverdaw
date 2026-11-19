@@ -8,6 +8,7 @@ import {
   isEngineAudioStatusPayload,
   isLibraryItemAnalysisPayload,
   isMixdownDonePayload,
+  TrackExportStartSchema,
   isMidiDevicesListPayload,
   isMidiMessagePayload,
   isMidiControlPayload,
@@ -81,6 +82,7 @@ const INBOUND_TYPES = {
   EDIT_UNDO_STATE: true,
   AUDIO_FILE_PROBED: true,
   MIXDOWN_PROGRESS: true,
+  TRACK_EXPORT_READY: true,
   MIXDOWN_DONE: true,
   MIXDOWN_FAILED: true,
   STEM_PROGRESS: true,
@@ -171,6 +173,27 @@ describe('isReadyPayload', () => {
   it('rejects missing or wrong-typed version', () => {
     expect(isReadyPayload({})).toBe(false)
     expect(isReadyPayload({ version: 1 })).toBe(false)
+  })
+})
+
+describe('track export encoding settings', () => {
+  const base = { sampleRate: 44100, includeEffects: true, tailSeconds: 0, trackLabels: { t1: 'Lead' } }
+  it('passes through the range opt-in only as a boolean', () => {
+    expect(TrackExportStartSchema.parse({ ...base, bitDepth: 24, selectionOnly: true }).selectionOnly).toBe(true)
+    expect(TrackExportStartSchema.safeParse({ ...base, bitDepth: 24, selectionOnly: 'true' }).success).toBe(false)
+  })
+  it('only accepts whole tail seconds from 0 through 60', () => {
+    const accepts = (tailSeconds: number) => TrackExportStartSchema.safeParse({ ...base, bitDepth: 24, tailSeconds }).success
+    for (const seconds of [0, 1, 60]) expect(accepts(seconds)).toBe(true)
+    for (const seconds of [-1, 0.5, 61]) expect(accepts(seconds)).toBe(false)
+  })
+
+  it('accepts existing WAV requests and rejects incompatible encoding parameters', () => {
+    expect(TrackExportStartSchema.parse({ ...base, bitDepth: 32 }).format).toBe('wav')
+    for (const settings of [{ format: 'flac', bitDepth: 32 }, { format: 'mp3', bitDepth: 24 },
+      { format: 'mp3', bitrateKbps: 999 }, { format: 'ogg', bitDepth: 16 }]) {
+      expect(TrackExportStartSchema.safeParse({ ...base, ...settings }).success).toBe(false)
+    }
   })
 })
 

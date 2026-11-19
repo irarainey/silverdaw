@@ -1,6 +1,5 @@
 #include "MixdownNormalize.h"
 
-#include "MixdownBroadcast.h"
 #include "MixdownExport.h"
 #include "MixdownGraph.h"
 
@@ -13,7 +12,6 @@
 namespace silverdaw::mixdown_normalize
 {
 
-using mixdown_bridge::broadcastProgress;
 using mixdown_dither::kLsb16f;
 using mixdown_dither::nextUniform;
 using mixdown_graph::kBlockFrames;
@@ -36,14 +34,13 @@ Pass2Result fail(MixdownFailureCode code, const juce::String& message)
 Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                               const juce::File& tmpFile,
                               const MixdownOptions& options,
-                              const juce::File& lameApp,
                               int chosenBitDepth,
                               bool wantFloatWav,
                               double appliedGainDb,
                               LoudnessAnalyzer& analyzer,
                               mixdown_dither::Xorshift32& rngL,
                               mixdown_dither::Xorshift32& rngR,
-                              BridgeServer& bridge,
+                              const RenderProgress& progress,
                               std::atomic<bool>& cancelFlag)
 {
     // Write caches to a sibling temp file so partial entries are never visible.
@@ -53,7 +50,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
         p2Reader.reset(wavReadback.createReaderFor(f32In.release(), /*deleteWhenDone*/ true));
     if (p2Reader == nullptr)
     {
-        f32TmpFile.deleteFile();
         return fail(MixdownFailureCode::Io,
                     "Pass 2: could not open intermediate file for read-back.");
     }
@@ -62,8 +58,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
         std::make_unique<juce::FileOutputStream>(tmpFile);
     if (! static_cast<juce::FileOutputStream*>(p2Stream.get())->openedOk())
     {
-        p2Reader.reset();
-        f32TmpFile.deleteFile();
         return fail(MixdownFailureCode::Io,
                     "Pass 2: cannot open output for writing: " + tmpFile.getFullPathName());
     }
@@ -75,13 +69,11 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
                                             ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
                                             : juce::AudioFormatWriterOptions::SampleFormat::integral);
     std::unique_ptr<juce::AudioFormatWriter> p2Writer =
-        mixdown_export::createOutputWriter(options.format, p2Opts, lameApp,
-                                           options.metadata, options.bitrateKbps, p2Stream);
+        mixdown_export::createOutputWriter(options.format, p2Opts, options.metadata, p2Stream);
     if (p2Writer == nullptr)
     {
         p2Stream.reset();
         tmpFile.deleteFile();
-        f32TmpFile.deleteFile();
         return fail(MixdownFailureCode::Io,
                     juce::String("Pass 2: failed to create final writer (bitDepth=")
                         + juce::String(chosenBitDepth) + ").");
@@ -106,7 +98,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
         {
             p2Writer.reset();
             tmpFile.deleteFile();
-            f32TmpFile.deleteFile();
             return fail(MixdownFailureCode::Cancelled, "Cancelled.");
         }
         const int chunk = static_cast<int>(
@@ -116,7 +107,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
         {
             p2Writer.reset();
             tmpFile.deleteFile();
-            f32TmpFile.deleteFile();
             return fail(MixdownFailureCode::Io, "Pass 2: read failure.");
         }
 
@@ -150,7 +140,6 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
         {
             p2Writer.reset();
             tmpFile.deleteFile();
-            f32TmpFile.deleteFile();
             return fail(MixdownFailureCode::Io, "Pass 2: writer failed mid-stream.");
         }
         p2Pos += chunk;
@@ -162,17 +151,16 @@ Pass2Result runNormalizePass2(const juce::File& f32TmpFile,
             const double pct = 46.0 + (static_cast<double>(p2Pos)
                                        / static_cast<double>(juce::jmax<juce::int64>(1, totalP2Frames)))
                                        * 44.0;
-            broadcastProgress(bridge, pct, "normalize-pass2");
+            progress(pct, "normalize-pass2");
             p2LastProgressMs = now;
         }
     }
-    broadcastProgress(bridge, 90.0, "normalize-pass2");
+    progress(90.0, "normalize-pass2");
     p2Writer.reset();
     result.outputFramesWritten = p2OutputFramesWritten;
     result.finalLoudness = analyzer.computeForLinearGainDb(appliedGainDb);
 
-    f32TmpFile.deleteFile();
-    broadcastProgress(bridge, 92.0, "finalize");
+    progress(92.0, "finalize");
     return result;
 }
 

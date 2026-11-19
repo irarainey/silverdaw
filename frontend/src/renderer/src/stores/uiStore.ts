@@ -6,6 +6,7 @@ import { log } from '@/lib/log'
 import type { SkipButtonTarget, WaveformDisplayMode } from '@shared/types'
 import type { AutomationParamId } from '@shared/bridge-protocol'
 import { DEFAULT_SNAP_GRID, toSnapGrid, type SnapGrid } from '@shared/snapGrid'
+import { clampTrackHeaderWidth, MIN_TRACK_HEADER_WIDTH } from '@shared/trackHeaderWidth'
 import {
   clampTimelineSelectionToDuration,
   normaliseTimelineSelection,
@@ -93,7 +94,7 @@ let nextTimelineRevealTrackRequestId = 1
 
 // Must match `DEFAULT_PREFS.ui` in src/main/index.ts.
 const DEFAULTS = {
-  trackHeaderWidth: 193,
+  trackHeaderWidth: MIN_TRACK_HEADER_WIDTH,
   libraryPanelHeight: 180,
   followPlayback: true,
   showLibraryTileImages: true,
@@ -115,18 +116,8 @@ function sanitiseProjectSampleRate(n: unknown): number {
     : DEFAULTS.defaultProjectSampleRate
 }
 
-// Defensive clamps protect against corrupt persisted layout values. The header
-// floor is the width of its own bottom button row (six 24px buttons, five 4px
-// gaps, 16px padding) — narrower and those controls start squashing.
-const MIN_TRACK_HEADER_WIDTH = 180
-const MAX_TRACK_HEADER_WIDTH = 480
 const MIN_LIBRARY_PANEL_HEIGHT = 80
 const MAX_LIBRARY_PANEL_HEIGHT = 2000
-
-function clampHeaderWidth(n: number): number {
-  if (!Number.isFinite(n)) return DEFAULTS.trackHeaderWidth
-  return Math.round(Math.max(MIN_TRACK_HEADER_WIDTH, Math.min(MAX_TRACK_HEADER_WIDTH, n)))
-}
 
 function clampLibraryHeight(n: number): number {
   if (!Number.isFinite(n)) return DEFAULTS.libraryPanelHeight
@@ -211,7 +202,7 @@ export const useUiStore = defineStore('ui', {
       if (this.hydrated) return
       try {
         const saved = await window.silverdaw.getUiPreferences()
-        this.trackHeaderWidth = clampHeaderWidth(saved.trackHeaderWidth)
+        this.trackHeaderWidth = clampTrackHeaderWidth(saved.trackHeaderWidth)
         this.libraryPanelHeight = clampLibraryHeight(saved.libraryPanelHeight)
         this.followPlayback =
           typeof saved.followPlayback === 'boolean' ? saved.followPlayback : DEFAULTS.followPlayback
@@ -259,7 +250,7 @@ export const useUiStore = defineStore('ui', {
     },
 
     setTrackHeaderWidth(value: number): void {
-      const next = clampHeaderWidth(value)
+      const next = clampTrackHeaderWidth(value)
       if (next === this.trackHeaderWidth) return
       this.trackHeaderWidth = next
       if (this.hydrated) schedulePush({ trackHeaderWidth: next })

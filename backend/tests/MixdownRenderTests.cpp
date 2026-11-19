@@ -7,10 +7,13 @@
 #include "BridgeServer.h"
 #include "DecodedCache.h"
 #include "Log.h"
+#include "LamePath.h"
 #include "MixdownEngine.h"
 #include "MixdownRender.h"
+#include "Mp3Export.h"
 #include "ProjectState.h"
 #include "TestRegistry.h"
+#include "TrackExport.h"
 
 #include <atomic>
 #include <cmath>
@@ -22,23 +25,23 @@ namespace silverdaw::tests
 namespace
 {
 
-// Author a deterministic stereo sine WAV so the render has real, non-silent
-// content to decode and sum through the full per-clip source graph.
-juce::File writeSineWav(const juce::File& dir, const juce::String& name,
-                        double seconds, double sampleRate, double freqHz, float amplitude)
+void writeStereoWav(const juce::File& file, double sampleRate, const juce::AudioBuffer<float>& buffer)
 {
-    auto file = dir.getChildFile(name);
     juce::WavAudioFormat format;
     std::unique_ptr<juce::OutputStream> stream(file.createOutputStream());
-    require(stream != nullptr, "sine wav output stream should open");
+    require(stream != nullptr, "fixture output stream should open");
     const auto writerOptions = juce::AudioFormatWriterOptions{}
                                    .withSampleRate(sampleRate)
                                    .withNumChannels(2)
                                    .withBitsPerSample(16);
     std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream, writerOptions));
-    require(writer != nullptr, "sine wav writer should create");
-    // The writer took ownership of the stream on success.
+    require(writer && writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples()),
+            "fixture WAV should be written");
+}
 
+juce::File writeSineWav(const juce::File& dir, const juce::String& name,
+                        double seconds, double sampleRate, double freqHz, float amplitude)
+{
     const int numSamples = juce::jmax(1, static_cast<int>(seconds * sampleRate));
     juce::AudioBuffer<float> buffer(2, numSamples);
     for (int i = 0; i < numSamples; ++i)
@@ -48,8 +51,8 @@ juce::File writeSineWav(const juce::File& dir, const juce::String& name,
         buffer.setSample(0, i, static_cast<float>(s));
         buffer.setSample(1, i, static_cast<float>(s));
     }
-    writer->writeFromAudioSampleBuffer(buffer, 0, numSamples);
-    writer.reset();
+    const auto file = dir.getChildFile(name);
+    writeStereoWav(file, sampleRate, buffer);
     return file;
 }
 
@@ -99,11 +102,22 @@ RenderFingerprint fingerprint(const juce::File& file)
     return fp;
 }
 
+RenderFingerprint decodedMp3Fingerprint(const juce::File& file)
+{
+    DecodedCache cache;
+    juce::AudioFormatManager noFallbackFormats;
+    const auto decoded = cache.ensureDecoded(file, noFallbackFormats);
+    require(decoded.existsAsFile(), "the bundled LAME decoder must decode the MP3 without a JUCE fallback");
+    juce::ScopeGuard cleanup{[&] { decoded.deleteFile(); }};
+    return fingerprint(decoded);
+}
+
 // Build a single-track, single-clip project pointing at a real WAV and render
 // it through runMixdownJob (synchronous; clientless BridgeServer => broadcasts
 // are no-ops). Returns the decoded fingerprint of the produced file.
 RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outFile, MixdownOptions::Format format,
-                             int bitDepth, MixdownOptions::LoudnessMode loudness, int bitrateKbps = 192)
+                             int bitDepth, MixdownOptions::LoudnessMode loudness, int bitrateKbps = 192,
+                             const ExportMetadata& metadata = {})
 {
     ProjectState state;
     require(state.addTrack("t1"), "addTrack should succeed");
@@ -122,6 +136,7 @@ RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outF
     options.format = format;
     options.bitDepth = bitDepth;
     options.bitrateKbps = bitrateKbps;
+    options.metadata = metadata;
     options.dither = false; // determinism
     options.tailSeconds = 0.0;
     options.loudnessMode = loudness;
@@ -142,20 +157,7 @@ RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outF
         throw std::runtime_error(std::string("render produced no output file; dir has: ")
                                  + present.toStdString());
     }
-    RenderFingerprint fp;
-    if (format == MixdownOptions::Format::Mp3)
-    {
-        DecodedCache cache;
-        juce::AudioFormatManager noFallbackFormats;
-        const auto decoded = cache.ensureDecoded(outFile, noFallbackFormats);
-        require(decoded.existsAsFile(), "the bundled LAME decoder must decode the MP3 without a JUCE fallback");
-        fp = fingerprint(decoded);
-        require(decoded.deleteFile(), "the test's decoded cache entry should be removed");
-    }
-    else
-    {
-        fp = fingerprint(outFile);
-    }
+    const auto fp = format == MixdownOptions::Format::Mp3 ? decodedMp3Fingerprint(outFile) : fingerprint(outFile);
     std::cout << "    [fingerprint] " << outFile.getFileName().toStdString()
               << " frames=" << fp.frames << " ch=" << fp.channels
               << " sr=" << fp.sampleRate << " peak=" << fp.peak
@@ -166,6 +168,7 @@ RenderFingerprint renderOnce(const juce::File& sourceWav, const juce::File& outF
 void testMp3ExportRoundTripsThroughBundledDecoder()
 {
     const auto dir = makeTempDir("mixdown-mp3");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
     const auto src = writeSineWav(dir, "source.wav", 1.0, 44100.0, 440.0, 0.5F);
     for (const int bitrate : {128, 192, 320})
     {
@@ -176,8 +179,98 @@ void testMp3ExportRoundTripsThroughBundledDecoder()
         requireNear(fp.sampleRate, 44100.0, 1.0, "MP3 round-trip preserves sample rate");
         require(fp.frames == 45056, "MP3 round-trip preserves the rendered length after gapless trimming");
         require(fp.peak > 0.4 && fp.peak < 0.55, "MP3 output retains the input signal level");
+        const auto kbps = static_cast<double>(out.getSize()) * 8.0 * fp.sampleRate /
+                          (1000.0 * static_cast<double>(fp.frames));
+        requireNear(kbps, static_cast<double>(bitrate), bitrate * 0.1, "MP3 uses the requested CBR bitrate");
     }
-    dir.deleteRecursively();
+    ExportMetadata metadata;
+    metadata.title = "Tagged mixdown";
+    const auto tagged = dir.getChildFile("normalized.mp3");
+    const auto normalized = renderOnce(src, tagged, MixdownOptions::Format::Mp3, 16,
+                                      MixdownOptions::LoudnessMode::Normalize, 192, metadata);
+    require(normalized.frames == 45056 && normalized.peak > 0.1 && normalized.peak < 0.45,
+            "normalized MP3 contains the gain-adjusted second pass");
+    juce::FileInputStream stream(tagged);
+    char title[18]{};
+    require(stream.setPosition(tagged.getSize() - 128) && stream.read(title, 17) == 17 &&
+            juce::String(title) == "TAGTagged mixdown", "normalized MP3 retains the title tag");
+}
+
+void testMp3FailureDoesNotPublish()
+{
+    const auto dir = makeTempDir("mp3-encode-failure");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    MixdownSnapshot snapshot;
+    snapshot.tracks.emplace_back().name = "Silent track";
+    MixdownOptions options;
+    options.lengthMs = 100;
+    options.format = MixdownOptions::Format::Mp3;
+    options.metadata.genre = "999"; // The bundled LAME rejects an unknown numeric ID3v1 genre.
+    options.outputFile = dir.getChildFile("mix.mp3");
+    require(options.outputFile.replaceWithText("previous mix"), "stage previous mixdown");
+    std::atomic<bool> cancel{false};
+    for (const auto mode : {MixdownOptions::LoudnessMode::Off, MixdownOptions::LoudnessMode::Normalize})
+    {
+        options.loudnessMode = mode;
+        bool checkedEncodeStage = false;
+        const auto result = renderOfflineFile(snapshot, options, [&](double, const char* stage) {
+            if (juce::String(stage) == "encode")
+            {
+                checkedEncodeStage = true;
+                require(dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1,
+                        "uncompressed PCM must never be staged beside the destination");
+            }
+        }, cancel);
+        require(checkedEncodeStage && result.failure == MixdownFailureCode::Encode && result.message.contains("exit"),
+                "report LAME's nonzero exit status");
+        require(options.outputFile.loadFileAsString() == "previous mix" &&
+                dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 1,
+                "an encoder failure preserves the previous mix and removes its intermediates");
+    }
+
+    options.loudnessMode = MixdownOptions::LoudnessMode::Off;
+    const auto exportDir = dir.getChildFile("export");
+    const auto batch = renderTrackBatch(snapshot, exportDir, options, false,
+        [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(batch.failure == MixdownFailureCode::Encode && batch.folder == juce::File() &&
+            exportDir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 0,
+            "a rejected MP3 leaves neither a published batch nor a partial folder");
+
+    options.metadata = {};
+    const auto shortPcm = writeSineWav(dir, "short.wav", 0.1, 44100, 440, 0.5F);
+    const auto partial = dir.getChildFile("partial.mp3");
+    const auto shortEncode = mixdown_export::encodeMp3(findLameExecutable(), shortPcm, partial, options,
+                                                        4411, cancel);
+    require(partial.getSize() > 0 && shortEncode.failed() && shortEncode.getErrorMessage().contains("incomplete"),
+            "a zero exit status and playable file are insufficient if even one rendered sample is missing");
+}
+
+void testSilentMp3Tracks()
+{
+    const auto dir = makeTempDir("track-export-silent-mp3");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto source = writeSineWav(dir, "source.wav", 0.5, 44100, 440.0, 0.5F);
+    ProjectState state;
+    require(state.addTrack("empty") && state.addTrack("down") &&
+            state.addLibraryItem("lib", source.getFullPathName(), "source", 500, 44100, 2) &&
+            state.addClip("down", "clip", "lib", 0, 500), "stage empty and fully attenuated tracks");
+    state.setTrackName("empty", "Empty");
+    state.setTrackName("down", "Down");
+    state.setTrackGain("down", 0.0F);
+    MixdownOptions options;
+    options.format = MixdownOptions::Format::Mp3;
+    options.bitrateKbps = 320;
+    options.lengthMs = 500;
+    std::atomic<bool> cancel{false};
+    const auto batch = renderTrackBatch(snapshotProjectForMixdown(state, 0, 1, 0, 1, 1, SnapshotScope::IndividualTracks),
+        dir, options, true, [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "export the silent MP3 tracks");
+    for (const auto* name : {"Empty.mp3", "Down.mp3"})
+    {
+        const auto fp = decodedMp3Fingerprint(batch.folder.getChildFile(name));
+        require(fp.frames == 22050 && fp.channels == 2 && fp.peak == 0,
+                "each decoded MP3 must contain a half-second of exact stereo silence");
+    }
 }
 
 void testMp3DecoderReplacesSupersededCache()
@@ -292,12 +385,303 @@ void testNormalizePass2ProducesLouderOutput()
     dir.deleteRecursively();
 }
 
+void testReversedTrackEndsWithResampledTransient()
+{
+    const auto dir = makeTempDir("track-export-transient");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = dir.getChildFile("impulse.wav");
+    juce::AudioBuffer<float> impulse(2, 44100);
+    impulse.clear();
+    impulse.setSample(0, 10, 0.8F);
+    writeStereoWav(src, 44100, impulse);
+    ProjectState state;
+    state.setTargetSampleRate(44100);
+    state.setMasterVolume(1.0F);
+    state.setSafetyLimiterEnabled(false);
+    require(state.addTrack("t") && state.addLibraryItem("lib", src.getFullPathName(), "source", 1000, 44100, 2)
+            && state.addClip("t", "clip", "lib", 0, 1000) && state.setClipReversed("clip", true),
+            "prepare a reversed one-second clip");
+    state.setTrackName("t", "Impulse");
+    MixdownOptions options;
+    options.outputFile = dir.getChildFile("mix.wav");
+    options.lengthMs = 1000;
+    options.outputSampleRate = 48000;
+    options.bitDepth = 24;
+    options.dither = false;
+    std::atomic<bool> cancel{false};
+    const auto mix = renderOfflineFile(snapshotProjectForMixdown(state), options, [](double, const char*) {}, cancel);
+    require(!mix.failure, "render the reversed mixdown");
+    const auto batch = renderTrackBatch(snapshotProjectForMixdown(state, 0, 1, 0, 1, 1, SnapshotScope::IndividualTracks),
+        dir.getChildFile("export"), options, true, [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "render the reversed track");
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    const auto trackFile = batch.folder.getChildFile("Impulse.wav");
+    juce::AudioBuffer<float> reference(2, 48000), track(2, 48000);
+    std::unique_ptr<juce::AudioFormatReader> mixReader(fm.createReaderFor(options.outputFile));
+    std::unique_ptr<juce::AudioFormatReader> trackReader(fm.createReaderFor(trackFile));
+    require(mixReader && mixReader->lengthInSamples >= 48000 && mixReader->read(&reference, 0, 48000, 0, true, true),
+            "read arrangement from mixdown");
+    require(trackReader && trackReader->lengthInSamples == 48000 && trackReader->read(&track, 0, 48000, 0, true, true),
+            "zero-tail resampled track is exactly one second");
+    require(track.getMagnitude(0, 47980, 20) > 0.1F, "final resampler preserves the reversed impulse at the end");
+    reference.addFrom(0, 0, track, 0, 0, 48000, -1.0F);
+    require(reference.getMagnitude(0, 0, 48000) < 1.0e-5F, "mixdown and individual track play the same reversed audio");
+}
+
+void testSlicedRenderTeardown()
+{
+    const auto dir = makeTempDir("mixdown-slices");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = writeSineWav(dir, "source.wav", 1, 44100, 440, 0.5F);
+    ProjectState state;
+    require(state.addTrack("t") && state.addLibraryItem("lib", src.getFullPathName(), "source", 1000, 44100, 2),
+            "prepare sliced source");
+    for (int i = 0; i < 16; ++i)
+        require(state.addClip("t", "slice" + juce::String(i), "lib", i * 60, 50), "add short slice");
+    MixdownOptions options;
+    options.lengthMs = 1000;
+    options.outputFile = dir.getChildFile("mix.wav");
+    std::atomic<bool> cancel{false};
+    double publishedMs = 0;
+    const auto result = renderOfflineFile(snapshotProjectForMixdown(state), options, [&](double pct, const char*) {
+        if (pct == 100) publishedMs = juce::Time::getMillisecondCounterHiRes();
+    }, cancel);
+    require(!result.failure && publishedMs > 0, "sliced mixdown should be published");
+    require(juce::Time::getMillisecondCounterHiRes() - publishedMs < 4000,
+            "teardown must not wait for a playback callback per slice");
+}
+
+void testTimelineRangeMatchesFullRender()
+{
+    const auto dir = makeTempDir("export-range");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = writeSineWav(dir, "tone.wav", 1, 44100, 237, 0.4F);
+    ProjectState state;
+    state.setTargetSampleRate(44100);
+    state.setMasterVolume(1.0F);
+    state.setSafetyLimiterEnabled(false);
+    require(state.addTrack("t") && state.addLibraryItem("lib", src.getFullPathName(), "tone", 1000, 44100, 2)
+            && state.addClip("t", "clip", "lib", 0, 200), "stage a clip ending before the range");
+    state.setTrackName("t", "Echo");
+    state.setProjectDelay("1/8", 0.3F, 0.5F, 1.0F);
+    state.setTrackSends("t", 0.0F, 1.0F);
+    MixdownOptions options;
+    options.outputFile = dir.getChildFile("full.wav");
+    options.outputSampleRate = 48000;
+    options.bitDepth = 24;
+    options.lengthMs = 1000;
+    const auto snapshot = snapshotProjectForMixdown(state);
+    std::atomic<bool> cancel{false};
+    const auto progress = [](double, const char*) {};
+    require(!renderOfflineFile(snapshot, options, progress, cancel).failure, "render full mix reference");
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    const juce::Range<int64_t> window{14413, 20571};
+    const auto count = static_cast<int>(window.getLength());
+    juce::AudioBuffer<float> reference(2, count);
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(options.outputFile));
+    require(reader && reader->read(&reference, 0, count, window.getStart(), true, true)
+            && reference.getMagnitude(0, count) > 0.02F, "reference contains the pre-range clip's delay return");
+
+    options.outputFile = dir.getChildFile("range.wav");
+    options.outputFrameRange = window;
+    require(!renderOfflineFile(snapshot, options, progress, cancel).failure, "render selected mix range");
+    const auto batch = renderTrackBatch(snapshot, dir.getChildFile("tracks"), options, true,
+        [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "render selected track range");
+    for (const auto& file : {options.outputFile, batch.folder.getChildFile("Echo.wav")})
+    {
+        reader.reset(fm.createReaderFor(file));
+        juce::AudioBuffer<float> actual(2, count);
+        require(reader && reader->lengthInSamples == count && reader->read(&actual, 0, count, 0, true, true),
+                "non-block-aligned range has the exact output frame count");
+        for (int ch = 0; ch < 2; ++ch)
+            actual.addFrom(ch, 0, reference, ch, 0, count, -1.0F);
+        require(actual.getMagnitude(0, count) < 1.0e-5F, "both exports match the same slice of the full render");
+    }
+}
+
+void testIndividualTrackExport()
+{
+    const auto dir = makeTempDir("track-export");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto src = writeSineWav(dir, "source.wav", 1.0, 44100, 440.0, 0.5F);
+    ProjectState state;
+    for (const auto* id : {"late", "warped", "empty"})
+        require(state.addTrack(id), "add fixture track");
+    state.setTrackName("late", "Lead");
+    state.setTrackName("warped", "lead");
+    state.setTrackName("empty", "CON.txt");
+    state.setTrackMuted("late", true);
+    state.setTrackSoloed("warped", true);
+    state.setTrackGain("late", 0.5F);
+    state.setMasterVolume(0.0F);
+    require(state.addLibraryItem("lib", src.getFullPathName(), "source", 1000, 44100, 2), "add source");
+    require(state.addClip("late", "a", "lib", 250, 125, 100), "add delayed slice");
+    require(state.addClip("warped", "b", "lib", 0, 500), "add final clip");
+    state.setClipWarp("b", true, juce::String("tonal"), 0.5, false, 2, {}, {});
+    state.setProjectDelay("1/8", 0.3F, 0.5F, 1.0F);
+    auto snapshot = snapshotProjectForMixdown(state, 0, 1, 0, 1, 1, SnapshotScope::IndividualTracks);
+    require(snapshot.tracks.size() == 3, "include muted and empty tracks");
+    snapshot.tracks.front().automation = {
+        {"delaySend", {{0, 1.0F}, {1000, 1.0F}}}, {"pan", {{0, -1.0F}, {1000, -1.0F}}}};
+    MixdownOptions options;
+    options.bitDepth = 24;
+    options.outputSampleRate = 48000;
+    options.tailSeconds = 0.25;
+    options.lengthMs = computeLastClipEndMs(snapshot);
+    std::atomic<bool> cancel{false};
+    const auto exportDir = dir.getChildFile("export");
+    const TrackExportProgress tick = [](double, const char*, int, int, const juce::String&) {};
+    const auto dry = renderTrackBatch(snapshot, exportDir, options, false, tick, cancel);
+    const auto wet = renderTrackBatch(snapshot, exportDir, options, true, tick, cancel);
+    require(!dry.failure && !wet.failure, "wet and dry exports should succeed");
+    require(dry.folder != wet.folder && dry.folder.getFileName().matchesWildcard("????-??-??_??-??-??*", false),
+            "successive batches never replace one another");
+    for (const auto& batch : {dry.folder, wet.folder})
+    {
+        for (const auto* name : {"Lead.wav", "lead (2).wav", "_CON.txt.wav"})
+        {
+            const auto fp = fingerprint(batch.getChildFile(name));
+            require(fp.frames == 60000 && fp.channels == 2 && fp.sampleRate == 48000,
+                    "every WAV spans the stretched final clip and shared tail at the chosen rate");
+            if (juce::String(name).startsWith("_")) require(fp.peak == 0, "empty track is silence");
+            else require(fp.peak > 0.1, "mute, solo and master volume do not silence track renders");
+        }
+    }
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    const auto readLead = [&](const juce::File& folder) {
+        std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(folder.getChildFile("Lead.wav")));
+        juce::AudioBuffer<float> audio(2, 60000);
+        require(reader && reader->bitsPerSample == 24 && reader->read(&audio, 0, 60000, 0, true, true),
+                "read exported 24-bit track");
+        return audio;
+    };
+    const auto dryAudio = readLead(dry.folder);
+    require(dryAudio.getMagnitude(0, 0, 11950) < 1.0e-5F &&
+            dryAudio.getMagnitude(0, 12000, 1000) > 0.15F, "late slice keeps its initial silence");
+    require(dryAudio.getMagnitude(1, 12000, 5000) < 1.0e-4F, "pan automation survives dry export");
+    require(dryAudio.getMagnitude(0, 20000, 30000) < 1.0e-5F &&
+            readLead(wet.folder).getMagnitude(0, 20000, 30000) > 0.01F,
+            "automated delay return is printed only when track effects are included");
+    require(state.getTrackMuted("late") && state.getTrackSoloed("warped"), "export leaves audition state alone");
+
+    auto solo = snapshot;
+    solo.tracks.resize(1);
+    solo.masterGain = 1.0F;
+    solo.mixGlueAmount = 0.0F;
+    solo.safetyLimiterEnabled = false;
+    options.outputFile = dir.getChildFile("Lead.wav");
+    options.lengthMs = 1000;
+    const auto reference = renderOfflineFile(solo, options, [](double, const char*) {}, cancel);
+    require(!reference.failure, "render the isolated pre-master reference");
+    const auto referenceAudio = readLead(dir);
+    auto difference = readLead(wet.folder);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        difference.addFrom(ch, 0, referenceAudio, ch, 0, 40000, -1.0F);
+        require(difference.getMagnitude(ch, 0, 40000) < 1.0e-5F,
+                "isolated track and solo reference match including the automated return");
+    }
+
+    const auto cancelled = renderTrackBatch(snapshot, exportDir, options, true,
+        [&](double, const char*, int index, int, const juce::String&) { if (index == 2) cancel.store(true); },
+        cancel);
+    require(cancelled.failure == MixdownFailureCode::Cancelled, "can cancel after writing the first track");
+    cancel.store(false);
+    snapshot.tracks[1].clips.front().filePath = dir.getChildFile("missing.wav").getFullPathName();
+    const auto failed = renderTrackBatch(std::move(snapshot), exportDir, options, true, tick, cancel);
+    require(failed.failure == MixdownFailureCode::Decode, "broken source fails the batch");
+    require(exportDir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 2,
+            "no partial folders or WAVs survive failure or cancellation");
+}
+
+void testSelectedRangeSourceBoundary()
+{
+    const auto dir = makeTempDir("range-sources");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto source = dir.getChildFile("impulse.wav");
+    juce::AudioBuffer<float> impulse(2, 4410);
+    impulse.clear();
+    impulse.setSample(0, 1, 0.9F);
+    writeStereoWav(source, 44100, impulse);
+    ProjectState state;
+    state.setTargetSampleRate(44100);
+    state.setMasterVolume(1.0F);
+    state.setSafetyLimiterEnabled(false);
+    require(state.addTrack("t") && state.addLibraryItem("lib", source.getFullPathName(), "source", 100, 44100, 2)
+            && state.addClip("t", "edge", "lib", 200, 100), "place an impulse just after the selected interval");
+    state.setTrackName("t", "Edge");
+    auto snapshot = snapshotProjectForMixdown(state);
+    MixdownOptions options;
+    options.outputFile = dir.getChildFile("full.wav");
+    options.bitDepth = 32;
+    options.outputSampleRate = 48000;
+    options.lengthMs = 300;
+    std::atomic<bool> cancel{false};
+    const auto tick = [](double, const char*) {};
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure, "render the full impulse");
+
+    constexpr int frames = 64;
+    constexpr int end = 9600; // 200 ms at 48 kHz
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(options.outputFile));
+    juce::AudioBuffer<float> reference(2, frames);
+    require(reader && reader->read(&reference, 0, frames, end - frames, true, true)
+            && reference.getMagnitude(0, frames) > 1.0e-5F, "sinc pre-ringing reaches into the range");
+
+    auto missing = snapshot.tracks.front().clips.front();
+    missing.id = "unavailable";
+    missing.offsetMs = 205; // Same render block, outside the sinc kernel.
+    missing.filePath = dir.getChildFile("missing.wav").getFullPathName();
+    snapshot.tracks.front().clips.push_back(missing);
+    options.outputFile = dir.getChildFile("range.wav");
+    options.outputFrameRange.emplace(end - frames, end);
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure, "an unrelated missing source does not block mixdown");
+    const auto batch = renderTrackBatch(snapshot, dir, options, true,
+        [](double, const char*, int, int, const juce::String&) {}, cancel);
+    require(!batch.failure, "an unrelated missing source does not block track export");
+    for (const auto& file : {options.outputFile, batch.folder.getChildFile("Edge.wav")})
+    {
+        reader.reset(fm.createReaderFor(file));
+        juce::AudioBuffer<float> actual(2, frames);
+        require(reader && reader->lengthInSamples == frames && reader->read(&actual, 0, frames, 0, true, true),
+                "read the complete selected interval");
+        actual.addFrom(0, 0, reference, 0, 0, frames, -1.0F);
+        require(actual.getMagnitude(0, frames) < 1.0e-7F, "post-selection samples needed by the filter are retained");
+    }
+
+    snapshot.tracks.front().clips.front().filePath = missing.filePath;
+    require(renderOfflineFile(snapshot, options, tick, cancel).failure == MixdownFailureCode::Decode,
+            "a missing source inside the resampler lookahead is still required");
+    options.outputSampleRate = 44100;
+    options.outputFrameRange.emplace(0, 8820);
+    auto& unresolved = snapshot.tracks.front().plugins.emplace_back();
+    unresolved.slotId = "missing-insert";
+    unresolved.identifier = "uninstalled-plugin";
+    require(!renderOfflineFile(snapshot, options, tick, cancel).failure && fingerprint(options.outputFile).peak == 0,
+            "an unresolved insert adds no lookahead: a source at the native-rate exclusive end is not required");
+}
+
 } // namespace
 
 void addMixdownRenderTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Individual track export renders aligned wet and dry WAV batches", testIndividualTrackExport});
+    tests.push_back({"Reversed mixdown and track export preserve the last resampled transient", testReversedTrackEndsWithResampledTransient});
+    tests.push_back({"Mixdown tears down short slices without per-clip playback waits", testSlicedRenderTeardown});
+    tests.push_back({"Timeline range export matches the full resampled mix including prior effects", testTimelineRangeMatchesFullRender});
+    tests.push_back({"Timeline range export opens only sources within its filter horizon", testSelectedRangeSourceBoundary});
     tests.push_back({"MP3 export round-trips through the bundled decoder at each bitrate",
                      testMp3ExportRoundTripsThroughBundledDecoder});
+    tests.push_back({"MP3 encoder failure preserves the mixdown and publishes no track batch",
+                     testMp3FailureDoesNotPublish});
+    tests.push_back({"MP3 track export preserves digital silence on empty and fully attenuated tracks", testSilentMp3Tracks});
     tests.push_back({"MP3 decoder replaces a superseded cache entry", testMp3DecoderReplacesSupersededCache});
     tests.push_back({"Mixdown WAV-16 render is deterministic and matches the input sine",
                      testWav16RenderIsDeterministicAndCorrect});

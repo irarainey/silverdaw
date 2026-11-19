@@ -29,6 +29,7 @@ withDefaults(defineProps<{ scrollY?: number; onWheel?: (e: WheelEvent) => void }
   scrollY: 0,
   onWheel: undefined
 })
+const emit = defineEmits<{ exportTrack: [trackId: string] }>()
 
 const project = useProjectStore()
 const ui = useUiStore()
@@ -537,6 +538,27 @@ function isTrackFxShowing(trackId: string): boolean {
               @click="ui.toggleTrackAutomationLanes(track.id)"
             >
               A
+            </button>
+            <button
+              type="button"
+              class="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 bg-zinc-800 text-zinc-400 transition-colors hover:border-zinc-500 hover:bg-zinc-700 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+              title="Export this track…"
+              :aria-label="`Export ${track.name}…`"
+              :disabled="!transport.bridgeReady"
+              @click="emit('exportTrack', track.id)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="h-3.5 w-3.5"
+                aria-hidden="true"
+              >
+                <path d="M12 15V3m-5 5 5-5 5 5M4 15v5h16v-5" />
+              </svg>
             </button>
           </div>
         </div>

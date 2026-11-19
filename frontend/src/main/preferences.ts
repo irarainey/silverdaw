@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { isAbsolute, join } from 'node:path'
 import { DEFAULT_MIDI_DEVICE_PREFERENCES } from '../shared/types'
+import { clampTrackHeaderWidth, MIN_TRACK_HEADER_WIDTH } from '../shared/trackHeaderWidth'
 import type {
   DebugPreferences,
   LatencyCalibrationDto,
@@ -313,7 +314,7 @@ export function buildDefaultPrefs(): Preferences {
   return {
     window: { width: 1400, height: 900, maximized: false },
     ui: {
-      trackHeaderWidth: 193,
+      trackHeaderWidth: MIN_TRACK_HEADER_WIDTH,
       libraryPanelHeight: 180,
       followPlayback: true,
       showLibraryTileImages: true,
@@ -598,8 +599,6 @@ export function sanitiseStemModelDir(input: unknown): string | undefined {
 
 // Defensive UI-layout clamps; mirror the renderer's uiStore bounds so a corrupt
 // prefs file or a hostile renderer message cannot poison the persisted layout.
-export const UI_TRACK_HEADER_WIDTH_MIN = 180
-export const UI_TRACK_HEADER_WIDTH_MAX = 480
 export const UI_LIBRARY_PANEL_HEIGHT_MIN = 80
 export const UI_LIBRARY_PANEL_HEIGHT_MAX = 2000
 
@@ -623,12 +622,7 @@ function boolOr(value: unknown, fallback: boolean): boolean {
 export function sanitiseUiPrefs(partial: unknown, base: UiPrefs): UiPrefs {
   const p = (partial && typeof partial === 'object' ? partial : {}) as Partial<Record<keyof UiPrefs, unknown>>
   return {
-    trackHeaderWidth: clampInt(
-      p.trackHeaderWidth,
-      UI_TRACK_HEADER_WIDTH_MIN,
-      UI_TRACK_HEADER_WIDTH_MAX,
-      base.trackHeaderWidth
-    ),
+    trackHeaderWidth: clampTrackHeaderWidth(p.trackHeaderWidth, base.trackHeaderWidth),
     libraryPanelHeight: clampInt(
       p.libraryPanelHeight,
       UI_LIBRARY_PANEL_HEIGHT_MIN,

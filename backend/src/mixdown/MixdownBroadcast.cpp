@@ -8,11 +8,12 @@
 namespace silverdaw::mixdown_bridge
 {
 
-void broadcastProgress(BridgeServer& bridge, double percent, const char* stage)
+void broadcastProgress(BridgeServer& bridge, double percent, const char* stage, const juce::var& track)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("percent", juce::jlimit(0.0, 100.0, percent));
     obj->setProperty("stage", juce::String(stage));
+    if (!track.isVoid()) obj->setProperty("track", track);
     bridge.broadcast("MIXDOWN_PROGRESS", juce::var(obj));
 }
 

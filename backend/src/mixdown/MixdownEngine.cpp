@@ -2,12 +2,20 @@
 
 #include "MixdownRender.h"
 
+#include <cmath>
 #include <utility>
 
 #include <juce_core/juce_core.h>
 
 namespace silverdaw
 {
+
+std::optional<juce::Range<int64_t>> MixdownOptions::exactOutputWindow() const
+{
+    if (outputFrameRange || !alignTrackLength) return outputFrameRange;
+    return juce::Range<int64_t>{0, static_cast<int64_t>(std::ceil(lengthMs * outputSampleRate / 1000.0))
+                                   + std::llround(tailSeconds * outputSampleRate)};
+}
 
 const char* mixdownFailureCodeToString(MixdownFailureCode code) noexcept
 {

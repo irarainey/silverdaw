@@ -19,6 +19,7 @@ import {
 } from '@/lib/engineRecovery'
 import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { beginTrackExport, snapshotMixdownState } from '@/lib/mixdownState'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
 const restartBackend = vi.fn(() => Promise.resolve())
@@ -68,6 +69,13 @@ describe('engineRecovery state machine', () => {
     onConnectionLost()
     onBackendStatus('failed')
     expect(useTransportStore().engineRecovery).toBe('unavailable')
+  })
+
+  it('dismisses track export progress if the engine dies before sending a result', () => {
+    markReady()
+    beginTrackExport('project\\export', 'wav')
+    onConnectionLost()
+    expect(snapshotMixdownState()).toBeNull()
   })
 
   it('shows recovery on a restarting status even before the socket closes', () => {

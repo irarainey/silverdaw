@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-16 · Owner: @irarainey_
+_Last reviewed: 2026-11-19 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -84,12 +84,12 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The designated release version is **1.10.1**, a GPU/stem-separation and
-diagnostic-log reliability patch. All automated quality gates passed, and local
-release assets were rebuilt and verified on 2026-11-16. The
-[release record](docs/development-plan.md#release-acceptance-1101) distinguishes
-those checks from unconfirmed manual/device/upgrade coverage and retained
-limitations.
+The **latest release is 1.11.0**. It adds aligned individual track exports and
+selected-range export for both tracks and mixdowns. The
+[1.11.0 release record](docs/development-plan.md#release-acceptance-1110)
+distinguishes the local asset build from test and publication status.
+**1.10.1** was a GPU/stem-separation and diagnostic-log reliability patch;
+its checks belong to the [1.10.1 record](docs/development-plan.md#release-acceptance-1101).
 Release **1.10.0** completed dependency migrations and measured
 opening, waveform-memory, viewport-resource, Save As snapshot and focused backend
 processing improvements. The stress-memory follow-up did not
@@ -220,11 +220,12 @@ Rationale: ADR 0014. Commands and coverage tooling:
 
 ## Diagnosing a reported problem
 
-Runtime logs are the first place to look. Each run writes an ISO-timestamped
-folder under `%USERPROFILE%\Silverdaw\Logs\` containing `main.log`,
-`renderer.log`, and `backend.log` (verbose logging is opt-in via
-**Preferences ▸ Developer**). Always-on startup and crash artifacts live
-separately in `%USERPROFILE%\Silverdaw\Diagnostics\`. Detail:
+Always-on startup and crash diagnostics live in
+`%USERPROFILE%\Silverdaw\Diagnostics\`. For detailed logs, enable **Preferences
+▸ Developer ▸ Write diagnostic logs** and restart. Opted-in sessions write
+`main.log`, `renderer.log`, and `backend.log` to a timestamped folder under
+the configured log directory (default: `%USERPROFILE%\Silverdaw\Logs\`).
+Detail:
 `docs/developer-guide.md#startup-diagnostics-always-on`.
 
 ## Load on demand

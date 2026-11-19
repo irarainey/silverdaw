@@ -167,7 +167,9 @@ void testBridgeAuthTokenValidation()
 {
     using silverdaw::bridge_auth::isTokenValid;
 
-    require(isTokenValid({}, juce::var()), "empty expected token should disable auth");
+    require(!isTokenValid({}, juce::var()), "missing server and client tokens must not authenticate");
+    require(!isTokenValid("   ", objectWithToken("   ")), "a blank server token must not authenticate");
+    require(!isTokenValid("123", makeBridgePayload({{"token", 123}})), "AUTH must not coerce numeric tokens");
     require(isTokenValid("abc123", objectWithToken("abc123")), "matching token should pass");
     require(!isTokenValid("abc123", objectWithToken("abc124")), "same-length mismatch should fail");
     require(!isTokenValid("abc123", objectWithToken("abc1234")), "length mismatch should fail");
@@ -176,6 +178,12 @@ void testBridgeAuthTokenValidation()
     missingToken->setProperty("other", "abc123");
     require(!isTokenValid("abc123", juce::var(missingToken)), "missing token should fail");
     require(!isTokenValid("abc123", juce::var()), "non-object payload should fail");
+}
+
+void testBridgeRequiresTokenToListen()
+{
+    silverdaw::BridgeServer server({}, nullptr);
+    require(!server.start(0), "an unconfigured bridge must refuse to listen");
 }
 
 void testBridgePayloadHelpersRejectMalformed()
@@ -382,6 +390,7 @@ void addBridgeTests(std::vector<TestCase>& tests)
         {"Bridge socket read survives concurrent write poll", testBridgeSocketReadSurvivesConcurrentWritePoll});
     tests.push_back({"Bridge reconnect and shutdown", testBridgeReconnectAndShutdown});
     tests.push_back({"Bridge auth token validation", testBridgeAuthTokenValidation});
+    tests.push_back({"Bridge requires token to listen", testBridgeRequiresTokenToListen});
     tests.push_back({"Bridge payload helpers reject malformed values", testBridgePayloadHelpersRejectMalformed});
     tests.push_back({"Bridge optional readers reject wrong types", testBridgeOptionalReadersRejectWrongType});
     tests.push_back({"Bridge MIDI devices envelope shape", testMidiDevicesEnvelopeShape});

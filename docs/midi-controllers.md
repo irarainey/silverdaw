@@ -9,8 +9,9 @@ time.
 > **Only supported deck MIDI controllers can be enabled.** Other MIDI devices
 > are still shown in **Preferences ▸ MIDI**, but their checkboxes are disabled.
 > MIDI keyboards, pad controllers, instruments, generic unmapped controllers,
-> and controllers that require HID, SysEx initialisation, or periodic
-> keep-alive messages are not supported.
+> and controllers that require HID or periodic keep-alive messages are not
+> supported. A profile can send one-time MIDI initialisation messages,
+> including SysEx, when the device connects.
 
 > **Hardware testing:** The Pioneer DJ DDJ-RB is the only controller tested on
 > physical hardware so far. Other listed devices have profile coverage but may
@@ -26,7 +27,7 @@ virtual instruments.
 
 1. Connect and power on the controller.
 2. Open **Edit ▸ Preferences… ▸ MIDI**.
-3. Select **Rescan devices** if the controller is not already listed.
+3. Select **Rescan MIDI inputs** if the controller is not already listed.
 4. Tick the controller. A recognised device is labelled **MIDI deck controls**.
 5. Select **Save** to keep the enabled device for future sessions.
 
@@ -43,9 +44,12 @@ Each supported controller tile also has device-specific preferences:
 - **Play audio while moving the main timeline** controls whether held platter
   movement produces scratch audio. It is off by default. When off, the jog wheel
   still moves the playhead silently.
-- **Crossfader direction** saves either **Left to right** or **Right to left**.
-  The default is **Left to right**. The crossfader remains controller telemetry
-  and does not currently change the audible mix.
+- **Crossfader direction** controls which way the fader cuts the scratch in
+  the Scratch Editor. Choose **Left to right** (default) or **Right to left**.
+  The hardware fader does not crossfade arrangement tracks.
+- **Default deck** applies at startup if there is no saved deck selection.
+  Choose **Deck 1 (Left)**, **Deck 2 (Right)**, or **None** (default), which
+  leaves both decks enabled.
 
 These settings remain saved by device identifier while the controller is
 disconnected and return when Windows reports the same device again.
@@ -64,18 +68,18 @@ corresponding binding, Silverdaw applies these actions:
 | Controller control | Silverdaw action |
 | --- | --- |
 | Play | Starts or pauses the project transport. |
-| Cue | Moves to the previous timeline marker. The start of an active timeline range counts as a temporary marker. |
-| Shift + Cue | Moves to the next timeline marker, again treating an active range's start as a temporary marker. Some controllers send a dedicated shifted Cue message. |
-| Sync | Acts as a jog modifier. It does not synchronise tempo. Holding Sync snaps jog movement to timeline grid lines. |
-| Jog wheel or platter | Moves the playhead freely. While playing, touching an enabled platter holds the transport until every touched platter is released. Moving a held platter auditions short forward or backward grains from the new playhead position. The Play button pulses while playback is held. Touch-sensitive profiles switch between pitch-bend and scratch movement; Shift moves faster. |
+| Cue | Moves to the previous timeline marker, or the timeline start if none remains. The start of an active timeline range counts as a temporary marker. |
+| Shift + Cue | Moves to the next timeline marker, or the timeline end if none remains. An active range's start again counts as a marker. Some controllers send a dedicated shifted Cue message. |
+| Sync | Hold while jogging to step along the selected snap grid. With the grid set to Free, each step is relative to the playhead instead. Sync does not change tempo. |
+| Jog wheel or platter | Moves the playhead. While playing, touching an enabled platter holds the transport until every touched platter is released; the Play button pulses during the hold. Moving a held platter auditions forward or backward grains only if its scrub-audio preference is on. Profiles with a search binding can jog faster. |
 | Browse encoder | Selects tracks. Pressing it enters clip-browse mode on the selected track; rotation then selects clips, shifted rotation extends the clip range, and another press exits clip-browse mode. |
-| Shift + Browse | On profiles with a mapped Shift button, zooms the timeline when clip-browse mode is not active. Each clockwise or anticlockwise step uses the same increment as Zoom In or Zoom Out. |
+| Shift + Browse | Where the profile maps shifted rotation or a dedicated zoom message, zooms the timeline outside clip-browse mode. Each step uses the same increment as Zoom In or Zoom Out. |
 | Hot-cue pads | Jump to the corresponding numbered timeline marker. A shifted or dedicated clear pad toggles a marker at the playhead: it removes the marker the playhead is sitting on, or adds one there when it is not. This is the same action as the `M` key. Profiles expose four or eight marker pads according to the hardware. |
 | Headphone Cue / PFL | Enables or disables input from that physical deck. This is useful when a controller exposes more than one deck channel. |
 | Channel fader | Changes the currently selected Silverdaw track's volume. |
 | EQ and filter | Changes Bass, Mid, Treble, or Filter on the currently selected track and opens Track FX. Profiles only expose controls present on that model. |
-| Master level | Changes the project master volume on profiles that bind it. |
-| Crossfader | Records the hardware position as MIDI controller state. Its saved direction preference does not currently change the audible mix. |
+| Master level | Changes the project master volume on profiles that bind it, even with an editor or dialog open. |
+| Crossfader | Reports the hardware position; outside the Scratch Editor it does not change the arrangement mix. |
 | Shift and jog touch | Maintain modifier and touch state used by the other mapped actions. |
 
 Physical deck numbers identify the source control; they are not assigned to
@@ -98,9 +102,9 @@ controller, Silverdaw can update:
 - Hot-cue lights for the current marker count.
 - Selected-track level meters.
 
-Feedback is available only where the profile defines it and Windows exposes one
-unambiguous MIDI output whose name matches the input. A controller can still
-provide input when no matching output is available.
+Feedback needs a mapped output. Silverdaw first tries the first output with
+the same name as the input (ignoring case); otherwise it tries a partial name
+match only if there is exactly one. Input can still work without an output.
 
 ## Supported controllers and profile coverage
 
@@ -113,13 +117,13 @@ Controls not listed for a profile are not mapped.
 
 | Supported model names | Mapped input coverage | Output feedback |
 | --- | --- | --- |
-| Denon MC7000 | Play, Cue, Sync, Shift, deck selection, Browse, jog/touch, eight marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
+| Denon MC7000 | Play, Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch, eight marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Hercules DJControl Inpulse 200 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, Bass, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Hercules DJControl Inpulse 300 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, eight marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Hercules DJControl Inpulse 500 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, eight marker pads, high-resolution channel fader and three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Hercules DJControl Starlight; DJControl MIX | Play, Cue/Shift+Cue, Sync, deck selection, jog/touch, four marker pads, channel fader, Bass, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Numark DJ2GO2 Touch | Play, Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, crossfader | Play, Cue, deck selection, marker pads |
-| Numark Mixtrack 3; Mixtrack Pro 3 | Play, Cue, Sync, Shift, deck selection, Browse, jog/touch, four marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
+| Numark Mixtrack 3; Mixtrack Pro 3 | Play, Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch, four marker pads, channel fader, three-band EQ, filter, crossfader | Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-ERGO; DDJ-WeGO; DDJ-WeGO2; DDJ-WeGO3; DDJ-WeGO4 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, crossfader | None |
 | Pioneer DJ DDJ-RR; DDJ-RX; DDJ-RZ; DDJ-RZX; DDJ-SB; DDJ-SB2; DDJ-SB3; DDJ-SR; DDJ-SX; DDJ-SX2; DDJ-SZ | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ DDJ-RB; DDJ-SR2 | Same coverage as the common DDJ profile, plus master level | Selected-track meter, Play, Cue, deck selection, marker pads |
@@ -130,8 +134,8 @@ Controls not listed for a profile are not mapped.
 | Pioneer DJ DDJ-REV7 | Play, Cue, Sync, Shift, Browse/zoom, scratch platter, eight marker pads, channel fader, crossfader | Marker pads |
 | Pioneer DJ DDJ-SX3 | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
 | Pioneer DJ OMNIS-DUO; XDJ-RR; XDJ-RX2; XDJ-RX3; XDJ-XZ | Play, Cue/Shift+Cue, Sync, Shift, deck selection, Browse/zoom, jog/touch/search, eight marker pads, channel fader, three-band EQ, filter, crossfader | Selected-track meter, Play, Cue, deck selection, marker pads |
-| Pioneer DJ XDJ-AERO; XDJ-R1 | Play, Cue/Shift+Cue, Sync, Browse, jog/touch/search, crossfader | Play, Cue |
-| Pioneer DJ XDJ-RX | Play, Cue, Sync, Browse, jog/touch/search, channel fader, crossfader | Selected-track meter, Play, Cue |
+| Pioneer DJ XDJ-AERO; XDJ-R1 | Play, Cue/Shift+Cue, Sync, Browse/zoom, jog/touch/search, crossfader | Play, Cue |
+| Pioneer DJ XDJ-RX | Play, Cue, Sync, Browse/zoom, jog/touch/search, channel fader, crossfader | Selected-track meter, Play, Cue |
 | Reloop Beatmix 2 MK2; Beatmix 4 MK2; shared device name Beatmix 2/4 MK2 | Play, Cue/Shift+Cue, Sync, deck selection, Browse, jog/touch, four marker pads, channel fader, three-band EQ, crossfader | Play, Cue, deck selection, marker pads |
 
 The Hercules DJControl Inpulse 200 MK2 and Hercules DJControl Inpulse 300 MK2
@@ -181,12 +185,15 @@ buttons and its platter/crossfader are repurposed for the session; this differs 
 ordinary timeline roles described above, which only apply with the editor
 closed.
 
+- **Headphone Cue / PFL** selects one physical deck and disables the other on
+  that controller. The crossfader controls scratch gain for the selected deck;
+  fader moves made during recording become part of the take.
 - **Play** drives scratch recording instead of transport playback, mirroring
   the on-screen Record button's three phases: idle → **armed** (press arms;
   nothing records yet), armed → **cancelled** (a second press before any touch
   discards the arm), recording → **stopped** (a press while recording
-  finalizes the take). The first eligible platter touch while armed starts the
-  take.
+  finalizes the take). The first eligible platter touch (or movement on a
+  touch-less platter) starts the armed take.
 - **Cue** runs **Build**, the same action as the backing panel's Build button.
   It prepares or rebuilds the selected backing tracks, anchor, and length. With
   the editor closed, Cue keeps its ordinary previous-marker behaviour unchanged.
@@ -208,15 +215,17 @@ and recording model.
 
 Open **Preferences ▸ Developer ▸ Open MIDI Monitor…**. The monitor shows the
 latest Note On, Note Off, Control Change, Pitch Bend, and other short messages
-from enabled inputs, including their controller code and value. It keeps the
-latest 200 messages and can be cleared without changing the mapping.
+from enabled inputs, including their controller code and value. It samples
+at most one message per input every 250 ms and keeps the latest 200 reports;
+it is not a complete MIDI trace. Clearing it does not change the mapping.
 
 If a listed controller is shown as unsupported:
 
-1. Select **Rescan devices**.
+1. Select **Rescan MIDI inputs**.
 2. Confirm that Windows reports the expected model name.
 3. Reconnect the controller, then rescan again.
-4. Include the reported device name and MIDI Monitor output in a bug report.
+4. Report the exact device name. If the device can be enabled but a control
+   does not work, include its MIDI Monitor output too.
 
 Model detection uses the Windows-reported input name. Matching is
 case-insensitive, requires model-name boundaries, and selects the longest

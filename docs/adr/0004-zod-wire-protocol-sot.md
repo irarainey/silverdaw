@@ -5,15 +5,13 @@
 ## Decision
 
 `frontend/src/shared/bridge-protocol.ts` is the canonical wire-protocol
-contract — a stable **facade** that re-exports the real schema modules
-`shared/bridge/inbound.ts`, `shared/bridge/outbound.ts`, and the Scratch-domain
-schemas in `shared/bridge/scratch.ts` (edit those, not the facade). Inbound
-(backend → renderer) payloads are defined as **zod** schemas;
-their TypeScript types are derived via `z.infer<>`, and each `isXxxPayload` guard
-is a one-line `safeParse(value).success` wrapper. Outbound (renderer → backend)
-payloads are plain TS interfaces in `shared/bridge/outbound.ts` (compile-checked
-at every `send<K>()` call site). A new message is added to the schema **first**, then
-validated on both ends. On the backend, inbound fields are extracted through the
+contract — a stable **facade** over the message maps and domain modules in
+`frontend/src/shared/bridge/`. Inbound (backend → renderer) payloads use
+**zod** schemas for runtime validation and `z.infer<>` for static types.
+The outbound map type-checks each `send<K>()` call. Many outbound entries are
+plain TS interfaces; others use types inferred from domain schemas, including
+`TRACK_EXPORT_START` in `trackExport.ts`. Add a new message to the contract
+**first**, then validate it on both ends. On the backend, fields are read with the
 strict `tryGetString`/`tryGetRequiredString`/`tryGetNumber` helpers rather than
 coercing `juce::var` silently.
 

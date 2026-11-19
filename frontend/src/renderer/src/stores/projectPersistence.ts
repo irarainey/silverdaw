@@ -7,6 +7,7 @@
 import { send as sendBridge } from '@/lib/bridgeService'
 import { log } from '@/lib/log'
 import { useNotificationsStore } from '@/stores/notificationsStore'
+import type { ProjectSaveViewStatePayload } from '@shared/bridge-protocol'
 import type { ProjectState } from './projectTypes'
 
 /** Store fields the persistence handshakes read/write. */
@@ -108,19 +109,29 @@ export function notifySaveAck(ok: boolean, error?: string): void {
   }
 }
 
-export function saveViewStateAndWait(target: PersistenceTarget): Promise<SaveResult> {
+export type ViewStateSaveOptions = Pick<ProjectSaveViewStatePayload, 'exportPreferencesOnly'>
+
+export function saveViewStateAndWait(target: PersistenceTarget, options?: ViewStateSaveOptions): Promise<SaveResult> {
   if (!target.currentFilePath) return Promise.resolve({ ok: true })
   if (pendingViewStateSaveResolver) {
     pendingViewStateSaveResolver({ ok: false, error: 'Superseded by a newer view-state save' })
   }
   const promise = new Promise<SaveResult>((resolve) => {
-    pendingViewStateSaveResolver = resolve
+    const timeout = setTimeout(() => {
+      notifyViewStateSaveAck(false, 'Timed out waiting for the audio engine to save project preferences')
+    }, PENDING_SAVE_TIMEOUT_MS)
+    pendingViewStateSaveResolver = result => {
+      clearTimeout(timeout)
+      resolve(result)
+    }
   })
-  sendBridge('PROJECT_SAVE_VIEW_STATE', {
+  const sent = sendBridge('PROJECT_SAVE_VIEW_STATE', {
+    ...options,
     filePath: target.currentFilePath,
     viewScrollX: target.viewScrollX ?? 0,
     viewPxPerSecond: target.viewPxPerSecond ?? undefined
   })
+  if (!sent) notifyViewStateSaveAck(false, 'The audio engine isn\'t connected')
   return promise
 }
 

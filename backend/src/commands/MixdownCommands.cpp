@@ -1,6 +1,8 @@
 #include "MixdownCommands.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "AudioEngine.h"
 #include "BridgeServer.h"
@@ -8,6 +10,11 @@
 #include "EnginePlaybackPath.h"
 #include "Log.h"
 #include "MixdownEngine.h"
+#include "MixdownExport.h"
+#include "MixdownBroadcast.h"
+#include "PluginChain.h"
+#include "ProjectSession.h"
+#include "TrackExport.h"
 #include "PayloadHelpers.h"
 #include "ProjectState.h"
 
@@ -16,6 +23,180 @@ namespace silverdaw
 
 using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::tryGetRequiredString;
+
+static MixdownSnapshot snapshotArrangement(AudioEngine& engine, ProjectState& project, SnapshotScope scope)
+{
+    return snapshotProjectForMixdown(project, engine.getBrakeDefaultSeconds(),
+        engine.getBrakeDefaultCurve(), engine.getBackspinDefaultSeconds(),
+        engine.getBackspinDefaultSpeed(), engine.getBackspinDefaultCurve(), scope);
+}
+
+static juce::Result applyExportSelection(const juce::var& payload, const ProjectState& project, MixdownOptions& options)
+{
+    const auto requested = payload.getProperty("selectionOnly", false);
+    if (!requested.isBool()) return juce::Result::fail("Invalid timeline selection option.");
+    if (!static_cast<bool>(requested)) return juce::Result::ok();
+    const auto selection = project.getViewTimelineSelection();
+    if (!selection) return juce::Result::fail("Select a range on the timeline before exporting.");
+    const auto toFrame = [&](double ms) { return ms * options.outputSampleRate / 1000.0; };
+    const auto end = toFrame(selection->endMs);
+    if (end >= static_cast<double>(std::numeric_limits<int64_t>::max()) || options.outputSampleRate <= 0)
+        return juce::Result::fail("Invalid export range or sample rate.");
+    const juce::Range<int64_t> frames{std::llround(toFrame(selection->startMs)), std::llround(end)};
+    if (frames.isEmpty()) return juce::Result::fail("The selected range is shorter than one output sample.");
+    options.outputFrameRange = frames;
+    options.lengthMs = selection->endMs - selection->startMs;
+    options.startMs = 0;
+    options.tailSeconds = 0;
+    return juce::Result::ok();
+}
+
+static void resolveRenderSources(MixdownSnapshot& snapshot, AudioEngine& engine, ProjectState& project,
+                                 const DecodedCache& cache, bool capturePlugins)
+{
+    for (auto& track : snapshot.tracks)
+    {
+        if (capturePlugins)
+            for (auto& slot : track.plugins)
+            {
+                const auto chunk = engine.getTrackPluginState(track.id, slot.slotId);
+                if (!chunk.isEmpty()) slot.state = plugins::encodeStateChunk(chunk);
+            }
+        for (auto& clip : track.clips)
+        {
+            const auto raw = project.getLibraryItemFilePath(clip.libraryItemId);
+            const auto resolved = resolveEnginePlaybackPath(raw, project, cache);
+            if (resolved.isNotEmpty()) clip.filePath = resolved;
+            log::debug("mixdown", "snapshot clip=" + clip.id + " source=" + raw + " playback=" + clip.filePath);
+        }
+    }
+    const auto deviceRate = engine.getAudioDevicesSnapshot().currentSampleRate;
+    if (deviceRate > 0.0) snapshot.projectSampleRate = static_cast<int>(deviceRate);
+}
+
+MixdownSnapshot snapshotAudibleMixForExport(AudioEngine& engine, ProjectState& project, const DecodedCache& cache)
+{
+    auto snapshot = snapshotArrangement(engine, project, SnapshotScope::AudibleMix);
+    resolveRenderSources(snapshot, engine, project, cache, /*capturePlugins=*/true);
+    return snapshot;
+}
+
+void handleTrackExportStart(const juce::var& payload, AudioEngine& engine, ProjectState& project,
+                            BridgeServer& bridge, juce::ThreadPool& pool, const DecodedCache& cache,
+                            const juce::String& projectPath, std::atomic<bool>& busy, std::atomic<bool>& cancel)
+{
+    const auto reject = [&](const juce::String& message) {
+        mixdown_bridge::broadcastFailed(bridge, MixdownFailureCode::Invalid, message);
+    };
+    if (busy.load())
+    {
+        reject("An export is already in progress.");
+        return;
+    }
+    if (projectPath.isEmpty())
+    {
+        reject("Save the project before exporting tracks.");
+        return;
+    }
+    const auto rate = bridge::tryGetNumber(payload, "sampleRate");
+    const auto format = mixdown_export::parseFormat(payload.getProperty("format", "wav").toString());
+    const auto bitrate = bridge::tryGetNumber(payload, "bitrateKbps");
+    const auto depth = bridge::tryGetNumber(payload, "bitDepth");
+    const auto tail = bridge::tryGetNumber(payload, "tailSeconds");
+    const auto effects = payload.getProperty("includeEffects", {});
+    const auto labels = payload.getProperty("trackLabels", {});
+    const auto* selection = labels.getDynamicObject();
+    if (!tail || !std::isfinite(*tail) || *tail != std::trunc(*tail) || *tail < 0 || *tail > 60)
+    {
+        reject("Enter a whole number of tail seconds between 0 and 60.");
+        return;
+    }
+    if ((!rate || (*rate != 44100 && *rate != 48000)) ||
+        !format || (*format == MixdownOptions::Format::Mp3
+            ? !bitrate || (*bitrate != 128 && *bitrate != 192 && *bitrate != 320)
+            : !depth || !mixdown_export::supportsBitDepth(*format, *depth)) ||
+        !effects.isBool() || selection == nullptr)
+    {
+        reject("Invalid file format, encoding settings or track selection.");
+        return;
+    }
+
+    if (selection->getProperties().size() == 0)
+    {
+        reject("Choose at least one track to export.");
+        return;
+    }
+    for (const auto& entry : selection->getProperties())
+        if (!entry.value.isString() || !project.hasTrack(entry.name.toString()))
+        {
+            reject("The track selection has changed. Choose the tracks to export again.");
+            return;
+        }
+    auto folder = projectArtifactsBaseDir(projectPath, "export");
+    if (payload.hasProperty("outputFolder"))
+    {
+        const auto path = tryGetRequiredString(payload, "outputFolder");
+        if (!path || !juce::File::isAbsolutePath(*path))
+        {
+            reject("Choose an absolute output folder.");
+            return;
+        }
+        folder = juce::File(*path);
+    }
+
+    engine.pause();
+    const bool wet = static_cast<bool>(effects);
+    auto snapshot = snapshotArrangement(engine, project, SnapshotScope::IndividualTracks);
+    MixdownOptions options;
+    // Measure the full arrangement before dropping unselected tracks, even for a silent selection.
+    options.lengthMs = computeLastClipEndMs(snapshot);
+    snapshot.tracks.erase(std::remove_if(snapshot.tracks.begin(), snapshot.tracks.end(),
+        [&](const auto& track) {
+            return !labels.hasProperty(juce::Identifier(track.id));
+        }), snapshot.tracks.end());
+    for (auto& track : snapshot.tracks)
+    {
+        const auto label = selection->getProperty(juce::Identifier(track.id)).toString();
+        if (label.isNotEmpty()) track.name = label;
+    }
+    resolveRenderSources(snapshot, engine, project, cache, wet);
+    options.outputSampleRate = static_cast<int>(*rate);
+    options.format = *format;
+    if (*format == MixdownOptions::Format::Mp3)
+        options.bitrateKbps = static_cast<int>(*bitrate);
+    else
+        options.bitDepth = static_cast<int>(*depth);
+    options.tailSeconds = *tail;
+    if (const auto range = applyExportSelection(payload, project, options); range.failed())
+    {
+        reject(range.getErrorMessage());
+        return;
+    }
+    busy.store(true);
+    cancel.store(false);
+    pool.addJob([snapshot = std::move(snapshot), options, wet, folder, &bridge, &busy, &cancel]() mutable {
+        juce::ErasedScopeGuard releaseSlot{[&busy] { busy.store(false); }};
+        const auto count = static_cast<int>(snapshot.tracks.size());
+        const auto result = renderTrackBatch(std::move(snapshot), folder, options, wet,
+            [&](double pct, const char* stage, int index, int total, const juce::String& name) {
+                auto* track = new juce::DynamicObject();
+                track->setProperty("index", index);
+                track->setProperty("count", total);
+                track->setProperty("name", name);
+                mixdown_bridge::broadcastProgress(bridge, pct, stage, juce::var(track));
+            }, cancel);
+        releaseSlot.reset();
+        if (result.failure)
+            mixdown_bridge::broadcastFailed(bridge, *result.failure, result.message);
+        else
+        {
+            auto* ready = new juce::DynamicObject();
+            ready->setProperty("folder", result.folder.getFullPathName());
+            ready->setProperty("trackCount", count);
+            bridge.broadcast("TRACK_EXPORT_READY", juce::var(ready));
+        }
+    });
+}
 
 void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine,
                         silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
@@ -65,34 +246,7 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     }
 
     // Snapshot on the message thread before worker dispatch.
-    auto snapshot = silverdaw::snapshotProjectForMixdown(
-        projectState, engine.getBrakeDefaultSeconds(), engine.getBrakeDefaultCurve(),
-        engine.getBackspinDefaultSeconds(), engine.getBackspinDefaultSpeed(),
-        engine.getBackspinDefaultCurve());
-    // Use the live resolver so mixdown matches decoded-cache playback and warp timing.
-    for (auto& trackSnap : snapshot.tracks)
-    {
-        for (auto& clipSnap : trackSnap.clips)
-        {
-            const auto rawSourcePath =
-                projectState.getLibraryItemFilePath(clipSnap.libraryItemId);
-            const auto resolvedPath =
-                silverdaw::resolveEnginePlaybackPath(rawSourcePath, projectState, decodedCache);
-            const auto previousPath = clipSnap.filePath;
-            if (resolvedPath.isNotEmpty()) clipSnap.filePath = resolvedPath;
-            silverdaw::log::info(
-                "mixdown",
-                "snapshot path resolve clip=" + clipSnap.id +
-                    " libraryItemId=" + clipSnap.libraryItemId +
-                    " rawSource=" + rawSourcePath +
-                    " storedPlayback=" + previousPath +
-                    " resolved=" + clipSnap.filePath +
-                    " changed=" +
-                        (previousPath != clipSnap.filePath
-                             ? juce::String("true")
-                             : juce::String("false")));
-        }
-    }
+    auto snapshot = snapshotAudibleMixForExport(engine, projectState, decodedCache);
     if (snapshot.tracks.empty())
     {
         auto* obj = new juce::DynamicObject();
@@ -102,35 +256,11 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         return;
     }
 
-    // Match live device rate before final high-quality resampling to avoid tonal drift.
-    {
-        const auto deviceSnap = engine.getAudioDevicesSnapshot();
-        const int previousRate = snapshot.projectSampleRate;
-        if (deviceSnap.currentSampleRate > 0.0)
-        {
-            snapshot.projectSampleRate =
-                static_cast<int>(deviceSnap.currentSampleRate);
-        }
-        silverdaw::log::info(
-            "mixdown",
-            "projectSampleRate aligned previous=" + juce::String(previousRate) +
-                " deviceRate=" + juce::String(deviceSnap.currentSampleRate, 1) +
-                " effective=" + juce::String(snapshot.projectSampleRate) +
-                " outputRate=" + juce::String(outputSampleRate));
-    }
-
     silverdaw::MixdownOptions options;
     options.outputFile = juce::File(outputPath);
     options.outputSampleRate = outputSampleRate;
     // Unknown format falls back to WAV to avoid binary mismatch.
-    if (formatStr == "mp3")
-        options.format = silverdaw::MixdownOptions::Format::Mp3;
-    else if (formatStr == "flac")
-        options.format = silverdaw::MixdownOptions::Format::Flac;
-    else if (formatStr == "aiff")
-        options.format = silverdaw::MixdownOptions::Format::Aiff;
-    else
-        options.format = silverdaw::MixdownOptions::Format::Wav;
+    options.format = mixdown_export::parseFormat(formatStr).value_or(MixdownOptions::Format::Wav);
 
     // Reject unsupported bit depths instead of silently quantising.
     const auto rejectInvalid = [&](const juce::String& msg)
@@ -140,34 +270,10 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
         obj->setProperty("error", msg);
         bridge.broadcast("MIXDOWN_FAILED", juce::var(obj));
     };
-    switch (options.format)
+    if (options.format != MixdownOptions::Format::Mp3 && !mixdown_export::supportsBitDepth(options.format, bitDepthRaw))
     {
-        case silverdaw::MixdownOptions::Format::Wav:
-            if (bitDepthRaw != 16 && bitDepthRaw != 24 && bitDepthRaw != 32)
-            {
-                rejectInvalid("WAV export supports 16, 24 or 32-bit only (got " +
-                              juce::String(bitDepthRaw) + ").");
-                return;
-            }
-            break;
-        case silverdaw::MixdownOptions::Format::Flac:
-            if (bitDepthRaw != 16 && bitDepthRaw != 24)
-            {
-                rejectInvalid("FLAC export supports 16 or 24-bit only (got " +
-                              juce::String(bitDepthRaw) + ").");
-                return;
-            }
-            break;
-        case silverdaw::MixdownOptions::Format::Aiff:
-            if (bitDepthRaw != 16 && bitDepthRaw != 24)
-            {
-                rejectInvalid("AIFF export supports 16 or 24-bit only (got " +
-                              juce::String(bitDepthRaw) + ").");
-                return;
-            }
-            break;
-        case silverdaw::MixdownOptions::Format::Mp3:
-            break;
+        rejectInvalid("Unsupported bit depth for " + formatStr.toUpperCase() + ": " + juce::String(bitDepthRaw));
+        return;
     }
     options.bitDepth = bitDepthRaw;
     // Reject tail outside the engine clamp range so the user gets a clear error.
@@ -245,6 +351,11 @@ void handleMixdownStart(const juce::var& payload, silverdaw::AudioEngine& engine
     }
     // Clamp non-negative; the renderer further clamps to the project length.
     options.startMs = startMsHint > 0.0 ? startMsHint : 0.0;
+    if (const auto range = applyExportSelection(payload, projectState, options); range.failed())
+    {
+        rejectInvalid(range.getErrorMessage());
+        return;
+    }
     const auto md = payload.getProperty("metadata", juce::var());
     if (md.isObject())
     {

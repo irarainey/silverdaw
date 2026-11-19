@@ -11,16 +11,19 @@
 // waiting; it does not prove a single sample was written, and a zero-length or
 // header-only file is exactly the regression worth catching.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
+import { parseFile } from 'music-metadata'
 
-import { expect, test } from '../fixtures/silverdaw'
+import { closeSilverdaw, expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
-import { stubOpenDialog } from '../helpers/dialogs'
+import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { libraryItem } from '../helpers/library'
 import { invokeMenuItem } from '../helpers/menu'
+import { readProjectDocument } from '../helpers/projectDocument'
 import { startNewProject } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
+import { dragRulerRange } from '../helpers/timeline'
 
 const AUDIO_FILE = 'e2e-mixdown-source.wav'
 const SOURCE_SECONDS = 2
@@ -116,4 +119,253 @@ test('exporting a mixdown writes a playable audio file', async ({ silverdaw }) =
   // what was rendered rather than a restatement of the default project duration.
   expect(wav.seconds).toBeGreaterThan(SOURCE_SECONDS * 0.75)
   expect(wav.seconds).toBeLessThan(SOURCE_SECONDS * 1.5)
+})
+
+async function publishedBatch(parent: string): Promise<string> {
+  const batches = (): string[] => existsSync(parent)
+    ? readdirSync(parent).filter(name => /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:-\d+)?$/.test(name))
+    : []
+  await expect.poll(batches, { timeout: 60_000 }).toHaveLength(1)
+  return join(parent, batches()[0])
+}
+
+test('both export dialogs opt in to exactly the selected ruler range', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  const root = makeTrackedTempDir('range-export')
+  const name = 'Range export'
+  const dialog = page.getByRole('dialog')
+  const checkbox = dialog.getByRole('checkbox', { name: 'Export selected range only' })
+  await startNewProject(page)
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubOpenDialog(electronApp, [createToneWav({ fileName: AUDIO_FILE, seconds: 4 })])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  for (const command of ['Export Mixdown', 'Export Tracks']) {
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeDisabled()
+    await expect(checkbox).not.toBeChecked()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+  }
+  await dragRulerRange(page, 40, 220)
+  await expect(page.getByTitle('Loop Selection (off) (L)')).toBeEnabled()
+  await stubSaveDialog(electronApp, join(root, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Save As')
+  const projectFile = join(root, name, `${name}.silverdaw`)
+  await expect.poll(() => readProjectDocument(projectFile)?.viewTimelineSelectionStartMs).toBeGreaterThan(0)
+  const project = readProjectDocument(projectFile)!
+  const startMs = Number(project.viewTimelineSelectionStartMs)
+  const endMs = Number(project.viewTimelineSelectionEndMs)
+  const sampleRate = 48000
+  const frames = Math.round(endMs * sampleRate / 1000) - Math.round(startMs * sampleRate / 1000)
+  expect(frames).toBeGreaterThan(0)
+  for (const command of ['Export Mixdown', 'Export Tracks']) {
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeEnabled()
+    await expect(checkbox).not.toBeChecked()
+    await checkbox.check()
+    await dialog.getByLabel('Sample rate').selectOption(String(sampleRate))
+    const mixFile = join(root, 'mix.wav')
+    if (command === 'Export Mixdown') {
+      await expect(dialog.getByRole('radio', { name: 'Trim to end of last clip' })).toBeDisabled()
+      await dialog.getByRole('textbox').first().fill(mixFile)
+    } else {
+      await expect(dialog.getByLabel('Tail (seconds)', { exact: true })).toBeDisabled()
+    }
+    await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+    if (command === 'Export Mixdown') {
+      await expect.poll(() => existsSync(mixFile), { timeout: 60_000 }).toBe(true)
+      expect(Math.round(readWav(mixFile).seconds * sampleRate)).toBe(frames)
+    } else {
+      const batch = await publishedBatch(join(root, name, 'export'))
+      const tracks = readdirSync(batch)
+      expect(tracks).toHaveLength(2)
+      for (const track of tracks) expect(Math.round(readWav(join(batch, track)).seconds * sampleRate)).toBe(frames)
+    }
+    await expect(page.getByRole('alertdialog')).toBeHidden()
+    await invokeMenuItem(page, 'File', command)
+    await expect(checkbox).toBeEnabled()
+    await expect(checkbox).not.toBeChecked()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+  }
+})
+
+test('Export Tracks remembers a selective export and preserves full arrangement length', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  const projects = makeTrackedTempDir('track-export')
+  const name = 'Aligned Tracks'
+  const defaultFolder = join(projects, name, 'export')
+  const source = createToneWav({ fileName: AUDIO_FILE, seconds: SOURCE_SECONDS })
+  await startNewProject(page)
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubOpenDialog(electronApp, [source])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await stubSaveDialog(electronApp, join(projects, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Export Tracks')
+  const dialog = page.getByRole('dialog', { name: 'Export Tracks' })
+  const format = dialog.getByLabel('Format', { exact: true })
+  await expect(format).toHaveValue('wav')
+  await expect(dialog.getByLabel('Bit depth')).toHaveValue('24')
+  const tail = dialog.getByLabel('Tail (seconds)', { exact: true })
+  expect(Math.abs(await tail.evaluate(el => el.getBoundingClientRect().top)
+    - await dialog.getByLabel('Sample rate').evaluate(el => el.getBoundingClientRect().top))).toBeLessThanOrEqual(2)
+  await tail.fill('0.5')
+  await expect(tail).toHaveAttribute('aria-invalid', 'true')
+  await expect(dialog.getByRole('button', { name: 'Save and Export' })).toBeDisabled()
+  await dialog.getByRole('button', { name: 'Increase tail' }).click()
+  await expect(tail).toHaveValue('1')
+  await expect(tail).toHaveAttribute('aria-invalid', 'false')
+  await dialog.getByRole('button', { name: 'Decrease tail' }).click()
+  await expect(dialog.getByLabel('Include track effects')).toBeChecked()
+  await expect(dialog.getByRole('button', { name: 'Tracks: All 2 selected' })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Save and Export' }).click()
+  const batch = await publishedBatch(defaultFolder)
+  const files = readdirSync(batch)
+  expect(files.sort()).toEqual(['Track 2.wav', AUDIO_FILE])
+  const first = readWav(join(batch, AUDIO_FILE))
+  expect(first.seconds).toBeGreaterThan(1)
+  expect(readWav(join(batch, 'Track 2.wav'))).toEqual(first)
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+
+  // App accelerators defer while the imported source is still being analysed.
+  await expect(page.getByText('Processing audio', { exact: true })).toBeHidden({ timeout: 30_000 })
+  await invokeMenuItem(page, 'File', 'Save', { exact: true })
+  const dirty = page.getByTitle('Unsaved changes', { exact: true })
+  await expect(dirty).toBeHidden()
+  await page.keyboard.press('Control+Shift+M')
+  const folder = dialog.getByLabel('Output folder')
+  await expect(folder).toHaveValue(defaultFolder)
+  const alternate = makeTrackedTempDir('selected-tracks')
+  await stubOpenDialog(electronApp, [alternate])
+  await dialog.getByRole('button', { name: 'Browse' }).click()
+  await expect(folder).toHaveValue(alternate)
+  await dialog.getByRole('button', { name: 'Tracks: All 2 selected' }).click()
+  await dialog.getByText('Select all tracks', { exact: true }).click()
+  const start = dialog.getByRole('button', { name: 'Export', exact: true })
+  await expect(start).toBeDisabled()
+  const secondTrack = dialog.getByRole('checkbox', { name: 'Track 2', exact: true })
+  const secondRow = dialog.locator('label').filter({ hasText: /^Track 2$/ })
+  await secondRow.click() // Middle of the row, beyond the name and checkbox.
+  await expect(secondTrack).toBeChecked()
+  await dialog.getByText('Track 2', { exact: true }).click()
+  await expect(secondTrack).not.toBeChecked()
+  await secondTrack.press('Space')
+  await expect(secondTrack).toBeChecked()
+  await dialog.getByLabel('Bit depth').selectOption('32')
+  const reference = (await parseFile(join(batch, 'Track 2.wav'))).format
+  for (const [type, container] of [['flac', 'FLAC'], ['aiff', 'AIFF'], ['mp3', 'MPEG']] as const) {
+    await format.selectOption(type)
+    if (type === 'mp3') {
+      await dialog.getByLabel('Bitrate').selectOption('320')
+    } else {
+      await expect(dialog.getByLabel('Bit depth')).toHaveValue('24')
+    }
+    const output = type === 'flac' ? alternate : makeTrackedTempDir(type)
+    await folder.fill(output)
+    await start.click()
+    const selectiveBatch = await publishedBatch(output)
+    const filename = `Track 2.${type}`
+    expect(readdirSync(selectiveBatch)).toEqual([filename])
+    const audio = (await parseFile(join(selectiveBatch, filename))).format
+    expect(audio.container).toContain(container)
+    expect(audio.sampleRate).toBe(reference.sampleRate)
+    if (type === 'mp3') {
+      expect(audio.bitrate).toBe(320_000)
+    } else {
+      expect(audio.duration).toBe(first.seconds)
+      expect(audio.bitsPerSample).toBe(24)
+    }
+
+    await expect(page.getByRole('alertdialog')).toBeHidden()
+    await expect(dirty).toBeHidden()
+    await page.keyboard.press('Control+Shift+M')
+    await expect(folder).toHaveValue(output)
+    await expect(format).toHaveValue(type)
+  }
+  await dialog.getByRole('button', { name: 'Tracks: 1 of 2 selected' }).click()
+  await expect(secondTrack).toBeChecked()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+  const firstName = await page.getByTitle(/ — click to rename$/).first().innerText()
+  await page.getByRole('button', { name: `Export ${firstName}…`, exact: true }).click()
+  await dialog.getByRole('button', { name: 'Tracks: 1 of 2 selected' }).click()
+  await expect(dialog.getByRole('checkbox', { name: firstName, exact: true })).toBeChecked()
+  await expect(secondTrack).not.toBeChecked()
+  const singleFolder = makeTrackedTempDir('header-track')
+  await folder.fill(singleFolder)
+  await start.click()
+  expect(readdirSync(await publishedBatch(singleFolder))).toEqual([`${firstName}.mp3`])
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+  await expect(dirty).toBeHidden()
+  await page.getByRole('button', { name: 'Add Track' }).click()
+  await expect(dirty).toBeVisible()
+  await stubOpenDialog(electronApp, [join(projects, name, `${name}.silverdaw`)])
+  await invokeMenuItem(page, 'File', 'Open Project')
+  await page.getByRole('button', { name: "Don't Save" }).click()
+  await expect(dirty).toBeHidden()
+  await invokeMenuItem(page, 'File', 'Export Tracks')
+  await expect(folder).toHaveValue(singleFolder)
+  await expect(format).toHaveValue('mp3')
+  await dialog.getByRole('button', { name: 'Tracks: 1 of 2 selected' }).click()
+  await expect(secondTrack).toBeChecked()
+})
+
+test('exports remember preferences without hiding unsaved work from crash recovery', async ({ launchApp }) => {
+  const first = await launchApp({ preferences: { autosave: { enabled: true, intervalSeconds: 600 } } })
+  const { page, electronApp } = first
+  const root = makeTrackedTempDir('export-recovery')
+  const name = 'Recovery'
+  const projectFile = join(root, name, `${name}.silverdaw`)
+  const mixFile = join(root, 'remember.flac')
+  const addTrack = page.getByRole('button', { name: 'Add Track' })
+  const dialog = page.getByRole('dialog')
+
+  await startNewProject(page)
+  await addTrack.click()
+  await stubOpenDialog(electronApp, [createToneWav({ fileName: AUDIO_FILE, seconds: SOURCE_SECONDS })])
+  await page.getByTitle('Import audio file...').click()
+  await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
+  await expect(page.getByText('Processing audio', { exact: true })).toBeHidden({ timeout: 30_000 })
+  await stubSaveDialog(electronApp, join(root, `${name}.silverdaw`))
+  await invokeMenuItem(page, 'File', 'Save As')
+  await expect.poll(() => existsSync(projectFile)).toBe(true)
+  await expect(page.getByLabel('Unsaved changes')).toBeHidden()
+  // Recovery ignores sub-second differences between an original and its autosave.
+  const earlier = new Date((Math.floor(Date.now() / 1000) - 60) * 1000)
+  utimesSync(projectFile, earlier, earlier)
+  const savedTime = statSync(projectFile).mtimeMs
+  await addTrack.click()
+  await expect(page.getByLabel('Unsaved changes')).toBeVisible()
+
+  await invokeMenuItem(page, 'File', 'Export Tracks')
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await publishedBatch(join(root, name, 'export'))
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+  expect(statSync(projectFile).mtimeMs).toBeCloseTo(savedTime, 0)
+
+  await invokeMenuItem(page, 'File', 'Export Mixdown')
+  await dialog.getByLabel('Format', { exact: true }).selectOption('flac')
+  await dialog.getByRole('textbox').first().fill(mixFile)
+  await dialog.getByRole('radio', { name: 'Trim to end of last clip' }).check()
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect.poll(() => existsSync(mixFile), { timeout: 30_000 }).toBe(true)
+  await expect(page.getByRole('alertdialog')).toBeHidden()
+  expect(statSync(projectFile).mtimeMs).toBeCloseTo(savedTime, 0)
+
+  await closeSilverdaw(first, { keepProfile: true })
+  const next = await launchApp({ userDataDir: first.userDataDir })
+  const recovery = next.page.getByRole('dialog').filter({ hasText: 'Recover Unsaved Work' })
+  await expect(recovery.getByText(name, { exact: true })).toBeVisible({ timeout: 60_000 })
+  await recovery.getByRole('button', { name: 'Restore' }).click()
+  await expect(next.page.getByLabel('Unsaved changes')).toBeVisible()
+  await stubOpenDialog(next.electronApp, [projectFile])
+  await invokeMenuItem(next.page, 'File', 'Open Project')
+  await next.page.getByRole('button', { name: "Don't Save" }).click()
+  await expect(next.page.getByLabel('Unsaved changes')).toBeHidden()
+  await invokeMenuItem(next.page, 'File', 'Export Mixdown')
+  const reopened = next.page.getByRole('dialog', { name: 'Export Mixdown' })
+  await expect(reopened.getByLabel('Format', { exact: true })).toHaveValue('flac')
+  await expect(reopened.getByRole('textbox').first()).toHaveValue(mixFile)
 })

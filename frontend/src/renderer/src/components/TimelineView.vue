@@ -11,6 +11,7 @@ import { useTimelineViewController } from '@/lib/timeline/useTimelineViewControl
 import { useUiStore } from '@/stores/uiStore'
 import type { LibraryItem } from '@/stores/libraryTypes'
 
+const emit = defineEmits<{ exportTrack: [trackId: string] }>()
 const ui = useUiStore()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -86,6 +87,7 @@ const {
     <TrackHeaderPanel
       :scroll-y="scrollY"
       :on-wheel="onWheel"
+      @export-track="emit('exportTrack', $event)"
     />
 
     <!-- Inline rename input for a clip's title strip. Floats over the

@@ -1,9 +1,9 @@
 # Third-Party Licences
 
 Silverdaw is released under the **GNU Affero General Public License v3.0 or
-later** (see [`LICENSE`](LICENSE)). It bundles or links the following
-third-party components, each retained under its own licence. The notices below
-satisfy the attribution requirements of those licences.
+later** (see [`LICENSE`](LICENSE)). The bundled components, build tools and
+optional model downloads listed below retain their own licences. Paths under
+`backend/build/_deps` refer to fetched build inputs, not files in the installer.
 
 ## Backend (C++)
 
@@ -19,9 +19,10 @@ satisfy the attribution requirements of those licences.
   `juce_audio_processors`, `juce_audio_utils`, `juce_core`,
   `juce_data_structures`, `juce_dsp`, `juce_events`) plus `juce_gui_basics`,
   which exists solely to host the native editor window of a VST3 plugin; the
-  Silverdaw interface itself is drawn by the Electron frontend. A copy of the
-  licence is included with the JUCE source obtained via CMake `FetchContent`
-  (`backend/build/_deps/juce-src/LICENSE.md`).
+  Silverdaw interface itself is drawn by the Electron frontend. See
+  `backend/build/_deps/juce-src/LICENSE.md` in the source obtained via CMake
+  `FetchContent`. The Windows build applies the buffering and resampling
+  patches in `backend/cmake/`.
 
 ### VST3 SDK — © 2025 Steinberg Media Technologies GmbH
 
@@ -64,17 +65,19 @@ SOFTWARE.
 
 - **Licence**: BSD 3-Clause.
 - **Project**: <https://github.com/machinezone/IXWebSocket>
-- **Notice**: Source obtained via CMake `FetchContent`; the full BSD-3-Clause
-  text ships alongside the source at
+- **Notice**: Source obtained via CMake `FetchContent`, with a Windows
+  write-wait patch in `backend/cmake/SilverdawPatchIxWebSocket.cmake`. The
+  BSD-3-Clause text is in
   `backend/build/_deps/ixwebsocket-src/LICENSE.txt`.
 
-### Rubber Band Library — © Chris Cannam and contributors
+### Rubber Band Library — © Particular Programs Ltd. and contributors
 
 - **Licence**: GNU General Public License v2 or later (GPL-2.0+).
 - **Project**: <https://breakfastquay.com/rubberband/>
 - **Source**: <https://github.com/breakfastquay/rubberband>
-- **Notice**: Used by the backend for non-destructive time-stretching and
-  pitch shifting. Source is obtained via CMake `FetchContent`; the upstream
+- **Notice**: Written by Chris Cannam. Used by the backend for non-destructive
+  time-stretching and pitch shifting. Source is obtained via CMake
+  `FetchContent`; the upstream
   licence text is included with the fetched source at
   `backend/build/_deps/rubberband-src/COPYING`.
 
@@ -83,12 +86,14 @@ SOFTWARE.
 - **Licence**: BSD 2-Clause.
 - **Project**: <https://libsndfile.github.io/libsamplerate/>
 - **Source**: <https://github.com/libsndfile/libsamplerate>
-- **Notice**: Used for offline analysis resampling and Rubber Band support.
+- **Notice**: Used for offline analysis, vocal denoising, mixdown sample-rate
+  conversion and Rubber Band support.
   Source is obtained via CMake `FetchContent`.
 
 ### BTrack / KISS FFT
 
-- **Licence**: GPL-3.0 for BTrack; BSD-style licence for KISS FFT.
+- **Licence**: GPL-3.0-or-later for BTrack (© Queen Mary University of
+  London); BSD-3-Clause for the bundled KISS FFT (© Mark Borgerding).
 - **Project**: <https://github.com/adamstark/BTrack>
 - **Notice**: A patched vendored copy lives under `backend/third_party/btrack/`
   and powers BPM / beat detection. See
@@ -103,14 +108,14 @@ SOFTWARE.
 - **Source**: <https://github.com/breakfastquay/minibpm>
 - **Notice**: An unmodified vendored copy of `src/MiniBpm.h` and
   `src/MiniBpm.cpp` lives under `backend/third_party/minibpm/` and provides a
-  second, independent fixed-tempo estimate used to corroborate BTrack's. The
-  upstream licence text is included verbatim as
+  second, independent fixed-tempo estimate to resolve disputed refinements
+  of BTrack's tempo. The upstream licence text is included verbatim as
   `backend/third_party/minibpm/LICENSE.txt`. The **or later** clause is what
   makes this compatible with the project's AGPL-3.0-or-later licence: the code
   is taken under GPL-3.0, which AGPL-3.0 §13 expressly permits combining with.
   A GPL-2.0-**only** dependency would not have been usable here.
 
-### RNNoise — © 2017 Mozilla; © 2018 Gregor Richards
+### RNNoise — © 2017 Mozilla; © 2018 Gregor Richards and other contributors
 
 - **Licence**: BSD 2-Clause.
 - **Project**: <https://jmvalin.ca/demo/rnnoise/>
@@ -135,8 +140,8 @@ SOFTWARE.
   unchanged from the
   [RareWares LAME bundle](https://www.rarewares.org/mp3-lame-bundle.php)
   next to `SilverdawBackend.exe` in `resources/backend/`. Silverdaw invokes
-  it as a separate child process for both MP3 encoding on export (via JUCE's
-  `LAMEEncoderAudioFormat`) and MP3 decoding on import; there is no static or
+  it as a separate child process for MP3 encoding on export and MP3 decoding
+  on import; there is no static or
   dynamic linking against the LAME library, so the LGPL boundary is the
   process boundary. Per the LGPL, the unmodified upstream source is available
   from the project links above. The LGPL 2.1 text is included in
@@ -154,14 +159,20 @@ SOFTWARE.
   The upstream copyright notices and licence text are included verbatim in
   `licenses/mpg123-COPYING.txt`, from the source archive's `COPYING` file.
 
-### ONNX Runtime (+ DirectML) — © Microsoft
+### ONNX Runtime and the DirectML redistributable — © Microsoft
 
-- **Licence**: MIT.
+- **Licences**: ONNX Runtime is MIT (`onnxruntime_dml-src/LICENSE` in the
+  default build's `_deps` directory). The separately packaged `DirectML.dll`
+  is governed by the **Microsoft DirectX Machine Learning (DirectML) Software
+  License Terms**, not the ONNX Runtime licence: see `directml-src/LICENSE.txt`
+  named by `Microsoft.AI.DirectML.nuspec`.
 - **Use**: runs the stem-separation models on CPU or a supported DirectX 12 GPU.
 - **Project**: <https://github.com/microsoft/onnxruntime>
 - **Notice**: The default Windows build fetches the runtime through CMake and
   bundles `onnxruntime.dll` beside the backend. The DirectML build also bundles
-  `DirectML.dll`; app-local Microsoft VC++ runtime DLLs are packaged with them.
+  `DirectML.dll` from `Microsoft.AI.DirectML`. The packaged app-local VC++
+  runtime DLLs come from the MSVC redistributable, not from either ONNX
+  Runtime or DirectML.
   These runtimes are not downloaded on first use. Model weights are downloaded
   separately as described below.
 
@@ -176,7 +187,8 @@ SOFTWARE.
 
 ### Vue 3, Pinia, @vue/devtools-api
 
-- **Licence**: MIT — © Yuxi (Evan) You and Vue contributors.
+- **Licence**: MIT. Vue: © Yuxi (Evan) You; Pinia: © Eduardo San Martin
+  Morote; `@vue/devtools-api`: © webfansplz.
 - **Project**: <https://vuejs.org>
 
 ### Zod
@@ -187,7 +199,7 @@ SOFTWARE.
 
 ### PixiJS
 
-- **Licence**: MIT — © Mat Groves / Goodboy Digital and contributors.
+- **Licence**: MIT — © Mathew Groves and Chad Engler.
 - **Project**: <https://pixijs.com>
 
 ### Tailwind CSS, Vite, electron-vite, vue-tsc, ESLint, TypeScript
@@ -205,17 +217,21 @@ SOFTWARE.
 
 ## Downloaded models (fetched on demand, not bundled)
 
-These are downloaded on demand into the user's app-data folder and integrity-
-checked against pinned SHA-256 hashes; they are not shipped in the release package.
+Managed downloads go under `%USERPROFILE%\Silverdaw\Models\<manifest-id>`,
+not in the release package. The downloader checks newly fetched files against
+pinned SHA-256 hashes. Adopting existing model files checks expected names and
+byte sizes; it does not rehash them.
 
 ### htdemucs fine-tuned — 4-stem separation model (backup)
 
 - **Licence**: MIT — © Meta Platforms, Inc. (Demucs). ONNX export ©
   StemSplitio, also MIT.
 - **Use**: the backup 4-stem (vocals/drums/bass/other) separation model — used
-  per stem when that stem's RoFormer quality pack is not installed, or for every
-  stem when the user enables "Always use the backup model". The normal first-use
-  flow offers the RoFormer quality packs; the backup is fetched when needed.
+  for vocals, drums or bass when their quality pack is absent or the user
+  enables "Always use the backup model". A partial selection containing
+  `other` uses its backup model; a four-stem run computes `other` as the
+  residual, even in backup mode. The normal first-use flow offers the
+  RoFormer quality packs; the backup is fetched when needed.
 - **Source**: <https://huggingface.co/StemSplitio/htdemucs-ft-onnx>
   (re-hosted byte-identically by Silverdaw at
   <https://huggingface.co/silverdaw/htdemucs-ft-onnx> so every model ships from
@@ -261,5 +277,5 @@ identify derived works without permission.
 
 ## Updating this file
 
-When adding or upgrading a runtime dependency, append its licence + attribution
-here so the bundled release package remains compliant.
+When adding or upgrading a runtime dependency, check its licence and
+attribution here and verify which upstream notices the package must carry.

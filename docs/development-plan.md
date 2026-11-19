@@ -1,7 +1,26 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Release version: **1.10.1**, covering GPU adapter selection and naming,
-stem-separation reliability and CPU usage, and diagnostic-log reliability.
+Latest release: **[1.11.0](#release-acceptance-1110)**.
+
+## Release acceptance (1.11.0)
+
+The maintainer designated **1.11.0** as the latest release on 2026-11-19.
+It adds [individual track and selected-range export](../CHANGELOG.md#1110).
+The local release build produced the signed sideload AppX, portable zip,
+unsigned Store AppX and public signing certificate in `dist/`.
+
+No tests ran as part of that build. Full-suite and manual acceptance of the
+rebuilt assets are not recorded here. The designation is not a publication
+record for GitHub or the Microsoft Store.
+
+The build predates the [third-party notice correction](../THIRD_PARTY_LICENSES.md)
+distinguishing the DirectML redistributable's terms from ONNX Runtime's MIT
+licence. The packages need that correction before distribution.
+
+At review on 2026-11-19, **Help ▸ Keyboard Shortcuts** pointed at the 1.11
+hosted guide, but that page returned HTTP 404. The
+[keyboard and mouse reference](developer-guide.md#keyboard--mouse-reference)
+is available in this repository.
 
 ## Release acceptance (1.10.1)
 
@@ -1012,7 +1031,7 @@ The Electron process launches the JUCE backend as a child process on startup and
 
 | Need                         | Library / approach                    | Status and notes                                                                                                                                              |
 | ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Beat / tempo detection       | BTrack                                | Implemented. A patched vendored copy lives under `backend/third_party/btrack/`; it runs offline BPM and beat analysis on the existing worker pool.            |
+| Beat / tempo detection       | BTrack + MiniBPM                      | BTrack estimates beats and tempo offline. When its tempo is uncertain, an independent MiniBPM estimate helps resolve it (ADR 0028). |
 | Audio resampling             | libsamplerate 0.2.2                   | Implemented via CMake `FetchContent`; used to convert analysis audio to BTrack's expected 44.1 kHz input.                                                     |
 | Key detection                | Renderer Web Audio analysis           | Implemented. The renderer decodes audio, builds a chroma profile and stores detected keys on library items.                                                   |
 | FFT                          | KISS FFT                              | Implemented as part of the BTrack vendor copy. No FFTW dependency.                                                                                            |
@@ -1049,11 +1068,10 @@ The wire-protocol contract lives in
 Inbound (backend → renderer) payloads are defined as `zod` schemas with the
 TypeScript types derived via `z.infer<typeof XPayloadSchema>` so the schema is
 the single source of truth; each `isXxxPayload` guard is a one-line
-`safeParse(value).success` wrapper. Outbound (renderer → backend) payloads are
-plain TypeScript interfaces (producer-side, compile-checked at
-every `send<K>()` call site). The facade re-exports from
-`bridge/inbound.ts` (zod schemas) and `bridge/outbound.ts` (typed interfaces).
-Vitest round-trip coverage exercises every guard.
+`safeParse(value).success` wrapper. Outbound (renderer → backend) payloads
+are typed at each `send<K>()` call.
+The facade re-exports the inbound and outbound contracts and shared schemas
+such as `TrackExportStartSchema`, which also validates the export dialog.
 The catalogue below illustrates the shape — see the TS file for the canonical,
 type-checked list of every currently-defined envelope.
 
@@ -1083,7 +1101,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.10.1" } }
+{ "type": "READY", "payload": { "version": "1.11.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1132,7 +1150,7 @@ whether the renderer draws the single summary lane or the stacked L/R lanes.
 | Audio playback                              | JUCE backend                                    |
 | Per-track FX, mixer routing                 | JUCE backend (Tone, Filter, Compressor, Punch, Saturation, Bit Crusher, sends, pan, and Beat Repeat shipped) |
 | Warping and pitch shift                     | JUCE backend (Rubber Band)                      |
-| BPM / beat detection                        | JUCE backend (BTrack)                           |
+| BPM / beat detection                        | JUCE backend (BTrack; MiniBPM tempo cross-check) |
 | Key detection                               | Electron renderer (Web Audio chroma analysis)   |
 | Stem separation                             | JUCE backend (ONNX Runtime / RoFormer + htdemucs backup), model download in Electron main |
 | File reading / writing                      | JUCE backend                                    |
@@ -1161,7 +1179,7 @@ JUCEBackend (headless)
 │
 ├── PeaksCache                  — disk-backed waveform peak cache
 │
-├── BpmDetector                 — BTrack + libsamplerate import analysis
+├── BpmDetector                 — resampling, BTrack beat analysis, MiniBPM tempo arbitration
 │
 ├── DecodedCache                — decoded playback WAV cache for analysis/import reuse
 │                                  (non-WAV sources only; WAV sources play directly)
@@ -1178,7 +1196,7 @@ Electron Shell
 │
 ├── Main process
 │   ├── Launches SilverdawBackend (port via --port, AUTH token via env)
-│   ├── Native file dialogs, app menu, preferences.json persistence,
+│   ├── Native file dialogs, menu action routing, preferences.json persistence,
 │   │   metadata + peaks-cache IPC, autosave directory management,
 │   │   recent-projects MRU
 │   └── App lifecycle (quit → terminate backend cleanly,
@@ -1231,9 +1249,9 @@ actually produce with the backup.
 **Integration:** ONNX Runtime C++ API. The runtime dependencies that ship beside
 `SilverdawBackend.exe` are `onnxruntime.dll` and — for the default DirectML
 build — `DirectML.dll`. The model **weights are not shipped**: htdemucs and both
-RoFormer packs are downloaded on demand (or located from an existing copy) into
-a discoverable `Silverdaw\Models` folder in the user's home folder (packaged
-installs) or `<userData>/models` (dev builds), or a user-selected directory. GPU acceleration via the DirectML
+RoFormer packs are downloaded on demand into `%USERPROFILE%\Silverdaw\Models`
+in both development and packaged builds, or located in a user-selected
+directory. GPU acceleration via the DirectML
 execution provider on Windows is **implemented**: the bundled ONNX Runtime is a
 DirectML build (a CPU+GPU superset — a single `onnxruntime.dll` serves both EPs),
 and the renderer threads a `useGpu` flag through to the backend's session options
@@ -1262,14 +1280,13 @@ mirrors how JUCE, IXWebSocket and Rubber Band are already obtained.
 
 **Packaging (implemented):** A CMake `POST_BUILD` step copies `onnxruntime.dll`
 (and, for the DirectML build, `DirectML.dll`) next to `SilverdawBackend.exe`, and
-`frontend/electron-builder.yml` ships them as `extraResources`, so the installer
-carries everything required to run — ONNX Runtime and DirectML are MIT-licensed,
-which permits redistribution alongside the app. The ~1.2 GB model weights are kept
-out of the installer and downloaded on first use.
+`frontend/electron-builder.yml` ships them as `extraResources`. ONNX Runtime
+is MIT-licensed; the separate Microsoft DirectML redistributable has its own
+terms. See the [third-party notices](../THIRD_PARTY_LICENSES.md). Model
+weights are not part of the installer.
 
-**Model store (implemented):** The model files are fetched on first use by the
-Electron main process (the headless backend has no network stack —
-`JUCE_USE_CURL=0`) into the user's app-data directory. `src/main/stems/` holds
+**Model store (implemented):** Electron main handles model downloads.
+`frontend/src/main/stems/` holds
 three pinned manifests — `htdemucsModel.ts` (backup), `melBandRoformerModel.ts`
 (vocal pack) and `bsRoformerRhythmModel.ts` (rhythm pack) — and a
 dependency-injected `ModelStore` (`modelStore.ts`) that checks presence,
@@ -1480,7 +1497,7 @@ the backend and driven from the shared master transport clock.
 
 ### 7.2 Sample Creation from Clip
 Users turn a timeline clip or a library clip item into a reusable sample in one
-action (region-to-sample arrives with the selection primitive in §7.2.1):
+action:
 
 - Select a timeline clip → **Library ▸ Save as Sample…**, then choose
   **Music** or **Simple** in the **Save as Sample** dialog
@@ -1496,12 +1513,11 @@ action (region-to-sample arrives with the selection primitive in §7.2.1):
 - Phase 8 alternative flow: drag a selected region from the timeline directly into the sample browser panel
 
 ### 7.2.1 Region Selection on a Clip
-The selection primitive that drives Save-as-Sample, cropping, splitting, region-specific volume / effects, and pitch on a sub-range. Two complementary input modes — both produce the same selection model:
-
-- **Drag-select** — click-drag across the waveform inside a clip block to paint a start→end region. Snaps to the project sub-beat by default; modifier overrides snap.
-- **Mark-points** — pick a start point at the playhead (key: `[`), pick an end point (key: `]`). Easier on touchpads and for sample-accurate marks driven by the transport.
-
-A region is a sub-range of a single clip with the clip's `clipId`, a `startMs`, and an `endMs`. Saved selections are first-class for: Save as Sample, Crop to Region, Split at Playhead, Apply effect to region, Volume-envelope edits.
+In the Clip Editor, drag across the waveform or use `Shift`+`←`/`→` to extend
+a selection. It bounds preview playback. For a source file, **Save Selection
+to Library** creates a clip without changing the source. When editing a
+clip, **Trim** narrows the working view; **Save** commits the edit. This
+selection is local to the editor, not the timeline ruler range used for export.
 
 ### 7.3 Drag and Drop
 The primary interaction model for placing and organising audio:
@@ -1513,7 +1529,7 @@ The primary interaction model for placing and organising audio:
 - All drag operations handled in Electron; resulting state changes sent to backend as commands
 
 ### 7.4 Beat & Key Detection
-Runs automatically on every import, in the background:
+For imported source audio:
 
 - BTrack: BPM and beat-position markers, refined by a least-squares period+anchor
   fit and an onset-detection-function (ODF) autocorrelation pass. A guarded,
@@ -1522,19 +1538,19 @@ Runs automatically on every import, in the background:
   significant and enough beats match) so the rigid grid lands on the beats rather
   than inheriting BTrack's causal lag.
 - Renderer Web Audio analysis: root note and mode
-- Sample rate is read from the file header on import and stored on the clip; no detection needed (always exact)
+- The library item records the probed source sample rate, falling back to the
+  decoded rate when the probe fails.
 - Results are merged into library metadata and stored in `ValueTree`
 - **Confidence ≠ sample.** Low tempo confidence no longer reclassifies a track as
   a non-musical "sample" — the grid stays **visible and warpable**, with no separate
   amber "unverified" marker (the classification control still notes the low-confidence
-  tempo in words). Only an explicit per-source **Auto / Music /
-  Sample** override marks a true sample.
-- **Manual fallback.** The user can set a BPM by hand on a source (rigid-metronome
-  grid) and **slide the grid over the waveform** in the Clip Editor to correct its
-  phase (`LIBRARY_ITEM_SET_MANUAL_TEMPO`). Manual values are treated as verified
-  music with the grid shown and warp enabled.
-- User can override BPM / key in the clip inspector
-- **Project BPM bootstrap:** when the *first* clip is added to an empty project, the detected BPM seeds the project BPM (one-shot — subsequent imports don't change it). User can override later via the transport bar.
+  tempo in words). The classification choices are **Auto**, **Music** and
+  **Simple**; a simple sample has no BPM grid.
+- **Edit BPM** corrects the source tempo (`LIBRARY_ITEM_CORRECT_TEMPO`).
+  Sliding the beat grid for a timeline clip changes only that clip's phase
+  (`CLIP_SET_BEAT_OFFSET`). Neither operation changes the project tempo.
+- With **Set project tempo from first clip** enabled, the first musical clip
+  can seed a new project's tempo once. A library-only import does not seed it.
 
 ### 7.5 Clip Editing Primitives
 Non-destructive clip operations on the timeline. Each operation mutates the `ValueTree` (so undoable) but never touches the underlying audio file — they're just changes to in/out points and clip references.
@@ -1548,12 +1564,14 @@ Backspin), **Crossfade** (recipes and removal when applicable), and **Library**
 entries; **Relink** is also direct when the clip is unresolved. Multi-selection
 and empty-track menus intentionally show only the actions that apply to them.
 
-- **Crop** — trim a clip's `inMs` / `outMs` to a selected region. Underlying file untouched.
-- **Split** — slice a clip at the playhead (or at every selected mark) into N adjacent clips that together reference the same file. Cheap: O(1) ValueTree edits, zero audio I/O.
-- **Duplicate** — clone a clip at a chosen offset (commonly drag with `Alt` or
-  **Edit ▸ Duplicate**). Both clips reference the same file; the duplicate gets
-  its own clip id so it can be edited independently.
-- **Repeat-to-loop** — a special-case duplicate that fills a region with N copies of a clip at clip-length spacing; ideal for looping a short sample across a section.
+- **Trim** — drag a clip edge to change its source window without rewriting
+  the file.
+- **Split** — split at the playhead; the resulting clips reference the same
+  library item. Use **Chop to Grid** or the Clip Editor's **Slice** mode to
+  make multiple slices (§7.6).
+- **Duplicate** — `D` or **Edit ▸ Duplicate Clip** appends a copy after the
+  original or its last duplicate, if it fits. `Alt`-drag moves without grid
+  snapping; it does not duplicate.
 - **Lock / Unlock** — `Ctrl+L` or **Edit ▸ Lock** freezes a single clip against
   accidental move / trim / split. Locked clips show a padlock badge on the title
   strip, refuse drag-move and edge-trim gestures silently, and surface a toast if
@@ -2087,19 +2105,14 @@ dry input has actually gone silent. Live transport rules:
   reset for the same reason — a tail is only valid relative to the
   dry history that fed it, and a seek invalidates that history.
 
-**Mixdown loop invariant.** The mixdown render loop runs until
-`(timelineDone && allSharedFxTerminated && addedSilenceDone)` is true.
-`timelineDone` = the project's last clip has finished its dry output.
-`allSharedFxTerminated` = both Reverb and Delay have hit either their
-detector-based termination or their safety cap. `addedSilenceDone` =
-the user's "silence tail" knob's frame count has been written after
-FX termination. A **hard fail-safe cutoff** at
-`projectEnd + max(roomCap, requiredEchoTail) + userTail` guarantees the loop
-exits even if both detectors malfunction. The user-facing "silence
-tail" knob in the Export dialog is **additive** on top of whatever
-the FX tail produced — set it to 0 and the file ends the moment FX
-tails terminate; set it to 2 s and you get FX tail + 2 s of digital
-silence.
+**Export boundaries.** In an ordinary mixdown, the tail control extends
+the minimum render duration. Reverb and delay can still sound during that
+time; it does not promise extra silence *after* the effects decay. The
+render can continue for a bounded shared-effects tail. Track export instead
+uses one common end for every file, including the requested tail. In either
+dialog, **Export selected range only** overrides these rules: earlier audio
+can feed effects already ringing at the selection start, but the file
+contains only the selected interval, with no added tail.
 
 **UI surfaces.** Where each effect lives in the renderer:
 
@@ -2366,9 +2379,9 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   `{ "$type": "TRACK", "id": "...", "$children": [] }`. Saves are atomic:
   the backend writes a sibling `.tmp` file and renames it into place.
   Imported audio is referenced by absolute path, but **generated artifacts are
-  project-local**: separated stems, exported samples, recorded channels and
-  scratch renders are written to `stems/`, `samples/`, `channels/` and
-  `scratches/` beside the project file (or to a disposable temp workspace while
+  project-local**: stems, samples, split channels, scratch renders and audio
+  takes live in `stems/`, `samples/`, `channels/`, `scratches/` and
+  `recordings/` beside the project file (or in a temporary workspace while
   the project is unsaved, migrated into the project folder on first save — see
   `projectArtifactsBaseDir()` and `migrateTempArtifactsIntoProject()` in
   `backend/src/project/ProjectSession.h`).
@@ -2385,13 +2398,12 @@ state; user preferences such as panel sizes remain in `preferences.json`.
     `masterVolume`; absent == unity (and suppressed from save when at
     unity to keep older projects bit-clean). UI presents it in dB via
     the shared `lib/audio/db.ts` taper.
-  - **Mixdown export settings** — a single opaque `exportSettingsJson`
-    string on the PROJECT root (capped 64 KB) holding the last-used
-    Export Mixdown dialog choices (format, sample rate, bit depth,
-    bitrate / quality, dither, tail, loudness mode + target, tags,
-    output path). Parsed with field-level whitelist / clamp /
-    schema-version guards. Edits don't enter the undo history (only
-    mark dirty) so re-exports don't pollute it.
+  - **Export settings** — `PROJECT.exportSettingsJson` holds the mixdown
+    settings and a separate `trackExport` object for the track format, bit
+    depth or MP3 bitrate, destination folder and batch selection. On an
+    existing project, saving export preferences does not save unrelated
+    edits, advance the file's recovery timestamp, mark the project dirty or
+    enter the undo history. Range-only export is a fresh choice each time.
   - **Transport / view state** — playhead position, horizontal zoom and
     horizontal scroll, plus optional timeline-range boundaries and Loop
     Selection state. View-state-only saves do not mark the project dirty.
@@ -2409,20 +2421,19 @@ state; user preferences such as panel sizes remain in `preferences.json`.
   `PROJECT_STATE` reconnect tokens, audio engine caches (peaks cache lives
   in `%APPDATA%`), cover art, in-flight import progress, clip-group selection
   state, library search / sort state.
-- **File validity on load:** the backend walks every referenced file and
-  `stat()`s it. Missing files mark their clips and library items as
-  "unresolved" (rendered greyed-out, audio silent for that clip) and the
-  renderer surfaces a single grouped toast listing them with a "Locate
-  files…" button that opens a per-file relink dialog.
-- **Dirty tracking:** every mutation to the `ValueTree` flips an
-  `isDirty` flag on the backend; the bridge mirrors it to the renderer.
-  The title bar shows the project name with a leading `•` when dirty.
-- **Auto-save / crash recovery:** implemented. A dirty project is silently
-  snapshotted into `%APPDATA%/Silverdaw/autosave/<projectId>/` every
-  30 s (user-configurable in Preferences ▸ Project ▸ Autosave). On launch
-  the **RecoveryDialog** offers to restore any project whose autosave is
-  newer than its backing file (or whose backing file is missing /
-  untitled). Choosing **Don't save** in the unsaved-changes prompt
+- **Missing files on load:** unresolved clips stay in the arrangement but do
+  not play. The renderer reports the number of missing paths and opens
+  **Missing Audio Files**. Each **Locate file…** action relinks all library
+  items that used that path.
+- **Dirty tracking:** the backend tracks unsaved edits; the renderer mirrors
+  this state with a leading `•` beside the project name. View changes and
+  export preferences are not arrangement edits.
+- **Autosave / crash recovery:** by default, a dirty project is snapshotted
+  every 30 s under `autosave/<projectId>/` in Electron's user-data folder.
+  The interval is configurable in **Preferences ▸ Project ▸ Autosave**.
+  On launch, recovery offers completed snapshots whose backing file is
+  missing or unset, or whose timestamp is more than 500 ms newer than the
+  backing file. Choosing **Don't save** in the unsaved-changes prompt
   clears the project's autosave bucket before the app exits so a
   conscious discard isn't resurrected as crash recovery on the next
   launch.
@@ -2477,11 +2488,11 @@ project transport.
   cropped range (Clip). Switching back from Source carries the
   current selection across so a coarse range painted on the full
   source can be tightened at clip-level zoom.
-- **Crop** narrows the in-dialog view to the current selection
+- **Trim** narrows the in-dialog view to the current selection
   non-destructively (no project mutation). Ctrl+Z / Ctrl+Y inside the
   dialog walk a Crop-only undo stack scoped to the dialog itself —
   the project-level undo history is untouched until the user
-  explicitly commits via Apply trim or Save Selection to Library.
+  explicitly commits via **Save** or **Save Selection to Library**.
 - Keyboard selection via Shift+Arrow uses a text-editor-style
   anchor model: first press anchors at the playhead (or the opposite
   edge of an existing narrowing selection); subsequent presses move
@@ -2547,7 +2558,8 @@ project transport.
   scope follows the clip's linked / unlinked state.
 
 ### 7.15 Audio Format Support
-- JUCE-native formats (WAV / AIFF / FLAC + MP3/WMA on Windows) decode directly on the backend.
+- The backend reads WAV, AIFF, FLAC and WMA. For MP3 it decodes to the
+  playback cache with the bundled LAME, with a JUCE fallback (ADR 0029).
 - Unsupported formats that Web Audio can decode route through the renderer's
   Web Audio + temp-WAV detour, producing a WAV in the cache that the backend
   loads.
@@ -3340,9 +3352,15 @@ sections retain the detailed evidence, deferrals and measurement limitations.
 
 ### 1.10.1 - GPU, Stem Separation & Diagnostics Reliability
 
-The designated release version as of 2026-11-16. Changes are listed in the
+Changes in this patch are listed in the
 [changelog](../CHANGELOG.md#1101); automated checks and verified local assets are
 recorded in the [release record](#release-acceptance-1101).
+
+### 1.11.0 - Individual Track & Range Export
+
+Export Tracks renders aligned files for all tracks, a saved subset, or a single
+track from its header. Both export dialogs can render just the selected
+timeline range. See the [release record](#release-acceptance-1110).
 
 ### Phase 1 — Backend Foundation & Bridge
 
@@ -3493,13 +3511,16 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 - [x] Rubber Band integration: per-clip real-time warp engine with rhythmic / tonal / complex modes and independent pitch controls
 - [x] BTrack integration: BPM **and beat-position** detection on import (vendored at `backend/third_party/btrack/` with two MSVC-compatibility patches; runs on the existing peaks worker pool; reported BPM is derived from the median beat-interval for tight self-consistency, and a `variableTempo` flag is set when the per-beat tempo samples spread > 5 %)
 - [x] Renderer key detection on import: Web Audio decode + chroma profile + major/minor templates; stored as `LIBRARY > ITEM.key` and shown on library tiles / info dialog with key-coloured badges
-- [x] First-clip BPM seeds project BPM on an otherwise-empty project (no other clips on tracks and no other analysed library items — runs even for variable-tempo sources, with the user free to override later in the Transport bar); gated by the app-level **Set project tempo from first clip** preference (default on, `ui.seedProjectTempoFromFirstClip`) so it can be turned off to keep the project tempo fixed
+- [x] Optional first-clip tempo seeding (see §7.4). The project records
+  whether its tempo is established rather than inferring it from a count of
+  analysed library items.
 - [x] Library tile shows detected key and BPM next to the duration with an amber `~ BPM` badge for variable-tempo sources; round-trips through `LIBRARY > ITEM[key, bpm, beats, beatAnchorSec, variableTempo, playbackFilePath]` on save/load
 - [x] Beat markers drawn on the clip waveform — synthesised on a source-global beat grid (`beats[0] + N × 60/sourceBPM`) so split / duplicate / trim sub-clips stay in lockstep
 - [x] Drag-snap on a clip uses the same source-global beat grid: the first source beat inside the clip snaps to the nearest project sub-beat (Alt to bypass for ms-precise drag)
 - [x] Clips auto-align to the project **bar** grid after tempo analysis (`project.alignClipToBarGrid`): the first in-window grid beat snaps to the nearest bar line so a clip placed before its beats were known — e.g. one with a silent intro — lands on the bar; gated by the **Align clips to the beat grid after analysis** preference (default on, `ui.alignClipsToGridOnAnalysis`), skips simple samples / locked / tempo-mismatched clips, and re-runs from `PROJECT_BPM_APPLIED` so a first-clip tempo seed is applied before aligning
 - [x] Floating processing panel surfaces staged progress (preparing audio → analysing tempo → analysing beats → applying warp when needed) for both import and reanalysis; OS busy cursor stays in `progress` for the whole lifespan
-- [x] Manual timeline markers: `M` toggles a marker at the nearest playhead grid point, double-clicking the ruler toggles at the nearest grid point, drag moves markers with grid snap, duplicate markers on the same grid point are refused, `Ctrl+←/→` jumps between markers and scrolls them into view, and markers persist as `MARKERS > MARKER[id, positionMs]`
+- [x] Manual timeline markers: `M` toggles at the exact playhead position;
+  drag a marker to move it, or use `Ctrl`+`←`/`→` to jump between markers.
 - [x] Auto warp-to-project-BPM on clip drop/import, enabled by default and gated
   by the Timeline preference; variable-tempo music uses its representative
   detected BPM, and unknown BPMs are applied after analysis
@@ -3507,7 +3528,7 @@ detected BPM/key, warp, region selection, and a tag-aware library.
 
 **Clip Editor region selection + clip editing:**
 - [x] Drag-select a region in the Clip Editor waveform (snap + Alt-bypass)
-- [x] Mark-points selection (`[` / `]` at playhead)
+- [x] Extend the Clip Editor selection from the keyboard with `Shift`+`←`/`→`.
 - [x] Trim clip non-destructively by dragging either edge (ms-precise; updates `inMs` / `durationMs` atomically via `CLIP_TRIM`)
 - [x] Crop clip to region (non-destructive: edit in/out points in ValueTree)
 - [x] Split clip at playhead (`S` key + Edit menu + **Edit ▸ Split at
@@ -3752,20 +3773,11 @@ playable at every point):
   Dialog choices (including output path) are
   persisted at the *project* level via a single
   `PROJECT.exportSettingsJson` blob (capped 64 KB, whitelist +
-  clamp + schema-version guard on parse, no undo entries — only a
-  dirty-mark). Once step 1 lands, mixdown pumps the same
-  canonical chain the live engine uses
-  (`OffsetSource → AudioTransportSource → per-clip volume shape →
-  TrackRuntime → TrackChain (Tone → Leveler → Saturation → Bit Crusher → Punch → gain → mute/solo) →
-  pre-pan send tap → pan → BusGraph dryBus + shared Reverb/Delay →
-  Glue Compressor → master gain → Safety Limiter → master meter →
-  final-stage libsamplerate`) so warped / pitch-
-  shifted / effected output is **sample-equivalent to live
-  playback at the internal master float bus** under deterministic
-  conditions (same project, fixed rate, fixed block size, no
-  parameter edits during render). Encoded export output is not
-  bit-equivalent to live device output — the parity guarantee
-  stops at the internal master bus. The live transport is
+  clamp + schema-version guard on parse, no undo entries or dirty mark).
+  Mixdown uses the same track and master processing as playback, including
+  hosted inserts and shared effects. Parity is defined at the internal master
+  float bus under deterministic conditions, not between an encoded file and
+  live device output (see ADR 0022 and ADR 0026). The live transport is
   force-paused for the duration and `TRANSPORT_PLAY` is rejected.
 - [x] **Render start bar + timeline bar numbering.** A project
   `barCounterStart` (default `1`, range `-64..1`) sets the number shown
@@ -4099,10 +4111,13 @@ robustness without changing the core editing model.
 - **Demucs** — htdemucs-ft 4-stem model (vocals/drums/bass/other), MIT-licensed ONNX export, downloaded on demand as the backup
 - **Mel-Band RoFormer** — optional MIT-licensed vocal model (Kim Vocal 2 / SYHFT) for the "Vocal Quality Pack", downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
 - **BS-RoFormer** — optional MIT-licensed 4-stem model (ZFTurbo MUSDB18-HQ) for the "Rhythm Quality Pack" (drums/bass), self-exported and downloaded on demand (not bundled); see THIRD_PARTY_LICENSES.md
-- **ONNX Runtime (DirectML)** — MIT; runs both stem models on CPU or any DX12 GPU
+- **ONNX Runtime** — runs stem models on CPU or, with the DirectML execution
+  provider enabled, a supported DirectX 12 GPU.
 - **JUCE is backend only** — all Silverdaw rendering is Electron + PixiJS; the
   engine owns native hosted-plugin editor windows under ADR 0025.
-- **Cross-layer logging** — every session writes `%USERPROFILE%\Silverdaw\Logs\<stamp>\{main,backend,renderer}.log` with aligned ISO-millisecond timestamps for post-mortem analysis (opt-in via Preferences ▸ Developer). An always-on startup diagnostics log + backend crash report is also written to `%USERPROFILE%\Silverdaw\Diagnostics` on every launch regardless of that flag, so a failed startup can still be diagnosed. Dev and packaged builds resolve both to the same discoverable location.
+- **Cross-layer logging** — session logging is opt-in. Startup diagnostics
+  are always enabled; a crash report is written only on a handled backend
+  fault. See [startup troubleshooting](../INSTALL.md#troubleshooting-silverdaw-wont-start).
 - **Multiple clients on the bridge** — the WebSocket bridge supports multiple
   authenticated clients. The existing Clip Editor is a renderer dialog, not a
   second BrowserWindow; no detached editor window is implemented.

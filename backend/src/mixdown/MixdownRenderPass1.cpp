@@ -4,7 +4,6 @@
 #include "BeatRepeatSnapshot.h"
 #include "Log.h"
 #include "Leveler.h"
-#include "MixdownBroadcast.h"
 #include "PluginPlayHead.h"
 #include "SafetyLimiter.h"
 #include "SharedFx.h"  // delayNoteToMs
@@ -23,7 +22,6 @@
 namespace silverdaw::mixdown_render_pass1
 {
 
-using mixdown_bridge::broadcastProgress;
 using mixdown_dither::kLsb16f;
 using mixdown_dither::nextUniform;
 using mixdown_graph::buildOfflineClip;
@@ -45,6 +43,27 @@ Pass1Result fail(MixdownFailureCode code, const juce::String& message)
     r.message = message;
     return r;
 }
+
+double lastTrackInputFrame(const MixdownSnapshot::TrackSnapshot& track, BusGraph& graph, double lastMixFrame)
+{
+    auto* chain = graph.getTrackPlugins(track.id);
+    if (chain == nullptr) return lastMixFrame;
+    // The graph delays other tracks separately; only this chain's latency extends its source horizon.
+    const auto frame = lastMixFrame + std::min(graph.getLatencyCompensationSamples(), chain->getLatencySamples());
+    const auto active = std::any_of(track.plugins.begin(), track.plugins.end(), [&](const auto& descriptor) {
+        const auto* slot = chain->findSlot(descriptor.slotId);
+        return !descriptor.bypassed && slot != nullptr && !slot->isUnresolved();
+    });
+    // A hosted processor can inspect its entire final input block.
+    return active ? (std::floor(frame / kBlockFrames) + 1.0) * kBlockFrames - 1.0 : frame;
+}
+
+bool startsAfterInputFrame(const MixdownSnapshot::ClipSnapshot& clip, double lastFrame, int projectRate)
+{
+    const double rate = clip.sourceSampleRate > 0 ? clip.sourceSampleRate : projectRate;
+    // OffsetSource floors the source-time offset; JUCE interpolates to the next source sample.
+    return std::floor(clip.offsetMs * rate / 1000.0) > std::ceil(lastFrame * rate / projectRate);
+}
 } // anonymous namespace
 
 Pass1Result runPass1(const MixdownSnapshot& snapshot,
@@ -56,28 +75,11 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
                      bool analyzing,
                      mixdown_dither::Xorshift32& rngL,
                      mixdown_dither::Xorshift32& rngR,
-                     BridgeServer& bridge,
+                     const RenderProgress& progress,
                      std::atomic<bool>& cancelFlag)
 {
     std::vector<std::unique_ptr<OfflineClip>> clips;
     clips.reserve(snapshot.tracks.size() * 8);
-    for (const auto& track : snapshot.tracks)
-    {
-        for (const auto& clip : track.clips)
-        {
-            if (cancelFlag.load())
-                return fail(MixdownFailureCode::Cancelled, "Cancelled.");
-            juce::String err;
-            auto built = buildOfflineClip(clip, track.id, track.gain,
-                                          snapshot.projectSampleRate,
-                                          formatManager, err);
-            if (built == nullptr)
-                return fail(MixdownFailureCode::Decode,
-                            "Could not open source for clip " + clip.id +
-                                (err.isNotEmpty() ? juce::String(": ") + err : juce::String("")));
-            clips.push_back(std::move(built));
-        }
-    }
 
     // Snapshot live per-track parameters so offline render stays in parity with playback.
     // Declaration order is deliberate: everything the graph's plugin chains point at — the
@@ -89,17 +91,13 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     const std::atomic<double> offlineRate{static_cast<double>(snapshot.projectSampleRate)};
     const std::atomic<bool> offlinePlaying{true};
     silverdaw::plugins::PluginPlayHead offlinePlayHead;
+    juce::MixerAudioSource silentSource;
     silverdaw::BusGraph busGraph;
 
     offlinePlayHead.setTransportSources(&mixdownPos, &offlineRate, &offlinePlaying);
     offlinePlayHead.setBpm(snapshot.bpm);
     busGraph.setPluginPlayHead(&offlinePlayHead);
     busGraph.prepareToPlay(kBlockFrames, static_cast<double>(snapshot.projectSampleRate));
-    for (auto& cp : clips)
-    {
-        busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
-    }
-
     for (const auto& trackSnap : snapshot.tracks)
     {
         busGraph.setTrackTone(trackSnap.id, trackSnap.toneBassDb, trackSnap.toneMidDb,
@@ -184,6 +182,33 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         return fail(MixdownFailureCode::Invalid,
                     juce::String("Cannot init output resampler: ") + finalResampler.error());
 
+    const auto window = options.exactOutputWindow();
+    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
+    for (const auto& track : snapshot.tracks)
+    {
+        const auto firstClip = clips.size();
+        const auto lastInputFrame = options.outputFrameRange
+            ? std::optional{lastTrackInputFrame(track, busGraph, finalResampler.lastInputFrameForOutput(window->getEnd() - 1))}
+            : std::nullopt;
+        for (const auto& clip : track.clips)
+        {
+            if (cancelFlag.load())
+                return fail(MixdownFailureCode::Cancelled, "Cancelled.");
+            if (lastInputFrame && startsAfterInputFrame(clip, *lastInputFrame, snapshot.projectSampleRate)) continue;
+            juce::String err;
+            auto built = buildOfflineClip(clip, track.id, track.gain, snapshot.projectSampleRate, formatManager, err);
+            if (built == nullptr)
+                return fail(MixdownFailureCode::Decode, "Could not open source for clip " + clip.id + ": " + err);
+            clips.push_back(std::move(built));
+            const auto& cp = clips.back();
+            busGraph.attachClip(cp->trackId, cp->id, cp->summingSource.get());
+        }
+        // Keep the track's inserts running on silence, even if its only clip is in the future.
+        if (clips.size() > firstClip) clips.back()->keepTrackAlive = window.has_value();
+        else if (!track.clips.empty())
+            busGraph.attachClip(track.id, track.clips.front().id, &silentSource);
+    }
+
     const double projectFramesPerMs = snapshot.projectSampleRate / 1000.0;
     int64_t totalProjectFrames =
         static_cast<int64_t>(std::round(options.lengthMs * projectFramesPerMs));
@@ -204,8 +229,10 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
     totalProjectFrames += maxTailFrames + sharedFxMaxTailFrames + userTailFrames;
     // Every track leaves the graph aligned by this much, so shift the whole render window to
     // match: the extra head is discarded and the extra tail keeps the true end audible (ADR 0026).
-    const int64_t alignmentFrames = busGraph.getLatencyCompensationSamples();
     totalProjectFrames += alignmentFrames;
+    if (window)
+        totalProjectFrames = alignmentFrames + static_cast<int64_t>(std::ceil(
+            static_cast<double>(window->getEnd()) * snapshot.projectSampleRate / options.outputSampleRate));
     const int64_t minRenderFrames = totalProjectFrames - sharedFxMaxTailFrames;
     // Render from frame 0 so clip positions and FX tails advance correctly, but only
     // push frames at/after the start offset into the output (earlier audio discarded).
@@ -214,6 +241,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         static_cast<int64_t>(std::round(options.startMs * projectFramesPerMs)) + alignmentFrames);
     int64_t projectFramesRendered = 0;
     int64_t outputFramesWritten = 0;
+    int64_t skipOutputFrames = window ? window->getStart() : 0;
     double peakAmplitude = 0.0;
     double preClampPeakAmplitude = 0.0;
     int64_t clippedSampleCount = 0;
@@ -247,6 +275,13 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
     const auto writeStereo = [&](const float* interleaved, int frames) -> bool
     {
+        if (window)
+        {
+            const auto skip = static_cast<int>(std::min<int64_t>(skipOutputFrames, frames));
+            skipOutputFrames -= skip;
+            interleaved += static_cast<std::ptrdiff_t>(skip) * kOutputChannels;
+            frames = static_cast<int>(std::min<int64_t>(frames - skip, window->getLength() - outputFramesWritten));
+        }
         if (frames <= 0) return true;
         if (frames > maxWriteFrames)
         {
@@ -285,7 +320,9 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         return true;
     };
 
-    while (projectFramesRendered < totalProjectFrames)
+    // For an exact output window, advance the full chain (including the resampler's
+    // lookahead) until it has actually delivered the final requested sample.
+    while (window ? outputFramesWritten < window->getLength() : projectFramesRendered < totalProjectFrames)
     {
         // ScopedNoDenormals protects realtime DSP from denormal CPU spikes.
         const juce::ScopedNoDenormals scopedNoDenormals;
@@ -293,7 +330,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         {
             return fail(MixdownFailureCode::Cancelled, "Cancelled.");
         }
-        const int blockFrames = static_cast<int>(
+        const int blockFrames = window ? kBlockFrames : static_cast<int>(
             std::min<int64_t>(kBlockFrames, totalProjectFrames - projectFramesRendered));
 
         mixBus.clear(0, blockFrames);
@@ -303,7 +340,7 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
         completedClips.clear();
         for (auto& cp : clips)
         {
-            if (cp->retired) continue;
+            if (cp->retired || cp->keepTrackAlive) continue;
             if (projectFramesRendered >= cp->timelineEndFrames + cp->tailFrames)
             {
                 completedClips.push_back({cp->id, cp->summingSource.get()});
@@ -354,13 +391,16 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
 
         // Push only frames at/after the start offset; earlier audio advances state then drops.
         const int64_t blockStart = projectFramesRendered;
+        projectFramesRendered += blockFrames;
+        const bool lastBlock = !window && (projectFramesRendered >= totalProjectFrames
+            || (projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated()));
         const int64_t keepOffset64 = juce::jmax<int64_t>(0, startFrames - blockStart);
         if (keepOffset64 < blockFrames)
         {
             const int keepOffset = static_cast<int>(keepOffset64);
             const int keepFrames = blockFrames - keepOffset;
             if (!finalResampler.push(mixInterleaved.data() + static_cast<size_t>(keepOffset) * 2,
-                                     keepFrames, /*endOfInput*/ false, writeStereo))
+                                     keepFrames, lastBlock, writeStereo))
             {
                 if (writerError.isNotEmpty())
                     return fail(MixdownFailureCode::Io, writerError);
@@ -370,35 +410,20 @@ Pass1Result runPass1(const MixdownSnapshot& snapshot,
             }
         }
 
-        projectFramesRendered += blockFrames;
-
-        if (projectFramesRendered >= minRenderFrames && busGraph.sharedFxTerminated())
-        {
-            break;
-        }
+        if (lastBlock) break;
 
         const auto now = juce::Time::getMillisecondCounter();
         if (now - lastProgressMs >= kProgressMinIntervalMs)
         {
             const double renderShare = normalizing ? 45.0 : 90.0;
-            const double pct = (static_cast<double>(projectFramesRendered)
+            const double pct = (static_cast<double>(std::min(projectFramesRendered, totalProjectFrames))
                                 / static_cast<double>(juce::jmax<int64_t>(1, totalProjectFrames)))
                                * renderShare;
-            broadcastProgress(bridge, pct,
+            progress(pct,
                               normalizing ? "normalize-pass1"
                                           : (analyzing ? "analyze" : "render"));
             lastProgressMs = now;
         }
-    }
-
-    // libsamplerate may leave input unconsumed; preserve leftovers to avoid render drift.
-    if (!finalResampler.push(mixInterleaved.data(), 0, /*endOfInput*/ true, writeStereo))
-    {
-        if (writerError.isNotEmpty())
-            return fail(MixdownFailureCode::Io, writerError);
-        return fail(MixdownFailureCode::Invalid,
-                    juce::String("Final resample flush failed: ") +
-                        (finalResampler.error() ? finalResampler.error() : "unknown"));
     }
 
     const double effectiveRenderLengthMs =

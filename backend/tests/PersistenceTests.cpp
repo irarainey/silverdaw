@@ -188,12 +188,39 @@ void testProjectFileSaveLoadAndViewState()
     requireNear(loadedSelection->endMs, 2500.0, 0.0001, "saved selection end should round-trip");
     require(loadedSelection->loop, "saved selection loop state should round-trip");
 
-    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(
-        file, -10.0, 240.0, 99.0, "t1", true, true, true,
-        silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false}, "bar", "project");
+    loaded.setViewScrollX(-10.0);
+    loaded.setViewPxPerSecond(240.0);
+    loaded.setPlayheadMs(99.0);
+    loaded.setMetronomeEnabled(true);
+    loaded.setClipEditorMetronomeEnabled(true);
+    loaded.setViewTimelineSelection(silverdaw::ProjectState::TimelineSelectionView{3000.0, 4500.0, false});
+    loaded.setViewSnapGrid("bar");
+    loaded.setViewFxTab("project");
+    const juce::String exportSettings = R"({"trackExport":{"format":"flac","trackIds":null}})";
+    loaded.setExportSettingsJson(exportSettings);
+    loaded.setMixdownStartBar(4);
+    loaded.addTrack("unsaved");
+    require(file.setLastModificationTime(juce::Time::getCurrentTime() - juce::RelativeTime::hours(1)),
+            "fixture should have a distinct content save time");
+    const auto originalTime = file.getLastModificationTime();
+    require(silverdaw::ProjectFile::saveViewState(file, loaded,
+                silverdaw::ProjectFile::ViewStateScope::ExportPreferencesOnly).wasOk(),
+            "export preferences should persist on a dirty project");
+    require(file.getLastModificationTime() == originalTime,
+            "an export must not make the saved arrangement appear newer than its autosave");
+    silverdaw::ProjectState preferencesOnly;
+    require(silverdaw::ProjectFile::load(file, preferencesOnly).ok, "export preferences file should reopen");
+    require(preferencesOnly.getExportSettingsJson() == exportSettings && preferencesOnly.getMixdownStartBar() == 4,
+            "export preferences should survive discarding unrelated edits");
+    require(!preferencesOnly.hasTrack("unsaved") && preferencesOnly.getViewFxTab() == "plugins",
+            "export must not save unsaved tracks or unrelated view state");
+    const auto viewStateResult = silverdaw::ProjectFile::saveViewState(file, loaded);
     require(viewStateResult.wasOk(), "saveViewState should update existing project file");
     silverdaw::ProjectState reloaded;
     require(silverdaw::ProjectFile::load(file, reloaded).ok, "reloading after view-state save should work");
+    require(reloaded.getExportSettingsJson() == exportSettings && reloaded.getMixdownStartBar() == 4,
+            "a clean close remembers export preferences");
+    require(!reloaded.hasTrack("unsaved"), "flushing preferences must not commit unrelated edits");
     requireNear(reloaded.getViewScrollX(), 0.0, 0.0001, "saveViewState should clamp negative scroll");
     requireNear(reloaded.getViewPxPerSecond(), 240.0, 0.0001, "saveViewState should persist zoom");
     requireNear(reloaded.getPlayheadMs(), 99.0, 0.0001, "saveViewState should update playhead");
@@ -213,7 +240,12 @@ void testProjectFileSaveLoadAndViewState()
             "saveViewState should persist the clip-editor metronome toggle (on)");
 
     // Turning the metronomes off via the targeted view-state write must round-trip as off.
-    const auto viewStateOff = silverdaw::ProjectFile::saveViewState(file, 0.0, 240.0, 99.0, "t1", true, false, false);
+    reloaded.setMetronomeEnabled(false);
+    reloaded.setClipEditorMetronomeEnabled(false);
+    reloaded.setViewTimelineSelection(std::nullopt);
+    reloaded.setViewSnapGrid({});
+    reloaded.setViewFxTab({});
+    const auto viewStateOff = silverdaw::ProjectFile::saveViewState(file, reloaded);
     require(viewStateOff.wasOk(), "saveViewState (metronome off) should update the project file");
     silverdaw::ProjectState reloadedOff;
     require(silverdaw::ProjectFile::load(file, reloadedOff).ok, "reloading after metronome-off save should work");

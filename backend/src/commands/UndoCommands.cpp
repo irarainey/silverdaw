@@ -50,7 +50,6 @@ bool isUndoableEnvelopeType(const juce::String& type) noexcept
            type == "PROJECT_SET_MASTER_VOLUME" ||
            type == "PROJECT_SET_SAFETY_LIMITER" ||
            type == "PROJECT_SET_BAR_COUNTER_START" ||
-           type == "PROJECT_SET_MIXDOWN_START_BAR" ||
            type == "PROJECT_MARKER_ADD" || type == "PROJECT_MARKER_MOVE" ||
            type == "PROJECT_MARKER_REMOVE" ||
            type == "TRANSITION_CREATE" || type == "TRANSITION_DELETE" ||
@@ -122,7 +121,6 @@ juce::String prettyTransactionName(const juce::String& type)
     if (type == "PROJECT_SET_MASTER_VOLUME") return "Change master volume";
     if (type == "PROJECT_SET_SAFETY_LIMITER") return "Toggle safety limiter";
     if (type == "PROJECT_SET_BAR_COUNTER_START") return "Change bar counter start";
-    if (type == "PROJECT_SET_MIXDOWN_START_BAR") return "Change mixdown start bar";
     if (type == "PROJECT_MARKER_ADD") return "Add marker";
     if (type == "PROJECT_MARKER_MOVE") return "Move marker";
     if (type == "PROJECT_MARKER_REMOVE") return "Remove marker";
@@ -197,7 +195,7 @@ void beginUndoTransactionIfNeeded(const juce::String& type, const juce::var& pay
              type == "PROJECT_SET_REVERB" || type == "PROJECT_SET_DELAY" ||
              type == "PROJECT_SET_MIX_GLUE" ||
              type == "PROJECT_SET_BPM" || type == "PROJECT_SET_LENGTH" || type == "PROJECT_RENAME" ||
-             type == "PROJECT_SET_BAR_COUNTER_START" || type == "PROJECT_SET_MIXDOWN_START_BAR")
+             type == "PROJECT_SET_BAR_COUNTER_START")
     {
         // Project-wide settings: there is only one of each, so a constant key
         // coalesces a drag or a burst of typing into a single undo step.

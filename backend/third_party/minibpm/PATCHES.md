@@ -15,8 +15,8 @@ Upstream: <https://github.com/breakfastquay/minibpm>
 ## Patches
 
 **None.** Unlike BTrack, MiniBPM builds cleanly under MSVC as-is — it is
-self-contained C++ with no variable-length arrays, no `M_PI` dependency and no
-external FFT. Keep it that way: if a change becomes necessary, record it here
+self-contained C++ with its own `M_PI` fallback and no external FFT.
+Keep it that way: if a change becomes necessary, record it here
 and explain why upstream could not absorb it, so the next update is a
 re-download rather than a merge.
 
@@ -26,11 +26,11 @@ compiles.
 
 ## Why it is here
 
-BTrack is a *causal* beat tracker, and in `BpmDetector` its tempo becomes the
-seed that every later refinement stage is constrained to within ±10%. A bad seed
-is therefore unrecoverable regardless of how good the refinement is. MiniBPM
-estimates tempo over the whole file using a different algorithm, so it is useful
-as an independent second opinion on the seed specifically.
+`BpmDetector` searches for a refined period near BTrack's initial estimate.
+If the candidate is in range but scores worse against BTrack's own beats,
+MiniBPM analyses the unconditioned mono audio as an independent check. A
+decisive estimate can tip the choice toward the candidate; MiniBPM does not
+supply a replacement seed or run on every analysis.
 
 It reports **tempo only** — no beat positions and no phase — so it cannot
 replace the existing ODF period/phase refinement, which is what actually places

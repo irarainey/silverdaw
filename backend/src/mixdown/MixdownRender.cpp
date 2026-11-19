@@ -7,6 +7,7 @@
 #include "BridgeServer.h"
 #include "Log.h"
 #include "LoudnessAnalyzer.h"
+#include "LamePath.h"
 #include "MixdownBroadcast.h"
 #include "MixdownDither.h"
 #include "MixdownEngine.h"
@@ -14,6 +15,7 @@
 #include "MixdownGraph.h"
 #include "MixdownNormalize.h"
 #include "MixdownRenderPass1.h"
+#include "Mp3Export.h"
 #include "ProjectState.h"
 #include "WarpProcessor.h"
 
@@ -33,7 +35,6 @@ namespace silverdaw
 
 using mixdown_export::atomicReplace;
 using mixdown_export::createOutputWriter;
-using mixdown_export::findLameExecutable;
 using mixdown_export::writeAiffTextChunks;
 using mixdown_export::writeFlacVorbisComment;
 
@@ -53,37 +54,28 @@ constexpr int kProgressMinIntervalMs = 50;
 
 } // anonymous namespace
 
-void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, BridgeServer& bridge,
-                   std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag)
+OfflineFileResult renderOfflineFile(const MixdownSnapshot& snapshot, MixdownOptions options,
+                                    const RenderProgress& progress, std::atomic<bool>& cancelFlag)
 {
-        struct BusyGuard
-        {
-            std::atomic<bool>& flag;
-            ~BusyGuard() { flag.store(false); }
-        } busyGuard{busyFlag};
-
-        const auto failWith = [&](MixdownFailureCode code, const juce::String& message)
+        const auto failWith = [](MixdownFailureCode code, const juce::String& message)
         {
             silverdaw::log::warn("mixdown", "fail code=" + juce::String(mixdownFailureCodeToString(code)) +
                                                  " msg=" + message);
-            broadcastFailed(bridge, code, message);
+            return OfflineFileResult{code, message};
         };
 
         if (snapshot.tracks.empty())
         {
-            failWith(MixdownFailureCode::Invalid, "No clips to render.");
-            return;
+            return failWith(MixdownFailureCode::Invalid, "No clips to render.");
         }
         if (options.lengthMs <= 0.0)
         {
-            failWith(MixdownFailureCode::Invalid, "Mixdown length must be positive.");
-            return;
+            return failWith(MixdownFailureCode::Invalid, "Mixdown length must be positive.");
         }
         if (options.outputSampleRate != 44100 && options.outputSampleRate != 48000)
         {
-            failWith(MixdownFailureCode::Invalid,
+            return failWith(MixdownFailureCode::Invalid,
                      "Unsupported output sample rate " + juce::String(options.outputSampleRate));
-            return;
         }
 
         // Shared TPDF dither keeps 16-bit output identical across render paths.
@@ -94,13 +86,11 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
             lameApp = findLameExecutable();
             if (! lameApp.existsAsFile())
             {
-                failWith(MixdownFailureCode::Invalid,
+                return failWith(MixdownFailureCode::Invalid,
                          "MP3 encoder (lame.exe) is not bundled with this build. "
                          "See backend/third_party/lame/README.md.");
-                return;
             }
             options.bitDepth = 16;
-            options.dither = true;
         }
         // Loudness normalization uses a measured pass before final gain, limiting, dither, and
         // encode.
@@ -108,9 +98,8 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
             && options.outputSampleRate != 44100
             && options.outputSampleRate != 48000)
         {
-            failWith(MixdownFailureCode::Invalid,
+            return failWith(MixdownFailureCode::Invalid,
                      "Loudness analysis requires 44.1 or 48 kHz output.");
-            return;
         }
         const bool normalizing = options.loudnessMode == MixdownOptions::LoudnessMode::Normalize;
         const bool analyzing = options.loudnessMode != MixdownOptions::LoudnessMode::Off;
@@ -124,39 +113,43 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
             }
             catch (const juce::String& e)
             {
-                failWith(MixdownFailureCode::Invalid,
+                return failWith(MixdownFailureCode::Invalid,
                          "Could not start loudness analyzer: " + e);
-                return;
             }
         }
 
-        broadcastProgress(bridge, 0.0, "prepare");
+        progress(0.0, "prepare");
 
-        // Write caches to a sibling temp file so partial entries are never visible.
         const auto targetFile = options.outputFile;
         const auto parentDir = targetFile.getParentDirectory();
         if (!parentDir.exists() && !parentDir.createDirectory())
         {
-            failWith(MixdownFailureCode::Io,
+            return failWith(MixdownFailureCode::Io,
                      "Cannot create output folder: " + parentDir.getFullPathName());
-            return;
         }
-        const auto tmpFile = parentDir.getChildFile(targetFile.getFileName() + ".tmp");
-        tmpFile.deleteFile();
-        const auto f32TmpFile = parentDir.getChildFile(targetFile.getFileName() + ".f32.tmp");
-        f32TmpFile.deleteFile();
+        // Only the publishable file needs to be on the destination volume.
+        const juce::TemporaryFile stagedOutput(targetFile);
+        const auto& tmpFile = stagedOutput.getFile();
+        std::optional<juce::TemporaryFile> floatPcm;
+        if (normalizing)
+        {
+            if (mp3) floatPcm.emplace(juce::String{".wav"});
+            else floatPcm.emplace(targetFile.withFileExtension(".wav"));
+        }
+        std::optional<juce::TemporaryFile> mp3Pcm;
+        if (mp3) mp3Pcm.emplace(juce::String{".wav"});
+        const auto& renderedFile = mp3 ? mp3Pcm->getFile() : tmpFile;
 
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
 
         // JUCE 8 lacks some tag hooks, so FLAC/AIFF metadata is post-processed after encode.
-        const juce::File& pass1File = normalizing ? f32TmpFile : tmpFile;
+        const juce::File& pass1File = normalizing ? floatPcm->getFile() : renderedFile;
         std::unique_ptr<juce::OutputStream> outStream = std::make_unique<juce::FileOutputStream>(pass1File);
         if (! static_cast<juce::FileOutputStream*>(outStream.get())->openedOk())
         {
-            failWith(MixdownFailureCode::Io,
+            return failWith(MixdownFailureCode::Io,
                      "Cannot open output file for writing: " + pass1File.getFullPathName());
-            return;
         }
 
         const int chosenBitDepth = options.bitDepth;
@@ -182,14 +175,11 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         else
         {
             writer = mixdown_export::createOutputWriter(
-                options.format, writerOptions, lameApp, options.metadata,
-                options.bitrateKbps, outStream);
+                options.format, writerOptions, options.metadata, outStream);
         }
 
         if (writer == nullptr)
         {
-            outStream.reset();
-            pass1File.deleteFile();
             const auto fmtName = normalizing
                                      ? juce::String("WAV-f32 (pass1)")
                                      : (options.format == MixdownOptions::Format::Flac
@@ -199,18 +189,14 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
                                                    : (options.format == MixdownOptions::Format::Aiff
                                                           ? juce::String("AIFF")
                                                           : juce::String("WAV"))));
-            failWith(MixdownFailureCode::Io,
+            return failWith(MixdownFailureCode::Io,
                      "Failed to create " + fmtName + " writer (bitDepth=" +
                          juce::String(pass1BitDepth) + ", sr=" + juce::String(options.outputSampleRate) + ").");
-            return;
         }
         if (pass1WantsFloat && ! writer->isFloatingPoint())
         {
-            writer.reset();
-            pass1File.deleteFile();
-            failWith(MixdownFailureCode::Io,
+            return failWith(MixdownFailureCode::Io,
                      "WAV writer opened in PCM mode when 32-float was requested.");
-            return;
         }
         silverdaw::log::info(
             "mixdown",
@@ -234,13 +220,10 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
 
         auto p1 = mixdown_render_pass1::runPass1(
             snapshot, options, formatManager, *writer, analyzer.get(),
-            normalizing, analyzing, rngL, rngR, bridge, cancelFlag);
+            normalizing, analyzing, rngL, rngR, progress, cancelFlag);
         if (! p1.ok)
         {
-            writer.reset();
-            pass1File.deleteFile();
-            failWith(p1.code, p1.message);
-            return;
+            return failWith(p1.code, p1.message);
         }
         // Member order preserves JUCE source lifetimes during teardown.
         auto clips = std::move(p1.clips);
@@ -250,13 +233,15 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         const int64_t clippedSampleCount = p1.clippedSampleCount;
         const double clampedTailSeconds = juce::jlimit(0.0, 60.0, options.tailSeconds);
 
-        broadcastProgress(bridge, normalizing ? 45.0 : 90.0,
+        progress(normalizing ? 45.0 : 90.0,
                           normalizing ? "normalize-pass1"
                                       : (analyzing ? "analyze" : "render"));
 
         const auto finalizeStartMs = juce::Time::getMillisecondCounter();
+        const auto window = options.exactOutputWindow();
         const int64_t totalOutputFrames =
-            static_cast<int64_t>(std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0));
+            window ? window->getLength() : static_cast<int64_t>(
+                std::round(effectiveRenderLengthMs * options.outputSampleRate / 1000.0));
         if (outputFramesWritten < totalOutputFrames)
         {
             const int64_t pad = totalOutputFrames - outputFramesWritten;
@@ -268,20 +253,17 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
                 const int chunk = static_cast<int>(juce::jmin<int64_t>(remaining, kBlockFrames));
                 if (!writer->writeFromFloatArrays(writePtrs, kOutputChannels, chunk))
                 {
-                    writer.reset();
-                    pass1File.deleteFile();
-                    failWith(MixdownFailureCode::Io, "Failed while writing final silence.");
-                    return;
+                    return failWith(MixdownFailureCode::Io, "Failed while writing final silence.");
                 }
                 remaining -= chunk;
                 outputFramesWritten += chunk;
             }
         }
         const auto padEndMs = juce::Time::getMillisecondCounter();
-        broadcastProgress(bridge, 92.0, "finalize");
+        progress(92.0, "finalize");
 
         // Closing the writer finalizes container headers before the atomic replace.
-        broadcastProgress(bridge, normalizing ? 45.0 : 95.0, "encode");
+        if (!mp3) progress(normalizing ? 45.0 : 95.0, "encode");
         writer.reset();
         const auto writerEndMs = juce::Time::getMillisecondCounter();
 
@@ -293,7 +275,7 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         double pass2PostGainPeakAmp = 0.0;
         if (analyzing && analyzer != nullptr)
         {
-            broadcastProgress(bridge, normalizing ? 46.0 : 96.0, "analyze");
+            progress(normalizing ? 46.0 : 96.0, "analyze");
             sourceLoudness = analyzer->finalize();
             finalLoudness = sourceLoudness; // overwritten below if normalizing
 
@@ -332,27 +314,32 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         if (normalizing)
         {
             auto p2 = mixdown_normalize::runNormalizePass2(
-                f32TmpFile, tmpFile, options, lameApp, chosenBitDepth, wantFloatWav,
-                appliedGainDb, *analyzer, rngL, rngR, bridge, cancelFlag);
+                pass1File, renderedFile, options, chosenBitDepth, wantFloatWav,
+                appliedGainDb, *analyzer, rngL, rngR, progress, cancelFlag);
             if (! p2.ok)
             {
-                failWith(p2.code, p2.message);
-                return;
+                return failWith(p2.code, p2.message);
             }
             outputFramesWritten = p2.outputFramesWritten;
             pass2ClippedSamples = p2.clippedSamples;
             pass2PostGainPeakAmp = p2.postGainPeakAmp;
             finalLoudness = p2.finalLoudness;
         }
-        else
+        if (mp3)
         {
+            progress(analyzing && !normalizing ? 96.0 : 95.0, "encode");
+            const auto encoded = mixdown_export::encodeMp3(lameApp, renderedFile, tmpFile, options,
+                                                            outputFramesWritten, cancelFlag);
+            if (encoded.failed())
+            {
+                return failWith(cancelFlag.load() ? MixdownFailureCode::Cancelled : MixdownFailureCode::Encode,
+                                encoded.getErrorMessage());
+            }
         }
 
         if (cancelFlag.load())
         {
-            tmpFile.deleteFile();
-            failWith(MixdownFailureCode::Cancelled, "Cancelled.");
-            return;
+            return failWith(MixdownFailureCode::Cancelled, "Cancelled.");
         }
 
         juce::String metadataWarning;
@@ -369,14 +356,12 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
 
         if (!atomicReplace(tmpFile, targetFile))
         {
-            tmpFile.deleteFile();
-            failWith(MixdownFailureCode::Io,
+            return failWith(MixdownFailureCode::Io,
                      "Could not finalise output file (rename failed). Path may be open in another app.");
-            return;
         }
         const auto replaceEndMs = juce::Time::getMillisecondCounter();
 
-        broadcastProgress(bridge, 100.0, "finalize");
+        progress(100.0, "finalize");
         const double actualDurationMs =
             static_cast<double>(outputFramesWritten) * 1000.0
             / static_cast<double>(options.outputSampleRate);
@@ -390,13 +375,6 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
                                  " peakAmp=" + juce::String(preClampPeakAmplitude, 4) +
                                  " clippedSamples=" + juce::String(clippedSampleCount) +
                                  " outputFrames=" + juce::String(outputFramesWritten));
-        broadcastDone(bridge, targetFile, actualDurationMs,
-                      analyzing ? &finalLoudness : nullptr,
-                      limitedByTruePeak, appliedGainDb,
-                      pass2ClippedSamples, pass2PostGainPeakAmp, metadataWarning);
-
-        busyFlag.store(false);
-
         const int totalClips = static_cast<int>(clips.size());
         // Counted before teardown: the offline render pulls the same WarpProcessor the
         // transport does, but with no deadline, so this is the control for a starvation
@@ -429,7 +407,7 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
         {
             if (auto& cp = *it; cp != nullptr)
             {
-                if (cp->transport) cp->transport->stop();
+                // There is no live callback to acknowledge stop(); detach the offline source directly.
                 if (cp->transport) cp->transport->setSource(nullptr);
                 if (cp->offsetSource) cp->offsetSource->setWarpProcessor(nullptr);
                 cp.reset();
@@ -447,6 +425,26 @@ void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, Brid
                 " visibleFinalizeMs=" + juce::String(replaceEndMs - finalizeStartMs) +
                 " backgroundTeardownMs=" + juce::String(teardownEndMs - replaceEndMs) +
                 " (clips=" + juce::String(totalClips) + ")");
+        return {std::nullopt, metadataWarning, actualDurationMs,
+                analyzing ? std::optional{finalLoudness} : std::nullopt, limitedByTruePeak,
+                appliedGainDb, pass2ClippedSamples, pass2PostGainPeakAmp};
+}
+
+void runMixdownJob(const MixdownSnapshot& snapshot, MixdownOptions options, BridgeServer& bridge,
+                   std::atomic<bool>& cancelFlag, std::atomic<bool>& busyFlag)
+{
+    const auto file = options.outputFile;
+    juce::ErasedScopeGuard releaseSlot{[&busyFlag] { busyFlag.store(false); }};
+    const auto result = renderOfflineFile(snapshot, std::move(options), [&](double pct, const char* stage) {
+        broadcastProgress(bridge, pct, stage);
+    }, cancelFlag);
+    releaseSlot.reset();
+    if (result.failure)
+        broadcastFailed(bridge, *result.failure, result.message);
+    else
+        broadcastDone(bridge, file, result.durationMs, result.loudness ? &*result.loudness : nullptr,
+                      result.limitedByTruePeak, result.appliedGainDb, result.postGainClips,
+                      result.postGainPeak, result.message);
 }
 
 } // namespace silverdaw

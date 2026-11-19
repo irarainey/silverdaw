@@ -85,6 +85,7 @@ struct OfflineClip
     juce::int64 timelineEndFrames{0};
     juce::int64 tailFrames{0};
     bool retired{false};
+    bool keepTrackAlive{false};
 
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     std::unique_ptr<WarpProcessor> warp;
@@ -126,6 +127,15 @@ public:
     const char* error() const { return lastError_; }
     bool active() const { return state_ != nullptr; }
 
+    double lastInputFrameForOutput(int64_t outputFrame) const noexcept
+    {
+        if (!active()) return static_cast<double>(outputFrame);
+        // Bound SRC_SINC_MEDIUM_QUALITY's right wing (22436/491 samples at the lower rate).
+        constexpr double sincHalfWidth = 46.0;
+        const double ratio = static_cast<double>(srcRate_) / dstRate_;
+        return std::floor(static_cast<double>(outputFrame) * ratio + sincHalfWidth * std::max(1.0, ratio));
+    }
+
     template <typename WriteFn>
     bool push(const float* interleaved, int inputFrames, bool endOfInput, WriteFn&& write)
     {
@@ -144,9 +154,8 @@ public:
             scratch_.resize(static_cast<size_t>(outputCap) * 2);
 
             SRC_DATA d{};
-            d.data_in = (remainingInput > 0)
-                            ? interleaved + static_cast<std::ptrdiff_t>(consumed) * 2
-                            : nullptr;
+            // libsamplerate needs a non-null input even when draining the final filter tail.
+            d.data_in = interleaved + static_cast<std::ptrdiff_t>(consumed) * kOutputChannels;
             d.input_frames = remainingInput;
             d.data_out = scratch_.data();
             d.output_frames = outputCap;

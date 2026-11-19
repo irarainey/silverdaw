@@ -112,7 +112,7 @@ int resolveBridgePort(int argc, char* argv[])
     return -1;
 }
 
-// Prefer Electron's per-session env token; CLI token exists only for manual backend testing.
+// Manual launches may supply a CLI token instead of Electron's per-session environment.
 // `argv` must remain a C-style array for main-compatible helpers.
 // NOLINTNEXTLINE(modernize-avoid-c-arrays,hicpp-avoid-c-arrays,cppcoreguidelines-avoid-c-arrays)
 juce::String resolveBridgeToken(int argc, char* argv[])
@@ -120,12 +120,14 @@ juce::String resolveBridgeToken(int argc, char* argv[])
     for (int i = 1; i < argc; ++i)
     {
         const std::string_view arg{argv[i]};
-        if (arg == "--token" && i + 1 < argc)
+        if (arg == "--token")
         {
+            if (i + 1 == argc || std::string_view{argv[i + 1]}.substr(0, 2) == "--")
+                return {};
             return juce::String{argv[i + 1]};
         }
         constexpr std::string_view prefix = "--token=";
-        if (arg.size() > prefix.size() && arg.substr(0, prefix.size()) == prefix)
+        if (arg.substr(0, prefix.size()) == prefix)
         {
             return juce::String{std::string(arg.substr(prefix.size()))};
         }
@@ -183,6 +185,13 @@ int runBackend(int argc, char* argv[])
         return 2;
     }
     const juce::String bridgeToken = resolveBridgeToken(argc, argv);
+    if (!bridgeToken.containsNonWhitespaceChars())
+    {
+        constexpr auto message = "A non-blank bridge authentication token is required; refusing to start";
+        silverdaw::log::error("main", message);
+        std::cerr << "[main] " << message << '\n';
+        return 2;
+    }
 
     // Verbose, always-on startup diagnostics: enough to triage a slow or failed launch
     // from the log alone (no repro). One-shot, INFO-level; the diag log is startup-scoped.
@@ -233,8 +242,7 @@ int runBackend(int argc, char* argv[])
                              + diskGb(exeFile.getBytesFreeOnVolume()) + " / "
                              + diskGb(exeFile.getVolumeTotalSize()) + " GB");
     silverdaw::log::info("main",
-                         "port=" + juce::String(bridgePort) + " token="
-                             + (bridgeToken.isNotEmpty() ? "set" : "unset") + " diagDir="
+                         "port=" + juce::String(bridgePort) + " diagDir="
                              + (diagDir.isNotEmpty() ? diagDir : juce::String("(none)")) + " logDir="
                              + (logDirOverride.isNotEmpty() ? logDirOverride : juce::String("(off)")));
     silverdaw::log::info("main",
@@ -277,13 +285,6 @@ int runBackend(int argc, char* argv[])
     const silverdaw::DecodedCache decodedCache;
 
     silverdaw::PeakJobCoordinator peakJobs;
-
-    if (bridgeToken.isEmpty())
-    {
-        silverdaw::log::warn("bridge",
-                             "WARNING: no AUTH token set (SILVERDAW_BRIDGE_TOKEN unset and --token not given); "
-                             "accepting all loopback clients. DO NOT USE IN PRODUCTION.");
-    }
 
     // Declared before `bridge` so captured references outlive worker jobs.
     juce::ThreadPool peakPool(kPeakWorkerCount);

@@ -157,6 +157,11 @@ beat-accuracy release.
 
 ## Notes
 
+The measurements and generation 2 → 3 transition above describe the original
+1.8.0 decoder change. The 1.11.0 branch uses generation 4 and requires both
+`lame.exe` and its sibling `libmpg123-0.dll`; `scripts/Fetch-Lame.ps1` fetches
+the pinned pair. The original measurements do not benchmark this bundle.
+
 Decoding is validated by reading the result back with `juce::WavAudioFormat`
 directly rather than through `AudioFormatManager`. This is not incidental: the
 manager selects a reader by file **extension**, and decodes stage to a

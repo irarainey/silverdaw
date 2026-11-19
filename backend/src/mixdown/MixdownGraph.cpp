@@ -19,6 +19,11 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     out->trackId = trackId;
     out->trackGain = trackGain;
 
+    if (clip.filePath.isEmpty())
+    {
+        outError = "Missing audio for clip " + clip.id;
+        return nullptr;
+    }
     const juce::File sourceFile(clip.filePath);
     auto* reader = formatManager.createReaderFor(sourceFile);
     if (reader == nullptr)
@@ -40,6 +45,7 @@ std::unique_ptr<OfflineClip> buildOfflineClip(const MixdownSnapshot::ClipSnapsho
     out->readerSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
 
     out->offsetSource = std::make_unique<OffsetSource>(out->readerSource.get());
+    out->offsetSource->setReversed(clip.reversed);
     out->offsetSource->setOffsetSamples(
         static_cast<juce::int64>(clip.offsetMs * out->sourceRate / 1000.0));
     out->offsetSource->setInSourceSamples(

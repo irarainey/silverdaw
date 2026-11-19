@@ -69,19 +69,6 @@ juce::File cacheFileForKey(const juce::File& cacheDir, const juce::String& key)
     return cacheDir.getChildFile(hashHex + ".wav");
 }
 
-// Decoding a whole file must never wedge a worker if the child process hangs (a
-// malformed file, or antivirus holding the executable). Scale the ceiling with the
-// source size so a long DJ set is not cut off, but keep it bounded. Decoding runs at
-// roughly 0.3 s per 5-minute track, so this is orders of magnitude of headroom.
-int lameTimeoutMsFor(const juce::File& sourceFile)
-{
-    constexpr int kFloorMs = 60'000;
-    constexpr int kCeilingMs = 600'000;
-    const auto megabytes = static_cast<double>(sourceFile.getSize()) / (1024.0 * 1024.0);
-    const auto scaled = static_cast<int>(megabytes * 10'000.0);
-    return juce::jlimit(kFloorMs, kCeilingMs, scaled);
-}
-
 // Decode an MP3 to 16-bit PCM WAV with the bundled LAME, straight into `destWav`.
 //
 // Preferred over JUCE's MP3 reader for every MP3: JUCE mis-parses some files so badly

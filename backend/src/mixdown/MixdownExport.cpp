@@ -1,7 +1,6 @@
 #include "MixdownExport.h"
 
 #include "Log.h"
-#include "../core/LamePath.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -11,45 +10,32 @@
 
 namespace silverdaw::mixdown_export
 {
+using Format = MixdownOptions::Format;
 
-juce::File findLameExecutable()
+const char* formatExtension(Format format)
 {
-    return silverdaw::findLameExecutable();
-}
-
-int lameQualityIndexForCbr(int kbps)
-{
-    switch (kbps)
+    switch (format)
     {
-        case 32:  return 10;
-        case 40:  return 11;
-        case 48:  return 12;
-        case 56:  return 13;
-        case 64:  return 14;
-        case 80:  return 15;
-        case 96:  return 16;
-        case 112: return 17;
-        case 128: return 18;
-        case 160: return 19;
-        case 192: return 20;
-        case 224: return 21;
-        case 256: return 22;
-        case 320: return 23;
-        default:  return 20; // 192 kbps fallback
+        case Format::Wav:  return "wav";
+        case Format::Flac: return "flac";
+        case Format::Aiff: return "aiff";
+        case Format::Mp3:  return "mp3";
     }
+    jassertfalse;
+    return "";
 }
 
-std::unordered_map<juce::String, juce::String>
-buildMp3MetadataMap(const ExportMetadata& md)
+std::optional<Format> parseFormat(const juce::String& name)
 {
-    std::unordered_map<juce::String, juce::String> m;
-    if (md.title.isNotEmpty())   m["id3title"]   = md.title;
-    if (md.artist.isNotEmpty())  m["id3artist"]  = md.artist;
-    if (md.album.isNotEmpty())   m["id3album"]   = md.album;
-    if (md.year.isNotEmpty())    m["id3date"]    = md.year;
-    if (md.genre.isNotEmpty())   m["id3genre"]   = md.genre;
-    if (md.comment.isNotEmpty()) m["id3comment"] = md.comment;
-    return m;
+    for (const auto format : {Format::Wav, Format::Flac, Format::Aiff, Format::Mp3})
+        if (name == formatExtension(format)) return format;
+    return std::nullopt;
+}
+
+bool supportsBitDepth(Format format, double depth)
+{
+    return depth == 16 || (format != Format::Mp3 && depth == 24)
+                       || (format == Format::Wav && depth == 32);
 }
 
 std::unordered_map<juce::String, juce::String>
@@ -333,15 +319,15 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target)
 std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
     MixdownOptions::Format format,
     const juce::AudioFormatWriterOptions& baseOptions,
-    const juce::File& lameApp,
     const ExportMetadata& metadata,
-    int bitrateKbps,
     std::unique_ptr<juce::OutputStream>& stream)
 {
-    if (format == MixdownOptions::Format::Wav)
+    if (format == MixdownOptions::Format::Wav || format == MixdownOptions::Format::Mp3)
     {
+        // MP3 stages untagged PCM; LAME applies the ID3 fields during finalization.
         juce::WavAudioFormat wav;
-        auto wavOpts = baseOptions.withMetadataValues(buildWavMetadataMap(metadata));
+        auto wavOpts = format == MixdownOptions::Format::Wav
+                           ? baseOptions.withMetadataValues(buildWavMetadataMap(metadata)) : baseOptions;
         return wav.createWriterFor(stream, wavOpts);
     }
     if (format == MixdownOptions::Format::Flac)
@@ -353,17 +339,6 @@ std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
     {
         juce::AiffAudioFormat aiff;
         return aiff.createWriterFor(stream, baseOptions);
-    }
-    if (format == MixdownOptions::Format::Mp3)
-    {
-        juce::LAMEEncoderAudioFormat lame(lameApp);
-        auto lameOpts = baseOptions
-                            .withBitsPerSample(16)
-                            .withSampleFormat(
-                                juce::AudioFormatWriterOptions::SampleFormat::integral)
-                            .withQualityOptionIndex(lameQualityIndexForCbr(bitrateKbps))
-                            .withMetadataValues(buildMp3MetadataMap(metadata));
-        return lame.createWriterFor(stream, lameOpts);
     }
     return nullptr;
 }

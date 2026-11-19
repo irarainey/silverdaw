@@ -19,6 +19,9 @@ export const ProjectImportDialog = defineAsyncComponent(
 export const ExportMixdownDialog = defineAsyncComponent(
   () => import('@/components/ExportMixdownDialog.vue')
 )
+export const ExportTracksDialog = defineAsyncComponent(
+  () => import('@/components/ExportTracksDialog.vue')
+)
 export const MixdownProgressDialog = defineAsyncComponent(
   () => import('@/components/MixdownProgressDialog.vue')
 )

@@ -8,8 +8,11 @@ Projects are saved as `.silverdaw` — **versioned JSON** carrying a
 schema-version field, produced from the backend `ValueTree` (ADR 0002) via a
 ValueTree↔JSON converter. The backend **reads any older version and always
 writes the latest**. A clip whose referenced source file is missing loads as an
-`unresolved` clip (silent playback, greyed UI, per-clip "Locate file" re-link)
+`unresolved` clip (silent playback, greyed UI)
 rather than failing the whole load.
+
+Relinking updates the library item, so all clips referencing that source
+recover together; it does not rewrite a path on each clip.
 
 ## Why
 

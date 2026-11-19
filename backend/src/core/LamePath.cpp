@@ -13,4 +13,10 @@ juce::File findLameExecutable()
 #endif
 }
 
+int lameTimeoutMsFor(const juce::File& sourceFile)
+{
+    const auto megabytes = static_cast<double>(sourceFile.getSize()) / (1024.0 * 1024.0);
+    return static_cast<int>(juce::jlimit(60'000.0, 600'000.0, megabytes * 10'000.0));
+}
+
 } // namespace silverdaw

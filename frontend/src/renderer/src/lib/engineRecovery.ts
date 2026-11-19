@@ -6,6 +6,7 @@ import { useTransportStore } from '@/stores/transportStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { abandonActiveStemSeparation } from '@/lib/stems/stemSeparationFlow'
+import { clearMixdownState, snapshotMixdownState } from '@/lib/mixdownState'
 import { log } from '@/lib/log'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 
@@ -67,6 +68,10 @@ function beginCycle(): void {
   abandonActiveStemSeparation(
     'Stem separation was interrupted because the audio engine restarted. Please try again.'
   )
+  if (snapshotMixdownState()) {
+    clearMixdownState()
+    useNotificationsStore().pushError('Export was interrupted. Try again after the audio engine reconnects.')
+  }
   log.warn(
     'recovery',
     `cycle ${recoveryGeneration} opened — captured projectId=${target.projectId ?? 'null'} ` +

@@ -949,6 +949,11 @@ bool dispatchMixdown(const DispatchContext& ctx)
         silverdaw::handleMixdownStart(payload, engine, projectState, bridge, peakPool, decodedCache,
                                       g_mixdownBusy, g_mixdownCancel);
     }
+    else if (type == "TRACK_EXPORT_START")
+    {
+        handleTrackExportStart(payload, engine, projectState, bridge, peakPool, decodedCache,
+                               ctx.session.currentPath, g_mixdownBusy, g_mixdownCancel);
+    }
     else if (type == "MIXDOWN_CANCEL")
     {
         silverdaw::handleMixdownCancel(g_mixdownBusy, g_mixdownCancel);

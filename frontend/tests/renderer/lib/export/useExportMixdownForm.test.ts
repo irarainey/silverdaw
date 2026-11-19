@@ -160,6 +160,8 @@ describe('useExportMixdownForm', () => {
 
   it('onSave dispatches MIXDOWN_START, persists settings and closes', async () => {
     const project = useProjectStore()
+    const trackExport = { outputFolder: 'D:\\Prints', trackIds: ['vocals'] }
+    project.exportSettingsJson = JSON.stringify({ trackExport })
     const setExportSettingsJson = vi.spyOn(project, 'setExportSettingsJson')
     const f = makeForm()
     f.draftOutputPath.value = 'C:/out/song.wav'
@@ -176,6 +178,7 @@ describe('useExportMixdownForm', () => {
     expect(confirmMixdownOverwrite).toHaveBeenCalledWith('C:/out/song.wav')
     expect(beginMixdownMock).toHaveBeenCalledWith('C:/out/song.wav', 'wav')
     expect(setExportSettingsJson).toHaveBeenCalledOnce()
+    expect(JSON.parse(project.exportSettingsJson)).toMatchObject({ format: 'wav', trackExport })
     const startCall = sendMock.mock.calls.find((c) => c[0] === 'MIXDOWN_START')
     expect(startCall).toBeDefined()
     expect(startCall?.[1]).toMatchObject({

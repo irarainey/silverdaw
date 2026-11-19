@@ -984,6 +984,7 @@ export type AudioFileProbedPayload = z.infer<typeof AudioFileProbedPayloadSchema
 /** Mixdown tick; `percent` is 0..100 and monotonic within one render. */
 export const MixdownProgressPayloadSchema = z.object({
   percent: z.number(),
+  track: z.object({ index: z.number().int().positive(), count: z.number().int().positive(), name: z.string() }).optional(),
   stage: z.enum([
     'prepare',
     'render',
@@ -1191,6 +1192,7 @@ export interface BridgeInboundMap {
   AUDIO_FILE_PROBED: AudioFileProbedPayload
   MIXDOWN_PROGRESS: MixdownProgressPayload
   MIXDOWN_DONE: MixdownDonePayload
+  TRACK_EXPORT_READY: z.infer<typeof import('./trackExport').TrackExportReadySchema>
   MIXDOWN_FAILED: MixdownFailedPayload
   STEM_PROGRESS: StemProgressPayload
   STEM_PARTIAL: StemPartialPayload
@@ -1280,6 +1282,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'AUDIO_FILE_PROBED',
   'MIXDOWN_PROGRESS',
   'MIXDOWN_DONE',
+  'TRACK_EXPORT_READY',
   'MIXDOWN_FAILED',
   'STEM_PROGRESS',
   'STEM_PARTIAL',

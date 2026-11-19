@@ -17,14 +17,9 @@ class OutputStream;
 namespace silverdaw::mixdown_export
 {
 
-
-// Re-exported from core/LamePath.h so existing callers keep one spelling; the
-// encoder and the MP3 decoder must resolve the same bundled binary.
-juce::File findLameExecutable();
-
-int lameQualityIndexForCbr(int kbps);
-
-std::unordered_map<juce::String, juce::String> buildMp3MetadataMap(const ExportMetadata& md);
+const char* formatExtension(MixdownOptions::Format format);
+std::optional<MixdownOptions::Format> parseFormat(const juce::String& name);
+bool supportsBitDepth(MixdownOptions::Format format, double depth);
 
 std::unordered_map<juce::String, juce::String> buildWavMetadataMap(const ExportMetadata& md);
 
@@ -39,9 +34,7 @@ bool atomicReplace(const juce::File& tmp, const juce::File& target);
 std::unique_ptr<juce::AudioFormatWriter> createOutputWriter(
     MixdownOptions::Format format,
     const juce::AudioFormatWriterOptions& baseOptions,
-    const juce::File& lameApp,
     const ExportMetadata& metadata,
-    int bitrateKbps,
     std::unique_ptr<juce::OutputStream>& stream);
 
 } // namespace silverdaw::mixdown_export

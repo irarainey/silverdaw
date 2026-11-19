@@ -76,6 +76,21 @@ describe('projectStore', () => {
     })
   })
 
+  it('releases preference saves when the bridge is disconnected or drops the acknowledgement', async () => {
+    const project = useProjectStore()
+    project.currentFilePath = 'C:\\projects\\mix.silverdaw'
+    sendMock.mockReturnValue(false)
+    await expect(project.saveViewStateAndWait()).resolves.toMatchObject({ ok: false, error: expect.stringContaining('connected') })
+
+    sendMock.mockReturnValue(true)
+    const missingAck = project.saveViewStateAndWait()
+    await vi.runAllTimersAsync()
+    await expect(missingAck).resolves.toMatchObject({ ok: false, error: expect.stringContaining('Timed out') })
+    const retry = project.saveViewStateAndWait()
+    project.notifyViewStateSaveAck(true)
+    await expect(retry).resolves.toEqual({ ok: true })
+  })
+
   it('starts from a clean untitled project', () => {
     const project = useProjectStore()
 

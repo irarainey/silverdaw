@@ -3,10 +3,11 @@
 Silverdaw uses the [LAME](https://lame.sourceforge.io/) command-line tool as a
 child process for both directions of MP3:
 
-- **Export** — JUCE's `LAMEEncoderAudioFormat` spawns it to encode MP3.
-- **Import** — `DecodedCache` spawns it (`lame --decode`) to decode every MP3
-  into the decoded-WAV cache, because JUCE's own MP3 reader mis-parses some
-  files badly enough that they cannot be played or analysed at all. See
+- **Export** — the backend's `mixdown_export::encodeMp3` checks LAME's exit
+  status and encoded output before a mixdown or track batch is published.
+- **Import** — on an MP3 cache miss, `DecodedCache` tries `lame --decode`
+  first, because JUCE's own reader mis-parses some files. It falls back to
+  JUCE if LAME does not produce a usable WAV. See
   *Decoding compressed sources* in `docs/developer-guide.md`.
 
 The standard RareWares **LAME 4.0 x64** bundle is used, not its separately
@@ -42,7 +43,7 @@ A complete LAME 4.0 installation is retained unless `-Force` is supplied.
 
 Custom `-Url` downloads must now be ZIP bundles with an explicit `-Sha256`;
 standalone EXE downloads are no longer supported. A bundle with multiple
-executables requires `-ZipEntry` to select one; its DLL must be in the same
+`lame.exe` files requires `-ZipEntry` to select one; its DLL must be in the same
 directory. The version check requires LAME 4.0.
 
 ## Build & install flow

@@ -1,6 +1,6 @@
 # Architecture — Silverdaw
 
-_Last reviewed: 2026-11-05 · Owner: @irarainey_
+_Last reviewed: 2026-11-19 · Owner: @irarainey_
 
 Linked from `CONTEXT.md`; read when a task touches structure, boundaries, or
 data flow. Keep this a lean overview — push detail into `docs/developer-guide.md`
@@ -26,15 +26,15 @@ hosted plugin — it still draws no Silverdaw interface of its own.
 |  + Electron main (IPC)      |    text {type,payload}    |  AudioEngine + ProjectState |
 +-----------------------------+                           +-----------------------------+
              ^                                                          |
-             |          bulk data (peaks, stems, mixdowns) on disk      |
-             +----------------- %APPDATA%/Silverdaw/ <------------------+
+             |         paths to caches and project/output files         |
+             +---------------------- on disk <--------------------------+
 ```
 
 ## Boundaries
 
-- **Electron main** — spawns/supervises the backend, picks a free loopback port
-  in `[8765, 8784]`, mints the AUTH token, owns OS dialogs, native menu,
-  `preferences.json`, autosave, recents, and all disk-read IPC for bulk data.
+- **Electron main** — spawns/supervises the backend, normally picks a free loopback
+  port in `[8765, 8784]`, mints the AUTH token, owns OS dialogs, menu-action
+  routing, `preferences.json`, autosave storage, recents, and disk-read IPC.
   It also owns the **path allow-list**: a folder becomes readable only when the
   user picks it in a native dialog (or it is restored from prefs main itself
   wrote), which is what confines the library file browser to folders the user
@@ -49,7 +49,8 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   `PROJECT_STATE`; per-track automation lanes persist the same way through
   `TRACK_SET_AUTOMATION_LANE_VIEW`.
 - **Backend bridge** — IXWebSocket loopback server; AUTH gate; marshals every
-  envelope onto the JUCE message thread.
+  engine command onto the JUCE message thread. AUTH and the `READY` reply
+  stay on the I/O thread.
 - **Backend engine** — `AudioEngine` (mixer/bus graph, per-track sources, master
   transport clock, device manager), DSP, stems, mixdown, and `ProjectState`
   (`ValueTree` + `UndoManager`). The engine owns the Loop Selection wrap, so a
@@ -87,9 +88,9 @@ hosted plugin — it still draws no Silverdaw interface of its own.
 
 - **Control plane on the socket, bulk data on disk.** The bridge carries
   commands, state, metadata, progress, and `*_READY` notifications. Audio files,
-  peak caches, stems, recordings, mixdowns, and project files live on disk; the
-  backend writes a stable path and the renderer reads it via main IPC. See
-  ADR 0003.
+  peak caches, stems, recordings, exports, and project files live on disk.
+  The renderer reads peaks via main IPC; export completion reports a file or
+  folder path, not rendered audio. See ADR 0003.
 - **Waveform reads share only in-flight work.** Matching renderer requests for
   one peaks path share a pending IPC read, not a persistent file cache.
   Timeline scene ownership separates retained clip pools from transient
@@ -104,8 +105,9 @@ hosted plugin — it still draws no Silverdaw interface of its own.
   resolves the on-disk file (preferring the decoded-WAV cache) at load time.
   Compressed sources are decoded into that cache once, MP3 via the bundled
   `lame.exe`. See `docs/developer-guide.md#decoding-compressed-sources`.
-- **Same canonical chain for playback and mixdown** so exports match what the
-  user hears.
+- **Playback and mixdown share the signal chain.** Track export renders selected
+  tracks separately through the offline graph, ignoring mute/solo and omitting
+  master processing. Both export modes can use the project's timeline range.
 - **MIDI is a profile-driven control plane.** The backend enumerates MIDI
   inputs, opens only recognised deck profiles, decodes raw messages on the JUCE
   message thread, and sends semantic `MIDI_CONTROL` envelopes to the renderer.
@@ -141,14 +143,14 @@ One line each; open the linked area only when the task touches it.
 | `backend/src/dsp/` | Per-track/shared DSP (Tone, Compressor, Punch, Saturation, Bit Crusher, Reverb, Delay, Glue Compressor, Safety Limiter, peaks), plus tempo and beat-grid detection | ADR 0028 |
 | `backend/src/plugins/` | VST3 catalogue and out-of-process scanning, hosted per-track insert chains, plugin play head, native editor windows | ADR 0025 |
 | `backend/src/stems/` | ONNX stem-separation orchestration | ADR 0009 |
-| `backend/src/mixdown/` | Offline render/export on the canonical chain | — |
+| `backend/src/mixdown/` | Offline mixdown and aligned per-track export | — |
 | `backend/src/project/` | `ValueTree` state, UndoManager, save/load, peaks cache | ADR 0002 |
 | `frontend/src/main/` | Window, menu, IPC, prefs, backend spawn + supervisor | ADR 0008 |
 | `frontend/src/preload/` | `contextBridge` surface | — |
 | `frontend/src/renderer/src/` | Vue SPA, Pinia stores, PixiJS timeline | — |
 | `frontend/src/renderer/src/lib/scratch/` | Scratch dialog orchestration, backing, controls, replay, notation layout/editing, persistence, and save flow | ADR 0021 |
 | `frontend/src/renderer/src/lib/recording/` | Record Audio session lifecycle, input options, live waveform, take placement | ADR 0030 |
-| `frontend/src/shared/` | `bridge-protocol.ts` facade over `bridge/inbound.ts` (zod schemas) + `outbound.ts` (typed interfaces) — wire SoT | ADR 0004 |
+| `frontend/src/shared/` | `bridge-protocol.ts` facade over the directional message maps and domain schemas in `bridge/` | ADR 0004 |
 
 ## Why it is built this way
 

@@ -118,6 +118,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     projectPropertiesOpen: refs.projectPropertiesOpen,
     projectImportOpen: refs.projectImportOpen,
     exportMixdownOpen: refs.exportMixdownOpen,
+    openExportTracks: vi.fn(),
     diagnosticsBusy: refs.diagnosticsBusy,
     guardAgainstUnsavedChanges: guard,
     isModalOpen: () => overrides.modalOpen === true,

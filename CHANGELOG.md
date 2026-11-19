@@ -1,6 +1,15 @@
 # Changelog
 
-Release version: **1.10.1**.
+## 1.11.0
+
+### Added
+
+- Export Tracks writes aligned WAV, FLAC, AIFF or MP3 files for all or selected tracks into a timestamped folder.
+- Export Mixdown and Export Tracks can render just the selected timeline range.
+
+### Fixed
+
+- Fixed an issue where the audio engine could start with an incomplete configuration.
 
 ## 1.10.1
 

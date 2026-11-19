@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import ExportFormatSettings from './ExportFormatSettings.vue'
 import ExportLengthTailOptions from './ExportLengthTailOptions.vue'
+import ExportSelectionCheckbox from './ExportSelectionCheckbox.vue'
 import ExportLoudnessOptions from './ExportLoudnessOptions.vue'
 import ExportMetadataTags from './ExportMetadataTags.vue'
 import ExportOutputLocation from './ExportOutputLocation.vue'
@@ -13,6 +14,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const dialogEl = ref<HTMLDivElement | null>(null)
 
 const {
+  selectionOnly,
   draftOutputPath,
   draftFormat,
   draftSampleRate,
@@ -43,13 +45,14 @@ const {
   effectiveProjectRate,
   lastClipEndMs,
   formIsValid,
+  submitting,
   reseedOnOpen,
   onBrowseClick,
   onSave
 } = useExportMixdownForm({ requestClose: () => emit('close') })
 
 function onClose(): void {
-  emit('close')
+  if (!submitting.value) emit('close')
 }
 
 watch(
@@ -108,6 +111,7 @@ watch(
         <div class="dialog-body silverdaw-scroll">
           <ExportOutputLocation
             v-model:output-path="draftOutputPath"
+            class="mb-5"
             :on-browse-click="onBrowseClick"
           />
           <ExportFormatSettings
@@ -129,15 +133,24 @@ watch(
             :custom-target-valid="customTargetValid"
             :custom-ceiling-valid="customCeilingValid"
           />
-          <ExportLengthTailOptions
-            v-model:length-mode="draftLengthMode"
-            v-model:duration-text="draftDurationText"
-            v-model:tail-seconds-text="draftTailSecondsText"
-            v-model:mixdown-start-bar="draftMixdownStartBar"
-            :last-clip-end-ms="lastClipEndMs"
-            :tail-valid="tailValid"
-            :mixdown-start-ms="mixdownStartMs"
+          <ExportSelectionCheckbox
+            v-model="selectionOnly"
+            class="mb-3"
           />
+          <fieldset
+            :disabled="selectionOnly"
+            class="disabled:opacity-50"
+          >
+            <ExportLengthTailOptions
+              v-model:length-mode="draftLengthMode"
+              v-model:duration-text="draftDurationText"
+              v-model:tail-seconds-text="draftTailSecondsText"
+              v-model:mixdown-start-bar="draftMixdownStartBar"
+              :last-clip-end-ms="lastClipEndMs"
+              :tail-valid="tailValid"
+              :mixdown-start-ms="mixdownStartMs"
+            />
+          </fieldset>
           <ExportMetadataTags
             v-model:title="draftTitle"
             v-model:artist="draftArtist"
@@ -152,6 +165,7 @@ watch(
           <button
             type="button"
             class="dialog-btn-cancel"
+            :disabled="submitting"
             @click="onClose"
           >
             Cancel

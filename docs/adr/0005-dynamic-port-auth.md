@@ -4,7 +4,8 @@
 
 ## Decision
 
-Electron main probes a free loopback port in `[8765, 8784]` at startup, spawns
+By default Electron main probes a free loopback port in `[8765, 8784]` at startup
+(`SILVERDAW_BRIDGE_PORT` can pin the port instead), spawns
 the backend with `--port <N>`, and exposes the port plus a per-session random
 AUTH token to the renderer over IPC. The backend has **no default port** and
 refuses to start without `--port` (exit code 2). It binds `127.0.0.1` only. The

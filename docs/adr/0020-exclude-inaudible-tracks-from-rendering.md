@@ -10,7 +10,9 @@ fully attenuated do not perform per-track audio work:
 - Live playback omits them from immutable `BusGraph` render snapshots. Their
   clips are not read, so warp, pitch, clip effects, track effects, sends, and
   metering do not run.
-- Mixdown omits them before building offline clips and track processing.
+- The stereo mixdown omits them before building offline clips and track
+  processing. Individual track export (added in 1.11.0) ignores mute and solo
+  by design; a selected track at zero gain still produces a silent file.
 - A live mute renders one final gain-ramp block before exclusion to avoid a
   discontinuity. No new signal enters the shared Reverb or Delay afterward.
   Tails already accumulated in those shared processors may continue because

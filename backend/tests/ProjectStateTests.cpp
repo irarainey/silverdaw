@@ -129,8 +129,7 @@ void testProjectStateExportSettingsRoundTrip()
     state.setExportSettingsJson(blob);
     requireEqual(state.getExportSettingsJson(), blob,
                  "setExportSettingsJson should round-trip");
-    require(state.isDirty(),
-            "setExportSettingsJson should mark the project dirty");
+    require(!state.isDirty(), "remembering export settings is not a content edit");
 
     // Should NOT have added an undo step (export prefs are not undoable).
     require(!state.getUndoManager().canUndo(),
@@ -140,11 +139,12 @@ void testProjectStateExportSettingsRoundTrip()
     state.setExportSettingsJson("");
     require(state.getExportSettingsJson().isEmpty(),
             "empty json should clear the property");
-    require(state.isDirty(), "clearing export settings should mark dirty");
+    require(!state.isDirty(), "clearing export settings should leave the project clean");
 
-    // Round-trip through ValueTreeJson so the .silverdaw save/load path
-    // keeps the blob intact.
+    state.addTrack("edit");
     state.setExportSettingsJson(blob);
+    require(state.isDirty(), "export must not clear a real edit");
+    require(state.performUndo() && !state.isDirty(), "undoing the edit remains clean after an export");
     const auto encoded = silverdaw::ValueTreeJson::toVar(state.getTree());
     const auto decoded = silverdaw::ValueTreeJson::fromVar(encoded);
     requireEqual(decoded.getProperty(juce::Identifier{"exportSettingsJson"}, {}).toString(),
@@ -239,11 +239,13 @@ void testProjectStateBarSettingsRoundTrip()
     require(static_cast<int>(decoded.getProperty(juce::Identifier{"mixdownStartBar"}, 0)) == 8,
             "mixdownStartBar should round-trip through ValueTreeJson");
 
-    // Undo restores the prior value.
+    state.markClean();
     state.getUndoManager().beginNewTransaction();
     state.setMixdownStartBar(2);
-    state.getUndoManager().undo();
-    require(state.getMixdownStartBar() == 8, "undo should restore the prior mixdownStartBar");
+    require(!state.isDirty(), "the mixdown start bar is an export preference");
+    state.setBarCounterStart(0);
+    require(state.performUndo() && !state.isDirty(), "undoing the ruler edit returns to clean");
+    require(state.getMixdownStartBar() == 2, "undo leaves export preferences alone");
 }
 
 void testProjectStateSuppressedPropertiesDoNotStickDirtyAcrossUndo()

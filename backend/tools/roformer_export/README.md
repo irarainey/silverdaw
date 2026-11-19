@@ -30,7 +30,7 @@ it is the card published alongside the model on Hugging Face.
 | --- | --- |
 | `export_4stem.py` | Trace the checkpoint to a host-STFT fp32 ONNX and save `reference_t<T>.npz` for parity. |
 | `python/wrapper.py` | The host-STFT `nn.Module` wrapper (STFT/iSTFT removed; complex multiply unrolled for ONNX). Shared by the exporter. |
-| `python/fp16_weights.py` | Store Conv/MatMul/Gemm weights as fp16 + `Cast(fp16→fp32)`, reducing file size while keeping fp32 computation. Weight quantisation is checked by the parity step below. Produces the shipped `*_fp16.onnx`. |
+| `python/fp16_weights.py` | Store eligible Conv, ConvTranspose, MatMul and Gemm initializers as fp16 with a cast back to fp32 for computation. Produces the shipped `*_fp16.onnx`. |
 | `python/validate_onnx.py` | Assert ONNX-Runtime (CPU) output matches the PyTorch reference (max abs diff < 1e-3). |
 | `full_track_4stem.py` | End-to-end full-track separation + sum-null check; writes per-stem WAVs for auditioning. |
 | `python/compare_stems.py` | Generic QA: correlation / RMS-diff / SI-SDR between two stem renders. |
@@ -48,8 +48,14 @@ it is the card published alongside the model on Hugging Face.
    checkpoint (config `config_bs_roformer_384_8_2_485100`, MUSDB18-HQ) from the
    ZFTurbo release and save it next to `export_4stem.py` as
    `model_bs_roformer_4stem.ckpt`.
-3. **Python deps** — `torch`, `onnx`, `onnxruntime`, `numpy`, `pyyaml`,
-   `einops`, `soundfile` (plus `librosa` for `compare_stems.py`).
+3. **Python deps** — the export and parity scripts use `torch`, `onnx`,
+   `onnxruntime`, `numpy`, `pyyaml` and `einops`, plus the dependencies of the
+   upstream `BSRoformer` class. Auditioning uses `soundfile`; `compare_stems.py`
+   also uses `librosa`.
+4. **Optional audition inputs** — `full_track_4stem.py` reads both
+   `backend/_mix.wav` and `backend/_cs_mix.wav`. Supply 44.1 kHz audio; the
+   script does not resample. It writes the stems under `artifacts/` and prints
+   the RMS difference between the mixture and their sum.
 
 ## Pipeline
 

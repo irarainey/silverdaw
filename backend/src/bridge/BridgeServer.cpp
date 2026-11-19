@@ -32,6 +32,11 @@ bool BridgeServer::start(int port)
     {
         return true;
     }
+    if (!expectedToken.containsNonWhitespaceChars())
+    {
+        silverdaw::log::error("bridge", "Cannot start listener without a session token");
+        return false;
+    }
 
     // Required before listen() on Windows; balanced in stop().
     ix::initNetSystem();
@@ -52,17 +57,10 @@ bool BridgeServer::start(int port)
                 {
                     if (c.get() == &webSocket)
                     {
-                        ClientInfo info;
-                        info.socket = c;
-                        info.authenticated = expectedToken.isEmpty();
-                        clients.insert_or_assign(c.get(), std::move(info));
+                        clients.insert_or_assign(c.get(), ClientInfo{c});
                     }
                 }
-                silverdaw::log::info("bridge", "client connected (auth=" + juce::String(expectedToken.isEmpty() ? "disabled" : "pending") + ")");
-                if (expectedToken.isEmpty())
-                {
-                    sendReadyTo(webSocket);
-                }
+                silverdaw::log::info("bridge", "client connected (auth pending)");
                 break;
             }
 
@@ -131,18 +129,8 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
     silverdaw::log::debug("bridge", "incoming bytes=" + juce::String(static_cast<int>(raw.size())));
     // AUTH stays on the I/O thread; engine-touching messages hop to the JUCE message thread.
     juce::var parsed = juce::JSON::parse(juce::String(raw));
-    if (!parsed.isObject())
-    {
-        return;
-    }
-
-    juce::String type = parsed.getProperty("type", juce::var()).toString();
+    const juce::String type = parsed.getProperty("type", juce::var()).toString();
     juce::var payload = parsed.getProperty("payload", juce::var());
-
-    if (type.isEmpty())
-    {
-        return;
-    }
 
     // Keeps the authenticated socket alive until the message-thread ready handler runs.
     std::shared_ptr<ix::WebSocket> readyClient;
@@ -170,9 +158,8 @@ void BridgeServer::onIncomingFromClient(ix::WebSocket& webSocket, const std::str
             silverdaw::log::info("bridge", "client authenticated");
             // Release the lock before sending through IXWebSocket.
         }
-        else if (type == "AUTH")
+        else if (type.isEmpty() || type == "AUTH")
         {
-            // Ignore duplicate AUTH after success.
             return;
         }
         else
