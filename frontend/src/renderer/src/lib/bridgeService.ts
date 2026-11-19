@@ -187,7 +187,6 @@ function resolveBridgeConnection(): Promise<BridgeConnection> {
   const tokenPromise: Promise<string> =
     api && typeof api.getBridgeToken === 'function'
       ? api.getBridgeToken().catch((err) => {
-          // Empty token is for stand-alone debug runs only.
           log.warn('bridge', `getBridgeToken failed; sending empty token: ${String(err)}`)
           return ''
         })

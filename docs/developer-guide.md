@@ -5577,7 +5577,10 @@ composite `dev: all`).
 
 The recommended dev path is **F5** in VS Code with the `Silverdaw (Dev)` launch configuration
 selected — it has a `preLaunchTask: "backend: build"` so the Debug backend is always rebuilt
-before the renderer starts.
+before the renderer starts. For C++ debugging, then run **Backend: Attach to
+running process** and select that session's `SilverdawBackend.exe`. Electron
+supplies the port and authentication token; the backend refuses to start
+without both.
 
 `backend/build/` is the Debug cache; `backend/build-release/` is the Release
 cache used by `scripts/Build-Release.ps1`. They're kept separate so a release build doesn't

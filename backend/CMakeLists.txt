@@ -902,6 +902,11 @@ tests/MixdownRenderTests.cpp
         tests/DecodedCacheTests.cpp)
     target_link_libraries(SilverdawBackendTests PRIVATE
         silverdaw_backend_core)
+    add_dependencies(SilverdawBackendTests SilverdawBackend)
+    add_test(NAME "Backend startup rejects invalid bridge tokens"
+        COMMAND ${CMAKE_COMMAND}
+            -D "BACKEND=$<TARGET_FILE:SilverdawBackend>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/BackendStartup.cmake")
     copy_lame_runtime_dependencies(SilverdawBackendTests)
     if(SILVERDAW_ENABLE_STEM_SEPARATION)
         copy_onnx_runtime_dependencies(SilverdawBackendTests)

@@ -49,29 +49,6 @@
     },
 
     // ─── JUCE backend (C++ / MSVC) ───────────────────────────────────────
-    // Standalone backend launch for attaching a C++ debugger. ⚠ Do NOT
-    // start this alongside "Silverdaw (Dev)" — Electron's main process
-    // already spawns its own backend and the two would compete for the
-    // bridge port. Use this config only when you want a headless backend
-    // with no renderer (e.g. running the WebSocket protocol from a
-    // manual client). The `--token` arg passes a fixed dev value so
-    // hand-crafted client tests have something to AUTH with.
-    {
-      "name": "Backend only (Debug, no renderer)",
-      "type": "cppvsdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe",
-      "args": ["--token", "dev-standalone-token"],
-      "stopAtEntry": false,
-      "cwd": "${workspaceFolder}/backend/build/SilverdawBackend_artefacts/Debug",
-      "environment": [],
-      "console": "integratedTerminal",
-      "preLaunchTask": "backend: build",
-      "presentation": {
-        "group": "2_advanced",
-        "order": 3
-      }
-    },
     {
       "name": "Backend: Attach to running process",
       "type": "cppvsdbg",
@@ -79,7 +56,7 @@
       "processId": "${command:pickProcess}",
       "presentation": {
         "group": "2_advanced",
-        "order": 4
+        "order": 3
       }
     }
   ]
