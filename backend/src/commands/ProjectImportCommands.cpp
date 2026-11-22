@@ -105,6 +105,10 @@ bool addImportedLibraryItem(ProjectState& projectState, const StagedLibraryItem&
                                      sourceItemId, {}, -1.0, -1.0, -1, mediaId))
         return false;
 
+    const auto attribution = source.getProperty("attribution", {});
+    if (attribution.isObject())
+        projectState.setLibraryItemAttribution(item.destinationId, attribution);
+
     const auto audioType = source.getProperty("audioType", {}).toString();
     if (audioType == "simple" || audioType == "music")
         projectState.setLibraryItemAudioType(item.destinationId, audioType);
@@ -178,7 +182,7 @@ bool copyRelevantMedia(const std::vector<StagedLibraryItem>& items, const juce::
     for (const auto& item : items)
     {
         const auto mediaId = item.source.data.getProperty("mediaId", {}).toString();
-        if (mediaId.isNotEmpty())
+        if (isSafeImportMediaId(mediaId))
             mediaIds.insert(mediaId);
     }
 
@@ -294,7 +298,7 @@ void handleProjectImportAssets(const juce::var& payload, ProjectState& projectSt
     }
 
     juce::String error;
-    const auto source = loadSourceProjectImport(juce::File(sourcePath), error);
+    const auto source = loadSourceProjectImport(juce::File(sourcePath), error, *libraryIds);
     if (!source)
     {
         bridge.broadcast("PROJECT_IMPORT_COMPLETED", makeResultPayload(false, sourcePath, error));

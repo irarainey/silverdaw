@@ -144,6 +144,7 @@ const api = {
   projectFileExists: (path: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.fileExists, path),
   chooseProjectOpen: (): Promise<string | null> => ipcRenderer.invoke(IPC.project.chooseOpen),
+  exportSampleReport: (projectPath: string): Promise<string | null> => ipcRenderer.invoke(IPC.project.exportSampleReport, projectPath),
   chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.chooseSaveAs, defaultName),
   listProjectImportSources: (): Promise<ProjectImportSource[]> =>
@@ -397,7 +398,7 @@ const api = {
   },
   /** Save a source's tags + cover into the project's central metadata/covers store under
    *  its media GUID; main resolves the identity from the source file on disk. */
-  saveProjectMedia: (mediaId: string, sourceFilePath: string): Promise<boolean> =>
+  saveProjectMedia: (mediaId: string, sourceFilePath: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.media.save, { mediaId, sourceFilePath }),
   /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
   getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>

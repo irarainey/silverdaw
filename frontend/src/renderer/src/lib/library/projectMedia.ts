@@ -14,15 +14,15 @@ import { log } from '@/lib/log'
  * imported file, or its sidecar for a tagless stem/sample). Called once, when a
  * source is first imported; derived items reuse the GUID and never re-save.
  */
-export async function saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean> {
-  if (mediaId === '' || sourceFilePath === '') return false
+export async function saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<AudioMetadata | null> {
+  if (mediaId === '' || sourceFilePath === '') return null
   try {
-    const ok = await window.silverdaw.saveProjectMedia(mediaId, sourceFilePath)
-    log.info('media', `saveProjectMedia id=${mediaId} src=${sourceFilePath} ok=${ok}`)
-    return ok
+    const metadata = await window.silverdaw.saveProjectMedia(mediaId, sourceFilePath)
+    log.info('media', `saveProjectMedia id=${mediaId} src=${sourceFilePath} ok=${metadata !== null}`)
+    return metadata
   } catch (err) {
     log.warn('media', `saveProjectMedia failed for ${mediaId}: ${String(err)}`)
-    return false
+    return null
   }
 }
 
@@ -51,8 +51,8 @@ export async function getProjectMedia(mediaId: string | undefined): Promise<Audi
  *  (stem or sample) keeps its OWN duration / sample-rate / channel-count while still
  *  inheriting identity tags + cover art. */
 export function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
-  const { durationMs: _d, sampleRate: _s, channelCount: _c, ...rest } = meta
-  return rest
+  const { durationMs, sampleRate: _s, channelCount: _c, ...rest } = meta
+  return durationMs === undefined ? rest : { ...rest, recordingDurationMs: durationMs }
 }
 
 /** Pick a new cover image and copy it into the covers dir as a per-item override.

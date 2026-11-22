@@ -29,8 +29,11 @@ struct SourceProjectImport
     std::map<juce::String, juce::var> scratchPatterns;
 };
 
-// Reads only importable persisted records without constructing ProjectState.
+// Inspection needs only the manifest; resolve portable attribution for selected items on import.
 std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sourceProjectFile,
-                                                           juce::String& error);
+                                                           juce::String& error,
+                                                           const juce::StringArray& selectedIds = {});
+
+bool isSafeImportMediaId(const juce::String& id);
 
 } // namespace silverdaw

@@ -375,7 +375,7 @@ bool dispatchScratch(const DispatchContext& ctx)
     if (ctx.type == "SCRATCH_SESSION_OPEN")
     {
         handleScratchSessionOpen(ctx.payload, ctx.engine, ctx.projectState, ctx.bridge,
-                                 ctx.peakPool, ctx.cache, ctx.session.currentPath);
+                                 ctx.peakPool, ctx.cache, ctx.session);
     }
     else if (ctx.type == "SCRATCH_SESSION_CLOSE")
     {

@@ -91,11 +91,18 @@ struct SampleWarpOptions
     double cents = 0.0;
 };
 
+bool rendersWarped(const std::optional<SampleWarpOptions>& warp)
+{
+    return warp && warp->enabled &&
+           (std::abs(warp->tempoRatio - 1.0) > 1e-4 ||
+            std::abs(silverdaw::warpPitchScale(warp->semitones, warp->cents) - 1.0) > 1e-4);
+}
+
 bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outputFile,
                             double inMs, double durationMs, silverdaw::AudioEngine& engine,
                             double& outDurationMs, double& outSampleRate, int& outChannels,
                             juce::String& error, const std::optional<SampleWarpOptions>& warpOptions = std::nullopt,
-                            int duplicateChannel = -1)
+                            int duplicateChannel = -1, bool* usedRequestedRatio = nullptr)
 {
     std::unique_ptr<juce::AudioFormatReader> reader(engine.getFormatManager().createReaderFor(sourceFile));
     if (reader == nullptr)
@@ -127,14 +134,7 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
         return false;
     }
 
-    const bool renderWarped =
-        warpOptions.has_value() &&
-        warpOptions->enabled &&
-        (std::abs(warpOptions->tempoRatio - 1.0) > 1e-4 ||
-         std::abs(silverdaw::warpPitchScale(
-                      warpOptions->semitones, warpOptions->cents)
-                  - 1.0)
-             > 1e-4);
+    const bool renderWarped = rendersWarped(warpOptions);
     if (renderWarped && !silverdaw::WarpProcessor::supportsChannelCount(outChannels))
     {
         error = "Warped export supports audio with up to "
@@ -180,6 +180,8 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
                                       pitchScale);
         warp.prepareToPlay(kBlock);
         warp.setTempoRatio(warpOptions->tempoRatio);
+        if (usedRequestedRatio != nullptr)
+            *usedRequestedRatio = warp.getTempoRatio() == warpOptions->tempoRatio;
         warp.seekSource(startSample);
 
         const auto outSamples = silverdaw::WarpProcessor::timelineSamplesForSourceSamples(
@@ -243,9 +245,15 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                              const juce::String& audioType = {}, const juce::String& sourceItemId = {},
                              int batchIndex = -1, int batchTotal = -1)
 {
+    const auto& parentId = libraryItemId.isNotEmpty() ? libraryItemId : sourceItemId;
+    const double ratio = rendersWarped(warpOptions) ? warpOptions->tempoRatio : 1.0;
+    const auto attribution = projectState.deriveAttribution(
+        parentId, juce::jmax(0.0, inMs), durationMs > 0.0 ? durationMs : -1.0, ratio);
+    const auto sampleMediaId = projectState.getLibraryItemMediaId(parentId);
     peakPool.addJob(
         [clipId, libraryItemId, newItemId, sampleName, outputDir, sourceFile, inMs, durationMs,
-         warpOptions, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &cache, &bridge]
+         warpOptions, audioType, sourceItemId, sampleMediaId, attribution, batchIndex, batchTotal,
+         &engine, &projectState, &cache, &bridge]
         {
             const auto safeName = sanitiseSampleFileName(sampleName);
             const auto outDir = juce::File(outputDir);
@@ -254,8 +262,10 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
             double sampleRate = 0.0;
             int channels = 0;
             juce::String error;
+            bool usedRequestedRatio = true;
             const bool ok = writeSourceWindowToWav(sourceFile, outFile, inMs, durationMs, engine,
-                                                   actualDurationMs, sampleRate, channels, error, warpOptions);
+                                                   actualDurationMs, sampleRate, channels, error, warpOptions,
+                                                   -1, &usedRequestedRatio);
             silverdaw::waveform::PeaksResult peaks;
             juce::File peaksFile;
             if (ok)
@@ -271,7 +281,8 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 
             juce::MessageManager::callAsync(
                 [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, inMs, durationMs, audioType, sourceItemId, batchIndex, batchTotal, &engine, &projectState, &bridge]
+                 ok, error, peaks, peaksFile, inMs, durationMs, audioType, sourceItemId, sampleMediaId,
+                 attribution, usedRequestedRatio, batchIndex, batchTotal, &engine, &projectState, &bridge]
                 {
                     auto* obj = new juce::DynamicObject();
                     if (batchTotal > 0)
@@ -301,12 +312,16 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     // sample is the only kind created FROM another item, which is
                     // how the renderer tells a saved sample from an ordinary import
                     // (audioType alone is ambiguous — a musical import is also "music").
-                    const juce::String sampleMediaId =
-                        sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
                     projectState.addLibraryItem(newItemId, outFile.getFullPathName(), outFile.getFileName(),
                                                 actualDurationMs, static_cast<int>(sampleRate), channels,
                                                 outFile.getFullPathName(), {}, "sample", safeName,
                                                 sourceItemId, {}, isMusic ? inMs : -1.0, -1.0, -1, sampleMediaId);
+                    // The stretcher can clamp an extreme ratio even though the WAV length uses
+                    // the requested ratio. In that case only its containing source window is known.
+                    if (!usedRequestedRatio && attribution.isObject())
+                        attribution.getDynamicObject()->removeProperty("ratio");
+                    if (projectState.setLibraryItemAttribution(newItemId, attribution))
+                        obj->setProperty("attribution", attribution);
                     if (isMusic)
                         projectState.setLibraryItemAudioType(newItemId, "music");
                     else if (audioType == "simple")
@@ -483,10 +498,12 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
     const juce::String outputDir = channelsOutputDir(projectPath, namePath);
     const double inMs = projectState.getClipInMs(clipId);
     const double durationMs = projectState.getClipDurationMs(clipId);
+    const auto attribution = projectState.deriveAttribution(
+        libraryItemId, inMs, durationMs > 0.0 ? durationMs : -1.0, 1.0);
     const juce::File sourceFile(sourcePath);
 
     peakPool.addJob(
-        [jobId, clipId, sourceName, channels, outputDir, sourceFile, inMs, durationMs, &engine, &bridge]
+        [jobId, clipId, sourceName, channels, outputDir, sourceFile, inMs, durationMs, attribution, &engine, &bridge]
         {
             struct ChannelResult
             {
@@ -514,7 +531,7 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
             }
 
             juce::MessageManager::callAsync(
-                [jobId, clipId, sourceName, results, error, &bridge]
+                [jobId, clipId, sourceName, results, error, attribution, &bridge]
                 {
                     if (results.empty())
                     {
@@ -531,6 +548,7 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
                     obj->setProperty("jobId", jobId);
                     obj->setProperty("clipId", clipId);
                     obj->setProperty("sourceName", sourceName);
+                    if (attribution.isObject()) obj->setProperty("attribution", attribution);
                     juce::Array<juce::var> channelArray;
                     for (const auto& r : results)
                     {

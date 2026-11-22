@@ -43,6 +43,46 @@ namespace silverdaw::tests
 namespace
 {
 
+void testRecordingAttribution()
+{
+    ProjectState state;
+    require(state.addLibraryItem("root", "song.wav", "song.wav", 10000, 48000, 2), "create legacy source");
+    require(state.addLibraryItem("cut", "cut.wav", "cut.wav", 2000, 48000, 2, {}, {}, "sample"), "create cut");
+    auto baked = state.deriveAttribution("root", 1000, 4000, 2);
+    require(baked.isObject(), "legacy source supplies a stable recording identity");
+    baked.getDynamicObject()->setProperty("artist", "Artist");
+    require(state.setLibraryItemAttribution("cut", baked), "persist cut attribution");
+    state.removeLibraryItem("root");
+    const auto nested = state.deriveAttribution("cut", 500, 250, 1);
+    require(nested["recordingId"].toString() == "root" && nested["parentId"].toString() == "cut",
+            "removing original preserves recording identity and immediate parent");
+    require(static_cast<double>(nested["startMs"]) == 2000 && static_cast<double>(nested["endMs"]) == 2500 &&
+            static_cast<double>(nested["ratio"]) == 2, "nested edit composes baked time ratio");
+    const auto scratch = state.deriveAttribution("cut", 500, 250, 0);
+    require(!scratch.hasProperty("ratio") && static_cast<double>(scratch["startMs"]) == 2000,
+            "scratch keeps only the source window");
+    const auto sameFile = state.deriveAttribution("cut", 500, 250, 1, true);
+    require(static_cast<double>(sameFile["startMs"]) == 1000, "saved clip must not double count trim");
+    const auto file = makeTempDir("recording-attribution").getChildFile("audit.silverdaw");
+    require(ProjectFile::save(file, state).wasOk(), "save report-only data");
+    ProjectState reopened;
+    require(ProjectFile::load(file, reopened).ok, "open compatible project");
+    const auto snapshot = reopened.libraryAsJson()[0]["attribution"];
+    require(snapshot["artist"].toString() == "Artist" && static_cast<double>(snapshot["ratio"]) == 2,
+            "snapshot survives save, reload, parent removal and bridge serialization");
+
+    ProjectState other;
+    state.addLibraryItem("l1", "first.wav", "first.wav", 1000);
+    other.addLibraryItem("l1", "second.wav", "second.wav", 1000);
+    const auto first = state.deriveAttribution("l1", 10, 50, 1);
+    require(first["recordingId"] != other.getLibraryItemAttribution("l1")["recordingId"],
+            "legacy sequential library IDs cannot identify recordings across projects");
+    state.setLibraryItemAttribution("cut", first);
+    state.setLibraryItemFilePath("l1", "moved.wav");
+    require(state.getLibraryItemAttribution("l1")["recordingId"] == first["recordingId"],
+            "captured legacy identity survives relinking");
+}
+
 void testProjectStateTracksClipsAndDirty()
 {
     silverdaw::ProjectState state;
@@ -2557,6 +2597,7 @@ void testProjectStateUndoChangeSetClassification()
 void addProjectStateTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ProjectState tracks, clips, and dirty tracking", testProjectStateTracksClipsAndDirty});
+    tests.push_back({"ProjectState recording attribution round-trip", testRecordingAttribution});
     tests.push_back({"ProjectState view, library, markers, and replaceTree", testProjectStateViewLibraryMarkersAndReplace});
     tests.push_back({"ProjectState export-settings JSON round-trip", testProjectStateExportSettingsRoundTrip});
     tests.push_back({"ProjectState master volume round-trip", testProjectStateMasterVolumeRoundTrip});

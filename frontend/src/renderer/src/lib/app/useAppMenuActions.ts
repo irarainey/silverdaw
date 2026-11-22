@@ -30,6 +30,7 @@ export interface AppMenuActionsDeps {
   aboutOpen: Ref<boolean>
   preferencesOpen: Ref<boolean>
   projectPropertiesOpen: Ref<boolean>
+  sampleReportOpen: Ref<boolean>
   projectImportOpen: Ref<boolean>
   exportMixdownOpen: Ref<boolean>
   openExportTracks: () => void
@@ -185,6 +186,10 @@ export function useAppMenuActions(deps: AppMenuActionsDeps): AppMenuActions {
     }
     if (action === 'file.recordAudio') {
       void useRecordingSessionStore().openDialog()
+      return
+    }
+    if (action === 'file.sampleReport') {
+      deps.sampleReportOpen.value = true
       return
     }
     if (action === 'file.projectProperties') {

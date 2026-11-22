@@ -30,6 +30,7 @@ describe('withoutAudioGeometry', () => {
   it('drops duration / sample-rate / channel-count but keeps identity tags + cover', () => {
     const stripped = withoutAudioGeometry(sourceMedia)
     expect(stripped.durationMs).toBeUndefined()
+    expect(stripped.recordingDurationMs).toBe(sourceMedia.durationMs)
     expect(stripped.sampleRate).toBeUndefined()
     expect(stripped.channelCount).toBeUndefined()
     expect(stripped.title).toBe('Get Down Saturday Night')

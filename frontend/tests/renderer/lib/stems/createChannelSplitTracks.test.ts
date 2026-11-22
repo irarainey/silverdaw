@@ -85,16 +85,19 @@ describe('createTracksFromChannelSplit', () => {
   })
 
   it('imports each channel as a stem item derived from the source', async () => {
-    await createTracksFromChannelSplit(payload())
+    const attribution = { recordingId: 'media', fileName: 'song.mp3', startMs: 500, endMs: 4500, ratio: 1 }
+    await createTracksFromChannelSplit({ ...payload(), attribution })
 
     expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(1, expect.anything(), {
       kind: 'stem',
       name: 'Left — Song',
+      attribution,
       derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
     })
     expect(importAudioIntoLibrary).toHaveBeenNthCalledWith(2, expect.anything(), {
       kind: 'stem',
       name: 'Right — Song',
+      attribution,
       derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 }
     })
     expect(inheritSourceAnalysis).toHaveBeenCalledTimes(2)

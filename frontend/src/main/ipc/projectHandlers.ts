@@ -3,7 +3,7 @@
 // pending launch path. Registered from main/index.ts.
 
 import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
-import { readFile, mkdir, cp } from 'node:fs/promises'
+import { readFile, mkdir, cp, writeFile, lstat, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
 import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerRecordingsWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
@@ -38,6 +38,7 @@ async function copyDirContents(src: string, dest: string): Promise<void> {
 
 export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   const { prefs } = ctx
+  let reportDestination: { project: string; folder: string } | undefined
 
   // ─── Project file lifecycle ─────────────────────────────────────────────
   // Main owns native project dialogs and the Recent Projects MRU.
@@ -77,8 +78,48 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
       properties: ['openFile']
     })
+
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC.project.exportSampleReport, async (event, projectPath: unknown): Promise<string | null> => {
+    const win = ctx.getMainWindow()
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      throw new Error('Audio Sample Reports can only be exported from the project window.')
+    }
+    const canonical = canonicaliseProjectPath(projectPath)
+    const media = getProjectMediaDirs()
+    if (!canonical || !media || dirname(canonical).toLowerCase() !== dirname(media.metadataDir).toLowerCase()) {
+      throw new Error('The report must belong to the active project.')
+    }
+    const auditDir = join(dirname(canonical), 'audit')
+    const project = canonical.toLowerCase()
+    let folder = reportDestination?.project === project ? reportDestination.folder : undefined
+    if (folder) {
+      try {
+        if (!(await stat(folder)).isDirectory()) folder = undefined
+      } catch (error) {
+        logMain('WARN ', 'sampleReport', 'Previous export folder is unavailable:', error)
+        folder = undefined
+      }
+    }
+    if (!folder) {
+      await mkdir(auditDir, { recursive: true })
+      if (!(await lstat(auditDir)).isDirectory()) throw new Error('The audit folder must be a project directory.')
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export Audio Sample Report',
+      defaultPath: join(folder ?? auditDir, `Audio Sample Report ${stamp}.pdf`),
+      filters: [{ name: 'PDF document', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath) return null
+    if (!filePath.toLowerCase().endsWith('.pdf')) throw new Error('Choose a PDF file.')
+    const pdf = await win.webContents.printToPDF({ pageSize: 'A4' })
+    await writeFile(filePath, pdf)
+    reportDestination = { project, folder: dirname(filePath) }
+    return filePath
   })
 
   ipcMain.handle(IPC.project.listImportSources, async () =>
@@ -129,6 +170,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
         await copyDirContents(previousMedia.metadataDir, nextMedia.metadataDir)
         await copyDirContents(previousMedia.coversDir, nextMedia.coversDir)
       }
+      reportDestination = undefined
       return target
     }
   )
@@ -187,6 +229,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
         }
       }
       visit(parsed)
+      reportDestination = undefined
       return true
     } catch (err) {
       logMain('WARN ', 'project:prepare', `could not read project file ${contentPath}:`, err)

@@ -90,6 +90,7 @@ export const IPC = {
     setLastPath: 'project:setLastPath',
     fileExists: 'project:fileExists',
     chooseOpen: 'project:chooseOpen',
+    exportSampleReport: 'project:exportSampleReport',
     chooseSaveAs: 'project:chooseSaveAs',
     listImportSources: 'project:listImportSources',
     prepareOpen: 'project:prepareOpen',

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.0
+
+### Added
+
+- File > Audio Sample Report groups clip placements by source and remembers the PDF export folder only while the project is open.
+- New stems and samples retain their original recording and source passage for attribution across projects.
+
 ## 1.11.0
 
 ### Added

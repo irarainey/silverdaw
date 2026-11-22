@@ -137,10 +137,10 @@ void runStemSeparationJob(const StemSeparationRequest& request, StemSeparator& s
                                        detail != nullptr ? juce::String(detail) : juce::String());
     };
     const StemReadyFn onStemReady =
-        [&bridge, &jobId, &clipId, &sourceName, &performance](const StemResultFile& stem)
+        [&bridge, &jobId, &clipId, &sourceName, &performance, &request](const StemResultFile& stem)
     {
         performance.recordPartial(stem.stem.toRawUTF8());
-        stem_bridge::broadcastPartial(bridge, jobId, clipId, sourceName, stem);
+        stem_bridge::broadcastPartial(bridge, jobId, clipId, sourceName, stem, request.attribution);
     };
     const StemCancelFn shouldCancel = [&cancelFlag]() { return cancelFlag.load(); };
 
@@ -162,7 +162,7 @@ void runStemSeparationJob(const StemSeparationRequest& request, StemSeparator& s
     try
     {
         auto result = separator.separate(request, onProgress, onStemReady, shouldCancel);
-        stem_bridge::broadcastReady(bridge, jobId, clipId, sourceName, result.stems);
+        stem_bridge::broadcastReady(bridge, jobId, clipId, sourceName, result.stems, request.attribution);
         outcome = "ready";
         silverdaw::log::info("stems", "STEM_READY job=" + jobId + " clip=" + clipId +
                                           " stems=" + juce::String(static_cast<int>(result.stems.size())));

@@ -1,16 +1,20 @@
 // Library domain types re-exported by `libraryStore` for stable imports.
 
-import type { ClipWarpMode, LibraryItemKind } from '@shared/bridge-protocol'
+import type { ClipWarpMode, LibraryAddPayload, LibraryItemKind, RecordingAttribution } from '@shared/bridge-protocol'
 
 export interface LibraryClipSource {
   sourceItemId?: string
   sourceClipId?: string
   inMs: number
+  /** The stored parent offset is absent or the generated file is not time-aligned. */
+  unmapped?: boolean
   durationMs: number
 }
 
 /** Input to `libraryStore.addItem`; shared so domain action modules can call it via `this`. */
 export interface AddLibraryItemInput {
+  attribution?: RecordingAttribution
+  sourceTags?: LibraryAddPayload['sourceTags']
   kind?: LibraryItemKind
   name?: string
   filePath: string
@@ -50,6 +54,7 @@ export interface AddLibraryItemInput {
 }
 
 export interface LibraryItem {
+  attribution?: RecordingAttribution
   readonly id: string
   readonly kind: LibraryItemKind
   name?: string

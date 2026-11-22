@@ -92,6 +92,7 @@ export function applyProjectLibrary(
     for (const item of snapshot.library) {
       const already = library.byId[item.id]
       if (already) {
+        already.attribution = item.attribution
         // Existing items still need relinked path/unresolved fields refreshed.
         already.filePath = item.filePath
         already.fileName = item.fileName?.trim()
@@ -102,6 +103,7 @@ export function applyProjectLibrary(
         continue
       }
       const libId = library.addItem({
+        attribution: item.attribution,
         id: item.id,
         kind: item.kind ?? 'source',
         name: item.name,
@@ -123,6 +125,8 @@ export function applyProjectLibrary(
               sourceItemId: item.sourceItemId,
               sourceClipId: item.sourceClipId,
               inMs: Math.max(0, item.sourceInMs ?? 0),
+              unmapped: item.sourceInMs == null || item.sourceInMs < 0 || item.scratchOrigin === true ||
+                (item.kind === 'sample' && item.audioType !== 'music'),
               durationMs: Math.max(0, item.sourceDurationMs ?? item.durationMs ?? 0)
             }
           : undefined,

@@ -502,6 +502,26 @@ export type ProjectStateMarker = z.infer<typeof ProjectStateMarkerSchema>
 export type LibraryItemKind = 'source' | 'stem' | 'sample' | 'clip'
 const libraryItemKindSchema = z.enum(['source', 'stem', 'sample', 'clip'])
 
+/** A backend-owned recording identity and, when known, file-to-recording time map. */
+export const RecordingAttributionSchema = z.object({
+  recordingId: z.string().min(1),
+  fileName: z.string().min(1),
+  title: z.string().optional(),
+  artist: z.string().optional(),
+  album: z.string().optional(),
+  parentId: z.string().optional(),
+  stemRole: z.string().optional(),
+  startMs: z.number().nonnegative().optional(),
+  endMs: z.number().nonnegative().optional(),
+  ratio: z.number().positive().optional()
+})
+export type RecordingAttribution = z.infer<typeof RecordingAttributionSchema>
+
+export const LibraryItemAttributionSchema = z.object({
+  itemId: z.string().min(1),
+  attribution: RecordingAttributionSchema
+})
+
 export const ProjectStateLibraryItemSchema = z
   .object({
     id: z.string(),
@@ -550,6 +570,7 @@ export const ProjectStateLibraryItemSchema = z
     recordingOrigin: z.boolean().optional(),
     /** Media GUID minted at first import; key into the project's metadata/covers store. */
     mediaId: z.string().optional(),
+    attribution: RecordingAttributionSchema.optional(),
     collapsed: z.boolean().optional(),
     /** User flag hiding this tile's cover art without deleting the shared media image. */
     coverArtHidden: z.boolean().optional(),
@@ -745,6 +766,7 @@ const SampleSavedFailureSchema = z.object({
   error: z.string().optional()
 })
 const SampleSavedSuccessSchema = z.object({
+  attribution: RecordingAttributionSchema.optional(),
   clipId: z.string().optional(),
   libraryItemId: z.string().optional(),
   itemId: z.string(),
@@ -1062,6 +1084,7 @@ export type StemProgressPayload = z.infer<typeof StemProgressPayloadSchema>
 
 /** One separated stem written to disk (non-destructive; the original is untouched). */
 export const StemFileSchema = z.object({
+  attribution: RecordingAttributionSchema.optional(),
   stem: StemNameSchema,
   filePath: z.string().min(1),
   sampleRate: z.number().positive().optional(),
@@ -1081,15 +1104,10 @@ export type StemReadyPayload = z.infer<typeof StemReadyPayloadSchema>
 
 /** One stem finished while the job is still running, so its result can be imported
  *  immediately for live feedback. The final STEM_READY backfills any not seen. */
-export const StemPartialPayloadSchema = z.object({
+export const StemPartialPayloadSchema = StemFileSchema.extend({
   jobId: z.string().min(1),
   clipId: z.string().min(1).optional(),
-  sourceName: z.string(),
-  stem: StemNameSchema,
-  filePath: z.string().min(1),
-  sampleRate: z.number().positive().optional(),
-  durationMs: z.number().nonnegative().optional(),
-  channelCount: z.number().int().positive().optional()
+  sourceName: z.string()
 })
 export type StemPartialPayload = z.infer<typeof StemPartialPayloadSchema>
 
@@ -1114,6 +1132,7 @@ export type ChannelSplitFile = z.infer<typeof ChannelSplitFileSchema>
 /** Channel-split success; `channels` are absolute paths the renderer imports as new
  *  stem library items and drops on new tracks (one track per channel). */
 export const ChannelSplitReadyPayloadSchema = z.object({
+  attribution: RecordingAttributionSchema.optional(),
   jobId: z.string().min(1),
   clipId: z.string().min(1).optional(),
   sourceName: z.string(),
@@ -1168,6 +1187,7 @@ export interface BridgeInboundMap {
   CLIP_EDITOR_PEAKS_READY: ClipEditorPeaksReadyPayload
   SAMPLE_SAVED: SampleSavedPayload
   LIBRARY_ITEM_ANALYSIS: LibraryItemAnalysisPayload
+  LIBRARY_ITEM_ATTRIBUTION: z.infer<typeof LibraryItemAttributionSchema>
   TEMPO_CORRECTION_APPLIED: TempoCorrectionAppliedPayload
   CLIP_WARP_APPLIED: ClipWarpAppliedPayload
   PROJECT_BPM_APPLIED: ProjectBpmAppliedPayload
@@ -1258,6 +1278,7 @@ const INBOUND_TYPES: ReadonlySet<BridgeInboundType> = new Set<BridgeInboundType>
   'CLIP_EDITOR_PEAKS_READY',
   'SAMPLE_SAVED',
   'LIBRARY_ITEM_ANALYSIS',
+  'LIBRARY_ITEM_ATTRIBUTION',
   'TEMPO_CORRECTION_APPLIED',
   'CLIP_WARP_APPLIED',
   'PROJECT_BPM_APPLIED',

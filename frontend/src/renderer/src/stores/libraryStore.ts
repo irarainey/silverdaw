@@ -152,6 +152,7 @@ export const useLibraryStore = defineStore('library', {
                   i.derivedFrom?.durationMs === audio.derivedFrom?.durationMs
               )
       if (existing) {
+        if (audio.attribution) existing.attribution = audio.attribution
         this.setItemAudioDetails(existing.id, audio.durationMs, audio.sampleRate, audio.channelCount)
         if (audio.key && !existing.key) existing.key = audio.key
         return existing.id
@@ -172,6 +173,7 @@ export const useLibraryStore = defineStore('library', {
         id = `l${this.nextItemIndex++}`
       }
       this.items.push({
+        attribution: audio.attribution,
         id,
         kind,
         name: audio.name,
@@ -206,6 +208,8 @@ export const useLibraryStore = defineStore('library', {
       // Snapshot-driven adds already mirror backend truth, so they do not echo.
       if (audio.fromSnapshot !== true) {
         sendBridge('LIBRARY_ADD', {
+          sourceTags: audio.sourceTags,
+          attribution: audio.attribution,
           itemId: id,
           filePath: audio.filePath,
           kind,

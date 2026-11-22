@@ -60,7 +60,7 @@ export function forgetChannelSplitJob(jobId: string): void {
 /** Import one channel WAV into the library and place it on a new track. Reserves
  *  the channel synchronously (before the first await) so duplicate events are
  *  skipped; un-reserves on failure so a later event can retry. */
-async function importChannel(job: ChannelSplitJob, channel: SplitChannel, filePath: string): Promise<boolean> {
+async function importChannel(job: ChannelSplitJob, channel: SplitChannel, filePath: string, attribution: ChannelSplitReadyPayload['attribution']): Promise<boolean> {
   if (job.placed.has(channel)) return false
   job.placed.add(channel)
 
@@ -85,6 +85,7 @@ async function importChannel(job: ChannelSplitJob, channel: SplitChannel, filePa
     // A channel split is a stem in every respect except how it was produced, so it
     // reuses the 'stem' kind (badge, cleanup, serialization) with no new surface.
     const itemId = await importAudioIntoLibrary(opened, {
+      attribution,
       kind: 'stem',
       name: displayName,
       derivedFrom: {
@@ -137,7 +138,7 @@ export async function createTracksFromChannelSplit(payload: ChannelSplitReadyPay
   const pending = payload.channels.filter((c) => !job.placed.has(c.channel))
   if (pending.length > 0) library.beginImportBatch(pending.length)
   for (const { channel, filePath } of pending) {
-    await importChannel(job, channel, filePath)
+    await importChannel(job, channel, filePath, payload.attribution)
   }
 
   const created = job.placed.size

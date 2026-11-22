@@ -247,6 +247,7 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
 }
 
 export interface AudioImportOptions {
+  attribution?: LibraryItem['attribution']
   kind?: LibraryItem['kind']
   name?: string
   derivedFrom?: LibraryItem['derivedFrom']
@@ -334,10 +335,17 @@ export async function importAudioIntoLibrary(
           ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
           : undefined
     const mediaId = sourceMediaId ?? crypto.randomUUID()
-    if (!sourceMediaId) {
-      await saveProjectMedia(mediaId, opened.filePath)
-    }
+    const stored = sourceMediaId ? null : await saveProjectMedia(mediaId, opened.filePath)
+    const media = sourceMediaId
+      ? options && 'inheritedMetadata' in options ? options.inheritedMetadata : await getProjectMedia(mediaId)
+      : enrichedMetadata
+    const tags = stored ?? media
+    const sourceTags = tags && (tags.title || tags.artist || tags.album)
+      ? { title: tags.title, artist: tags.artist, album: tags.album }
+      : undefined
     const itemId = library.addItem({
+      attribution: options?.attribution,
+      sourceTags,
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: generatedAudio?.durationMs ?? decoded.durationMs,
@@ -355,17 +363,7 @@ export async function importAudioIntoLibrary(
     if (decoded.channelPeaks.length > 0) {
       library.setItemChannelPeaks(itemId, decoded.channelPeaks, decoded.peaksPerSecond)
     }
-    // Display identity: a root import already holds the file's own tags + cover; a
-    // derived item is a tagless WAV, so resolve the shared cover from the media store.
-    if (sourceMediaId) {
-      const media =
-        options && 'inheritedMetadata' in options
-          ? options.inheritedMetadata
-          : await getProjectMedia(mediaId)
-      library.setItemMetadata(itemId, media ?? enrichedMetadata)
-    } else {
-      library.setItemMetadata(itemId, enrichedMetadata)
-    }
+    library.setItemMetadata(itemId, media ?? enrichedMetadata)
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {

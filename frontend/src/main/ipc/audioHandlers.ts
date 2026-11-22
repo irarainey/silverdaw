@@ -354,26 +354,28 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   // (embedded tags for an imported file, or a sidecar for a tagless stem/sample) so
   // the renderer never needs the cover bytes. Confined to the registered project
   // media dirs; the source must be on the audio allow-list.
-  ipcMain.handle(IPC.media.save, async (_evt, payload: unknown) => {
-    if (!payload || typeof payload !== 'object') return false
+  ipcMain.handle(IPC.media.save, async (_evt, payload: unknown): Promise<AudioMetadata | null> => {
+    if (!payload || typeof payload !== 'object') return null
     const p = payload as { mediaId?: unknown; sourceFilePath?: unknown }
-    if (!isSafeMediaGuid(p.mediaId) || typeof p.sourceFilePath !== 'string') return false
+    if (!isSafeMediaGuid(p.mediaId) || typeof p.sourceFilePath !== 'string') return null
     if (!isAllowedAudioPath(p.sourceFilePath)) {
       logMain('WARN ', 'media:save', 'rejected source not on allow-list:', p.sourceFilePath)
-      return false
+      return null
     }
     const dirs = getProjectMediaDirs()
     if (!dirs) {
       logMain('WARN ', 'media:save', 'no active project media store')
-      return false
+      return null
     }
     try {
       const identity = await resolveSourceIdentity(p.sourceFilePath)
-      if (!identity) return false
-      return await writeProjectMediaFiles(dirs.metadataDir, dirs.coversDir, p.mediaId, identity.metadata, identity.cover)
+      if (!identity) return null
+      const saved = await writeProjectMediaFiles(dirs.metadataDir, dirs.coversDir, p.mediaId, identity.metadata, identity.cover)
+      // The import needs the resolved tags (including legacy sidecars), not another cover read.
+      return saved ? identity.metadata : null
     } catch (err) {
       logMain('WARN ', 'media:save', `failed for ${String(p.mediaId)}:`, err)
-      return false
+      return null
     }
   })
 

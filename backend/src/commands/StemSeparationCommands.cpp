@@ -217,6 +217,8 @@ void handleStemSeparate(const juce::var& payload,
             request.lengthMs = clipDurationMs;
         }
     }
+    request.attribution = projectState.deriveAttribution(
+        sourceItemId, request.startMs, request.lengthMs > 0.0 ? request.lengthMs : -1.0, 1.0);
     const juce::var useGpuVar = payload.getProperty("useGpu", juce::var());
     request.useGpu = useGpuVar.isBool() && static_cast<bool>(useGpuVar);
 

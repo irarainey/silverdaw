@@ -102,6 +102,7 @@ async function performStemImport(
     const label = STEM_TRACK_LABEL[stem]
     delegatedImport = true
     const itemId = await importAudioIntoLibrary(opened, {
+      attribution: stemFile.attribution,
       kind: 'stem',
       // Name mirrors the stem's track name ("<part> — <source>") so the library
       // item reads as a distinct, source-tagged file. The leading part (before

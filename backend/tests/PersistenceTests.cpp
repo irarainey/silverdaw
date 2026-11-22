@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "BridgeServer.h"
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
@@ -16,6 +17,7 @@
 #include "WaveformCommands.h"
 #include "DecodedCache.h"
 #include "ProjectFile.h"
+#include "ProjectCommands.h"
 #include "ProjectImportSource.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
@@ -111,7 +113,8 @@ void testProjectFileSaveLoadAndViewState()
     require(stemFile.replaceWithText("test"), "source stem file should be created");
     silverdaw::ProjectState sourceProject;
     require(sourceProject.addLibraryItem("stem-1", stemFile.getFullPathName(), "audio.wav", 1000.0,
-                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem"),
+                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem",
+                                         "original-item", {}, 250.0),
             "source stem should be added");
     const auto scratchFile = sourceDir.getChildFile("scratches").getChildFile("sp-1")
                                        .getChildFile("source.wav");
@@ -148,6 +151,22 @@ void testProjectFileSaveLoadAndViewState()
                                          1000.0, 44100, 2, recordingFile.getFullPathName(), {}, "sample",
                                          "Recording 1"),
             "source recording should be added");
+    const auto originalPath = sourceDir.getChildFile("Original.mp3").getFullPathName();
+    require(sourceProject.addLibraryItem("original-item", originalPath, "Original.mp3", 10000.0,
+                                         44100, 2, {}, {}, "source", {}, {}, {}, -1, -1, -1, "original-media"),
+            "legacy stem parent should be available only in the source library");
+    const auto metadata = sourceDir.getChildFile("metadata");
+    require(metadata.createDirectory() && metadata.getChildFile("original-media.json").replaceWithText(
+                R"({"metadata":{"artist":"Original artist","album":"Original album","title":"Original title"}})"),
+            "source recording tags should be available");
+    const auto scratchAttribution = juce::JSON::parse(
+        R"({"recordingId":"original-media","fileName":"Original.mp3","parentId":"foreign-sample",)"
+        R"("title":"Saved title","startMs":450,"endMs":950})");
+    require(sourceProject.setLibraryItemAttribution("scratch-1", scratchAttribution),
+            "scratch fixture should have a non-linear source window");
+    require(sourceProject.addLibraryItem("orphan", stemFile.getFullPathName(), "audio.wav", 1000.0,
+                                         44100, 2, {}, {}, "stem", {}, "orphan"),
+            "previously imported stem should have a self-referential local link");
     require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
             "source project should be saved");
     juce::String sourceError;
@@ -169,6 +188,38 @@ void testProjectFileSaveLoadAndViewState()
             "an imported recording should carry its provenance");
     requireEqual(importSource->library.at("stem-1").category, juce::String("stems"),
                  "a stem should keep its own import category");
+    silverdaw::ProjectState destination;
+    silverdaw::BridgeServer bridge("", nullptr);
+    const silverdaw::ProjectSession destinationSession{dir.getChildFile("destination")
+                                                          .getChildFile("copy.silverdaw").getFullPathName()};
+    auto request = juce::JSON::parse(R"({"libraryItemIds":["stem-1","scratch-1","recording-1","orphan"]})");
+    request.getDynamicObject()->setProperty("sourceProjectPath", sourceFile.getFullPathName());
+    silverdaw::handleProjectImportAssets(request, destination, bridge, destinationSession);
+    const auto imported = destination.libraryAsJson();
+    require(imported.size() == 4, "the destination should receive all four selected assets");
+    const auto legacyStem = imported[0].getProperty("attribution", {});
+    require(imported[0]["id"].toString() != "stem-1" && imported[0]["sourceItemId"] == imported[0]["id"],
+            "a stem should still have a separate destination-local library link");
+    require(legacyStem["recordingId"].toString() == "original-media"
+            && legacyStem["parentId"].toString() == "original-item"
+            && legacyStem["fileName"].toString() == "Original.mp3"
+            && legacyStem["artist"].toString() == "Original artist"
+            && static_cast<double>(legacyStem["startMs"]) == 250.0
+            && static_cast<double>(legacyStem["endMs"]) == 1250.0
+            && static_cast<double>(legacyStem["ratio"]) == 1.0,
+            "legacy import should retain the original identity, basename, tags and aligned window");
+    const auto scratch = imported[1].getProperty("attribution", {});
+    require(scratch["recordingId"].toString() == "original-media"
+            && scratch["parentId"].toString() == "foreign-sample"
+            && scratch["title"].toString() == "Saved title"
+            && scratch["album"].toString() == "Original album"
+            && static_cast<double>(scratch["startMs"]) == 450.0
+            && static_cast<double>(scratch["endMs"]) == 950.0 && !scratch.hasProperty("ratio"),
+            "portable scratch attribution should keep its original parent and never invent a linear map");
+    require(imported[2]["attribution"]["recordingId"].toString() == "recording-1",
+            "an imported legacy take should keep its identity even if its recording flag was missing");
+    require(!imported[3].hasProperty("attribution"),
+            "a legacy stem's self-reference cannot identify an original recording");
 
     silverdaw::ProjectState loaded;
     const auto loadResult = silverdaw::ProjectFile::load(file, loaded);

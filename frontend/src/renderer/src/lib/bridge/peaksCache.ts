@@ -259,6 +259,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
   // sample saves (fresh ids, cover-art inheritance) are unaffected.
   const existingItem = library.byId[payload.itemId]
   if (existingItem && payload.scratchOrigin === true) {
+    existingItem.attribution = payload.attribution
     existingItem.filePath = payload.filePath
     existingItem.fileName = payload.fileName
     existingItem.playbackFilePath = payload.filePath
@@ -271,6 +272,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       existingItem.derivedFrom = {
         sourceItemId: payload.sourceItemId,
         inMs: payload.sourceInMs ?? existingItem.derivedFrom?.inMs ?? 0,
+        unmapped: payload.scratchOrigin === true || payload.audioType !== 'music' || payload.sourceInMs == null,
         durationMs:
           payload.sourceDurationMs ?? existingItem.derivedFrom?.durationMs ?? payload.durationMs
       }
@@ -294,6 +296,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
     return
   }
   library.addItem({
+    attribution: payload.attribution,
     id: payload.itemId,
     kind: 'sample',
     name: payload.name,
@@ -313,6 +316,7 @@ export async function applySampleSaved(payload: SampleSavedPayload): Promise<voi
       ? {
           sourceItemId: payload.sourceItemId,
           inMs: payload.sourceInMs ?? 0,
+          unmapped: payload.scratchOrigin === true || payload.audioType !== 'music' || payload.sourceInMs == null,
           durationMs: payload.sourceDurationMs ?? payload.durationMs
         }
       : undefined,

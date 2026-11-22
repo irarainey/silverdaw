@@ -11,3 +11,7 @@ export function formatTrackTime(ms: number): string {
     ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
     : `${m}:${String(s).padStart(2, '0')}`
 }
+
+export function formatTrackTimestamp(ms: number): string {
+  return `${formatTrackTime(ms)}.${String(Math.floor(ms % 1000)).padStart(3, '0')}`
+}

@@ -45,6 +45,8 @@ export interface AudioMetadata {
   codec?: string
   container?: string
   bitrate?: number
+  /** Original media-store recording length for attribution, not the item's playback length. */
+  recordingDurationMs?: number
   durationMs?: number
   sampleRate?: number
   channelCount?: number

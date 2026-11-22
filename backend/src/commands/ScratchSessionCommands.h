@@ -14,6 +14,7 @@ class AudioEngine;
 class BridgeServer;
 class PeaksCache;
 class ProjectState;
+struct ProjectSession;
 
 void handleScratchSessionOpen(const juce::var& payload,
                               AudioEngine& engine,
@@ -21,7 +22,7 @@ void handleScratchSessionOpen(const juce::var& payload,
                               BridgeServer& bridge,
                               juce::ThreadPool& workerPool,
                               const PeaksCache& cache,
-                              const juce::String& projectPath);
+                              ProjectSession& session);
 void handleScratchSessionClose(const juce::var& payload,
                                AudioEngine& engine,
                                BridgeServer& bridge);

@@ -31,13 +31,15 @@ void broadcastPartial(BridgeServer& bridge,
                       const juce::String& jobId,
                       const juce::String& clipId,
                       const juce::String& sourceName,
-                      const StemResultFile& stem);
+                      const StemResultFile& stem,
+                      const juce::var& attribution);
 
 void broadcastReady(BridgeServer& bridge,
                     const juce::String& jobId,
                     const juce::String& clipId,
                     const juce::String& sourceName,
-                    const std::vector<StemResultFile>& stems);
+                    const std::vector<StemResultFile>& stems,
+                    const juce::var& attribution);
 
 void broadcastFailed(BridgeServer& bridge,
                      const juce::String& jobId,

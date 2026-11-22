@@ -4,6 +4,7 @@ export const ImportProgressDialog = defineAsyncComponent(
   () => import('@/components/ImportProgressDialog.vue')
 )
 export const AboutDialog = defineAsyncComponent(() => import('@/components/AboutDialog.vue'))
+export const SampleReportDialog = defineAsyncComponent(() => import('@/components/SampleReportDialog.vue'))
 export const PreferencesDialog = defineAsyncComponent(
   () => import('@/components/PreferencesDialog.vue')
 )

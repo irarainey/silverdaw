@@ -57,6 +57,30 @@ describe('project snapshot library media hydration', () => {
     })
   })
 
+  it('mirrors creation and snapshot attribution on existing and imported rows without echoing it', () => {
+    const library = useLibraryStore()
+    const project = useProjectStore()
+    const row = {
+      id: 'new', filePath: 'C:\\audio\\present.wav', fileName: 'present.wav',
+      durationMs: 1000, sampleRate: 44100, channelCount: 2
+    }
+    library.addItem({ ...row, peaks: new Float32Array() })
+    const attribution = { recordingId: 'original', fileName: 'original.wav', startMs: 200, endMs: 800, ratio: 2 }
+    libraryBridgeHandlers.LIBRARY_ITEM_ATTRIBUTION({ itemId: row.id, attribution })
+    expect(library.byId.new?.attribution).toEqual(attribution)
+    const window = { ...attribution, ratio: undefined }
+    sendMock.mockClear()
+    project.applyProjectStateSnapshot({
+      name: 'Imported', filePath: null, tracks: [], library: [
+        { ...row, attribution: window },
+        { ...row, id: 'imported', kind: 'sample', filePath: 'C:\\samples\\new.wav', attribution }
+      ]
+    })
+    expect(library.byId.new?.attribution).toEqual(window)
+    expect(library.byId.imported?.attribution).toEqual(attribution)
+    expect(sendMock).not.toHaveBeenCalledWith('LIBRARY_ADD', expect.anything())
+  })
+
   it('uses the queued backend request instead of decoding matching source peaks', async () => {
     const project = useProjectStore()
     const library = useLibraryStore()

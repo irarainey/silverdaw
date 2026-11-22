@@ -92,6 +92,7 @@ function payload(): StemReadyPayload {
     stems: [
       {
         stem: 'vocals',
+        attribution: { recordingId: 'record', fileName: 'original.mp3', stemRole: 'vocals' },
         filePath: 'C:\\stems\\vocals.wav',
         sampleRate: 44100,
         durationMs: 50000,
@@ -152,6 +153,7 @@ describe('createTracksFromStems (timeline target)', () => {
       expect.objectContaining({
         kind: 'stem',
         name: 'Vocals — Song',
+        attribution: { recordingId: 'record', fileName: 'original.mp3', stemRole: 'vocals' },
         derivedFrom: { sourceItemId: 'src-item', sourceClipId: 'src', inMs: 0, durationMs: 0 },
         generatedAudio: { sampleRate: 44100, durationMs: 50000, channelCount: 2 },
         inheritedMetadata: { artist: 'Artist' }

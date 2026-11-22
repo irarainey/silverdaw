@@ -13,6 +13,12 @@ class DecodedCache;
 struct ProjectSession
 {
     juce::String currentPath;
+    struct PreparedScratch
+    {
+        juce::String sessionId;
+        juce::var attribution;
+    };
+    PreparedScratch preparedScratch;
 };
 
 juce::StringArray collectClipIds(const ProjectState& projectState);

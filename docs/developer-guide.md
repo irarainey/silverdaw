@@ -1620,7 +1620,17 @@ sit at the same absolute path on the other machine. Peaks are deliberately **not
 with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
 source on demand.
 
-**Central media store (cover art + tags)** — embedded tag metadata and cover art are not
+**Audio Sample Report provenance** — An optional `attribution` property on a
+library item identifies its original recording independently of its immediate
+parent. The snapshot carries a basename, not a foreign machine's path. Its
+`startMs` and `endMs` describe a window in the original recording. Only a
+positive `ratio` maps positions within the derived file to positions within
+that window. A scratch render can identify its input window without claiming
+to play every part of it. These fields are not playback or beat-grid settings.
+Timeline trims, splits and moves reuse the library item; they do not create
+new recording identities. Schema-1 projects without snapshots remain valid.
+
+**Central media store (cover art + tags)** — full embedded tag metadata and cover art are not
 stored per library item. At first import each source file is minted a **media GUID**, and
 its tags are written to `<projectDir>/metadata/<guid>.json` and its cover image to
 `<projectDir>/covers/<guid>.<ext>` (before the first save the store lives in the temp
