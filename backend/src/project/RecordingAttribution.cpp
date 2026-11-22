@@ -28,7 +28,7 @@ juce::String projectFileFingerprint(const juce::File& file, const juce::File& di
     if (size <= 0) return {};
     // Silent passages can match across unrelated recordings. Include portable file evidence
     // while keeping cold reads bounded even for multi-GB recordings.
-    constexpr int block = 4096;
+    constexpr juce::int64 block = 4096;
     juce::MemoryBlock bytes;
     {
         juce::MemoryOutputStream evidence(bytes, false);
@@ -86,7 +86,7 @@ juce::var readSnapshot(const juce::var& value)
     return result;
 }
 
-juce::var derived(juce::var source, const juce::String& parent, double in, double length, double ratio, bool sameFile)
+juce::var derived(const juce::var& source, const juce::String& parent, double in, double length, double ratio, bool sameFile)
 {
     if (!source.isObject()) return {};
     auto result = source.clone();
@@ -164,14 +164,14 @@ juce::var ProjectState::resolveAttribution(const juce::ValueTree& library, const
     }
     for (int i = chain.size(); --i >= 0 && result.isObject();)
     {
-        const auto child = chain.getReference(i);
+        const auto& child = chain.getReference(i);
         const auto kind = child[kKind].toString();
         const bool sameFile = kind == "clip" && item[kFilePath].toString().equalsIgnoreCase(child[kFilePath].toString());
         const bool scratch = child.hasProperty(kScratchPatternId);
         const bool aligned = !scratch &&
                              (kind == "stem" || (kind == "sample" && child[kAudioType].toString() == "music"));
-        const auto in = child.getProperty(kSourceInMs);
-        const auto length = child.getProperty(scratch ? kSourceDurationMs : kDurationMs);
+        const auto& in = child.getProperty(kSourceInMs);
+        const auto& length = child.getProperty(scratch ? kSourceDurationMs : kDurationMs);
         const bool knownWindow = finiteNumber(in) && (aligned || (scratch && finiteNumber(length)
                                                                   && static_cast<double>(length) > 0));
         result = derived(result, item[kId].toString(), knownWindow ? static_cast<double>(in) : -1.0,
@@ -186,11 +186,11 @@ juce::var ProjectState::getLibraryItemAttribution(const juce::String& itemId) co
     return resolveAttribution(root.getChildWithName(kLibrary), itemId, legacyRecordingIds);
 }
 
-juce::var ProjectState::deriveAttribution(const juce::String& parentId, double in, double length,
-                                          double ratio, bool sameFile) const
+juce::var ProjectState::deriveAttribution(const juce::String& parentId, double parentInMs,
+                                          double parentDurationMs, double ratio, bool sameFile) const
 {
     const auto source = getLibraryItemAttribution(parentId);
-    return derived(source, parentId, in, length, ratio, sameFile);
+    return derived(source, parentId, parentInMs, parentDurationMs, ratio, sameFile);
 }
 
 bool ProjectState::setLibraryItemAttribution(const juce::String& itemId, const juce::var& attribution)

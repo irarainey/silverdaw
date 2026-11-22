@@ -19,6 +19,7 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace silverdaw
@@ -56,8 +57,8 @@ class ExportDestination
 {
   public:
     ExportDestination(const ProjectSession& sessionToUse, const ProjectState& state,
-                      const juce::String& category, const juce::String& sourcePath)
-        : session(sessionToUse), library(state.getTree().getChildWithName("LIBRARY")), folder(category)
+                      juce::String category, const juce::String& sourcePath)
+        : session(sessionToUse), library(state.getTree().getChildWithName("LIBRARY")), folder(std::move(category))
     {
         if (sourcePath.isNotEmpty())
             folder = juce::File::addTrailingSeparator(folder)
