@@ -14,7 +14,15 @@ Large-session packaged performance projects and opt-in measurements are
 documented in [performance benchmarks](../performance/README.md). They are not
 collected by the normal E2E suite.
 
-Run from `frontend`:
+From the repository root, run the full suite with one command:
+
+```powershell
+pnpm test:e2e
+```
+
+Pass a journey name to run just that test: `pnpm test:e2e automation-steps`.
+
+Alternatively, run from `frontend`:
 
 ```powershell
 pnpm test:e2e         # builds out/, then runs the suite
@@ -22,7 +30,15 @@ pnpm test:e2e:only    # skips the build — only when out/ is known current
 pnpm test:e2e:report  # opens an existing Playwright HTML report
 ```
 
-CI enables the HTML reporter; the default local reporter is list-only.
+Local runs keep Electron on a private Windows desktop that is never shown or
+switched to. The tests still exercise real windows, including maximising them.
+The launcher requires Python 3 on `PATH` as `python`; no Python packages are
+needed. The terminal prints each journey and its actions as they start.
+CI keeps its existing runner and HTML report.
+
+To watch a journey while debugging, set `$env:SILVERDAW_E2E_HEADED = '1'`
+before running it. Use `Remove-Item Env:SILVERDAW_E2E_HEADED` to return to
+hidden runs.
 
 `test:e2e` builds first on purpose. A stale `out/` passes happily while testing
 code you have already changed, which has now happened more than once; the few

@@ -6005,7 +6005,10 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 - **End-to-end**: `pnpm test:e2e` rebuilds the frontend (`electron-vite build`),
   not the native engine. Build `SilverdawBackend` first; the default executable
   is `backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe`.
-  Playwright runs the journeys under `frontend/e2e/` against that spawned backend,
+  Local Electron tests run on a private Windows desktop and print their actions
+  to the terminal; see the [E2E guide](../frontend/e2e/README.md#running) for
+  prerequisites and visible debugging. Playwright runs the journeys under
+  `frontend/e2e/` against that spawned backend,
   so a run covers the spawn → port → AUTH → handshake chain, the native dialog
   stubs and the saved project format. The tier is deliberately small and wide and
   asserts mostly on the DOM, the filesystem and saved project files; its rules and
