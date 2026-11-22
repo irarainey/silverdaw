@@ -19,10 +19,10 @@ import { clipAnchorOffsetMs } from '@/lib/clip/sourceBeatGrid'
 import { startMsForAlignedBeat } from '@/lib/musicTime'
 import { buildTrackRowLayout } from './trackLayout'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
-import { laneYToValue } from './automationLaneRenderer'
+import { automationHandleAt, laneYToValue } from './automationLaneRenderer'
 import { findAutomationLane, findAutomationLaneAt } from '@/lib/automation/automationLanes'
 import { AUTOMATION_PARAMS } from '@/lib/automation/automationParams'
-import { flatCurve, insertBreakpoint, moveBreakpoint, removeBreakpoint } from '@/lib/automation/breakpoints'
+import { flatCurve, insertBreakpoint, moveBreakpoint, removeBreakpoint, type Breakpoint } from '@/lib/automation/breakpoints'
 import { RULER_HEIGHT, SCROLLBAR_HEIGHT } from './constants'
 import type { GridGeometry } from './useGridGeometry'
 import { createTimelineQueries } from './timelineQueries'
@@ -180,6 +180,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   let autoParam: import('@shared/bridge-protocol').AutomationParamId | null = null
   let autoPointIndex = -1
   let autoGestureId = ''
+  let autoStartPoints: Breakpoint[] = []
+  let autoLastPoints: Breakpoint[] = []
+  let autoGrabMs = 0
+  let autoGrabValue = 0
 
   /** If the pointer is inside a track's expanded automation lane, begin an add /
    *  move / remove edit and return true. Otherwise return false. */
@@ -201,7 +205,7 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (!laneRegion) return false
     const { lane, top } = laneRegion
     const param = lane.paramId
-    const ms = pointerToRawMsClamped(e.clientX)
+    const ms = pointerToRawMs(e.clientX)
     if (ms === null) return false
 
     let points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
@@ -211,16 +215,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       points = flatCurve(Math.max(1, project.durationMs), baseline)
     }
     const pps = geometry.pxPerSecond.value
-    const hitR = 8
-    let nearest = -1
-    for (let i = 0; i < points.length; i++) {
-      const dx = Math.abs(((points[i]!.timeMs - ms) / 1000) * pps)
-      const dy = Math.abs(laneYToValue(param, worldY, top) - points[i]!.value)
-      if (dx < hitR && nearest < 0) nearest = i
-      void dy
-    }
+    const nearest = automationHandleAt(points, param, ms, worldY, top, lane.heightPx, pps)
     if (e.altKey && nearest >= 0) {
       points = removeBreakpoint(points, nearest)
+      ui.setSelectedAutomationPoint(null)
       project.setTrackAutomation(trackId, param, points)
       return true
     }
@@ -236,6 +234,11 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
       points = r.points
       autoPointIndex = r.index
     }
+    autoStartPoints = points
+    autoLastPoints = points
+    autoGrabMs = points[autoPointIndex]!.timeMs - ms
+    autoGrabValue = points[autoPointIndex]!.value - value
+    host.value.focus({ preventScroll: true })
     ui.setSelectedAutomationPoint({ trackId, paramId: param, index: autoPointIndex })
     project.setTrackAutomation(trackId, param, points, { gestureId: autoGestureId })
     window.addEventListener('pointermove', onAutoMove)
@@ -262,17 +265,17 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const ms = pointerToRawMsClamped(e.clientX) ?? 0
     const value = laneYToValue(autoParam, worldY, laneRegion.top, laneRegion.lane.heightPx)
     const d = AUTOMATION_PARAMS[autoParam]
-    const points = (project.tracks[idx]?.automation?.[autoParam] ?? []).map((p) => ({ ...p }))
-    if (autoPointIndex < 0 || autoPointIndex >= points.length) return
-    const next = moveBreakpoint(points, autoPointIndex, ms, value, { min: d.min, max: d.max })
-    project.setTrackAutomation(autoTrackId, autoParam, next, { gestureId: autoGestureId })
+    const next = moveBreakpoint(autoStartPoints, autoPointIndex, ms + autoGrabMs, value + autoGrabValue, { min: d.min, max: d.max })
+    autoLastPoints = next.points
+    project.setTrackAutomation(autoTrackId, autoParam, next.points, { gestureId: autoGestureId })
+    if (ui.selectedAutomationPoint && ui.selectedAutomationPoint.index !== next.index) {
+      ui.setSelectedAutomationPoint({ trackId: autoTrackId, paramId: autoParam, index: next.index })
+    }
   }
 
   function onAutoUp(): void {
     if (autoTrackId && autoParam) {
-      const idx = project.tracks.findIndex((t) => t.id === autoTrackId)
-      const points = project.tracks[idx]?.automation?.[autoParam] ?? []
-      project.setTrackAutomation(autoTrackId, autoParam, [...points], {
+      project.setTrackAutomation(autoTrackId, autoParam, autoLastPoints, {
         gestureId: autoGestureId,
         gestureEnd: true
       })
@@ -280,6 +283,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     autoTrackId = null
     autoParam = null
     autoPointIndex = -1
+    autoStartPoints = []
+    autoLastPoints = []
     window.removeEventListener('pointermove', onAutoMove)
     window.removeEventListener('pointerup', onAutoUp)
     window.removeEventListener('pointercancel', onAutoUp)
@@ -304,16 +309,14 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     )
     if (!laneRegion) return false
     const param = laneRegion.lane.paramId
-    const ms = pointerToRawMsClamped(clientX)
+    const ms = pointerToRawMs(clientX)
     if (ms === null) return false
     const points = (project.tracks[idx]?.automation?.[param] ?? []).map((p) => ({ ...p }))
     if (points.length < 2) return false
     const pps = geometry.pxPerSecond.value
-    let nearest = -1
-    for (let i = 0; i < points.length; i++) {
-      if (Math.abs(((points[i]!.timeMs - ms) / 1000) * pps) < 8) { nearest = i; break }
-    }
-    if (nearest < 0) return false
+    const nearest = automationHandleAt(points, param, ms, worldY, laneRegion.top, laneRegion.lane.heightPx, pps)
+    if (nearest <= 0 || nearest === points.length - 1) return false
+    ui.setSelectedAutomationPoint(null)
     project.setTrackAutomation(trackId, param, removeBreakpoint(points, nearest))
     return true
   }
@@ -405,7 +408,10 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     if (y > bottomLimit) return
 
     // Preserve the established playhead grab gesture wherever its grab cursor is shown.
-    if (!hitTestPlayhead(e.clientX, e.clientY) && tryBeginRangeSelection(e)) return
+    if (!hitTestPlayhead(e.clientX, e.clientY) && tryBeginRangeSelection(e)) {
+      ui.setSelectedAutomationPoint(null)
+      return
+    }
 
     // Automation lane editing claims the bottom strip of an expanded track row.
     if (tryBeginAutomationEdit(e)) return
@@ -966,9 +972,9 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
     const param = laneRegion.lane.paramId
     const pts = project.tracks[idx]?.automation?.[param]
     if (!pts || pts.length < 2) { ui.automationHoverTip = null; return }
-    const ms = pointerToRawMsClamped(clientX) ?? 0
+    const ms = pointerToRawMs(clientX)
     const pps = geometry.pxPerSecond.value
-    const hit = pts.find((p) => Math.abs(((p.timeMs - ms) / 1000) * pps) < 8)
+    const hit = ms === null ? undefined : pts[automationHandleAt(pts, param, ms, worldY, laneRegion.top, laneRegion.lane.heightPx, pps)]
     ui.automationHoverTip = hit
       ? { x: clientX, y: clientY, text: AUTOMATION_PARAMS[param].format(hit.value) }
       : null
@@ -1006,6 +1012,8 @@ export function useDragHandlers(opts: DragHandlersOptions): DragHandlers {
   )
 
   onBeforeUnmount(() => {
+    if (autoTrackId) onAutoUp()
+    ui.setSelectedAutomationPoint(null)
     // A group drag opens EDIT_GROUP_BEGIN on pointerdown and only closes it in
     // onGroupPointerUp. If the timeline unmounts mid-drag that pointerup never
     // arrives, so the backend's group-depth counter stays above zero and every

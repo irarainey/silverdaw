@@ -60,6 +60,7 @@ export function useTimelineRepaintWatches(deps: TimelineRepaintWatchesDeps): voi
     if (horizontalRebuildNeeded()) redraw()
   })
   watch(deps.scrollY, () => redraw())
+  watch(() => ui.selectedAutomationPoint, () => redraw())
 
   watch(
     () => ui.waveformDisplayMode,

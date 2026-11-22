@@ -7,6 +7,11 @@
 - File > Audio Sample Report groups clip placements and available file credits by recording to aid attribution and clearance research.
 - Audio Sample Reports can be exported as timestamped landscape PDFs.
 - New stems and samples retain available recording credits and source ranges across projects.
+- Track automation lanes such as Gain, Pan, and Filter highlight the point selected for arrow-key editing.
+
+### Fixed
+
+- Track automation points can share a time without disappearing and remain individually selectable for dragging or keyboard edits.
 
 ## 1.11.0
 

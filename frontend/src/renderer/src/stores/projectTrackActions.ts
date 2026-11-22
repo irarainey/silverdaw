@@ -302,11 +302,11 @@ export const trackActions = {
       // control takes over (e.g. flattening pan back to centre). Only on a
       // settled edit (discrete change or gesture end), never mid-drag.
       let effective = cleaned
-      const settled = !opts?.gestureId || opts?.gestureEnd === true
+      const settled = !opts?.localOnly && (!opts?.gestureId || opts.gestureEnd === true)
       if (settled && effective.length >= 2) {
         const baseline = trackStaticAutomationValue(track, paramId)
         const tol = Math.max(1e-4, (d.max - d.min) * 1e-3)
-        const flat = effective.every((p) => Math.abs(p.value - effective[0]!.value) <= tol)
+        const flat = effective.every((p) => p.value === effective[0]!.value)
         if (flat && Math.abs(effective[0]!.value - baseline) <= tol) effective = []
       }
       const next = effective.length >= 2 ? effective : undefined
@@ -315,6 +315,12 @@ export const trackActions = {
       if (next) map[paramId] = next
       else delete map[paramId]
       track.automation = Object.keys(map).length > 0 ? map : undefined
+      if (!next) {
+        const ui = useUiStore()
+        if (ui.selectedAutomationPoint?.trackId === trackId && ui.selectedAutomationPoint.paramId === paramId) {
+          ui.setSelectedAutomationPoint(null)
+        }
+      }
       this.timelineRevision++
 
       if (!opts?.localOnly) {
@@ -393,7 +399,7 @@ export const trackActions = {
       const base = track.automation?.[paramId] && track.automation[paramId]!.length >= 2
         ? track.automation[paramId]!
         : flatCurve(track.lengthMs, trackStaticAutomationValue(track, paramId))
-      const { points } = insertBreakpoint(base, timeMs, value, { min: d.min, max: d.max })
+      const { points } = insertBreakpoint(base, timeMs, value, { min: d.min, max: d.max }, 'set')
       runInUndoGroup('Set automation point', () => {
         this.setTrackAutomation(trackId, paramId, points)
       })
@@ -409,8 +415,9 @@ export const trackActions = {
       const p = pts[index]!
       let value = p.value + dValue
       if (dValue !== 0 && (p.value - d.defaultValue) * (value - d.defaultValue) < 0) value = d.defaultValue
-      const next = moveBreakpoint(pts.map((q) => ({ ...q })), index, p.timeMs + dTimeMs, value, { min: d.min, max: d.max })
-      this.setTrackAutomation(trackId, paramId, next)
+      const next = moveBreakpoint(pts, index, p.timeMs + dTimeMs, value, { min: d.min, max: d.max })
+      this.setTrackAutomation(trackId, paramId, next.points)
+      if (next.index !== index) useUiStore().setSelectedAutomationPoint({ trackId, paramId, index: next.index })
     },
 
     removeTrack(trackId: string): void {

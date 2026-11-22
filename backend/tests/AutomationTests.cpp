@@ -117,14 +117,27 @@ void testProjectStateAutomationRoundTrip()
     require(state.getTrackAutomationLanes("t1").size() == 1, "only the pan lane should remain");
 }
 
-void testProjectStateAutomationRejectsDuplicateTimes()
+void testAutomationVerticalSteps()
 {
     silverdaw::ProjectState state;
     require(state.addTrack("t1"), "addTrack should succeed");
     juce::Array<juce::var> pts;
+    pts.add(automationPoint(200.0, 1.0));
     pts.add(automationPoint(100.0, 0.0));
-    pts.add(automationPoint(100.0, 1.0)); // duplicate timeMs
-    require(!state.setTrackAutomation("t1", "filter", pts), "duplicate-time points should be rejected");
+    pts.add(automationPoint(100.0, 1.0));
+    pts.add(automationPoint(200.0, -1.0));
+    require(state.setTrackAutomation("t1", "filter", pts), "store steps with equal times");
+    silverdaw::BreakpointCurve curve;
+    const auto stored = state.getTrackAutomation("t1", "filter");
+    require(stored.size() == 4, "store every handle");
+    for (const auto& point : stored)
+        curve.addPoint(point["timeMs"], static_cast<float>(point["value"]));
+    curve.finalise();
+    std::size_t seg = 0;
+    requireNear(curve.valueAtMs(99.999, seg), 0, 1e-6, "incoming side before first step");
+    requireNear(curve.valueAtMs(100, seg), 1, 1e-6, "outgoing side at first step");
+    requireNear(curve.valueAtMs(200, seg), -1, 1e-6, "outgoing side at last step");
+    requireNear(curve.valueAtMs(199.999, seg), 1, 1e-6, "seek back before last step");
 }
 
 void testProjectStateEffectAutomationCanonicalization()
@@ -190,7 +203,7 @@ void addAutomationTests(std::vector<TestCase>& tests)
     tests.push_back({"BreakpointCurve decibel domain interpolates linear gain in log space", testBreakpointCurveDecibelDomain});
     tests.push_back({"BreakpointCurve degenerate (empty / single-point) curves", testBreakpointCurveDegenerate});
     tests.push_back({"ProjectState track automation store/normalise/clear round-trip", testProjectStateAutomationRoundTrip});
-    tests.push_back({"ProjectState track automation rejects duplicate breakpoint times", testProjectStateAutomationRejectsDuplicateTimes});
+    tests.push_back({"Track automation retains and samples ordered vertical steps", testAutomationVerticalSteps});
     tests.push_back({"ProjectState canonicalizes Saturation and Bit Crusher automation values", testProjectStateEffectAutomationCanonicalization});
     tests.push_back({"tracksAsJson carries per-track automation into PROJECT_STATE", testTracksAsJsonCarriesAutomation});
 }

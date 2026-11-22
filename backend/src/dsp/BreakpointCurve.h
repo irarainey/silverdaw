@@ -54,7 +54,7 @@ class BreakpointCurve
     /** Sort by time so the RT cursor walk is monotone-correct. */
     void finalise()
     {
-        std::sort(points.begin(), points.end(),
+        std::stable_sort(points.begin(), points.end(),
                   [](const Point& a, const Point& b) { return a.timeMs < b.timeMs; });
     }
 
@@ -77,8 +77,8 @@ class BreakpointCurve
 
         const Point& a = points[seg];
         const Point& b = points[seg + 1];
-        if (ms <= a.timeMs) return a.value;
         if (ms >= b.timeMs) return b.value;
+        if (ms <= a.timeMs) return a.value;
 
         const double frac = (ms - a.timeMs) / (b.timeMs - a.timeMs);
         if (domain == InterpDomain::decibel)

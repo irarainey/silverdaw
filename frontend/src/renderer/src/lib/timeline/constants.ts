@@ -98,4 +98,5 @@ export const AUTOMATION_LANE_HEIGHT = 80
 export const AUTOMATION_LANE_DIVIDER = 0x52525b // zinc-600
 export const AUTOMATION_LINE = 0x38bdf8 // sky-400
 export const AUTOMATION_HANDLE = 0xe0f2fe // sky-100
+export const AUTOMATION_HANDLE_SELECTED = 0x0284c7 // sky-600
 export const AUTOMATION_HANDLE_RADIUS_PX = 4

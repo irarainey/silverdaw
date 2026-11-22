@@ -5344,7 +5344,11 @@ Lanes can edit **Filter**, **Pan**, the 3-band **Tone**, **Reverb/Delay sends**,
 **Compressor**, **Punch**, **Saturation**, **Bit Crusher**, or **Gain** (a post-FX track level in
 dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
 move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
-stream coalesces into one undo step. Lane-header controls raise/lower the whole curve, set the
+stream coalesces into one undo step. Drag or nudge one point onto another to
+make a vertical step. The curve approaches the first value and takes the last
+value at that time. Click either handle at its own height to edit it. The
+keyboard target has a blue fill and light outline until it loses focus.
+The outer endpoints can change value but keep their time. Lane-header controls raise/lower the whole curve, set the
 value at the playhead, copy/paste a curve, and reset to default. Pasting into a different
 parameter maps every value through its normalized range, preserving the copied curve's visual
 shape. The picker marks already-automated params with a ● dot, and the value editor shows the
