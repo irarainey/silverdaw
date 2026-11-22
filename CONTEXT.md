@@ -84,9 +84,10 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The **latest designated release is [1.12.0](docs/development-plan.md#release-acceptance-1120)**.
-It adds the offline [Audio Sample Report](docs/developer-guide.md#audio-sample-report)
-and lets track automation points share a time without losing independent selection.
+The **latest designated release is [1.12.1](docs/development-plan.md#release-acceptance-1121)**.
+It fixes clip and scratch point editing, scratch playback and Audio Sample Report scrolling.
+**1.12.0** added the offline [Audio Sample Report](docs/developer-guide.md#audio-sample-report)
+and let track automation points share a time without losing independent selection.
 **1.11.0** added aligned individual track exports and selected-range export for
 both tracks and mixdowns.
 **1.10.1** was a GPU/stem-separation and diagnostic-log reliability patch;
