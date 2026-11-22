@@ -22,6 +22,11 @@ interface Placement {
   excluded?: string
 }
 
+const fileTags = [
+  ['isrc', 'ISRC'], ['composer', 'Composer'], ['label', 'Label'], ['copyright', 'Copyright notice']
+] as const
+type FileTag = typeof fileTags[number][0]
+
 interface ReportSource {
   key: string
   path: string
@@ -29,6 +34,7 @@ interface ReportSource {
   title: string
   artist: string
   album: string
+  fileTags: Partial<Record<FileTag, string>>
   hasSeparatedStems: boolean
   files: { path: string; placements: Placement[] }[]
 }
@@ -241,7 +247,7 @@ export function buildSampleReport(
       const sourcePath = capsule ? origin?.filePath || snapshotName || ''
         : provenance?.sharedKey ? '' : origin?.filePath || path
       const key = provenance?.sharedKey ?? (pathKey(sourcePath) || clip.libraryItemId)
-      const tag = (field: 'title' | 'artist' | 'album') =>
+      const tag = (field: 'title' | 'artist' | 'album' | FileTag) =>
         capsule?.[field]?.trim() || origin?.metadata?.[field]?.trim() || item?.metadata?.[field]?.trim()
       let source = sources.get(key)
       if (!source) {
@@ -252,6 +258,7 @@ export function buildSampleReport(
           title: tag('title') || snapshotName || (provenance?.sharedKey ? 'Unidentified recording' : origin?.fileName || item?.fileName || clip.fileName),
           artist: tag('artist') || 'Cannot be determined',
           album: tag('album') || 'Cannot be determined',
+          fileTags: {},
           files: [],
           hasSeparatedStems: false
         }
@@ -264,6 +271,10 @@ export function buildSampleReport(
         }
         if (source.artist === 'Cannot be determined') source.artist = tag('artist') || source.artist
         if (source.album === 'Cannot be determined') source.album = tag('album') || source.album
+      }
+      for (const [field] of fileTags) {
+        const value = tag(field)
+        if (value && !source.fileTags[field]) source.fileTags[field] = value
       }
       const durationMs = effectiveClipDurationMs(clip)
       let file = source.files.find(file => pathKey(file.path) === pathKey(path))
@@ -291,5 +302,8 @@ export function buildSampleReport(
   }
   for (const source of sources.values()) source.files.sort((a, b) => compareText(a.path, b.path))
   return [...sources.values()].sort((a, b) => compareText(a.title, b.title) || compareText(a.path, b.path))
-    .map(source => ({ ...source, usage: recordingUsage(source.files) }))
+    .map(source => ({
+      ...source, usage: recordingUsage(source.files),
+      fileTags: fileTags.flatMap(([field, label]) => source.fileTags[field] ? [{ label, value: source.fileTags[field] }] : [])
+    }))
 }

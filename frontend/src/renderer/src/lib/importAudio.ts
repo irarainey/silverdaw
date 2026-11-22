@@ -340,8 +340,9 @@ export async function importAudioIntoLibrary(
       ? options && 'inheritedMetadata' in options ? options.inheritedMetadata : await getProjectMedia(mediaId)
       : enrichedMetadata
     const tags = stored ?? media
-    const sourceTags = tags && (tags.title || tags.artist || tags.album)
-      ? { title: tags.title, artist: tags.artist, album: tags.album }
+    const sourceTags = tags
+      ? { title: tags.title, artist: tags.artist, album: tags.album, isrc: tags.isrc,
+          composer: tags.composer, label: tags.label, copyright: tags.copyright }
       : undefined
     const itemId = library.addItem({
       attribution: options?.attribution,

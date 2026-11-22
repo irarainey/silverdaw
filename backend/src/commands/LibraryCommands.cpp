@@ -45,7 +45,7 @@ void captureLibraryAddAttribution(ProjectState& state, BridgeServer& bridge, con
     if (auto* out = attribution.getDynamicObject())
     {
         const auto tags = payload.getProperty("sourceTags", {});
-        for (const auto* key : {"title", "artist", "album"})
+        for (const auto* key : {"title", "artist", "album", "isrc", "composer", "label", "copyright"})
             if (const auto tag = readOptionalString(tags, key); tag && tag->isNotEmpty())
                 out->setProperty(key, *tag);
     }

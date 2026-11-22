@@ -116,7 +116,7 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
     })
     if (canceled || !filePath) return null
     if (!filePath.toLowerCase().endsWith('.pdf')) throw new Error('Choose a PDF file.')
-    const pdf = await win.webContents.printToPDF({ pageSize: 'A4' })
+    const pdf = await win.webContents.printToPDF({ pageSize: 'A4', landscape: true })
     await writeFile(filePath, pdf)
     reportDestination = { project, folder: dirname(filePath) }
     return filePath

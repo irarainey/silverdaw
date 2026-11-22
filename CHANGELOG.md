@@ -4,7 +4,7 @@
 
 ### Added
 
-- File > Audio Sample Report groups clip placements by source and remembers the PDF export folder only while the project is open.
+- File > Audio Sample Report groups clip placements and available file credits by recording to aid attribution and clearance research.
 - New stems and samples retain their original recording and source passage for attribution across projects.
 
 ## 1.11.0

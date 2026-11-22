@@ -87,6 +87,16 @@ async function exportPdf(): Promise<void> {
             </h3>
             <p><strong>Artist:</strong> {{ source.artist }}</p>
             <p><strong>Album:</strong> {{ source.album }}</p>
+            <div v-if="source.fileTags.length">
+              <strong>File metadata</strong>
+              <p
+                v-for="tag in source.fileTags"
+                :key="tag.label"
+                class="pl-4"
+              >
+                <strong>{{ tag.label }}:</strong> {{ tag.value }}
+              </p>
+            </div>
             <p>
               <strong>Source file:</strong> {{ reportFilePath(source.path, projectRoot) || 'Cannot be determined' }}
               <span v-if="source.pathMatch">(matched by {{ source.pathMatch }})</span>

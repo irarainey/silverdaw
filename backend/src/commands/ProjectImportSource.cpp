@@ -40,7 +40,7 @@ juce::var importAttribution(const juce::ValueTree& library, const SourceLibraryI
             continue;
         const auto record = juce::JSON::parse(file.loadFileAsString());
         const auto tags = record.getProperty("metadata", {});
-        for (const auto* field : {"title", "artist", "album"})
+        for (const auto* field : {"title", "artist", "album", "isrc", "composer", "label", "copyright"})
         {
             const auto tag = tags.getProperty(field, {});
             if (!snapshot->hasProperty(field) && tag.isString() && tag.toString().trim().isNotEmpty())

@@ -1620,6 +1620,11 @@ sit at the same absolute path on the other machine. Peaks are deliberately **not
 with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
 source on demand.
 
+**Audio Sample Report** — An offline aid for attribution and clearance research,
+not a clearance determination. The report lists the ISRC, composer, label and
+copyright notice when available in local file metadata. These tags are shown
+as supplied; they do not verify ownership or permission to use the recording.
+
 **Audio Sample Report provenance** — An optional `attribution` property on a
 library item identifies its original recording independently of its immediate
 parent. The snapshot carries a basename, not a foreign machine's path. Its

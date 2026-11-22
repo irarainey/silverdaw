@@ -41,6 +41,9 @@ export interface AudioMetadata {
   bpm?: number
   key?: string
   composer?: string
+  isrc?: string
+  label?: string
+  copyright?: string
   comment?: string
   codec?: string
   container?: string

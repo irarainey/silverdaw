@@ -16,7 +16,8 @@ juce::var readSnapshot(const juce::var& value)
     if (!value.isObject()) return {};
     juce::var result(new juce::DynamicObject());
     auto& out = *result.getDynamicObject();
-    for (const auto* key : {"recordingId", "fileName", "parentId", "title", "artist", "album", "stemRole"})
+    for (const auto* key : {"recordingId", "fileName", "parentId", "title", "artist", "album",
+                            "isrc", "composer", "label", "copyright", "stemRole"})
     {
         auto field = value.getProperty(key, {});
         if (!field.isString()) continue;

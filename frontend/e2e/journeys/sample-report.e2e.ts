@@ -39,6 +39,7 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await expect(report.getByRole('heading', { name: 'Track: sample-report.wav' })).toBeVisible()
   await expect(report.getByText('Artist: Cannot be determined', { exact: true })).toBeVisible()
   await expect(report.getByText('Album: Cannot be determined', { exact: true })).toBeVisible()
+  await expect(report.getByText('File metadata', { exact: true })).toHaveCount(0)
   await expect(report.getByRole('cell', { name: 'Source', exact: true })).toBeVisible()
   await expect(report.getByRole('columnheader', { name: 'Original recording range' })).toBeVisible()
   await expect(report).toContainText('Known distinct passages: 1')
@@ -76,7 +77,11 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   expect(files()).toHaveLength(1)
   for (const name of files()) {
     expect(name).toMatch(/^Audio Sample Report \d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.pdf$/)
-    expect(readFileSync(join(audit, name)).subarray(0, 5).toString()).toBe('%PDF-')
+    const pdf = readFileSync(join(audit, name)).toString('latin1')
+    expect(pdf.startsWith('%PDF-')).toBe(true)
+    const pages = [...pdf.matchAll(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/g)]
+    expect(pages.length).toBeGreaterThan(0)
+    for (const [, width, height] of pages) expect(Number(width)).toBeGreaterThan(Number(height))
   }
 
   const first = join(root, 'Attribution', 'Attribution.silverdaw')
@@ -89,6 +94,7 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   item.kind = 'sample'
   item.attribution = {
     recordingId: 'missing-recording', fileName: 'Original.mp3', artist: 'Recording artist',
+    isrc: 'GBABC2600001', composer: 'A. Writer', label: 'Example label', copyright: 'Example notice',
     startMs: 10300, endMs: 14450
   }
   writeFileSync(second, JSON.stringify(document))
@@ -105,7 +111,11 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
       await expect(report).toContainText('Artist: Recording artist')
       const window = report.getByRole('cell', { name: 'Within 0:10.300 – 0:14.450 (source window only)' })
       await expect(window).toBeVisible()
+      await expect(report.getByText('ISRC: GBABC2600001')).toBeVisible()
+      await expect(report.getByText('Composer: A. Writer')).toBeVisible()
+      await expect(report.getByText('Label: Example label')).toBeVisible()
       await page.emulateMedia({ media: 'print' })
+      await expect(report.getByText('Copyright notice: Example notice')).toBeVisible()
       await expect(window).toBeVisible()
       await page.emulateMedia({ media: 'screen' })
     }

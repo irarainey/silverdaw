@@ -151,7 +151,7 @@ export interface ClipEditorPeaksRequestPayload {
 /** Register a library item so its durable fields persist; volatile data (peaks, URLs) is rebuilt on demand. */
 export interface LibraryAddPayload {
   attribution?: RecordingAttribution
-  sourceTags?: Pick<RecordingAttribution, 'title' | 'artist' | 'album'>
+  sourceTags?: Pick<RecordingAttribution, 'title' | 'artist' | 'album' | 'isrc' | 'composer' | 'label' | 'copyright'>
   itemId: string
   filePath: string
   kind?: LibraryItemKind
