@@ -32,6 +32,20 @@ describe('useClipEditorVolumeShapeDraft', () => {
     expect(d.committedPoints()).toEqual(pts)
   })
 
+  it('saves authored unity handles but treats an old explicit default line as unchanged', () => {
+    const d = useClipEditorVolumeShapeDraft()
+    d.initialise(clipWith([{ timeMs: 0, gain: 1 }, { timeMs: 1000, gain: 1 }]), 1000)
+    expect(d.hasChanged.value).toBe(false)
+    d.addPoint(500, 1)
+    d.addPoint(500, 1)
+    const saved = d.committedPoints()
+    expect(saved.slice(1, 3)).toEqual([{ timeMs: 500, gain: 1 }, { timeMs: 500, gain: 1 }])
+    expect(d.hasChanged.value).toBe(true)
+    d.initialise(clipWith(saved), 1000)
+    expect(d.hasChanged.value).toBe(false)
+    expect(d.draftPoints.value).toEqual(saved)
+  })
+
   it('becomes dirty after bending a handle', () => {
     const d = useClipEditorVolumeShapeDraft()
     d.initialise(clipWith(undefined), 1000)

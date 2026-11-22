@@ -469,7 +469,7 @@ export interface ClipEnvelopePoint {
   gain: number
 }
 
-/** Per-clip volume envelope (one atomic mutation per drag); backend sorts/clamps/dedupes. Empty = cleared. */
+/** Per-clip volume envelope; equal times preserve authored order. Empty = cleared. */
 export interface ClipSetEnvelopePayload extends GestureHints {
   clipId: string
   points: ClipEnvelopePoint[]

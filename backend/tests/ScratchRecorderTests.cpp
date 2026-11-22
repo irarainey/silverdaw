@@ -480,6 +480,22 @@ void testBakePatternToBufferRendersAudio()
             "baked scratch should contain audible signal");
 }
 
+void testBakeSubBlockCrossfaderCut()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto audio = makeRecorderTestBuffer(48000, sampleRate);
+    scratch::Pattern pattern;
+    pattern.durationUs = pattern.cropEndUs = 20000;
+    pattern.ownerDeck = scratch::DeckSide::deck2;
+    pattern.platter = {{0, 0.1, false}, {20000, 0.11, false}};
+    // Both cuts fall before the midpoint of the first 512-sample bake block.
+    pattern.crossfader = {{0, 0}, {1000, 0}, {1000, 1}, {3000, 1}, {3000, 0}, {20000, 0}};
+    const auto baked = scratch::bakePatternToBuffer(pattern, audio, sampleRate);
+    require(baked.getNumSamples() == 960, "baked cut keeps the pattern duration");
+    require(baked.getMagnitude(0, 0, 48) == 0.0f, "a closed fader stays silent before the cut");
+    require(baked.getMagnitude(0, 48, 96) > 0.001f, "a sub-block fader opening must be audible");
+}
+
 void testBakePatternToBufferHandlesMissingInputs()
 {
     // Empty/degenerate inputs must yield an empty buffer, never crash.
@@ -688,6 +704,7 @@ void addScratchRecorderTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch recorder engine integration", testRecorderEngineIntegration});
     tests.push_back({"scratch draft pattern replay uses scratch source", testDraftPatternReplayUsesScratchSource});
     tests.push_back({"scratch bake pattern to buffer renders audio", testBakePatternToBufferRendersAudio});
+    tests.push_back({"scratch bake sub-block crossfader cut", testBakeSubBlockCrossfaderCut});
     tests.push_back({"scratch bake pattern to buffer handles missing inputs", testBakePatternToBufferHandlesMissingInputs});
     tests.push_back({"scratch recorder abort on session close", testRecorderAbortOnSessionClose});
     tests.push_back({"scratch recorder saturated lane capacity", testRecorderSaturatedLaneCapacity});

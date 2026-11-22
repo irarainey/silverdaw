@@ -13,6 +13,14 @@ export function overlayGainToDb(gain: number): number {
   return Math.min(OVERLAY_DB_MAX, Math.max(OVERLAY_DB_MIN, 20 * Math.log10(gain)))
 }
 
+/** Move by a displayed dB interval, with true silence at the bottom stop. */
+export function nudgeOverlayGain(gain: number, deltaDb: number): number {
+  const db = overlayGainToDb(gain) + deltaDb
+  if (db <= OVERLAY_DB_MIN) return ENVELOPE_MIN_GAIN
+  if (db >= OVERLAY_DB_MAX) return ENVELOPE_MAX_GAIN
+  return Math.pow(10, db / 20)
+}
+
 /** Linear gain → y pixel within `[top, top + height]`. */
 export function overlayGainToY(gain: number, top: number, height: number): number {
   const db = overlayGainToDb(gain)
@@ -52,7 +60,9 @@ export function hitTestHandle(
   positions: readonly { x: number; y: number }[],
   px: number,
   py: number,
-  hitRadius: number
+  hitRadius: number,
+  selectedIndex: number | null = null,
+  cycle = false
 ): number | null {
   let best: number | null = null
   let bestD = hitRadius * hitRadius
@@ -62,11 +72,17 @@ export function hitTestHandle(
     const dx = p.x - px
     const dy = p.y - py
     const d = dx * dx + dy * dy
-    if (d <= bestD) {
+    if (d < bestD || (best === null && d === bestD)) {
       bestD = d
       best = i
     }
   }
+  if (best === null || selectedIndex === null) return best
+  const target = positions[best]!
+  const same = (i: number): boolean => positions[i]?.x === target.x && positions[i]?.y === target.y
+  if (!same(selectedIndex)) return best
+  if (!cycle) return selectedIndex
+  for (let i = selectedIndex + 1; i < positions.length; i++) if (same(i)) return i
   return best
 }
 

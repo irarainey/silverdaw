@@ -59,7 +59,7 @@ async function exportPdf(): Promise<void> {
       <div
         ref="card"
         tabindex="-1"
-        class="dialog-card w-[min(1440px,98vw)]"
+        class="dialog-card h-[90vh] w-[min(1440px,98vw)]"
       >
         <header class="dialog-header">
           <h1
@@ -69,8 +69,8 @@ async function exportPdf(): Promise<void> {
             Audio Sample Report
           </h1>
         </header>
-        <div class="dialog-body silverdaw-scroll space-y-3 break-words text-xs">
-          <div class="space-y-1">
+        <div class="dialog-body silverdaw-scroll space-y-3 break-words text-xs leading-relaxed text-zinc-100">
+          <div class="grid gap-x-8 gap-y-1 md:grid-cols-2">
             <h2><strong>Project name:</strong> {{ project.projectName }}</h2>
             <p><strong>Location:</strong> {{ projectRoot || 'Project not yet saved' }}</p>
           </div>
@@ -80,56 +80,68 @@ async function exportPdf(): Promise<void> {
           <section
             v-for="source in sources"
             :key="source.key"
-            class="space-y-1 border-t border-zinc-800 pt-3"
+            class="space-y-3 border-t border-zinc-700 pt-5 print:border-zinc-300 print:pt-3"
           >
-            <h3>
+            <h3 class="text-sm font-medium">
               <strong>Track:</strong> {{ source.title }}
             </h3>
-            <p><strong>Artist:</strong> {{ source.artist }}</p>
-            <p><strong>Album:</strong> {{ source.album }}</p>
-            <div v-if="source.fileTags.length">
-              <strong>File metadata</strong>
-              <p
-                v-for="tag in source.fileTags"
-                :key="tag.label"
-                class="pl-4"
-              >
-                <strong>{{ tag.label }}:</strong> {{ tag.value }}
-              </p>
+            <div class="grid gap-x-8 gap-y-3 md:grid-cols-2">
+              <div class="min-w-0 space-y-1 [&>:not(:first-child)]:ps-3">
+                <h4 class="report-subheading bg-zinc-800 p-1 print:bg-transparent">
+                  Recording details
+                </h4>
+                <p><strong>Artist:</strong> {{ source.artist }}</p>
+                <p><strong>Album:</strong> {{ source.album }}</p>
+                <p>
+                  <strong>Source file:</strong> {{ reportFilePath(source.path, projectRoot) || 'Cannot be determined' }}
+                  <span v-if="source.pathMatch">(matched by {{ source.pathMatch }})</span>
+                </p>
+                <p v-if="source.hasSeparatedStems">
+                  <strong>Provenance:</strong> Includes separated stems.
+                </p>
+                <template v-if="source.fileTags.length">
+                  <h4 class="report-subheading">
+                    File metadata
+                  </h4>
+                  <p
+                    v-for="tag in source.fileTags"
+                    :key="tag.label"
+                    class="ms-3"
+                  >
+                    <strong>{{ tag.label }}:</strong> {{ tag.value }}
+                  </p>
+                </template>
+              </div>
+              <div class="min-w-0 space-y-1 tabular-nums [&>:not(:first-child)]:ps-3">
+                <h4 class="report-subheading bg-zinc-800 p-1 print:bg-transparent">
+                  Usage in this project
+                </h4>
+                <p><strong>Placements:</strong> {{ source.usage.placements }}</p>
+                <p><strong>Stems:</strong> {{ source.usage.stems }}</p>
+                <p>
+                  <strong>Known distinct passages:</strong> {{ source.usage.passages }}
+                  <span v-if="source.usage.knownOriginalMs !== undefined"> ({{ time(source.usage.knownOriginalMs) }} of the original)</span>
+                </p>
+                <p v-if="source.usage.windowOnly">
+                  <strong>Placements with source window only:</strong> {{ source.usage.windowOnly }}
+                </p>
+                <p v-if="source.usage.unmapped">
+                  <strong>Placements with unknown original range:</strong> {{ source.usage.unmapped }}
+                </p>
+                <p><strong>Timeline coverage:</strong> {{ time(source.usage.arrangedMs) }} arranged</p>
+                <p v-if="source.usage.excluded">
+                  <strong>After mute/solo:</strong> {{ time(source.usage.includedMs) }} ({{ source.usage.excluded }} excluded)
+                </p>
+              </div>
             </div>
-            <p>
-              <strong>Source file:</strong> {{ reportFilePath(source.path, projectRoot) || 'Cannot be determined' }}
-              <span v-if="source.pathMatch">(matched by {{ source.pathMatch }})</span>
-            </p>
-            <p v-if="source.hasSeparatedStems">
-              <strong>Provenance:</strong> Includes separated stems.
-            </p>
-            <p>
-              <strong>Placements:</strong> {{ source.usage.placements }} ·
-              <strong>Stems:</strong> {{ source.usage.stems }} · <strong>Known distinct passages:</strong> {{ source.usage.passages }}
-              <span v-if="source.usage.knownOriginalMs !== undefined"> ({{ time(source.usage.knownOriginalMs) }} of the original)</span>
-              <span v-if="source.usage.windowOnly"> · Placements with source window only: {{ source.usage.windowOnly }}</span>
-              <span v-if="source.usage.unmapped"> · Placements with unknown original range: {{ source.usage.unmapped }}</span>
-            </p>
-            <p>
-              <strong>Timeline coverage:</strong> {{ time(source.usage.arrangedMs) }} arranged
-              <span v-if="source.usage.excluded">
-                · {{ time(source.usage.includedMs) }} after mute/solo ({{ source.usage.excluded }} excluded)
-              </span>
-            </p>
             <table class="w-full text-left text-[11px]">
-              <thead>
+              <thead class="bg-zinc-800 print:bg-transparent">
                 <tr><th>Project track</th><th>Clip</th><th>File type</th><th>Timeline range</th><th>Duration</th><th>File range</th><th>Original recording range</th></tr>
               </thead>
               <tbody
                 v-for="file in source.files"
                 :key="file.path"
               >
-                <tr v-if="file.path === source.path && source.files.length > 1">
-                  <td colspan="7">
-                    <strong>Original file</strong>
-                  </td>
-                </tr>
                 <tr
                   v-for="use in file.placements"
                   :key="use.id"
@@ -184,7 +196,8 @@ async function exportPdf(): Promise<void> {
 </template>
 
 <style scoped>
-th, td { padding: 0.25rem; overflow-wrap: anywhere; }
+.report-subheading { font-size: 0.8125rem; font-weight: 600; }
+th, td { padding: 0.25rem; padding-inline-start: 1rem; overflow-wrap: anywhere; }
 td:nth-child(n+4) { font-family: monospace; }
 @media print {
   :global(html), :global(body) { height: auto; overflow: visible; background: white; }

@@ -138,6 +138,9 @@ PatternReplaySnapshot ScratchPatternEvaluator::buildSnapshot(const Pattern& patt
         const std::int64_t relTime = kf.timeUs - pattern.cropStartUs;
         if (relTime < 0) continue;
         if (relTime > cropDuration) break;
+        if (!snap.crossfader.empty() && relTime == snap.crossfader.back().timeUs
+            && (snap.crossfaderCutsUs.empty() || relTime != snap.crossfaderCutsUs.back()))
+            snap.crossfaderCutsUs.push_back(relTime);
         snap.crossfader.push_back({relTime, kf.value});
     }
 
@@ -210,7 +213,7 @@ double ScratchPatternEvaluator::interpolateCrossfader(
     std::int64_t timeUs) noexcept
 {
     if (lane.empty()) return 1.0;
-    if (timeUs <= lane.front().timeUs) return lane.front().value;
+    if (timeUs < lane.front().timeUs) return lane.front().value;
     if (timeUs >= lane.back().timeUs) return lane.back().value;
 
     auto it = std::upper_bound(lane.begin(), lane.end(), timeUs,

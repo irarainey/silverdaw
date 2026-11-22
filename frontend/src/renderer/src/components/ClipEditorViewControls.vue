@@ -61,7 +61,7 @@ defineEmits<{
         viewExpanded
           ? 'Switch to the Clip view to shape volume'
           : volumeEditMode
-            ? 'Volume shaping on — drag to add or move breakpoints; hold Shift to snap to beats'
+            ? 'Drag to shape volume; hold Shift to snap. Click again to cycle stacked points, or use Tab and the arrow keys.'
             : 'Shape the clip volume over time on the waveform'
       "
       @click="volumeEditMode = !volumeEditMode"

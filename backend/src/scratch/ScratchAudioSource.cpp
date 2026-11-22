@@ -1,6 +1,7 @@
 #include "ScratchAudioSource.h"
 #include "ScratchPatternEvaluator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <thread>
 
@@ -104,6 +105,45 @@ void ScratchAudioSource::prepareToPlay(int samplesPerBlockExpected, double newOu
     sourceEndReached.store(false, std::memory_order_release);
 }
 
+void ScratchAudioSource::renderReplayGain(const juce::AudioSourceChannelInfo& info,
+                                          const PatternReplaySnapshot& replay,
+                                          const EvalResult& blockMidpoint) noexcept
+{
+    auto render = [&](int start, int count, double position, double gain) {
+        processor.setTargetGain(static_cast<float>(gain));
+        processor.process(*audio, *info.buffer, info.startSample + start, count);
+        replayCrossfaderPosition.store(position, std::memory_order_release);
+    };
+    if (replay.crossfaderCutsUs.empty())
+    {
+        render(0, info.numSamples, blockMidpoint.crossfaderPosition, blockMidpoint.crossfaderGain);
+        return;
+    }
+    // A block midpoint can miss a whole cut. Split at its first outgoing sample,
+    // retaining the normal de-click smoothing and platter rate.
+    const auto sampleTimeUs = [&](int offset) {
+        return static_cast<std::int64_t>(static_cast<double>(replayOutputSamples + offset)
+                                         * 1000000.0 / outputSampleRate);
+    };
+    for (int start = 0; start < info.numSamples;)
+    {
+        const auto cut = std::upper_bound(replay.crossfaderCutsUs.begin(), replay.crossfaderCutsUs.end(),
+                                          sampleTimeUs(start));
+        int end = info.numSamples;
+        if (cut != replay.crossfaderCutsUs.end() && *cut <= sampleTimeUs(end - 1))
+        {
+            const auto cutSample = static_cast<std::int64_t>(std::ceil(
+                static_cast<double>(*cut) * outputSampleRate / 1000000.0));
+            end = static_cast<int>(std::clamp<std::int64_t>(cutSample - replayOutputSamples, start + 1, end));
+        }
+        const auto midpoint = sampleTimeUs(start + (end - start - 1) / 2);
+        const auto position = ScratchPatternEvaluator::interpolateCrossfader(
+            replay.crossfader, std::min(midpoint, replay.durationUs() - 1));
+        render(start, end - start, position, ScratchPatternEvaluator::linearV1Gain(position, replay.ownerDeck));
+        start = end;
+    }
+}
+
 void ScratchAudioSource::releaseResources()
 {
 }
@@ -166,11 +206,7 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
 
         processor.setManualWeightEngaged(false);
         processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
-        processor.setTargetGain(static_cast<float>(evaluation.crossfaderGain));
-        replayCrossfaderPosition.store(
-            evaluation.crossfaderPosition,
-            std::memory_order_release);
-        processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
+        renderReplayGain(info, *replay, evaluation);
         replayOutputSamples += info.numSamples;
         outputSampleCounter.store(blockStart + info.numSamples, std::memory_order_release);
         publishedSourcePosition.store(processor.getSourcePosition(), std::memory_order_release);
@@ -348,12 +384,14 @@ void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapsho
                                  * sourceSampleRate;
     const auto initial = ScratchPatternEvaluator::evaluate(
         *snapshot, juce::jmin<std::int64_t>(snapshot->durationUs() - 1, 1));
+    const auto initialPositionCf = snapshot->crossfaderCutsUs.empty() ? initial.crossfaderPosition
+        : ScratchPatternEvaluator::interpolateCrossfader(snapshot->crossfader, 0);
     processor.reset(
         initialPosition,
         initial.playbackRate * sourceSamplesPerOutputSample,
-        static_cast<float>(initial.crossfaderGain));
+        static_cast<float>(ScratchPatternEvaluator::linearV1Gain(initialPositionCf, snapshot->ownerDeck)));
     replayCrossfaderPosition.store(
-        initial.crossfaderPosition,
+        initialPositionCf,
         std::memory_order_release);
     publishedSourcePosition.store(initialPosition, std::memory_order_release);
     replaySnapshot.store(snapshot, std::memory_order_release);

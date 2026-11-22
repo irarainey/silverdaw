@@ -1585,7 +1585,7 @@ lengthBeats, division }` regions stored
 in beat space; older projects simply have none. `CLIP.envelopePoints` is
 an optional `{ timeMs, gain }` breakpoint array — the per-clip **Volume Shape**;
 `gain` is linear in `[0, 4]` (`1.0` = unity) and the property is normalised
-(sorted, clamped, de-duplicated) backend-side and removed entirely when the
+(sorted and clamped) backend-side and removed entirely when the
 shape is cleared. `viewSelectedTrack` / `viewFxPanelOpen` / `viewFxTab` are view
 state for the bottom-panel FX tabs — the tab is stored opaquely, like the snap
 grid, so a value a build does not recognise falls back to Track FX rather than
@@ -3987,7 +3987,11 @@ replay with the playhead held near the centre of the viewport.
 
 Click a notation point to select it, then drag it or use the keyboard controls
 listed below. Double-click a lane to add a point; right-click an editable point
-to remove it. Endpoint points remain pinned. Every notation edit changes the
+to remove it. The highlight clears when focus leaves the notation editor.
+Crossfader points can share a time: the first value ends the preceding ramp
+and the last takes effect at the cut. Platter times remain strictly increasing:
+two different platter positions at one instant would jump the source audio.
+Endpoint points remain pinned. Every notation edit changes the
 action data, marks the draft dirty, and participates in the notation-local
 undo/redo history; one point drag is one undo step. Cropping clips the lanes,
 evaluates values at the new boundaries, rebases time to zero, and preserves the
@@ -5204,6 +5208,7 @@ and the following set takes over instead:
 | **Reverse** toolbar toggle | Play the clip back-to-front. Mutually exclusive with the Brake / Backspin tail effects — kept visible but disabled while one of those is set (turn it off first). Part of the transactional draft and previewed live; **Save** commits it (following the same scope as the other edits), **Cancel** discards. |
 | **Brake** / **Backspin** toolbar toggles | Apply a turntable record-stop (Brake) or reverse-rewind (Backspin) tail effect, drawing a matching red / violet deceleration overlay on the waveform tail. Reverse, Brake and Backspin form a mutually-exclusive group — each toggle stays visible but is disabled while any other in the group is set. Part of the transactional draft and auditioned live on the preview voice; **Save** commits the flag (propagating to every linked instance, like reverse), **Cancel** discards. |
 | Click / drag on waveform (Volume mode on) | Add a breakpoint, or drag an existing one — freehand placement by default. Endpoints keep their pinned times. |
+| Arrow keys with a Volume Shape point focused | Left/right move the point in time. Up/down adjust gain by 1 dB, or 0.1 dB with `Shift`. Points at the same time can form an instantaneous gain change. |
 | `Shift` + click / drag (Volume mode on) | Snap the breakpoint to the nearest source beat while adding or moving it. |
 | `Alt` + click or right-click a breakpoint (Volume mode on) | Remove that breakpoint (pinned endpoints can't be removed). |
 | **Silence** / **Full** toolbar buttons (`S` / `F`) | Flatten the current sub-selection to silence or full volume with hard step edges (a region gate). Enabled once a range is selected; the rest of the shape is left untouched. The `S` and `F` keys trigger the same gate without drawing the envelope. |

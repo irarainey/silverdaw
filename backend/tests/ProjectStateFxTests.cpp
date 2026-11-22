@@ -129,10 +129,20 @@ void testProjectStateClipEnvelopeNormalisation()
         juce::Array<juce::var> dup;
         dup.add(makePoint(50.0, 1.0));
         dup.add(makePoint(50.0, 0.5));
-        require(!state.setClipEnvelope("c-env", dup),
-                "duplicate timeMs must be rejected (no mutation)");
-        require(state.getClipEnvelope("c-env").size() == 3,
-                "rejected duplicate must leave prior envelope intact");
+        require(state.setClipEnvelope("c-env", dup), "equal-time handles form a step");
+        require(!state.setClipEnvelope("c-env", dup), "unchanged ordered step is a no-op");
+        const auto step = state.getClipEnvelope("c-env");
+        require(step.size() == 2, "both sides of a step are retained");
+        requireNear(static_cast<double>(step[1].getProperty("gain", 0.0)), 0.5, 1e-6,
+                    "equal-time handles retain input order");
+        const auto json = juce::JSON::toString(ValueTreeJson::toVar(state.getTree()));
+        ProjectState reopened;
+        require(reopened.replaceTree(ValueTreeJson::fromVar(juce::JSON::parse(json))).wasOk(),
+                "ordered shape loads through the project JSON codec");
+        const auto loaded = reopened.getClipEnvelope("c-env");
+        require(loaded.size() == 2, "reopening retains both handles");
+        requireNear(static_cast<double>(loaded[0]["gain"]), 1.0, 1e-6, "incoming gain reloads");
+        requireNear(static_cast<double>(loaded[1]["gain"]), 0.5, 1e-6, "outgoing gain reloads");
 
         juce::Array<juce::var> empty;
         require(state.setClipEnvelope("c-env", empty),
@@ -701,7 +711,7 @@ void testProjectStateAutomationLaneViewPersistence()
 void addProjectStateFxTests(std::vector<TestCase>& tests)
 {
     tests.push_back({"ProjectState per-track sends round-trip + default suppression", testProjectStateTrackSendsRoundTrip});
-    tests.push_back({"ProjectState clip envelope sort / dedupe / clear", testProjectStateClipEnvelopeNormalisation});
+    tests.push_back({"ProjectState clip envelope stable sort / steps / clear", testProjectStateClipEnvelopeNormalisation});
     tests.push_back({"ProjectState project delay noteValue guard", testProjectStateDelayNoteValueGuard});
     tests.push_back({"ProjectState safety limiter default and round-trip", testProjectStateSafetyLimiterDefaultsAndRoundTrip});
     tests.push_back({"ProjectState Glue Compressor defaults, persistence, and legacy round-trip", testProjectStateMixGlueDefaultsAndRoundTrip});

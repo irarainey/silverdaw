@@ -39,7 +39,7 @@ class EnvelopeSnapshot
                 {t, static_cast<float>(g),
                  static_cast<float>(20.0 * std::log10(std::max(g, kGainFloor)))});
         }
-        std::sort(snap->points.begin(), snap->points.end(),
+        std::stable_sort(snap->points.begin(), snap->points.end(),
                   [](const Point& a, const Point& b) { return a.timeMs < b.timeMs; });
         return snap;
     }
@@ -60,8 +60,8 @@ class EnvelopeSnapshot
 
         const Point& a = points[seg];
         const Point& b = points[seg + 1];
-        if (ms <= a.timeMs) return a.gainLinear;
         if (ms >= b.timeMs) return b.gainLinear;
+        if (ms <= a.timeMs || a.gainLinear == b.gainLinear) return a.gainLinear;
 
         const double frac = (ms - a.timeMs) / (b.timeMs - a.timeMs);
         const double db = static_cast<double>(a.gainDb) +

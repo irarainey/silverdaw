@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.12.1
+
+### Fixed
+
+- The Audio Sample Report dialog keeps a consistent height and scrolls longer reports.
+- The Clip Editor now highlights the Volume Shape point targeted by the arrow keys.
+- Clip Volume Shape and scratch crossfader points can share a time for an
+  instantaneous change and remain individually editable.
+- Scratch platter and crossfader points lose their highlight when the notation
+  editor loses keyboard focus.
+
 ## 1.12.0
 
 ### Added

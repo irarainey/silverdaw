@@ -156,6 +156,13 @@ void testScratchPatternPayload()
 
 void testScratchPatternOrderingAndBounds()
 {
+    auto lanes = scratch::parsePattern(makeValidPatternVar()).value();
+    lanes.crossfader = {{0, 0.0}, {400, 1.0}, {300, 0.0}, {lanes.durationUs, 1.0}};
+    require(!scratch::parsePattern(scratch::serializePattern(lanes)), "descending fader times reject");
+    lanes.crossfader[2].timeUs = 400;
+    require(scratch::parsePattern(scratch::serializePattern(lanes)).has_value(), "ordered fader cuts parse");
+    lanes.platter.insert(lanes.platter.begin() + 1, {0, 0.5, true});
+    require(!scratch::parsePattern(scratch::serializePattern(lanes)), "same-time platter jumps reject");
     const auto invalidOrder = parseJson(R"json({
         "id":"scratch-1",
         "name":"First take",

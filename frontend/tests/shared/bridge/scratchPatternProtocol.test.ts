@@ -31,6 +31,17 @@ function makePattern() {
 }
 
 describe('ScratchPatternSavePayload schema', () => {
+  it('permits ordered crossfader cuts but rejects decreasing times and platter teleports', () => {
+    const pattern = makePattern()
+    const payload = { protocolVersion: SCRATCH_PROTOCOL_VERSION, sessionId: 's', pattern }
+    pattern.crossfader.splice(1, 0, { timeUs: 10, value: 0.2 }, { timeUs: 10, value: 0.8 })
+    expect(ScratchPatternSavePayloadSchema.parse(payload).pattern.crossfader).toEqual(pattern.crossfader)
+    pattern.crossfader[1]!.timeUs++
+    expect(ScratchPatternSavePayloadSchema.safeParse(payload).success).toBe(false)
+    pattern.crossfader[1]!.timeUs--
+    pattern.platter.splice(1, 0, { ...pattern.platter[0]!, turns: 1 })
+    expect(ScratchPatternSavePayloadSchema.safeParse(payload).success).toBe(false)
+  })
   it('accepts a valid save payload', () => {
     const result = ScratchPatternSavePayloadSchema.safeParse({
       protocolVersion: SCRATCH_PROTOCOL_VERSION,

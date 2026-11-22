@@ -1,5 +1,6 @@
 #include "ScratchProtocol.h"
 #include "ScratchProtocolInternal.h"
+#include <type_traits>
 
 namespace silverdaw::scratch
 {
@@ -26,7 +27,8 @@ std::optional<std::vector<Point>> parseKeyframes(const juce::var& object, const 
     for (const auto& item : *array)
     {
         auto point = parsePoint(item);
-        if (!point || point->timeUs <= previousTimeUs || point->timeUs > durationUs)
+        if (!point || point->timeUs < previousTimeUs || point->timeUs > durationUs
+            || (std::is_same_v<Point, PlatterKeyframe> && point->timeUs == previousTimeUs))
         {
             return std::nullopt;
         }

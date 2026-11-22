@@ -62,7 +62,7 @@ export function useClipEditorVolumeRegion(deps: ClipEditorVolumeRegionDeps): Cli
     const durMs = deps.volumeShapeDurationMs()
     const clampLocal = (sourceMs: number): number =>
       Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, base, ratio)))
-    volumeShapeDraft.gateRange(clampLocal(deps.selectionInMs()), clampLocal(deps.selectionEndMs()), gain)
+    volumeShapeDraft.gateRange(clampLocal(deps.selectionInMs()), clampLocal(deps.selectionEndMs()), gain, durMs)
     if (!volumeEditMode.value) volumeEditMode.value = true
   }
   function onSilenceSelection(): void {

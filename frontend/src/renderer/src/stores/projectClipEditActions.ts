@@ -61,7 +61,7 @@ export const clipEditActions = {
       // right half only; leaving them on the left would brake mid-phrase.
       const carriedBrake = clip.brake === true
       const carriedBackspin = clip.backspin === true
-      const splitEnvelope = splitEnvelopeAtMs(clip.envelopePoints, splitOffsetTimelineMs)
+      const splitEnvelope = splitEnvelopeAtMs(clip.envelopePoints, splitOffsetTimelineMs, effectiveDurMs)
       // Derive the right half's own timeline footprint from its source length.
       // Must be captured before trimClip(), which mutates clip.effectiveDurationMs
       // in place to the LEFT half's value — copying it afterwards would size the

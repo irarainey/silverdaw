@@ -114,6 +114,10 @@ export function useClipEditorController(
     initialise: initialiseVolumeShapeDraft,
     committedPoints: volumeShapeCommittedPoints
   } = volumeShapeDraft
+  const focusedEnvelopePointLabel = computed(() => {
+    const index = volumeShapeDraft.selectedIndex.value
+    return index === null ? '' : `Point ${index + 1} of ${volumeShapeDraft.draftPoints.value.length}`
+  })
 
   // Draft reverse-playback flag; Save commits, Cancel discards.
   const reverseDraft = useClipEditorReverseDraft()
@@ -399,6 +403,7 @@ export function useClipEditorController(
         dialogEl.value?.focus()
         loadPreviewForView()
       } else {
+        clearEnvelopeFocus()
         // A session that ends without Save rolls back its uncommitted grid draft;
         // Save has already committed, so this is a no-op there.
         beatGrid.discardIfUncommitted()
@@ -461,9 +466,11 @@ export function useClipEditorController(
     }
   )
 
-  watch(volumeEditActive, () => {
+  watch(volumeEditActive, (active) => {
+    if (!active) clearEnvelopeFocus()
     drawWaveform()
   })
+  watch(volumeShapeDraft.selectedIndex, () => drawWaveform())
 
   // Slice mode and Volume mode are mutually exclusive; turning one on clears the
   // other. Reseed the slice window when entering, and clear stale markers on exit.
@@ -713,6 +720,7 @@ export function useClipEditorController(
     volumeEditActive: () => volumeEditActive.value,
     volumeShapeDurationMs: () => volumeShapeDurationMs.value,
     draftPoints: () => volumeShapeDraft.draftPoints.value,
+    selectedEnvelopeIndex: () => volumeShapeDraft.selectedIndex.value,
     draftEffectiveRatio: () => warpDraft.draftEffectiveRatio.value,
     draftReversed: () => reverseDraft.reversed.value,
     draftBrake: () => djEffectDraft.brake.value,
@@ -733,6 +741,9 @@ export function useClipEditorController(
   watch(zoom, () => ensureEditorHiResPeaks())
 
   const {
+    clearEnvelopeFocus,
+    onEnvelopeFocus,
+    onEnvelopeKeydown,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,
@@ -770,6 +781,7 @@ export function useClipEditorController(
     commitGridAnchorSec: (anchorSec: number) => beatGrid.commitAnchorSec(anchorSec),
     setZoomAnchored
   })
+  onBeforeUnmount(clearEnvelopeFocus)
 
   const { onTogglePlay, onSkipToStart, onSkipToEnd, onToggleLoop } = useClipEditorTransport({
     preview,
@@ -909,6 +921,7 @@ export function useClipEditorController(
     clipMetronomeEnabled,
     onToggleClipMetronome,
     volumeEditActive,
+    focusedEnvelopePointLabel,
     canResetVolumeShape,
     onResetVolumeShape,
     canGateSelection,
@@ -923,6 +936,9 @@ export function useClipEditorController(
     onToggleBrake,
     onToggleBackspin,
     onCanvasMouseDown,
+    clearEnvelopeFocus,
+    onEnvelopeFocus,
+    onEnvelopeKeydown,
     onCanvasContextMenu,
     onCanvasWheel,
     onScrollbarMouseDown,

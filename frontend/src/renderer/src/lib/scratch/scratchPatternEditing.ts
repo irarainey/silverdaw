@@ -86,7 +86,7 @@ export function interpolateCrossfaderAt(
   const n = crossfader.length
   if (n === 0) return 0.5
   const first = crossfader[0]!
-  if (n === 1 || timeUs <= first.timeUs) return first.value
+  if (n === 1 || timeUs < first.timeUs) return first.value
   const last = crossfader[n - 1]!
   if (timeUs >= last.timeUs) return last.value
 
@@ -141,23 +141,26 @@ export function moveCrossfaderKeyframe(
   index: number,
   timeUs: number,
   value: number
-): ScratchCrossfaderKeyframe[] {
-  const next = crossfader.map((k) => ({ ...k }))
+): { crossfader: ScratchCrossfaderKeyframe[]; index: number } {
+  const next = [...crossfader]
   const pt = next[index]
-  if (!pt) return next
+  if (!pt) return { crossfader: next, index }
   const v = Math.max(0, Math.min(1, value))
   const isBoundary = index === 0 || index === next.length - 1
   if (isBoundary) {
     next[index] = { ...pt, value: v }
-    return next
+    return { crossfader: next, index }
   }
-  const prev = next[index - 1]!
-  const after = next[index + 1]!
-  const lo = prev.timeUs + 1
-  const hi = after.timeUs - 1
-  const t = Math.round(Math.min(Math.max(timeUs, lo), Math.max(lo, hi)))
-  next[index] = { timeUs: t, value: v }
-  return next
+  // Any member of a cut can leave on either side without crossing a distinct neighbour.
+  let left = index
+  let right = index
+  while (left > 1 && next[left - 1]!.timeUs === pt.timeUs) left--
+  while (right < next.length - 2 && next[right + 1]!.timeUs === pt.timeUs) right++
+  const t = Math.round(Math.min(Math.max(timeUs, next[left - 1]!.timeUs), next[right + 1]!.timeUs))
+  const movedIndex = t < pt.timeUs ? left : t > pt.timeUs ? right : index
+  next.splice(index, 1)
+  next.splice(movedIndex, 0, { timeUs: t, value: v })
+  return { crossfader: next, index: movedIndex }
 }
 
 // ── Keyframe add ─────────────────────────────────────────────────────────────
@@ -178,19 +181,20 @@ export function addPlatterKeyframe(
   return { platter: next, index }
 }
 
-/** Insert a crossfader keyframe, maintaining strict time order. Returns new array + index. */
+/** Append to equal-time cuts without displacing the pinned final handle. */
 export function addCrossfaderKeyframe(
   crossfader: readonly ScratchCrossfaderKeyframe[],
   timeUs: number,
   value: number
 ): { crossfader: ScratchCrossfaderKeyframe[]; index: number } | null {
-  if (crossfader.length >= MAX_SCRATCH_PATTERN_POINTS) return null
-  const t = Math.round(Math.max(0, timeUs))
+  if (crossfader.length < 2 || crossfader.length >= MAX_SCRATCH_PATTERN_POINTS) return null
+  const t = Math.round(timeUs)
+  if (t < 0 || t > crossfader[crossfader.length - 1]!.timeUs) return null
   const v = Math.max(0, Math.min(1, value))
-  if (crossfader.some((k) => k.timeUs === t)) return null
-  const next = [...crossfader.map((k) => ({ ...k })), { timeUs: t, value: v }]
-  next.sort((a, b) => a.timeUs - b.timeUs)
-  const index = next.findIndex((k) => k.timeUs === t)
+  const after = crossfader.findIndex((k) => k.timeUs > t)
+  const index = after === -1 ? crossfader.length - 1 : after
+  const next = [...crossfader]
+  next.splice(index, 0, { timeUs: t, value: v })
   return { crossfader: next, index }
 }
 

@@ -165,6 +165,23 @@ void testEvaluatorSourcePosition()
     requireNear(posEnd, 86400.0, 50.0, "source position near end should be ~86400 samples");
 }
 
+void testEvaluatorCrossfaderCut()
+{
+    auto p = makeSimpleForwardPattern();
+    p.crossfader = {{0, 0.0}, {900000, 0.0}, {900000, 0.5}, {900000, 1.0}, {1800000, 1.0}};
+    const auto snapshot = ScratchPatternEvaluator::buildSnapshot(p);
+    const auto valueAt = [&](std::int64_t t) {
+        return ScratchPatternEvaluator::evaluate(snapshot, t).crossfaderPosition;
+    };
+    requireNear(valueAt(899999), 0.0, 1e-12, "approach the first point at the cut");
+    requireNear(valueAt(900000), 1.0, 1e-12, "use the last point exactly at the cut");
+    requireNear(valueAt(900001), 1.0, 1e-12, "leave from the last point at the cut");
+    p.cropStartUs = 900000;
+    const auto cropped = ScratchPatternEvaluator::buildSnapshot(p);
+    requireNear(ScratchPatternEvaluator::evaluate(cropped, 0).crossfaderPosition, 1.0, 1e-12,
+                "a crop starting at the cut must open on its outgoing value");
+}
+
 void testEvaluatorBlockSizeIndependence()
 {
     auto snap = ScratchPatternEvaluator::buildSnapshot(makeSimpleForwardPattern());
@@ -267,6 +284,7 @@ void addScratchPatternEvaluatorTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch_evaluator_crossfader_linear_v1_deck1", testEvaluatorCrossfaderLinearV1Deck1});
     tests.push_back({"scratch_evaluator_crossfader_linear_v1_deck2", testEvaluatorCrossfaderLinearV1Deck2});
     tests.push_back({"scratch_evaluator_crossfader_interpolation", testEvaluatorCrossfaderInterpolation});
+    tests.push_back({"scratch_evaluator_crossfader_cut", testEvaluatorCrossfaderCut});
     tests.push_back({"scratch_evaluator_source_position", testEvaluatorSourcePosition});
     tests.push_back({"scratch_evaluator_block_size_independence", testEvaluatorBlockSizeIndependence});
     tests.push_back({"scratch_evaluator_seek_independence", testEvaluatorSeekIndependence});

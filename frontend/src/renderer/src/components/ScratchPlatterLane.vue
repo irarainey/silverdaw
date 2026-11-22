@@ -20,11 +20,6 @@ const POINT_RADIUS = 5
 
 const segments = computed(() => classifyPlatterLane(props.platter))
 
-function isSelected(index: number): boolean {
-  const sel = props.editor.selection.value
-  return sel !== null && sel.lane === 'platter' && sel.index === index
-}
-
 function segmentColor(kind: string): string {
   if (kind === 'forward') return 'rgb(56 189 248)' // sky-400
   if (kind === 'reverse') return 'rgb(251 146 60)' // amber-400 (caution)
@@ -54,6 +49,7 @@ function segmentColor(kind: string): string {
       :y2="toY(platter[seg.endIndex]!.turns)"
       :stroke="segmentColor(seg.kind)"
       stroke-width="2"
+      pointer-events="none"
       stroke-linecap="round"
     />
 
@@ -64,16 +60,16 @@ function segmentColor(kind: string): string {
       :cx="toX(kf.timeUs)"
       :cy="toY(kf.turns)"
       :r="POINT_RADIUS"
-      :fill="isSelected(i) ? 'rgb(56 189 248)' : 'rgb(228 228 231)'"
-      :stroke="isSelected(i) ? 'rgb(14 165 233)' : 'rgb(113 113 122)'"
+      fill="rgb(228 228 231)"
+      stroke="rgb(113 113 122)"
       stroke-width="1.5"
-      class="cursor-pointer"
+      class="cursor-pointer outline-none"
       role="button"
+      :aria-pressed="editor.selection.value?.lane === 'platter' && editor.selection.value.index === i"
       :aria-label="`Platter point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${kf.turns.toFixed(3)} turns${kf.touched ? ', touched' : ''}`"
       :tabindex="0"
       @pointerdown="pointerInteraction.handlePointDown('platter', i, $event)"
       @contextmenu="pointerInteraction.handlePointContextMenu('platter', i, $event)"
-      @keydown.enter.prevent="editor.selectKeyframe('platter', i)"
       @focus="editor.selectKeyframe('platter', i)"
     />
   </g>

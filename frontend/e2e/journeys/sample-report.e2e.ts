@@ -26,6 +26,8 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await invokeMenuItem(page, 'File', 'Audio Sample Report')
   const report = page.getByRole('dialog', { name: 'Audio Sample Report', exact: true })
   await expect(report).toContainText('No clips are placed')
+  const card = report.locator('.dialog-card')
+  const emptyHeight = await card.evaluate(el => el.clientHeight)
   await page.keyboard.press('Escape')
   await expect(report).toBeHidden()
 
@@ -36,6 +38,7 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
   await invokeMenuItem(page, 'File', 'Audio Sample Report')
   await expect(report).toContainText(path)
+  expect(await card.evaluate(el => el.clientHeight)).toBe(emptyHeight)
   await expect(report.getByRole('heading', { name: 'Track: sample-report.wav' })).toBeVisible()
   await expect(report.getByText('Artist: Cannot be determined', { exact: true })).toBeVisible()
   await expect(report.getByText('Album: Cannot be determined', { exact: true })).toBeVisible()

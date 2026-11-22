@@ -167,6 +167,16 @@ describe('interpolateCrossfaderAt', () => {
   it('returns 0.5 for empty lane', () => {
     expect(interpolateCrossfaderAt([], 500)).toBe(0.5)
   })
+
+  it('approaches the first handle and leaves the last, including zero and duration', () => {
+    const cuts = [
+      { timeUs: 0, value: 1 }, { timeUs: 0, value: 0 },
+      { timeUs: 10, value: 0 }, { timeUs: 10, value: 1 },
+      { timeUs: 20, value: 1 }, { timeUs: 20, value: 0 }
+    ]
+    expect([-1, 0, 9, 10, 11, 19, 20].map(t => interpolateCrossfaderAt(cuts, t)))
+      .toEqual([1, 0, 0, 1, 1, 1, 0])
+  })
 })
 
 // ── Move keyframes ───────────────────────────────────────────────────────────
@@ -217,15 +227,15 @@ describe('moveCrossfaderKeyframe', () => {
 
   it('clamps value to [0, 1]', () => {
     const result = moveCrossfaderKeyframe(cf, 1, 500_000, 1.5)
-    expect(result[1]!.value).toBe(1)
+    expect(result.crossfader[1]!.value).toBe(1)
     const result2 = moveCrossfaderKeyframe(cf, 1, 500_000, -0.5)
-    expect(result2[1]!.value).toBe(0)
+    expect(result2.crossfader[1]!.value).toBe(0)
   })
 
   it('boundary keeps time', () => {
     const result = moveCrossfaderKeyframe(cf, 0, 999, 0.3)
-    expect(result[0]!.timeUs).toBe(0)
-    expect(result[0]!.value).toBe(0.3)
+    expect(result.crossfader[0]!.timeUs).toBe(0)
+    expect(result.crossfader[0]!.value).toBe(0.3)
   })
 })
 
@@ -279,9 +289,15 @@ describe('addCrossfaderKeyframe', () => {
     expect(result!.crossfader[1]!.value).toBe(1)
   })
 
-  it('rejects negative time (clamped to 0, but 0 exists)', () => {
+  it('rejects negative time', () => {
     const result = addCrossfaderKeyframe(cf, -100, 0.5)
     expect(result).toBeNull()
+  })
+
+  it('inserts before the pinned final handle, even at duration', () => {
+    const result = addCrossfaderKeyframe(cf, 1_000_000, 0.5)!
+    expect(result.index).toBe(1)
+    expect(deleteCrossfaderKeyframe(result.crossfader, result.index)).toEqual(cf)
   })
 })
 

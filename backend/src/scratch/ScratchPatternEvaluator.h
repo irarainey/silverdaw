@@ -29,6 +29,7 @@ struct PatternReplaySnapshot
 
     // Crossfader keyframes (sorted by timeUs, within crop window, rebased to crop start).
     std::vector<CrossfaderKeyframe> crossfader;
+    std::vector<std::int64_t> crossfaderCutsUs;
 
     // Derived: pattern duration in microseconds (cropEnd - cropStart).
     std::int64_t durationUs() const noexcept { return cropEndUs - cropStartUs; }
@@ -78,6 +79,9 @@ class ScratchPatternEvaluator
     // position: 0.0 = fully left, 1.0 = fully right.
     static double linearV1Gain(double position, DeckSide ownerDeck) noexcept;
 
+    static double interpolateCrossfader(const std::vector<CrossfaderKeyframe>& lane,
+                                        std::int64_t timeUs) noexcept;
+
   private:
     // Interpolate platter turns at timeUs using linear interpolation between keyframes.
     static double interpolatePlatter(const std::vector<PlatterKeyframe>& lane,
@@ -86,10 +90,6 @@ class ScratchPatternEvaluator
     // Determine touch state at timeUs (uses the last keyframe at or before timeUs).
     static bool interpolateTouch(const std::vector<PlatterKeyframe>& lane,
                                  std::int64_t timeUs) noexcept;
-
-    // Interpolate crossfader value at timeUs using linear interpolation.
-    static double interpolateCrossfader(const std::vector<CrossfaderKeyframe>& lane,
-                                        std::int64_t timeUs) noexcept;
 
     // Compute instantaneous platter velocity (turns per microsecond) at timeUs.
     static double platterVelocity(const std::vector<PlatterKeyframe>& lane,

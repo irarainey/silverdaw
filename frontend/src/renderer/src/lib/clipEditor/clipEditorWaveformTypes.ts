@@ -29,6 +29,7 @@ export interface ClipEditorWaveformDeps {
   volumeEditActive: () => boolean
   volumeShapeDurationMs: () => number
   draftPoints: () => readonly ClipEnvelopePoint[]
+  selectedEnvelopeIndex: () => number | null
   draftEffectiveRatio: () => number
   draftReversed: () => boolean
   /** Draft brake flag — draws the record-stop tail overlay when on. */
