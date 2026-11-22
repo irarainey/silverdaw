@@ -2,13 +2,54 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BaseWindow, SaveDialogOptions } from 'electron'
 import type { ElectronApplication } from '@playwright/test'
+import { extractText } from 'unpdf'
 import { expect, test } from '../fixtures/silverdaw'
 import { createToneWav } from '../helpers/audioFixtures'
 import { stubOpenDialog, stubSaveDialog } from '../helpers/dialogs'
 import { invokeMenuItem } from '../helpers/menu'
 import { findNode, type ProjectNode } from '../helpers/projectDocument'
-import { startNewProject } from '../helpers/startup'
+import { copyProjectFixture } from '../helpers/projectFixtures'
+import { startNewProject, waitForStartupReady } from '../helpers/startup'
 import { makeTrackedTempDir } from '../helpers/tempDirs'
+
+test('a long Audio Sample Report scrolls independently and exports its final row', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  const projectFile = copyProjectFixture()
+  const doc = JSON.parse(readFileSync(projectFile, 'utf8')) as { project: ProjectNode }
+  if (!doc.project.$children) throw new Error('Missing fixture project children')
+  const clips = Array.from({ length: 80 }, (_, i) => ({
+    $type: 'CLIP', id: `clip-${i}`, libraryItemId: 'l1', clipName: `Passage ${i + 1}`,
+    offsetMs: i * 200, durationMs: 200, inMs: 0
+  }))
+  doc.project.$children.push({ $type: 'TRACK', id: 'track', name: 'Arrangement', gain: 1, $children: clips })
+  writeFileSync(projectFile, JSON.stringify(doc))
+
+  await waitForStartupReady(page)
+  await stubOpenDialog(electronApp, [projectFile])
+  await page.getByRole('button', { name: 'Open Project…' }).click()
+  await expect(page.getByTitle(projectFile).first()).toBeVisible()
+  await invokeMenuItem(page, 'File', 'Audio Sample Report')
+  const report = page.getByRole('dialog', { name: 'Audio Sample Report', exact: true })
+  const exportPdf = report.getByRole('button', { name: 'Export PDF', exact: true })
+  const last = report.getByRole('cell', { name: 'Passage 80', exact: true })
+  await expect(last).toHaveCount(1)
+  await expect(last).not.toBeInViewport()
+  await expect(exportPdf).toBeInViewport()
+  const footerBefore = await exportPdf.boundingBox()
+  await last.scrollIntoViewIfNeeded()
+  await expect(last).toBeInViewport()
+  expect(await report.locator('.dialog-body').evaluate(el => el.scrollTop)).toBeGreaterThan(0)
+  expect(await exportPdf.boundingBox()).toEqual(footerBefore)
+
+  const destination = join(makeTrackedTempDir('long-report'), 'report.pdf')
+  await stubSaveDialog(electronApp, destination)
+  await exportPdf.click()
+  await expect(report).toBeHidden()
+  const { totalPages, text } = await extractText(new Uint8Array(readFileSync(destination)))
+  expect(totalPages).toBeGreaterThan(1)
+  expect(text[0]).toContain('Passage 1')
+  expect(text.at(-1)).toContain('Passage 80')
+})
 
 async function acceptSuggestedPdf(app: ElectronApplication, projectPath = ''): Promise<void> {
   await app.evaluate(({ dialog }, project) => {
@@ -26,6 +67,8 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await invokeMenuItem(page, 'File', 'Audio Sample Report')
   const report = page.getByRole('dialog', { name: 'Audio Sample Report', exact: true })
   await expect(report).toContainText('No clips are placed')
+  const card = report.locator('.dialog-card')
+  const emptyHeight = await card.evaluate(el => el.clientHeight)
   await page.keyboard.press('Escape')
   await expect(report).toBeHidden()
 
@@ -36,6 +79,7 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await expect(page.getByTitle('Track already has a clip')).toBeDisabled({ timeout: 30_000 })
   await invokeMenuItem(page, 'File', 'Audio Sample Report')
   await expect(report).toContainText(path)
+  expect(await card.evaluate(el => el.clientHeight)).toBe(emptyHeight)
   await expect(report.getByRole('heading', { name: 'Track: sample-report.wav' })).toBeVisible()
   await expect(report.getByText('Artist: Cannot be determined', { exact: true })).toBeVisible()
   await expect(report.getByText('Album: Cannot be determined', { exact: true })).toBeVisible()

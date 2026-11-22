@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import type { ScratchNotationEditor } from '@/lib/scratch/useScratchNotationEditor'
 import {
@@ -97,7 +97,9 @@ const pointerInteraction = createNotationPointerInteraction(
     platterMaxTurns,
     turnsMargin: TURNS_MARGIN,
     cfLaneTop: computed(() => props.cfLaneTop),
-    cfLaneHeight: computed(() => props.cfLaneHeight)
+    cfLaneHeight: computed(() => props.cfLaneHeight),
+    crossfader: computed(() => props.pattern.crossfader),
+    selection: props.editor.selection
   },
   {
     onBeginEdit: () => props.editor.beginEditGroup(),
@@ -107,12 +109,27 @@ const pointerInteraction = createNotationPointerInteraction(
     onMoveCrossfader: (index, t, value) => props.editor.moveCrossfader(index, t, value),
     onAddPlatter: (t) => props.editor.addPlatter(t),
     onAddCrossfader: (t) => props.editor.addCrossfaderPoint(t),
-    onDelete: (lane, index) => {
-      props.editor.selectKeyframe(lane, index)
-      props.editor.deleteSelected()
-    }
+    onDelete: () => props.editor.deleteSelected()
   }
 )
+
+watch(() => props.editor.selection.value, (selection) => {
+  const drag = pointerInteraction.dragState.value
+  if (drag.active && (drag.index !== selection?.index || drag.lane !== selection?.lane)) {
+    pointerInteraction.finishDrag()
+  }
+})
+
+const selectedHandle = computed(() => {
+  const sel = props.editor.selection.value
+  if (!sel) return null
+  if (sel.lane === 'platter') {
+    const point = props.pattern.platter[sel.index]
+    return point && { x: toX(point.timeUs), y: toPlatterY(point.turns), radius: 6 }
+  }
+  const point = props.pattern.crossfader[sel.index]
+  return point && { x: toX(point.timeUs), y: toCfY(point.value), radius: 5 }
+})
 
 // Divider drag: resize the platter/crossfader lanes by dragging the separator.
 // The pointer's Y (converted from screen pixels into SVG user units) sets the
@@ -155,11 +172,12 @@ function onDividerPointerUp(event: PointerEvent): void {
     :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
     preserveAspectRatio="none"
     tabindex="-1"
-    aria-label="Pattern lanes. Use arrow keys to move selected point, Insert to add, Delete to remove, T to toggle touch."
+    aria-label="Pattern lanes. Tab selects a point. Arrows move it, Insert adds, Shift+Insert stacks a crossfader point, Delete removes, T toggles touch."
     @pointermove="pointerInteraction.handlePointerMove"
     @pointerup="pointerInteraction.handlePointerUp"
     @pointercancel="pointerInteraction.handlePointerCancel"
     @lostpointercapture="pointerInteraction.handleLostPointerCapture"
+    @keydown.capture="pointerInteraction.finishDrag()"
   >
     <!-- Time grid stays proportional to the recording, so longer takes gain
          usable horizontal space rather than compressing their keyframes. -->
@@ -231,6 +249,16 @@ function onDividerPointerUp(event: PointerEvent): void {
       :pointer-interaction="pointerInteraction"
       :to-x="toX"
       :to-y="toCfY"
+    />
+
+    <circle
+      v-if="selectedHandle"
+      :cx="selectedHandle.x"
+      :cy="selectedHandle.y"
+      :r="selectedHandle.radius"
+      class="pointer-events-none fill-sky-400 stroke-sky-200"
+      stroke-width="2"
+      aria-hidden="true"
     />
 
     <!-- Replay playhead -->

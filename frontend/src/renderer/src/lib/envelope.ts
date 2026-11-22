@@ -6,28 +6,20 @@ export const ENVELOPE_MAX_GAIN = 4
 // ≈ -100 dB; matches backend interpolation toward true-zero breakpoints.
 const GAIN_FLOOR = 1e-5
 
-/** Match backend envelope normalisation: finite, clamped, sorted, de-duped. */
+/** Stable ordering preserves the incoming and outgoing sides of a step. */
 export function sanitizeEnvelopePoints(
   points: readonly ClipEnvelopePoint[]
 ): ClipEnvelopePoint[] {
-  const cleaned = points
+  return points
     .filter((p) => Number.isFinite(p.timeMs) && Number.isFinite(p.gain))
     .map((p) => ({
       timeMs: Math.max(0, p.timeMs),
       gain: Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, p.gain))
     }))
     .sort((a, b) => a.timeMs - b.timeMs)
-
-  const out: ClipEnvelopePoint[] = []
-  for (const p of cleaned) {
-    const prev = out[out.length - 1]
-    if (prev && Math.abs(p.timeMs - prev.timeMs) < 1e-3) continue
-    out.push(p)
-  }
-  return out
 }
 
-/** Value-equality within backend change-detection tolerances. */
+/** Compare the ordered shape, matching backend change detection. */
 export function envelopesEqual(
   a: readonly ClipEnvelopePoint[] | undefined,
   b: readonly ClipEnvelopePoint[] | undefined
@@ -39,8 +31,7 @@ export function envelopesEqual(
     const pa = aa[i]
     const pb = bb[i]
     if (!pa || !pb) return false
-    if (Math.abs(pa.timeMs - pb.timeMs) > 1e-3) return false
-    if (Math.abs(pa.gain - pb.gain) > 1e-4) return false
+    if (pa.timeMs !== pb.timeMs || pa.gain !== pb.gain) return false
   }
   return true
 }
@@ -53,20 +44,19 @@ export function envelopeGainAtMs(points: readonly ClipEnvelopePoint[], ms: numbe
   if (n === 1) return first.gain
   const last = points[n - 1]
   if (!last) return first.gain
-  if (ms <= first.timeMs) return first.gain
+  if (ms < first.timeMs) return first.gain
   if (ms >= last.timeMs) return last.gain
 
-  let seg = 0
-  while (seg < n - 2) {
-    const nextPt = points[seg + 1]
-    if (!nextPt || ms < nextPt.timeMs) break
-    seg++
+  let lo = 0
+  let hi = n - 1
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (points[mid]!.timeMs <= ms) lo = mid
+    else hi = mid
   }
-  const a = points[seg]
-  const b = points[seg + 1]
-  if (!a || !b) return 1
-  if (ms <= a.timeMs) return a.gain
-  if (ms >= b.timeMs) return b.gain
+  const a = points[lo]!
+  const b = points[hi]!
+  if (ms === a.timeMs || a.gain === b.gain) return a.gain
 
   const aDb = 20 * Math.log10(Math.max(a.gain, GAIN_FLOOR))
   const bDb = 20 * Math.log10(Math.max(b.gain, GAIN_FLOOR))
@@ -87,7 +77,8 @@ export function envelopeGainAtMs(points: readonly ClipEnvelopePoint[], ms: numbe
  */
 export function splitEnvelopeAtMs(
   points: readonly ClipEnvelopePoint[] | undefined,
-  atMs: number
+  atMs: number,
+  durationMs: number
 ): { left: ClipEnvelopePoint[] | undefined; right: ClipEnvelopePoint[] | undefined } {
   const source = points ? sanitizeEnvelopePoints(points) : []
   if (source.length < 2 || !Number.isFinite(atMs) || atMs <= 0) {
@@ -95,16 +86,16 @@ export function splitEnvelopeAtMs(
   }
 
   const seamGain = envelopeGainAtMs(source, atMs)
-  const left = sanitizeEnvelopePoints([
-    ...source.filter((p) => p.timeMs < atMs - 1e-3),
-    { timeMs: atMs, gain: seamGain }
-  ])
-  const right = sanitizeEnvelopePoints([
-    { timeMs: 0, gain: seamGain },
-    ...source
-      .filter((p) => p.timeMs > atMs + 1e-3)
-      .map((p) => ({ timeMs: p.timeMs - atMs, gain: p.gain }))
-  ])
+  const incoming = source.find((p) => p.timeMs === atMs)
+  const left = source.filter((p) => p.timeMs < atMs)
+  if (!left.length) left.push({ timeMs: 0, gain: source[0]!.gain })
+  left.push({ timeMs: atMs, gain: incoming?.gain ?? seamGain })
+  const right = source.filter((p) => p.timeMs >= atMs)
+    .map((p) => ({ timeMs: p.timeMs - atMs, gain: p.gain }))
+  if (!incoming) right.unshift({ timeMs: 0, gain: seamGain })
+  if (right.at(-1)?.timeMs === 0 && durationMs > atMs) {
+    right.push({ timeMs: durationMs - atMs, gain: seamGain })
+  }
 
   return {
     left: isFlatUnityEnvelope(left) ? undefined : left,
@@ -131,9 +122,11 @@ export function scaleEnvelopePoints(
   return sanitizeEnvelopePoints(points.map((p) => ({ timeMs: p.timeMs * scale, gain: p.gain })))
 }
 
-/** True when an envelope has no audible shape and should not be persisted. */export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
+/** Only an unedited unity line is implicit; extra handles are editable data. */
+export function isFlatUnityEnvelope(points: readonly ClipEnvelopePoint[]): boolean {
   if (points.length < 2) return true
-  return points.every((p) => Math.abs(p.gain - 1) <= 1e-4)
+  return points.length === 2 && points[0]!.timeMs !== points[1]!.timeMs &&
+    points.every((p) => p.gain === 1)
 }
 
 /** Default two-point flat-unity shape spanning the clip. */
@@ -145,73 +138,51 @@ export function defaultEnvelope(durationMs: number): ClipEnvelopePoint[] {
   ]
 }
 
-/** Insert or replace a breakpoint, returning the sorted envelope and touched index. */
+/** Insert after equal-time peers, keeping the outer endpoints pinned. */
 export function insertEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   timeMs: number,
-  gain: number
+  gain: number,
+  durationMs: number
 ): { points: ClipEnvelopePoint[]; index: number } {
-  const t = Math.max(0, timeMs)
+  const t = Math.max(0, Math.min(durationMs, timeMs))
   const g = Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, gain))
   const next = points.map((p) => ({ ...p }))
-  const existing = next.findIndex((p) => Math.abs(p.timeMs - t) < 1e-3)
-  if (existing >= 0) {
-    next[existing] = { timeMs: next[existing]!.timeMs, gain: g }
-    return { points: next, index: existing }
-  }
-  next.push({ timeMs: t, gain: g })
-  next.sort((a, b) => a.timeMs - b.timeMs)
-  return { points: next, index: next.findIndex((p) => Math.abs(p.timeMs - t) < 1e-3) }
+  const first = next[0]
+  const last = next.at(-1)
+  // After a trim the saved shape can end inside the clip. Keep its held gain at the real edge.
+  if (last && t > last.timeMs) next.push({ timeMs: durationMs, gain: last.gain })
+  if (first && t < first.timeMs) next.unshift({ timeMs: 0, gain: first.gain })
+  const after = next.findIndex((p) => p.timeMs > t)
+  const index = after >= 0 ? after : Math.max(0, next.length - 1)
+  next.splice(index, 0, { timeMs: t, gain: g })
+  return { points: next, index }
 }
-
-/** Minimum width (ms) of a hard envelope edge; an inaudible ramp that reads as
- *  an instant transition while staying clear of the 1e-3 ms de-dup tolerance. */
-export const ENVELOPE_EDGE_EPSILON_MS = 1
 
 /**
  * Flatten `[startMs, endMs]` to `gain` with hard step edges, leaving the rest of
  * the envelope intact. Produces a held gate (e.g. silence a region) instead of a
- * ramp, with near-vertical transitions into and out of the gated span.
+ * ramp, with instantaneous transitions into and out of the gated span.
  */
 export function applyEnvelopeGate(
   points: readonly ClipEnvelopePoint[],
   startMs: number,
   endMs: number,
   gain: number,
-  epsilonMs: number = ENVELOPE_EDGE_EPSILON_MS
+  durationMs = points.at(-1)?.timeMs ?? 0
 ): ClipEnvelopePoint[] {
   const lo = Math.max(0, Math.min(startMs, endMs))
-  const hi = Math.max(startMs, endMs)
-  const endTime = points[points.length - 1]?.timeMs ?? hi
-  if (hi - lo < epsilonMs) return points.map((p) => ({ ...p }))
-
-  // Sample the original shape just outside the span so the edges don't disturb
-  // the rest of the envelope.
-  const beforeGain = envelopeGainAtMs(points, Math.max(0, lo - epsilonMs))
-  const afterGain = envelopeGainAtMs(points, hi + epsilonMs)
-  const atStart = lo <= epsilonMs
-  const atEnd = hi >= endTime - epsilonMs
-
-  // Drop interior breakpoints inside the span; pinned endpoints stay.
-  let next = points
-    .map((p) => ({ ...p }))
-    .filter((p, i, arr) => {
-      if (i === 0 || i === arr.length - 1) return true
-      return p.timeMs < lo - 1e-3 || p.timeMs > hi + 1e-3
-    })
-
-  if (atStart) {
-    next = insertEnvelopePoint(next, 0, gain).points
-  } else {
-    next = insertEnvelopePoint(next, Math.max(0, lo - epsilonMs), beforeGain).points
-    next = insertEnvelopePoint(next, lo, gain).points
+  const hi = Math.min(durationMs, Math.max(startMs, endMs))
+  if (!(hi > lo)) return points.slice()
+  const level = Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, gain))
+  const next = points.filter((p) => p.timeMs < lo)
+  if (lo > 0) {
+    const incoming = points.find((p) => p.timeMs === lo)?.gain ?? envelopeGainAtMs(points, lo)
+    next.push({ timeMs: lo, gain: incoming })
   }
-  if (atEnd) {
-    next = insertEnvelopePoint(next, endTime, gain).points
-  } else {
-    next = insertEnvelopePoint(next, hi, gain).points
-    next = insertEnvelopePoint(next, hi + epsilonMs, afterGain).points
-  }
+  next.push({ timeMs: lo, gain: level }, { timeMs: hi, gain: level })
+  if (hi < durationMs) next.push({ timeMs: hi, gain: envelopeGainAtMs(points, hi) })
+  for (const p of points) if (p.timeMs > hi) next.push(p)
   return next
 }
 
@@ -224,27 +195,24 @@ export function removeEnvelopePoint(
   return points.filter((_, i) => i !== index).map((p) => ({ ...p }))
 }
 
-/** Move a breakpoint; endpoints keep time and interior points stay strictly sorted. */
+/** Stop at distinct neighbours; any member of a stack can detach to either side. */
 export function moveEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   index: number,
   timeMs: number,
   gain: number
-): ClipEnvelopePoint[] {
+): { points: ClipEnvelopePoint[]; index: number } {
   const next = points.map((p) => ({ ...p }))
   const pt = next[index]
-  if (!pt) return next
-  const g = Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, gain))
-  const isEndpoint = index === 0 || index === next.length - 1
-  if (isEndpoint) {
-    next[index] = { timeMs: pt.timeMs, gain: g }
-    return next
+  if (!pt) return { points: next, index }
+  pt.gain = Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, gain))
+  if (index > 0 && index < next.length - 1) {
+    let left = index - 1
+    let right = index + 1
+    while (left > 0 && next[left]!.timeMs === pt.timeMs) left--
+    while (right < next.length - 1 && next[right]!.timeMs === pt.timeMs) right++
+    pt.timeMs = Math.min(next[right]!.timeMs, Math.max(next[left]!.timeMs, timeMs))
+    next.sort((a, b) => a.timeMs - b.timeMs)
   }
-  const prev = next[index - 1]
-  const after = next[index + 1]
-  const lo = (prev?.timeMs ?? 0) + 1e-3
-  const hi = (after?.timeMs ?? timeMs) - 1e-3
-  const t = Math.min(Math.max(timeMs, lo), Math.max(lo, hi))
-  next[index] = { timeMs: t, gain: g }
-  return next
+  return { points: next, index: next.indexOf(pt) }
 }

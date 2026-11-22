@@ -1,8 +1,7 @@
 // Clip Editor canvas pointer, wheel, scrollbar, and keyboard-nudge handlers.
 // Pointer math uses CSS pixels; waveform drawing uses device pixels.
 import type { Ref } from 'vue'
-import { hitTestHandle, overlayGainToY, overlayLaneIndexForY, overlayYToGain, sourceMsToVolumeTime, volumeOverlayLanes, volumeTimeToSourceMs } from '@/lib/clipEditor/volumeOverlay'
-import { snapTimelineMsToBeat, type BeatSnapContext } from '@/lib/clipEditor/envelopeBeatSnap'
+import { createClipEnvelopeInteraction } from './clipEnvelopeInteraction'
 import { hitTestSliceMarker } from '@/lib/clipEditor/sliceOverlay'
 import type { SourceBeatGrid } from '@/lib/clip/sourceBeatGrid'
 import type { LibraryItem } from '@/stores/libraryStore'
@@ -51,7 +50,7 @@ export interface ClipEditorCanvasInteractionDeps {
   setZoomAnchored: (zoom: number, anchorMs: number) => void
 }
 
-export interface ClipEditorCanvasInteraction {
+export interface ClipEditorCanvasInteraction extends Omit<ReturnType<typeof createClipEnvelopeInteraction>, 'onEnvelopePointerDown'> {
   onCanvasMouseDown: (e: MouseEvent) => void
   onCanvasContextMenu: (e: MouseEvent) => void
   onCanvasWheel: (e: WheelEvent) => void
@@ -67,7 +66,8 @@ const SMALLEST_NUDGE_MS = 1
 export function useClipEditorCanvasInteraction(
   deps: ClipEditorCanvasInteractionDeps
 ): ClipEditorCanvasInteraction {
-  const { preview, volumeShapeDraft, selectionInMs, selectionDurationMs, scrollMs, waveformStereoLanes } = deps
+  const { preview, selectionInMs, selectionDurationMs, scrollMs } = deps
+  const { onEnvelopePointerDown, ...envelopeFocus } = createClipEnvelopeInteraction(deps)
 
   function onCanvasMouseDown(e: MouseEvent): void {
     const canvas = deps.getCanvas()
@@ -82,7 +82,7 @@ export function useClipEditorCanvasInteraction(
 
     // Volume edit mode owns the canvas pointer before selection logic.
     if (deps.volumeEditActive()) {
-      onCanvasEnvelopePointerDown(e, rect, vIn, vDur)
+      onEnvelopePointerDown(e, rect, vIn, vDur)
       return
     }
 
@@ -150,79 +150,6 @@ export function useClipEditorCanvasInteraction(
         }
         seekPlayheadToSourceMs(ms)
       }
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
-
-  // Canvas volume editing mirrors SVG gestures, but in CSS-pixel space.
-  function onCanvasEnvelopePointerDown(
-    e: MouseEvent,
-    rect: DOMRect,
-    vIn: number,
-    vDur: number
-  ): void {
-    const ratio = deps.draftEffectiveRatio() > 0 ? deps.draftEffectiveRatio() : 1
-    const clipStartSourceMs = deps.viewInMs()
-    const durMs = deps.volumeShapeDurationMs()
-    const rulerCss = 18
-    const waveTopCss = rulerCss
-    const waveHCss = Math.max(1, rect.height - rulerCss)
-
-    const timeToXCss = (timelineMs: number): number => {
-      const sourceMs = volumeTimeToSourceMs(timelineMs, clipStartSourceMs, ratio)
-      return ((sourceMs - vIn) / vDur) * rect.width
-    }
-    const xToTime = (clientX: number): number => {
-      const sourceMs = vIn + ((clientX - rect.left) / rect.width) * vDur
-      return Math.max(0, Math.min(durMs, sourceMsToVolumeTime(sourceMs, clipStartSourceMs, ratio)))
-    }
-    // Snap a clip-local time to the source beat grid unless Shift is held.
-    // Freehand placement by default; hold Shift to snap to the source beat grid.
-    const snapCtx: BeatSnapContext = {
-      baseSourceMs: clipStartSourceMs,
-      ratio,
-      grid: deps.sourceBeatGrid(),
-      durationMs: durMs
-    }
-    const timeAt = (clientX: number, snap: boolean): number =>
-      snap ? snapTimelineMsToBeat(xToTime(clientX), snapCtx) : xToTime(clientX)
-    // In stereo view, hit-test and drag within the pointer's lane only.
-    const lanes = volumeOverlayLanes(waveTopCss, waveHCss, waveformStereoLanes.value)
-    const lx = e.clientX - rect.left
-    const ly = e.clientY - rect.top
-    const activeLane = lanes[overlayLaneIndexForY(ly, lanes)] ?? lanes[lanes.length - 1]!
-    const yToGain = (clientY: number): number =>
-      overlayYToGain(clientY - rect.top, activeLane.top, activeLane.height)
-
-    const points = volumeShapeDraft.draftPoints.value
-    // Active-lane handle index maps directly to the breakpoint.
-    const positions = points.map((p) => ({
-      x: timeToXCss(p.timeMs),
-      y: overlayGainToY(p.gain, activeLane.top, activeLane.height)
-    }))
-    const hit = hitTestHandle(positions, lx, ly, 12)
-
-    // Alt/right-click removes non-endpoint handles.
-    if (hit !== null && (e.altKey || e.button === 2)) {
-      volumeShapeDraft.removePoint(hit)
-      return
-    }
-    if (e.button === 2) return
-
-    let dragIndex = hit
-    if (dragIndex === null) {
-      dragIndex = volumeShapeDraft.addPoint(timeAt(e.clientX, e.shiftKey), yToGain(e.clientY))
-    }
-    e.preventDefault()
-
-    const onMove = (ev: MouseEvent): void => {
-      if (dragIndex === null) return
-      volumeShapeDraft.movePoint(dragIndex, timeAt(ev.clientX, ev.shiftKey), yToGain(ev.clientY))
-    }
-    const onUp = (): void => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -443,6 +370,7 @@ export function useClipEditorCanvasInteraction(
   }
 
   return {
+    ...envelopeFocus,
     onCanvasMouseDown,
     onCanvasContextMenu,
     onCanvasWheel,

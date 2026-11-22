@@ -43,7 +43,7 @@ class VinylScratchProcessor
 
     void process(const juce::AudioBuffer<float>& source,
                  juce::AudioBuffer<float>& destination, int destinationStartSample,
-                 int numSamples) noexcept;
+                 int numSamples, double targetGainStep = 0.0) noexcept;
 
     double getSourcePosition() const noexcept { return sourcePosition; }
     double getCurrentRate() const noexcept { return currentRate; }

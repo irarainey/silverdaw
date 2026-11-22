@@ -32,10 +32,24 @@ describe('useClipEditorVolumeShapeDraft', () => {
     expect(d.committedPoints()).toEqual(pts)
   })
 
+  it('saves authored unity handles but treats an old explicit default line as unchanged', () => {
+    const d = useClipEditorVolumeShapeDraft()
+    d.initialise(clipWith([{ timeMs: 0, gain: 1 }, { timeMs: 1000, gain: 1 }]), 1000)
+    expect(d.hasChanged.value).toBe(false)
+    d.addPoint(500, 1, 1000)
+    d.addPoint(500, 1, 1000)
+    const saved = d.committedPoints()
+    expect(saved.slice(1, 3)).toEqual([{ timeMs: 500, gain: 1 }, { timeMs: 500, gain: 1 }])
+    expect(d.hasChanged.value).toBe(true)
+    d.initialise(clipWith(saved), 1000)
+    expect(d.hasChanged.value).toBe(false)
+    expect(d.draftPoints.value).toEqual(saved)
+  })
+
   it('becomes dirty after bending a handle', () => {
     const d = useClipEditorVolumeShapeDraft()
     d.initialise(clipWith(undefined), 1000)
-    const idx = d.addPoint(500, 0.5)
+    const idx = d.addPoint(500, 0.5, 1000)
     expect(idx).toBe(1)
     expect(d.hasChanged.value).toBe(true)
     expect(d.committedPoints()).toEqual([
@@ -52,6 +66,18 @@ describe('useClipEditorVolumeShapeDraft', () => {
     expect(d.draftPoints.value[0]).toEqual({ timeMs: 0, gain: 0.25 })
   })
 
+  it('adds an editable point in the extended tail without moving the saved shape', () => {
+    const saved = [{ timeMs: 0, gain: 1 }, { timeMs: 1000, gain: 0.5 }]
+    const d = useClipEditorVolumeShapeDraft()
+    d.initialise(clipWith(saved), 2000)
+    expect(d.hasChanged.value).toBe(false)
+    const index = d.addPoint(1500, 0.2, 2000)
+    expect(index).toBe(2)
+    expect(d.committedPoints()).toEqual([...saved, { timeMs: 1500, gain: 0.2 }, { timeMs: 2000, gain: 0.5 }])
+    d.movePoint(index, 1700, 0.3)
+    expect(d.draftPoints.value[index]).toEqual({ timeMs: 1700, gain: 0.3 })
+  })
+
   it('does not remove pinned endpoints', () => {
     const d = useClipEditorVolumeShapeDraft()
     d.initialise(clipWith(undefined), 1000)
@@ -63,7 +89,7 @@ describe('useClipEditorVolumeShapeDraft', () => {
   it('reset returns to flat unity and clears dirtiness', () => {
     const d = useClipEditorVolumeShapeDraft()
     d.initialise(clipWith(undefined), 1000)
-    d.addPoint(500, 0.5)
+    d.addPoint(500, 0.5, 1000)
     expect(d.hasChanged.value).toBe(true)
     d.reset(1000)
     expect(d.hasChanged.value).toBe(false)
@@ -88,7 +114,7 @@ describe('useClipEditorVolumeShapeDraft', () => {
     const d = useClipEditorVolumeShapeDraft()
     d.initialise(clipWith(undefined), 1000)
     expect(d.isFlat.value).toBe(true)
-    d.addPoint(500, 0.5)
+    d.addPoint(500, 0.5, 1000)
     expect(d.isFlat.value).toBe(false)
     d.reset(1000)
     expect(d.isFlat.value).toBe(true)

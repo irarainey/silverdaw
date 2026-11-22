@@ -1,5 +1,6 @@
 # Silverdaw — Technical Design & Implementation Plan
 
+Development version: **[1.12.1](../CHANGELOG.md#1121)**.
 Latest designated release: **[1.12.0](#release-acceptance-1120)**.
 
 ## Release acceptance (1.12.0)
@@ -1110,7 +1111,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.12.0" } }
+{ "type": "READY", "payload": { "version": "1.12.1" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,

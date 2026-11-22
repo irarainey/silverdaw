@@ -3,9 +3,12 @@
 // focused composable that the editor component can consume.
 
 import { ref, type Ref } from 'vue'
-import type { NotationLane } from './useScratchNotationEditor'
+import type { ScratchCrossfaderKeyframe } from '@shared/bridge-protocol'
+import type { NotationLane, NotationSelection } from './useScratchNotationEditor'
 import {
+  cfValueToY,
   clientToSvgCoordinates,
+  timeToX,
   xToTime,
   yToTurns,
   yToCfValue
@@ -30,6 +33,8 @@ export interface PointerInteractionContext {
   turnsMargin: number
   cfLaneTop: Ref<number>
   cfLaneHeight: Ref<number>
+  crossfader: Ref<readonly ScratchCrossfaderKeyframe[]>
+  selection: Ref<NotationSelection | null>
 }
 
 export interface PointerCallbacks {
@@ -50,6 +55,7 @@ export interface NotationPointerInteraction {
   handlePointerUp(event: PointerEvent): void
   handlePointerCancel(event: PointerEvent): void
   handleLostPointerCapture(event: PointerEvent): void
+  finishDrag(): void
   handleDoubleClick(lane: NotationLane, event: MouseEvent): void
   handlePointContextMenu(lane: NotationLane, index: number, event: MouseEvent): void
 }
@@ -60,25 +66,22 @@ export function createNotationPointerInteraction(
 ): NotationPointerInteraction {
   const dragState = ref<DragState>({ active: false, lane: null, index: -1 })
   let capturedPointerId: number | null = null
+  let captureTarget: Element | null = null
+  let grabOffsetX = 0
+  let grabOffsetY = 0
 
-  function releaseCaptureIfHeld(event: PointerEvent): void {
-    if (capturedPointerId !== null) {
-      try {
-        ;(event.target as Element)?.releasePointerCapture?.(capturedPointerId)
-      } catch {
-        // Already released or target changed — safe to ignore.
-      }
-      capturedPointerId = null
-    }
-  }
-
-  function resetDrag(): void {
+  function finishDrag(): void {
+    if (!dragState.value.active) return
     dragState.value = { active: false, lane: null, index: -1 }
+    if (capturedPointerId !== null && captureTarget?.hasPointerCapture(capturedPointerId)) {
+      captureTarget.releasePointerCapture(capturedPointerId)
+    }
+    captureTarget = null
     capturedPointerId = null
     callbacks.onEndEdit()
   }
 
-  function getSvgCoords(event: PointerEvent): { x: number; y: number } | null {
+  function getSvgCoords(event: MouseEvent): { x: number; y: number } | null {
     const svg = context.svgEl.value
     if (!svg) return null
     const rect = svg.getBoundingClientRect()
@@ -95,27 +98,57 @@ export function createNotationPointerInteraction(
     context.svgEl.value?.focus({ preventScroll: true })
   }
 
+  function crossfaderHit(index: number, pointerValue: number, cycle: boolean): number {
+    const points = context.crossfader.value
+    const hit = points[index]!
+    let first = index
+    while (first > 0 && points[first - 1]!.timeUs === hit.timeUs) first--
+    let nearest = first
+    let end = first + 1
+    for (; end < points.length && points[end]!.timeUs === hit.timeUs; end++) {
+      if (Math.abs(points[end]!.value - pointerValue) < Math.abs(points[nearest]!.value - pointerValue)) nearest = end
+    }
+    const selected = context.selection.value
+    if (selected?.lane !== 'crossfader' || selected.index < first || selected.index >= end
+      || points[selected.index]!.value !== points[nearest]!.value) return nearest
+    if (!cycle) return selected.index
+    for (let i = selected.index + 1; i < end; i++) {
+      if (points[i]!.value === points[nearest]!.value) return i
+    }
+    return nearest
+  }
+
   function handlePointDown(lane: NotationLane, index: number, event: PointerEvent): void {
     event.preventDefault()
+    if (event.button !== 0 || dragState.value.active) return
+    const coords = getSvgCoords(event)
+    if (lane === 'crossfader' && coords) {
+      const value = yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value)
+      index = crossfaderHit(index, value, true)
+      const point = context.crossfader.value[index]!
+      grabOffsetX = timeToX(point.timeUs, context.durationUs.value, context.contentWidth.value, context.paddingX) - coords.x
+      grabOffsetY = cfValueToY(point.value, context.cfLaneTop.value, context.cfLaneHeight.value) - coords.y
+    }
     focusSvg()
     callbacks.onSelect(lane, index)
     callbacks.onBeginEdit()
     dragState.value = { active: true, lane, index }
     try {
-      ;(event.target as Element)?.setPointerCapture?.(event.pointerId)
-      capturedPointerId = event.pointerId
+      captureTarget = event.currentTarget as Element | null
+      captureTarget?.setPointerCapture(event.pointerId)
     } catch {
       // setPointerCapture may throw if the target is removed — safe fallback.
     }
+    capturedPointerId = event.pointerId
   }
 
   function handlePointerMove(event: PointerEvent): void {
-    if (!dragState.value.active) return
+    if (!dragState.value.active || capturedPointerId !== event.pointerId) return
     const coords = getSvgCoords(event)
     if (!coords) return
 
     const timeUs = xToTime(
-      coords.x,
+      coords.x + (dragState.value.lane === 'crossfader' ? grabOffsetX : 0),
       context.durationUs.value,
       context.contentWidth.value,
       context.paddingX
@@ -131,38 +164,22 @@ export function createNotationPointerInteraction(
       )
       callbacks.onMovePlatter(dragState.value.index, timeUs, turns)
     } else if (dragState.value.lane === 'crossfader') {
-      const value = yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value)
+      const value = yToCfValue(coords.y + grabOffsetY, context.cfLaneTop.value, context.cfLaneHeight.value)
       callbacks.onMoveCrossfader(dragState.value.index, timeUs, value)
+      const selected = context.selection.value
+      if (selected?.lane === 'crossfader') dragState.value.index = selected.index
     }
   }
 
   function handlePointerUp(event: PointerEvent): void {
-    releaseCaptureIfHeld(event)
-    resetDrag()
-  }
-
-  function handlePointerCancel(event: PointerEvent): void {
-    releaseCaptureIfHeld(event)
-    resetDrag()
-  }
-
-  function handleLostPointerCapture(_event: PointerEvent): void {
-    capturedPointerId = null
-    resetDrag()
+    if (event.pointerId === capturedPointerId) finishDrag()
   }
 
   function handleDoubleClick(lane: NotationLane, event: MouseEvent): void {
     const svg = context.svgEl.value
     if (!svg) return
     focusSvg()
-    const rect = svg.getBoundingClientRect()
-    const coords = clientToSvgCoordinates(
-      event.clientX,
-      event.clientY,
-      rect,
-      context.viewBoxWidth.value,
-      context.viewBoxHeight.value
-    )
+    const coords = getSvgCoords(event)!
     const timeUs = xToTime(
       coords.x,
       context.durationUs.value,
@@ -178,6 +195,11 @@ export function createNotationPointerInteraction(
 
   function handlePointContextMenu(lane: NotationLane, index: number, event: MouseEvent): void {
     event.preventDefault()
+    const coords = getSvgCoords(event)
+    if (lane === 'crossfader' && coords && event.button === 2) {
+      index = crossfaderHit(index, yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value), false)
+    }
+    finishDrag()
     focusSvg()
     callbacks.onSelect(lane, index)
     callbacks.onDelete(lane, index)
@@ -188,8 +210,9 @@ export function createNotationPointerInteraction(
     handlePointDown,
     handlePointerMove,
     handlePointerUp,
-    handlePointerCancel,
-    handleLostPointerCapture,
+    handlePointerCancel: handlePointerUp,
+    handleLostPointerCapture: handlePointerUp,
+    finishDrag,
     handleDoubleClick,
     handlePointContextMenu
   }

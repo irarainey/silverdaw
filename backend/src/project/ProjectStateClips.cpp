@@ -677,7 +677,7 @@ static bool envelopeArraysSemanticallyEqual(const juce::Array<juce::var>& a,
         const double tb = static_cast<double>(b.getReference(i).getProperty(timeId, 0.0));
         const double ga = static_cast<double>(a.getReference(i).getProperty(gainId, 1.0));
         const double gb = static_cast<double>(b.getReference(i).getProperty(gainId, 1.0));
-        if (std::abs(ta - tb) > 1.0e-3 || std::abs(ga - gb) > 1.0e-4) return false;
+        if (ta != tb || ga != gb) return false;
     }
     return true;
 }
@@ -688,7 +688,7 @@ bool ProjectState::setClipEnvelope(const juce::String& clipId,
     auto clip = findClip(clipId);
     if (!clip.isValid()) return false;
 
-    // Normalise envelopes so default/duplicate shapes do not pollute persisted state.
+    // Equal-time points describe a step; their authored order is significant.
     juce::Array<juce::var> normalised;
     normalised.ensureStorageAllocated(points.size());
     for (const auto& p : points)
@@ -696,6 +696,7 @@ bool ProjectState::setClipEnvelope(const juce::String& clipId,
         if (!p.isObject()) return false;
         const double t = static_cast<double>(p.getProperty(kEnvelopeTimeMs, 0.0));
         const double g = static_cast<double>(p.getProperty(kEnvelopeGain, 1.0));
+        if (!std::isfinite(t) || !std::isfinite(g)) return false;
         const double clampedTime = juce::jmax(0.0, t);
         const double clampedGain = juce::jlimit(0.0, 4.0, g);
         auto* obj = new juce::DynamicObject();
@@ -703,16 +704,13 @@ bool ProjectState::setClipEnvelope(const juce::String& clipId,
         obj->setProperty(kEnvelopeGain, clampedGain);
         normalised.add(juce::var(obj));
     }
-    std::sort(normalised.begin(), normalised.end(),
-              [](const juce::var& a, const juce::var& b) {
-                  return static_cast<double>(a.getProperty("timeMs", 0.0)) <
-                         static_cast<double>(b.getProperty("timeMs", 0.0));
-              });
-    for (int i = 1; i < normalised.size(); ++i)
+    if (normalised.size() > 1)
     {
-        const double prev = static_cast<double>(normalised.getReference(i - 1).getProperty(kEnvelopeTimeMs, 0.0));
-        const double curr = static_cast<double>(normalised.getReference(i).getProperty(kEnvelopeTimeMs, 0.0));
-        if (std::abs(curr - prev) < 1.0e-3) return false; // duplicate timeMs
+        std::stable_sort(normalised.begin(), normalised.end(),
+                         [](const juce::var& a, const juce::var& b) {
+                             return static_cast<double>(a.getProperty("timeMs", 0.0)) <
+                                    static_cast<double>(b.getProperty("timeMs", 0.0));
+                         });
     }
 
     const auto existing = readEnvelopeArray(clip, kEnvelopePoints);

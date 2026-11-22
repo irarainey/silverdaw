@@ -480,6 +480,92 @@ void testBakePatternToBufferRendersAudio()
             "baked scratch should contain audible signal");
 }
 
+void testBakeSubBlockCrossfaderCut()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto audio = makeRecorderTestBuffer(48000, sampleRate);
+    scratch::Pattern pattern;
+    pattern.durationUs = pattern.cropEndUs = 20000;
+    pattern.ownerDeck = scratch::DeckSide::deck2;
+    pattern.platter = {{0, 0.1, false}, {20000, 0.11, false}};
+    // Both cuts fall before the midpoint of the first 512-sample bake block.
+    pattern.crossfader = {{0, 0}, {1000, 0}, {1000, 1}, {3000, 1}, {3000, 0}, {20000, 0}};
+    const auto baked = scratch::bakePatternToBuffer(pattern, audio, sampleRate);
+    require(baked.getNumSamples() == 960, "baked cut keeps the pattern duration");
+    require(baked.getMagnitude(0, 0, 48) == 0.0f, "a closed fader stays silent before the cut");
+    require(baked.getMagnitude(0, 48, 96) > 0.001f, "a sub-block fader opening must be audible");
+}
+
+void testReplayStepThenRampMatchesBake()
+{
+    constexpr double sampleRate = 48000.0;
+    auto audio = std::make_shared<juce::AudioBuffer<float>>(1, 12000);
+    juce::FloatVectorOperations::fill(audio->getWritePointer(0), 1.0f, audio->getNumSamples());
+    scratch::Pattern pattern;
+    pattern.durationUs = pattern.cropEndUs = 20000;
+    pattern.ownerDeck = scratch::DeckSide::deck2;
+    pattern.platter = {{0, 0.1, false}, {20000, 0.11, false}};
+    pattern.crossfader = {{0, 0}, {1000, 0}, {1000, 1}, {2000, 0}, {20000, 0}};
+
+    const auto baked = scratch::bakePatternToBuffer(pattern, audio, sampleRate);
+    const auto snapshot = scratch::ScratchPatternEvaluator::buildSnapshot(pattern);
+    scratch::ScratchAudioSource source(audio, sampleRate);
+    source.prepareToPlay(64, sampleRate);
+    source.beginPatternReplay(&snapshot);
+    juce::AudioBuffer<float> live(1, 512);
+    for (int start = 0; start < 512; start += 64)
+        source.getNextAudioBlock({&live, start, 64});
+
+    const double smoothing = 1.0 - std::exp(
+        -1.0 / (sampleRate * VinylScratchProcessor::Settings{}.gainSmoothingSeconds));
+    double expected = 0.0;
+    for (int i = 0; i < 512; ++i)
+    {
+        const double target = i >= 48 && i < 96 ? (96 - i) / 48.0 : 0.0;
+        expected += (target - expected) * smoothing;
+        requireNear(baked.getSample(0, i), expected, 1e-6, "512-sample bake must follow the smoothed step and ramp");
+        requireNear(live.getSample(0, i), expected, 1e-6, "64-sample replay must follow the same envelope");
+    }
+}
+
+void testReplayPartialCropEnd()
+{
+    constexpr double sampleRate = 48000.0;
+    scratch::Pattern pattern;
+    pattern.durationUs = 20000;
+    pattern.cropStartUs = 3000;
+    pattern.cropEndUs = 5005; // 96.24 samples: sample 96 is inside, 97 is outside.
+    pattern.platter = {{0, 0.1, false}, {20000, 0.11, false}};
+    pattern.crossfader = {{0, 0}, {20000, 0}};
+    const auto audio = makeRecorderTestBuffer(48000, sampleRate);
+    const auto snapshot = scratch::ScratchPatternEvaluator::buildSnapshot(pattern);
+    scratch::ScratchAudioSource source(audio, sampleRate);
+    source.prepareToPlay(64, sampleRate);
+    source.setTouched(true);
+    source.setManualRate(1.0);
+    source.beginPatternReplay(&snapshot);
+    source.setPlaying(true);
+    juce::AudioBuffer<float> output(2, 66);
+    source.getNextAudioBlock({&output, 1, 64});
+    for (int ch = 0; ch < 2; ++ch)
+        juce::FloatVectorOperations::fill(output.getWritePointer(ch), 2.0f, 66);
+    source.getNextAudioBlock({&output, 1, 64});
+    const auto baked = scratch::bakePatternToBuffer(pattern, audio, sampleRate);
+    require(baked.getNumSamples() == 97, "bake should include the last in-crop sample");
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        require(std::abs(output.getSample(ch, 33)) > 0.001f, "last in-crop sample should play");
+        requireNear(baked.getSample(ch, 96), output.getSample(ch, 33), 1e-6,
+                    "bake and replay should end on the same sample");
+        require(output.getMagnitude(ch, 34, 31) == 0.0f, "partial final block must silence every post-crop sample");
+        require(output.getSample(ch, 0) == 2.0f && output.getSample(ch, 65) == 2.0f,
+                "crop-tail clearing must respect the requested buffer region");
+    }
+    require(source.consumeEndReached(), "the final block should signal crop end");
+    source.getNextAudioBlock({&output, 1, 64});
+    require(output.getMagnitude(1, 64) == 0.0f, "stopped replay must stay silent");
+}
+
 void testBakePatternToBufferHandlesMissingInputs()
 {
     // Empty/degenerate inputs must yield an empty buffer, never crash.
@@ -688,6 +774,9 @@ void addScratchRecorderTests(std::vector<TestCase>& tests)
     tests.push_back({"scratch recorder engine integration", testRecorderEngineIntegration});
     tests.push_back({"scratch draft pattern replay uses scratch source", testDraftPatternReplayUsesScratchSource});
     tests.push_back({"scratch bake pattern to buffer renders audio", testBakePatternToBufferRendersAudio});
+    tests.push_back({"scratch bake sub-block crossfader cut", testBakeSubBlockCrossfaderCut});
+    tests.push_back({"scratch replay step then ramp matches bake", testReplayStepThenRampMatchesBake});
+    tests.push_back({"scratch replay partial crop end", testReplayPartialCropEnd});
     tests.push_back({"scratch bake pattern to buffer handles missing inputs", testBakePatternToBufferHandlesMissingInputs});
     tests.push_back({"scratch recorder abort on session close", testRecorderAbortOnSessionClose});
     tests.push_back({"scratch recorder saturated lane capacity", testRecorderSaturatedLaneCapacity});

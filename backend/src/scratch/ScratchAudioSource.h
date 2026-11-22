@@ -14,6 +14,7 @@ namespace silverdaw::scratch
 {
 
 struct PatternReplaySnapshot;
+struct EvalResult;
 
 class ScratchAudioSource final : public juce::AudioSource
 {
@@ -89,6 +90,8 @@ class ScratchAudioSource final : public juce::AudioSource
     double preparedSampleRate() const noexcept { return sourceSampleRate; }
 
   private:
+    void renderReplayGain(const juce::AudioSourceChannelInfo& info, const PatternReplaySnapshot& replay,
+                          const EvalResult& blockMidpoint) noexcept;
     // Waits for any in-flight audio callback to finish.  Must be called from
     // the message/control thread, NEVER from the audio callback.
     void waitForCallbackQuiescence() const noexcept;

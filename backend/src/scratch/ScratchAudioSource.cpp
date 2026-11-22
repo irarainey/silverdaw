@@ -1,7 +1,8 @@
 #include "ScratchAudioSource.h"
 #include "ScratchPatternEvaluator.h"
 
-#include <cmath>
+#include <algorithm>
+#include <iterator>
 #include <thread>
 
 namespace silverdaw::scratch
@@ -104,6 +105,47 @@ void ScratchAudioSource::prepareToPlay(int samplesPerBlockExpected, double newOu
     sourceEndReached.store(false, std::memory_order_release);
 }
 
+void ScratchAudioSource::renderReplayGain(const juce::AudioSourceChannelInfo& info,
+                                          const PatternReplaySnapshot& replay,
+                                          const EvalResult& blockMidpoint) noexcept
+{
+    if (!replay.hasCrossfaderCuts)
+    {
+        processor.setTargetGain(static_cast<float>(blockMidpoint.crossfaderGain));
+        processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
+        replayCrossfaderPosition.store(blockMidpoint.crossfaderPosition, std::memory_order_release);
+        return;
+    }
+
+    // Split at every knot, not just cuts: the outgoing ramp can end in this same callback.
+    const auto& lane = replay.crossfader;
+    double position = 0.0;
+    for (int start = 0; start < info.numSamples;)
+    {
+        const auto sample = replayOutputSamples + start;
+        const double timeUs = static_cast<double>(sample) * 1000000.0 / outputSampleRate;
+        const auto next = std::upper_bound(lane.begin(), lane.end(), sample,
+            [&](std::int64_t s, const CrossfaderKeyframe& kf) {
+                return s < firstSampleAtOrAfterUs(kf.timeUs, outputSampleRate);
+            });
+        // The cropped lane includes both endpoints; only in-crop samples are rendered.
+        const auto& previous = *std::prev(next);
+        const double slope = (next->value - previous.value)
+                             / static_cast<double>(next->timeUs - previous.timeUs);
+        position = previous.value + slope * (timeUs - static_cast<double>(previous.timeUs));
+        const double positionStep = slope * 1000000.0 / outputSampleRate;
+        const int count = static_cast<int>(std::min<std::int64_t>(info.numSamples - start,
+            firstSampleAtOrAfterUs(next->timeUs, outputSampleRate) - sample));
+        processor.setTargetGain(static_cast<float>(
+            ScratchPatternEvaluator::linearV1Gain(position, replay.ownerDeck)));
+        const double gainStep = replay.ownerDeck == DeckSide::deck1 ? -positionStep : positionStep;
+        processor.process(*audio, *info.buffer, info.startSample + start, count, gainStep);
+        position += (count - 1) * positionStep;
+        start += count;
+    }
+    replayCrossfaderPosition.store(position, std::memory_order_release);
+}
+
 void ScratchAudioSource::releaseResources()
 {
 }
@@ -141,42 +183,39 @@ void ScratchAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& i
         const auto timeUs = static_cast<std::int64_t>(
             static_cast<double>(replayOutputSamples) * 1000000.0 / outputSampleRate);
         const auto replayDurationUs = replay->durationUs();
-        replayNormalized.store(
-            replayDurationUs > 0
-                ? juce::jlimit(0.0, 1.0, static_cast<double>(timeUs)
-                                             / static_cast<double>(replayDurationUs))
-                : 0.0,
-            std::memory_order_release);
-        const auto current = ScratchPatternEvaluator::evaluate(*replay, timeUs);
-        if (current.beyondEnd)
+        const auto endSample = firstSampleAtOrAfterUs(replayDurationUs, outputSampleRate);
+        const int count = static_cast<int>(std::clamp<std::int64_t>(
+            endSample - replayOutputSamples, 0, info.numSamples));
+        if (count > 0)
         {
-            replaySnapshot.store(nullptr, std::memory_order_release);
-            info.clearActiveBufferRegion();
-            motorPlaying.store(false, std::memory_order_release);
-            publishedSemanticRate.store(0.0, std::memory_order_release);
-            sourceEndReached.store(true, std::memory_order_release);
-            callbackInFlight.fetch_sub(1, std::memory_order_release);
-            return;
+            const auto midpointUs = timeUs + static_cast<std::int64_t>(
+                static_cast<double>(count) * 500000.0 / outputSampleRate);
+            const auto evaluation = ScratchPatternEvaluator::evaluate(
+                *replay, juce::jmin(replayDurationUs - 1, midpointUs));
+            processor.setManualWeightEngaged(false);
+            processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
+            renderReplayGain({info.buffer, info.startSample, count}, *replay, evaluation);
+            replayOutputSamples += count;
+            publishedSemanticRate.store(juce::jlimit(-8.0, 8.0, evaluation.playbackRate),
+                                        std::memory_order_release);
         }
-
-        const auto midpointUs = timeUs + static_cast<std::int64_t>(
-            static_cast<double>(info.numSamples) * 500000.0 / outputSampleRate);
-        const auto evaluation = ScratchPatternEvaluator::evaluate(
-            *replay, juce::jmin(replay->durationUs() - 1, midpointUs));
-
-        processor.setManualWeightEngaged(false);
-        processor.setTargetRate(evaluation.playbackRate * sourceSamplesPerOutputSample);
-        processor.setTargetGain(static_cast<float>(evaluation.crossfaderGain));
-        replayCrossfaderPosition.store(
-            evaluation.crossfaderPosition,
-            std::memory_order_release);
-        processor.process(*audio, *info.buffer, info.startSample, info.numSamples);
-        replayOutputSamples += info.numSamples;
+        if (count < info.numSamples)
+            info.buffer->clear(info.startSample + count, info.numSamples - count);
         outputSampleCounter.store(blockStart + info.numSamples, std::memory_order_release);
         publishedSourcePosition.store(processor.getSourcePosition(), std::memory_order_release);
-        publishedSemanticRate.store(
-            juce::jlimit(-8.0, 8.0, evaluation.playbackRate),
-            std::memory_order_release);
+        const bool finished = replayOutputSamples >= endSample;
+        replayNormalized.store(finished ? 1.0 : static_cast<double>(timeUs) / static_cast<double>(replayDurationUs),
+                               std::memory_order_release);
+        if (finished)
+        {
+            processor.reset(processor.getSourcePosition(), 0.0, 0.0f);
+            motorPlaying.store(false, std::memory_order_release);
+            platterTouched.store(false, std::memory_order_release);
+            manualRateUntilOutputSample.store(0, std::memory_order_release);
+            publishedSemanticRate.store(0.0, std::memory_order_release);
+            replaySnapshot.store(nullptr, std::memory_order_release);
+            sourceEndReached.store(true, std::memory_order_release);
+        }
         callbackInFlight.fetch_sub(1, std::memory_order_release);
         return;
     }
@@ -348,12 +387,15 @@ void ScratchAudioSource::beginPatternReplay(const PatternReplaySnapshot* snapsho
                                  * sourceSampleRate;
     const auto initial = ScratchPatternEvaluator::evaluate(
         *snapshot, juce::jmin<std::int64_t>(snapshot->durationUs() - 1, 1));
+    const auto initialPositionCf = snapshot->hasCrossfaderCuts
+        ? ScratchPatternEvaluator::interpolateCrossfader(snapshot->crossfader, 0)
+        : initial.crossfaderPosition;
     processor.reset(
         initialPosition,
         initial.playbackRate * sourceSamplesPerOutputSample,
-        static_cast<float>(initial.crossfaderGain));
+        static_cast<float>(ScratchPatternEvaluator::linearV1Gain(initialPositionCf, snapshot->ownerDeck)));
     replayCrossfaderPosition.store(
-        initial.crossfaderPosition,
+        initialPositionCf,
         std::memory_order_release);
     publishedSourcePosition.store(initialPosition, std::memory_order_release);
     replaySnapshot.store(snapshot, std::memory_order_release);

@@ -46,6 +46,7 @@ import {
   COL_SLICE_HANDLE,
   COL_VOL_DOT_STROKE,
   COL_VOL_ENDPOINT,
+  COL_VOL_FOCUS,
   COL_VOL_LINE,
   COL_VOL_MIDPOINT,
   COL_VOL_MIDPOINT_DIM,
@@ -395,12 +396,17 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
       // Linear-in-dB segments curve in linear gain, sampled across the visible span.
       const curve = acquireGraphics()
       if (!curve) return
-      for (let i = 0; i <= steps; i++) {
+      // Include every breakpoint between samples so a step is genuinely vertical.
+      let point = points.findIndex((p) => p.timeMs >= tLo)
+      if (point < 0) point = points.length
+      curve.moveTo(drawLeft, envY(points[point]?.timeMs === tLo ? points[point]!.gain : envelopeGainAtMs(points, tLo)))
+      for (let i = 1; i <= steps; i++) {
         const t = tLo + (i / steps) * (tHi - tLo)
-        const x = envX(t)
-        const y = envY(envelopeGainAtMs(points, t))
-        if (i === 0) curve.moveTo(x, y)
-        else curve.lineTo(x, y)
+        while (point < points.length && points[point]!.timeMs <= t) {
+          const p = points[point++]!
+          curve.lineTo(envX(p.timeMs), envY(p.gain))
+        }
+        curve.lineTo(envX(t), envY(envelopeGainAtMs(points, t)))
       }
       curve.stroke({ color: COL_VOL_LINE, width: editing ? 2 : 1.5, alpha: editing ? 0.95 : 0.5 })
       layer.addChild(curve)
@@ -423,6 +429,14 @@ export function createClipEditorWaveformPasses(ctx: ClipEditorWaveformPassCtx) {
         dot.circle(x, y, r).fill({ color: colour, alpha: editing ? 1 : 0.6 })
         if (editing) dot.stroke({ color: COL_VOL_DOT_STROKE, width: 1 })
         layer.addChild(dot)
+      }
+      const selected = deps.selectedEnvelopeIndex()
+      const p = selected === null ? undefined : points[selected]
+      if (editing && p && envX(p.timeMs) >= drawLeft - 8 && envX(p.timeMs) <= drawRight + 8) {
+        const focus = acquireGraphics()
+        if (!focus) return
+        focus.circle(envX(p.timeMs), envY(p.gain), r + 2).stroke({ color: COL_VOL_FOCUS, width: 2 })
+        layer.addChild(focus)
       }
     }
   }

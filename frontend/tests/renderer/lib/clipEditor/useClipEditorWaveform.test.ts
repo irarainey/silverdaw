@@ -40,6 +40,7 @@ function makeWaveform(h: Harness): ReturnType<typeof useClipEditorWaveform> {
     volumeEditActive: () => false,
     volumeShapeDurationMs: () => 0,
     draftPoints: () => [],
+    selectedEnvelopeIndex: () => null,
     draftEffectiveRatio: () => 1,
     draftReversed: () => false,
     draftBrake: () => false,

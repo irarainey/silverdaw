@@ -195,6 +195,10 @@ function handleInsertKey(event: KeyboardEvent, ctx: KeyboardCommandContext): boo
       }
     } else {
       const kf = pattern.crossfader[sel.index]
+      if (kf && event.key === 'Insert' && event.shiftKey) {
+        editor.addCrossfaderPoint(kf.timeUs)
+        return true
+      }
       const next = pattern.crossfader[sel.index + 1]
       if (kf && next) {
         insertTimeUs = Math.round((kf.timeUs + next.timeUs) / 2)

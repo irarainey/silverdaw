@@ -253,6 +253,16 @@ void testEnvelopeSnapshotInterpolation()
     seg = 0;
     requireNear(snap->gainAtMs(500.0, seg), 0.70711, 1.0e-3,
                 "midpoint interpolates linear-in-dB (~0.707), not linear-in-gain (0.75)");
+    const auto steps = silverdaw::EnvelopeSnapshot::fromVarArray({
+        makePoint(0, 1), makePoint(5, 0), makePoint(0, 0),
+        makePoint(5, 0.25), makePoint(5, 0.5), makePoint(10, 0.5), makePoint(10, 1)
+    });
+    for (double time : {0.0, 4.999, 10.0, 5.0, -1.0})
+    {
+        const auto expected = time < 0 || time >= 10 ? 1.0 : time >= 5 ? 0.5 : 0.0;
+        requireNear(steps->gainAtMs(time, seg), expected, 1.0e-8,
+                    "steps hold their exact outgoing gain, including after backwards seeks");
+    }
 }
 
 void testMixdownSnapshotCarriesClipEnvelope()
@@ -273,6 +283,7 @@ void testMixdownSnapshotCarriesClipEnvelope()
     juce::Array<juce::var> pts;
     pts.add(makePoint(0.0, 1.0));
     pts.add(makePoint(500.0, 0.25));
+    pts.add(makePoint(500.0, 0.75));
     require(state.setClipEnvelope("c-env", pts), "setClipEnvelope should succeed");
 
     // Un-shaped clip on the same track — must carry an empty envelope.
@@ -294,13 +305,15 @@ void testMixdownSnapshotCarriesClipEnvelope()
 
     require(shaped != nullptr, "shaped clip should appear in the mixdown snapshot");
     require(plain != nullptr, "plain clip should appear in the mixdown snapshot");
-    require(shaped->envelopePoints.size() == 2,
+    require(shaped->envelopePoints.size() == 3,
             "snapshot should carry the clip volume-envelope points");
     require(plain->envelopePoints.isEmpty(),
             "un-shaped clip should default to an empty envelope");
     const auto compiled = silverdaw::EnvelopeSnapshot::fromVarArray(shaped->envelopePoints);
     require(!compiled->isEmpty(),
             "carried envelope points must compile to a usable snapshot");
+    std::size_t seg = 0;
+    requireNear(compiled->gainAtMs(500, seg), 0.75, 1.0e-6, "export retains the outgoing step");
 }
 
 void testTracksAsJsonCarriesClipEnvelope()

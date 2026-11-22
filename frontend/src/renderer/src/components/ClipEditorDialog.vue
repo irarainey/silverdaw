@@ -34,7 +34,11 @@ const {
   clipMetronomeEnabled,
   onToggleClipMetronome,
   volumeEditActive,
+  focusedEnvelopePointLabel,
   onCanvasMouseDown,
+  clearEnvelopeFocus,
+  onEnvelopeFocus,
+  onEnvelopeKeydown,
   onCanvasContextMenu,
   onCanvasWheel,
   onScrollbarMouseDown,
@@ -166,12 +170,23 @@ const gridAligning = computed(() => beatGrid.alignActive.value)
             <div class="relative w-full">
               <div
                 ref="waveformHost"
-                class="relative h-[min(260px,26vh)] w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950"
+                :tabindex="volumeEditActive ? 0 : undefined"
+                :role="volumeEditActive ? 'group' : undefined"
+                :aria-label="volumeEditActive ? 'Volume Shape. Tab through points; use arrow keys to move the focused point.' : undefined"
+                class="relative h-[min(260px,26vh)] w-full overflow-hidden rounded border border-zinc-800 bg-zinc-950 outline-none focus:border-sky-500"
                 :class="gridAligning ? 'cursor-grab' : volumeEditActive ? 'cursor-pointer' : 'cursor-crosshair'"
                 @mousedown="onCanvasMouseDown"
+                @focus="onEnvelopeFocus"
+                @blur="clearEnvelopeFocus"
+                @keydown="onEnvelopeKeydown"
                 @contextmenu="onCanvasContextMenu"
                 @wheel="onCanvasWheel"
               />
+              <span
+                v-if="volumeEditActive && focusedEnvelopePointLabel"
+                role="status"
+                class="pointer-events-none absolute right-2 top-1 rounded bg-zinc-950 px-1 font-mono text-[10px] tabular-nums text-sky-200"
+              >{{ focusedEnvelopePointLabel }}</span>
               <!-- Horizontal scrollbar, flush to the bottom edge of the waveform
                    window and full width, matching how the main timeline renders it. -->
               <div

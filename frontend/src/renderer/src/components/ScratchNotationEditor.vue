@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchNotationEditor } from '@/lib/scratch/useScratchNotationEditor'
 import { useScratchNotationLayout, ZOOM_STEP_PERCENT } from '@/lib/scratch/useScratchNotationLayout'
@@ -39,8 +39,15 @@ watch(
 )
 
 // Keyboard handler (extracted module) — events stop propagation when consumed
-function onKeydown(event: KeyboardEvent): void {
-  handleNotationKeydown(event, { editor, durationUs: durationUs.value })
+async function onKeydown(event: KeyboardEvent): Promise<void> {
+  const previous = editor.selection.value
+  if (!handleNotationKeydown(event, { editor, durationUs: durationUs.value })
+      || editor.selection.value === previous) return
+  await nextTick()
+  const viewport = viewportEl.value
+  if (!viewport?.contains(document.activeElement)) return
+  const selected = viewport.querySelector<SVGElement>('[aria-pressed="true"]')
+  ;(selected ?? viewport).focus({ preventScroll: true })
 }
 </script>
 
@@ -48,10 +55,6 @@ function onKeydown(event: KeyboardEvent): void {
   <div
     ref="containerEl"
     class="flex flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 p-2 outline-none focus:border-zinc-800 focus:outline-none focus-visible:border-zinc-800 focus-visible:outline-none"
-    tabindex="0"
-    role="application"
-    :aria-label="pattern ? 'Scratch notation editor' : 'No pattern to edit'"
-    @keydown="onKeydown"
   >
     <template v-if="pattern">
       <!-- Lane viewport + overlaid controls -->
@@ -59,7 +62,12 @@ function onKeydown(event: KeyboardEvent): void {
         <!-- SVG notation lanes -->
         <div
           ref="viewportEl"
-          class="no-native-scrollbar min-h-0 w-full flex-1 overflow-x-auto overflow-y-hidden"
+          class="no-native-scrollbar min-h-0 w-full flex-1 overflow-x-auto overflow-y-hidden outline-none"
+          tabindex="0"
+          role="application"
+          aria-label="Scratch notation editor"
+          @keydown="onKeydown"
+          @focusout="!viewportEl?.contains($event.relatedTarget as Node | null) && editor.clearSelection()"
           @wheel.ctrl.prevent="layout.onZoomWheel"
           @scroll="layout.onViewportScroll"
         >

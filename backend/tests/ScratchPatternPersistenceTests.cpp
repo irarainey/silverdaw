@@ -153,7 +153,9 @@ void testScratchPatternJsonRoundtrip()
     state.replaceTree(makeProjectTree());
     require(state.addScratchPattern(makeValidPatternVar("sp-1", "Pattern A")),
             "add before save should succeed");
-    require(state.addScratchPattern(makeValidPatternVar("sp-2", "Pattern B")),
+    auto cut = scratch::parsePattern(makeValidPatternVar("sp-2", "Pattern B")).value();
+    cut.crossfader = {{0, 1.0}, {1000000, 0.0}, {1000000, 0.0}, {1000000, 0.75}, {2000000, 0.5}};
+    require(state.addScratchPattern(scratch::serializePattern(cut)),
             "second add before save should succeed");
     state.markClean();
 
@@ -173,6 +175,15 @@ void testScratchPatternJsonRoundtrip()
     {
         const auto parsed = scratch::parsePattern((*arr)[i]);
         require(parsed.has_value(), "reloaded pattern should parse cleanly");
+        if (parsed->id == cut.id)
+        {
+            require(parsed->crossfader.size() == cut.crossfader.size(), "retain coincident handles");
+            for (std::size_t j = 0; j < cut.crossfader.size(); ++j)
+            {
+                require(parsed->crossfader[j].timeUs == cut.crossfader[j].timeUs, "retain cut time");
+                requireNear(parsed->crossfader[j].value, cut.crossfader[j].value, 1e-12, "retain cut order");
+            }
+        }
     }
 }
 

@@ -75,7 +75,7 @@ void VinylScratchProcessor::setManualWeightEngaged(bool engaged) noexcept
 
 void VinylScratchProcessor::process(const juce::AudioBuffer<float>& source,
                                     juce::AudioBuffer<float>& destination,
-                                    int destinationStartSample, int numSamples) noexcept
+                                    int destinationStartSample, int numSamples, double targetGainStep) noexcept
 {
     const int destinationSamples = destination.getNumSamples();
     if (destinationStartSample < 0 || destinationStartSample >= destinationSamples
@@ -98,7 +98,8 @@ void VinylScratchProcessor::process(const juce::AudioBuffer<float>& source,
     for (int i = 0; i < samplesToWrite; ++i)
     {
         currentRate += (targetRate - currentRate) * rateSmoothing;
-        currentGain += static_cast<float>((targetGain - currentGain) * gainSmoothing);
+        const float sampleTarget = static_cast<float>(targetGain + i * targetGainStep);
+        currentGain += static_cast<float>((sampleTarget - currentGain) * gainSmoothing);
 
         const double rateMagnitude = std::abs(currentRate);
         const float rateGain = smoothStep(

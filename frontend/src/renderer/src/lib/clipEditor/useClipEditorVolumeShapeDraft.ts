@@ -24,6 +24,7 @@ import {
 export interface ClipEditorVolumeShapeDraft {
   /** The working breakpoints, ordered ascending by `timeMs`. */
   draftPoints: Ref<ClipEnvelopePoint[]>
+  selectedIndex: Ref<number | null>
 
   /** True when the draft differs from the clip's persisted envelope. A flat
    *  unity draft compares equal to "no envelope". */
@@ -35,16 +36,16 @@ export interface ClipEditorVolumeShapeDraft {
   initialise: (current: Clip | null, durationMs: number) => void
 
   /** Insert a breakpoint, returning its index in the new array. */
-  addPoint: (timeMs: number, gain: number) => number
+  addPoint: (timeMs: number, gain: number, durationMs: number) => number
 
   /** Move the breakpoint at `index` (endpoints keep their pinned time). */
-  movePoint: (index: number, timeMs: number, gain: number) => void
+  movePoint: (index: number, timeMs: number, gain: number) => number
 
   /** Remove the breakpoint at `index` (pinned endpoints are never removed). */
   removePoint: (index: number) => void
 
   /** Flatten `[startMs, endMs]` (clip-local) to `gain` with hard step edges. */
-  gateRange: (startMs: number, endMs: number, gain: number) => void
+  gateRange: (startMs: number, endMs: number, gain: number, durationMs: number) => void
 
   /** Reset the draft back to a flat unity shape spanning `durationMs`. */
   reset: (durationMs: number) => void
@@ -59,6 +60,7 @@ export interface ClipEditorVolumeShapeDraft {
 
 export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
   const draftPoints = ref<ClipEnvelopePoint[]>(defaultEnvelope(1000))
+  const selectedIndex = ref<number | null>(null)
 
   // Closure over the live clip so `hasChanged` always compares against the
   // latest persisted state (a Save that mutates the clip then settles the
@@ -70,13 +72,14 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
   }
 
   const hasChanged = computed<boolean>(() => {
-    const persisted = getCurrentClip()?.envelopePoints
-    return !envelopesEqual(normalisedDraft(), persisted)
+    const persisted = getCurrentClip()?.envelopePoints ?? []
+    return !envelopesEqual(normalisedDraft(), isFlatUnityEnvelope(persisted) ? [] : persisted)
   })
 
   const isFlat = computed<boolean>(() => isFlatUnityEnvelope(draftPoints.value))
 
   function initialise(current: Clip | null, durationMs: number): void {
+    selectedIndex.value = null
     getCurrentClip = () => current
     const existing = current?.envelopePoints
     draftPoints.value =
@@ -85,25 +88,32 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
         : defaultEnvelope(durationMs)
   }
 
-  function addPoint(timeMs: number, gain: number): number {
-    const { points, index } = insertEnvelopePoint(draftPoints.value, timeMs, gain)
+  function addPoint(timeMs: number, gain: number, durationMs: number): number {
+    const { points, index } = insertEnvelopePoint(draftPoints.value, timeMs, gain, durationMs)
     draftPoints.value = points
     return index
   }
 
-  function movePoint(index: number, timeMs: number, gain: number): void {
-    draftPoints.value = moveEnvelopePoint(draftPoints.value, index, timeMs, gain)
+  function movePoint(index: number, timeMs: number, gain: number): number {
+    const moved = moveEnvelopePoint(draftPoints.value, index, timeMs, gain)
+    draftPoints.value = moved.points
+    if (selectedIndex.value === index) selectedIndex.value = moved.index
+    return moved.index
   }
 
   function removePoint(index: number): void {
+    if (index <= 0 || index >= draftPoints.value.length - 1) return
+    selectedIndex.value = null
     draftPoints.value = removeEnvelopePoint(draftPoints.value, index)
   }
 
-  function gateRange(startMs: number, endMs: number, gain: number): void {
-    draftPoints.value = applyEnvelopeGate(draftPoints.value, startMs, endMs, gain)
+  function gateRange(startMs: number, endMs: number, gain: number, durationMs: number): void {
+    selectedIndex.value = null
+    draftPoints.value = applyEnvelopeGate(draftPoints.value, startMs, endMs, gain, durationMs)
   }
 
   function reset(durationMs: number): void {
+    selectedIndex.value = null
     draftPoints.value = defaultEnvelope(durationMs)
   }
 
@@ -113,6 +123,7 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
 
   return {
     draftPoints,
+    selectedIndex,
     hasChanged,
     initialise,
     addPoint,

@@ -101,15 +101,15 @@ export const ScratchPatternSchema = z
           message: `${field} lane must have exactly one point when durationUs is zero`
         })
       }
-      // Strictly increasing timestamps.
       let previousTimeUs = -1
       for (let index = 0; index < points.length; index += 1) {
         const timeUs = points[index]?.timeUs ?? 0
-        if (timeUs <= previousTimeUs || timeUs > pattern.durationUs) {
+        if (timeUs < previousTimeUs || (field === 'platter' && timeUs === previousTimeUs)
+          || timeUs > pattern.durationUs) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
             path: [field, index, 'timeUs'],
-            message: 'keyframe times must be strictly increasing and contained by durationUs'
+            message: `${field} times must be ${field === 'platter' ? 'strictly increasing' : 'nondecreasing'} and contained by durationUs`
           })
           break
         }

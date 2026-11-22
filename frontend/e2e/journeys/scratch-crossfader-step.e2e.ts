@@ -1,0 +1,55 @@
+import { expect, test } from '../fixtures/silverdaw'
+import { stubOpenDialog } from '../helpers/dialogs'
+import { libraryItem } from '../helpers/library'
+import { copyProjectFixture, FIXTURE_AUDIO_FILE } from '../helpers/projectFixtures'
+import { waitForStartupReady } from '../helpers/startup'
+
+test('scratch notation targets stacked crossfader handles only while focused', async ({ silverdaw }) => {
+  const { page, electronApp } = silverdaw
+  await waitForStartupReady(page)
+  await stubOpenDialog(electronApp, [copyProjectFixture()])
+  await page.getByRole('button', { name: 'Open Project…' }).click()
+  await libraryItem(page, FIXTURE_AUDIO_FILE).click({ button: 'right' })
+  await page.getByText('Open in Scratch Editor', { exact: true }).click()
+  await page.getByRole('button', { name: 'Arm scratch recording' }).click()
+  await expect(page.getByRole('button', { name: 'Cancel record arming' })).toBeVisible()
+  await page.getByRole('slider', { name: 'Virtual vinyl platter' }).click()
+  await page.getByRole('button', { name: 'Stop recording' }).click()
+
+  const editor = page.getByRole('application', { name: 'Scratch notation editor' })
+  const platter = editor.getByRole('button', { name: /^Platter point 1:/ })
+  const fader = (number: number) => editor.getByRole('button', { name: new RegExp(`^Crossfader point ${number}:`) })
+  await platter.focus()
+  await expect(platter).toHaveAttribute('aria-pressed', 'true')
+  await fader(1).focus()
+  await expect(platter).toHaveAttribute('aria-pressed', 'false')
+  await page.keyboard.press('Insert')
+  await expect(fader(2)).toBeFocused()
+  const original = await fader(2).getAttribute('aria-label')
+  const points = editor.getByRole('button', { name: /^Crossfader point / })
+  const beforeStack = await points.count()
+  await page.keyboard.press('Shift+Insert')
+  await expect(fader(3)).toBeFocused()
+  await expect(fader(3)).toHaveAttribute('aria-pressed', 'true')
+  const stacked = await fader(3).getAttribute('aria-label')
+  await page.keyboard.press(stacked?.endsWith('100%') ? 'ArrowDown' : 'ArrowUp')
+  await expect(fader(3)).not.toHaveAttribute('aria-label', stacked!)
+  await page.keyboard.press('Shift+F10')
+  await expect(points).toHaveCount(beforeStack)
+  await expect(fader(2)).toHaveAttribute('aria-label', original!)
+
+  await fader(2).focus()
+  await page.keyboard.press('Shift+Insert')
+  await expect(fader(3)).toHaveAttribute('aria-pressed', 'true')
+  const identical = await fader(3).boundingBox()
+  if (!identical) throw new Error('Stacked crossfader point is missing')
+  await page.mouse.click(identical.x + identical.width / 2, identical.y + identical.height / 2)
+  await expect(fader(2)).toHaveAttribute('aria-pressed', 'true')
+  const outgoing = await fader(3).getAttribute('aria-label')
+  const incoming = await fader(2).getAttribute('aria-label')
+  await page.keyboard.press(incoming?.endsWith('100%') ? 'ArrowDown' : 'ArrowUp')
+  await expect(fader(2)).not.toHaveAttribute('aria-label', incoming!)
+  await expect(fader(3)).toHaveAttribute('aria-label', outgoing!)
+  await page.getByRole('button', { name: 'Zoom notation in' }).focus()
+  await expect(editor.getByRole('button', { pressed: true })).toHaveCount(0)
+})

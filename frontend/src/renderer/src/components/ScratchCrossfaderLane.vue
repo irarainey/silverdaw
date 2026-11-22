@@ -25,10 +25,6 @@ const path = computed(() => {
     .join(' ')
 })
 
-function isSelected(index: number): boolean {
-  const sel = props.editor.selection.value
-  return sel !== null && sel.lane === 'crossfader' && sel.index === index
-}
 </script>
 
 <template>
@@ -48,7 +44,8 @@ function isSelected(index: number): boolean {
       v-if="path"
       :d="path"
       fill="none"
-      stroke="rgb(34 211 238)"
+      stroke="rgb(161 161 170)"
+      pointer-events="none"
       stroke-width="1.5"
       stroke-linejoin="round"
     />
@@ -60,16 +57,16 @@ function isSelected(index: number): boolean {
       :cx="toX(kf.timeUs)"
       :cy="toY(kf.value)"
       :r="POINT_RADIUS - 1"
-      :fill="isSelected(i) ? 'rgb(34 211 238)' : 'rgb(228 228 231)'"
-      :stroke="isSelected(i) ? 'rgb(8 145 178)' : 'rgb(113 113 122)'"
+      fill="rgb(228 228 231)"
+      stroke="rgb(113 113 122)"
       stroke-width="1.5"
-      class="cursor-pointer"
+      class="cursor-pointer outline-none"
       role="button"
+      :aria-pressed="editor.selection.value?.lane === 'crossfader' && editor.selection.value.index === i"
       :aria-label="`Crossfader point ${i + 1}: ${formatUsTime(kf.timeUs)}, ${(kf.value * 100).toFixed(0)}%`"
       :tabindex="0"
       @pointerdown="pointerInteraction.handlePointDown('crossfader', i, $event)"
       @contextmenu="pointerInteraction.handlePointContextMenu('crossfader', i, $event)"
-      @keydown.enter.prevent="editor.selectKeyframe('crossfader', i)"
       @focus="editor.selectKeyframe('crossfader', i)"
     />
   </g>

@@ -54,6 +54,7 @@ export function useScratchNotationEditor(
   const redoHistory: ScratchPattern[] = []
   let editGroupBaseline: ScratchPattern | null = null
   let editGroupHasChanges = false
+  let crossfaderGrabIndex: number | null = null
 
   const pattern = computed<ScratchPattern | null>(() => store.completedPattern)
 
@@ -112,6 +113,7 @@ export function useScratchNotationEditor(
     if (editGroupBaseline || !pattern.value) return
     editGroupBaseline = pattern.value
     editGroupHasChanges = false
+    crossfaderGrabIndex = null
   }
 
   function endEditGroup(): void {
@@ -173,10 +175,17 @@ export function useScratchNotationEditor(
   function moveCrossfader(index: number, timeUs: number, value: number): boolean {
     const p = pattern.value
     if (!p) return false
-    const newCf = moveCrossfaderKeyframe(p.crossfader, index, timeUs, value)
-    const result = applyCrossfaderEdit(p, newCf)
-    if (!result) return false
-    return commitEdit(result)
+    if (editGroupBaseline) crossfaderGrabIndex ??= index
+    const moved = moveCrossfaderKeyframe(
+      editGroupBaseline?.crossfader ?? p.crossfader, editGroupBaseline ? crossfaderGrabIndex! : index,
+      timeUs, value
+    )
+    const result = applyCrossfaderEdit(p, moved.crossfader)
+    if (!result || !commitEdit(result)) return false
+    if (selection.value?.lane === 'crossfader' && selection.value.index === index && moved.index !== index) {
+      selectKeyframe('crossfader', moved.index)
+    }
+    return true
   }
 
   function addPlatter(timeUs: number): boolean {
