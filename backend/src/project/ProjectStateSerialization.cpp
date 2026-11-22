@@ -518,6 +518,7 @@ juce::Result ProjectState::replaceTree(const juce::ValueTree& newTree, const juc
     // Suppress listener dirties during load; markClean emits the final correct state.
     {
         const SuppressDirtyScope suppress(*this);
+        legacyRecordingIds = {projectDir, {}};
         root.removeAllChildren(nullptr);
         root.removeAllProperties(nullptr);
         root.copyPropertiesAndChildrenFrom(newTree, nullptr);

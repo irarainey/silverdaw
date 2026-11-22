@@ -19,9 +19,9 @@ const juce::Identifier kDisplayName{"displayName"};
 const juce::Identifier kScratchPatternId{"scratchPatternId"};
 
 juce::var importAttribution(const juce::ValueTree& library, const SourceLibraryItem& item,
-                            const juce::File& metadataDirectory)
+                            const juce::File& metadataDirectory, const ProjectState::LegacyRecordingIds& legacyIds)
 {
-    auto attribution = ProjectState::resolveAttribution(library, item.id);
+    auto attribution = ProjectState::resolveAttribution(library, item.id, legacyIds);
     auto* snapshot = attribution.getDynamicObject();
     if (!snapshot)
         return {};
@@ -158,11 +158,12 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
     }
 
     const auto metadata = sourceProjectFile.getSiblingFile("metadata");
+    const ProjectState::LegacyRecordingIds legacyIds{sourceProjectFile.getParentDirectory(), {}};
     for (const auto& id : selectedIds)
     {
         const auto it = source.library.find(id);
         if (it != source.library.end())
-            it->second.data.getDynamicObject()->setProperty("attribution", importAttribution(library, it->second, metadata));
+            it->second.data.getDynamicObject()->setProperty("attribution", importAttribution(library, it->second, metadata, legacyIds));
     }
 
     const auto patterns = tree.getChildWithName(scratch_ids::kScratchPatterns);

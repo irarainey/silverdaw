@@ -175,17 +175,17 @@ bool dispatchClip(const DispatchContext& ctx)
     else if (type == "CLIP_SAVE_AS_SAMPLE")
     {
         silverdaw::handleClipSaveAsSample(payload, engine, projectState, bridge, peakPool, cache,
-                                          session.currentPath);
+                                          session);
     }
     else if (type == "CLIP_SLICE_TO_SAMPLES")
     {
         silverdaw::handleClipSliceToSamples(payload, engine, projectState, bridge, peakPool, cache,
-                                            session.currentPath);
+                                            session);
     }
     else if (type == "CLIP_SPLIT_CHANNELS")
     {
         silverdaw::handleClipSplitChannels(payload, engine, projectState, bridge, peakPool, cache,
-                                           session.currentPath);
+                                           session);
     }
     else if (type == "CLIP_SET_ENVELOPE")
     {
@@ -221,7 +221,7 @@ bool dispatchLibrary(const DispatchContext& ctx)
     else if (type == "LIBRARY_ITEM_SAVE_AS_SAMPLE")
     {
         silverdaw::handleLibraryItemSaveAsSample(payload, engine, projectState, bridge, peakPool, cache,
-                                                 session.currentPath);
+                                                 session);
     }
     else if (type == "LIBRARY_ADD")
     {

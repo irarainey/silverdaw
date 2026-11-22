@@ -11,6 +11,7 @@ const sourceMedia: AudioMetadata = {
   artist: 'The Originals',
   // Source-file geometry — must NOT leak onto a derived stem/sample sharing the GUID.
   durationMs: 58_000,
+  geometryOrigin: 'recording',
   sampleRate: 44_100,
   channelCount: 2,
   coverArt: { data: new ArrayBuffer(8), mimeType: 'image/jpeg' }
@@ -24,6 +25,15 @@ function stubMedia(meta: AudioMetadata | null): void {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+it('does not promote output or ambiguous legacy WAV lengths, even with matching tags', () => {
+  for (const geometryOrigin of ['output', undefined] as const) {
+    expect(withoutAudioGeometry({ ...sourceMedia, container: 'WAVE', geometryOrigin }))
+      .not.toHaveProperty('recordingDurationMs')
+  }
+  expect(withoutAudioGeometry({ ...sourceMedia, geometryOrigin: 'output', recordingDurationMs: 90_000 }))
+    .toHaveProperty('recordingDurationMs', 90_000)
 })
 
 describe('withoutAudioGeometry', () => {

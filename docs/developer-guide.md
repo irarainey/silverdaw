@@ -1633,8 +1633,10 @@ library item identifies its original recording independently of its immediate
 parent. The snapshot carries a basename, not a foreign machine's path. Its
 `startMs` and `endMs` describe a window in the original recording. Only a
 positive `ratio` maps positions within the derived file to positions within
-that window. A scratch render can identify its input window without claiming
-to play every part of it. These fields are not playback or beat-grid settings.
+that window. A baked scratch or a clip with a live scratch pattern can identify
+its input window without claiming to play every part of it. These windows do
+not count toward exact recording coverage. These fields are not playback or
+beat-grid settings.
 Timeline trims, splits and moves reuse the library item; they do not create
 new recording identities. Schema-1 projects without snapshots remain valid.
 
@@ -1648,8 +1650,13 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 `sourceItemId` provenance chain) so it reads the same cover art and tags from that one
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
-`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
-optional **Clean up project files** preference is on, removing a library item deletes
+`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`.
+Newly parsed media records label their file geometry as `recording` or `output`.
+Only recording geometry supplies duration evidence for attribution; a legacy
+record with a known non-WAV container can also identify recording geometry.
+Neither case changes a derived item's playback length.
+
+When the optional **Clean up project files** preference is on, removing a library item deletes
 its generated WAV — a stem, a sample, a split channel, a recording or a baked scratch —
 and then prunes the per-source folder once nothing but the
 artifacts that removal took remains in it (another still-referenced stem/sample, or any

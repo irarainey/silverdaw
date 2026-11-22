@@ -71,6 +71,21 @@ void testRecordingAttribution()
     require(snapshot["artist"].toString() == "Artist" && static_cast<double>(snapshot["ratio"]) == 2,
             "snapshot survives save, reload, parent removal and bridge serialization");
 
+    require(reopened.addLibraryItem("scratch", "bake.wav", "bake.wav", 720, 48000, 2, {}, {}, "sample", {},
+                                    "cut", {}, 500, 250), "create legacy scratch with a known input trim");
+    require(reopened.setLibraryItemScratchMeta("scratch", "pattern", "snapshot.wav"), "mark legacy scratch");
+    const auto legacy = reopened.libraryAsJson()[1]["attribution"];
+    require(legacy["parentId"].toString() == "cut" && static_cast<double>(legacy["startMs"]) == 2000
+            && static_cast<double>(legacy["endMs"]) == 2500 && !legacy.hasProperty("ratio"),
+            "legacy scratch serialization composes its input window rather than the baked audio length");
+    ProjectSession::PreparedScratch prepared{"session", reopened.getLibraryItemAttribution("scratch"), "scratch"};
+    const auto copy = prepared.attributionForSave("scratch-copy");
+    const auto revision = prepared.attributionForSave("scratch");
+    require(copy["parentId"].toString() == "scratch" && revision["parentId"].toString() == "cut"
+            && copy["recordingId"] == revision["recordingId"] && copy["endMs"] == revision["endMs"]
+            && revision["startMs"] == legacy["startMs"] && !revision.hasProperty("ratio") && !copy.hasProperty("ratio"),
+            "Save As identifies the reopened scratch; revising it preserves its original parent and window");
+
     ProjectState other;
     state.addLibraryItem("l1", "first.wav", "first.wav", 1000);
     other.addLibraryItem("l1", "second.wav", "second.wav", 1000);

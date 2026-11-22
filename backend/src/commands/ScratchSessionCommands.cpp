@@ -179,8 +179,9 @@ void handleScratchSessionOpen(const juce::var& payload,
     }
     // A reopened source.wav is the old prepared window, not time zero in the original recording.
     session.preparedScratch.sessionId = sessionId;
+    if (usesScratchSourceSnapshot) session.preparedScratch.reopenedScratchId = clip->libraryItemId;
     session.preparedScratch.attribution = usesScratchSourceSnapshot
-        ? projectState.deriveAttribution(clip->libraryItemId, -1.0, -1.0, 0.0)
+        ? projectState.getLibraryItemAttribution(clip->libraryItemId)
         : projectState.deriveAttribution(clip->libraryItemId, clip->inMs, clip->durationMs, 0.0);
     const auto cacheDirectory = projectArtifactsBaseDir(session.currentPath, "scratch-cache");
     broadcastScratchSessionState(engine, bridge);

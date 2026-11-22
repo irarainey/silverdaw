@@ -670,8 +670,14 @@ class ProjectState : public juce::ValueTree::Listener
     /** Read a library item's media GUID (the key into the project's metadata/covers store). */
     juce::String getLibraryItemMediaId(const juce::String& itemId) const;
     juce::var getLibraryItemAttribution(const juce::String& itemId) const;
-    static juce::var resolveAttribution(const juce::ValueTree& library, const juce::String& itemId);
-    static juce::var readItemAttribution(const juce::ValueTree& item);
+    struct LegacyRecordingIds
+    {
+        juce::File projectDirectory;
+        mutable std::unordered_map<juce::String, juce::String> byPath;
+        juce::String forPath(const juce::String& path) const;
+    };
+    static juce::var resolveAttribution(const juce::ValueTree& library, const juce::String& itemId,
+                                        const LegacyRecordingIds& legacyIds);
     juce::var deriveAttribution(const juce::String& parentId, double parentInMs, double parentDurationMs,
                                 double ratio, bool sameFile = false) const;
     bool setLibraryItemAttribution(const juce::String& itemId, const juce::var& attribution);
@@ -906,6 +912,8 @@ class ProjectState : public juce::ValueTree::Listener
 
     juce::ValueTree root;
     juce::ValueTree cleanSnapshot;
+    LegacyRecordingIds legacyRecordingIds;
+    static juce::var readItemAttribution(const juce::ValueTree& item, const LegacyRecordingIds& legacyIds);
     juce::UndoManager undoManager;
     bool dirty{false};
     // Runtime-only: resolves a plugin identifier against the installed catalogue. Never

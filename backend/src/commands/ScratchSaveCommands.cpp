@@ -93,6 +93,16 @@ bool writeBufferToWav(const juce::AudioBuffer<float>& buffer, double sampleRate,
 
 } // namespace
 
+juce::var ProjectSession::PreparedScratch::attributionForSave(const juce::String& destinationId) const
+{
+    if (reopenedScratchId.isEmpty() || !attribution.isObject()) return attribution;
+    auto snapshot = attribution.clone();
+    snapshot.getDynamicObject()->removeProperty("ratio");
+    if (destinationId != reopenedScratchId)
+        snapshot.getDynamicObject()->setProperty("parentId", reopenedScratchId);
+    return snapshot;
+}
+
 void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
                                ProjectState& projectState, BridgeServer& bridge,
                                juce::ThreadPool& peakPool, const PeaksCache& cache,
@@ -130,7 +140,12 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
 
     // The library item the scratch was recorded over; the baked sample inherits
     // its media GUID so cover art resolves from the shared project media entry.
-    const juce::String sourceItemId = tryGetString(payload, "sourceItemId").value_or(juce::String{});
+    const auto active = engine.getScratchSessionSnapshot();
+    const auto& prepared = session.preparedScratch;
+    const bool matchesPreparation = active && prepared.sessionId == active->sessionId;
+    const bool replacingScratch = matchesPreparation && prepared.reopenedScratchId == itemId;
+    const juce::String sourceItemId = replacingScratch ? projectState.getLibraryItemSourceItemId(itemId)
+        : tryGetString(payload, "sourceItemId").value_or(juce::String{});
     // The exact source window the scratch was performed over, persisted so re-opening
     // the saved scratch can display the original source aligned to the playhead rather
     // than the baked (already-scratched) waveform. Absent (-1) for legacy callers.
@@ -154,9 +169,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
     // may safely read the shared_ptr<const> copy for the offline bake.
     auto preparedSource = engine.getScratchPreparedSource();
     const double sourceSampleRate = engine.getScratchPreparedSourceSampleRate();
-    const auto active = engine.getScratchSessionSnapshot();
-    const auto attribution = active && session.preparedScratch.sessionId == active->sessionId
-        ? session.preparedScratch.attribution : juce::var{};
+    const auto attribution = matchesPreparation ? prepared.attributionForSave(itemId) : juce::var{};
     if (!preparedSource || preparedSource->getNumSamples() <= 0 || sourceSampleRate <= 0.0)
     {
         auto* obj = new juce::DynamicObject();

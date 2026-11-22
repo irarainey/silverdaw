@@ -328,6 +328,73 @@ void testProjectFileSaveLoadAndViewState()
     dir.deleteRecursively();
 }
 
+void testPortableLegacyRecordingIdentity()
+{
+    const auto base = makeTempDir("legacy-recording-identity");
+    const auto originalDir = base.getChildFile("before");
+    const auto project = originalDir.getChildFile("project.silverdaw");
+    const auto audio = originalDir.getChildFile("Song.wav");
+    const auto stem = originalDir.getChildFile("stems").getChildFile("Vocals.wav");
+    const auto scratch = originalDir.getChildFile("scratches").getChildFile("p").getChildFile("source.wav");
+    require(stem.getParentDirectory().createDirectory() && scratch.getParentDirectory().createDirectory()
+            && stem.replaceWithText("stem") && scratch.replaceWithText("scratch"), "create managed artifacts");
+    juce::MemoryBlock content(16384, true);
+    require(audio.replaceWithData(content.getData(), content.getSize()), "create project-owned original");
+    ProjectState state;
+    require(state.addLibraryItem("l1", audio.getFullPathName(), "Song.wav", 3000)
+            && state.addLibraryItem("stem", stem.getFullPathName(), "Vocals.wav", 1000,
+                                    44100, 2, {}, {}, "stem", {}, "l1", {}, 200)
+            && state.addLibraryItem("scratch", scratch.getFullPathName(), "Scratch.wav", 42,
+                                    44100, 2, {}, {}, "sample", {}, "stem", {}, 100, 400)
+            && state.setLibraryItemScratchMeta("scratch", "p", scratch.getFullPathName())
+            && state.addScratchPattern(makeValidPatternVar("p", "Scratch")), "create legacy scratch chain");
+    require(ProjectFile::save(project, state).wasOk(), "save legacy source project");
+    const auto selected = [&](const juce::File& file)
+    {
+        juce::String error;
+        const auto source = loadSourceProjectImport(file, error, {"scratch"});
+        require(source && source->library.count("scratch"), "select legacy scratch");
+        return source->library.at("scratch").data.getProperty("attribution", {});
+    };
+    const auto before = selected(project);
+    const auto id = before["recordingId"].toString();
+    require(id.isNotEmpty() && id != "l1" && before["parentId"].toString() == "stem"
+            && static_cast<double>(before["startMs"]) == 300 && static_cast<double>(before["endMs"]) == 700
+            && !before.hasProperty("ratio"), "import composes the scratch input window through its legacy stem");
+    const auto moved = base.getChildFile("somewhere-else");
+    require(originalDir.moveFileTo(moved), "relocate whole project before its first local derivation");
+    const auto movedProject = moved.getChildFile(project.getFileName());
+    ProjectState relocated;
+    require(ProjectFile::load(movedProject, relocated).ok, "open relocated source");
+    require(selected(movedProject)["recordingId"].toString() == id
+            && relocated.deriveAttribution("stem", 5, 10, 1)["recordingId"].toString() == id
+            && relocated.libraryAsJson()[0]["attribution"]["recordingId"].toString() == id,
+            "local snapshots, subsequent derivations and repeated imports agree after relocation");
+    const auto unrelated = base.getChildFile("unrelated");
+    require(moved.copyDirectoryTo(unrelated), "create independent project with identical IDs and filenames");
+    const auto unrelatedAudio = unrelated.getChildFile(audio.getFileName());
+    const auto unrelatedProject = unrelated.getChildFile(project.getFileName());
+    const auto originalTime = moved.getChildFile(audio.getFileName()).getLastModificationTime();
+    require(unrelatedAudio.setLastModificationTime(juce::Time(originalTime.toMilliseconds() + 60000))
+            && selected(unrelatedProject)["recordingId"].toString() != id,
+            "even identical sampled audio at the same relative path is distinguished by modification time");
+    const auto elsewhere = unrelated.getChildFile("alternate").getChildFile(audio.getFileName());
+    require(elsewhere.getParentDirectory().createDirectory() && unrelatedAudio.copyFileTo(elsewhere)
+            && elsewhere.setLastModificationTime(originalTime), "copy identical audio into another relative folder");
+    ProjectState other;
+    require(ProjectFile::load(unrelatedProject, other).ok
+            && other.setLibraryItemFilePath("l1", elsewhere.getFullPathName())
+            && other.deriveAttribution("stem", 5, 10, 1)["recordingId"].toString() != id,
+            "identical sampled audio, basename and timestamp at a different relative path stay distinct");
+    static_cast<char*>(content.getData())[content.getSize() / 2] = 'x';
+    require(unrelatedAudio.replaceWithData(content.getData(), content.getSize())
+            && unrelatedAudio.setLastModificationTime(originalTime),
+            "replace identically sized unrelated recording");
+    require(selected(unrelatedProject)["recordingId"].toString() != id,
+            "same project structure, original basename, size and library ID cannot merge unrelated audio");
+    base.deleteRecursively();
+}
+
 // A "clean up project files" removal prunes just the removed item from the saved file,
 // in place, leaving every other saved item and field intact.
 void testProjectFileRemoveLibraryItems()
@@ -822,6 +889,7 @@ void testLegacyLibraryKindMigrates()
 
 void addPersistenceTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Legacy recording identity across project relocation", testPortableLegacyRecordingIdentity});
     tests.push_back({"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation});
     tests.push_back({"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState});
     tests.push_back({"ProjectFile prunes library items in place", testProjectFileRemoveLibraryItems});

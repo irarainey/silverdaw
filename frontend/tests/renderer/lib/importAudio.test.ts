@@ -38,7 +38,8 @@ vi.mock('@/stores/transportStore', () => ({ useTransportStore: vi.fn() }))
 vi.mock('@/stores/notificationsStore', () => ({ useNotificationsStore: vi.fn() }))
 vi.mock('@/stores/uiStore', () => ({ useUiStore: vi.fn() }))
 vi.mock('@/lib/sampleRatePrompt', () => ({ promptSampleRateMismatch: vi.fn() }))
-vi.mock('@/lib/library/projectMedia', () => ({
+vi.mock('@/lib/library/projectMedia', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/library/projectMedia')>(),
   saveProjectMedia: mocks.saveProjectMedia,
   getProjectMedia: mocks.getProjectMedia
 }))
@@ -118,6 +119,16 @@ describe('importAudioIntoLibrary generated audio', () => {
     )
     expect(mocks.setItemMetadata).toHaveBeenCalledWith('stem-item', inheritedMetadata)
   })
+
+  it('marks a generated WAV as output even when no source media ID survives', async () => {
+    const opened = { filePath: 'C:\\channels\\left.wav', fileName: 'left.wav', data: new ArrayBuffer(0) }
+    await importAudioIntoLibrary(opened, {
+      kind: 'stem', inheritedMediaId: undefined,
+      generatedAudio: { sampleRate: 44100, durationMs: 2000, channelCount: 1 }
+    })
+    expect(mocks.saveProjectMedia).toHaveBeenCalledWith('new-media', opened.filePath, 'output')
+    expect(mocks.addItem).toHaveBeenCalledWith(expect.objectContaining({ durationMs: 2000 }))
+  })
 })
 
 describe('importAudioIntoTrack undo grouping', () => {
@@ -160,6 +171,7 @@ describe('importAudioIntoTrack undo grouping', () => {
   it('brackets the whole import in a single undo group', async () => {
     mocks.saveProjectMedia.mockResolvedValueOnce({ title: 'Sidecar title', album: 'Album', genre: ['Soul'] })
     await importAudioIntoTrack('track-1')
+    expect(mocks.saveProjectMedia).toHaveBeenCalledWith(expect.any(String), 'C:\\a.wav', 'recording')
     expect(mocks.addItem).toHaveBeenCalledWith(expect.objectContaining({
       sourceTags: { title: 'Sidecar title', album: 'Album' }
     }))

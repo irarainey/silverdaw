@@ -5,8 +5,14 @@
 // identity from one shared entry (no per-item sidecars, no dependency on the origin
 // library item still existing). Thin renderer wrappers over the main-process store.
 
-import type { AudioMetadata } from '@shared/types'
+import type { AudioMetadata, MediaGeometryOrigin } from '@shared/types'
+import type { AddLibraryItemInput } from '@/stores/libraryTypes'
 import { log } from '@/lib/log'
+
+export function itemGeometryOrigin(item?: Pick<AddLibraryItemInput, 'kind' | 'derivedFrom' | 'recordingOrigin'>): MediaGeometryOrigin {
+  return !item?.recordingOrigin && (item?.derivedFrom || item?.kind === 'stem' || item?.kind === 'sample' || item?.kind === 'clip')
+    ? 'output' : 'recording'
+}
 
 /**
  * Persist a source's tags + cover art into the project media store under `mediaId`.
@@ -14,24 +20,19 @@ import { log } from '@/lib/log'
  * imported file, or its sidecar for a tagless stem/sample). Called once, when a
  * source is first imported; derived items reuse the GUID and never re-save.
  */
-export async function saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<AudioMetadata | null> {
+export async function saveProjectMedia(mediaId: string, sourceFilePath: string, geometryOrigin: MediaGeometryOrigin): Promise<AudioMetadata | null> {
   if (mediaId === '' || sourceFilePath === '') return null
   try {
-    const metadata = await window.silverdaw.saveProjectMedia(mediaId, sourceFilePath)
+    const metadata = await window.silverdaw.saveProjectMedia(mediaId, sourceFilePath, geometryOrigin)
     log.info('media', `saveProjectMedia id=${mediaId} src=${sourceFilePath} ok=${metadata !== null}`)
-    return metadata
+    return metadata ? withoutAudioGeometry(metadata) : null
   } catch (err) {
     log.warn('media', `saveProjectMedia failed for ${mediaId}: ${String(err)}`)
     return null
   }
 }
 
-/** Read a source's tags + cover (cover bytes attached) back by GUID, or null when absent.
- *  The stored entry also carries the SOURCE file's audio geometry (duration / sample
- *  rate / channel count), which is meaningless for a derived stem or sample sharing the
- *  GUID — applying it would stretch a one-bar stem to the whole source. Strip it here so
- *  the media store only ever supplies identity (tags + cover); every consumer keeps its
- *  own decoded geometry. */
+/** Read shared identity by GUID without applying another file's geometry to this item. */
 export async function getProjectMedia(mediaId: string | undefined): Promise<AudioMetadata | null> {
   if (!mediaId) {
     log.info('media', 'getProjectMedia skipped (no mediaId on item)')
@@ -51,8 +52,14 @@ export async function getProjectMedia(mediaId: string | undefined): Promise<Audi
  *  (stem or sample) keeps its OWN duration / sample-rate / channel-count while still
  *  inheriting identity tags + cover art. */
 export function withoutAudioGeometry(meta: AudioMetadata): AudioMetadata {
-  const { durationMs, sampleRate: _s, channelCount: _c, ...rest } = meta
-  return durationMs === undefined ? rest : { ...rest, recordingDurationMs: durationMs }
+  const { durationMs, sampleRate: _s, channelCount: _c, recordingDurationMs, ...rest } = meta
+  // Legacy stores copied the parser's container verbatim. Generated audio was always WAV;
+  // tags (even an embedded cover) alone do not distinguish it from the original.
+  const legacyRecording = meta.geometryOrigin === undefined && typeof meta.container === 'string' &&
+    /^(?:MPEG|FLAC|AIFF(?:-C)?|M4A|MP4)(?:$|\/)/i.test(meta.container)
+  const duration = recordingDurationMs ?? (meta.geometryOrigin === 'recording' || legacyRecording ? durationMs : undefined)
+  return typeof duration === 'number' && Number.isFinite(duration) && duration > 0
+    ? { ...rest, recordingDurationMs: duration } : rest
 }
 
 /** Pick a new cover image and copy it into the covers dir as a per-item override.

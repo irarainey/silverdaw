@@ -132,6 +132,7 @@ describe('project snapshot library media hydration', () => {
         }
       ]
     })
+
     await flushAsyncWork()
 
     expect(sendMock).toHaveBeenCalledWith('WAVEFORM_REQUEST', { clipId: 'clip-1' })
@@ -148,6 +149,36 @@ describe('project snapshot library media hydration', () => {
     expect(library.byId['stem-1']?.peaks).toBe(summary)
     expect(library.channelPeaksByItemId['source-1']?.channels).toEqual(channels)
     expect(library.channelPeaksByItemId['stem-1']?.channels).toEqual(channels)
+  })
+
+  it('reopens original and generated media without treating a generated length as recording evidence', async () => {
+    const tags = { artist: 'Marlena Shaw', title: 'California Soul', album: 'Sampled' }
+    const legacy = { ...tags, container: 'MPEG', durationMs: 177214.69 }
+    const output = { ...tags, container: 'WAVE', durationMs: 2000 }
+    const records: Record<string, AudioMetadata> = {
+      original: { ...output, geometryOrigin: 'recording' }, legacy,
+      output: { ...output, geometryOrigin: 'output' }, ambiguous: output
+    }
+    Object.assign(window.silverdaw, { getProjectMedia: vi.fn(async (id: string) => records[id] ?? null) })
+    vi.mocked(window.silverdaw.readAudioMetadata).mockResolvedValue(output)
+    const ids = ['original', 'legacy', 'output', 'ambiguous', 'missing']
+    useProjectStore().applyProjectStateSnapshot({
+      name: 'Reopened', filePath: null, reset: true, tracks: [],
+      library: ids.map(id => ({
+        id, kind: id === 'original' ? 'source' : 'stem', filePath: `C:\\audio\\${id}.wav`,
+        sourceItemId: id === 'original' ? undefined : id,
+        mediaId: id, durationMs: 2000, sampleRate: 48000, channelCount: 2
+      }))
+    })
+    await flushAsyncWork()
+    const { byId } = useLibraryStore()
+    expect(byId.original?.metadata?.recordingDurationMs).toBe(2000)
+    expect(byId.legacy).toMatchObject({ durationMs: 2000, metadata: { ...tags, recordingDurationMs: legacy.durationMs } })
+    for (const id of ['output', 'ambiguous', 'missing']) {
+      expect(byId[id]).toMatchObject({ durationMs: 2000, metadata: tags })
+      expect(byId[id]!.metadata).not.toHaveProperty('durationMs')
+      expect(byId[id]!.metadata).not.toHaveProperty('recordingDurationMs')
+    }
   })
 
   it('still decodes peaks for a standalone library source', async () => {

@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { projectBridgeHandlers } from '@/lib/bridge/handlers/projectHandlers'
 import { useAppStore } from '@/stores/appStore'
 import { useAudioDeviceStore } from '@/stores/audioDeviceStore'
@@ -35,6 +35,28 @@ describe('project bridge handlers', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.stubGlobal('window', { silverdaw: { confirmActiveProject: vi.fn() } })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('confirms project replacement and successful saves but not rejected or incremental state', () => {
+    const path = 'C:\\Projects\\Mix.silverdaw'
+    const other = 'C:\\Projects\\Rejected.silverdaw'
+    const snapshot = { ...emptySnapshot, filePath: path, name: 'Mix' }
+    vi.spyOn(useAppStore(), 'refreshRecentProjects').mockResolvedValue()
+    const hydrate = vi.spyOn(useProjectStore(), 'applyProjectStateSnapshot')
+    projectBridgeHandlers.PROJECT_STATE({ ...snapshot, reset: true })
+    expect(window.silverdaw.confirmActiveProject).toHaveBeenCalledBefore(hydrate)
+    projectBridgeHandlers.PROJECT_LOAD_FAILED({ filePath: other, error: 'Unreadable' })
+    projectBridgeHandlers.PROJECT_SAVED({ filePath: other, ok: false })
+    projectBridgeHandlers.PROJECT_SAVED({ filePath: path, ok: true })
+    projectBridgeHandlers.PROJECT_STATE(snapshot)
+    projectBridgeHandlers.PROJECT_STATE({ ...snapshot, reset: true })
+    projectBridgeHandlers.PROJECT_STATE({ ...emptySnapshot, reset: true })
+
+    expect(vi.mocked(window.silverdaw.confirmActiveProject).mock.calls).toEqual([
+      [path, 'Mix', true], [path, 'Mix', false], [path, 'Mix', true], [null, 'Untitled', true]
+    ])
   })
 
   it('re-applies backend-scoped preferences only once per bridge connection', () => {

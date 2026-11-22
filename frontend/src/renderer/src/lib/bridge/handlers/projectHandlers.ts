@@ -34,6 +34,8 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
 > = {
   PROJECT_STATE: (payload) => {
     if (payload.reset === true) {
+      // Queue the main-process root switch before snapshot hydration issues any media IPC.
+      window.silverdaw.confirmActiveProject(payload.filePath, payload.name, true)
       useScratchEditorStore().close()
       useScratchSessionStore().clear()
     }
@@ -57,11 +59,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
       transport.resetPlaybackForProjectChange()
     }
     transport.setBridgeReady(true)
-    // Load/Save As reset snapshots update MRU; initial reconnect snapshots do not.
-    if (payload.reset === true && payload.filePath) {
-      window.silverdaw.setLastProjectPath(payload.filePath, useProjectStore().projectName)
-      void useAppStore().refreshRecentProjects()
-    }
+    if (payload.reset === true && payload.filePath) void useAppStore().refreshRecentProjects()
     if (isInitialBridgeSnapshot) {
       useAudioDeviceStore().requestInitialList()
       void useMidiDeviceStore().applyEnabledInputsOnReady()
@@ -85,7 +83,7 @@ export const projectBridgeHandlers: BridgeInboundHandlers<
       log.info('bridge', `PROJECT_SAVED path=${payload.filePath}`)
       // Main persists last project path and updates the MRU (with the current
       // project name so a renamed project shows its new name in Recents).
-      window.silverdaw.setLastProjectPath(payload.filePath, project.projectName)
+      window.silverdaw.confirmActiveProject(payload.filePath, project.projectName, false)
       // Explicit save makes the current autosave bucket redundant.
       if (project.projectId) void window.silverdaw.clearAutosave(project.projectId)
       void useAppStore().refreshRecentProjects()

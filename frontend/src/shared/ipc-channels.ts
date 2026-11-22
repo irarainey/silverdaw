@@ -87,7 +87,7 @@ export const IPC = {
     setPrefs: 'debug:setPrefs'
   },
   project: {
-    setLastPath: 'project:setLastPath',
+    confirmActive: 'project:confirmActive',
     fileExists: 'project:fileExists',
     chooseOpen: 'project:chooseOpen',
     exportSampleReport: 'project:exportSampleReport',

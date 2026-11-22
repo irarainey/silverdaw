@@ -17,6 +17,8 @@ struct ProjectSession
     {
         juce::String sessionId;
         juce::var attribution;
+        juce::String reopenedScratchId;
+        juce::var attributionForSave(const juce::String& destinationId) const;
     };
     PreparedScratch preparedScratch;
 };

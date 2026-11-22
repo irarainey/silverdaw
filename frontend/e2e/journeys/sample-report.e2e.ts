@@ -67,6 +67,12 @@ test('Audio Sample Report previews a placed file and saves the report as PDF', a
   await exportPdf.click()
   await expect.poll(() => existsSync(join(other, 'Custom.pdf'))).toBe(true)
   await expect(report).toBeHidden()
+  // Main can prepare valid JSON that the backend subsequently rejects.
+  const invalidProject = join(root, 'Rejected.silverdaw')
+  writeFileSync(invalidProject, '{}')
+  await stubOpenDialog(electronApp, [invalidProject])
+  await invokeMenuItem(page, 'File', 'Open Project')
+  await expect(page.getByText(/Could not open project:/)).toBeVisible()
   await invokeMenuItem(page, 'File', 'Audio Sample Report')
   await stubSaveDialog(electronApp, null)
   await exportPdf.click()

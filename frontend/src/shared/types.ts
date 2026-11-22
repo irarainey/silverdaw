@@ -26,6 +26,8 @@ export interface ProjectImportSource {
   name: string
 }
 
+export type MediaGeometryOrigin = 'recording' | 'output'
+
 /** Normalised audio tag metadata; all fields are optional because tags vary by container. */
 export interface AudioMetadata {
   title?: string
@@ -50,6 +52,8 @@ export interface AudioMetadata {
   bitrate?: number
   /** Original media-store recording length for attribution, not the item's playback length. */
   recordingDurationMs?: number
+  /** Which file supplied durationMs/sampleRate/channelCount; absent in legacy media records. */
+  geometryOrigin?: MediaGeometryOrigin
   durationMs?: number
   sampleRate?: number
   channelCount?: number

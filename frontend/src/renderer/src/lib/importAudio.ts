@@ -13,7 +13,7 @@ import type { LibraryItem } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
-import { saveProjectMedia, getProjectMedia } from '@/lib/library/projectMedia'
+import { saveProjectMedia, getProjectMedia, itemGeometryOrigin } from '@/lib/library/projectMedia'
 import { runInUndoGroupAsync } from '@/lib/undo/undoGroup'
 
 function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
@@ -335,10 +335,11 @@ export async function importAudioIntoLibrary(
           ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
           : undefined
     const mediaId = sourceMediaId ?? crypto.randomUUID()
-    const stored = sourceMediaId ? null : await saveProjectMedia(mediaId, opened.filePath)
+    const origin = generatedAudio ? 'output' : itemGeometryOrigin(options)
+    const stored = sourceMediaId ? null : await saveProjectMedia(mediaId, opened.filePath, origin)
     const media = sourceMediaId
       ? options && 'inheritedMetadata' in options ? options.inheritedMetadata : await getProjectMedia(mediaId)
-      : enrichedMetadata
+      : stored ? { ...enrichedMetadata, ...stored } : enrichedMetadata
     const tags = stored ?? media
     const sourceTags = tags
       ? { title: tags.title, artist: tags.artist, album: tags.album, isrc: tags.isrc,
@@ -404,7 +405,10 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
 
     const { decoded, metadata, detectedKey, trueSampleRate, playbackFilePath } =
       await prepareAudioImport(opened)
-    const enrichedMetadata = withRedetectedKey(metadata, detectedKey)
+    const identity = itemGeometryOrigin(item) === 'output'
+      ? await getProjectMedia(item.mediaId) ?? item.metadata
+      : null
+    const enrichedMetadata = withRedetectedKey(identity ? { ...metadata, ...identity } : metadata, detectedKey)
 
     library.setItemAudioDetails(item.id, decoded.durationMs, trueSampleRate, decoded.channelCount)
     library.setItemPeaks(item.id, decoded.peaks, trueSampleRate, decoded.peaksPerSecond)

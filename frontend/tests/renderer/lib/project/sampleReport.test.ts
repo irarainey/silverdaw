@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
 import { buildSampleReport } from '@/lib/project/sampleReport'
-import { withoutAudioGeometry } from '@/lib/library/projectMedia'
 import { projectRootFromPath, reportFilePath } from '@/lib/project/projectPath'
 import type { LibraryItem } from '@/stores/libraryTypes'
 import type { Clip, Track } from '@/stores/projectTypes'
@@ -67,7 +66,7 @@ it('attributes repeated stem placements to their original and separates file tri
     ...artifacts, o: original, other: { ...original, id: 'other', filePath: 'D:\\Song.mp3' }
   }, root)
   expect(ambiguous.some(source => source.pathMatch)).toBe(false)
-  const metadata = withoutAudioGeometry({ title: 'Song', artist: 'A', album: 'LP', durationMs: 82432.25 })
+  const metadata = { title: 'Song', artist: 'A', album: 'LP', recordingDurationMs: 82432.25 }
   const imported = {
     ...stem, filePath: `${root}\\stems\\import-s\\drums.wav`, mediaId: 'foreign',
     derivedFrom: { ...stem.derivedFrom!, sourceItemId: stem.id }, metadata
@@ -89,6 +88,26 @@ it('attributes repeated stem placements to their original and separates file tri
       { path: stem.filePath, placements: [{ id: 'a' }] }, { path: vocals.filePath, placements: [{ id: 'b' }] }
     ] })
   }
+})
+
+it('counts a live scratch trim as a source window, not exact recording coverage', () => {
+  const item: LibraryItem = {
+    id: 'cut', kind: 'sample', fileName: 'cut.wav', filePath: 'C:\\cut.wav', playbackFilePath: '',
+    durationMs: 2000, sampleRate: 48000, channelCount: 2, peaks: new Float32Array(),
+    attribution: { recordingId: 'song', fileName: 'song.wav', startMs: 30000, endMs: 34000, ratio: 2 }
+  }
+  const clip: Clip = {
+    id: 'live', libraryItemId: item.id, trackId: 't', filePath: item.filePath, fileName: item.fileName,
+    sampleRate: item.sampleRate, channelCount: item.channelCount, peaks: item.peaks,
+    inMs: 500, durationMs: 1000, startMs: 0, unresolved: false, scratchPatternId: 'repeat'
+  }
+  const track: Track = {
+    id: 't', name: 'Scratch', clipIds: [clip.id], muted: false, soloed: false,
+    volume: 1, colorIndex: 0, lengthMs: 1000
+  }
+  const [source] = buildSampleReport([track], { live: clip }, { cut: item })
+  expect(source?.files[0]?.placements[0]?.originalWindow).toEqual({ startMs: 31000, endMs: 33000 })
+  expect(source?.usage).toMatchObject({ arrangedMs: 1000, windowOnly: 1, passages: 0, knownOriginalMs: undefined })
 })
 
 it('shortens only files inside the displayed project root', () => {
@@ -180,6 +199,10 @@ it('matches foreign stems to an independent import only by corroborated recordin
     l1: root, l2: item, ...(other && { other })
   })[0]
   expect(report(stem)).toMatchObject({ path: root.filePath, pathMatch: 'recording metadata' })
+  const managedOutput = { ...root, metadata: { ...root.metadata, geometryOrigin: 'output' as const } }
+  expect(buildSampleReport([track], { c: clip }, { l1: managedOutput, l2: stem })[0]?.path).toBe('song.MP3')
+  expect(report({ ...stem, attribution: undefined, metadata: { ...root.metadata, durationMs: 90000 } })?.path)
+    .toBe('')
   expect(report(stem, { ...root, id: 'other', filePath: 'D:\\Song.mp3' })?.path).toBe('song.MP3')
   expect(report(stem, { ...root, id: 'other', filePath: 'D:\\Copy.mp3' })?.path).toBe('song.MP3')
   expect(report({ ...stem, attribution: { ...stem.attribution!, fileName: 'other.mp3' } })?.path).toBe('other.mp3')

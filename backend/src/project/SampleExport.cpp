@@ -17,6 +17,7 @@
 #include <juce_events/juce_events.h>
 
 #include <cmath>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -40,42 +41,58 @@ juce::String sanitiseSampleFileName(juce::String name)
     return name.trim().isNotEmpty() ? name.trim() : juce::String("Sample");
 }
 
-// A music sample is an independent loop that inherits its parent's identity
-// (cover art + tags), persisted as a sidecar beside the WAV (mirroring stems).
-// Group every saved sample — music AND simple — under a per-source subdir of Samples/
-// named after the originating file, so all samples cut from the same track stay
-// together (and inherit the same identity from the project media store, keyed by the
-// shared media GUID). The subdir name is derived from the source path's filename.
-juce::String sampleOutputDir(const juce::String& projectPath, const juce::String& sourcePath)
-{
-    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "samples");
-    if (sourcePath.isNotEmpty())
-        return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
-            .getFullPathName();
-    return base.getFullPathName();
-}
-
-// Split-channel exports live under a per-source subdir of channels/ (mirroring the
-// samples/ layout) so every channel stem cut from the same track stays together.
-juce::String channelsOutputDir(const juce::String& projectPath, const juce::String& sourcePath)
-{
-    const auto base = silverdaw::projectArtifactsBaseDir(projectPath, "channels");
-    if (sourcePath.isNotEmpty())
-        return base.getChildFile(sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension()))
-            .getFullPathName();
-    return base.getFullPathName();
-}
-
 juce::File uniqueWavFile(const juce::File& dir, const juce::String& baseName)
 {
     for (int i = 1; i < 10000; ++i)
     {
         const auto suffix = "-sample-" + juce::String(i).paddedLeft('0', 3);
         auto file = dir.getChildFile(baseName + suffix + ".wav");
-        if (!file.existsAsFile()) return file;
+        if (!file.exists()) return file;
     }
     return dir.getChildFile(baseName + "-sample-" + juce::Uuid().toString().substring(0, 8) + ".wav");
 }
+
+class ExportDestination
+{
+  public:
+    ExportDestination(const ProjectSession& sessionToUse, const ProjectState& state,
+                      const juce::String& category, const juce::String& sourcePath)
+        : session(sessionToUse), library(state.getTree().getChildWithName("LIBRARY")), folder(category)
+    {
+        if (sourcePath.isNotEmpty())
+            folder = juce::File::addTrailingSeparator(folder)
+                   + sanitiseSampleFileName(juce::File(sourcePath).getFileNameWithoutExtension());
+        // Keep work in progress outside the unsaved workspace: New clears it and Save As migrates it.
+        if (session.currentPath.isNotEmpty())
+            stagingTarget = juce::File(session.currentPath).getSiblingFile("sample-export.wav");
+    }
+
+    std::shared_ptr<juce::TemporaryFile> stage() const
+    {
+        if (stagingTarget != juce::File{})
+            return std::make_shared<juce::TemporaryFile>(stagingTarget);
+        return std::make_shared<juce::TemporaryFile>(".wav");
+    }
+
+    bool isCurrent(const ProjectState& state) const
+    {
+        return state.getTree().getChildWithName("LIBRARY") == library;
+    }
+
+    juce::File publish(const juce::File& staged, const juce::String& name) const
+    {
+        const auto dir = projectArtifactsBaseDir(session.currentPath, folder);
+        if (dir.createDirectory().failed()) return {};
+        const auto file = uniqueWavFile(dir, name);
+        return staged.moveFileTo(file) ? file : juce::File{};
+    }
+
+  private:
+    const ProjectSession& session;
+    juce::ValueTree library;
+    juce::String folder;
+    juce::File stagingTarget;
+};
 
 RubberBand::RubberBandStretcher::Options sampleWarpModeOptions(const juce::String& mode)
 {
@@ -237,7 +254,7 @@ bool writeSourceWindowToWav(const juce::File& sourceFile, const juce::File& outp
 
 void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& libraryItemId,
                              const juce::String& newItemId, const juce::String& sampleName,
-                             const juce::String& outputDir, const juce::File& sourceFile, double inMs,
+                             const ExportDestination& destination, const juce::File& sourceFile, double inMs,
                              double durationMs, silverdaw::AudioEngine& engine, silverdaw::ProjectState& projectState,
                              juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
                              silverdaw::BridgeServer& bridge,
@@ -251,38 +268,39 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
         parentId, juce::jmax(0.0, inMs), durationMs > 0.0 ? durationMs : -1.0, ratio);
     const auto sampleMediaId = projectState.getLibraryItemMediaId(parentId);
     peakPool.addJob(
-        [clipId, libraryItemId, newItemId, sampleName, outputDir, sourceFile, inMs, durationMs,
+        [clipId, libraryItemId, newItemId, sampleName, destination, sourceFile, inMs, durationMs,
          warpOptions, audioType, sourceItemId, sampleMediaId, attribution, batchIndex, batchTotal,
          &engine, &projectState, &cache, &bridge]
         {
             const auto safeName = sanitiseSampleFileName(sampleName);
-            const auto outDir = juce::File(outputDir);
-            const auto outFile = uniqueWavFile(outDir, safeName);
+            const auto staged = destination.stage();
+            const auto& stagedWav = staged->getFile();
             double actualDurationMs = 0.0;
             double sampleRate = 0.0;
             int channels = 0;
             juce::String error;
             bool usedRequestedRatio = true;
-            const bool ok = writeSourceWindowToWav(sourceFile, outFile, inMs, durationMs, engine,
+            const bool ok = writeSourceWindowToWav(sourceFile, stagedWav, inMs, durationMs, engine,
                                                    actualDurationMs, sampleRate, channels, error, warpOptions,
                                                    -1, &usedRequestedRatio);
             silverdaw::waveform::PeaksResult peaks;
-            juce::File peaksFile;
+            std::shared_ptr<juce::TemporaryFile> stagedPeaks;
             if (ok)
             {
-                peaks = silverdaw::waveform::computePeaks(outFile, engine.getFormatManager(),
+                peaks = silverdaw::waveform::computePeaks(stagedWav, engine.getFormatManager(),
                                                           silverdaw::waveform::kDefaultPeaksPerSecond);
                 if (!peaks.peaks.empty())
                 {
-                    cache.store(outFile, peaks);
-                    peaksFile = cache.getCacheFilePath(outFile, silverdaw::waveform::kDefaultPeaksPerSecond);
+                    const auto file = cache.getCacheFilePath(stagedWav, peaks.peaksPerSecond);
+                    stagedPeaks = std::make_shared<juce::TemporaryFile>(juce::File{}, file);
+                    cache.store(stagedWav, peaks);
                 }
             }
 
             juce::MessageManager::callAsync(
-                [clipId, libraryItemId, newItemId, safeName, outFile, actualDurationMs, sampleRate, channels,
-                 ok, error, peaks, peaksFile, inMs, durationMs, audioType, sourceItemId, sampleMediaId,
-                 attribution, usedRequestedRatio, batchIndex, batchTotal, &engine, &projectState, &bridge]
+                [clipId, libraryItemId, newItemId, safeName, destination, staged, actualDurationMs, sampleRate, channels,
+                 error, peaks = std::move(peaks), stagedPeaks, inMs, durationMs, audioType, sourceItemId, sampleMediaId,
+                 attribution, usedRequestedRatio, batchIndex, batchTotal, &engine, &projectState, &bridge, &cache]
                 {
                     auto* obj = new juce::DynamicObject();
                     if (batchTotal > 0)
@@ -293,10 +311,33 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
                     if (clipId.isNotEmpty()) obj->setProperty("clipId", clipId);
                     if (libraryItemId.isNotEmpty()) obj->setProperty("libraryItemId", libraryItemId);
                     obj->setProperty("itemId", newItemId);
-                    obj->setProperty("ok", ok && !peaks.peaks.empty());
-                    if (!ok || peaks.peaks.empty())
+                    juce::String failure = error;
+                    juce::File outFile, peaksFile;
+                    if (!destination.isCurrent(projectState))
+                        failure = "The project changed before the sample finished saving";
+                    else if (!stagedPeaks)
                     {
-                        obj->setProperty("error", error.isNotEmpty() ? error : juce::String("Could not create peaks for sample"));
+                        if (failure.isEmpty()) failure = "Could not create peaks for sample";
+                    }
+                    else
+                    {
+                        outFile = destination.publish(staged->getFile(), safeName);
+                        if (outFile == juce::File{})
+                            failure = "Could not save sample file";
+                        else
+                        {
+                            peaksFile = cache.getCacheFilePath(outFile, peaks.peaksPerSecond);
+                            if (!stagedPeaks->getFile().moveFileTo(peaksFile))
+                            {
+                                outFile.deleteFile();
+                                failure = "Could not save peaks for sample";
+                            }
+                        }
+                    }
+                    obj->setProperty("ok", failure.isEmpty());
+                    if (failure.isNotEmpty())
+                    {
+                        obj->setProperty("error", failure);
                         bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
                         return;
                     }
@@ -375,7 +416,7 @@ void saveWindowAsSampleAsync(const juce::String& clipId, const juce::String& lib
 void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
                             silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                             juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                            const juce::String& projectPath)
+                            const ProjectSession& session)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
@@ -393,7 +434,7 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
     if (namePath.isEmpty()) namePath = sourcePath;
     // The samples folder is derived, not renderer-supplied, so it tracks the
     // project's portable location (or the temp workspace while unsaved).
-    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
+    const ExportDestination destination(session, projectState, "samples", namePath);
     // A music sample stays at its source tempo (warp/pitch are not baked) so it
     // can inherit the source grid and re-warp on drop. A simple sample bakes the
     // clip's current warp/pitch into a flat one-shot.
@@ -421,7 +462,7 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
                 }
             });
     }
-    saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
+    saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, destination, juce::File(sourcePath),
                             projectState.getClipInMs(clipId), projectState.getClipDurationMs(clipId),
                             engine, projectState, peakPool, cache, bridge, sampleWarp, audioType, libraryItemId);
 }
@@ -429,7 +470,7 @@ void handleClipSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& en
 void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& engine,
                               silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                               juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                              const juce::String& projectPath)
+                              const ProjectSession& session)
 {
     const juce::String clipId = tryGetRequiredString(payload, "clipId").value_or(juce::String{});
     if (clipId.isEmpty()) return;
@@ -447,7 +488,7 @@ void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& 
     if (sourcePath.isEmpty()) sourcePath = projectState.getClipFilePath(clipId);
     juce::String namePath = projectState.getLibraryItemFilePath(libraryItemId);
     if (namePath.isEmpty()) namePath = sourcePath;
-    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
+    const ExportDestination destination(session, projectState, "samples", namePath);
     const juce::String baseName = juce::File(namePath).getFileNameWithoutExtension();
 
     const int total = slices.size();
@@ -459,7 +500,7 @@ void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& 
         const double durationMs = static_cast<double>(s.getProperty("durationMs", juce::var(0.0)));
         if (itemId.isEmpty() || durationMs <= 0.0) continue;
         const juce::String sampleName = baseName + " " + juce::String(i + 1);
-        saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, outputDir, juce::File(sourcePath),
+        saveWindowAsSampleAsync(clipId, {}, itemId, sampleName, destination, juce::File(sourcePath),
                                 inMs, durationMs, engine, projectState, peakPool, cache, bridge,
                                 std::nullopt, audioType, libraryItemId, i, total);
     }
@@ -468,7 +509,7 @@ void handleClipSliceToSamples(const juce::var& payload, silverdaw::AudioEngine& 
 void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& engine,
                              silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                              juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                             const juce::String& projectPath)
+                             const ProjectSession& session)
 {
     juce::ignoreUnused(cache);
     const juce::String jobId = tryGetRequiredString(payload, "jobId").value_or(juce::String{});
@@ -495,7 +536,7 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
     juce::String namePath = projectState.getLibraryItemFilePath(libraryItemId);
     if (namePath.isEmpty()) namePath = sourcePath;
     if (sourceName.isEmpty()) sourceName = juce::File(namePath).getFileNameWithoutExtension();
-    const juce::String outputDir = channelsOutputDir(projectPath, namePath);
+    const ExportDestination destination(session, projectState, "channels", namePath);
     const double inMs = projectState.getClipInMs(clipId);
     const double durationMs = projectState.getClipDurationMs(clipId);
     const auto attribution = projectState.deriveAttribution(
@@ -503,44 +544,64 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
     const juce::File sourceFile(sourcePath);
 
     peakPool.addJob(
-        [jobId, clipId, sourceName, channels, outputDir, sourceFile, inMs, durationMs, attribution, &engine, &bridge]
+        [jobId, clipId, sourceName, channels, destination, sourceFile, inMs, durationMs, attribution, &engine, &projectState, &bridge]
         {
             struct ChannelResult
             {
                 juce::String channel;
-                juce::File file;
+                juce::String safeName;
+                std::shared_ptr<juce::TemporaryFile> staged;
             };
             std::vector<ChannelResult> results;
             juce::String error;
-            const auto outDir = juce::File(outputDir);
             for (const auto& channel : channels)
             {
                 const int channelIndex = (channel == "right") ? 1 : 0;
                 const juce::String suffix = (channel == "right") ? " (R)" : " (L)";
                 const auto safeName = sanitiseSampleFileName(sourceName + suffix);
-                const auto outFile = uniqueWavFile(outDir, safeName);
+                const auto staged = destination.stage();
                 double outDurationMs = 0.0;
                 double outSampleRate = 0.0;
                 int outChannels = 0;
-                if (writeSourceWindowToWav(sourceFile, outFile, inMs, durationMs, engine,
+                if (writeSourceWindowToWav(sourceFile, staged->getFile(), inMs, durationMs, engine,
                                            outDurationMs, outSampleRate, outChannels, error,
                                            std::nullopt, channelIndex))
-                    results.push_back({ channel, outFile });
+                    results.push_back({ channel, safeName, staged });
                 else
                     break;
             }
 
             juce::MessageManager::callAsync(
-                [jobId, clipId, sourceName, results, error, attribution, &bridge]
+                [jobId, clipId, sourceName, results, error, attribution, destination, &projectState, &bridge]
                 {
-                    if (results.empty())
+                    juce::Array<juce::var> channelArray;
+                    juce::String failure = error;
+                    if (!destination.isCurrent(projectState))
+                        failure = "The project changed before the channels finished saving";
+                    else
+                    {
+                        for (const auto& r : results)
+                        {
+                            const auto file = destination.publish(r.staged->getFile(), r.safeName);
+                            if (file == juce::File{})
+                            {
+                                failure = "Could not save channel file";
+                                break;
+                            }
+                            auto* entry = new juce::DynamicObject();
+                            entry->setProperty("channel", r.channel);
+                            entry->setProperty("filePath", file.getFullPathName());
+                            channelArray.add(juce::var(entry));
+                        }
+                    }
+                    if (channelArray.isEmpty())
                     {
                         auto* obj = new juce::DynamicObject();
                         obj->setProperty("jobId", jobId);
                         obj->setProperty("clipId", clipId);
                         obj->setProperty("code", "io");
                         obj->setProperty("error",
-                                         error.isNotEmpty() ? error : juce::String("Could not split channels"));
+                                         failure.isNotEmpty() ? failure : juce::String("Could not split channels"));
                         bridge.broadcast("CHANNEL_SPLIT_FAILED", juce::var(obj));
                         return;
                     }
@@ -549,14 +610,6 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
                     obj->setProperty("clipId", clipId);
                     obj->setProperty("sourceName", sourceName);
                     if (attribution.isObject()) obj->setProperty("attribution", attribution);
-                    juce::Array<juce::var> channelArray;
-                    for (const auto& r : results)
-                    {
-                        auto* entry = new juce::DynamicObject();
-                        entry->setProperty("channel", r.channel);
-                        entry->setProperty("filePath", r.file.getFullPathName());
-                        channelArray.add(juce::var(entry));
-                    }
                     obj->setProperty("channels", channelArray);
                     bridge.broadcast("CHANNEL_SPLIT_READY", juce::var(obj));
                 });
@@ -566,7 +619,7 @@ void handleClipSplitChannels(const juce::var& payload, silverdaw::AudioEngine& e
 void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEngine& engine,
                                    silverdaw::ProjectState& projectState, silverdaw::BridgeServer& bridge,
                                    juce::ThreadPool& peakPool, const silverdaw::PeaksCache& cache,
-                                   const juce::String& projectPath)
+                                   const ProjectSession& session)
 {
     const juce::String libraryItemId = tryGetRequiredString(payload, "libraryItemId").value_or(juce::String{});
     const juce::String itemId = tryGetRequiredString(payload, "itemId").value_or(juce::String{});
@@ -600,7 +653,7 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
     juce::String namePath = projectState.getLibraryItemFilePath(sourceItemId);
     if (namePath.isEmpty()) namePath = found.getProperty("filePath", juce::var()).toString();
     if (namePath.isEmpty()) namePath = sourcePath;
-    const juce::String outputDir = sampleOutputDir(projectPath, namePath);
+    const ExportDestination destination(session, projectState, "samples", namePath);
     // See handleClipSaveAsSample: music keeps source tempo (no bake) so it can
     // inherit the source grid; simple bakes the saved clip's warp/pitch.
     std::optional<SampleWarpOptions> sampleWarp;
@@ -624,7 +677,7 @@ void handleLibraryItemSaveAsSample(const juce::var& payload, silverdaw::AudioEng
         opts.cents = static_cast<double>(found.getProperty("cents", 0.0));
         sampleWarp = opts;
     }
-    saveWindowAsSampleAsync({}, libraryItemId, itemId, sampleName, outputDir, juce::File(sourcePath),
+    saveWindowAsSampleAsync({}, libraryItemId, itemId, sampleName, destination, juce::File(sourcePath),
                             sourceInMs, sourceDurationMs, engine, projectState, peakPool, cache, bridge,
                             sampleWarp, audioType, sourceItemId);
 }

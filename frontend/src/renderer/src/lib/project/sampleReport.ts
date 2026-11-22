@@ -76,7 +76,7 @@ function recordingKey(item: LibraryItem): string | undefined {
 /** Imported stems retain the original media-store tags, not its local library ID. */
 function matchRecording(item: LibraryItem, candidates: ReadonlyMap<string, LibraryItem[]>): LibraryItem | undefined {
   const key = recordingKey(item)
-  const duration = item.metadata?.recordingDurationMs ?? (!item.attribution ? item.metadata?.durationMs : undefined)
+  const duration = item.metadata?.recordingDurationMs
   if (!key || !duration) return undefined
   let match: LibraryItem | undefined
   for (const candidate of candidates.get(key) ?? []) {
@@ -126,7 +126,7 @@ function recordingResolver(
   const byRecording = new Map<string, LibraryItem[]>()
   const byFilename = new Map<string, LibraryItem | null>()
   for (const entry of Object.values(byId)) {
-    if (entry.kind !== 'source' && !entry.recordingOrigin) continue
+    if ((entry.kind !== 'source' && !entry.recordingOrigin) || entry.metadata?.geometryOrigin === 'output') continue
     for (const id of [entry.id, entry.mediaId, entry.attribution?.recordingId]) {
       if (!id) continue
       indexUniquePath(originals, id, entry)
@@ -216,7 +216,10 @@ function originalPassage(provenance: Provenance | undefined, clip: Clip): Pick<P
     const ratio = capsule?.ratio ?? 1
     const startMs = (capsule?.startMs ?? 0) + (offset + clip.inMs) * ratio
     const endMs = Math.min(capsule?.endMs ?? Infinity, startMs + clip.durationMs * ratio)
-    return endMs > startMs ? { originalRange: { startMs, endMs } } : {}
+    if (endMs <= startMs) return {}
+    const range = { startMs, endMs }
+    // A live scratch can revisit or skip audio inside its input trim.
+    return clip.scratchPatternId ? { originalWindow: range } : { originalRange: range }
   }
   if (capsule?.startMs !== undefined && capsule.endMs !== undefined && capsule.endMs > capsule.startMs) {
     return { originalWindow: { startMs: capsule.startMs, endMs: capsule.endMs } }

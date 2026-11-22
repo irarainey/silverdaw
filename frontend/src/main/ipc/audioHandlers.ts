@@ -8,13 +8,14 @@ import { createHash } from 'node:crypto'
 import { parseFile } from 'music-metadata'
 import { IPC } from '../../shared/ipc-channels'
 import { normalizeMetadata } from '../audioMetadata'
-import type { AudioMetadata } from '../../shared/types'
+import type { AudioMetadata, MediaGeometryOrigin } from '../../shared/types'
 import {
   AUDIO_FILE_EXTENSIONS,
   canonicalisePath,
   isAllowedAudioPath,
   isWithinStemsWriteRoot,
   isWithinSamplesWriteRoot,
+  isWithinChannelsWriteRoot,
   getProjectMediaDirs,
   registerIssuedPath
 } from '../audioPaths'
@@ -209,7 +210,7 @@ async function deleteOrphanMedia(guid: string, metadataDir: string, coversDir: s
 // is gated to app-owned folders so an unrelated metadata.json beside a user's music
 // file can never be mistaken for the source's identity.
 async function resolveSourceIdentity(
-  sourceFilePath: string
+  sourceFilePath: string, geometryOrigin?: MediaGeometryOrigin
 ): Promise<{ metadata: AudioMetadata; cover?: SidecarCover } | null> {
   const splitCover = (meta: AudioMetadata): { metadata: AudioMetadata; cover?: SidecarCover } => {
     const { coverArt, ...rest } = meta
@@ -231,11 +232,18 @@ async function resolveSourceIdentity(
     }
   }
   try {
-    return splitCover(normalizeMetadata(await parseFile(sourceFilePath, { duration: true, skipCovers: false })))
+    return splitCover(await readFileMetadata(sourceFilePath, geometryOrigin))
   } catch (err) {
     logMain('WARN ', 'samples:writeSidecar', `could not resolve identity for ${sourceFilePath}:`, err)
     return null
   }
+}
+
+async function readFileMetadata(filePath: string, origin?: MediaGeometryOrigin): Promise<AudioMetadata> {
+  const dir = dirname(filePath)
+  const isOutput = isWithinStemsDir(dir) || isWithinSamplesWriteRoot(dir) || isWithinChannelsWriteRoot(dir)
+  const metadata = normalizeMetadata(await parseFile(filePath, { duration: true, skipCovers: false }))
+  return { ...metadata, geometryOrigin: isOutput ? 'output' : origin }
 }
 
 export function registerAudioHandlers(ctx: AudioHandlersContext): void {
@@ -339,8 +347,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       return null
     }
     try {
-      const meta = await parseFile(filePath, { duration: true, skipCovers: false })
-      return normalizeMetadata(meta)
+      return await readFileMetadata(filePath, 'recording')
     } catch (err) {
       logMain('WARN ', 'audio:readMetadata', `failed for ${String(filePath)}:`, err)
       return null
@@ -356,8 +363,9 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
   // media dirs; the source must be on the audio allow-list.
   ipcMain.handle(IPC.media.save, async (_evt, payload: unknown): Promise<AudioMetadata | null> => {
     if (!payload || typeof payload !== 'object') return null
-    const p = payload as { mediaId?: unknown; sourceFilePath?: unknown }
+    const p = payload as { mediaId?: unknown; sourceFilePath?: unknown; geometryOrigin?: unknown }
     if (!isSafeMediaGuid(p.mediaId) || typeof p.sourceFilePath !== 'string') return null
+    if (p.geometryOrigin !== undefined && p.geometryOrigin !== 'recording' && p.geometryOrigin !== 'output') return null
     if (!isAllowedAudioPath(p.sourceFilePath)) {
       logMain('WARN ', 'media:save', 'rejected source not on allow-list:', p.sourceFilePath)
       return null
@@ -368,7 +376,7 @@ export function registerAudioHandlers(ctx: AudioHandlersContext): void {
       return null
     }
     try {
-      const identity = await resolveSourceIdentity(p.sourceFilePath)
+      const identity = await resolveSourceIdentity(p.sourceFilePath, p.geometryOrigin)
       if (!identity) return null
       const saved = await writeProjectMediaFiles(dirs.metadataDir, dirs.coversDir, p.mediaId, identity.metadata, identity.cover)
       // The import needs the resolved tags (including legacy sidecars), not another cover read.
