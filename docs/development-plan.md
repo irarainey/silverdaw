@@ -1,7 +1,18 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Development version: **[1.12.1](../CHANGELOG.md#1121)**.
-Latest designated release: **[1.12.0](#release-acceptance-1120)**.
+Latest designated release: **[1.12.1](#release-acceptance-1121)**.
+
+## Release acceptance (1.12.1)
+
+The maintainer designated **1.12.1** as the released version on 2026-11-22.
+See the [1.12.1 changelog](../CHANGELOG.md#1121) for the Clip Editor, Scratch
+Editor and Audio Sample Report fixes.
+
+Frontend lint and typechecking passed. Strict clang-tidy reported no warnings.
+All 2,544 frontend tests, 545 backend tests and 48 Electron journeys passed.
+The signed sideload AppX, public certificate, portable ZIP and unsigned Store
+AppX were rebuilt and verified locally. This is not a publication record for
+GitHub or the Microsoft Store.
 
 ## Release acceptance (1.12.0)
 

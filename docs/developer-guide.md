@@ -192,8 +192,9 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The latest designated release is **[1.12.0](development-plan.md#release-acceptance-1120)**.
-It adds the [Audio Sample Report](#audio-sample-report) and lets users edit
+The latest designated release is **[1.12.1](development-plan.md#release-acceptance-1121)**.
+It fixes Volume Shape and scratch editing, scratch playback and report scrolling.
+**1.12.0** added the [Audio Sample Report](#audio-sample-report) and let users edit
 track automation points independently at the same time position.
 **1.11.0** added aligned per-track audio export and selected-range rendering
 in both export dialogs. The
@@ -5688,7 +5689,7 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The [1.12.0 release record](development-plan.md#release-acceptance-1120)
+The [1.12.1 release record](development-plan.md#release-acceptance-1121)
 identifies the current release. Building packages
 does not run the quality gates, publish a GitHub release or submit to the
 Microsoft Store. Previous releases' test and manual sign-offs are not evidence
