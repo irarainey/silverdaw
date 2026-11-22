@@ -134,3 +134,12 @@ it('picks the closest visible handle in both axes in a resized lane', () => {
   expect(hit(-6)).toBe(1)
   expect(hit(-50)).toBe(-1)
 })
+
+it('cycles exact overlaps in step order without picking the different value between them', () => {
+  const pts = [0, -6, 0, 0].map(value => ({ timeMs: 1000, value }))
+  const hit = (selected?: number, cycle = true) => automationHandleAt(pts, 'level', 1000,
+    valueToLaneY('level', 0, 0, 120), 0, 120, 100, selected, cycle)
+  expect([hit(), hit(0), hit(2), hit(3)]).toEqual([0, 2, 3, 0])
+  expect(hit(2, false)).toBe(2)
+  expect(hit(1)).toBe(0)
+})

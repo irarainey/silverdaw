@@ -5346,8 +5346,10 @@ dB, distinct from the header fader and clip Volume Shape). Click to add a breakp
 move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
 stream coalesces into one undo step. Drag or nudge one point onto another to
 make a vertical step. The curve approaches the first value and takes the last
-value at that time. Click either handle at its own height to edit it. The
-keyboard target has a blue fill and light outline until it loses focus.
+value at that time. Click either handle at its own height to edit it. If
+handles share both time and value, click repeatedly to select each in turn.
+The keyboard target has a blue fill and light outline; undo and redo clear
+the selection so the next nudge cannot edit a different point.
 The outer endpoints can change value but keep their time. Lane-header controls raise/lower the whole curve, set the
 value at the playhead, copy/paste a curve, and reset to default. Pasting into a different
 parameter maps every value through its normalized range, preserving the copied curve's visual

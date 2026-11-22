@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { send } from '@/lib/bridgeService'
 import { useProjectStore } from '@/stores/projectStore'
+import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('@/lib/bridgeService', () => ({ send: vi.fn() }))
 vi.mock('@/lib/log', () => ({
@@ -177,6 +178,22 @@ describe('projectStore — setTrackAutomation', () => {
     const lane = project.tracks[0]!.automation?.filter
     expect(lane?.[1]?.timeMs).toBe(550)
     expect(lane?.[1]?.value).toBe(1)
+  })
+
+  it('clears an index-based selection when undo restores a different handle to that index', () => {
+    const project = useProjectStore()
+    const ui = useUiStore()
+    const points = [0, 0, -6, -6].map((value, i) => ({ value, timeMs: [0, 100, 100, 200][i]! }))
+    const snapshot = { filePath: null, name: 'Steps', tracks: [{ id: 't1', name: 'T', gain: 1,
+      clips: [], automation: [{ paramId: 'level' as const, points }],
+      automationLaneView: [{ paramId: 'level' as const, heightPx: 120 }] }] }
+    project.applyProjectStateSnapshot(snapshot)
+    ui.setSelectedAutomationPoint({ trackId: 't1', paramId: 'level', index: 2 })
+    project.nudgeAutomationPoint('t1', 'level', 2, -5, 0)
+    expect(ui.selectedAutomationPoint?.index).toBe(1)
+    project.applyProjectStateSnapshot({ ...snapshot, softReplace: true })
+    expect(project.tracks[0]?.automation?.level?.[1]?.value).toBe(0)
+    expect(ui.selectedAutomationPoint).toBeNull()
   })
 
   it('clears the lane when a curve settles flat at the static resting value', () => {

@@ -53,7 +53,8 @@ export function laneYToValue(
 
 export function automationHandleAt(
   points: readonly AutomationPoint[], paramId: AutomationParamId, timeMs: number,
-  worldY: number, top: number, height: number, pxPerSecond: number
+  worldY: number, top: number, height: number, pxPerSecond: number,
+  selectedIndex?: number, cycle = false
 ): number {
   let nearest = -1
   let best = (2 * AUTOMATION_HANDLE_RADIUS_PX) ** 2
@@ -65,6 +66,15 @@ export function automationHandleAt(
       nearest = i
       best = distance
     }
+  }
+  const hit = points[nearest]
+  if (selectedIndex === undefined) return nearest
+  const selected = points[selectedIndex]
+  if (!hit || !selected || selected.timeMs !== hit.timeMs || selected.value !== hit.value) return nearest
+  if (!cycle) return selectedIndex
+  // Identical handles share a centre. Each new grab advances in stored step order.
+  for (let i = selectedIndex + 1; i < points.length && points[i]!.timeMs === hit.timeMs; i++) {
+    if (points[i]!.value === hit.value) return i
   }
   return nearest
 }
