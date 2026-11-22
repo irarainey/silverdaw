@@ -192,7 +192,8 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The latest project release is **1.11.0**. It adds aligned per-track audio export
+The **1.12.0 development branch** adds the [Audio Sample Report](#audio-sample-report).
+The latest designated release is **1.11.0**. It adds aligned per-track audio export
 and lets either export dialog render just the selected timeline range. The
 [1.11.0 release record](development-plan.md#release-acceptance-1110) describes
 the local rebuild; it did not run tests or establish publication or manual
@@ -1343,6 +1344,51 @@ folder alongside the always-on diagnostics below.
   `backend.log` for both startup and runtime. In either mode, match the crash
   report timestamp to the launch being investigated.
 
+## Audio Sample Report
+
+Choose **File ▸ Audio Sample Report…** to see which recordings are used in
+the open project's arrangement. Only clips placed on the timeline appear;
+importing a file into the library is not itself a use. The dialog groups
+placements by recording and lists the project track, clip and file used for
+each one. Project-owned paths are relative to the displayed project location;
+external files use local paths. If an imported stem or sample has no identifiable
+local original, the report may have only the original filename or no source path.
+Paths inferred from a project folder or recording metadata are labelled as such.
+
+Read the three time ranges separately:
+
+- **Timeline range** and **Duration** describe the placement in the project,
+  including the effect of tempo warping.
+- **File range** is the clip's trim in the file it plays, which might be a
+  rendered sample or a stem rather than the original recording.
+- **Original recording range** identifies the passage in the original when
+  known. **Source window only** means the input interval is known, not that
+  every part played; a scratch can skip or repeat audio. **Cannot be
+  determined** means no such range is known.
+
+**Known distinct passages** merges overlapping or touching exact ranges, so
+repeating a passage or layering stems from it does not count it twice. Source
+windows and unknown ranges do not contribute. **Timeline coverage** likewise
+counts overlapping placements once. Muted and solo-excluded placements remain
+listed; when present, a separate coverage figure excludes them. That figure
+describes track mute/solo state, not measured audibility.
+
+Artist and album appear on separate lines, with **Cannot be determined** for
+missing values. The report also lists ISRC, composer, label and copyright
+notice when available. It uses local project data and file tags, not an online
+lookup. These are leads for attribution and clearance research, not verified
+ownership or clearance. Silverdaw grants no permission to use third-party
+recordings or compositions. Before sharing or releasing a project, check that
+your intended use is permitted and obtain any permissions you need.
+
+Choose **Export PDF** to save the report as a landscape A4 document. For an
+unsaved project, **Save and Export PDF** asks you to save the project first.
+The suggested filename is `Audio Sample Report <UTC timestamp>.pdf`, initially
+in the `audit` folder beside the project file. You can change the name and
+folder. A successful export remembers the folder while that project stays
+open; reopening it starts at `audit` again. The PDF includes the file paths
+shown in the dialog, so check them before sharing it.
+
 ## Project state model
 
 `ProjectState` (C++) wraps a `juce::ValueTree`. Its main persisted nodes and
@@ -1374,7 +1420,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
      ITEM[id, kind, filePath, name?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?, musicalBeats?,
           playbackFilePath?, variableTempo?, lowConfidence?, audioType?, collapsed?,
-          mediaId?, coverArtHidden?, coverArtOverride?,
+          mediaId?, attribution?, coverArtHidden?, coverArtOverride?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
           recordingOrigin?, scratchPatternId?, scratchSourcePath?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
@@ -1620,15 +1666,7 @@ sit at the same absolute path on the other machine. Peaks are deliberately **not
 with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
 source on demand.
 
-**Audio Sample Report** — An offline aid for attribution and clearance research,
-not a clearance determination. The report lists the ISRC, composer, label and
-copyright notice when available in local file metadata. These tags are shown
-as supplied; they do not verify ownership. Silverdaw does not grant permission
-to use third-party recordings or compositions. Before sharing or releasing a
-project, check that your intended use is permitted and obtain any permissions
-you need.
-
-**Audio Sample Report provenance** — An optional `attribution` property on a
+**[Audio Sample Report](#audio-sample-report) provenance** — An optional `attribution` property on a
 library item identifies its original recording independently of its immediate
 parent. The snapshot carries a basename, not a foreign machine's path. Its
 `startMs` and `endMs` describe a window in the original recording. Only a
@@ -1638,7 +1676,9 @@ its input window without claiming to play every part of it. These windows do
 not count toward exact recording coverage. These fields are not playback or
 beat-grid settings.
 Timeline trims, splits and moves reuse the library item; they do not create
-new recording identities. Schema-1 projects without snapshots remain valid.
+new recording identities. Re-saving an existing scratch preserves its parent.
+Schema-1 projects without snapshots remain valid; their surviving parent
+links can establish a passage or input window, but missing links need not.
 
 **Central media store (cover art + tags)** — full embedded tag metadata and cover art are not
 stored per library item. At first import each source file is minted a **media GUID**, and
@@ -1651,6 +1691,9 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
 `registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`.
+Opening or saving to a new path switches the active media roots and PDF export
+session only after the backend confirms the change. A failed attempt leaves
+the current project's destinations intact.
 Newly parsed media records label their file geometry as `recording` or `output`.
 Only recording geometry supplies duration evidence for attribution; a legacy
 record with a known non-WAV container can also identify recording geometry.
@@ -3313,7 +3356,12 @@ named after the source's (sanitised) file name, under the current project folder
 under the temporary workspace
 (`<temp>/Silverdaw/samples`) when the project has not been saved yet; temp samples
 migrate into the project folder on the first save. The numeric
-suffix increments for duplicate base names. There are two flavours: a **music
+suffix increments for duplicate base names. Sample, slice and channel exports
+stage their WAVs before adding them to the originating project's library. If you
+open another project before a render finishes, it cannot add files to that
+project; a Save As of the same project uses its new location.
+
+There are two flavours: a **music
 sample** inherits the source's tempo/key grid so it warps and shows its grid, while
 a **simple sample** is a non-musical one-shot. A one-shot has no pulse, so it
 **cannot hold a BPM at all**: classifying an item simple strips `bpm`, `beats`,

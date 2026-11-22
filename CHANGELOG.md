@@ -5,7 +5,8 @@
 ### Added
 
 - File > Audio Sample Report groups clip placements and available file credits by recording to aid attribution and clearance research.
-- New stems and samples retain their original recording and source passage for attribution across projects.
+- Audio Sample Reports can be exported as timestamped landscape PDFs.
+- New stems and samples retain available recording credits and source ranges across projects.
 
 ## 1.11.0
 

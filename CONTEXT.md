@@ -1,6 +1,6 @@
 # Project Context — Silverdaw
 
-_Last reviewed: 2026-11-19 · Owner: @irarainey_
+_Last reviewed: 2026-11-22 · Owner: @irarainey_
 
 The small, always-on source of truth. Read this first. It is mostly an index —
 inline only what is `CRITICAL`; open the linked documents only when a task
@@ -84,7 +84,9 @@ known BPM, or **Simple** with no grid at all (ADR 0030,
 Rubber Band's transient and pitch options are now derived from the shift itself
 rather than from the warp mode alone, which changes how an already-released
 project that uses pitch shift sounds (ADR 0031).
-The **latest release is 1.11.0**. It adds aligned individual track exports and
+The **1.12.0 development branch** adds the offline
+[Audio Sample Report](docs/developer-guide.md#audio-sample-report).
+The **latest designated release is 1.11.0**. It adds aligned individual track exports and
 selected-range export for both tracks and mixdowns. The
 [1.11.0 release record](docs/development-plan.md#release-acceptance-1110)
 distinguishes the local asset build from test and publication status.

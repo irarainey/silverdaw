@@ -1,6 +1,7 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Latest release: **[1.11.0](#release-acceptance-1110)**.
+Development version: **1.12.0** ([Audio Sample Report](developer-guide.md#audio-sample-report)).
+Latest designated release: **[1.11.0](#release-acceptance-1110)**.
 
 ## Release acceptance (1.11.0)
 
@@ -1101,7 +1102,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PROJECT_SET_VIEW", "payload": { "pxPerSecond": 80.0, "scrollX": 1240 } }
 
 // Backend → Renderer (state updates and events)
-{ "type": "READY", "payload": { "version": "1.11.0" } }
+{ "type": "READY", "payload": { "version": "1.12.0" } }
 { "type": "PROJECT_STATE", "payload": { "filePath": null, "name": "Untitled",
   "bpm": 100, "projectLengthMs": 0, "viewPxPerSecond": 60,
   "viewScrollX": 0, "playheadMs": 0,
@@ -1112,6 +1113,7 @@ type-checked list of every currently-defined envelope.
 { "type": "PLAYHEAD_UPDATE", "payload": { "positionMs": 4250, "isPlaying": true } }
 { "type": "CLIP_ADDED", "payload": { "trackId": "t1", "clipId": "c1", "libraryItemId": "l1", "ok": true } }
 { "type": "LIBRARY_ITEM_ANALYSIS", "payload": { "itemId": "l1", "bpm": 124.37, "beats": [0.487, 0.972], "beatAnchorSec": 0.487, "variableTempo": false, "playbackFilePath": "..." } }
+{ "type": "LIBRARY_ITEM_ATTRIBUTION", "payload": { "itemId": "l1", "attribution": { "recordingId": "media-1", "fileName": "Song.wav" } } }
 { "type": "WAVEFORM_READY", "payload": { "clipId": "c1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 158310, "peaksPerSecond": 501.13, "sampleRate": 44100, "laneCount": 3 } }
 { "type": "CLIP_EDITOR_PEAKS_READY", "payload": { "libraryItemId": "l1", "cachePath": "C:/Users/.../Silverdaw/peaks/<hash>.peaks", "peakCount": 633240, "peaksPerSecond": 2004.54, "sampleRate": 44100, "laneCount": 3 } }
 { "type": "PROJECT_SAVED", "payload": { "filePath": "...", "ok": true } }
@@ -2412,10 +2414,11 @@ state; user preferences such as panel sizes remain in `preferences.json`.
     beat positions, beat anchor, variable-tempo flag, decoded playback
     cache path, duration, channel count, sample rate, a **media GUID**
     (`mediaId`), and — for derived items (saved clips, stems, samples) —
-    `sourceItemId` / `derivedFrom` source pointers. Cover art and tag
-    metadata are not serialised inline; each item resolves them from the
-    project media store by its GUID on load, falling back to reading the
-    source file's embedded metadata via `audio:readMetadata` when it has none.
+    `sourceItemId` / `derivedFrom` source pointers. An optional `attribution`
+    snapshot keeps selected recording credits and known passage bounds inline.
+    Full tags and cover art are separate: each item resolves them from the
+    project media store by GUID on load, falling back to the source file's
+    embedded metadata via `audio:readMetadata` when it has no GUID.
   - **Timeline markers** — marker id and absolute project position.
 - **What is NOT saved:** undo history (always empty on load),
   `PROJECT_STATE` reconnect tokens, audio engine caches (peaks cache lives
@@ -3361,6 +3364,14 @@ recorded in the [release record](#release-acceptance-1101).
 Export Tracks renders aligned files for all tracks, a saved subset, or a single
 track from its header. Both export dialogs can render just the selected
 timeline range. See the [release record](#release-acceptance-1110).
+
+### 1.12.0 - Audio Sample Report
+
+The [Audio Sample Report](developer-guide.md#audio-sample-report) groups
+placements by recording and exports a landscape PDF. Optional library-item
+attribution carries recording identity and known source ranges through edits
+and cross-project imports without changing playback or requiring conversion
+of older projects.
 
 ### Phase 1 — Backend Foundation & Bridge
 

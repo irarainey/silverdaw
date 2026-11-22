@@ -81,6 +81,12 @@ project. `renderer-recovery.e2e.ts` deliberately loses the timeline's WebGL
 context, checks that the replacement canvas and the open editor have live
 contexts, then verifies the saved clip. Neither check reads canvas pixels.
 
+`sample-report.e2e.ts` checks the report dialog and the PDF on disk, including
+landscape pages, the timestamped default filename, and which project's export
+folder is used. `sample-report-provenance.e2e.ts` opens a legacy project and
+checks that an exact passage, a scratch input window, and an unknown range
+remain distinguishable in the report.
+
 Markers are the sharpest case of a canvas-only feature: they are placed with a
 bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`
 reads them through Edit ▸ Clear All Markers instead, which is enabled exactly
