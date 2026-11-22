@@ -83,7 +83,7 @@ export function createClipEnvelopeInteraction(deps: EnvelopeInteractionDeps) {
       draft.removePoint(hit)
       return
     }
-    let index = hit ?? draft.addPoint(timeAt(x, e.shiftKey), overlayYToGain(y, lane.top, lane.height))
+    let index = hit ?? draft.addPoint(timeAt(x, e.shiftKey), overlayYToGain(y, lane.top, lane.height), durationMs)
     draft.selectedIndex.value = index
     const origin = draft.draftPoints.value[index]!
     const grabX = hit !== null ? positions[hit]!.x - x : 0

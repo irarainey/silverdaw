@@ -128,7 +128,7 @@ describe('envelope helpers', () => {
   describe('insertEnvelopePoint', () => {
     it('inserts an interior point in sorted order', () => {
       const base = defaultEnvelope(1000)
-      const { points, index } = insertEnvelopePoint(base, 500, 0.5)
+      const { points, index } = insertEnvelopePoint(base, 500, 0.5, 1000)
       expect(points).toEqual([
         { timeMs: 0, gain: 1 },
         { timeMs: 500, gain: 0.5 },
@@ -139,7 +139,7 @@ describe('envelope helpers', () => {
 
     it('keeps a new handle separate from the pinned endpoint at the same time', () => {
       const base = defaultEnvelope(1000)
-      const { points, index } = insertEnvelopePoint(base, 0, 0.2)
+      const { points, index } = insertEnvelopePoint(base, 0, 0.2, 1000)
       expect(points[0]).toEqual(base[0])
       expect(points[index]).toEqual({ timeMs: 0, gain: 0.2 })
       expect(index).toBe(1)

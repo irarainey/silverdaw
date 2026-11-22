@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { ScratchPattern } from '@shared/bridge-protocol'
 import { useScratchNotationEditor } from '@/lib/scratch/useScratchNotationEditor'
 import { useScratchNotationLayout, ZOOM_STEP_PERCENT } from '@/lib/scratch/useScratchNotationLayout'
@@ -39,8 +39,15 @@ watch(
 )
 
 // Keyboard handler (extracted module) — events stop propagation when consumed
-function onKeydown(event: KeyboardEvent): void {
-  handleNotationKeydown(event, { editor, durationUs: durationUs.value })
+async function onKeydown(event: KeyboardEvent): Promise<void> {
+  const previous = editor.selection.value
+  if (!handleNotationKeydown(event, { editor, durationUs: durationUs.value })
+      || editor.selection.value === previous) return
+  await nextTick()
+  const viewport = viewportEl.value
+  if (!viewport?.contains(document.activeElement)) return
+  const selected = viewport.querySelector<SVGElement>('[aria-pressed="true"]')
+  ;(selected ?? viewport).focus({ preventScroll: true })
 }
 </script>
 

@@ -142,11 +142,17 @@ export function defaultEnvelope(durationMs: number): ClipEnvelopePoint[] {
 export function insertEnvelopePoint(
   points: readonly ClipEnvelopePoint[],
   timeMs: number,
-  gain: number
+  gain: number,
+  durationMs: number
 ): { points: ClipEnvelopePoint[]; index: number } {
-  const t = Math.max(points[0]?.timeMs ?? 0, Math.min(points.at(-1)?.timeMs ?? timeMs, timeMs))
+  const t = Math.max(0, Math.min(durationMs, timeMs))
   const g = Math.min(ENVELOPE_MAX_GAIN, Math.max(ENVELOPE_MIN_GAIN, gain))
   const next = points.map((p) => ({ ...p }))
+  const first = next[0]
+  const last = next.at(-1)
+  // After a trim the saved shape can end inside the clip. Keep its held gain at the real edge.
+  if (last && t > last.timeMs) next.push({ timeMs: durationMs, gain: last.gain })
+  if (first && t < first.timeMs) next.unshift({ timeMs: 0, gain: first.gain })
   const after = next.findIndex((p) => p.timeMs > t)
   const index = after >= 0 ? after : Math.max(0, next.length - 1)
   next.splice(index, 0, { timeMs: t, gain: g })

@@ -14,6 +14,8 @@
 namespace silverdaw::scratch
 {
 
+std::int64_t firstSampleAtOrAfterUs(std::int64_t timeUs, double sampleRate) noexcept;
+
 // Immutable prepared snapshot of a pattern for audio-thread evaluation.
 // Constructed on the message thread, published to audio via atomic pointer swap.
 struct PatternReplaySnapshot
@@ -29,7 +31,7 @@ struct PatternReplaySnapshot
 
     // Crossfader keyframes (sorted by timeUs, within crop window, rebased to crop start).
     std::vector<CrossfaderKeyframe> crossfader;
-    std::vector<std::int64_t> crossfaderCutsUs;
+    bool hasCrossfaderCuts = false;
 
     // Derived: pattern duration in microseconds (cropEnd - cropStart).
     std::int64_t durationUs() const noexcept { return cropEndUs - cropStartUs; }

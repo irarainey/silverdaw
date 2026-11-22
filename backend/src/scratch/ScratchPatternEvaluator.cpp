@@ -13,6 +13,12 @@ constexpr double kSecondsPerTurn = 1.8;
 constexpr double kMicrosecondsPerSecond = 1000000.0;
 } // namespace
 
+std::int64_t firstSampleAtOrAfterUs(std::int64_t timeUs, double sampleRate) noexcept
+{
+    return static_cast<std::int64_t>(std::ceil(static_cast<double>(timeUs) * sampleRate
+                                               / kMicrosecondsPerSecond));
+}
+
 EvalResult ScratchPatternEvaluator::evaluate(const PatternReplaySnapshot& snapshot,
                                              std::int64_t timeUs) noexcept
 {
@@ -138,9 +144,8 @@ PatternReplaySnapshot ScratchPatternEvaluator::buildSnapshot(const Pattern& patt
         const std::int64_t relTime = kf.timeUs - pattern.cropStartUs;
         if (relTime < 0) continue;
         if (relTime > cropDuration) break;
-        if (!snap.crossfader.empty() && relTime == snap.crossfader.back().timeUs
-            && (snap.crossfaderCutsUs.empty() || relTime != snap.crossfaderCutsUs.back()))
-            snap.crossfaderCutsUs.push_back(relTime);
+        if (!snap.crossfader.empty() && relTime == snap.crossfader.back().timeUs)
+            snap.hasCrossfaderCuts = true;
         snap.crossfader.push_back({relTime, kf.value});
     }
 

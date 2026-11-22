@@ -42,6 +42,19 @@ function createPointerInteraction() {
 }
 
 describe('createNotationPointerInteraction', () => {
+  it.each([
+    { grabX: 402, grabY: 160, edgeX: 778, edgeY: 137, timeUs: 1_000_000, value: 1 },
+    { grabX: 398, grabY: 162, edgeX: 22, edgeY: 185, timeUs: 0, value: 0 }
+  ])('an off-centre grab can reach ($timeUs, $value) without jumping', ({ grabX, grabY, edgeX, edgeY, timeUs, value }) => {
+    const { callbacks, interaction } = createPointerInteraction()
+    const event = { clientX: grabX, clientY: grabY, button: 0, pointerId: 1, preventDefault: vi.fn() } as unknown as PointerEvent
+    interaction.handlePointDown('crossfader', 1, event)
+    interaction.handlePointerMove(event)
+    expect(callbacks.onMoveCrossfader).toHaveBeenLastCalledWith(1, 500_000, 0.5)
+    interaction.handlePointerMove({ ...event, clientX: edgeX, clientY: edgeY })
+    expect(callbacks.onMoveCrossfader).toHaveBeenLastCalledWith(1, timeUs, value)
+  })
+
   it('cycles identical handles in stored order, drags just the chosen one and right-clicks without cycling', () => {
     const { callbacks, interaction } = createPointerInteraction()
     const event = { clientX: 400, clientY: 161, button: 0, pointerId: 1, preventDefault: vi.fn() } as unknown as PointerEvent

@@ -6,7 +6,9 @@ import { ref, type Ref } from 'vue'
 import type { ScratchCrossfaderKeyframe } from '@shared/bridge-protocol'
 import type { NotationLane, NotationSelection } from './useScratchNotationEditor'
 import {
+  cfValueToY,
   clientToSvgCoordinates,
+  timeToX,
   xToTime,
   yToTurns,
   yToCfValue
@@ -65,8 +67,8 @@ export function createNotationPointerInteraction(
   const dragState = ref<DragState>({ active: false, lane: null, index: -1 })
   let capturedPointerId: number | null = null
   let captureTarget: Element | null = null
-  let grabTimeUs = 0
-  let grabValue = 0
+  let grabOffsetX = 0
+  let grabOffsetY = 0
 
   function finishDrag(): void {
     if (!dragState.value.active) return
@@ -124,8 +126,8 @@ export function createNotationPointerInteraction(
       const value = yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value)
       index = crossfaderHit(index, value, true)
       const point = context.crossfader.value[index]!
-      grabTimeUs = point.timeUs - xToTime(coords.x, context.durationUs.value, context.contentWidth.value, context.paddingX)
-      grabValue = point.value - value
+      grabOffsetX = timeToX(point.timeUs, context.durationUs.value, context.contentWidth.value, context.paddingX) - coords.x
+      grabOffsetY = cfValueToY(point.value, context.cfLaneTop.value, context.cfLaneHeight.value) - coords.y
     }
     focusSvg()
     callbacks.onSelect(lane, index)
@@ -146,7 +148,7 @@ export function createNotationPointerInteraction(
     if (!coords) return
 
     const timeUs = xToTime(
-      coords.x,
+      coords.x + (dragState.value.lane === 'crossfader' ? grabOffsetX : 0),
       context.durationUs.value,
       context.contentWidth.value,
       context.paddingX
@@ -162,8 +164,8 @@ export function createNotationPointerInteraction(
       )
       callbacks.onMovePlatter(dragState.value.index, timeUs, turns)
     } else if (dragState.value.lane === 'crossfader') {
-      const value = yToCfValue(coords.y, context.cfLaneTop.value, context.cfLaneHeight.value)
-      callbacks.onMoveCrossfader(dragState.value.index, timeUs + grabTimeUs, value + grabValue)
+      const value = yToCfValue(coords.y + grabOffsetY, context.cfLaneTop.value, context.cfLaneHeight.value)
+      callbacks.onMoveCrossfader(dragState.value.index, timeUs, value)
       const selected = context.selection.value
       if (selected?.lane === 'crossfader') dragState.value.index = selected.index
     }

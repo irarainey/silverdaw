@@ -6,10 +6,16 @@
 
 - The Audio Sample Report dialog keeps a consistent height and scrolls longer reports.
 - The Clip Editor now highlights the Volume Shape point targeted by the arrow keys.
+- Volume Shape points can be added beyond the last saved point after extending a clip.
 - Clip Volume Shape and scratch crossfader points can share a time for an
   instantaneous change and remain individually editable.
 - Scratch platter and crossfader points lose their highlight when the notation
   editor loses keyboard focus.
+- Scratch playback and baked samples preserve short crossfader cuts and stop at
+  the crop end.
+- Dragging a scratch crossfader point off-centre can reach either lane edge.
+- Keyboard actions target the newly inserted scratch point even when it overlaps
+  another point.
 
 ## 1.12.0
 

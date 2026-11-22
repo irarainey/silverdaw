@@ -4,7 +4,6 @@
 #include "ScratchPatternEvaluator.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace silverdaw::scratch
 {
@@ -38,8 +37,7 @@ juce::AudioBuffer<float> bakePatternToBuffer(const Pattern& pattern,
     if (durationUs <= 0)
         return output;
 
-    auto totalSamples = static_cast<std::int64_t>(
-        std::llround(static_cast<double>(durationUs) * sampleRate / 1000000.0));
+    auto totalSamples = firstSampleAtOrAfterUs(durationUs, sampleRate);
     totalSamples = std::clamp<std::int64_t>(totalSamples, 1, kMaxBakeSamples);
 
     output.setSize(kBakeChannels, static_cast<int>(totalSamples));

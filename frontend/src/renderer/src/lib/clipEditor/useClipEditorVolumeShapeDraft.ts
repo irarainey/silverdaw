@@ -36,7 +36,7 @@ export interface ClipEditorVolumeShapeDraft {
   initialise: (current: Clip | null, durationMs: number) => void
 
   /** Insert a breakpoint, returning its index in the new array. */
-  addPoint: (timeMs: number, gain: number) => number
+  addPoint: (timeMs: number, gain: number, durationMs: number) => number
 
   /** Move the breakpoint at `index` (endpoints keep their pinned time). */
   movePoint: (index: number, timeMs: number, gain: number) => number
@@ -88,8 +88,8 @@ export function useClipEditorVolumeShapeDraft(): ClipEditorVolumeShapeDraft {
         : defaultEnvelope(durationMs)
   }
 
-  function addPoint(timeMs: number, gain: number): number {
-    const { points, index } = insertEnvelopePoint(draftPoints.value, timeMs, gain)
+  function addPoint(timeMs: number, gain: number, durationMs: number): number {
+    const { points, index } = insertEnvelopePoint(draftPoints.value, timeMs, gain, durationMs)
     draftPoints.value = points
     return index
   }

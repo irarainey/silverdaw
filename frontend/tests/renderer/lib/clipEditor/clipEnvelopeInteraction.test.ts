@@ -7,7 +7,7 @@ function setup() {
   const events = new EventTarget()
   vi.stubGlobal('window', events)
   const draft = useClipEditorVolumeShapeDraft()
-  for (let i = 0; i < 3; i++) draft.addPoint(500, 1)
+  for (let i = 0; i < 3; i++) draft.addPoint(500, 1, 1000)
   const handlers = createClipEnvelopeInteraction({
     volumeShapeDraft: draft, viewInMs: () => 0, volumeShapeDurationMs: () => 1000,
     volumeEditActive: () => true, draftEffectiveRatio: () => 1,
