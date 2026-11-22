@@ -192,9 +192,11 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The **1.12.0 development branch** adds the [Audio Sample Report](#audio-sample-report).
-The latest designated release is **1.11.0**. It adds aligned per-track audio export
-and lets either export dialog render just the selected timeline range. The
+The latest designated release is **[1.12.0](development-plan.md#release-acceptance-1120)**.
+It adds the [Audio Sample Report](#audio-sample-report) and lets users edit
+track automation points independently at the same time position.
+**1.11.0** added aligned per-track audio export and selected-range rendering
+in both export dialogs. The
 [1.11.0 release record](development-plan.md#release-acceptance-1110) describes
 the local rebuild; it did not run tests or establish publication or manual
 sign-off. The [1.10.1 checks](development-plan.md#release-acceptance-1101)
@@ -5681,8 +5683,8 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The [1.11.0 release record](development-plan.md#release-acceptance-1110)
-documents the latest project release and its local rebuild. Building packages
+The [1.12.0 release record](development-plan.md#release-acceptance-1120)
+identifies the current release. Building packages
 does not run the quality gates, publish a GitHub release or submit to the
 Microsoft Store. Previous releases' test and manual sign-offs are not evidence
 for this build.

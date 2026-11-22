@@ -1,7 +1,15 @@
 # Silverdaw — Technical Design & Implementation Plan
 
-Development version: **1.12.0** ([Audio Sample Report](developer-guide.md#audio-sample-report)).
-Latest designated release: **[1.11.0](#release-acceptance-1110)**.
+Latest designated release: **[1.12.0](#release-acceptance-1120)**.
+
+## Release acceptance (1.12.0)
+
+The maintainer designated **1.12.0** as the released version on 2026-11-22.
+It adds the [Audio Sample Report](developer-guide.md#audio-sample-report)
+and supports independently editable track automation points at the same time.
+See the [1.12.0 changelog](../CHANGELOG.md#1120) for details. This designation
+does not establish package verification or publication to GitHub or the
+Microsoft Store.
 
 ## Release acceptance (1.11.0)
 
