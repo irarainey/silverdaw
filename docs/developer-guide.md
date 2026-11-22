@@ -1623,7 +1623,10 @@ source on demand.
 **Audio Sample Report** — An offline aid for attribution and clearance research,
 not a clearance determination. The report lists the ISRC, composer, label and
 copyright notice when available in local file metadata. These tags are shown
-as supplied; they do not verify ownership or permission to use the recording.
+as supplied; they do not verify ownership. Silverdaw does not grant permission
+to use third-party recordings or compositions. Before sharing or releasing a
+project, check that your intended use is permitted and obtain any permissions
+you need.
 
 **Audio Sample Report provenance** — An optional `attribution` property on a
 library item identifies its original recording independently of its immediate
