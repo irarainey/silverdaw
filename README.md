@@ -256,6 +256,11 @@ Silverdaw is built around a single idea: **arranging audio should be simple.**
   Scratch Editor, and the Record Audio dialog.
 - **Per-project sample rate.** Pin a project to 44.1 or 48 kHz; imports are
   checked against the project rate and offer a clear path when they differ.
+- **Audio Sample Report.** Choose **File ▸ Audio Sample Report…** to see where
+  each recording appears in the arrangement, including uses through stems and
+  samples. The report shows available file credits and can be saved as a
+  landscape PDF. It helps with attribution; it does not verify rights or grant
+  permission. See [how to read and export the report](docs/developer-guide.md#audio-sample-report).
 - **Export a mixdown.** **File ▸ Export Mixdown…** (`Ctrl`+`M`) renders the mix
   to one stereo file, with optional loudness normalisation.
 - **Export individual tracks.** **File ▸ Export Tracks…** (`Ctrl`+`Shift`+`M`)

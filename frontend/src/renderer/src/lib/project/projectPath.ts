@@ -13,3 +13,19 @@ export function basename(path: string): string {
 export function projectNameFromPath(path: string): string {
   return basename(path).replace(/\.silverdaw$/i, '')
 }
+
+export function projectRootFromPath(projectFile: string | null): string {
+  if (!projectFile) return ''
+  const path = projectFile.replaceAll('/', '\\')
+  const root = path.slice(0, path.lastIndexOf('\\') + 1)
+  return /^[A-Z]:\\$/i.test(root) ? root : root.replace(/\\$/, '')
+}
+
+/** Project-owned files use a short path; external sources keep their full location. */
+export function reportFilePath(path: string, projectRoot: string): string {
+  if (!projectRoot) return path
+  const prefix = projectRoot.replace(/\\$/, '') + '\\'
+  const normalized = path.replaceAll('/', '\\')
+  if (!normalized.toLowerCase().startsWith(prefix.toLowerCase()) || normalized.split('\\').includes('..')) return path
+  return '\\' + normalized.slice(prefix.length)
+}

@@ -61,6 +61,7 @@ import {
   PreferencesDialog,
   ProjectImportDialog,
   ProjectPropertiesDialog,
+  SampleReportDialog,
   RecordAudioDialog,
   RelinkDialog,
   SampleRateMismatchDialog,
@@ -88,6 +89,7 @@ useDialogDefaultButton()
 const aboutOpen = ref(false)
 const preferencesOpen = ref(false)
 const projectPropertiesOpen = ref(false)
+const sampleReportOpen = ref(false)
 const projectImportOpen = ref(false)
 const exportMixdownOpen = ref(false)
 const trackExportRequest = ref<{ initialTrackId?: string } | null>(null)
@@ -195,6 +197,7 @@ function isInteractionBlocked(): boolean {
     aboutOpen.value ||
     preferencesOpen.value ||
     projectPropertiesOpen.value ||
+    sampleReportOpen.value ||
     projectImportOpen.value ||
     exportMixdownOpen.value ||
     trackExportRequest.value !== null ||
@@ -543,6 +546,7 @@ const { handleMenuAction } = useAppMenuActions({
   aboutOpen,
   preferencesOpen,
   projectPropertiesOpen,
+  sampleReportOpen,
   projectImportOpen,
   exportMixdownOpen,
   openExportTracks,
@@ -626,6 +630,10 @@ const { handleMenuAction } = useAppMenuActions({
       @close="midiMonitorOpen = false"
     />
 
+    <SampleReportDialog
+      v-if="sampleReportOpen"
+      @close="sampleReportOpen = false"
+    />
     <ProjectPropertiesDialog
       v-if="projectPropertiesOpen"
       :open="projectPropertiesOpen"

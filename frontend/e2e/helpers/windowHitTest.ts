@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import type { ElectronApplication } from '@playwright/test'
 
 /** Queries Windows routing, which Playwright's browser input bypasses. */
@@ -11,6 +12,7 @@ export async function windowHitTest(
     const bounds = win.getContentBounds()
     const zoom = win.webContents.getZoomFactor()
     return {
+      desktop: process.env['SILVERDAW_E2E_DESKTOP'],
       handle: win.getNativeWindowHandle().readBigUInt64LE().toString(),
       points: points.map((point) => screen.dipToScreenPoint({
         x: Math.round(bounds.x + point.x * zoom),
@@ -47,11 +49,12 @@ foreach ($point in $target.points) {
   $result.ToUInt64()
 }
 `
-  const output = execFileSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', timeout: 15_000 }
-  )
+  const args = ['-NoProfile', '-NonInteractive', '-Command', script]
+  if (target.desktop) {
+    args.unshift(fileURLToPath(new URL('./privateDesktop.py', import.meta.url)), target.desktop, 'powershell.exe')
+  }
+  const output = execFileSync(target.desktop ? 'python' : 'powershell.exe', args,
+    { encoding: 'utf8', timeout: 15_000, windowsHide: true })
   const results = output.trim().split(/\r?\n/).map(Number)
   if (results.length !== points.length || results.some((result) => !Number.isInteger(result))) {
     throw new Error(`Unexpected WM_NCHITTEST results: ${output}`)

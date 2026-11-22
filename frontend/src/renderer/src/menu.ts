@@ -82,6 +82,7 @@ export function buildMenus(opts: BuildMenusOptions): MenuDef[] {
         { label: 'Save As\u2026', action: 'file.saveAs', accelerator: 'Ctrl+Shift+S' },
         SEP,
         { label: 'Project Properties\u2026', action: 'file.projectProperties' },
+        { label: 'Audio Sample Report\u2026', action: 'file.sampleReport' },
         SEP,
         { label: 'Import to Library\u2026', action: 'file.importToLibrary', accelerator: 'Ctrl+I' },
         { label: 'Import from Project\u2026', action: 'file.importFromProject' },

@@ -116,6 +116,7 @@ function makeDeps(overrides: { bridgeReady?: boolean; modalOpen?: boolean } = {}
     aboutOpen: refs.aboutOpen,
     preferencesOpen: refs.preferencesOpen,
     projectPropertiesOpen: refs.projectPropertiesOpen,
+    sampleReportOpen: ref(false),
     projectImportOpen: refs.projectImportOpen,
     exportMixdownOpen: refs.exportMixdownOpen,
     openExportTracks: vi.fn(),

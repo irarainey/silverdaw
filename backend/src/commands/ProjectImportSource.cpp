@@ -18,6 +18,38 @@ const juce::Identifier kName{"name"};
 const juce::Identifier kDisplayName{"displayName"};
 const juce::Identifier kScratchPatternId{"scratchPatternId"};
 
+juce::var importAttribution(const juce::ValueTree& library, const SourceLibraryItem& item,
+                            const juce::File& metadataDirectory, const ProjectState::LegacyRecordingIds& legacyIds)
+{
+    auto attribution = ProjectState::resolveAttribution(library, item.id, legacyIds);
+    auto* snapshot = attribution.getDynamicObject();
+    if (!snapshot)
+        return {};
+
+    // Prefer the original's tags; older stems may have their own copy of the media record.
+    const auto recordingId = snapshot->getProperty("recordingId").toString();
+    const auto mediaId = item.data.getProperty("mediaId", {}).toString();
+    juce::StringArray ids{recordingId};
+    ids.addIfNotAlreadyThere(mediaId);
+    for (const auto& id : ids)
+    {
+        if (!isSafeImportMediaId(id))
+            continue;
+        const auto file = metadataDirectory.getChildFile(id + ".json");
+        if (!file.existsAsFile())
+            continue;
+        const auto record = juce::JSON::parse(file.loadFileAsString());
+        const auto tags = record.getProperty("metadata", {});
+        for (const auto* field : {"title", "artist", "album", "isrc", "composer", "label", "copyright"})
+        {
+            const auto tag = tags.getProperty(field, {});
+            if (!snapshot->hasProperty(field) && tag.isString() && tag.toString().trim().isNotEmpty())
+                snapshot->setProperty(field, tag);
+        }
+    }
+    return attribution;
+}
+
 bool isManagedSourceFile(const juce::File& file, const juce::File& root)
 {
     return file.existsAsFile() && file.isAChildOf(root);
@@ -82,8 +114,14 @@ std::optional<SourceLibraryItem> parseSourceLibraryItem(const juce::ValueTree& i
 
 } // namespace
 
+bool isSafeImportMediaId(const juce::String& id)
+{
+    return id.isNotEmpty() && id.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-");
+}
+
 std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sourceProjectFile,
-                                                           juce::String& error)
+                                                           juce::String& error,
+                                                           const juce::StringArray& selectedIds)
 {
     juce::ValueTree tree;
     const auto result = ProjectFile::loadTree(sourceProjectFile, tree);
@@ -108,11 +146,24 @@ std::optional<SourceProjectImport> loadSourceProjectImport(const juce::File& sou
     ProjectState::repairLibraryItemKinds(library, sourceProjectFile.getParentDirectory());
     for (int i = 0; i < library.getNumChildren(); ++i)
     {
-        const auto item = library.getChild(i);
+        auto item = library.getChild(i);
         if (!item.hasType(kLibraryItem))
             continue;
         if (const auto parsed = parseSourceLibraryItem(item, sourceProjectFile))
+        {
+            if (parsed->category == "recordings")
+                item.setProperty("recordingOrigin", true, nullptr);
             source.library.emplace(parsed->id, *parsed);
+        }
+    }
+
+    const auto metadata = sourceProjectFile.getSiblingFile("metadata");
+    const ProjectState::LegacyRecordingIds legacyIds{sourceProjectFile.getParentDirectory(), {}};
+    for (const auto& id : selectedIds)
+    {
+        const auto it = source.library.find(id);
+        if (it != source.library.end())
+            it->second.data.getDynamicObject()->setProperty("attribution", importAttribution(library, it->second, metadata, legacyIds));
     }
 
     const auto patterns = tree.getChildWithName(scratch_ids::kScratchPatterns);

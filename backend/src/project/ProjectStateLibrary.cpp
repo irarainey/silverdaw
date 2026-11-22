@@ -422,6 +422,16 @@ juce::var ProjectState::libraryAsJson() const
         obj->setProperty("filePath", filePath);
         const auto kind = item.getProperty(kKind, "source").toString();
         obj->setProperty("kind", kind);
+        const bool original = kind == "source" || static_cast<bool>(item[kRecordingOrigin]);
+        if (item.hasProperty(kScratchPatternId) || item.hasProperty("attribution")
+            || (original && !item.hasProperty(kMediaId)))
+        {
+            const auto attribution = item.hasProperty(kScratchPatternId) && !item.hasProperty("attribution")
+                ? resolveAttribution(library, item[kId].toString(), legacyRecordingIds)
+                : readItemAttribution(item, legacyRecordingIds);
+            if (attribution.isObject())
+                obj->setProperty("attribution", attribution);
+        }
         if (item.hasProperty(kDisplayName))
         {
             obj->setProperty("name", item.getProperty(kDisplayName).toString());

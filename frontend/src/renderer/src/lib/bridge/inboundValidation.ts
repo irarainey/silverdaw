@@ -36,6 +36,7 @@ import {
   isChannelSplitReadyPayload,
   isChannelSplitFailedPayload,
   isLibraryItemAnalysisPayload,
+  LibraryItemAttributionSchema,
   isTempoCorrectionAppliedPayload,
   isMasterLevelPayload,
   isTrackLevelsPayload,
@@ -165,6 +166,10 @@ function narrowPayload(type: BridgeInboundType, payload: unknown): BridgeInbound
       return isSampleSavedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'LIBRARY_ITEM_ANALYSIS':
       return isLibraryItemAnalysisPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
+    case 'LIBRARY_ITEM_ATTRIBUTION': {
+      const result = LibraryItemAttributionSchema.safeParse(payload)
+      return result.success ? { type, payload: result.data } : payloadMismatch(type, payload)
+    }
     case 'TEMPO_CORRECTION_APPLIED':
       return isTempoCorrectionAppliedPayload(payload) ? { type, payload } : payloadMismatch(type, payload)
     case 'PROJECT_BPM_APPLIED':

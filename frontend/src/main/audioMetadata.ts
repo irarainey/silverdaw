@@ -39,6 +39,9 @@ export function normalizeMetadata(meta: IAudioMetadata): AudioMetadata {
   if (typeof common.bpm === 'number') out.bpm = common.bpm
   if (common.key) out.key = common.key
   if (common.composer && common.composer.length > 0) out.composer = common.composer.join(', ')
+  if (common.isrc?.length) out.isrc = common.isrc.join(', ')
+  if (common.label?.length) out.label = common.label.join(', ')
+  if (common.copyright) out.copyright = common.copyright
   if (common.comment && common.comment.length > 0) {
     const first = common.comment[0]
     out.comment = typeof first === 'string' ? first : (first?.text ?? undefined)

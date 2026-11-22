@@ -23,6 +23,41 @@ using silverdaw::bridge::readOptionalString;
 using silverdaw::bridge::readOptionalWarpMode;
 using silverdaw::bridge::tryGetRequiredString;
 
+namespace
+{
+void captureLibraryAddAttribution(ProjectState& state, BridgeServer& bridge, const juce::var& payload,
+                                  const juce::String& id, const juce::String& kind,
+                                  const juce::String& parent, double inMs, double durationMs)
+{
+    juce::var attribution;
+    if (kind == "clip")
+        attribution = state.deriveAttribution(parent, inMs, durationMs, 1.0, true);
+    else if (kind == "stem")
+    {
+        // Separation may have outlived its source item: prefer the snapshot taken at dispatch.
+        attribution = payload.getProperty("attribution", {}).clone();
+        if (!attribution.isObject())
+            attribution = state.deriveAttribution(parent, inMs, durationMs, 1.0);
+    }
+    else
+        attribution = state.getLibraryItemAttribution(id);
+
+    if (auto* out = attribution.getDynamicObject())
+    {
+        const auto tags = payload.getProperty("sourceTags", {});
+        for (const auto* key : {"title", "artist", "album", "isrc", "composer", "label", "copyright"})
+            if (const auto tag = readOptionalString(tags, key); tag && tag->isNotEmpty())
+                out->setProperty(key, *tag);
+    }
+    if (!state.setLibraryItemAttribution(id, attribution)) return;
+
+    auto* reply = new juce::DynamicObject();
+    reply->setProperty("itemId", id);
+    reply->setProperty("attribution", state.getLibraryItemAttribution(id));
+    bridge.broadcast("LIBRARY_ITEM_ATTRIBUTION", juce::var(reply));
+}
+}
+
 void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectState& projectState,
                       BridgeServer& bridge, juce::ThreadPool& peakPool, const DecodedCache& decodedCache)
 {
@@ -50,9 +85,14 @@ void handleLibraryAdd(const juce::var& payload, AudioEngine& engine, ProjectStat
                                   : -1;
     const juce::String mediaId = readOptionalString(payload, "mediaId").value_or(juce::String{});
     silverdaw::log::info("bridge", "recv LIBRARY_ADD itemId=" + itemId);
-    projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
-                                kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
-                                collapsedFlag, mediaId);
+    const bool isNewItem = projectState.getLibraryItemFilePath(itemId).isEmpty();
+    if (!projectState.addLibraryItem(itemId, filePath, fileName, durationMs, sampleRate, channelCount, playbackPath, key,
+                                     kind, displayName, sourceItemId, sourceClipId, sourceInMs, sourceDurationMs,
+                                     collapsedFlag, mediaId))
+        return;
+    if (isNewItem)
+        captureLibraryAddAttribution(projectState, bridge, payload, itemId, kind, sourceItemId,
+                                     sourceInMs, kind == "clip" ? sourceDurationMs : durationMs);
     if (kind == "clip")
     {
         // Saved-clip warp fields are partial; missing fields keep identity defaults.

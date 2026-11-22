@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.12.0
+
+### Added
+
+- File > Audio Sample Report groups clip placements by recording, includes
+  available credits and source ranges retained by new stems and samples across
+  projects, and exports a timestamped landscape PDF for attribution research.
+- Track automation lanes such as Gain, Pan, and Filter highlight the point selected for arrow-key editing.
+
+### Fixed
+
+- Track automation points can share a time without disappearing and remain individually selectable for dragging or keyboard edits.
+
 ## 1.11.0
 
 ### Added

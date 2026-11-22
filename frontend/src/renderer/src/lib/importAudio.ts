@@ -13,7 +13,7 @@ import type { LibraryItem } from '@/stores/libraryStore'
 import { useNotificationsStore } from '@/stores/notificationsStore'
 import { useUiStore } from '@/stores/uiStore'
 import { promptSampleRateMismatch, type RateBucket } from '@/lib/sampleRatePrompt'
-import { saveProjectMedia, getProjectMedia } from '@/lib/library/projectMedia'
+import { saveProjectMedia, getProjectMedia, itemGeometryOrigin } from '@/lib/library/projectMedia'
 import { runInUndoGroupAsync } from '@/lib/undo/undoGroup'
 
 function withDetectedKey(metadata: AudioMetadata | null, detectedKey: string | undefined): AudioMetadata | null {
@@ -247,6 +247,7 @@ export function libraryItemToClipPlacement(audio: LibraryItem): {
 }
 
 export interface AudioImportOptions {
+  attribution?: LibraryItem['attribution']
   kind?: LibraryItem['kind']
   name?: string
   derivedFrom?: LibraryItem['derivedFrom']
@@ -334,10 +335,19 @@ export async function importAudioIntoLibrary(
           ? resolveLibraryItemMediaId(library.byId[options.derivedFrom.sourceItemId], library.byId)
           : undefined
     const mediaId = sourceMediaId ?? crypto.randomUUID()
-    if (!sourceMediaId) {
-      await saveProjectMedia(mediaId, opened.filePath)
-    }
+    const origin = generatedAudio ? 'output' : itemGeometryOrigin(options)
+    const stored = sourceMediaId ? null : await saveProjectMedia(mediaId, opened.filePath, origin)
+    const media = sourceMediaId
+      ? options && 'inheritedMetadata' in options ? options.inheritedMetadata : await getProjectMedia(mediaId)
+      : stored ? { ...enrichedMetadata, ...stored } : enrichedMetadata
+    const tags = stored ?? media
+    const sourceTags = tags
+      ? { title: tags.title, artist: tags.artist, album: tags.album, isrc: tags.isrc,
+          composer: tags.composer, label: tags.label, copyright: tags.copyright }
+      : undefined
     const itemId = library.addItem({
+      attribution: options?.attribution,
+      sourceTags,
       filePath: opened.filePath,
       fileName: opened.fileName,
       durationMs: generatedAudio?.durationMs ?? decoded.durationMs,
@@ -355,17 +365,7 @@ export async function importAudioIntoLibrary(
     if (decoded.channelPeaks.length > 0) {
       library.setItemChannelPeaks(itemId, decoded.channelPeaks, decoded.peaksPerSecond)
     }
-    // Display identity: a root import already holds the file's own tags + cover; a
-    // derived item is a tagless WAV, so resolve the shared cover from the media store.
-    if (sourceMediaId) {
-      const media =
-        options && 'inheritedMetadata' in options
-          ? options.inheritedMetadata
-          : await getProjectMedia(mediaId)
-      library.setItemMetadata(itemId, media ?? enrichedMetadata)
-    } else {
-      library.setItemMetadata(itemId, enrichedMetadata)
-    }
+    library.setItemMetadata(itemId, media ?? enrichedMetadata)
     library.markImportAnalyzing(importEntryId, itemId)
     return itemId
   } catch (err) {
@@ -405,7 +405,10 @@ export async function reanalyseLibraryItem(itemId: string): Promise<void> {
 
     const { decoded, metadata, detectedKey, trueSampleRate, playbackFilePath } =
       await prepareAudioImport(opened)
-    const enrichedMetadata = withRedetectedKey(metadata, detectedKey)
+    const identity = itemGeometryOrigin(item) === 'output'
+      ? await getProjectMedia(item.mediaId) ?? item.metadata
+      : null
+    const enrichedMetadata = withRedetectedKey(identity ? { ...metadata, ...identity } : metadata, detectedKey)
 
     library.setItemAudioDetails(item.id, decoded.durationMs, trueSampleRate, decoded.channelCount)
     library.setItemPeaks(item.id, decoded.peaks, trueSampleRate, decoded.peaksPerSecond)

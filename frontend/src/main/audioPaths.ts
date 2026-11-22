@@ -98,13 +98,7 @@ export function registerStemsWriteRoot(dir: string): void {
 // A stem sidecar folder is writable only when it sits inside a registered stems
 // write root. (The central stems base is checked separately by the caller.)
 export function isWithinStemsWriteRoot(dir: unknown): dir is string {
-  if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
-  const canonical = canonicalisePath(dir)
-  for (const root of stemsWriteRoots) {
-    const rel = relative(root, canonical)
-    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
-  }
-  return false
+  return isWithinOutputRoots(dir, stemsWriteRoots)
 }
 
 // Trust a project's Samples output folder (derived by main from a save/open path)
@@ -123,13 +117,21 @@ export function registerSamplesWriteRoot(dir: string): void {
 // samples write root (a project's portable "samples" subfolder or the temp
 // workspace one used before the project is saved).
 export function isWithinSamplesWriteRoot(dir: unknown): dir is string {
+  return isWithinOutputRoots(dir, samplesWriteRoots)
+}
+
+function isWithinOutputRoots(dir: unknown, roots: ReadonlySet<string>): dir is string {
   if (typeof dir !== 'string' || dir === '' || !isAbsolute(dir)) return false
   const canonical = canonicalisePath(dir)
-  for (const root of samplesWriteRoots) {
+  for (const root of roots) {
     const rel = relative(root, canonical)
     if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) return true
   }
   return false
+}
+
+export function isWithinChannelsWriteRoot(dir: unknown): dir is string {
+  return isWithinOutputRoots(dir, channelsWriteRoots)
 }
 
 // Trust a project's "channels" output folder (derived by main from a save/open
@@ -185,22 +187,25 @@ export function isPrunableArtifactSubdir(dir: unknown): dir is string {
 // (Silverdaw is single-project), or the temp workspace while unsaved. The store is
 // the single source of truth for cover art + tags, shared by an imported file and
 // every stem/sample derived from it.
-let currentMetadataDir: string | null = null
-let currentCoversDir: string | null = null
+export function projectMediaDirsFor(projectDir: string) {
+  return {
+    metadataDir: canonicalisePath(join(projectDir, 'metadata')),
+    coversDir: canonicalisePath(join(projectDir, 'covers'))
+  }
+}
+
+let currentMediaDirs: ReturnType<typeof projectMediaDirsFor> | null = null
 
 export function registerProjectMediaRoots(projectDir: string): void {
   if (typeof projectDir !== 'string' || projectDir === '' || !isAbsolute(projectDir)) {
     logMain('WARN ', 'main', 'refusing to register non-absolute project media root:', projectDir)
     return
   }
-  currentMetadataDir = canonicalisePath(join(projectDir, 'metadata'))
-  currentCoversDir = canonicalisePath(join(projectDir, 'covers'))
+  currentMediaDirs = projectMediaDirsFor(projectDir)
 }
 
 export function getProjectMediaDirs(): { metadataDir: string; coversDir: string } | null {
-  return currentMetadataDir !== null && currentCoversDir !== null
-    ? { metadataDir: currentMetadataDir, coversDir: currentCoversDir }
-    : null
+  return currentMediaDirs ? { ...currentMediaDirs } : null
 }
 
 // Trust a file-browser root. Only called for folders the user picked in the

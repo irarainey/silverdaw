@@ -6,6 +6,7 @@
 #include "AudioEngine.h"
 #include "AudioConstants.h"
 #include "BridgeAuth.h"
+#include "BridgeServer.h"
 #include "EdgeFadeSnapshot.h"
 #include "LoudnessAnalyzer.h"
 #include "Leveler.h"
@@ -16,6 +17,7 @@
 #include "WaveformCommands.h"
 #include "DecodedCache.h"
 #include "ProjectFile.h"
+#include "ProjectCommands.h"
 #include "ProjectImportSource.h"
 #include "ProjectSession.h"
 #include "ProjectState.h"
@@ -111,7 +113,8 @@ void testProjectFileSaveLoadAndViewState()
     require(stemFile.replaceWithText("test"), "source stem file should be created");
     silverdaw::ProjectState sourceProject;
     require(sourceProject.addLibraryItem("stem-1", stemFile.getFullPathName(), "audio.wav", 1000.0,
-                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem"),
+                                         44100, 2, stemFile.getFullPathName(), {}, "stem", "Source Stem",
+                                         "original-item", {}, 250.0),
             "source stem should be added");
     const auto scratchFile = sourceDir.getChildFile("scratches").getChildFile("sp-1")
                                        .getChildFile("source.wav");
@@ -148,6 +151,22 @@ void testProjectFileSaveLoadAndViewState()
                                          1000.0, 44100, 2, recordingFile.getFullPathName(), {}, "sample",
                                          "Recording 1"),
             "source recording should be added");
+    const auto originalPath = sourceDir.getChildFile("Original.mp3").getFullPathName();
+    require(sourceProject.addLibraryItem("original-item", originalPath, "Original.mp3", 10000.0,
+                                         44100, 2, {}, {}, "source", {}, {}, {}, -1, -1, -1, "original-media"),
+            "legacy stem parent should be available only in the source library");
+    const auto metadata = sourceDir.getChildFile("metadata");
+    require(metadata.createDirectory() && metadata.getChildFile("original-media.json").replaceWithText(
+                R"({"metadata":{"artist":"Original artist","album":"Original album","title":"Original title"}})"),
+            "source recording tags should be available");
+    const auto scratchAttribution = juce::JSON::parse(
+        R"({"recordingId":"original-media","fileName":"Original.mp3","parentId":"foreign-sample",)"
+        R"("title":"Saved title","startMs":450,"endMs":950})");
+    require(sourceProject.setLibraryItemAttribution("scratch-1", scratchAttribution),
+            "scratch fixture should have a non-linear source window");
+    require(sourceProject.addLibraryItem("orphan", stemFile.getFullPathName(), "audio.wav", 1000.0,
+                                         44100, 2, {}, {}, "stem", {}, "orphan"),
+            "previously imported stem should have a self-referential local link");
     require(silverdaw::ProjectFile::save(sourceFile, sourceProject).wasOk(),
             "source project should be saved");
     juce::String sourceError;
@@ -169,6 +188,38 @@ void testProjectFileSaveLoadAndViewState()
             "an imported recording should carry its provenance");
     requireEqual(importSource->library.at("stem-1").category, juce::String("stems"),
                  "a stem should keep its own import category");
+    silverdaw::ProjectState destination;
+    silverdaw::BridgeServer bridge("", nullptr);
+    const silverdaw::ProjectSession destinationSession{dir.getChildFile("destination")
+                                                          .getChildFile("copy.silverdaw").getFullPathName()};
+    auto request = juce::JSON::parse(R"({"libraryItemIds":["stem-1","scratch-1","recording-1","orphan"]})");
+    request.getDynamicObject()->setProperty("sourceProjectPath", sourceFile.getFullPathName());
+    silverdaw::handleProjectImportAssets(request, destination, bridge, destinationSession);
+    const auto imported = destination.libraryAsJson();
+    require(imported.size() == 4, "the destination should receive all four selected assets");
+    const auto legacyStem = imported[0].getProperty("attribution", {});
+    require(imported[0]["id"].toString() != "stem-1" && imported[0]["sourceItemId"] == imported[0]["id"],
+            "a stem should still have a separate destination-local library link");
+    require(legacyStem["recordingId"].toString() == "original-media"
+            && legacyStem["parentId"].toString() == "original-item"
+            && legacyStem["fileName"].toString() == "Original.mp3"
+            && legacyStem["artist"].toString() == "Original artist"
+            && static_cast<double>(legacyStem["startMs"]) == 250.0
+            && static_cast<double>(legacyStem["endMs"]) == 1250.0
+            && static_cast<double>(legacyStem["ratio"]) == 1.0,
+            "legacy import should retain the original identity, basename, tags and aligned window");
+    const auto scratch = imported[1].getProperty("attribution", {});
+    require(scratch["recordingId"].toString() == "original-media"
+            && scratch["parentId"].toString() == "foreign-sample"
+            && scratch["title"].toString() == "Saved title"
+            && scratch["album"].toString() == "Original album"
+            && static_cast<double>(scratch["startMs"]) == 450.0
+            && static_cast<double>(scratch["endMs"]) == 950.0 && !scratch.hasProperty("ratio"),
+            "portable scratch attribution should keep its original parent and never invent a linear map");
+    require(imported[2]["attribution"]["recordingId"].toString() == "recording-1",
+            "an imported legacy take should keep its identity even if its recording flag was missing");
+    require(!imported[3].hasProperty("attribution"),
+            "a legacy stem's self-reference cannot identify an original recording");
 
     silverdaw::ProjectState loaded;
     const auto loadResult = silverdaw::ProjectFile::load(file, loaded);
@@ -275,6 +326,73 @@ void testProjectFileSaveLoadAndViewState()
     require(!badLoad.ok && badLoad.error.containsIgnoreCase("Malformed"), "malformed project should fail");
 
     dir.deleteRecursively();
+}
+
+void testPortableLegacyRecordingIdentity()
+{
+    const auto base = makeTempDir("legacy-recording-identity");
+    const auto originalDir = base.getChildFile("before");
+    const auto project = originalDir.getChildFile("project.silverdaw");
+    const auto audio = originalDir.getChildFile("Song.wav");
+    const auto stem = originalDir.getChildFile("stems").getChildFile("Vocals.wav");
+    const auto scratch = originalDir.getChildFile("scratches").getChildFile("p").getChildFile("source.wav");
+    require(stem.getParentDirectory().createDirectory() && scratch.getParentDirectory().createDirectory()
+            && stem.replaceWithText("stem") && scratch.replaceWithText("scratch"), "create managed artifacts");
+    juce::MemoryBlock content(16384, true);
+    require(audio.replaceWithData(content.getData(), content.getSize()), "create project-owned original");
+    ProjectState state;
+    require(state.addLibraryItem("l1", audio.getFullPathName(), "Song.wav", 3000)
+            && state.addLibraryItem("stem", stem.getFullPathName(), "Vocals.wav", 1000,
+                                    44100, 2, {}, {}, "stem", {}, "l1", {}, 200)
+            && state.addLibraryItem("scratch", scratch.getFullPathName(), "Scratch.wav", 42,
+                                    44100, 2, {}, {}, "sample", {}, "stem", {}, 100, 400)
+            && state.setLibraryItemScratchMeta("scratch", "p", scratch.getFullPathName())
+            && state.addScratchPattern(makeValidPatternVar("p", "Scratch")), "create legacy scratch chain");
+    require(ProjectFile::save(project, state).wasOk(), "save legacy source project");
+    const auto selected = [&](const juce::File& file)
+    {
+        juce::String error;
+        const auto source = loadSourceProjectImport(file, error, {"scratch"});
+        require(source && source->library.count("scratch"), "select legacy scratch");
+        return source->library.at("scratch").data.getProperty("attribution", {});
+    };
+    const auto before = selected(project);
+    const auto id = before["recordingId"].toString();
+    require(id.isNotEmpty() && id != "l1" && before["parentId"].toString() == "stem"
+            && static_cast<double>(before["startMs"]) == 300 && static_cast<double>(before["endMs"]) == 700
+            && !before.hasProperty("ratio"), "import composes the scratch input window through its legacy stem");
+    const auto moved = base.getChildFile("somewhere-else");
+    require(originalDir.moveFileTo(moved), "relocate whole project before its first local derivation");
+    const auto movedProject = moved.getChildFile(project.getFileName());
+    ProjectState relocated;
+    require(ProjectFile::load(movedProject, relocated).ok, "open relocated source");
+    require(selected(movedProject)["recordingId"].toString() == id
+            && relocated.deriveAttribution("stem", 5, 10, 1)["recordingId"].toString() == id
+            && relocated.libraryAsJson()[0]["attribution"]["recordingId"].toString() == id,
+            "local snapshots, subsequent derivations and repeated imports agree after relocation");
+    const auto unrelated = base.getChildFile("unrelated");
+    require(moved.copyDirectoryTo(unrelated), "create independent project with identical IDs and filenames");
+    const auto unrelatedAudio = unrelated.getChildFile(audio.getFileName());
+    const auto unrelatedProject = unrelated.getChildFile(project.getFileName());
+    const auto originalTime = moved.getChildFile(audio.getFileName()).getLastModificationTime();
+    require(unrelatedAudio.setLastModificationTime(juce::Time(originalTime.toMilliseconds() + 60000))
+            && selected(unrelatedProject)["recordingId"].toString() != id,
+            "even identical sampled audio at the same relative path is distinguished by modification time");
+    const auto elsewhere = unrelated.getChildFile("alternate").getChildFile(audio.getFileName());
+    require(elsewhere.getParentDirectory().createDirectory() && unrelatedAudio.copyFileTo(elsewhere)
+            && elsewhere.setLastModificationTime(originalTime), "copy identical audio into another relative folder");
+    ProjectState other;
+    require(ProjectFile::load(unrelatedProject, other).ok
+            && other.setLibraryItemFilePath("l1", elsewhere.getFullPathName())
+            && other.deriveAttribution("stem", 5, 10, 1)["recordingId"].toString() != id,
+            "identical sampled audio, basename and timestamp at a different relative path stay distinct");
+    static_cast<char*>(content.getData())[content.getSize() / 2] = 'x';
+    require(unrelatedAudio.replaceWithData(content.getData(), content.getSize())
+            && unrelatedAudio.setLastModificationTime(originalTime),
+            "replace identically sized unrelated recording");
+    require(selected(unrelatedProject)["recordingId"].toString() != id,
+            "same project structure, original basename, size and library ID cannot merge unrelated audio");
+    base.deleteRecursively();
 }
 
 // A "clean up project files" removal prunes just the removed item from the saved file,
@@ -771,6 +889,7 @@ void testLegacyLibraryKindMigrates()
 
 void addPersistenceTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Legacy recording identity across project relocation", testPortableLegacyRecordingIdentity});
     tests.push_back({"ValueTreeJson round-trip and validation", testValueTreeJsonRoundTripAndValidation});
     tests.push_back({"ProjectFile save/load and view-state update", testProjectFileSaveLoadAndViewState});
     tests.push_back({"ProjectFile prunes library items in place", testProjectFileRemoveLibraryItems});

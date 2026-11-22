@@ -912,6 +912,9 @@ void handleRecordRecordingCommit(const juce::var& payload, AudioEngine& engine,
                 obj->setProperty("musicalBeats", *ready.musicalBeats);
         }
         obj->setProperty("recordingOrigin", true);
+        const auto attribution = projectState.getLibraryItemAttribution(part.itemId);
+        if (projectState.setLibraryItemAttribution(part.itemId, attribution))
+            obj->setProperty("attribution", attribution);
         bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
 
         if (! toTimeline) continue;

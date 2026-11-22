@@ -18,9 +18,14 @@ export const libraryBridgeHandlers: BridgeInboundHandlers<
   | 'WAVEFORM_FAILED'
   | 'CLIP_EDITOR_PEAKS_READY'
   | 'LIBRARY_ITEM_ANALYSIS'
+  | 'LIBRARY_ITEM_ATTRIBUTION'
   | 'TEMPO_CORRECTION_APPLIED'
   | 'SAMPLE_SAVED'
 > = {
+  LIBRARY_ITEM_ATTRIBUTION: ({ itemId, attribution }) => {
+    const item = useLibraryStore().byId[itemId]
+    if (item) item.attribution = attribution
+  },
   WAVEFORM_READY: (payload) => {
     // Bulk peaks stay on disk; main reads and dequantises them.
     void loadPeaksFromCache(payload)

@@ -4,7 +4,7 @@ import { libraryItemDisplayName, libraryItemIsSimple, libraryItemIsSample, stemP
 import { useTransportStore } from '@/stores/transportStore'
 import { keyBadgeClass } from '@/lib/keyBadge'
 import { LIBRARY_BPM_PILL_CLASS, LIBRARY_BPM_VARIABLE_PILL_CLASS } from '@/lib/library/libraryPillClasses'
-import { formatTrackTime } from '@/lib/library/trackTime'
+import { formatTrackTime, formatTrackTimestamp as formatTime } from '@/lib/library/trackTime'
 import { resolveCorrectableTempoOwner } from '@/stores/libraryItemHelpers'
 import { shiftedKey } from '@/lib/pitchKey'
 import { effectiveTempoRatio } from '@/lib/warp'
@@ -393,10 +393,6 @@ function formatPreciseDuration(ms: number): string {
   if (safe < 1000) return `${Math.round(safe)} ms`
   if (safe < 60_000) return `${(safe / 1000).toFixed(safe < 10_000 ? 3 : 2)} s`
   return formatDuration(safe)
-}
-
-function formatTime(ms: number): string {
-  return `${formatDuration(ms)}.${String(Math.floor(ms % 1000)).padStart(3, '0')}`
 }
 
 function channelLabel(count: number): string {

@@ -1,0 +1,8 @@
+{
+  "name": "silverdaw-repository",
+  "private": true,
+  "packageManager": "pnpm@12.16.1",
+  "scripts": {
+    "test:e2e": "pnpm --dir frontend run test:e2e"
+  }
+}

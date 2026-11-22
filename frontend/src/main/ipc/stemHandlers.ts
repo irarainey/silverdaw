@@ -25,7 +25,7 @@ import { ModelStore, ModelDownloadError } from '../stems/modelStore'
 import { detectGpuFromInfo } from '../stems/gpuDetect'
 import { sanitiseStemModelDir, getManagedModelsRoot } from '../preferences'
 import type { PrefsService } from '../prefsService'
-import { registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerRecordingsWriteRoot, registerProjectMediaRoots } from '../audioPaths'
+import { registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerRecordingsWriteRoot } from '../audioPaths'
 
 export interface StemHandlersContext {
   getMainWindow(): BrowserWindow | null
@@ -82,8 +82,6 @@ export function registerStemHandlers(ctx: StemHandlersContext): void {
   // Takes recorded before the project is saved land in the temp workspace too;
   // trust it for renderer reads (backend migrates them on save).
   registerRecordingsWriteRoot(join(app.getPath('temp'), 'Silverdaw', 'recordings'))
-  // Central per-source metadata/cover store while unsaved (migrated beside the project on save).
-  registerProjectMediaRoots(join(app.getPath('temp'), 'Silverdaw'))
   // The backend separator is single-slot, so at most one download is in flight.
   let activeDownload: AbortController | null = null
 

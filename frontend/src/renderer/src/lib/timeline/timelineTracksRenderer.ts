@@ -261,7 +261,9 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
               headerW,
               pxPerSecond.value,
               worldRowRight,
-              trackStaticAutomationValue(track, lane.paramId)
+              trackStaticAutomationValue(track, lane.paramId),
+              ui.selectedAutomationPoint?.trackId === track.id && ui.selectedAutomationPoint.paramId === lane.paramId
+                ? ui.selectedAutomationPoint.index : undefined
             )
             laneOffset += lane.heightPx
           }

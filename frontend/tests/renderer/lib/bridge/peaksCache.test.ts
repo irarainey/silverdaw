@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loadPeaksFromCache, parsePeaksCacheBuffer } from '@/lib/bridge/peaksCache'
+import { applySampleSaved, loadPeaksFromCache, parsePeaksCacheBuffer } from '@/lib/bridge/peaksCache'
 import { useLibraryStore } from '@/stores/libraryStore'
 import { useProjectStore } from '@/stores/projectStore'
 import type { Clip } from '@/stores/projectTypes'
@@ -116,6 +116,22 @@ describe('loadPeaksFromCache', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('mirrors a saved sample immediately and replaces its source window on scratch re-bake', async () => {
+    readPeaksCacheFile.mockResolvedValue(makePeaksCache([[-0.5, 0.5]]))
+    const attribution = { recordingId: 'gone', fileName: 'original.wav', startMs: 500, endMs: 1500 }
+    const saved = {
+      ok: true as const, itemId: 'scratch', filePath: 'C:\\scratch.wav', fileName: 'scratch.wav', name: 'Scratch',
+      durationMs: 700, sampleRate: 48000, channelCount: 1, cachePath: 'C:\\scratch.peaks',
+      peakCount: 1, peaksPerSecond: 500, laneCount: 1, scratchOrigin: true, attribution
+    }
+    await applySampleSaved(saved)
+    expect(useLibraryStore().byId.scratch?.attribution).toEqual(attribution)
+    const revised = { ...attribution, startMs: 750 }
+    await applySampleSaved({ ...saved, filePath: 'C:\\revision.wav', attribution: revised })
+    expect(useLibraryStore().items).toHaveLength(1)
+    expect(useLibraryStore().byId.scratch?.attribution).toEqual(revised)
   })
 
   it('skips the cache IPC read when matching stereo peaks are already present', async () => {

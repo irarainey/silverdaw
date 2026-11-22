@@ -38,7 +38,8 @@ vi.mock('@/stores/transportStore', () => ({ useTransportStore: vi.fn() }))
 vi.mock('@/stores/notificationsStore', () => ({ useNotificationsStore: vi.fn() }))
 vi.mock('@/stores/uiStore', () => ({ useUiStore: vi.fn() }))
 vi.mock('@/lib/sampleRatePrompt', () => ({ promptSampleRateMismatch: vi.fn() }))
-vi.mock('@/lib/library/projectMedia', () => ({
+vi.mock('@/lib/library/projectMedia', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/library/projectMedia')>(),
   saveProjectMedia: mocks.saveProjectMedia,
   getProjectMedia: mocks.getProjectMedia
 }))
@@ -83,6 +84,7 @@ describe('importAudioIntoLibrary generated audio', () => {
 
   it('uses authoritative geometry and skips redundant generated-WAV analysis', async () => {
     const inheritedMetadata = { artist: 'Artist', key: 'A min' }
+    const attribution = { recordingId: 'media-1', fileName: 'song.mp3', ratio: 1, startMs: 0, endMs: 50000 }
     const result = await importAudioIntoLibrary(
       {
         filePath: 'C:\\stems\\vocals.wav',
@@ -91,6 +93,7 @@ describe('importAudioIntoLibrary generated audio', () => {
       },
       {
         kind: 'stem',
+        attribution,
         derivedFrom: { sourceItemId: 'source', inMs: 0, durationMs: 0 },
         generatedAudio: { sampleRate: 44100, durationMs: 50000, channelCount: 2 },
         inheritedMetadata
@@ -109,10 +112,22 @@ describe('importAudioIntoLibrary generated audio', () => {
         sampleRate: 44100,
         channelCount: 2,
         playbackFilePath: 'C:\\stems\\vocals.wav',
+        attribution,
+        sourceTags: { artist: 'Artist' },
         mediaId: 'media-1'
       })
     )
     expect(mocks.setItemMetadata).toHaveBeenCalledWith('stem-item', inheritedMetadata)
+  })
+
+  it('marks a generated WAV as output even when no source media ID survives', async () => {
+    const opened = { filePath: 'C:\\channels\\left.wav', fileName: 'left.wav', data: new ArrayBuffer(0) }
+    await importAudioIntoLibrary(opened, {
+      kind: 'stem', inheritedMediaId: undefined,
+      generatedAudio: { sampleRate: 44100, durationMs: 2000, channelCount: 1 }
+    })
+    expect(mocks.saveProjectMedia).toHaveBeenCalledWith('new-media', opened.filePath, 'output')
+    expect(mocks.addItem).toHaveBeenCalledWith(expect.objectContaining({ durationMs: 2000 }))
   })
 })
 
@@ -154,7 +169,12 @@ describe('importAudioIntoTrack undo grouping', () => {
   // library item, then the clip). Without an explicit bracket the backend records
   // one transaction per send, so the user's first Ctrl+Z appears to do nothing.
   it('brackets the whole import in a single undo group', async () => {
+    mocks.saveProjectMedia.mockResolvedValueOnce({ title: 'Sidecar title', album: 'Album', genre: ['Soul'] })
     await importAudioIntoTrack('track-1')
+    expect(mocks.saveProjectMedia).toHaveBeenCalledWith(expect.any(String), 'C:\\a.wav', 'recording')
+    expect(mocks.addItem).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTags: { title: 'Sidecar title', album: 'Album' }
+    }))
 
     const types = mocks.send.mock.calls.map(([type]) => type as string)
     expect(types.at(0)).toBe('EDIT_GROUP_BEGIN')

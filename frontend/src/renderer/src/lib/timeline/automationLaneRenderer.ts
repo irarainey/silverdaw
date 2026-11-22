@@ -8,6 +8,7 @@ import {
   AUTOMATION_LANE_DIVIDER,
   AUTOMATION_LINE,
   AUTOMATION_HANDLE,
+  AUTOMATION_HANDLE_SELECTED,
   AUTOMATION_HANDLE_RADIUS_PX
 } from './constants'
 import type { AutomationParamId, AutomationPoint } from '@shared/bridge-protocol'
@@ -50,7 +51,34 @@ export function laneYToValue(
   return d.min + frac * (d.max - d.min)
 }
 
-/** Draw the lane's faint divider, curve, and breakpoint handles (no fill). */
+export function automationHandleAt(
+  points: readonly AutomationPoint[], paramId: AutomationParamId, timeMs: number,
+  worldY: number, top: number, height: number, pxPerSecond: number,
+  selectedIndex?: number, cycle = false
+): number {
+  let nearest = -1
+  let best = (2 * AUTOMATION_HANDLE_RADIUS_PX) ** 2
+  for (const [i, p] of points.entries()) {
+    const dx = (p.timeMs - timeMs) * pxPerSecond / 1000
+    const dy = valueToLaneY(paramId, p.value, top, height) - worldY
+    const distance = dx * dx + dy * dy
+    if (distance < best) {
+      nearest = i
+      best = distance
+    }
+  }
+  const hit = points[nearest]
+  if (selectedIndex === undefined) return nearest
+  const selected = points[selectedIndex]
+  if (!hit || !selected || selected.timeMs !== hit.timeMs || selected.value !== hit.value) return nearest
+  if (!cycle) return selectedIndex
+  // Identical handles share a centre. Each new grab advances in stored step order.
+  for (let i = selectedIndex + 1; i < points.length && points[i]!.timeMs === hit.timeMs; i++) {
+    if (points[i]!.value === hit.value) return i
+  }
+  return nearest
+}
+
 export function drawAutomationLane(
   layer: Container,
   G: typeof Graphics,
@@ -63,7 +91,8 @@ export function drawAutomationLane(
   headerWidth: number,
   pxPerSecond: number,
   rightEdgePx: number,
-  baselineValue: number
+  baselineValue: number,
+  selectedIndex: number | undefined
 ): void {
   const { top, bottom } = laneRegion(worldY, clipHeight, laneOffset, laneHeight)
   // Draw every lane boundary so stacked lanes remain visually distinct.
@@ -80,6 +109,7 @@ export function drawAutomationLane(
 
   const xAt = (ms: number): number => headerWidth + (ms / 1000) * pxPerSecond
   const curve = new G()
+  layer.addChild(curve)
   if (points && points.length >= 2) {
     curve.moveTo(headerWidth, valueToLaneY(paramId, points[0]!.value, top, laneHeight))
     for (const p of points) {
@@ -90,7 +120,8 @@ export function drawAutomationLane(
       valueToLaneY(paramId, points[points.length - 1]!.value, top, laneHeight)
     )
     curve.stroke({ color: AUTOMATION_LINE, width: 2, alpha: 0.95 })
-    for (const p of points) {
+    for (const [i, p] of points.entries()) {
+      if (i === selectedIndex) continue
       const h = new G()
       h.circle(
         xAt(p.timeMs),
@@ -99,9 +130,16 @@ export function drawAutomationLane(
       ).fill(AUTOMATION_HANDLE)
       layer.addChild(h)
     }
+    const selected = selectedIndex === undefined ? undefined : points[selectedIndex]
+    if (selected) {
+      const h = new G()
+      h.circle(xAt(selected.timeMs), valueToLaneY(paramId, selected.value, top, laneHeight),
+        AUTOMATION_HANDLE_RADIUS_PX + 1).fill(AUTOMATION_HANDLE_SELECTED)
+        .stroke({ color: AUTOMATION_HANDLE, width: 1.5 })
+      layer.addChild(h)
+    }
   } else {
     curve.moveTo(headerWidth, restY).lineTo(rightEdgePx, restY).stroke({ color: AUTOMATION_LINE, width: 1.5, alpha: 0.5 })
   }
-  layer.addChild(curve)
   void bottom
 }

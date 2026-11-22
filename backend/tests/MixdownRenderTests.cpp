@@ -4,6 +4,7 @@
 // dedup, normalize pass-2 extraction) can be proven behaviour-neutral. Dither
 // is forced OFF so the 16-bit output is fully deterministic run-to-run.
 
+#include "AudioEngine.h"
 #include "BridgeServer.h"
 #include "DecodedCache.h"
 #include "Log.h"
@@ -11,7 +12,10 @@
 #include "MixdownEngine.h"
 #include "MixdownRender.h"
 #include "Mp3Export.h"
+#include "PeaksCache.h"
+#include "ProjectSession.h"
 #include "ProjectState.h"
+#include "SampleExport.h"
 #include "TestRegistry.h"
 #include "TrackExport.h"
 
@@ -19,6 +23,7 @@
 #include <cmath>
 #include <iostream>
 #include <juce_audio_formats/juce_audio_formats.h>
+#include <windows.h>
 
 namespace silverdaw::tests
 {
@@ -668,10 +673,71 @@ void testSelectedRangeSourceBoundary()
             "an unresolved insert adds no lookahead: a source at the native-rate exclusive end is not required");
 }
 
+void testPendingSliceExport(bool replaceProject)
+{
+    const auto dir = makeTempDir("sample-export");
+    juce::ScopeGuard cleanup{[&] { dir.deleteRecursively(); }};
+    const auto source = writeSineWav(dir, "source.wav", 0.1, 44100, 440, 0.5F);
+    AudioEngine engine;
+    engine.getFormatManager().registerBasicFormats();
+    BridgeServer bridge({}, nullptr);
+    ProjectState project;
+    project.addLibraryItem("source", source.getFullPathName());
+    project.addTrack("track");
+    project.addClip("track", "clip", "source", 0.0, 100.0);
+    ProjectSession session;
+    session.currentPath = dir.getChildFile("original.silverdaw").getFullPathName();
+    const auto cacheDir = dir.getChildFile("cache");
+    PeaksCache cache(cacheDir);
+    juce::ThreadPool pool(1);
+    const auto payload = juce::JSON::parse(R"({"clipId":"clip","audioType":"simple","slices":[
+        {"itemId":"first","inMs":0,"durationMs":50},{"itemId":"second","inMs":50,"durationMs":50}]})");
+    handleClipSliceToSamples(payload, engine, project, bridge, pool, cache, session);
+
+    // A FIFO barrier leaves both renders finished, with their message-thread commits still queued.
+    juce::WaitableEvent rendered;
+    pool.addJob([&] { rendered.signal(); });
+    rendered.wait();
+    const auto newDir = dir.getChildFile("relocated");
+    if (replaceProject)
+        project.replaceTree(project.getTree().createCopy()); // even reopening the same file and IDs is a replacement
+    else
+    {
+        session.currentPath = newDir.getChildFile("saved-as.silverdaw").getFullPathName();
+        project.removeClip("clip");
+        project.removeLibraryItem("source");
+    }
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+
+    require(!dir.getChildFile("samples").exists(), "pending WAVs must not leak into the original artifact folder");
+    for (const auto* id : {"first", "second"})
+    {
+        const auto path = project.getLibraryItemFilePath(id);
+        if (replaceProject)
+            require(path.isEmpty(), "no slice may land in the replacement library");
+        else
+        {
+            const juce::File file(path);
+            require(file.existsAsFile() && file.isAChildOf(newDir), "Save As must keep both slices in the new location");
+            require(!cache.tryLoad(file, waveform::kDefaultPeaksPerSecond).peaks.empty(), "published peaks must match the relocated WAV");
+        }
+    }
+    if (replaceProject)
+        require(!project.isDirty() && cacheDir.getNumberOfChildFiles(juce::File::findFiles) == 0,
+                "discarded slices must not dirty the new project or leave cache files");
+}
+
 } // namespace
 
 void addMixdownRenderTests(std::vector<TestCase>& tests)
 {
+    tests.push_back({"Pending slice exports cannot commit into a reopened project", [] { testPendingSliceExport(true); }});
+    tests.push_back({"Pending slice exports survive Save As and source removal", [] { testPendingSliceExport(false); }});
     tests.push_back({"Individual track export renders aligned wet and dry WAV batches", testIndividualTrackExport});
     tests.push_back({"Reversed mixdown and track export preserve the last resampled transient", testReversedTrackEndsWithResampledTransient});
     tests.push_back({"Mixdown tears down short slices without per-clip playback waits", testSlicedRenderTeardown});

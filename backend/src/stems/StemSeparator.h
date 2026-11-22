@@ -73,6 +73,7 @@ struct StemSeparationRequest
     // "to the end of the file" — i.e. separate the whole track (full-source stems).
     double startMs = 0.0;
     double lengthMs = 0.0;
+    juce::var attribution;
     // Directory holding the four htdemucs-ft .onnx files.
     juce::File modelDir;
     // Optional Mel-Band RoFormer ("Vocal Quality Pack") .onnx core. When set and

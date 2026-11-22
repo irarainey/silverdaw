@@ -27,6 +27,7 @@ void handleProjectNew(silverdaw::AudioEngine& engine, silverdaw::ProjectState& p
     // PROJECT_NEW always clears any scratch session/backing/replay — a fresh
     // project has nothing for it to reference.
     engine.clearScratchSession();
+    session.preparedScratch = {};
     for (const auto& id : previousClipIds)
     {
         engine.removeClip(id);
@@ -90,6 +91,7 @@ void handleProjectLoad(const juce::var& payload, silverdaw::AudioEngine& engine,
     // replacing the engine's tracks. A failed load above returns early and
     // never reaches here, so the existing session survives a failed load.
     engine.clearScratchSession();
+    session.preparedScratch = {};
     for (const auto& id : previousClipIds)
     {
         engine.removeClip(id);
@@ -385,6 +387,7 @@ void handleProjectLoadRecovery(const juce::var& payload, silverdaw::AudioEngine&
     // Recovery load succeeded — clear any prior scratch session/backing/replay
     // before replacing the engine's tracks (see PROJECT_LOAD).
     engine.clearScratchSession();
+    session.preparedScratch = {};
     for (const auto& id : previousClipIds)
     {
         engine.removeClip(id);

@@ -42,6 +42,7 @@ export function handleMenuAction(action: string, ctx: MenuActionContext): void {
       wc.send(IPC.menu.action, action)
       break
     case 'file.projectProperties':
+    case 'file.sampleReport':
       wc.send(IPC.menu.action, action)
       break
     case 'file.addTrack':

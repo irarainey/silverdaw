@@ -123,7 +123,7 @@ void handleScratchSessionOpen(const juce::var& payload,
                               BridgeServer& bridge,
                               juce::ThreadPool& workerPool,
                               const PeaksCache& cache,
-                              const juce::String& projectPath)
+                              ProjectSession& session)
 {
     const auto request = scratch::parseSessionOpenPayload(payload);
     if (!request)
@@ -135,6 +135,7 @@ void handleScratchSessionOpen(const juce::var& payload,
     const auto fromLibrary = request->libraryItemId.isNotEmpty();
     const auto identity = fromLibrary ? request->libraryItemId : request->clipId;
     const auto sessionId = engine.beginScratchSession(identity);
+    session.preparedScratch = {};
     const auto clip = fromLibrary
         ? projectState.getLibraryItemPreparationInfo(request->libraryItemId)
         : projectState.getClipPreparationInfo(request->clipId);
@@ -176,11 +177,17 @@ void handleScratchSessionOpen(const juce::var& payload,
             usesScratchSourceSnapshot = true;
         }
     }
-    const auto cacheDirectory = projectArtifactsBaseDir(projectPath, "scratch-cache");
+    // A reopened source.wav is the old prepared window, not time zero in the original recording.
+    session.preparedScratch.sessionId = sessionId;
+    if (usesScratchSourceSnapshot) session.preparedScratch.reopenedScratchId = clip->libraryItemId;
+    session.preparedScratch.attribution = usesScratchSourceSnapshot
+        ? projectState.getLibraryItemAttribution(clip->libraryItemId)
+        : projectState.deriveAttribution(clip->libraryItemId, clip->inMs, clip->durationMs, 0.0);
+    const auto cacheDirectory = projectArtifactsBaseDir(session.currentPath, "scratch-cache");
     broadcastScratchSessionState(engine, bridge);
 
     workerPool.addJob(
-        [sessionId, settings, cacheDirectory, usesScratchSourceSnapshot, &engine, &bridge, &cache]
+        [sessionId, settings, cacheDirectory, usesScratchSourceSnapshot, &engine, &bridge, &cache, &session]
         {
             scratch::PreparedSource prepared;
             juce::String error;
@@ -224,8 +231,8 @@ void handleScratchSessionOpen(const juce::var& payload,
                 }
             }
             juce::MessageManager::callAsync(
-                [applied, sessionId, peaks = std::move(peaks), preparedCache = prepared.cacheFile,
-                 &engine, &bridge, &cache]
+                [applied, ok, sessionId, peaks = std::move(peaks), preparedCache = prepared.cacheFile,
+                 &engine, &bridge, &cache, &session]
                 {
                     if (!applied)
                     {
@@ -233,6 +240,8 @@ void handleScratchSessionOpen(const juce::var& payload,
                             "scratch", "ignored stale scratch preparation completion");
                         return;
                     }
+                    if (!ok && session.preparedScratch.sessionId == sessionId)
+                        session.preparedScratch = {};
                     broadcastScratchSessionState(engine, bridge);
                     const auto current = engine.getScratchSessionSnapshot();
                     if (peaks.peaks.empty() || !current || current->sessionId != sessionId)

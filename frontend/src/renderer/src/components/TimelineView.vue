@@ -73,8 +73,10 @@ const {
   <div class="relative h-full w-full overflow-hidden">
     <div
       ref="host"
-      class="absolute inset-0"
+      tabindex="-1"
+      class="absolute inset-0 outline-none"
       :style="{ cursor: hoverCursor }"
+      @blur="ui.setSelectedAutomationPoint(null)"
     />
     <!-- No separate file-drop overlay: a dragged file uses the same drop ghost as a
              dragged library item, so every timeline drop looks and reads the same. -->

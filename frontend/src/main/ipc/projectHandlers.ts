@@ -3,10 +3,10 @@
 // pending launch path. Registered from main/index.ts.
 
 import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
-import { readFile, mkdir, cp } from 'node:fs/promises'
+import { readFile, mkdir, cp, writeFile, lstat, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { IPC } from '../../shared/ipc-channels'
-import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerRecordingsWriteRoot, registerProjectMediaRoots, getProjectMediaDirs } from '../audioPaths'
+import { registerIssuedPath, registerStemsWriteRoot, registerSamplesWriteRoot, registerChannelsWriteRoot, registerRecordingsWriteRoot, registerProjectMediaRoots, getProjectMediaDirs, projectMediaDirsFor } from '../audioPaths'
 import { canonicaliseProjectPath, projectFolderPath } from '../projectPaths'
 import { listProjectImportSources } from '../projectImportSources'
 import { sweepEmptyArtifactSubdirs } from '../projectFileCleanup'
@@ -14,6 +14,8 @@ import { ensureWritableTargetDir } from '../writableTarget'
 import type { PrefsService } from '../prefsService'
 import type { RecentProject } from '../../shared/types'
 import { logMain } from '../log'
+
+const MAX_PENDING_PROJECT_PATHS = 8
 
 export interface ProjectHandlersContext {
   getMainWindow(): BrowserWindow | null
@@ -38,22 +40,43 @@ async function copyDirContents(src: string, dest: string): Promise<void> {
 
 export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   const { prefs } = ctx
+  const preparedProjects = new Set<string>()
+  let activeProject: { path: string; reportFolder?: string } | undefined
+  const unsavedRoot = join(app.getPath('temp'), 'Silverdaw')
+  registerProjectMediaRoots(unsavedRoot)
+
+  function stageProject(path: string): void {
+    const key = path.toLowerCase()
+    preparedProjects.delete(key)
+    preparedProjects.add(key)
+    // Allow overlapping requests without retaining failed or disconnected ones indefinitely.
+    if (preparedProjects.size > MAX_PENDING_PROJECT_PATHS) {
+      const [oldest] = preparedProjects
+      preparedProjects.delete(oldest)
+    }
+  }
 
   // ─── Project file lifecycle ─────────────────────────────────────────────
   // Main owns native project dialogs and the Recent Projects MRU.
 
-  ipcMain.on(IPC.project.setLastPath, (_evt, value: unknown) => {
-    // Accept the {path,name} form (current) and a bare string (defensive/legacy).
-    let path: string | undefined
-    let name: string | undefined
-    if (typeof value === 'string') {
-      path = value
-    } else if (value && typeof value === 'object') {
-      const candidate = value as { path?: unknown; name?: unknown }
-      if (typeof candidate.path === 'string') path = candidate.path
-      if (typeof candidate.name === 'string') name = candidate.name
+  ipcMain.on(IPC.project.confirmActive, (event, filePath: unknown, name: unknown, replaced: unknown) => {
+    const win = ctx.getMainWindow()
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return
+    if (typeof replaced !== 'boolean' || typeof name !== 'string') return
+    if (filePath === null && replaced) {
+      activeProject = undefined
+      registerProjectMediaRoots(unsavedRoot)
+      return
     }
-    if (!path || path.length === 0) return
+    const path = canonicaliseProjectPath(filePath)
+    if (!path) return
+    const key = path.toLowerCase()
+    // Preparation grants a path; only a successful backend load/save makes it active.
+    if (!preparedProjects.delete(key) && key !== activeProject?.path) return
+    if (replaced || key !== activeProject?.path) {
+      activeProject = { path: key }
+      registerProjectMediaRoots(dirname(path))
+    }
     if (prefs.bumpRecentProject(path, name)) prefs.flushSaveSync()
   })
 
@@ -77,8 +100,49 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       filters: [{ name: 'Silverdaw project', extensions: ['silverdaw'] }],
       properties: ['openFile']
     })
+
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC.project.exportSampleReport, async (event, projectPath: unknown): Promise<string | null> => {
+    const win = ctx.getMainWindow()
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      throw new Error('Audio Sample Reports can only be exported from the project window.')
+    }
+    const canonical = canonicaliseProjectPath(projectPath)
+    const session = activeProject
+    if (!canonical || !session || canonical.toLowerCase() !== session.path) {
+      throw new Error('The report must belong to the active project.')
+    }
+    const auditDir = join(dirname(canonical), 'audit')
+    let folder = session.reportFolder
+    if (folder) {
+      try {
+        if (!(await stat(folder)).isDirectory()) folder = undefined
+      } catch (error) {
+        logMain('WARN ', 'sampleReport', 'Previous export folder is unavailable:', error)
+        folder = undefined
+      }
+    }
+    if (!folder) {
+      await mkdir(auditDir, { recursive: true })
+      if (!(await lstat(auditDir)).isDirectory()) throw new Error('The audit folder must be a project directory.')
+    }
+    if (session !== activeProject) return null
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export Audio Sample Report',
+      defaultPath: join(folder ?? auditDir, `Audio Sample Report ${stamp}.pdf`),
+      filters: [{ name: 'PDF document', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath || session !== activeProject) return null
+    if (!filePath.toLowerCase().endsWith('.pdf')) throw new Error('Choose a PDF file.')
+    const pdf = await win.webContents.printToPDF({ pageSize: 'A4', landscape: true })
+    if (session !== activeProject) return null
+    await writeFile(filePath, pdf)
+    session.reportFolder = dirname(filePath)
+    return filePath
   })
 
   ipcMain.handle(IPC.project.listImportSources, async () =>
@@ -123,26 +187,28 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // survives the save: items imported while the project was unsaved wrote it to the
       // temp workspace, and a "Save As" copies it from the previous project folder.
       const previousMedia = getProjectMediaDirs()
-      registerProjectMediaRoots(dirname(target))
-      const nextMedia = getProjectMediaDirs()
-      if (previousMedia && nextMedia && previousMedia.metadataDir !== nextMedia.metadataDir) {
+      const nextMedia = projectMediaDirsFor(dirname(target))
+      if (previousMedia && previousMedia.metadataDir !== nextMedia.metadataDir) {
         await copyDirContents(previousMedia.metadataDir, nextMedia.metadataDir)
         await copyDirContents(previousMedia.coversDir, nextMedia.coversDir)
       }
+      const canonical = canonicaliseProjectPath(target)
+      if (canonical) stageProject(canonical)
       return target
     }
   )
 
-  // Pre-register a project's audio paths before load: trust its artifact roots (stems /
-  // samples / media store) for reads, and allow-list every `filePath` in the project JSON.
-  // `contentPath` is the file to scan (the .silverdaw being loaded); `rootsDir` is the folder
-  // the project's artifacts live beside. For a normal open these are the same directory. For a
-  // RECOVERY they differ: the content is the autosave copy in the autosave bucket, but the
-  // artifacts (samples, stems, media store) live beside the ORIGINAL project file — so the roots
-  // must be registered there, not against the autosave directory.
+  // Recovery scans the autosave document but resolves relative audio paths at the original project.
   async function prepareProjectPaths(contentPath: string, rootsDir: string): Promise<boolean> {
     try {
       const content = await readFile(contentPath, 'utf8')
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(content)
+      } catch (parseErr) {
+        logMain('WARN ', 'project:prepare', `malformed project JSON at ${contentPath}:`, parseErr)
+        return false
+      }
       // Stems + samples for this project live beside it; trust those folders for reads + sidecar.
       const stemsRoot = join(rootsDir, 'stems')
       const samplesRoot = join(rootsDir, 'samples')
@@ -158,15 +224,6 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       void sweepEmptyArtifactSubdirs(samplesRoot)
       void sweepEmptyArtifactSubdirs(channelsRoot)
       void sweepEmptyArtifactSubdirs(recordingsRoot)
-      // Central per-source metadata/cover store (keyed by media GUID) beside the project.
-      registerProjectMediaRoots(rootsDir)
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(content)
-      } catch (parseErr) {
-        logMain('WARN ', 'project:prepare', `malformed project JSON at ${contentPath}:`, parseErr)
-        return false
-      }
       // Project JSON may contain `filePath` anywhere in the tree. Project-internal artifact paths
       // are stored relative to the project folder (portability); resolve them against `rootsDir`
       // before allow-listing so the renderer can read them. (Autosave content stores these
@@ -198,13 +255,11 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
   ipcMain.handle(IPC.project.prepareOpen, async (_evt, filePath: unknown): Promise<boolean> => {
     const canonical = canonicaliseProjectPath(filePath)
     if (canonical === null) return false
-    return prepareProjectPaths(canonical, dirname(canonical))
+    const prepared = await prepareProjectPaths(canonical, dirname(canonical))
+    if (prepared) stageProject(canonical)
+    return prepared
   })
 
-  // Recovery preloads from the autosave copy, but the project's artifacts live beside the ORIGINAL
-  // file (or in the temp workspace if it was never saved). Allow-list the autosave content while
-  // registering the artifact roots at the real project folder, so samples / stems / cover art +
-  // tags resolve to where they actually are — not the autosave bucket (which broke restored links).
   ipcMain.handle(
     IPC.project.prepareRecovery,
     async (_evt, autosavePath: unknown, originalPath: unknown): Promise<boolean> => {
@@ -218,8 +273,10 @@ export function registerProjectHandlers(ctx: ProjectHandlersContext): void {
       // (where unsaved imports/samples/stems were written, mirroring stemHandlers startup).
       const rootsDir = canonicalOriginal !== null
         ? dirname(canonicalOriginal)
-        : join(app.getPath('temp'), 'Silverdaw')
-      return prepareProjectPaths(canonicalAutosave, rootsDir)
+        : unsavedRoot
+      const prepared = await prepareProjectPaths(canonicalAutosave, rootsDir)
+      if (prepared && canonicalOriginal) stageProject(canonicalOriginal)
+      return prepared
     }
   )
 

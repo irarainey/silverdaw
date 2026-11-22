@@ -28,7 +28,7 @@ bool pointsSemanticallyEqual(const juce::Array<juce::var>& a, const juce::Array<
         const double tb = static_cast<double>(b.getReference(i).getProperty(timeId, 0.0));
         const double va = static_cast<double>(a.getReference(i).getProperty(valueId, 0.0));
         const double vb = static_cast<double>(b.getReference(i).getProperty(valueId, 0.0));
-        if (std::abs(ta - tb) > 1.0e-3 || std::abs(va - vb) > 1.0e-4) return false;
+        if (ta != tb || va != vb) return false;
     }
     return true;
 }
@@ -87,7 +87,7 @@ bool ProjectState::setTrackAutomation(const juce::String& trackId, const juce::S
     auto track = findTrack(trackId);
     if (!track.isValid()) return false;
 
-    // Normalise the incoming points: finite, time-clamped, sorted, dedup by time.
+    // Equal-time points are the ordered sides of a vertical step.
     juce::Array<juce::var> normalised;
     normalised.ensureStorageAllocated(points.size());
     for (const auto& p : points)
@@ -101,18 +101,10 @@ bool ProjectState::setTrackAutomation(const juce::String& trackId, const juce::S
         obj->setProperty(kAutomationValue, normalizeAutomationValue(paramId, val));
         normalised.add(juce::var(obj));
     }
-    std::sort(normalised.begin(), normalised.end(), [this](const juce::var& a, const juce::var& b) {
+    std::stable_sort(normalised.begin(), normalised.end(), [this](const juce::var& a, const juce::var& b) {
         return static_cast<double>(a.getProperty(kAutomationTimeMs, 0.0)) <
                static_cast<double>(b.getProperty(kAutomationTimeMs, 0.0));
     });
-    for (int i = 1; i < normalised.size(); ++i)
-    {
-        const double prev =
-            static_cast<double>(normalised.getReference(i - 1).getProperty(kAutomationTimeMs, 0.0));
-        const double curr =
-            static_cast<double>(normalised.getReference(i).getProperty(kAutomationTimeMs, 0.0));
-        if (std::abs(curr - prev) < 1.0e-3) return false; // duplicate timeMs
-    }
 
     const auto existing = readLanes(track, kAutomation);
 

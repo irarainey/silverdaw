@@ -2,6 +2,7 @@
 
 import type {
   AudioMetadata as SharedAudioMetadata,
+  MediaGeometryOrigin,
   DebugPreferences as SharedDebugPreferences,
   DiagnosticLogsResult,
   FileBrowserEntry as SharedFileBrowserEntry,
@@ -91,9 +92,10 @@ declare global {
       }>
       openExternal(url: string): void
       sendDiagnostics(): Promise<DiagnosticLogsResult>
-      setLastProjectPath(path: string, name: string): void
+      confirmActiveProject(path: string | null, name: string, replaced: boolean): void
       projectFileExists(path: string): Promise<boolean>
       chooseProjectOpen(): Promise<string | null>
+      exportSampleReport(projectPath: string): Promise<string | null>
       chooseProjectSaveAs(defaultName: string): Promise<string | null>
       listProjectImportSources(): Promise<SharedProjectImportSource[]>
       chooseMixdownSaveAs(defaultPath: string, format: 'wav' | 'mp3' | 'flac' | 'aiff'): Promise<string | null>
@@ -223,7 +225,7 @@ declare global {
       onRhythmPackDownloadProgress(
         handler: (progress: SharedStemModelDownloadProgress) => void
       ): () => void
-      saveProjectMedia(mediaId: string, sourceFilePath: string): Promise<boolean>
+      saveProjectMedia(mediaId: string, sourceFilePath: string, geometryOrigin?: MediaGeometryOrigin): Promise<AudioMetadata | null>
       getProjectMedia(mediaId: string): Promise<AudioMetadata | null>
       cleanupProjectFiles(payload: { mediaIds: string[] }): Promise<boolean>
       updateItemCover(payload: {

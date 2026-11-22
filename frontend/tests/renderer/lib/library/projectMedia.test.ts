@@ -11,6 +11,7 @@ const sourceMedia: AudioMetadata = {
   artist: 'The Originals',
   // Source-file geometry — must NOT leak onto a derived stem/sample sharing the GUID.
   durationMs: 58_000,
+  geometryOrigin: 'recording',
   sampleRate: 44_100,
   channelCount: 2,
   coverArt: { data: new ArrayBuffer(8), mimeType: 'image/jpeg' }
@@ -26,10 +27,20 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it('does not promote output or ambiguous legacy WAV lengths, even with matching tags', () => {
+  for (const geometryOrigin of ['output', undefined] as const) {
+    expect(withoutAudioGeometry({ ...sourceMedia, container: 'WAVE', geometryOrigin }))
+      .not.toHaveProperty('recordingDurationMs')
+  }
+  expect(withoutAudioGeometry({ ...sourceMedia, geometryOrigin: 'output', recordingDurationMs: 90_000 }))
+    .toHaveProperty('recordingDurationMs', 90_000)
+})
+
 describe('withoutAudioGeometry', () => {
   it('drops duration / sample-rate / channel-count but keeps identity tags + cover', () => {
     const stripped = withoutAudioGeometry(sourceMedia)
     expect(stripped.durationMs).toBeUndefined()
+    expect(stripped.recordingDurationMs).toBe(sourceMedia.durationMs)
     expect(stripped.sampleRate).toBeUndefined()
     expect(stripped.channelCount).toBeUndefined()
     expect(stripped.title).toBe('Get Down Saturday Night')

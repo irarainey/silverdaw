@@ -27,6 +27,8 @@ import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { randomUUID } from 'node:crypto'
 import {
   AUTOSAVE_FILENAME,
   AUTOSAVE_MANIFEST_FILENAME,
@@ -173,8 +175,14 @@ export async function launchSilverdaw(options: LaunchOptions = {}): Promise<Silv
   )
   // Selects the backend build tree in an unpackaged run (main/index.ts).
   env['SILVERDAW_BACKEND_CONFIG'] = process.env['SILVERDAW_BACKEND_CONFIG'] ?? 'Debug'
+  const privateDesktop = !env['CI'] && env['SILVERDAW_E2E_HEADED'] !== '1'
+  if (privateDesktop) {
+    env['SILVERDAW_E2E_ELECTRON'] = createRequire(import.meta.url)('electron')
+    env['SILVERDAW_E2E_DESKTOP'] = `Silverdaw-E2E-${randomUUID()}`
+  }
 
   const electronApp = await electron.launch({
+    executablePath: privateDesktop ? join(FRONTEND_ROOT, 'e2e', 'helpers', 'privateElectron.cmd') : undefined,
     // The switch precedes the entry point so Chromium consumes it rather than
     // the app seeing it as an argv entry.
     args: [`--user-data-dir=${userDataDir}`, MAIN_ENTRY],

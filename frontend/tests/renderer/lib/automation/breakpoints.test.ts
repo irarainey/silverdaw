@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { automationHandleAt, valueToLaneY } from '@/lib/timeline/automationLaneRenderer'
 import {
   sanitizeBreakpoints,
   breakpointsEqual,
@@ -13,7 +14,7 @@ import {
 const SIGNED: { min: number; max: number } = { min: -1, max: 1 }
 
 describe('sanitizeBreakpoints', () => {
-  it('clamps values/time, sorts, and de-dups by time', () => {
+  it('clamps values/time and sorts without dropping short ramps', () => {
     const out = sanitizeBreakpoints(
       [
         { timeMs: 100, value: 5 },
@@ -26,7 +27,8 @@ describe('sanitizeBreakpoints', () => {
     expect(out).toEqual([
       { timeMs: 0, value: -1 },
       { timeMs: 50, value: 0.5 },
-      { timeMs: 100, value: 1 }
+      { timeMs: 100, value: 1 },
+      { timeMs: 100.0005, value: 0.2 }
     ])
   })
 
@@ -81,14 +83,17 @@ describe('sampleBreakpoints', () => {
 })
 
 describe('insert/remove/move', () => {
-  it('insert adds and replaces by time', () => {
+  it('inserts a vertical step and sets its outgoing side at the playhead', () => {
     const base = flatCurve(1000, 0)
     const added = insertBreakpoint(base, 500, 0.5, SIGNED)
     expect(added.points).toHaveLength(3)
     expect(added.points[1]).toEqual({ timeMs: 500, value: 0.5 })
-    const replaced = insertBreakpoint(added.points, 500, -0.5, SIGNED)
-    expect(replaced.points).toHaveLength(3)
-    expect(replaced.points[1]!.value).toBe(-0.5)
+    const step = insertBreakpoint(added.points, 500, -0.5, SIGNED)
+    expect(step.index).toBe(2)
+    const replaced = insertBreakpoint(step.points, 500, -1, SIGNED, 'set')
+    expect(replaced.points).toHaveLength(4)
+    expect(sampleBreakpoints(replaced.points, 499.999)).toBeCloseTo(0.5)
+    expect(sampleBreakpoints(replaced.points, 500)).toBe(-1)
   })
 
   it('remove keeps endpoints, drops interior', () => {
@@ -100,14 +105,41 @@ describe('insert/remove/move', () => {
   it('move clamps interior time between neighbours and clamps value', () => {
     const pts = insertBreakpoint(flatCurve(1000, 0), 500, 0, SIGNED).points
     const moved = moveBreakpoint(pts, 1, 5000, 9, SIGNED)
-    expect(moved[1]!.timeMs).toBeLessThan(1000)
-    expect(moved[1]!.timeMs).toBeGreaterThan(0)
-    expect(moved[1]!.value).toBe(1) // clamped to max
+    expect(moved.points[1]).toEqual({ timeMs: 1000, value: 1 })
+    expect(sampleBreakpoints(moved.points, 1000)).toBe(0)
   })
 
   it('move on an endpoint keeps its time but updates value', () => {
     const pts = flatCurve(1000, 0)
     const moved = moveBreakpoint(pts, 0, 400, 0.7, SIGNED)
-    expect(moved[0]).toEqual({ timeMs: 0, value: 0.7 })
+    expect(moved.points[0]).toEqual({ timeMs: 0, value: 0.7 })
   })
+
+  it('retains both handles on collision and tracks the chosen one when detaching across its peer', () => {
+    const pts = [{ timeMs: 0, value: 0 }, { timeMs: 1000, value: 0 },
+      { timeMs: 1005, value: -1 }, { timeMs: 5000, value: -1 }]
+    const step = sanitizeBreakpoints(moveBreakpoint(pts, 2, 1000, -1, SIGNED).points, SIGNED)
+    expect(step).toEqual(pts.map((p, i) => i === 2 ? { ...p, timeMs: 1000 } : p))
+    const detached = moveBreakpoint(step, 2, 995, -1, SIGNED)
+    expect(detached.index).toBe(1)
+    expect(detached.points.slice(1, 3)).toEqual([{ timeMs: 995, value: -1 }, pts[1]])
+  })
+})
+
+it('picks the closest visible handle in both axes in a resized lane', () => {
+  const pts = [{ timeMs: 1000, value: 0 }, { timeMs: 1000, value: -6 }]
+  const hit = (value: number) => automationHandleAt(pts, 'level', 1000,
+    valueToLaneY('level', value, 230, 160), 230, 160, 120)
+  expect(hit(0)).toBe(0)
+  expect(hit(-6)).toBe(1)
+  expect(hit(-50)).toBe(-1)
+})
+
+it('cycles exact overlaps in step order without picking the different value between them', () => {
+  const pts = [0, -6, 0, 0].map(value => ({ timeMs: 1000, value }))
+  const hit = (selected?: number, cycle = true) => automationHandleAt(pts, 'level', 1000,
+    valueToLaneY('level', 0, 0, 120), 0, 120, 100, selected, cycle)
+  expect([hit(), hit(0), hit(2), hit(3)]).toEqual([0, 2, 3, 0])
+  expect(hit(2, false)).toBe(2)
+  expect(hit(1)).toBe(0)
 })

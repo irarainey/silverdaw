@@ -14,7 +14,15 @@ Large-session packaged performance projects and opt-in measurements are
 documented in [performance benchmarks](../performance/README.md). They are not
 collected by the normal E2E suite.
 
-Run from `frontend`:
+From the repository root, run the full suite with one command:
+
+```powershell
+pnpm test:e2e
+```
+
+Pass a journey name to run just that test: `pnpm test:e2e automation-steps`.
+
+Alternatively, run from `frontend`:
 
 ```powershell
 pnpm test:e2e         # builds out/, then runs the suite
@@ -22,7 +30,15 @@ pnpm test:e2e:only    # skips the build — only when out/ is known current
 pnpm test:e2e:report  # opens an existing Playwright HTML report
 ```
 
-CI enables the HTML reporter; the default local reporter is list-only.
+Local runs keep Electron on a private Windows desktop that is never shown or
+switched to. The tests still exercise real windows, including maximising them.
+The launcher requires Python 3 on `PATH` as `python`; no Python packages are
+needed. The terminal prints each journey and its actions as they start.
+CI keeps its existing runner and HTML report.
+
+To watch a journey while debugging, set `$env:SILVERDAW_E2E_HEADED = '1'`
+before running it. Use `Remove-Item Env:SILVERDAW_E2E_HEADED` to return to
+hidden runs.
 
 `test:e2e` builds first on purpose. A stale `out/` passes happily while testing
 code you have already changed, which has now happened more than once; the few
@@ -80,6 +96,12 @@ and each exported track's WAV length with the selected range saved in the
 project. `renderer-recovery.e2e.ts` deliberately loses the timeline's WebGL
 context, checks that the replacement canvas and the open editor have live
 contexts, then verifies the saved clip. Neither check reads canvas pixels.
+
+`sample-report.e2e.ts` checks the report dialog and the PDF on disk, including
+landscape pages, the timestamped default filename, and which project's export
+folder is used. `sample-report-provenance.e2e.ts` opens a legacy project and
+checks that an exact passage, a scratch input window, and an unknown range
+remain distinguishable in the report.
 
 Markers are the sharpest case of a canvas-only feature: they are placed with a
 bare `M`, drawn only on the ruler, and have no DOM at all. `markers.e2e.ts`

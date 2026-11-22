@@ -93,6 +93,16 @@ bool writeBufferToWav(const juce::AudioBuffer<float>& buffer, double sampleRate,
 
 } // namespace
 
+juce::var ProjectSession::PreparedScratch::attributionForSave(const juce::String& destinationId) const
+{
+    if (reopenedScratchId.isEmpty() || !attribution.isObject()) return attribution;
+    auto snapshot = attribution.clone();
+    snapshot.getDynamicObject()->removeProperty("ratio");
+    if (destinationId != reopenedScratchId)
+        snapshot.getDynamicObject()->setProperty("parentId", reopenedScratchId);
+    return snapshot;
+}
+
 void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
                                ProjectState& projectState, BridgeServer& bridge,
                                juce::ThreadPool& peakPool, const PeaksCache& cache,
@@ -130,7 +140,12 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
 
     // The library item the scratch was recorded over; the baked sample inherits
     // its media GUID so cover art resolves from the shared project media entry.
-    const juce::String sourceItemId = tryGetString(payload, "sourceItemId").value_or(juce::String{});
+    const auto active = engine.getScratchSessionSnapshot();
+    const auto& prepared = session.preparedScratch;
+    const bool matchesPreparation = active && prepared.sessionId == active->sessionId;
+    const bool replacingScratch = matchesPreparation && prepared.reopenedScratchId == itemId;
+    const juce::String sourceItemId = replacingScratch ? projectState.getLibraryItemSourceItemId(itemId)
+        : tryGetString(payload, "sourceItemId").value_or(juce::String{});
     // The exact source window the scratch was performed over, persisted so re-opening
     // the saved scratch can display the original source aligned to the playhead rather
     // than the baked (already-scratched) waveform. Absent (-1) for legacy callers.
@@ -139,8 +154,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
     const juce::String sampleMediaId =
         sourceItemId.isNotEmpty() ? projectState.getLibraryItemMediaId(sourceItemId) : juce::String{};
 
-    // Persist the canonical notation into the project ValueTree first, so re-open
-    // and project save/reload have it even if the bake fails on the worker.
+    // Persist notation even if no prepared audio is available for the bake.
     const bool notationOk = projectState.hasScratchPattern(parsed->id)
                                 ? projectState.updateScratchPattern(parsed->id, patternVar)
                                 : projectState.addScratchPattern(patternVar);
@@ -155,6 +169,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
     // may safely read the shared_ptr<const> copy for the offline bake.
     auto preparedSource = engine.getScratchPreparedSource();
     const double sourceSampleRate = engine.getScratchPreparedSourceSampleRate();
+    const auto attribution = matchesPreparation ? prepared.attributionForSave(itemId) : juce::var{};
     if (!preparedSource || preparedSource->getNumSamples() <= 0 || sourceSampleRate <= 0.0)
     {
         auto* obj = new juce::DynamicObject();
@@ -165,6 +180,8 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
         return;
     }
 
+    const auto libraryAtStart = projectState.getTree().getChildWithName("LIBRARY");
+
     const auto scratchDir =
         projectArtifactsBaseDir(session.currentPath, "scratches")
             .getChildFile(sanitiseScratchFileName(parsed->id));
@@ -173,7 +190,7 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
 
     peakPool.addJob(
         [pattern, notationVar, preparedSource, sourceSampleRate, scratchDir, itemId, sampleName,
-         sourceItemId, sampleMediaId, scratchSourceInMs, scratchSourceDurationMs, &engine,
+         sourceItemId, sampleMediaId, scratchSourceInMs, scratchSourceDurationMs, attribution, libraryAtStart, &engine,
          &projectState, &cache, &bridge, &session]
         {
             const auto safeName = sanitiseScratchFileName(sampleName);
@@ -226,10 +243,17 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
             juce::MessageManager::callAsync(
                 [pattern, itemId, safeName, bakedFile, durationMs, sourceSampleRate, channels,
                  bakeOk, error, peaks, peaksFile, sourcePath, sourceItemId, sampleMediaId,
-                 scratchSourceInMs, scratchSourceDurationMs, &projectState, &bridge, &session]
+                 scratchSourceInMs, scratchSourceDurationMs, attribution, libraryAtStart, &projectState, &bridge, &session]
                 {
                     auto* obj = new juce::DynamicObject();
                     obj->setProperty("itemId", itemId);
+                    if (projectState.getTree().getChildWithName("LIBRARY") != libraryAtStart)
+                    {
+                        obj->setProperty("ok", false);
+                        obj->setProperty("error", "The project changed before the scratch finished saving");
+                        bridge.broadcast("SAMPLE_SAVED", juce::var(obj));
+                        return;
+                    }
                     const bool ok = bakeOk && !peaks.peaks.empty();
                     obj->setProperty("ok", ok);
                     if (!ok)
@@ -252,6 +276,8 @@ void handleScratchSaveAsSample(const juce::var& payload, AudioEngine& engine,
                                                 bakedFile.getFullPathName(), {}, "sample", safeName,
                                                 sourceItemId, {}, scratchSourceInMs, scratchSourceDurationMs,
                                                 -1, sampleMediaId);
+                    if (projectState.setLibraryItemAttribution(itemId, attribution))
+                        obj->setProperty("attribution", attribution);
                     projectState.setLibraryItemAudioType(itemId, "simple");
                     projectState.setLibraryItemScratchMeta(itemId, pattern.id, sourcePath);
 

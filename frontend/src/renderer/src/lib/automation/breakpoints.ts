@@ -32,27 +32,18 @@ function clampValue(value: number, clamp: ValueClamp): number {
   return Math.min(clamp.max, Math.max(clamp.min, value))
 }
 
-/** Finite, value-clamped, time-clamped (>=0), sorted, and de-duped by time. */
+/** Stable sorting retains the incoming and outgoing sides of an equal-time step. */
 export function sanitizeBreakpoints(
   points: readonly Breakpoint[],
-  clamp: ValueClamp,
-  timeTolMs: number = DEFAULT_TIME_TOL_MS
+  clamp: ValueClamp
 ): Breakpoint[] {
-  const cleaned = points
+  return points
     .filter((p) => Number.isFinite(p.timeMs) && Number.isFinite(p.value))
     .map((p) => ({ timeMs: Math.max(0, p.timeMs), value: clampValue(p.value, clamp) }))
     .sort((a, b) => a.timeMs - b.timeMs)
-
-  const out: Breakpoint[] = []
-  for (const p of cleaned) {
-    const prev = out[out.length - 1]
-    if (prev && Math.abs(p.timeMs - prev.timeMs) < timeTolMs) continue
-    out.push(p)
-  }
-  return out
 }
 
-/** Value-equality within tolerances (mirrors backend change-detection). */
+/** Value-equality within tolerances. */
 export function breakpointsEqual(
   a: readonly Breakpoint[] | undefined,
   b: readonly Breakpoint[] | undefined,
@@ -85,7 +76,7 @@ export function sampleBreakpoints(
   if (n === 1) return first.value
   const last = points[n - 1]
   if (!last) return first.value
-  if (ms <= first.timeMs) return first.value
+  if (ms < first.timeMs) return first.value
   if (ms >= last.timeMs) return last.value
 
   let seg = 0
@@ -109,25 +100,26 @@ export function sampleBreakpoints(
   return a.value + (b.value - a.value) * frac
 }
 
-/** Insert or replace a breakpoint at `timeMs`; returns the sorted curve + index. */
+/** Pointer insertion appends a step; setting a value at the playhead edits its outgoing side. */
 export function insertBreakpoint(
   points: readonly Breakpoint[],
   timeMs: number,
   value: number,
   clamp: ValueClamp,
-  timeTolMs: number = DEFAULT_TIME_TOL_MS
+  mode: 'insert' | 'set' = 'insert'
 ): { points: Breakpoint[]; index: number } {
   const t = Math.max(0, timeMs)
   const v = clampValue(value, clamp)
   const next = points.map((p) => ({ ...p }))
-  const existing = next.findIndex((p) => Math.abs(p.timeMs - t) < timeTolMs)
-  if (existing >= 0) {
-    next[existing] = { timeMs: next[existing]!.timeMs, value: v }
-    return { points: next, index: existing }
+  let index = next.findIndex(p => p.timeMs > t)
+  if (index < 0) index = next.length
+  const outgoing = next[index - 1]
+  if (outgoing?.timeMs === t && (mode === 'set' || outgoing.value === v)) {
+    outgoing.value = v
+    return { points: next, index: index - 1 }
   }
-  next.push({ timeMs: t, value: v })
-  next.sort((a, b) => a.timeMs - b.timeMs)
-  return { points: next, index: next.findIndex((p) => Math.abs(p.timeMs - t) < timeTolMs) }
+  next.splice(index, 0, { timeMs: t, value: v })
+  return { points: next, index }
 }
 
 /** Remove an interior breakpoint; the pinned endpoints are kept. */
@@ -142,25 +134,27 @@ export function moveBreakpoint(
   index: number,
   timeMs: number,
   value: number,
-  clamp: ValueClamp,
-  timeTolMs: number = DEFAULT_TIME_TOL_MS
-): Breakpoint[] {
+  clamp: ValueClamp
+): { points: Breakpoint[]; index: number } {
   const next = points.map((p) => ({ ...p }))
   const pt = next[index]
-  if (!pt) return next
+  if (!pt) return { points: next, index }
   const v = clampValue(value, clamp)
   const isEndpoint = index === 0 || index === next.length - 1
   if (isEndpoint) {
     next[index] = { timeMs: pt.timeMs, value: v }
-    return next
+    return { points: next, index }
   }
-  const prev = next[index - 1]
-  const after = next[index + 1]
-  const lo = (prev?.timeMs ?? 0) + timeTolMs
-  const hi = (after?.timeMs ?? timeMs) - timeTolMs
-  const t = Math.min(Math.max(timeMs, lo), Math.max(lo, hi))
-  next[index] = { timeMs: t, value: v }
-  return next
+  // Stop at distinct neighbours, but let any handle already in a step detach
+  // to either side. The outer endpoints remain pinned.
+  let left = index - 1
+  let right = index + 1
+  while (left > 0 && next[left]!.timeMs === pt.timeMs) left--
+  while (right < next.length - 1 && next[right]!.timeMs === pt.timeMs) right++
+  pt.timeMs = Math.min(next[right]!.timeMs, Math.max(next[left]!.timeMs, timeMs))
+  pt.value = v
+  next.sort((a, b) => a.timeMs - b.timeMs)
+  return { points: next, index: next.indexOf(pt) }
 }
 
 /** Two-point flat curve at `value` spanning `[0, durationMs]`. */

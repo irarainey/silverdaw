@@ -192,8 +192,11 @@ out of monolithic implementation files.
 
 ## Current status and roadmap
 
-The latest project release is **1.11.0**. It adds aligned per-track audio export
-and lets either export dialog render just the selected timeline range. The
+The latest designated release is **[1.12.0](development-plan.md#release-acceptance-1120)**.
+It adds the [Audio Sample Report](#audio-sample-report) and lets users edit
+track automation points independently at the same time position.
+**1.11.0** added aligned per-track audio export and selected-range rendering
+in both export dialogs. The
 [1.11.0 release record](development-plan.md#release-acceptance-1110) describes
 the local rebuild; it did not run tests or establish publication or manual
 sign-off. The [1.10.1 checks](development-plan.md#release-acceptance-1101)
@@ -1343,6 +1346,51 @@ folder alongside the always-on diagnostics below.
   `backend.log` for both startup and runtime. In either mode, match the crash
   report timestamp to the launch being investigated.
 
+## Audio Sample Report
+
+Choose **File ▸ Audio Sample Report…** to see which recordings are used in
+the open project's arrangement. Only clips placed on the timeline appear;
+importing a file into the library is not itself a use. The dialog groups
+placements by recording and lists the project track, clip and file used for
+each one. Project-owned paths are relative to the displayed project location;
+external files use local paths. If an imported stem or sample has no identifiable
+local original, the report may have only the original filename or no source path.
+Paths inferred from a project folder or recording metadata are labelled as such.
+
+Read the three time ranges separately:
+
+- **Timeline range** and **Duration** describe the placement in the project,
+  including the effect of tempo warping.
+- **File range** is the clip's trim in the file it plays, which might be a
+  rendered sample or a stem rather than the original recording.
+- **Original recording range** identifies the passage in the original when
+  known. **Source window only** means the input interval is known, not that
+  every part played; a scratch can skip or repeat audio. **Cannot be
+  determined** means no such range is known.
+
+**Known distinct passages** merges overlapping or touching exact ranges, so
+repeating a passage or layering stems from it does not count it twice. Source
+windows and unknown ranges do not contribute. **Timeline coverage** likewise
+counts overlapping placements once. Muted and solo-excluded placements remain
+listed; when present, a separate coverage figure excludes them. That figure
+describes track mute/solo state, not measured audibility.
+
+Artist and album appear on separate lines, with **Cannot be determined** for
+missing values. The report also lists ISRC, composer, label and copyright
+notice when available. It uses local project data and file tags, not an online
+lookup. These are leads for attribution and clearance research, not verified
+ownership or clearance. Silverdaw grants no permission to use third-party
+recordings or compositions. Before sharing or releasing a project, check that
+your intended use is permitted and obtain any permissions you need.
+
+Choose **Export PDF** to save the report as a landscape A4 document. For an
+unsaved project, **Save and Export PDF** asks you to save the project first.
+The suggested filename is `Audio Sample Report <UTC timestamp>.pdf`, initially
+in the `audit` folder beside the project file. You can change the name and
+folder. A successful export remembers the folder while that project stays
+open; reopening it starts at `audit` again. The PDF includes the file paths
+shown in the dialog, so check them before sharing it.
+
 ## Project state model
 
 `ProjectState` (C++) wraps a `juce::ValueTree`. Its main persisted nodes and
@@ -1374,7 +1422,7 @@ PROJECT[name, bpm, projectLengthMs, viewPxPerSecond, viewScrollX, playheadMs,
      ITEM[id, kind, filePath, name?, displayName?, durationMs,
           sampleRate, channelCount, key?, bpm?, beats?, beatAnchorSec?, musicalBeats?,
           playbackFilePath?, variableTempo?, lowConfidence?, audioType?, collapsed?,
-          mediaId?, coverArtHidden?, coverArtOverride?,
+          mediaId?, attribution?, coverArtHidden?, coverArtOverride?,
           sourceItemId?, sourceClipId?, sourceInMs?, sourceDurationMs?,
           recordingOrigin?, scratchPatternId?, scratchSourcePath?,
           warpEnabled?, warpMode?, tempoRatio?, semitones?, cents?]
@@ -1620,7 +1668,21 @@ sit at the same absolute path on the other machine. Peaks are deliberately **not
 with the project — they are a regenerable cache (`<appData>/Silverdaw/peaks`) rebuilt from
 source on demand.
 
-**Central media store (cover art + tags)** — embedded tag metadata and cover art are not
+**[Audio Sample Report](#audio-sample-report) provenance** — An optional `attribution` property on a
+library item identifies its original recording independently of its immediate
+parent. The snapshot carries a basename, not a foreign machine's path. Its
+`startMs` and `endMs` describe a window in the original recording. Only a
+positive `ratio` maps positions within the derived file to positions within
+that window. A baked scratch or a clip with a live scratch pattern can identify
+its input window without claiming to play every part of it. These windows do
+not count toward exact recording coverage. These fields are not playback or
+beat-grid settings.
+Timeline trims, splits and moves reuse the library item; they do not create
+new recording identities. Re-saving an existing scratch preserves its parent.
+Schema-1 projects without snapshots remain valid; their surviving parent
+links can establish a passage or input window, but missing links need not.
+
+**Central media store (cover art + tags)** — full embedded tag metadata and cover art are not
 stored per library item. At first import each source file is minted a **media GUID**, and
 its tags are written to `<projectDir>/metadata/<guid>.json` and its cover image to
 `<projectDir>/covers/<guid>.<ext>` (before the first save the store lives in the temp
@@ -1630,8 +1692,16 @@ and samples — **carries the source's GUID** (the backend resolves it by walkin
 `sourceItemId` provenance chain) so it reads the same cover art and tags from that one
 store entry, even after the original library item is removed. The renderer reads/writes the
 store through guarded main-process IPC (`media:get` / `media:save`, roots registered by
-`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`. When the
-optional **Clean up project files** preference is on, removing a library item deletes
+`registerProjectMediaRoots`); the dirs are returned by `getProjectMediaDirs`.
+Opening or saving to a new path switches the active media roots and PDF export
+session only after the backend confirms the change. A failed attempt leaves
+the current project's destinations intact.
+Newly parsed media records label their file geometry as `recording` or `output`.
+Only recording geometry supplies duration evidence for attribution; a legacy
+record with a known non-WAV container can also identify recording geometry.
+Neither case changes a derived item's playback length.
+
+When the optional **Clean up project files** preference is on, removing a library item deletes
 its generated WAV — a stem, a sample, a split channel, a recording or a baked scratch —
 and then prunes the per-source folder once nothing but the
 artifacts that removal took remains in it (another still-referenced stem/sample, or any
@@ -3288,7 +3358,12 @@ named after the source's (sanitised) file name, under the current project folder
 under the temporary workspace
 (`<temp>/Silverdaw/samples`) when the project has not been saved yet; temp samples
 migrate into the project folder on the first save. The numeric
-suffix increments for duplicate base names. There are two flavours: a **music
+suffix increments for duplicate base names. Sample, slice and channel exports
+stage their WAVs before adding them to the originating project's library. If you
+open another project before a render finishes, it cannot add files to that
+project; a Save As of the same project uses its new location.
+
+There are two flavours: a **music
 sample** inherits the source's tempo/key grid so it warps and shows its grid, while
 a **simple sample** is a non-musical one-shot. A one-shot has no pulse, so it
 **cannot hold a BPM at all**: classifying an item simple strips `bpm`, `beats`,
@@ -5271,7 +5346,13 @@ Lanes can edit **Filter**, **Pan**, the 3-band **Tone**, **Reverb/Delay sends**,
 **Compressor**, **Punch**, **Saturation**, **Bit Crusher**, or **Gain** (a post-FX track level in
 dB, distinct from the header fader and clip Volume Shape). Click to add a breakpoint, drag to
 move, right-click or Alt-click to remove; a selected point fine-nudges with arrow keys; a drag
-stream coalesces into one undo step. Lane-header controls raise/lower the whole curve, set the
+stream coalesces into one undo step. Drag or nudge one point onto another to
+make a vertical step. The curve approaches the first value and takes the last
+value at that time. Click either handle at its own height to edit it. If
+handles share both time and value, click repeatedly to select each in turn.
+The keyboard target has a blue fill and light outline; undo and redo clear
+the selection so the next nudge cannot edit a different point.
+The outer endpoints can change value but keep their time. Lane-header controls raise/lower the whole curve, set the
 value at the playhead, copy/paste a curve, and reset to default. Pasting into a different
 parameter maps every value through its normalized range, preserving the copied curve's visual
 shape. The picker marks already-automated params with a ● dot, and the value editor shows the
@@ -5602,8 +5683,8 @@ reconfigure the Debug cache out from under your dev session.
 
 ## Packaging for Windows
 
-The [1.11.0 release record](development-plan.md#release-acceptance-1110)
-documents the latest project release and its local rebuild. Building packages
+The [1.12.0 release record](development-plan.md#release-acceptance-1120)
+identifies the current release. Building packages
 does not run the quality gates, publish a GitHub release or submit to the
 Microsoft Store. Previous releases' test and manual sign-offs are not evidence
 for this build.
@@ -5924,7 +6005,10 @@ repo); the `pwsh` and `scripts/` gates run from the workspace root.
 - **End-to-end**: `pnpm test:e2e` rebuilds the frontend (`electron-vite build`),
   not the native engine. Build `SilverdawBackend` first; the default executable
   is `backend/build/SilverdawBackend_artefacts/Debug/SilverdawBackend.exe`.
-  Playwright runs the journeys under `frontend/e2e/` against that spawned backend,
+  Local Electron tests run on a private Windows desktop and print their actions
+  to the terminal; see the [E2E guide](../frontend/e2e/README.md#running) for
+  prerequisites and visible debugging. Playwright runs the journeys under
+  `frontend/e2e/` against that spawned backend,
   so a run covers the spawn → port → AUTH → handshake chain, the native dialog
   stubs and the saved project format. The tier is deliberately small and wide and
   asserts mostly on the DOM, the filesystem and saved project files; its rules and

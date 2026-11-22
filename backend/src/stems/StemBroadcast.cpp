@@ -4,6 +4,23 @@
 
 namespace silverdaw::stem_bridge
 {
+namespace
+{
+void addStemFile(juce::DynamicObject& obj, const StemResultFile& stem, const juce::var& attribution)
+{
+    obj.setProperty("stem", stem.stem);
+    obj.setProperty("filePath", stem.file.getFullPathName());
+    obj.setProperty("sampleRate", stem.sampleRate);
+    obj.setProperty("durationMs", stem.durationMs);
+    obj.setProperty("channelCount", stem.channelCount);
+    if (attribution.isObject())
+    {
+        auto forStem = attribution.clone();
+        forStem.getDynamicObject()->setProperty("stemRole", stem.stem);
+        obj.setProperty("attribution", forStem);
+    }
+}
+}
 
 void broadcastProgress(BridgeServer& bridge,
                        const juce::String& jobId,
@@ -27,18 +44,15 @@ void broadcastPartial(BridgeServer& bridge,
                       const juce::String& jobId,
                       const juce::String& clipId,
                       const juce::String& sourceName,
-                      const StemResultFile& stem)
+                      const StemResultFile& stem,
+                      const juce::var& attribution)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("jobId", jobId);
     if (clipId.isNotEmpty())
         obj->setProperty("clipId", clipId);
     obj->setProperty("sourceName", sourceName);
-    obj->setProperty("stem", stem.stem);
-    obj->setProperty("filePath", stem.file.getFullPathName());
-    obj->setProperty("sampleRate", stem.sampleRate);
-    obj->setProperty("durationMs", stem.durationMs);
-    obj->setProperty("channelCount", stem.channelCount);
+    addStemFile(*obj, stem, attribution);
     bridge.broadcast("STEM_PARTIAL", juce::var(obj));
 }
 
@@ -46,7 +60,8 @@ void broadcastReady(BridgeServer& bridge,
                     const juce::String& jobId,
                     const juce::String& clipId,
                     const juce::String& sourceName,
-                    const std::vector<StemResultFile>& stems)
+                    const std::vector<StemResultFile>& stems,
+                    const juce::var& attribution)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty("jobId", jobId);
@@ -58,11 +73,7 @@ void broadcastReady(BridgeServer& bridge,
     for (const auto& s : stems)
     {
         auto* entry = new juce::DynamicObject();
-        entry->setProperty("stem", s.stem);
-        entry->setProperty("filePath", s.file.getFullPathName());
-        entry->setProperty("sampleRate", s.sampleRate);
-        entry->setProperty("durationMs", s.durationMs);
-        entry->setProperty("channelCount", s.channelCount);
+        addStemFile(*entry, s, attribution);
         stemArray.add(juce::var(entry));
     }
     obj->setProperty("stems", stemArray);

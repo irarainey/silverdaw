@@ -1,7 +1,7 @@
 # Performance benchmarks
 
-[**1.11.0**](../../docs/development-plan.md#release-acceptance-1110) is the
-latest designated release. The benchmarks below are historical, not 1.11.0
+[**1.12.0**](../../docs/development-plan.md#release-acceptance-1120) is the
+latest designated release. The benchmarks below are historical, not 1.12.0
 acceptance evidence. The [1.10.1 release record](../../docs/development-plan.md#release-acceptance-1101)
 documents the automated checks and local assets verified on 2026-11-16.
 

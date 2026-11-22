@@ -5,6 +5,7 @@
 
 import { useTransportStore } from '@/stores/transportStore'
 import { useLibraryStore } from '@/stores/libraryStore'
+import { useUiStore } from '@/stores/uiStore'
 import type { ProjectStatePayload } from '@shared/bridge-protocol'
 import { DEFAULT_PROJECT_NAME } from './projectTypes'
 import { deriveProjectIdFromPath, freshUntitledProjectId } from './projectHelpers'
@@ -174,6 +175,8 @@ export function applyProjectStructureReset(
   const library = useLibraryStore()
   // Reset/soft-replace wipe ValueTree-backed mirrors; undo/redo preserves view state.
   if (snapshot.reset === true || isSoftReplace) {
+    // A restored curve may have a different handle at the previously selected index.
+    useUiStore().setSelectedAutomationPoint(null)
     target.tracks = []
     target.clips = {}
     target.markers = []

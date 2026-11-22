@@ -2,6 +2,7 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type {
   AudioMetadata,
+  MediaGeometryOrigin,
   DebugPreferences,
   DiagnosticLogsResult,
   FileBrowserEntry,
@@ -138,12 +139,13 @@ const api = {
   /** Zip the current run's logs, reveal them, and open a support email draft. */
   sendDiagnostics: (): Promise<DiagnosticLogsResult> => ipcRenderer.invoke(IPC.app.sendDiagnostics),
   // ─── Project file lifecycle ──────────────────────────────────────────────
-  setLastProjectPath: (path: string, name: string): void => {
-    ipcRenderer.send(IPC.project.setLastPath, { path, name })
+  confirmActiveProject: (path: string | null, name: string, replaced: boolean): void => {
+    ipcRenderer.send(IPC.project.confirmActive, path, name, replaced)
   },
   projectFileExists: (path: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.fileExists, path),
   chooseProjectOpen: (): Promise<string | null> => ipcRenderer.invoke(IPC.project.chooseOpen),
+  exportSampleReport: (projectPath: string): Promise<string | null> => ipcRenderer.invoke(IPC.project.exportSampleReport, projectPath),
   chooseProjectSaveAs: (defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.project.chooseSaveAs, defaultName),
   listProjectImportSources: (): Promise<ProjectImportSource[]> =>
@@ -165,8 +167,7 @@ const api = {
   /** Pre-register project audio paths for trusted post-load reads. */
   prepareProjectOpen: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.prepareOpen, filePath),
-  /** Pre-register a recovered project's audio paths: allow-list the autosave content but trust the
-   *  ORIGINAL project folder's artifact roots (samples/stems/media), so restored links resolve. */
+  /** Resolve audio paths in autosave content against the original project's artifact roots. */
   prepareProjectRecovery: (autosavePath: string, originalPath: string | null): Promise<boolean> =>
     ipcRenderer.invoke(IPC.project.prepareRecovery, autosavePath, originalPath),
   /** Consume a pending `.silverdaw` launch path exactly once. */
@@ -397,8 +398,8 @@ const api = {
   },
   /** Save a source's tags + cover into the project's central metadata/covers store under
    *  its media GUID; main resolves the identity from the source file on disk. */
-  saveProjectMedia: (mediaId: string, sourceFilePath: string): Promise<boolean> =>
-    ipcRenderer.invoke(IPC.media.save, { mediaId, sourceFilePath }),
+  saveProjectMedia: (mediaId: string, sourceFilePath: string, geometryOrigin?: MediaGeometryOrigin): Promise<AudioMetadata | null> =>
+    ipcRenderer.invoke(IPC.media.save, { mediaId, sourceFilePath, geometryOrigin }),
   /** Read a source's media (tags + cover bytes) back by media GUID, or null when absent. */
   getProjectMedia: (mediaId: string): Promise<AudioMetadata | null> =>
     ipcRenderer.invoke(IPC.media.get, mediaId),

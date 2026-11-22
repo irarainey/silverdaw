@@ -36,7 +36,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env['CI']),
   retries: process.env['CI'] ? 1 : 0,
 
-  reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  reporter: process.env['CI']
+    ? [['list'], ['html', { open: 'never' }]]
+    : [['list'], ['./e2e/actionReporter.ts']],
 
   use: {
     // Traces make a cross-process failure diagnosable after the fact; combined
