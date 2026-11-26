@@ -16,6 +16,8 @@ import {
   GRID_BAR,
   GRID_BEAT,
   GRID_SUB,
+  MIN_BAR_SPACING_PX,
+  MIN_TICK_SPACING_PX,
   RULER_HEIGHT,
   RULER_TICK,
   SCROLLBAR_WIDTH,
@@ -27,7 +29,7 @@ import { drawAutomationLane } from './automationLaneRenderer'
 import { makeLaneHeightOf } from '@/lib/automation/laneLayout'
 import type { GridGeometry } from './useGridGeometry'
 import type { createClipRenderer } from './clipRenderer'
-import { horizontalOverscanPx } from './timelineWindow'
+import { barThinningStep, horizontalOverscanPx } from './timelineWindow'
 import { visibleSubRange } from './timelineWindow'
 
 export interface TimelineTracksRendererDeps {
@@ -82,6 +84,7 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
     const pxPerSub = pxPerBeat / subsPerBeat.value
     const subsPerBarNow = subsPerBar.value
+    const pxPerBar = (subsPerBarNow / subsPerBeat.value) * pxPerBeat
 
     const viewWidth = rightEdge - gridLeft
     const projectPx = (project.durationMs / 1000) * pxPerSecond.value
@@ -94,15 +97,25 @@ export function createTimelineTracksRenderer(deps: TimelineTracksRendererDeps) {
       lastSub
     )
 
+    // Same density rules as the ruler ticks (see drawRulerTicks): suppress
+    // tiers finer than the minimum spacing, thin bars on a 1-2-5 sequence,
+    // and stride the band loop by the finest tier actually drawn. Bars use
+    // the wider minimum so the strongest lines never pack into a solid wall.
+    const drawSubs = pxPerSub >= MIN_TICK_SPACING_PX
+    const drawBeats = pxPerBeat >= MIN_TICK_SPACING_PX
+    const barTickSubs = barThinningStep(pxPerBar, MIN_BAR_SPACING_PX) * subsPerBarNow
+    const stride = drawSubs ? 1 : drawBeats ? subsPerBeat.value : barTickSubs
+
     const subLines = new G()
     const beatLines = new G()
     const barLines = new G()
 
-    for (let s = firstSub; s <= lastVisibleSub; s++) {
+    for (let s = Math.ceil(firstSub / stride) * stride; s <= lastVisibleSub; s += stride) {
       const x = gridLeft + s * pxPerSub + 0.5
-      const isBar = s % subsPerBarNow === 0
-      const isBeat = s % subsPerBeat.value === 0
+      const isBar = s % barTickSubs === 0
+      const isBeat = drawBeats && s % subsPerBeat.value === 0
       const target = isBar ? barLines : isBeat ? beatLines : subLines
+      if (!isBar && !isBeat && !drawSubs) continue
       target.moveTo(x, gridTop).lineTo(x, gridBottom)
     }
     subLines.stroke({ color: GRID_SUB, width: 1, alpha: 0.5 })

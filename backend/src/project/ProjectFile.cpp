@@ -250,7 +250,10 @@ juce::Result saveViewState(const juce::File& file, const ProjectState& project, 
 
     rootObj->setProperty(kSavedAtKey, isoTimestampNowUtc());
     projectObj->setProperty("viewScrollX", juce::jmax(0.0, project.getViewScrollX()));
-    projectObj->setProperty("viewPxPerSecond", juce::jmax(1.0, project.getViewPxPerSecond()));
+    // Floor matches the renderer's MIN_PX_PER_SECOND (timeline constants) and
+    // ProjectState::setViewPxPerSecond's clamp, so a zoom-to-fit level for a
+    // long project survives save/load.
+    projectObj->setProperty("viewPxPerSecond", juce::jmax(0.1, project.getViewPxPerSecond()));
     projectObj->setProperty("playheadMs", juce::jmax(0.0, project.getPlayheadMs()));
     projectObj->setProperty("viewSelectedTrack", project.getViewSelectedTrack());
     projectObj->setProperty("viewFxPanelOpen", project.getViewFxPanelOpen());

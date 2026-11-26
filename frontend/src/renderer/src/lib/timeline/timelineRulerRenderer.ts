@@ -11,6 +11,9 @@ import {
   GRID_BEAT,
   GRID_SUB,
   MARKER,
+  MIN_BAR_LABEL_SPACING_PX,
+  MIN_BAR_SPACING_PX,
+  MIN_TICK_SPACING_PX,
   RULER_BG,
   RULER_HEIGHT,
   RULER_LABEL_HINT,
@@ -19,7 +22,7 @@ import {
   TRACK_HEADER_BG
 } from './constants'
 import type { GridGeometry } from './useGridGeometry'
-import { visibleSubRange } from './timelineWindow'
+import { barThinningStep, visibleSubRange } from './timelineWindow'
 
 export interface TimelineRulerRendererDeps {
   app: ShallowRef<Application | null>
@@ -146,6 +149,7 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     const pxPerBeat = (60 / transport.bpm) * pxPerSecond.value
     const pxPerSub = pxPerBeat / subsPerBeat.value
     const subsPerBarNow = subsPerBar.value
+    const pxPerBar = (subsPerBarNow / subsPerBeat.value) * pxPerBeat
 
     // Project extent in subdivisions, used as the clamp ceiling for the band.
     const viewWidth = rightEdge - headerWidth()
@@ -160,16 +164,27 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
       lastSub
     )
 
+    // Zoomed far out the fine tiers would draw as a solid smear, so tiers
+    // closer than the minimum spacing are suppressed and bars — the anchor
+    // tier — thin onto a 1-2-5 sequence instead. The band loop strides by the
+    // finest tier actually drawn, so a suppressed sub tier can't iterate
+    // thousands of sub-pixel subdivisions per rebuild.
+    const drawSubs = pxPerSub >= MIN_TICK_SPACING_PX
+    const drawBeats = pxPerBeat >= MIN_TICK_SPACING_PX
+    const barTickSubs = barThinningStep(pxPerBar, MIN_BAR_SPACING_PX) * subsPerBarNow
+    const stride = drawSubs ? 1 : drawBeats ? subsPerBeat.value : barTickSubs
+
     const subTicks = new G()
     const beatTicks = new G()
     const barTicks = new G()
 
-    for (let s = firstSub; s <= lastVisibleSub; s++) {
+    for (let s = Math.ceil(firstSub / stride) * stride; s <= lastVisibleSub; s += stride) {
       const x = headerWidth() + s * pxPerSub + 0.5
-      const isBar = s % subsPerBarNow === 0
-      const isBeat = s % subsPerBeat.value === 0
+      const isBar = s % barTickSubs === 0
+      const isBeat = drawBeats && s % subsPerBeat.value === 0
       const tickH = isBar ? 14 : isBeat ? 10 : 5
       const target = isBar ? barTicks : isBeat ? beatTicks : subTicks
+      if (!isBar && !isBeat && !drawSubs) continue
       target.moveTo(x, RULER_HEIGHT - tickH).lineTo(x, RULER_HEIGHT - 1)
     }
     subTicks.stroke({ color: GRID_SUB, width: 1, alpha: 0.9 })
@@ -180,10 +195,13 @@ export function createTimelineRulerRenderer(deps: TimelineRulerRendererDeps) {
     rulerTicks.addChild(barTicks)
 
     // Bar labels: barCounterStart is the first bar's number (default 1; 0 or lower for lead-in).
-    if (T) {
+    // Labels only render while every bar has room for its own number (>= the
+    // minimum label spacing). Below that they'd need thinning, and thinned
+    // numbers (1, 101, 201 …) stop being usable references — hidden instead.
+    if (T && pxPerBar >= MIN_BAR_LABEL_SPACING_PX) {
       const barCounterStart = project.barCounterStart
-      const firstBarSub = Math.ceil(firstSub / subsPerBarNow) * subsPerBarNow
-      for (let s = firstBarSub; s <= lastVisibleSub; s += subsPerBarNow) {
+      const firstLabelSub = Math.ceil(firstSub / subsPerBarNow) * subsPerBarNow
+      for (let s = firstLabelSub; s <= lastVisibleSub; s += subsPerBarNow) {
         const x = headerWidth() + s * pxPerSub + 0.5
         const barNumber = s / subsPerBarNow + barCounterStart
         const label = new T({

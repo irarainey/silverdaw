@@ -31,8 +31,13 @@ function onSnapGridChange(e: Event): void {
 }
 
 // Timeline zoom expressed as a percentage of the default (100 px/s = 100%).
-// Shown to the nearest whole percent; tooltip carries the raw px/sec.
-const zoomPercent = computed(() => Math.round((ui.zoomPxPerSecond / DEFAULT_PX_PER_SECOND) * 100))
+// Shown to the nearest whole percent; tooltip carries the raw px/sec. Sub-1%
+// zooms (Ctrl+F fitting a long project to the window) keep one decimal so the
+// readout doesn't round up to a misleading 0%.
+const zoomPercent = computed(() => {
+  const percent = (ui.zoomPxPerSecond / DEFAULT_PX_PER_SECOND) * 100
+  return percent >= 1 ? Math.round(percent) : Math.round(percent * 10) / 10
+})
 const zoomTooltip = computed(() => `Timeline zoom — ${ui.zoomPxPerSecond.toFixed(1)} px/s (100% = ${DEFAULT_PX_PER_SECOND} px/s)`)
 
 // Disable the step buttons at the geometry-clamped extremes so they don't look

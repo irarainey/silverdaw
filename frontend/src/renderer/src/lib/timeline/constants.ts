@@ -21,11 +21,36 @@ export const SCROLLBAR_HEIGHT = 12
 export const SCROLLBAR_WIDTH = 12
 
 // ─── Horizontal zoom (px per second) ────────────────────────────────────────
-// Zoom caps keep redraw cost bounded while allowing sub-beat alignment.
+// Zoom caps keep redraw cost bounded while allowing sub-beat alignment. The
+// floor is low enough that Ctrl+F (zoom-to-fit) can show an hours-long project
+// at once; the backend mirrors both bounds in `ProjectState::setViewPxPerSecond`
+// (backend/src/project/ProjectStateSettings.cpp) — keep them in lockstep.
 export const DEFAULT_PX_PER_SECOND = 100
-export const MIN_PX_PER_SECOND = 10
+export const MIN_PX_PER_SECOND = 0.1
 export const MAX_PX_PER_SECOND = 800
-export const ZOOM_STEP_PX_PER_SECOND = 10
+/**
+ * Multiplicative zoom factor per zoom key press / per full wheel notch (see
+ * `zoomTargetFor` and `zoomTargetForDelta` in `useTimelineZoom`). Proportional
+ * by design: the same gesture scales the zoom by this factor at every level,
+ * instead of a fixed px-per-second delta that feels huge zoomed out and tiny
+ * zoomed in. Keep the value subtle and tune here — 1.2 is ~20% per step.
+ */
+export const ZOOM_STEP_FACTOR = 1.2
+/**
+ * Wheel deltaY that counts as one notch (Chromium pixel-delta convention).
+ * A touchpad pinch arrives as a rapid stream of much smaller deltas, which
+ * `zoomTargetForDelta` converts into a proportionally smaller zoom change.
+ */
+export const ZOOM_WHEEL_NOTCH = 20
+
+// ─── Ruler & grid density ───────────────────────────────────────────────────
+// Below these spacings tiers would draw as a solid smear, so finer tiers are
+// suppressed and the bar tier thins (see `barThinningStep`). Bars get a wider
+// minimum than the beat/sub tiers: they are the strongest lines and read as
+// solid walls when packed tighter than this.
+export const MIN_TICK_SPACING_PX = 5
+export const MIN_BAR_SPACING_PX = 10
+export const MIN_BAR_LABEL_SPACING_PX = 40
 
 // ─── Musical grid ───────────────────────────────────────────────────────────
 // The drawn sub-beat tier follows the selected snap grid, so it is resolved per

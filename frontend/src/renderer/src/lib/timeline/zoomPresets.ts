@@ -8,10 +8,9 @@ import { DEFAULT_PX_PER_SECOND } from './constants'
 
 /**
  * Zoom presets expressed directly in px-per-second (NOT percent). Each value
- * is an exact multiple of `ZOOM_STEP_PX_PER_SECOND` (10) and sits inside
- * `[MIN_PX_PER_SECOND, MAX_PX_PER_SECOND]`, so it round-trips through
- * `useGridGeometry.setPxPerSecond` (which snaps to the step and clamps)
- * without the stored value drifting away from the chosen preset.
+ * sits inside `[MIN_PX_PER_SECOND, MAX_PX_PER_SECOND]` so it applies exactly
+ * through `useGridGeometry.setPxPerSecond` (which clamps only) — the stored
+ * zoom never drifts away from the chosen preset.
  *
  * Ordered low → high so the menu reads zoomed-out → zoomed-in.
  */
