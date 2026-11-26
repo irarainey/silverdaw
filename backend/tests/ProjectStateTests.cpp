@@ -482,6 +482,12 @@ void testProjectStateViewLibraryMarkersAndReplace()
     state.setPlayheadMs(1234.0);
     require(!state.isDirty(), "view state should not mark project dirty");
     requireNear(state.getViewPxPerSecond(), 160.0, 0.0001, "view zoom should store");
+    // The floor mirrors the renderer's MIN_PX_PER_SECOND so zoom-to-fit levels
+    // for long projects persist; below it clamps instead of storing.
+    state.setViewPxPerSecond(0.05);
+    requireNear(state.getViewPxPerSecond(), 0.1, 0.0001, "view zoom should clamp to the floor");
+    state.setViewPxPerSecond(0.5);
+    requireNear(state.getViewPxPerSecond(), 0.5, 0.0001, "sub-coarse-step zoom should store verbatim");
     requireNear(state.getViewScrollX(), 240.0, 0.0001, "view scroll should store");
     requireNear(state.getPlayheadMs(), 1234.0, 0.0001, "playhead should store");
 

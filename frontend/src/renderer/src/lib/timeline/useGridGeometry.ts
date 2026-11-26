@@ -14,7 +14,6 @@ import {
   DEFAULT_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
   MIN_PX_PER_SECOND,
-  ZOOM_STEP_PX_PER_SECOND,
   TIME_SIG_NUM
 } from './constants'
 
@@ -65,8 +64,12 @@ export function useGridGeometry(): GridGeometry {
     snapMs(positionMs, transport.bpm, ui.snapGrid, fineMode)
 
   function setPxPerSecond(next: number): number {
-    const stepped = Math.round(next / ZOOM_STEP_PX_PER_SECOND) * ZOOM_STEP_PX_PER_SECOND
-    const clamped = Math.min(MAX_PX_PER_SECOND, Math.max(MIN_PX_PER_SECOND, stepped))
+    // Clamp only. Every caller passes an exact target — stepped zooms add a
+    // whole step, the View-menu presets are exact values, and zoom-to-fit
+    // sizes the project to the track area — so snapping to the coarse step
+    // would distort the fine steps below it and round a fit target away from
+    // the window size.
+    const clamped = Math.min(MAX_PX_PER_SECOND, Math.max(MIN_PX_PER_SECOND, next))
     pxPerSecond.value = clamped
     return clamped
   }

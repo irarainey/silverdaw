@@ -12,7 +12,8 @@ import type { TimelineZoomRequest } from '@/stores/uiStore'
 import {
   DEFAULT_PX_PER_SECOND,
   SCROLLBAR_WIDTH,
-  ZOOM_STEP_PX_PER_SECOND
+  ZOOM_STEP_FACTOR,
+  ZOOM_WHEEL_NOTCH
 } from '@/lib/timeline/constants'
 
 export interface TimelineZoomDeps {
@@ -45,6 +46,28 @@ export interface TimelineZoom {
   onWheel: (e: WheelEvent) => void
 }
 
+/**
+ * Zoom target for one step request: the current zoom scaled by the tunable
+ * `ZOOM_STEP_FACTOR` (or its reciprocal when zooming out). Proportional, so a
+ * zoom key feels like the same-size change at every zoom level.
+ */
+function zoomTargetFor(pxPerSecond: number, direction: 'in' | 'out'): number {
+  return direction === 'in' ? pxPerSecond * ZOOM_STEP_FACTOR : pxPerSecond / ZOOM_STEP_FACTOR
+}
+
+/**
+ * Continuous zoom response for the wheel: the delta is converted to a
+ * proportional change through exp, so a full notch scales by
+ * `ZOOM_STEP_FACTOR` while the small high-frequency deltas of a touchpad
+ * pinch move the zoom by a matching fraction of it. Discrete per-event steps
+ * here would make a pinch race (every tiny delta applying a whole step).
+ * Wheel deltas are pixel-mode (Chromium/Electron); deltas compose additively
+ * because of the exponential form.
+ */
+function zoomTargetForDelta(pxPerSecond: number, deltaY: number): number {
+  return pxPerSecond * Math.exp((-deltaY / ZOOM_WHEEL_NOTCH) * Math.log(ZOOM_STEP_FACTOR))
+}
+
 export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
   function applyZoomRequest(request: TimelineZoomRequest): void {
     const prev = deps.pxPerSecond()
@@ -69,7 +92,7 @@ export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
         ? request.pxPerSecond
         : request.action === 'reset'
           ? DEFAULT_PX_PER_SECOND
-          : prev + (request.action === 'in' ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
+          : zoomTargetFor(prev, request.action === 'in' ? 'in' : 'out')
     const next = deps.setPxPerSecond(target)
     if (next === prev) return
 
@@ -139,9 +162,7 @@ export function useTimelineZoom(deps: TimelineZoomDeps): TimelineZoom {
     if (delta === 0) return
 
     const prev = deps.pxPerSecond()
-    const next = deps.setPxPerSecond(
-      prev + (delta < 0 ? ZOOM_STEP_PX_PER_SECOND : -ZOOM_STEP_PX_PER_SECOND)
-    )
+    const next = deps.setPxPerSecond(zoomTargetForDelta(prev, delta))
     if (next === prev) return
 
     // Determine the anchor (in track-area-local pixels) and the time it

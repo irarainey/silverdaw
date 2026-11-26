@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   OVERSCAN_FRACTION,
   REBUILD_OVERSCAN_FRACTION,
+  barThinningStep,
   horizontalOverscanPx,
   exceedsRebuildThreshold,
   visibleSubRange
@@ -68,5 +69,28 @@ describe('visibleSubRange', () => {
   it('returns an empty range for non-positive pxPerSub or negative lastSub', () => {
     expect(visibleSubRange(0, 1000, 0, 100)).toEqual({ first: 0, last: -1 })
     expect(visibleSubRange(0, 1000, 50, -1)).toEqual({ first: 0, last: -1 })
+  })
+})
+
+describe('barThinningStep', () => {
+  it('keeps every bar while bars are at least the minimum spacing apart', () => {
+    expect(barThinningStep(40, 5)).toBe(1)
+    expect(barThinningStep(5, 5)).toBe(1)
+  })
+
+  it('thins on the 1-2-5 sequence as bars fall below the minimum spacing', () => {
+    expect(barThinningStep(4, 5)).toBe(2)
+    expect(barThinningStep(2, 5)).toBe(5)
+    expect(barThinningStep(1, 5)).toBe(5)
+    expect(barThinningStep(0.2, 5)).toBe(50)
+  })
+
+  it('scales the same sequence for the wider label spacing', () => {
+    expect(barThinningStep(20, 40)).toBe(2)
+    expect(barThinningStep(0.2, 40)).toBe(200)
+  })
+
+  it('returns the sequence ceiling for absurdly dense bars', () => {
+    expect(barThinningStep(0.0004, 5)).toBe(10000)
   })
 })

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { MAX_PX_PER_SECOND, MIN_PX_PER_SECOND, ZOOM_STEP_FACTOR } from '@/lib/timeline/constants'
 import { useTimelineZoom, type TimelineZoomDeps } from '@/lib/timeline/useTimelineZoom'
 
 function makeDeps(overrides: Partial<TimelineZoomDeps> = {}): {
@@ -136,6 +137,37 @@ describe('useTimelineZoom — onWheel', () => {
     onWheel(wheel({ deltaY: -100, ctrlKey: true }))
     expect(h.spies.redraw).not.toHaveBeenCalled()
   })
+
+  it('Ctrl + wheel zoom-out at a full notch scales proportionally at low zoom', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond, pxPerSecond: () => 10 })
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 100, ctrlKey: true }))
+    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeCloseTo(10 / ZOOM_STEP_FACTOR, 8)
+  })
+
+  it('a small pinch delta moves the zoom a matching fraction of a step', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond, pxPerSecond: () => 100 })
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: -5, ctrlKey: true }))
+    const next = setPxPerSecond.mock.calls[0]?.[0] as number
+    // One twentieth of a notch, so one twentieth of the step factor's change.
+    expect(next).toBeGreaterThan(100)
+    expect(next).toBeLessThan(100 * 1.02)
+  })
+
+  it('pinch deltas compose like wheel notches (two half-notches = one step)', () => {
+    const h = makeDeps()
+    h.deps.setPxPerSecond = (v: number) => {
+      h.pxPerSecond.value = v
+      return v
+    }
+    const { onWheel } = useTimelineZoom(h.deps)
+    onWheel(wheel({ deltaY: 50, ctrlKey: true }))
+    onWheel(wheel({ deltaY: 50, ctrlKey: true }))
+    expect(h.pxPerSecond.value).toBeCloseTo(100 / ZOOM_STEP_FACTOR, 8)
+  })
 })
 
 describe('useTimelineZoom — applyZoomRequest', () => {
@@ -148,13 +180,57 @@ describe('useTimelineZoom — applyZoomRequest', () => {
     expect(h.spies.redraw).toHaveBeenCalledTimes(1)
   })
 
-  it('step "in" nudges up by the zoom step', () => {
+  it('step "in" scales the zoom up', () => {
     const setPxPerSecond = vi.fn((v: number) => v)
     const h = makeDeps({ setPxPerSecond })
     const { applyZoomRequest } = useTimelineZoom(h.deps)
     applyZoomRequest({ kind: 'step', action: 'in', id: 2 } as never)
-    // prev is 100; the step constant is added, so the target exceeds 100.
-    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeGreaterThan(100)
+    // prev is 100; the multiplicative step factor scales it up.
+    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeCloseTo(100 * ZOOM_STEP_FACTOR, 10)
+  })
+
+  it('step "out" scales the zoom down proportionally', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'out', id: 7 } as never)
+    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeCloseTo(100 / ZOOM_STEP_FACTOR, 10)
+  })
+
+  it('step "in" scales the zoom up proportionally at low zoom', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond, pxPerSecond: () => 5 })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'in', id: 8 } as never)
+    expect(setPxPerSecond.mock.calls[0]?.[0]).toBeCloseTo(5 * ZOOM_STEP_FACTOR, 10)
+  })
+
+  it('one step feels proportionate at every zoom level', () => {
+    const setPxPerSecond = vi.fn((v: number) => v)
+    const h = makeDeps({ setPxPerSecond })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    let id = 20
+    for (const level of [500, 100, 20, 3, 0.5]) {
+      h.deps.pxPerSecond = () => level
+      applyZoomRequest({ kind: 'step', action: 'out', id: id++ } as never)
+      expect(setPxPerSecond.mock.calls.at(-1)?.[0]).toBeCloseTo(level / ZOOM_STEP_FACTOR, 10)
+    }
+  })
+
+  it('step "out" at the floor is a no-op', () => {
+    const setPxPerSecond = vi.fn((v: number) => Math.max(MIN_PX_PER_SECOND, v))
+    const h = makeDeps({ setPxPerSecond, pxPerSecond: () => MIN_PX_PER_SECOND })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'out', id: 9 } as never)
+    expect(h.spies.redraw).not.toHaveBeenCalled()
+  })
+
+  it('step "in" at the ceiling is a no-op', () => {
+    const setPxPerSecond = vi.fn((v: number) => Math.min(MAX_PX_PER_SECOND, v))
+    const h = makeDeps({ setPxPerSecond, pxPerSecond: () => MAX_PX_PER_SECOND })
+    const { applyZoomRequest } = useTimelineZoom(h.deps)
+    applyZoomRequest({ kind: 'step', action: 'in', id: 10 } as never)
+    expect(h.spies.redraw).not.toHaveBeenCalled()
   })
 
   it('step "reset" returns to the default zoom', () => {

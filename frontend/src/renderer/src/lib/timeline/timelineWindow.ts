@@ -52,3 +52,25 @@ export function visibleSubRange(
   const last = Math.min(lastSub, Math.ceil((scrollX + viewWidth + overscan) / pxPerSub))
   return { first, last }
 }
+
+/** Ceiling for the 1-2-5 bar-thinning sequence below. */
+const BAR_THINNING_MAX_STEP = 10000
+
+/** 1-2-5 sequence used to thin the bar tier; thinned ticks/labels stay on
+ *  round bar numbers instead of landing at arbitrary bars. */
+const BAR_THINNING_STEPS = [
+  1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, BAR_THINNING_MAX_STEP
+]
+
+/**
+ * Smallest step from the 1-2-5 sequence whose bars sit at least `minPx` apart
+ * at the given pixels-per-bar. The bar tier is the ruler/grid anchor, so when
+ * zoomed far out it thins by this step rather than being suppressed like the
+ * beat and sub-beat tiers. The final entry bounds absurdly dense bars.
+ */
+export function barThinningStep(pxPerBar: number, minPx: number): number {
+  for (const step of BAR_THINNING_STEPS) {
+    if (pxPerBar * step >= minPx) return step
+  }
+  return BAR_THINNING_MAX_STEP
+}

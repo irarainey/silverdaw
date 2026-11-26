@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PX_PER_SECOND } from '@/lib/timeline/constants'
+import {
+  DEFAULT_PX_PER_SECOND,
+  MAX_PX_PER_SECOND,
+  MIN_PX_PER_SECOND
+} from '@/lib/timeline/constants'
 import {
   ZOOM_PRESET_PX_PER_SECOND,
   isZoomPresetAction,
@@ -9,9 +13,10 @@ import {
 } from '@/lib/timeline/zoomPresets'
 
 describe('zoom presets', () => {
-  it('presets are multiples of the zoom step so they survive snapping', () => {
+  it('presets sit inside the supported zoom range so they apply exactly', () => {
     for (const px of ZOOM_PRESET_PX_PER_SECOND) {
-      expect(px % 10).toBe(0)
+      expect(px).toBeGreaterThanOrEqual(MIN_PX_PER_SECOND)
+      expect(px).toBeLessThanOrEqual(MAX_PX_PER_SECOND)
     }
   })
 
